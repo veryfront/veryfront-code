@@ -13,8 +13,11 @@ import {
   getOrComputeTransform,
   initializeTransformCache,
   setCachedTransformAsync,
+  type TransformCachedEntryValidator,
 } from "#veryfront/transforms/esm/transform-cache.ts";
 import { validateCachedBundlesByManifestOrCode } from "#veryfront/transforms/esm/cached-bundle-validation.ts";
+import { exists } from "#veryfront/platform/compat/fs.ts";
+import { findMissingFrameworkBundlePaths } from "#veryfront/transforms/shared/framework-bundle-paths.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
@@ -64,6 +67,7 @@ export interface ModuleTransformCacheDeps {
     ttlSeconds: number,
     onProgress?: TransformProgressListener,
     signal?: AbortSignal,
+    validateCachedEntry?: TransformCachedEntryValidator,
   ) => Promise<TransformCacheResult>;
   transformToESM: (
     code: string,
@@ -77,6 +81,7 @@ export interface ModuleTransformCacheDeps {
     bundleManifestId: string | undefined,
     cacheDir: string,
   ) => Promise<BundleValidationResult>;
+  findMissingFrameworkBundlePaths: (code: string) => Promise<string[]>;
   getHttpBundleCacheDir: typeof getHttpBundleCacheDir;
   setCachedTransformAsync: typeof setCachedTransformAsync;
   runPipeline: (
@@ -92,6 +97,15 @@ const defaultDeps: ModuleTransformCacheDeps = {
   getOrComputeTransform,
   transformToESM,
   validateCachedBundlesByManifestOrCode,
+  findMissingFrameworkBundlePaths: (code) =>
+    findMissingFrameworkBundlePaths(code, exists, {
+      onError: (path, error) => {
+        logger.error("Framework bundle validation error", {
+          path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    }),
   getHttpBundleCacheDir,
   setCachedTransformAsync,
   runPipeline: async (code, filePath, projectDir, options) => {
@@ -112,6 +126,37 @@ export interface TransformModuleCodeWithCacheInput {
   onProgress?: TransformProgressListener;
   signal?: AbortSignal;
   deps?: ModuleTransformCacheDeps;
+}
+
+function createCachedTransformValidator(
+  filePath: string,
+  deps: ModuleTransformCacheDeps,
+): TransformCachedEntryValidator {
+  return async (entry) => {
+    const [httpValidation, missingFrameworkBundles] = await Promise.all([
+      deps.validateCachedBundlesByManifestOrCode(
+        entry.code,
+        entry.bundleManifestId,
+        deps.getHttpBundleCacheDir(),
+      ),
+      deps.findMissingFrameworkBundlePaths(entry.code),
+    ]);
+
+    if (httpValidation.valid && missingFrameworkBundles.length === 0) {
+      return true;
+    }
+
+    logger.warn("Cached transform dependency validation failed, re-transforming", {
+      filePath,
+      manifestId: entry.bundleManifestId?.slice(0, 12),
+      failedHashes: httpValidation.failedHashes,
+      reason: httpValidation.valid ? "framework_bundle_missing" : httpValidation.reason,
+      source: httpValidation.valid ? "framework-bundles" : httpValidation.source,
+      missingFrameworkBundleCount: missingFrameworkBundles.length,
+      firstMissingFrameworkBundle: missingFrameworkBundles[0]?.split("/").pop(),
+    });
+    return false;
+  };
 }
 
 /** Transform module source through the shared cache and stale-cache retry checks. */
@@ -160,49 +205,12 @@ export async function transformModuleCodeWithCache(
     ttlSeconds,
     input.onProgress,
     input.signal,
+    createCachedTransformValidator(input.filePath, deps),
   );
 
   input.signal?.throwIfAborted();
 
   let transformedCode = transformResult.code;
-
-  if (transformResult.cacheHit) {
-    const validation = await deps.validateCachedBundlesByManifestOrCode(
-      transformedCode,
-      transformResult.bundleManifestId,
-      deps.getHttpBundleCacheDir(),
-    );
-    input.signal?.throwIfAborted();
-    if (!validation.valid) {
-      logger.warn("Cached HTTP bundle validation failed, re-transforming", {
-        filePath: input.filePath,
-        manifestId: transformResult.bundleManifestId?.slice(0, 12),
-        failedHashes: validation.failedHashes,
-        reason: validation.reason,
-        source: validation.source,
-      });
-
-      transformedCode = await deps.transformToESM(
-        input.fileContent,
-        input.filePath,
-        input.projectDir,
-        input.adapter,
-        transformOptions,
-      );
-
-      deps.setCachedTransformAsync(
-        cacheKey,
-        transformedCode,
-        contentHash,
-        ttlSeconds,
-      ).catch((error) => {
-        logger.debug("Failed to update transform cache after re-transform", {
-          filePath: input.filePath,
-          error,
-        });
-      });
-    }
-  }
 
   // CRITICAL: Validate that no unresolved /_vf_modules/ imports remain after transform.
   // These imports should have been resolved to file:// paths by ssrVfModulesPlugin.

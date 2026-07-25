@@ -3,6 +3,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
+import { CACHE_DIR_TOKEN } from "#veryfront/cache/paths.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   __injectCachesForTests,
   destroyTransformCache,
@@ -261,6 +263,199 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(computed, false);
       assertEquals(result.code, "first-value");
       assertEquals(result.cacheHit, true);
+    });
+
+    it("recomputes when the cached entry validator rejects a cache hit", async () => {
+      await getOrComputeTransform("invalid-hit-key", async () => "stale-value");
+
+      let computeCalls = 0;
+      let validationCalls = 0;
+      const result = await getOrComputeTransform(
+        "invalid-hit-key",
+        async () => {
+          computeCalls++;
+          return "fresh-value";
+        },
+        300,
+        undefined,
+        undefined,
+        (entry) => {
+          validationCalls++;
+          assertEquals(entry.code, "stale-value");
+          assertEquals(entry.cacheHit, true);
+          return false;
+        },
+      );
+
+      assertEquals(result, { code: "fresh-value", cacheHit: false });
+      assertEquals(computeCalls, 1);
+      assertEquals(validationCalls, 1);
+
+      const cached = await getOrComputeTransform(
+        "invalid-hit-key",
+        async () => "unexpected-value",
+      );
+      assertEquals(cached.code, "fresh-value");
+      assertEquals(cached.cacheHit, true);
+    });
+
+    it("recomputes when cached-entry validation throws", async () => {
+      await getOrComputeTransform("validator-error-key", async () => "stale-value");
+
+      let computeCalls = 0;
+      const result = await getOrComputeTransform(
+        "validator-error-key",
+        async () => {
+          computeCalls++;
+          return "fresh-value";
+        },
+        300,
+        undefined,
+        undefined,
+        () => {
+          throw new Error("stat failed");
+        },
+      );
+
+      assertEquals(result, { code: "fresh-value", cacheHit: false });
+      assertEquals(computeCalls, 1);
+    });
+
+    it("shares cached-entry validation and repair across concurrent callers", async () => {
+      await getOrComputeTransform("invalid-shared-key", async () => "stale-shared-value");
+
+      let computeCalls = 0;
+      let validationCalls = 0;
+      let releaseValidation!: () => void;
+      let markValidationStarted!: () => void;
+      const validationGate = new Promise<void>((resolve) => {
+        releaseValidation = resolve;
+      });
+      const validationStarted = new Promise<void>((resolve) => {
+        markValidationStarted = resolve;
+      });
+
+      const validateCachedEntry = async () => {
+        validationCalls++;
+        markValidationStarted();
+        await validationGate;
+        return false;
+      };
+
+      const first = getOrComputeTransform(
+        "invalid-shared-key",
+        async () => {
+          computeCalls++;
+          return "fresh-shared-value";
+        },
+        300,
+        undefined,
+        undefined,
+        validateCachedEntry,
+      );
+
+      await validationStarted;
+
+      const second = getOrComputeTransform(
+        "invalid-shared-key",
+        async () => {
+          computeCalls++;
+          return "unexpected-shared-value";
+        },
+        300,
+        undefined,
+        undefined,
+        validateCachedEntry,
+      );
+
+      await Promise.resolve();
+      assertEquals(validationCalls, 1);
+      assertEquals(computeCalls, 0);
+
+      releaseValidation();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      assertEquals(firstResult, { code: "fresh-shared-value", cacheHit: false });
+      assertEquals(secondResult, { code: "fresh-shared-value", cacheHit: false });
+      assertEquals(validationCalls, 1);
+      assertEquals(computeCalls, 1);
+    });
+
+    it("repairs a detokenized distributed framework reference once", async () => {
+      const key = "distributed-framework-repair-key";
+      const frameworkPath =
+        `${getCacheBaseDir()}/veryfront-mdx-esm/framework/vfmod-vf-framework-missing.mjs`;
+      const staleCode = `import helper from "file://${frameworkPath}";`;
+      let storedValue: string | null = null;
+      let setCalls = 0;
+      const repairPublished = Promise.withResolvers<void>();
+      const cacheBackend: CacheBackend = {
+        type: "redis",
+        get: () => Promise.resolve(storedValue),
+        set: (_key, value) => {
+          storedValue = value;
+          setCalls++;
+          if (setCalls === 2) repairPublished.resolve();
+          return Promise.resolve();
+        },
+        del: () => Promise.resolve(),
+      };
+      __injectCachesForTests({ cacheBackend });
+
+      await setCachedTransformAsync(key, staleCode, "stale-hash");
+      const portableEntry = await cacheBackend.get(key);
+      assertEquals(portableEntry?.includes(CACHE_DIR_TOKEN), true);
+      assertEquals(portableEntry?.includes(frameworkPath), false);
+
+      let computeCalls = 0;
+      let validationCalls = 0;
+      const validationStarted = Promise.withResolvers<void>();
+      const releaseValidation = Promise.withResolvers<void>();
+      const validateCachedEntry = async (entry: { code: string }) => {
+        validationCalls++;
+        assertEquals(entry.code.includes(frameworkPath), true);
+        assertEquals(entry.code.includes(CACHE_DIR_TOKEN), false);
+        validationStarted.resolve();
+        await releaseValidation.promise;
+        return false;
+      };
+
+      const first = getOrComputeTransform(
+        key,
+        async () => {
+          computeCalls++;
+          return "export const repaired = true;";
+        },
+        300,
+        undefined,
+        undefined,
+        validateCachedEntry,
+      );
+      await validationStarted.promise;
+      const second = getOrComputeTransform(
+        key,
+        async () => {
+          computeCalls++;
+          return "export const duplicate = true;";
+        },
+        300,
+        undefined,
+        undefined,
+        validateCachedEntry,
+      );
+
+      releaseValidation.resolve();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      await repairPublished.promise;
+
+      assertEquals(firstResult.code, "export const repaired = true;");
+      assertEquals(secondResult.code, "export const repaired = true;");
+      assertEquals(validationCalls, 1);
+      assertEquals(computeCalls, 1);
+      assertEquals(
+        (await getCachedTransformAsync(key))?.code,
+        "export const repaired = true;",
+      );
     });
 
     it("coalesces concurrent cold misses for the same key", async () => {
