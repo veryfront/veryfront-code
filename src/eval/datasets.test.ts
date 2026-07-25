@@ -63,7 +63,7 @@ describe("eval/datasets", () => {
       () =>
         datasets.inline([
           { id: "same", input: "alpha" },
-          { id: "same", input: "beta" },
+          { id: " same ", input: "beta" },
         ]),
       Error,
       "Duplicate",
@@ -74,6 +74,8 @@ describe("eval/datasets", () => {
       Error,
       "input",
     );
+    assertThrows(() => datasets.json("  "), Error, "path");
+    assertThrows(() => datasets.jsonl(""), Error, "path");
 
     const root = await Deno.makeTempDir({ prefix: "vf-eval-dataset-bad-" });
     try {

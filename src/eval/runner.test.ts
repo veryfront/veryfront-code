@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   datasets,
@@ -463,6 +463,70 @@ describe("eval/runner", () => {
     assertEquals(report.summary.passRate, 0);
     assertEquals(report.records[0]?.completed, false);
     assertEquals(report.records[0]?.error, "AG-UI request failed");
+  });
+
+  it("normalizes custom dataset output before executing adapters", async () => {
+    const definition = evalAgent({
+      id: "eval:custom-dataset",
+      target: "agent:researcher",
+      dataset: {
+        kind: "inline",
+        load: () =>
+          Promise.resolve([
+            { id: "duplicate", input: "first" },
+            { id: " duplicate ", input: "second" },
+          ]),
+      },
+    });
+
+    await assertRejects(
+      () => runEval(definition, { adapters: { agent: async () => "unused" } }),
+      Error,
+      "Duplicate eval example id",
+    );
+  });
+
+  it("contains adapter and evaluator contract failures in the affected record", async () => {
+    const invalidUsageDefinition = evalAgent({
+      id: "eval:invalid-adapter-result",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+    const invalidUsageReport = await runEval(invalidUsageDefinition, {
+      adapters: {
+        agent: async () => ({ text: "Paris", usage: { totalTokens: -1 } }),
+      },
+    });
+
+    assertEquals(invalidUsageReport.summary.failed, 1);
+    assertEquals(invalidUsageReport.records[0]?.completed, false);
+    assertEquals(invalidUsageReport.records[0]?.error?.includes("at least 0"), true);
+
+    const evaluatorDefinition = evalAgent({
+      id: "eval:evaluator-error",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [
+        metrics.answer.groundedness({
+          judge: () => {
+            throw new Error("judge unavailable");
+          },
+        }).gate({ min: 0.8 }),
+        metrics.answer.exactMatch().gate(),
+      ],
+      check() {
+        throw new Error("check unavailable");
+      },
+    });
+    const evaluatorReport = await runEval(evaluatorDefinition, {
+      adapters: { agent: async () => "Paris" },
+    });
+    const record = evaluatorReport.records[0];
+    assertExists(record);
+    assertEquals(evaluatorReport.summary.failed, 1);
+    assertEquals(record.metrics?.map((result) => result.pass), [false, true]);
+    assertEquals(record.error?.includes("judge unavailable"), true);
+    assertEquals(record.error?.includes("check unavailable"), true);
   });
 
   it("emits eval result and duration metrics through the runtime metrics API", async () => {

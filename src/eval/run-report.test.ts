@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import type {
@@ -530,6 +530,39 @@ describe("runEvalReport single mode", () => {
     if (outcome.kind !== "single") throw new Error("expected single outcome");
     assertEquals(outcome.report.summary.failed, 1);
     assertEquals(outcome.baseline?.regressed, true);
+  });
+
+  it("emits record execution errors as JUnit testcase failures", async () => {
+    const failedReport = createReport({
+      summary: {
+        ...createReport().summary,
+        passed: 0,
+        failed: 1,
+        passRate: 0,
+      },
+      records: [{
+        ...createReport().records[0]!,
+        completed: false,
+        error: "adapter contract failed",
+        metrics: [],
+      }],
+    });
+    const { adapters, writes } = createAdapters({ report: failedReport });
+
+    await runEvalReport({
+      kind: "single",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      evalItem: createDiscoveredEval(),
+      targetKind: "agent",
+      target: "agent:answers",
+      targetAdapter: {},
+      junit: "artifacts/error.xml",
+    }, adapters);
+
+    const junit = writes.find((write) => write.path === "artifacts/error.xml")?.content ?? "";
+    assertStringIncludes(junit, '<failure message="record.error failed">');
+    assertStringIncludes(junit, "adapter contract failed");
   });
 
   it("returns exit 1 when a passing report regresses against a stronger baseline", async () => {
@@ -1615,6 +1648,25 @@ describe("runEvalReport model comparison mode", () => {
           "Unsupported eval report kind: unknown",
         );
       },
+    );
+  });
+
+  it("rejects model ids whose sanitized artifact directories collide", async () => {
+    const { adapters } = createAdapters();
+
+    await assertRejects(
+      () =>
+        runEvalReport({
+          kind: "model-comparison",
+          projectDir: "/repo",
+          frameworkVersion: "1.2.3",
+          evalItem: createDiscoveredEval(),
+          baselineModel: "provider/a?b",
+          candidateModels: ["provider/a/b"],
+          target: "agent:answers",
+        }, adapters),
+      Error,
+      "same report directory",
     );
   });
 });

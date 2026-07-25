@@ -41,29 +41,37 @@ function firstValue(env: Env, keys: string[]): string | undefined {
   return undefined;
 }
 
+function readEnvironmentValue(key: string): string | undefined {
+  try {
+    return Deno.env.get(key);
+  } catch {
+    return undefined;
+  }
+}
+
 function collectEnv(): Env {
   return {
-    AG_UI_EVAL_BRANCH_ID: Deno.env.get("AG_UI_EVAL_BRANCH_ID"),
-    AG_UI_EVAL_PROJECT_ID: Deno.env.get("AG_UI_EVAL_PROJECT_ID"),
-    AG_UI_EVAL_PROJECT_SLUG: Deno.env.get("AG_UI_EVAL_PROJECT_SLUG"),
-    AG_UI_EVAL_RELEASE_ID: Deno.env.get("AG_UI_EVAL_RELEASE_ID"),
-    CI: Deno.env.get("CI"),
-    GITHUB_ACTIONS: Deno.env.get("GITHUB_ACTIONS"),
-    GITHUB_REF_NAME: Deno.env.get("GITHUB_REF_NAME"),
-    GITHUB_SHA: Deno.env.get("GITHUB_SHA"),
-    TENANT_BRANCH_ID: Deno.env.get("TENANT_BRANCH_ID"),
-    TENANT_DEPLOYMENT_ID: Deno.env.get("TENANT_DEPLOYMENT_ID"),
-    TENANT_ENVIRONMENT: Deno.env.get("TENANT_ENVIRONMENT"),
-    TENANT_PROJECT_ID: Deno.env.get("TENANT_PROJECT_ID"),
-    TENANT_PROJECT_SLUG: Deno.env.get("TENANT_PROJECT_SLUG"),
-    TENANT_RELEASE_ID: Deno.env.get("TENANT_RELEASE_ID"),
-    VERCEL_ENV: Deno.env.get("VERCEL_ENV"),
-    VERYFRONT_BRANCH_REF: Deno.env.get("VERYFRONT_BRANCH_REF"),
-    VERYFRONT_DEPLOYMENT_ID: Deno.env.get("VERYFRONT_DEPLOYMENT_ID"),
-    VERYFRONT_ENVIRONMENT: Deno.env.get("VERYFRONT_ENVIRONMENT"),
-    VERYFRONT_PROJECT_ID: Deno.env.get("VERYFRONT_PROJECT_ID"),
-    VERYFRONT_PROJECT_SLUG: Deno.env.get("VERYFRONT_PROJECT_SLUG"),
-    VERYFRONT_RELEASE_ID: Deno.env.get("VERYFRONT_RELEASE_ID"),
+    AG_UI_EVAL_BRANCH_ID: readEnvironmentValue("AG_UI_EVAL_BRANCH_ID"),
+    AG_UI_EVAL_PROJECT_ID: readEnvironmentValue("AG_UI_EVAL_PROJECT_ID"),
+    AG_UI_EVAL_PROJECT_SLUG: readEnvironmentValue("AG_UI_EVAL_PROJECT_SLUG"),
+    AG_UI_EVAL_RELEASE_ID: readEnvironmentValue("AG_UI_EVAL_RELEASE_ID"),
+    CI: readEnvironmentValue("CI"),
+    GITHUB_ACTIONS: readEnvironmentValue("GITHUB_ACTIONS"),
+    GITHUB_REF_NAME: readEnvironmentValue("GITHUB_REF_NAME"),
+    GITHUB_SHA: readEnvironmentValue("GITHUB_SHA"),
+    TENANT_BRANCH_ID: readEnvironmentValue("TENANT_BRANCH_ID"),
+    TENANT_DEPLOYMENT_ID: readEnvironmentValue("TENANT_DEPLOYMENT_ID"),
+    TENANT_ENVIRONMENT: readEnvironmentValue("TENANT_ENVIRONMENT"),
+    TENANT_PROJECT_ID: readEnvironmentValue("TENANT_PROJECT_ID"),
+    TENANT_PROJECT_SLUG: readEnvironmentValue("TENANT_PROJECT_SLUG"),
+    TENANT_RELEASE_ID: readEnvironmentValue("TENANT_RELEASE_ID"),
+    VERCEL_ENV: readEnvironmentValue("VERCEL_ENV"),
+    VERYFRONT_BRANCH_REF: readEnvironmentValue("VERYFRONT_BRANCH_REF"),
+    VERYFRONT_DEPLOYMENT_ID: readEnvironmentValue("VERYFRONT_DEPLOYMENT_ID"),
+    VERYFRONT_ENVIRONMENT: readEnvironmentValue("VERYFRONT_ENVIRONMENT"),
+    VERYFRONT_PROJECT_ID: readEnvironmentValue("VERYFRONT_PROJECT_ID"),
+    VERYFRONT_PROJECT_SLUG: readEnvironmentValue("VERYFRONT_PROJECT_SLUG"),
+    VERYFRONT_RELEASE_ID: readEnvironmentValue("VERYFRONT_RELEASE_ID"),
   };
 }
 

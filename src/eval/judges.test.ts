@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "veryfront/provider";
 import { judges } from "veryfront/eval";
@@ -56,6 +61,7 @@ describe("eval/judges", () => {
     const [call] = calls as Array<{
       prompt: Array<{ content: Array<{ type: string; text: string }> }>;
     }>;
+    assertExists(call);
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
     assertStringIncludes(promptText, "Deployment errors after migration");
     assertStringIncludes(promptText, "knowledge/deployment-incident-triage.md");
@@ -147,6 +153,7 @@ describe("eval/judges", () => {
     const [call] = calls as Array<{
       prompt: Array<{ content: Array<{ type: string; text: string }> }>;
     }>;
+    assertExists(call);
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
     assertStringIncludes(promptText, "Evidence snippets:");
     assertStringIncludes(promptText, "Retrieved sources:");
@@ -179,6 +186,7 @@ describe("eval/judges", () => {
     const [call] = calls as Array<{
       prompt: Array<{ content: Array<{ type: string; text: string }> }>;
     }>;
+    assertExists(call);
     const promptText = call.prompt[0]?.content[0]?.text ?? "";
     assertStringIncludes(promptText, "Critical policy evidence");
     assertStringIncludes(promptText, "Retrieved sources:");
@@ -228,5 +236,23 @@ describe("eval/judges", () => {
     assertEquals(result.score, 0);
     assertEquals(result.pass, false);
     assertStringIncludes(result.explanation ?? "", "valid JSON");
+  });
+
+  it("rejects invalid judge limits before making a model request", () => {
+    assertThrows(
+      () => judges.llm.groundedness({ threshold: Number.NaN }),
+      Error,
+      "finite",
+    );
+    assertThrows(
+      () => judges.llm.groundedness({ maxEvidenceChars: 0 }),
+      Error,
+      "at least 1",
+    );
+    assertThrows(
+      () => judges.llm.groundedness({ maxOutputTokens: 1.5 }),
+      Error,
+      "integer",
+    );
   });
 });

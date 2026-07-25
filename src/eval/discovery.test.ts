@@ -110,6 +110,39 @@ describe("eval/discovery", () => {
   it("derives stable eval ids from eval file paths", () => {
     assertEquals(deriveEvalId("evals/deep-research.eval.ts", "evals"), "eval:deep-research");
     assertEquals(deriveEvalId("evals/rag/retrieval.ts", "evals"), "eval:rag/retrieval");
+    assertEquals(
+      deriveEvalId(
+        String.raw`C:\repo\evals\rag\retrieval.eval.ts`,
+        String.raw`C:\repo\evals`,
+      ),
+      "eval:rag/retrieval",
+    );
+  });
+
+  it("fails closed when multiple files declare the same eval id", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/alpha.eval.ts": "",
+      "/project/evals/beta.eval.ts": "",
+    });
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async () => ({
+        default: evalAgent({
+          id: "eval:duplicate",
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "capital" }]),
+        }),
+      }),
+    });
+
+    assertEquals(result.evals, []);
+    assertEquals(result.errors.map((entry) => entry.filePath), [
+      "evals/alpha.eval.ts",
+      "evals/beta.eval.ts",
+    ]);
+    assertEquals(result.errors.every((entry) => entry.error.includes("Duplicate eval id")), true);
   });
 
   it("discovers eval files with source metadata for Studio editing", async () => {

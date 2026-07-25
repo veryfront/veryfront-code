@@ -1,4 +1,5 @@
 import { createEvalCheckContext } from "./expect.ts";
+import { isEvalDefinition } from "./factory.ts";
 import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
@@ -24,22 +25,133 @@ import type {
   EvalUsage,
   RunEvalOptions,
 } from "./types.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalExamples,
+  normalizeEvalString,
+} from "./validation.ts";
 
 const UNMAPPED_TOOL_INPUT = Symbol("unmapped-tool-input");
+const USAGE_NUMERIC_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "billableInputTokens",
+  "billableOutputTokens",
+  "cachedInputTokens",
+  "cacheCreationInputTokens",
+  "cacheReadInputTokens",
+  "reasoningTokens",
+  "costUsd",
+  "providerInputCostUsd",
+  "providerOutputCostUsd",
+  "providerCostUsd",
+  "veryfrontInputChargeUsd",
+  "veryfrontOutputChargeUsd",
+  "veryfrontChargeUsd",
+  "veryfrontBilledUsd",
+  "costCredits",
+] as const satisfies readonly (keyof EvalUsage)[];
 
 function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
+  if (trace !== undefined && !isEvalRecord(trace)) {
+    throw createEvalValidationError("Eval adapter trace must be an object");
+  }
+  if (trace?.events !== undefined && !Array.isArray(trace.events)) {
+    throw createEvalValidationError("Eval adapter trace events must be an array");
+  }
+  if (trace?.toolCalls !== undefined && !Array.isArray(trace.toolCalls)) {
+    throw createEvalValidationError("Eval adapter trace toolCalls must be an array");
+  }
   return {
-    events: trace?.events ?? [],
-    toolCalls: trace?.toolCalls ?? [],
+    events: [...(trace?.events ?? [])],
+    toolCalls: (trace?.toolCalls ?? []).map((toolCall, index) => {
+      if (!isEvalRecord(toolCall)) {
+        throw createEvalValidationError(
+          `Eval adapter trace toolCalls[${index}] must be an object`,
+        );
+      }
+      const name = normalizeEvalString(
+        toolCall.name,
+        `Eval adapter trace toolCalls[${index}] name`,
+      );
+      if (
+        toolCall.status !== undefined &&
+        toolCall.status !== "ok" &&
+        toolCall.status !== "error" &&
+        toolCall.status !== "skipped" &&
+        toolCall.status !== "denied"
+      ) {
+        throw createEvalValidationError(
+          `Eval adapter trace toolCalls[${index}] has an invalid status`,
+        );
+      }
+      return { ...toolCall, name } as EvalToolCall;
+    }),
   };
 }
 
 function normalizeUsage(usage?: EvalUsage): EvalUsage {
-  return usage ?? {};
+  if (usage === undefined) return {};
+  if (!isEvalRecord(usage)) {
+    throw createEvalValidationError("Eval adapter usage must be an object");
+  }
+  const normalized = { ...usage } as EvalUsage;
+  for (const key of USAGE_NUMERIC_KEYS) {
+    const value = normalized[key];
+    if (value !== undefined) {
+      assertFiniteEvalNumber(value, `Eval adapter usage ${key}`, { min: 0 });
+    }
+  }
+  return normalized;
 }
 
-function normalizeAdapterResult(result: string | EvalAgentAdapterResult): EvalAgentAdapterResult {
-  return typeof result === "string" ? { text: result } : result;
+function normalizeAgentAdapterResult(
+  result: string | EvalAgentAdapterResult,
+): EvalAgentAdapterResult {
+  if (typeof result === "string") return { text: result };
+  if (!isEvalRecord(result)) {
+    throw createEvalValidationError("Eval agent adapter must return a string or result object");
+  }
+  validateAdapterResultFields(result, "agent");
+  return {
+    ...result,
+    ...(result.trace === undefined
+      ? {}
+      : { trace: normalizeTrace(result.trace as Partial<EvalTrace>) }),
+    ...(result.usage === undefined ? {} : { usage: normalizeUsage(result.usage as EvalUsage) }),
+  };
+}
+
+function normalizeToolAdapterResult(result: EvalToolAdapterResult): EvalToolAdapterResult {
+  if (!isEvalRecord(result)) {
+    throw createEvalValidationError("Eval tool adapter must return a result object");
+  }
+  validateAdapterResultFields(result, "tool");
+  return {
+    ...result,
+    ...(result.trace === undefined
+      ? {}
+      : { trace: normalizeTrace(result.trace as Partial<EvalTrace>) }),
+    ...(result.usage === undefined ? {} : { usage: normalizeUsage(result.usage as EvalUsage) }),
+  } as EvalToolAdapterResult;
+}
+
+function validateAdapterResultFields(
+  result: Record<string, unknown>,
+  kind: "agent" | "tool",
+): void {
+  if (result.completed !== undefined && typeof result.completed !== "boolean") {
+    throw createEvalValidationError(`Eval ${kind} adapter completed must be a boolean`);
+  }
+  if (result.error !== undefined && typeof result.error !== "string") {
+    throw createEvalValidationError(`Eval ${kind} adapter error must be a string`);
+  }
+  if (result.durationMs !== undefined) {
+    assertFiniteEvalNumber(result.durationMs, `Eval ${kind} adapter durationMs`, { min: 0 });
+  }
 }
 
 function normalizeOutput(result: EvalAgentAdapterResult): unknown {
@@ -92,7 +204,7 @@ async function runAgentTarget(
   if (!adapter) {
     throw new Error(`No agent adapter configured for eval target "${definition.target}".`);
   }
-  return normalizeAdapterResult(await adapter({ definition, example, repetition }));
+  return normalizeAgentAdapterResult(await adapter({ definition, example, repetition }));
 }
 
 async function runToolTarget(
@@ -109,7 +221,9 @@ async function runToolTarget(
   }
   const input = definition.input ? await definition.input(example) : example.input;
   markInvoked?.();
-  const result = await adapter({ definition, example, repetition, runId, input });
+  const result = normalizeToolAdapterResult(
+    await adapter({ definition, example, repetition, runId, input }),
+  );
   return { input, result };
 }
 
@@ -206,6 +320,43 @@ function createMissingExporterResult(exporterId: string): EvalReportExportResult
 
 function exportErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function metricEvaluationFailure(
+  metric: EvalDefinition["metrics"][number],
+  error: unknown,
+): EvalMetricResult {
+  return {
+    name: metric.name,
+    family: metric.family,
+    severity: metric.severity,
+    pass: false,
+    explanation: `Metric evaluation failed: ${exportErrorMessage(error)}`,
+  };
+}
+
+function normalizeMetricResult(
+  metric: EvalDefinition["metrics"][number],
+  result: unknown,
+): EvalMetricResult {
+  if (!isEvalRecord(result)) {
+    throw createEvalValidationError(`Metric "${metric.name}" must return a result object`);
+  }
+  if (result.score !== undefined) {
+    assertFiniteEvalNumber(result.score, `Metric "${metric.name}" score`);
+  }
+  if (result.pass !== undefined && typeof result.pass !== "boolean") {
+    throw createEvalValidationError(`Metric "${metric.name}" pass must be a boolean`);
+  }
+  if (result.skipped !== undefined && typeof result.skipped !== "boolean") {
+    throw createEvalValidationError(`Metric "${metric.name}" skipped must be a boolean`);
+  }
+  return {
+    ...result,
+    name: metric.name,
+    family: metric.family,
+    severity: metric.severity,
+  } as EvalMetricResult;
 }
 
 function createExporterFailureResult(
@@ -392,24 +543,38 @@ async function runRecord(
   };
 
   const metricResults = [];
+  const evaluationErrors: string[] = [];
   for (const metric of definition.metrics) {
-    metricResults.push(await metric.evaluate(record));
+    try {
+      metricResults.push(normalizeMetricResult(metric, await metric.evaluate(record)));
+    } catch (error) {
+      const failure = metricEvaluationFailure(metric, error);
+      metricResults.push(failure);
+      evaluationErrors.push(failure.explanation ?? `${metric.name} evaluation failed`);
+    }
   }
   record.metrics = metricResults;
 
   const checks: EvalMetricResult[] = [];
   if (definition.check) {
-    await definition.check(createEvalCheckContext({
-      definition,
-      example,
-      repetition,
-      record,
-      checks,
-    }));
+    try {
+      await definition.check(createEvalCheckContext({
+        definition,
+        example,
+        repetition,
+        record,
+        checks,
+      }));
+    } catch (error) {
+      evaluationErrors.push(`Eval check failed: ${exportErrorMessage(error)}`);
+    }
   }
   record.checks = checks;
 
-  if (isBlockingFailure(record)) {
+  if (evaluationErrors.length > 0) {
+    record.error = [record.error, ...evaluationErrors].filter(Boolean).join("; ");
+    record.completed = false;
+  } else if (isBlockingFailure(record)) {
     record.completed = false;
   }
 
@@ -421,10 +586,22 @@ export async function runEval(
   definition: EvalDefinition,
   options: RunEvalOptions,
 ) {
+  if (!isEvalDefinition(definition)) {
+    throw createEvalValidationError("runEval requires a valid eval definition");
+  }
   const startedAt = options.now?.() ?? new Date();
-  const runId = options.runId ?? createEvalRunId(startedAt);
+  if (!(startedAt instanceof Date) || !Number.isFinite(startedAt.getTime())) {
+    throw createEvalValidationError("Eval start time must be a valid Date");
+  }
+  const runId = options.runId === undefined
+    ? createEvalRunId(startedAt)
+    : normalizeEvalString(options.runId, "Eval run id");
   const baseDir = options.baseDir ?? Deno.cwd();
-  const examples = await definition.dataset.load({ baseDir });
+  const loadedExamples = await definition.dataset.load({ baseDir });
+  const examples = normalizeEvalExamples(
+    loadedExamples,
+    `dataset "${definition.dataset.path ?? definition.dataset.kind}"`,
+  );
   const dataset = await createEvalDatasetMetadata(definition.dataset, examples);
   const records: EvalRecord[] = [];
 
@@ -435,6 +612,9 @@ export async function runEval(
   }
 
   const endedAt = options.now?.() ?? new Date();
+  if (!(endedAt instanceof Date) || !Number.isFinite(endedAt.getTime())) {
+    throw createEvalValidationError("Eval end time must be a valid Date");
+  }
   const report = createEvalReport({
     definition,
     records,

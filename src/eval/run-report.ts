@@ -4,6 +4,7 @@ import type { DiscoveredEval } from "./discovery.ts";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
 import { EVAL_REPORT_SCHEMA_VERSION } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type {
   EvalMetricResult,
   EvalModelComparison,
@@ -306,6 +307,18 @@ function createEvalModelComparisonArtifactPaths(
   reportDir: string,
   models: string[],
 ): EvalModelComparisonArtifactPaths {
+  const pathOwners = new Map<string, string>();
+  for (const model of models) {
+    const segment = sanitizeModelIdForPath(model);
+    const owner = pathOwners.get(segment);
+    if (owner !== undefined && owner !== model) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Model ids "${owner}" and "${model}" map to the same report directory "${segment}".`,
+      });
+    }
+    pathOwners.set(segment, model);
+  }
   return {
     directory: reportDir,
     comparisonJson: join(reportDir, "comparison.json"),
@@ -547,10 +560,6 @@ function blockingResults(record: EvalRecord): EvalMetricResult[] {
   );
 }
 
-function skippedResults(record: EvalRecord): EvalMetricResult[] {
-  return [...(record.metrics ?? []), ...(record.checks ?? [])].filter((result) => result.skipped);
-}
-
 function testcaseName(record: EvalRecord): string {
   return `${record.exampleId}#${record.repetition}`;
 }
@@ -566,40 +575,38 @@ function failureBody(result: EvalMetricResult): string {
 }
 
 function createJunitXml(report: EvalReport): string {
-  const skipped = report.records.reduce(
-    (count, record) => count + skippedResults(record).length,
-    0,
-  );
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<testsuite name="${
       xmlEscape(report.definitionId)
-    }" tests="${report.summary.records}" failures="${report.summary.failed}" skipped="${skipped}">`,
+    }" tests="${report.summary.records}" failures="${report.summary.failed}" skipped="0">`,
   ];
 
   for (const record of report.records) {
     const failures = blockingResults(record);
-    const skips = skippedResults(record);
+    const recordFailure = !record.completed || record.error
+      ? record.error ?? "Record did not complete."
+      : undefined;
     const attrs = `classname="${xmlEscape(report.definitionId)}" name="${
       xmlEscape(testcaseName(record))
     }" time="${(record.durationMs / 1000).toFixed(3)}"`;
 
-    if (failures.length === 0 && skips.length === 0) {
+    if (failures.length === 0 && recordFailure === undefined) {
       lines.push(`  <testcase ${attrs} />`);
       continue;
     }
 
     lines.push(`  <testcase ${attrs}>`);
+    if (recordFailure !== undefined) {
+      lines.push(
+        `    <failure message="record.error failed">${xmlEscape(recordFailure)}</failure>`,
+      );
+    }
     for (const failure of failures) {
       lines.push(
         `    <failure message="${xmlEscape(failureMessage(failure))}">${
           xmlEscape(failureBody(failure))
         }</failure>`,
-      );
-    }
-    for (const skip of skips) {
-      lines.push(
-        `    <skipped message="${xmlEscape(skip.explanation ?? `${skip.name} skipped`)}" />`,
       );
     }
     lines.push("  </testcase>");
@@ -735,8 +742,13 @@ function stripFileProtocol(path: string): string {
 
 function displaySourcePath(filePath: string, projectDir: string): string {
   const normalized = stripFileProtocol(filePath);
-  if (normalized.startsWith(projectDir)) {
-    return relative(projectDir, normalized);
+  const relativePath = relative(projectDir, normalized);
+  if (
+    relativePath !== ".." &&
+    !relativePath.startsWith("../") &&
+    !relativePath.startsWith("..\\")
+  ) {
+    return relativePath || ".";
   }
   return normalized;
 }
@@ -959,7 +971,17 @@ async function runEvalReportModelComparison(
   const runId = createRunId(adapters.clock);
   const reportDir = input.reportDir ?? createDefaultEvalReportDir(runId, input.evalItem.id);
   const baselineModel = input.baselineModel.trim();
+  if (!baselineModel) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Model comparison baseline model must be a non-empty string.",
+    });
+  }
   const models = uniqueTrimmedValues([baselineModel, ...input.candidateModels]);
+  if (models.length < 2) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Model comparison requires at least one candidate model.",
+    });
+  }
   const paths = createEvalModelComparisonArtifactPaths(reportDir, models);
   const reports: EvalReport[] = [];
 
