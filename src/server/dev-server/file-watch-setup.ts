@@ -52,6 +52,12 @@ const IGNORED_PATH_PATTERNS = [
 const IGNORED_ARTIFACT_EXTENSIONS = new Set([".log", ".tmp"]);
 
 /**
+ * Generated file names written at project root during dev-server request
+ * handling. These files are not source and must not trigger HMR.
+ */
+const TRANSIENT_MIDDLEWARE_MODULE_RE = /^\.vf-middleware-.+\.mjs$/;
+
+/**
  * Project-root directory names that contain runtime data (not source code)
  * and should be excluded from HMR. Matched by first path segment relative
  * to projectDir to avoid false positives (e.g. "src/data/" is fine).
@@ -79,6 +85,11 @@ function hasIgnoredArtifactExtension(path: string): boolean {
   return false;
 }
 
+function hasIgnoredArtifactFileName(path: string): boolean {
+  const fileName = path.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  return TRANSIENT_MIDDLEWARE_MODULE_RE.test(fileName);
+}
+
 /**
  * Check if a path should be ignored for HMR purposes — either because it lives
  * in a generated/output directory or because it is a generated-artifact file.
@@ -87,7 +98,8 @@ function hasIgnoredArtifactExtension(path: string): boolean {
  */
 export function shouldIgnorePath(path: string): boolean {
   return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
-    hasIgnoredArtifactExtension(path);
+    hasIgnoredArtifactExtension(path) ||
+    hasIgnoredArtifactFileName(path);
 }
 
 /**
