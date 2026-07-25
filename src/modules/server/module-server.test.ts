@@ -356,6 +356,53 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("honors an explicit .mjs request before same-stem fallbacks", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-mjs-collision-" });
+    try {
+      await Deno.mkdir(`${projectDir}/styled-system/css`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/styled-system/css/index.js`,
+        `export const source = "js-fallback";\n`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/styled-system/css/index.mjs`,
+        `export const source = "mjs-explicit";\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/styled-system/css/index.mjs"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertStringIncludes(text, "mjs-explicit");
+      assertEquals(text.includes("js-fallback"), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not serve CommonJS sources without browser conversion", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-cjs-module-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/legacy.cjs`,
+        `module.exports = { source: "commonjs" };\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/legacy.cjs"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 404);
+      assertEquals(await response.text(), "Module not found");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("should prefer project deno.js over the dnt-relative deno fallback", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-project-deno-module-" });
     try {
