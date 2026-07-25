@@ -1015,6 +1015,49 @@ Deno.test("stripPendingToolParts keeps only the nearest duplicate transient call
   ]);
 });
 
+Deno.test("stripPendingToolParts removes completed duplicate calls superseded by replay results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "duplicate-call",
+        "github__get_pr_diff",
+        { pull_number: 1 },
+        "output-available",
+        { files: ["old.ts"] },
+      ),
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+    ]),
+    toolReplayMessage([rawToolResultReplayPart("duplicate-call", { files: ["new.ts"] })]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "input-available",
+          input: { pull_number: 2 },
+        },
+      ],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "duplicate-call",
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
 Deno.test("stripPendingToolParts rejects name-mismatched replay results", () => {
   const messages = [
     assistantReplayMessage([
@@ -1153,6 +1196,37 @@ Deno.test("stripPendingToolParts does not keep prior-message calls after visible
       ],
     },
     messages[1],
+  ]);
+});
+
+Deno.test("stripPendingToolParts treats whitespace text as provider-visible", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    assistantReplayMessage([textReplayPart(" \n")], "assistant-whitespace"),
+    toolReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-whitespace",
+      role: "assistant",
+      parts: [{ type: "text", text: " \n" }],
+    },
+    {
+      id: "assistant-1:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "first-call",
+          output: { files: ["one.ts"] },
+        },
+      ],
+    },
   ]);
 });
 

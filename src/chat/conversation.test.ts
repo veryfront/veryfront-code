@@ -1061,6 +1061,32 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     );
   });
 
+  it("omits completed duplicate call occurrences superseded by a transient replay result", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart(
+          "duplicate-call",
+          "github__get_pr_diff",
+          { pull_number: 1 },
+          "output-available",
+          { files: ["old.ts"] },
+        ),
+        dynamicToolInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+      ], "assistant-1"),
+      toolInputMessage([
+        rawToolResultInputPart("duplicate-call", { files: ["new.ts"] }),
+      ], "assistant-1:tool"),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("duplicate-call", "github__get_pr_diff", { pull_number: 2 })],
+        [expectedJsonResult("duplicate-call", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
+  });
+
   it("does not preserve a transient call for a name-mismatched result", () => {
     const messages: ChatProviderModelInputMessage[] = [
       assistantInputMessage([
@@ -1103,6 +1129,19 @@ describe("convertUiMessagesToProviderModelMessages", () => {
       {
         role: "assistant",
         content: [{ type: "text", text: "I will continue without it." }],
+      },
+    ]);
+
+    const whitespaceStoppedMessages: ChatProviderModelInputMessage[] = [
+      skippedMessages[0]!,
+      assistantInputMessage([textInputPart("  \n")], "assistant-whitespace"),
+      skippedMessages[2]!,
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(whitespaceStoppedMessages), [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "  \n" }],
       },
     ]);
   });

@@ -797,11 +797,23 @@ export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[
   const replayMatches = findProviderVisibleToolReplayMatches(messages);
 
   return messages.flatMap((message) => {
-    if (message.role !== "assistant" || message.parts.length === 0) {
+    if (message.parts.length === 0) {
       return [message];
     }
 
     const parts = message.parts.filter((part) => {
+      if (
+        isRecord(part) &&
+        (replayMatches.supersededToolCallParts.has(part) ||
+          replayMatches.supersededToolResultParts.has(part))
+      ) {
+        return false;
+      }
+
+      if (message.role !== "assistant") {
+        return true;
+      }
+
       if (!isPendingToolPart(part)) {
         return true;
       }

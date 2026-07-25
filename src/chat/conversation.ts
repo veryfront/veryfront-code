@@ -990,7 +990,7 @@ function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
 
 function isProviderVisibleNonToolPart(part: unknown): boolean {
   if (isTextPart(part)) {
-    return part.text.trim().length > 0;
+    return true;
   }
 
   return isReasoningPart(part) || getFilePart(part) !== null;
@@ -1049,6 +1049,8 @@ export type ProviderVisibleToolReplayMatches = {
   matchedToolResultParts: WeakSet<object>;
   matchedToolResultNames: WeakMap<object, string>;
   toolCallPartsStartingNewBatch: WeakSet<object>;
+  supersededToolCallParts: WeakSet<object>;
+  supersededToolResultParts: WeakSet<object>;
 };
 
 /** Find adjacent replay call/result occurrences using part object identity. */
@@ -1059,6 +1061,10 @@ export function findProviderVisibleToolReplayMatches(
   const matchedToolResultParts = new WeakSet<object>();
   const matchedToolResultNames = new WeakMap<object, string>();
   const toolCallPartsStartingNewBatch = new WeakSet<object>();
+  const supersededToolCallParts = new WeakSet<object>();
+  const supersededToolResultParts = new WeakSet<object>();
+  const matchedResultPartByCallPart = new WeakMap<object, object>();
+  const toolCallsById = new Map<string, ReplayToolCallPart[]>();
   const pendingCalls: PendingReplayToolCall[] = [];
 
   for (const [messageIndex, message] of messages.entries()) {
@@ -1067,6 +1073,10 @@ export function findProviderVisibleToolReplayMatches(
     for (const part of message.parts) {
       const call = getReplayToolCallPart(part, message.role);
       if (call) {
+        const callsWithId = toolCallsById.get(call.toolCallId) ?? [];
+        callsWithId.push(call);
+        toolCallsById.set(call.toolCallId, callsWithId);
+
         if (hasPendingCallsFromEarlierMessages(pendingCalls, messageIndex)) {
           toolCallPartsStartingNewBatch.add(call.part);
         }
@@ -1098,8 +1108,20 @@ export function findProviderVisibleToolReplayMatches(
           if (matchedCall.transient) {
             preservedTransientToolParts.add(matchedCall.part);
           }
+          for (const priorCall of toolCallsById.get(matchedCall.toolCallId) ?? []) {
+            if (priorCall.part === matchedCall.part) {
+              continue;
+            }
+
+            supersededToolCallParts.add(priorCall.part);
+            const priorResultPart = matchedResultPartByCallPart.get(priorCall.part);
+            if (priorResultPart) {
+              supersededToolResultParts.add(priorResultPart);
+            }
+          }
           matchedToolResultParts.add(result.part);
           matchedToolResultNames.set(result.part, matchedCall.toolName);
+          matchedResultPartByCallPart.set(matchedCall.part, result.part);
           removePendingCallsThroughMatchedResult(pendingCalls, matchedIndex, result.toolCallId);
         }
         continue;
@@ -1121,6 +1143,8 @@ export function findProviderVisibleToolReplayMatches(
     matchedToolResultParts,
     matchedToolResultNames,
     toolCallPartsStartingNewBatch,
+    supersededToolCallParts,
+    supersededToolResultParts,
   };
 }
 
@@ -1268,6 +1292,10 @@ function convertAssistantMessage(
       return;
     }
 
+    if (isRecord(part) && replayMatches.supersededToolCallParts.has(part)) {
+      return;
+    }
+
     if (isRecord(part) && replayMatches.toolCallPartsStartingNewBatch.has(part)) {
       flushAssistantMessage(assistantContent);
       flushToolMessage();
@@ -1327,7 +1355,10 @@ function convertAssistantMessage(
 
     const rawToolResult = getRawToolResultPart(part);
     if (rawToolResult) {
-      if (!isRecord(part) || !replayMatches.matchedToolResultParts.has(part)) {
+      if (
+        !isRecord(part) || !replayMatches.matchedToolResultParts.has(part) ||
+        replayMatches.supersededToolResultParts.has(part)
+      ) {
         continue;
       }
 
@@ -1363,7 +1394,10 @@ function convertToolMessage(
     if (toolPart) {
       const output = buildToolResultOutput(toolPart);
       if (output) {
-        if (!isRecord(part) || !replayMatches.matchedToolResultParts.has(part)) {
+        if (
+          !isRecord(part) || !replayMatches.matchedToolResultParts.has(part) ||
+          replayMatches.supersededToolResultParts.has(part)
+        ) {
           continue;
         }
 
@@ -1381,7 +1415,10 @@ function convertToolMessage(
     if (!rawResult) {
       continue;
     }
-    if (!isRecord(part) || !replayMatches.matchedToolResultParts.has(part)) {
+    if (
+      !isRecord(part) || !replayMatches.matchedToolResultParts.has(part) ||
+      replayMatches.supersededToolResultParts.has(part)
+    ) {
       continue;
     }
 
