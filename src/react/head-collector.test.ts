@@ -92,6 +92,67 @@ describe("head-collector", () => {
     });
   });
 
+  describe("single-valued key override (page over layout)", () => {
+    it("overrides og:title, keeping only the later tag", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ metas: [{ property: "og:title", content: "Layout OG Title" }] });
+        collectHead({ metas: [{ property: "og:title", content: "Page OG Title" }] });
+      });
+
+      assertEquals(head.metas.length, 1);
+      assertEquals(head.metas[0], { property: "og:title", content: "Page OG Title" });
+    });
+
+    it("overrides a name-based singleton (robots)", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ metas: [{ name: "robots", content: "noindex" }] });
+        collectHead({ metas: [{ name: "robots", content: "index,follow" }] });
+      });
+
+      assertEquals(head.metas.length, 1);
+      assertEquals(head.metas[0], { name: "robots", content: "index,follow" });
+    });
+
+    it("overrides a canonical link, keeping only the later href", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ links: [{ rel: "canonical", href: "https://example.com/layout" }] });
+        collectHead({ links: [{ rel: "canonical", href: "https://example.com/page" }] });
+      });
+
+      assertEquals(head.links.length, 1);
+      assertEquals(head.links[0], { rel: "canonical", href: "https://example.com/page" });
+    });
+  });
+
+  describe("repeatable tags accumulate", () => {
+    it("keeps multiple og:image tags", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ metas: [{ property: "og:image", content: "https://example.com/a.jpg" }] });
+        collectHead({ metas: [{ property: "og:image", content: "https://example.com/b.jpg" }] });
+      });
+
+      assertEquals(head.metas.length, 2);
+    });
+
+    it("keeps multiple preload links", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ links: [{ rel: "preload", href: "/a.woff2" }] });
+        collectHead({ links: [{ rel: "preload", href: "/b.woff2" }] });
+      });
+
+      assertEquals(head.links.length, 2);
+    });
+
+    it("keeps unlisted meta keys (accumulate is the safe default)", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ metas: [{ property: "article:tag", content: "react" }] });
+        collectHead({ metas: [{ property: "article:tag", content: "ssr" }] });
+      });
+
+      assertEquals(head.metas.length, 2);
+    });
+  });
+
   describe("runWithHeadCollector", () => {
     it("returns result and collected head", async () => {
       const { result, head } = await runWithHeadCollector(() => {
