@@ -152,12 +152,10 @@ export class LayoutApplicator {
         }
 
         const pageFilePath = pageInfo.entity.path;
-        const routerMode = await resolveRouterModeForPage(
+        const routerMode = resolveRouterModeForPage(
           this.projectDir,
           pageFilePath,
           this.config,
-          this.adapter,
-          { projectId: this.projectId },
         );
 
         const isDotPath = pageFilePath

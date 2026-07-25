@@ -323,12 +323,10 @@ export class LayoutCollector {
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
     const pageFilePath = resolvePagePath(pageInfo.entity.path, this.projectDir);
-    const routerMode = await resolveRouterModeForPage(
+    const routerMode = resolveRouterModeForPage(
       this.projectDir,
       pageInfo.entity.path,
       this.config,
-      this.adapter,
-      { projectId: this.projectId },
     );
     const rootDir = resolveLayoutRouterRootDir(
       this.projectDir,

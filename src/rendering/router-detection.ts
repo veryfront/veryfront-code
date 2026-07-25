@@ -79,14 +79,16 @@ function resolveProjectPath(projectDir: string, path: string): string {
  * Auto-detection decides which router to try first, but mixed projects can
  * legitimately fall back to the other router. Per-page rendering must follow
  * the route that actually resolved instead of the project-wide preference.
+ *
+ * Pages routes can also resolve from the project root. App routes cannot
+ * resolve outside their configured root, so an unmatched resolved path belongs
+ * to the Pages router.
  */
-export async function resolveRouterModeForPage(
+export function resolveRouterModeForPage(
   projectDir: string,
   pagePath: string,
   config: VeryfrontConfig,
-  adapter: RuntimeAdapter,
-  options?: DetectAppRouterOptions,
-): Promise<"app" | "pages"> {
+): "app" | "pages" {
   if (config.router === "app") return "app";
   if (config.router === "pages") return "pages";
 
@@ -100,10 +102,18 @@ export async function resolveRouterModeForPage(
     config.directories?.pages ?? "pages",
   );
 
-  if (isPathInside(resolvedPagePath, appRoot)) return "app";
-  if (isPathInside(resolvedPagePath, pagesRoot)) return "pages";
+  const isAppRoute = isPathInside(resolvedPagePath, appRoot);
+  const isPagesRoute = isPathInside(resolvedPagePath, pagesRoot);
 
-  return (await detectAppRouter(projectDir, config, adapter, options)) ? "app" : "pages";
+  if (isAppRoute && isPagesRoute) {
+    const appDistance = relative(appRoot, resolvedPagePath).split(/[\\/]/).filter(Boolean).length;
+    const pagesDistance =
+      relative(pagesRoot, resolvedPagePath).split(/[\\/]/).filter(Boolean).length;
+    return pagesDistance < appDistance ? "pages" : "app";
+  }
+
+  if (isAppRoute) return "app";
+  return "pages";
 }
 
 /**

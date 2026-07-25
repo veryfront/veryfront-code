@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { detectAppRouter } from "./router-detection.ts";
+import { detectAppRouter, resolveRouterModeForPage } from "./router-detection.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -118,5 +118,36 @@ describe("detectAppRouter", () => {
     const result = await detectAppRouter(tmpDir, config, failingAdapter);
 
     assertEquals(result, true, "should detect app router using compat fs fallback");
+  });
+});
+
+describe("resolveRouterModeForPage", () => {
+  it("uses the most specific matching router root", () => {
+    const config = {
+      directories: {
+        app: "src",
+        pages: "src/pages",
+      },
+    } as VeryfrontConfig;
+
+    const result = resolveRouterModeForPage(
+      "/project",
+      "/project/src/pages/chat/index.tsx",
+      config,
+    );
+
+    assertEquals(result, "pages");
+  });
+
+  it("treats a resolved root-level page as a Pages route", () => {
+    const config = {} as VeryfrontConfig;
+
+    const result = resolveRouterModeForPage(
+      "/project",
+      "/project/index.mdx",
+      config,
+    );
+
+    assertEquals(result, "pages");
   });
 });
