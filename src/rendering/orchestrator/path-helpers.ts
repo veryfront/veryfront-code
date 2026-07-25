@@ -21,6 +21,18 @@ export interface DotPathOptions {
   projectDir: string;
 }
 
+function getProjectPath(filePath: string | undefined, projectDir: string): string | undefined {
+  if (!filePath || !isAbsolute(filePath)) return filePath;
+
+  const projectPath = relative(projectDir, filePath);
+  const normalizedProjectPath = projectPath.replaceAll("\\", "/");
+  const isOutsideProject = normalizedProjectPath === ".." ||
+    normalizedProjectPath.startsWith("../") ||
+    isAbsolute(projectPath);
+
+  return isOutsideProject ? undefined : projectPath;
+}
+
 /**
  * Check whether a route contains a dot-prefixed segment.
  *
@@ -30,7 +42,7 @@ export interface DotPathOptions {
 export function isDotPath({ slug, filePath, projectDir }: DotPathOptions): boolean {
   const hasDotSegment = (path: string) =>
     path.replaceAll("\\", "/").split("/").some(isHiddenSegment);
-  const projectPath = filePath && isAbsolute(filePath) ? relative(projectDir, filePath) : filePath;
+  const projectPath = getProjectPath(filePath, projectDir);
 
   return hasDotSegment(slug) || (projectPath ? hasDotSegment(projectPath) : false);
 }

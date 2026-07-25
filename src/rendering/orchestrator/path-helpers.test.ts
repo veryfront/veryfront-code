@@ -70,6 +70,17 @@ describe("path-helpers", () => {
       );
     });
 
+    it("ignores absolute file paths outside the project", () => {
+      assertEquals(
+        isDotPath({
+          slug: "chat",
+          filePath: "/repo/.worktrees/another-project/pages/chat/index.tsx",
+          projectDir: "/repo/project",
+        }),
+        false,
+      );
+    });
+
     it("returns false for paths with . or ..", () => {
       assertEquals(isDotPath({ slug: "./relative", projectDir: "/project" }), false);
       assertEquals(isDotPath({ slug: "../parent", projectDir: "/project" }), false);
