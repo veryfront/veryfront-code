@@ -1,4 +1,4 @@
-const MAX_EMBEDDING_DIMENSION = 65_536;
+export const MAX_EMBEDDING_DIMENSION = 65_536;
 
 export function requirePositiveSafeInteger(
   value: number,

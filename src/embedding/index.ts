@@ -33,6 +33,7 @@ export type {
   EmbeddingConfig,
   RagChunk,
   RagDocumentMeta,
+  RagEmbeddingFingerprint,
   RagRefreshOptions,
   RagSearchOptions,
   RagSearchResult,

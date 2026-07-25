@@ -46,6 +46,17 @@ In local development, `ragStore()` stores chunks and vectors in `data/index.json
 When Veryfront Cloud bootstrap is present, it uses the Veryfront Cloud RAG
 backend automatically.
 
+The local JSON backend accepts files up to 64 MiB by default; set
+`maxStorageBytes` when a larger bounded index is intentional. It coordinates
+all stores that target the same path within one runtime process. Use the Cloud
+backend when multiple processes or application instances can write the same
+index.
+
+Local indexes persist the embedding model, document prefix, and vector
+dimension with their vectors. Changing `model` or `documentPrefix` causes all
+stored document chunks to be re-embedded on the next search instead of mixing
+incompatible vectors.
+
 Set `contentDir: "knowledge"` to index `knowledge/` instead of `content/`.
 
 ## Add upload routes

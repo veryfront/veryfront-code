@@ -88,13 +88,50 @@ describe("ragStore", () => {
 
       const persisted = await readTextFile(storagePath);
       const parsed = JSON.parse(persisted) as {
+        schemaVersion?: number;
         documents: unknown[];
         chunks: unknown[];
       };
+      assertEquals(parsed.schemaVersion, 1);
       assertEquals(Array.isArray(parsed.documents), true);
       assertEquals(Array.isArray(parsed.chunks), true);
       assertEquals(persisted, JSON.stringify(parsed));
       assertEquals(await exists(storagePath + ".tmp"), false);
+      const temporaryEntries: string[] = [];
+      for await (const entry of Deno.readDir(join(tempDir, "data"))) {
+        if (entry.name.startsWith("index.json.tmp.")) temporaryEntries.push(entry.name);
+      }
+      assertEquals(temporaryEntries, []);
+    });
+  });
+
+  it("serializes concurrent writes from independent stores sharing a path", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const stores = Array.from(
+        { length: 20 },
+        () =>
+          ragStore({
+            model: "local/test-model",
+            storagePath,
+          }),
+      );
+
+      await Promise.all(
+        stores.map((store, index) =>
+          store.ingest(`Doc ${index}`, `Content ${index}`, {
+            source: `upload:${index}.txt`,
+            type: "txt",
+          })
+        ),
+      );
+
+      const documents = await stores[0]!.listDocuments();
+      assertEquals(documents.length, stores.length);
+      assertEquals(
+        new Set(documents.map((document) => document.source)).size,
+        stores.length,
+      );
     });
   });
 
@@ -221,6 +258,8 @@ describe("ragStore", () => {
   });
 
   it("migrates legacy upload-store data from data/index.json", async () => {
+    registerTestEmbeddingProvider();
+
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
@@ -238,14 +277,14 @@ describe("ragStore", () => {
             id: "chunk-1",
             uploadId: "upload-1",
             text: "legacy content",
-            embedding: [],
+            embedding: [999, 999],
             index: 0,
           }],
         }),
       );
 
       const store = ragStore({
-        model: "local/test-model",
+        model: "test/demo",
         storagePath,
       });
 
@@ -257,66 +296,338 @@ describe("ragStore", () => {
         type: "txt",
         createdAt: 1,
       }]);
+
+      await store.search("legacy");
+      const migrated = JSON.parse(await readTextFile(storagePath)) as {
+        schemaVersion?: number;
+        embeddingFingerprint?: {
+          model: string;
+          documentPrefix: string;
+          dimension: number;
+        };
+        chunks: Array<{ embedding: number[] }>;
+      };
+      assertEquals(migrated.schemaVersion, 1);
+      assertEquals(migrated.embeddingFingerprint, {
+        model: "test/demo",
+        documentPrefix: "",
+        dimension: 1536,
+      });
+      assertEquals(migrated.chunks[0]?.embedding.length, 1536);
     });
   });
 
-  it("resets local store when document entries fail validation", async () => {
+  it("fails closed without overwriting invalid document entries", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
-      await Deno.writeTextFile(
-        storagePath,
-        JSON.stringify({
-          documents: [{
-            id: 123,
-            title: "Invalid Doc",
-            source: "upload:invalid.txt",
-            type: "txt",
-            createdAt: 1,
-          }],
-          chunks: [],
-        }),
-      );
+      const original = JSON.stringify({
+        documents: [{
+          id: 123,
+          title: "Invalid Doc",
+          source: "upload:invalid.txt",
+          type: "txt",
+          createdAt: 1,
+        }],
+        chunks: [],
+      });
+      await Deno.writeTextFile(storagePath, original);
 
       const store = ragStore({
         model: "local/test-model",
         storagePath,
       });
 
-      assertEquals(await store.listDocuments(), []);
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "failed validation",
+      );
+      await assertRejects(
+        () => store.ingest("Replacement", "must not overwrite"),
+        Error,
+        "failed validation",
+      );
+      assertEquals(await readTextFile(storagePath), original);
     });
   });
 
-  it("resets local store when chunk entries fail validation", async () => {
+  it("fails closed without overwriting invalid chunk entries", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
-      await Deno.writeTextFile(
-        storagePath,
-        JSON.stringify({
-          documents: [{
-            id: "doc-1",
-            title: "Valid Doc",
-            source: "upload:valid.txt",
-            type: "txt",
-            createdAt: 1,
-          }],
-          chunks: [{
-            id: "chunk-1",
-            documentId: "doc-1",
-            text: "content",
-            embedding: ["not-a-number"],
-            index: 0,
-          }],
-        }),
-      );
+      const original = JSON.stringify({
+        documents: [{
+          id: "doc-1",
+          title: "Valid Doc",
+          source: "upload:valid.txt",
+          type: "txt",
+          createdAt: 1,
+        }],
+        chunks: [{
+          id: "chunk-1",
+          documentId: "doc-1",
+          text: "content",
+          embedding: ["not-a-number"],
+          index: 0,
+        }],
+      });
+      await Deno.writeTextFile(storagePath, original);
 
       const store = ragStore({
         model: "local/test-model",
         storagePath,
       });
 
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "failed validation",
+      );
+      assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
+  it("fails closed without overwriting malformed JSON", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = '{"documents":[';
+      await Deno.writeTextFile(storagePath, original);
+
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "malformed JSON",
+      );
+      await assertRejects(
+        () => store.removeDocument("anything"),
+        Error,
+        "malformed JSON",
+      );
+      assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
+  it("rejects blank ingest and refresh content without mutating the store", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      await assertRejects(
+        () => store.ingest("Blank", " \n\t "),
+        Error,
+        "no extractable text",
+      );
       assertEquals(await store.listDocuments(), []);
+
+      const id = await store.ingest("Valid", "Preserve this content");
+      const before = await readTextFile(storagePath);
+      const refresh = store.refreshDocument;
+      assert(refresh);
+      await assertRejects(
+        () => refresh(id, "   "),
+        Error,
+        "no extractable text",
+      );
+      assertEquals(await readTextFile(storagePath), before);
+    });
+  });
+
+  it("re-embeds persisted chunks when model or document prefix changes", async () => {
+    const embeddingCalls: Array<{ model: string; values: string[] }> = [];
+    registerEmbeddingProvider("fingerprint", (modelId) =>
+      ({
+        specificationVersion: "v2",
+        provider: "fingerprint",
+        modelId,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          embeddingCalls.push({ model: modelId, values: [...values] });
+          return {
+            embeddings: values.map((value) =>
+              modelId === "v1" ? [value.length, 1] : [1, value.length]
+            ),
+            usage: { tokens: 0 },
+            warnings: [],
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const first = ragStore({
+        model: "fingerprint/v1",
+        storagePath,
+      });
+      await first.ingest("Doc", "alpha content");
+      await first.search("alpha");
+
+      const firstPersisted = JSON.parse(await readTextFile(storagePath)) as {
+        embeddingFingerprint: {
+          model: string;
+          documentPrefix: string;
+          dimension: number;
+        };
+        chunks: Array<{ embedding: number[] }>;
+      };
+      assertEquals(firstPersisted.embeddingFingerprint, {
+        model: "fingerprint/v1",
+        documentPrefix: "",
+        dimension: 2,
+      });
+      assertEquals(firstPersisted.chunks[0]?.embedding, [13, 1]);
+
+      const second = ragStore({
+        model: "fingerprint/v2",
+        storagePath,
+      });
+      await second.search("alpha");
+      const secondPersisted = JSON.parse(await readTextFile(storagePath)) as {
+        embeddingFingerprint: {
+          model: string;
+          documentPrefix: string;
+          dimension: number;
+        };
+        chunks: Array<{ embedding: number[] }>;
+      };
+      assertEquals(secondPersisted.embeddingFingerprint, {
+        model: "fingerprint/v2",
+        documentPrefix: "",
+        dimension: 2,
+      });
+      assertEquals(secondPersisted.chunks[0]?.embedding, [1, 13]);
+
+      const prefixed = ragStore({
+        model: "fingerprint/v2",
+        documentPrefix: "document: ",
+        storagePath,
+      });
+      await prefixed.search("alpha");
+      const prefixedPersisted = JSON.parse(await readTextFile(storagePath)) as {
+        embeddingFingerprint: {
+          model: string;
+          documentPrefix: string;
+          dimension: number;
+        };
+        chunks: Array<{ embedding: number[] }>;
+      };
+      assertEquals(prefixedPersisted.embeddingFingerprint, {
+        model: "fingerprint/v2",
+        documentPrefix: "document: ",
+        dimension: 2,
+      });
+      assertEquals(prefixedPersisted.chunks[0]?.embedding, [1, 23]);
+      assertEquals(
+        embeddingCalls.some((call) =>
+          call.model === "v2" && call.values.includes("document: alpha content")
+        ),
+        true,
+      );
+    });
+  });
+
+  it("leaves persisted vectors unchanged when model migration fails", async () => {
+    registerEmbeddingProvider("fingerprint-failure", (modelId) =>
+      ({
+        specificationVersion: "v2",
+        provider: "fingerprint-failure",
+        modelId,
+        supportsParallelCalls: true,
+        async doEmbed({ values }: { values: string[] }) {
+          if (modelId === "v2") throw new Error("provider unavailable");
+          return {
+            embeddings: values.map(() => [1, 0]),
+            usage: { tokens: 0 },
+            warnings: [],
+          };
+        },
+      }) as never);
+
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const first = ragStore({
+        model: "fingerprint-failure/v1",
+        storagePath,
+      });
+      await first.ingest("Doc", "stable content");
+      await first.search("stable");
+      const before = await readTextFile(storagePath);
+
+      const second = ragStore({
+        model: "fingerprint-failure/v2",
+        storagePath,
+      });
+      await assertRejects(
+        () => second.search("stable"),
+        Error,
+        "provider unavailable",
+      );
+      assertEquals(await readTextFile(storagePath), before);
+    });
+  });
+
+  it("validates local search controls before invoking an embedder", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      for (
+        const options of [
+          { topK: 0 },
+          { topK: -1 },
+          { topK: 1.5 },
+          { topK: 10_001 },
+          { threshold: Number.NaN },
+          { threshold: -0.1 },
+          { threshold: 1.1 },
+        ]
+      ) {
+        await assertRejects(
+          () => store.search("query", options),
+          RangeError,
+        );
+      }
+
+      const controller = new AbortController();
+      controller.abort(new Error("cancelled"));
+      await assertRejects(
+        () => store.search("query", { abortSignal: controller.signal }),
+        Error,
+        "cancelled",
+      );
+    });
+  });
+
+  it("bounds local JSON store reads before parsing", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = JSON.stringify({ documents: [], chunks: [] });
+      await Deno.writeTextFile(storagePath, original);
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+        maxStorageBytes: original.length - 1,
+      });
+
+      await assertRejects(
+        () => store.listDocuments(),
+        RangeError,
+        "maxStorageBytes",
+      );
+      assertEquals(await readTextFile(storagePath), original);
     });
   });
 
@@ -703,8 +1014,8 @@ describe("ragStore", () => {
         });
         assertEquals(embeddingVectors.size, 1);
 
-        const listedDocuments = await store.listDocuments() as Array<Record<string, unknown>>;
-        assertEquals("filePath" in listedDocuments[0]!, false);
+        const listedDocuments = await store.listDocuments();
+        assertEquals(Object.hasOwn(listedDocuments[0]!, "filePath"), false);
       },
     );
   });

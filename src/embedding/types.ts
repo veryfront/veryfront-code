@@ -93,8 +93,18 @@ export interface RagChunk {
   index: number;
 }
 
+/** Provenance required to determine whether persisted document vectors are reusable. */
+export interface RagEmbeddingFingerprint {
+  model: string;
+  documentPrefix: string;
+  dimension: number;
+}
+
 /** Public API contract for rag store data. */
 export interface RagStoreData {
+  /** Current persisted schema version. Omitted only by compatible legacy stores. */
+  schemaVersion?: 1;
+  embeddingFingerprint?: RagEmbeddingFingerprint;
   documents: RagDocumentMeta[];
   chunks: RagChunk[];
 }
@@ -108,6 +118,7 @@ export interface RagStoreConfig {
   backend?: RagStoreBackend;
   branch?: string; // optional branch override for cloud-backed stores
   storagePath?: string; // default "data/index.json"
+  maxStorageBytes?: number; // local JSON read limit (default 64 MiB)
   contentDir?: string; // optional auto-index dir
   contentExtensions?: string[]; // default [".md", ".mdx", ".txt"]
   chunkOptions?: ChunkOptions;
@@ -130,6 +141,7 @@ export interface RagSearchResult {
 export interface RagSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
+  abortSignal?: AbortSignal;
 }
 
 /** Options accepted when refreshing an existing rag document. */
