@@ -627,6 +627,13 @@ export function isReasoningPart(value: unknown): value is ReasoningPartLike {
       typeof value.redactedData === "string");
 }
 
+function isProviderVisibleReasoningPart(value: unknown): value is ReasoningPartLike {
+  return isReasoningPart(value) &&
+    (getNonEmptyStringField(value, "text") !== undefined ||
+      getNonEmptyStringField(value, "signature") !== undefined ||
+      getNonEmptyStringField(value, "redactedData") !== undefined);
+}
+
 /** Message shape for extract text from. */
 export function extractTextFromMessage(message: ProviderModelMessage): string {
   if (!message || !message.content) return "";
@@ -1029,7 +1036,7 @@ function isProviderVisibleNonToolPart(role: ChatUiMessageRole, part: unknown): b
   }
 
   if (role === "assistant") {
-    return isTextPart(part) && part.text.length > 0 || isReasoningPart(part) ||
+    return isTextPart(part) && part.text.length > 0 || isProviderVisibleReasoningPart(part) ||
       getFilePart(part) !== null;
   }
 
@@ -1384,7 +1391,7 @@ function convertAssistantMessage(
       continue;
     }
 
-    if (isReasoningPart(part)) {
+    if (isProviderVisibleReasoningPart(part)) {
       pushAssistantPart({
         type: "reasoning",
         text: part.text,

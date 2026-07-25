@@ -478,7 +478,7 @@ describe("agent/hosted-chat-request", () => {
           interveningMessage,
           toolMessage([rawReplayToolResultPart]),
         ],
-        "completed tool_call requires an adjacent tool_result before conversation continuation",
+        "terminal tool_call requires an adjacent tool_result before conversation continuation",
       );
     }
   });
@@ -486,7 +486,7 @@ describe("agent/hosted-chat-request", () => {
   it("rejects completed raw replay tool calls left unresolved at EOF", () => {
     assertHostedChatRequestError(
       [assistantMessage([rawReplayToolCallPart])],
-      "completed tool_call requires a matching tool_result",
+      "terminal tool_call requires a matching tool_result",
     );
   });
 
@@ -507,12 +507,12 @@ describe("agent/hosted-chat-request", () => {
           "assistant-message-2",
         ),
       ],
-      "completed tool_call requires an adjacent tool_result before conversation continuation",
+      "terminal tool_call requires an adjacent tool_result before conversation continuation",
     );
 
     assertHostedChatRequestError(
       [assistantMessage([normalizedCompletedToolCall])],
-      "completed tool_call requires a matching tool_result",
+      "terminal tool_call requires a matching tool_result",
     );
   });
 
@@ -528,7 +528,7 @@ describe("agent/hosted-chat-request", () => {
           "assistant-message-2",
         ),
       ],
-      "completed tool_call requires an adjacent tool_result before conversation continuation",
+      "terminal tool_call requires an adjacent tool_result before conversation continuation",
     );
   });
 
@@ -541,7 +541,7 @@ describe("agent/hosted-chat-request", () => {
         assistantMessage([secondToolCallPart], "assistant-message-2"),
         toolMessage([rawReplayToolResultPart]),
       ],
-      "completed tool_call requires an adjacent tool_result before conversation continuation",
+      "terminal tool_call requires an adjacent tool_result before conversation continuation",
     );
   });
 
@@ -607,7 +607,7 @@ describe("agent/hosted-chat-request", () => {
         ),
         toolMessage([rawReplayToolResultPart]),
       ],
-      "tool_result requires an adjacent completed tool_call",
+      "tool_result requires an adjacent terminal tool_call",
     );
   });
 
@@ -622,7 +622,7 @@ describe("agent/hosted-chat-request", () => {
           },
         ]),
       ],
-      "completed tool_call requires a matching tool_result",
+      "terminal tool_call requires a matching tool_result",
     );
   });
 
@@ -672,7 +672,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[0]?.parts.length, 5);
   });
 
-  it("accepts empty text placeholders between completed replay calls and results", () => {
+  it("accepts empty text and reasoning placeholders between completed replay calls and results", () => {
     for (const role of ["system", "user", "assistant"] as const) {
       const parsed = parseHostedChatRequestMessages([
         assistantMessage([rawReplayToolCallPart]),
@@ -683,6 +683,15 @@ describe("agent/hosted-chat-request", () => {
       assertEquals(parsed.messages[1]?.parts as unknown, [{ type: "text", text: "" }]);
       assertProviderMessages(parsed.messages, expectedRawReplayProviderMessages());
     }
+
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([rawReplayToolCallPart]),
+      assistantMessage([{ type: "reasoning", text: "" }], "assistant-empty-reasoning"),
+      toolMessage([rawReplayToolResultPart]),
+    ]);
+
+    assertEquals(parsed.messages[1]?.parts as unknown, [{ type: "reasoning", text: "" }]);
+    assertProviderMessages(parsed.messages, expectedRawReplayProviderMessages());
   });
 
   it("ignores non-tool content in tool messages before matching replay results", () => {
@@ -709,7 +718,7 @@ describe("agent/hosted-chat-request", () => {
           ),
           toolMessage([rawReplayToolResultPart]),
         ],
-        "completed tool_call requires an adjacent tool_result before conversation continuation",
+        "terminal tool_call requires an adjacent tool_result before conversation continuation",
       );
     }
   });
@@ -723,7 +732,7 @@ describe("agent/hosted-chat-request", () => {
         ]),
         toolMessage([rawReplayToolResultPart]),
       ],
-      "completed tool_call requires a same-message tool_result before assistant continuation",
+      "terminal tool_call requires a same-message tool_result before assistant continuation",
     );
   });
 
@@ -744,7 +753,7 @@ describe("agent/hosted-chat-request", () => {
           secondToolResultPart,
         ]),
       ],
-      "completed tool_call requires a same-message tool_result before assistant continuation",
+      "terminal tool_call requires a same-message tool_result before assistant continuation",
     );
   });
 
@@ -781,7 +790,7 @@ describe("agent/hosted-chat-request", () => {
           "assistant-message-2",
         ),
       ],
-      "completed tool_call requires an adjacent tool_result before conversation continuation",
+      "terminal tool_call requires an adjacent tool_result before conversation continuation",
     );
   });
 
@@ -804,7 +813,7 @@ describe("agent/hosted-chat-request", () => {
           "assistant-message-2",
         ),
       ],
-      "completed tool_call requires an adjacent tool_result before conversation continuation",
+      "terminal tool_call requires an adjacent tool_result before conversation continuation",
     );
   });
 
@@ -821,7 +830,7 @@ describe("agent/hosted-chat-request", () => {
         ]),
         toolMessage([rawReplayToolResultPart]),
       ],
-      "completed tool_call requires an adjacent tool_result before conversation continuation",
+      "terminal tool_call requires an adjacent tool_result before conversation continuation",
     );
   });
 
@@ -941,7 +950,7 @@ describe("agent/hosted-chat-request", () => {
       assertStringIncludes(validationMessage, "tool_call id must be unique");
       assertStringIncludes(
         validationMessage,
-        "completed tool_call requires a matching tool_result",
+        "terminal tool_call requires a matching tool_result",
       );
     }
   });

@@ -101,6 +101,10 @@ function isHostedChatToolResultPart(part: unknown): boolean {
   );
 }
 
+function hasHostedChatNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0;
+}
+
 function isHostedChatProviderVisibleNonToolPart(role: string, part: unknown): boolean {
   if (!isRecord(part)) {
     return false;
@@ -122,8 +126,9 @@ function isHostedChatProviderVisibleNonToolPart(role: string, part: unknown): bo
     return (
       part.type === "text" && typeof part.text === "string" && part.text.length > 0 ||
       part.type === "reasoning" &&
-        (typeof part.text === "string" || typeof part.signature === "string" ||
-          typeof part.redactedData === "string") ||
+        (hasHostedChatNonEmptyString(part.text) ||
+          hasHostedChatNonEmptyString(part.signature) ||
+          hasHostedChatNonEmptyString(part.redactedData)) ||
       (part.type === "file" || part.type === "image") &&
         typeof part.mediaType === "string" && typeof part.url === "string"
     );
@@ -202,7 +207,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
     };
     const closeOpenBatchBeforeContinuation = (): void => {
       rejectUnresolvedCompletedToolCalls(
-        "completed tool_call requires an adjacent tool_result before conversation continuation",
+        "terminal tool_call requires an adjacent tool_result before conversation continuation",
       );
       openToolCalls.clear();
     };
@@ -219,8 +224,8 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           ctx.addIssue({
             code: "custom",
             message: openToolCall.originMessageIndex === messageIndex
-              ? "completed tool_call requires a same-message tool_result before assistant continuation"
-              : "completed tool_call requires an adjacent tool_result before conversation continuation",
+              ? "terminal tool_call requires a same-message tool_result before assistant continuation"
+              : "terminal tool_call requires an adjacent tool_result before conversation continuation",
             path: openToolCall.path,
           });
         }
@@ -234,7 +239,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
             ctx.addIssue({
               code: "custom",
               message:
-                "completed tool_call requires an adjacent tool_result before conversation continuation",
+                "terminal tool_call requires an adjacent tool_result before conversation continuation",
               path: openToolCall.path,
             });
           }
@@ -258,7 +263,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           ctx.addIssue({
             code: "custom",
             message:
-              "completed tool_call requires a same-message tool_result before assistant continuation",
+              "terminal tool_call requires a same-message tool_result before assistant continuation",
             path: openToolCall.path,
           });
         }
@@ -295,7 +300,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       if (!openToolCall) {
         ctx.addIssue({
           code: "custom",
-          message: "tool_result requires an adjacent completed tool_call",
+          message: "tool_result requires an adjacent terminal tool_call",
           path: toolCallIdPath,
         });
         return;
@@ -438,7 +443,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       closeOpenBatchAfterSameMessageContinuation();
     }
 
-    rejectUnresolvedCompletedToolCalls("completed tool_call requires a matching tool_result");
+    rejectUnresolvedCompletedToolCalls("terminal tool_call requires a matching tool_result");
   })
 );
 

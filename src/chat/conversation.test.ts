@@ -1208,6 +1208,20 @@ describe("convertUiMessagesToProviderModelMessages", () => {
       ),
     );
 
+    const emptyReasoningMessages: ChatProviderModelInputMessage[] = [
+      skippedMessages[0]!,
+      assistantInputMessage([{ type: "reasoning", text: "" }], "assistant-empty-reasoning"),
+      skippedMessages[2]!,
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(emptyReasoningMessages),
+      expectedToolExchange(
+        [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
+        [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
+
     const emptyUserTextMessages: ChatProviderModelInputMessage[] = [
       skippedMessages[0]!,
       userInputMessage("", "user-empty-text"),
