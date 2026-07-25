@@ -1,31 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
-
-function createMockAdapter(): RuntimeAdapter {
-  return {
-    id: "test",
-    name: "test",
-    capabilities: {},
-    fs: {
-      exists: () => Promise.resolve(false),
-    } as unknown as RuntimeAdapter["fs"],
-    env: {
-      get: (_key: string) => undefined,
-      set: () => {},
-      delete: () => {},
-      has: () => false,
-      toObject: () => ({}),
-    },
-    server: {} as RuntimeAdapter["server"],
-    serve: () => Promise.resolve({ close: () => Promise.resolve() }),
-  } as unknown as RuntimeAdapter;
-}
 
 function createProxyModeHandler() {
   injectIsolationDepsForTests({
