@@ -27,7 +27,9 @@ import {
 } from "./openai-sse-buffer.ts";
 import {
   createOpenAIRawResponseMetadata,
+  MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
   normalizeOpenAIWebSearchCall,
+  readOpenAIRawResponseOutputItems,
   validateOpenAIUrlCitation,
 } from "./openai-web-search.ts";
 
@@ -57,6 +59,7 @@ type OpenAIResponsesStreamRetainedTextState = {
 type OpenAIResponsesStreamMessagePartState = OpenAIResponsesStreamRetainedTextState & {
   kind: "output_text" | "refusal";
   annotations: Map<number, string>;
+  annotationSnapshot?: string[];
 };
 
 type OpenAIResponsesStreamReasoningState = {
@@ -73,6 +76,7 @@ type OpenAIResponsesStreamMessageState = {
 type OpenAIResponsesStreamOutputItemState = {
   type: string;
   outputIndex?: number;
+  order: number;
 };
 
 type OpenAIResponsesStreamWebSearchState = {
@@ -83,9 +87,11 @@ type OpenAIResponsesStreamContext = {
   providerKind?: "openai" | "mistral" | "moonshotai";
   providerLabel?: string;
   webSearchToolName?: string;
+  preserveRawOutputItems?: boolean;
 };
 
 export const MAX_OPENAI_STREAM_MESSAGE_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+export const MAX_OPENAI_RESPONSES_RAW_METADATA_BYTES = MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES;
 export const MAX_OPENAI_RESPONSES_STREAM_OUTPUT_ITEMS = 4_096;
 export const MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS = 4_096;
 const MAX_OPENAI_STREAM_MESSAGE_DELTA_BATCH_BYTES = 64 * 1024;
@@ -237,10 +243,21 @@ export async function* streamOpenAIResponsesParts(
   const reasoningBlocks = new Map<string, OpenAIResponsesStreamReasoningState>();
   const functionCalls = new Map<string, OpenAIResponsesStreamFunctionCallState>();
   const messageItems = new Map<string, OpenAIResponsesStreamMessageState>();
+  const webSearchItems = new Map<string, OpenAIResponsesStreamWebSearchState>();
   const outputItems = new Map<string, OpenAIResponsesStreamOutputItemState>();
   const seenOutputItemIds = new Set<string>();
   const outputItemIdsByIndex = new Map<number, string>();
   const seenFunctionCallIds = new Set<string>();
+  const rawOutputItemsByOrder: Array<
+    | {
+      item: Record<string, unknown>;
+      order: number;
+      outputIndex?: number;
+    }
+    | undefined
+  > = [];
+  const retainRawOutputItems = context.preserveRawOutputItems === true ||
+    context.webSearchToolName !== undefined;
   const toolArgumentBudget: OpenAIStreamToolArgumentBudget = {
     bytes: 0,
     fragments: 0,
@@ -252,6 +269,8 @@ export async function* streamOpenAIResponsesParts(
   let sawDone = false;
   let contentPartCount = 0;
   let retainedMessageSnapshotBytes = 0;
+  let retainedRawOutputBytes = 0;
+  let outputItemOrder = 0;
   const textEncoder = new TextEncoder();
 
   function readEventItem(
@@ -641,6 +660,105 @@ export async function* streamOpenAIResponsesParts(
     return kind;
   }
 
+  function serializeUrlCitation(value: unknown, issue: string): string {
+    const annotation = validateOpenAIUrlCitation(
+      value,
+      (detail) => invalidOpenAIResponsesStream(context, `${issue}: ${detail}`),
+    );
+    return stringifyJsonValue({
+      type: annotation.type,
+      start_index: annotation.start_index,
+      end_index: annotation.end_index,
+      url: annotation.url,
+      title: annotation.title,
+    });
+  }
+
+  function reconcileMessageAnnotations(
+    state: OpenAIResponsesStreamMessagePartState,
+    part: Record<string, unknown>,
+    text: string,
+    issue: string,
+  ): void {
+    if (state.kind !== "output_text") {
+      if (part.annotations !== undefined) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          `${issue} attached annotations to a refusal`,
+        );
+      }
+      return;
+    }
+    const rawAnnotations = part.annotations ?? [];
+    if (
+      !Array.isArray(rawAnnotations) ||
+      rawAnnotations.length > MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS
+    ) {
+      throw invalidOpenAIResponsesStream(context, `${issue} annotations were malformed`);
+    }
+    const annotations = rawAnnotations.map((annotation, index) => {
+      const serialized = serializeUrlCitation(annotation, `${issue} annotation ${index}`);
+      const parsed = readRecord(annotation);
+      if (
+        !parsed ||
+        (parsed.end_index as number) > text.length
+      ) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          `${issue} annotation range exceeded its text`,
+        );
+      }
+      return serialized;
+    });
+    if (
+      state.annotationSnapshot !== undefined &&
+      (state.annotationSnapshot.length !== annotations.length ||
+        state.annotationSnapshot.some((annotation, index) => annotation !== annotations[index]))
+    ) {
+      throw invalidOpenAIResponsesStream(context, `${issue} annotations changed`);
+    }
+    if (state.annotations.size > 0) {
+      if (state.annotations.size !== annotations.length) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          `${issue} annotations disagreed with streamed annotations`,
+        );
+      }
+      for (const [index, annotation] of state.annotations) {
+        if (annotations[index] !== annotation) {
+          throw invalidOpenAIResponsesStream(
+            context,
+            `${issue} annotations disagreed with streamed annotations`,
+          );
+        }
+      }
+    }
+    state.annotationSnapshot = annotations;
+  }
+
+  function retainCompletedOutputItem(
+    state: OpenAIResponsesStreamOutputItemState,
+    item: Record<string, unknown>,
+  ): void {
+    if (!retainRawOutputItems) return;
+    const itemBytes = textEncoder.encode(stringifyJsonValue(item)).byteLength;
+    if (
+      itemBytes > MAX_OPENAI_RESPONSES_RAW_METADATA_BYTES -
+          retainedRawOutputBytes
+    ) {
+      throw invalidOpenAIResponsesStream(
+        context,
+        `raw response metadata exceeded ${MAX_OPENAI_RESPONSES_RAW_METADATA_BYTES} UTF-8 bytes`,
+      );
+    }
+    retainedRawOutputBytes += itemBytes;
+    rawOutputItemsByOrder[state.order] = {
+      item,
+      order: state.order,
+      outputIndex: state.outputIndex,
+    };
+  }
+
   function* processEvent(event: unknown | "[DONE]"): Generator<unknown> {
     if (event === "[DONE]") {
       if (!sawTerminalEvent) {
@@ -702,6 +820,7 @@ export async function* streamOpenAIResponsesParts(
       outputItems.set(itemId, {
         type: itemType,
         outputIndex,
+        order: outputItemOrder++,
       });
       if (itemType === "function_call") {
         const callId = isBoundedOpenAIStreamString(
@@ -777,7 +896,63 @@ export async function* streamOpenAIResponsesParts(
           throw invalidOpenAIResponsesStream(context, "added message was not in its initial state");
         }
         messageItems.set(itemId, { parts: new Map() });
+      } else if (itemType === "web_search_call") {
+        if (!context.webSearchToolName) {
+          throw invalidOpenAIResponsesStream(
+            context,
+            "provider emitted web search without a configured web-search tool",
+          );
+        }
+        if (
+          item.action !== undefined ||
+          (item.status !== undefined && item.status !== "in_progress")
+        ) {
+          throw invalidOpenAIResponsesStream(
+            context,
+            "added web-search call was not in its initial state",
+          );
+        }
+        if (seenFunctionCallIds.has(itemId)) {
+          throw invalidOpenAIResponsesStream(context, "tool call id was reused");
+        }
+        webSearchItems.set(itemId, { phaseRank: 0 });
+        seenFunctionCallIds.add(itemId);
+        yield {
+          type: "tool-input-start",
+          id: itemId,
+          toolName: context.webSearchToolName,
+          providerExecuted: true,
+        };
       }
+      return;
+    }
+
+    if (
+      type === "response.web_search_call.in_progress" ||
+      type === "response.web_search_call.searching" ||
+      type === "response.web_search_call.completed"
+    ) {
+      const itemId = readMessageItemId(record, "web-search lifecycle event");
+      const state = webSearchItems.get(itemId);
+      if (!state) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          "web-search lifecycle event referenced an unknown item",
+        );
+      }
+      assertOutputIndex(itemId, record, "web-search lifecycle event");
+      const phaseRank = type === "response.web_search_call.in_progress"
+        ? 1
+        : type === "response.web_search_call.searching"
+        ? 2
+        : 3;
+      if (phaseRank <= state.phaseRank) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          "web-search lifecycle moved backward or repeated a phase",
+        );
+      }
+      state.phaseRank = phaseRank;
       return;
     }
 
@@ -857,6 +1032,17 @@ export async function* streamOpenAIResponsesParts(
       }
       const message = getMessageState(itemId, "message content-part event");
       const kind = validateMessageContentPart(part, "message content part");
+      if (
+        type === "response.content_part.added" &&
+        kind === "output_text" &&
+        part.annotations !== undefined &&
+        (!Array.isArray(part.annotations) || part.annotations.length > 0)
+      ) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          "added message content part annotations were not empty",
+        );
+      }
       const existing = message.parts.get(contentIndex);
       if (type === "response.content_part.added" && existing) {
         throw invalidOpenAIResponsesStream(context, "message content part was added twice");
@@ -896,6 +1082,12 @@ export async function* streamOpenAIResponsesParts(
         if (missingDelta !== undefined) {
           yield { type: "text-delta", delta: missingDelta };
         }
+        reconcileMessageAnnotations(
+          state,
+          part,
+          value as string,
+          "completed message content part",
+        );
         state.contentPartDone = true;
       }
       return;
@@ -929,6 +1121,51 @@ export async function* streamOpenAIResponsesParts(
         part.emittedValue = true;
         yield { type: "text-delta", delta: record.delta };
       }
+      return;
+    }
+
+    if (type === "response.output_text.annotation.added") {
+      const itemId = readMessageItemId(record, "output-text annotation event");
+      const message = getMessageState(itemId, "output-text annotation event");
+      assertOutputIndex(itemId, record, "output-text annotation event");
+      const contentIndex = readContentIndex(record);
+      if (
+        !Number.isSafeInteger(record.annotation_index) ||
+        (record.annotation_index as number) < 0 ||
+        (record.annotation_index as number) >=
+          MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS
+      ) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          "output-text annotation index was malformed",
+        );
+      }
+      const part = getOrCreateMessagePart(
+        message,
+        contentIndex,
+        "output_text",
+        "output-text annotation event",
+      );
+      if (part.contentPartDone || part.annotationSnapshot !== undefined) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          "output-text annotation followed a completed part",
+        );
+      }
+      const annotationIndex = record.annotation_index as number;
+      if (part.annotations.has(annotationIndex)) {
+        throw invalidOpenAIResponsesStream(
+          context,
+          "output-text annotation index was reused",
+        );
+      }
+      part.annotations.set(
+        annotationIndex,
+        serializeUrlCitation(
+          record.annotation,
+          `output-text annotation ${annotationIndex}`,
+        ),
+      );
       return;
     }
 
@@ -1158,11 +1395,11 @@ export async function* streamOpenAIResponsesParts(
         throw invalidOpenAIResponsesStream(context, "completed output item type changed");
       }
       assertOutputIndex(itemId, record, "completed output item");
-      if (
-        item.status !== undefined &&
-        item.status !== "completed" &&
-        item.status !== "incomplete"
-      ) {
+      const validStatus = item.status === undefined ||
+        item.status === "completed" ||
+        item.status === "incomplete" ||
+        (itemType === "web_search_call" && item.status === "failed");
+      if (!validStatus) {
         throw invalidOpenAIResponsesStream(
           context,
           "completed output item status was malformed",
@@ -1262,6 +1499,39 @@ export async function* streamOpenAIResponsesParts(
           input,
         };
         functionCalls.delete(itemId);
+      } else if (itemType === "web_search_call") {
+        const state = webSearchItems.get(itemId);
+        if (!state || !context.webSearchToolName) {
+          throw invalidOpenAIResponsesStream(
+            context,
+            "completed web-search call referenced an unknown item",
+          );
+        }
+        const webSearch = normalizeOpenAIWebSearchCall(
+          item,
+          (issue) => invalidOpenAIResponsesStream(context, issue),
+        );
+        yield {
+          type: "tool-input-delta",
+          id: webSearch.id,
+          delta: webSearch.input,
+        };
+        yield {
+          type: "tool-call",
+          toolCallId: webSearch.id,
+          toolName: context.webSearchToolName,
+          input: webSearch.input,
+          providerExecuted: true,
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: webSearch.id,
+          toolName: context.webSearchToolName,
+          result: webSearch.result,
+          ...(webSearch.isError ? { isError: true } : {}),
+          providerExecuted: true,
+        };
+        webSearchItems.delete(itemId);
       } else if (itemType === "message") {
         const state = messageItems.get(itemId);
         if (!state) {
@@ -1319,6 +1589,12 @@ export async function* streamOpenAIResponsesParts(
           if (missingDelta !== undefined) {
             yield { type: "text-delta", delta: missingDelta };
           }
+          reconcileMessageAnnotations(
+            partState,
+            part,
+            finalValue as string,
+            "completed message content part",
+          );
           finalContentIndices.add(contentIndex);
         }
         for (const contentIndex of state.parts.keys()) {
@@ -1337,6 +1613,7 @@ export async function* streamOpenAIResponsesParts(
           "completed output item type was unsupported",
         );
       }
+      retainCompletedOutputItem(outputItem, item);
       outputItems.delete(itemId);
       return;
     }
@@ -1433,14 +1710,72 @@ export async function* streamOpenAIResponsesParts(
     outputItems.size > 0 ||
     reasoningBlocks.size > 0 ||
     functionCalls.size > 0 ||
-    messageItems.size > 0
+    messageItems.size > 0 ||
+    webSearchItems.size > 0
   ) {
     throw invalidOpenAIResponsesStream(context, "stream ended with unfinished output items");
+  }
+
+  let providerMetadata: Record<string, unknown> | undefined;
+  if (retainRawOutputItems && rawOutputItemsByOrder.length > 0) {
+    if (
+      rawOutputItemsByOrder.length !== seenOutputItemIds.size ||
+      rawOutputItemsByOrder.some((item) => item === undefined)
+    ) {
+      throw invalidOpenAIResponsesStream(
+        context,
+        "raw response metadata omitted a completed output item",
+      );
+    }
+    const rawOutputEntries = rawOutputItemsByOrder as Array<{
+      item: Record<string, unknown>;
+      order: number;
+      outputIndex?: number;
+    }>;
+    const indexedEntryCount = rawOutputEntries.filter(
+      (entry) => entry.outputIndex !== undefined,
+    ).length;
+    if (
+      indexedEntryCount !== 0 &&
+      indexedEntryCount !== rawOutputEntries.length
+    ) {
+      throw invalidOpenAIResponsesStream(
+        context,
+        "raw response output order was only partially indexed",
+      );
+    }
+    const orderedEntries = indexedEntryCount === rawOutputEntries.length
+      ? rawOutputEntries.toSorted((left, right) =>
+        (left.outputIndex as number) - (right.outputIndex as number)
+      )
+      : rawOutputEntries.toSorted((left, right) => left.order - right.order);
+    if (
+      indexedEntryCount > 0 &&
+      orderedEntries.some((entry, index) => entry.outputIndex !== index)
+    ) {
+      throw invalidOpenAIResponsesStream(
+        context,
+        "raw response output indexes were not contiguous",
+      );
+    }
+    const candidateMetadata = createOpenAIRawResponseMetadata(
+      orderedEntries.map((entry) => entry.item),
+    );
+    try {
+      readOpenAIRawResponseOutputItems(candidateMetadata);
+    } catch {
+      throw invalidOpenAIResponsesStream(
+        context,
+        "raw response output items were unsafe to replay",
+      );
+    }
+    providerMetadata = candidateMetadata;
   }
 
   yield {
     type: "finish",
     finishReason,
     ...(usage ? { usage } : {}),
+    ...(providerMetadata ? { providerMetadata } : {}),
   };
 }

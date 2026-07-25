@@ -7,6 +7,7 @@ import {
   MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS,
 } from "./openai-tool-input.ts";
 import {
+  MAX_OPENAI_STREAM_CONTENT_PARTS,
   MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
   MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
 } from "./openai-stream-metadata.ts";
@@ -173,6 +174,33 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       type: "finish",
       finishReason: "stop",
     }]);
+  });
+
+  it("rejects unsupported or excessive choice content parts", async () => {
+    for (
+      const [content, expected] of [
+        [
+          [{ type: "future_content", value: "not represented" }],
+          "choice delta content part type was unsupported",
+        ],
+        [
+          Array.from(
+            { length: MAX_OPENAI_STREAM_CONTENT_PARTS + 1 },
+            () => ({ type: "text", text: "" }),
+          ),
+          `choice delta content exceeded ${MAX_OPENAI_STREAM_CONTENT_PARTS} parts`,
+        ],
+      ] as const
+    ) {
+      await assertRejects(
+        () =>
+          collectParts(streamFromText(data({
+            choices: [{ delta: { content }, finish_reason: "stop" }],
+          }))),
+        ProviderRequestError,
+        expected,
+      );
+    }
   });
 
   it("bounds aggregate streamed tool argument bytes and fragment counts", async () => {

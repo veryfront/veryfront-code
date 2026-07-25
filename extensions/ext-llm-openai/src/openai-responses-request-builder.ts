@@ -15,6 +15,7 @@ import {
 } from "./openai-reasoning-models.ts";
 import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
 import {
+  OPENAI_REASONING_ENCRYPTED_CONTENT_INCLUDE,
   OPENAI_WEB_SEARCH_SOURCES_INCLUDE,
   readOpenAIRawResponseOutputItems,
   resolveOpenAIWebSearchDescriptor,
@@ -245,7 +246,7 @@ export function buildOpenAIResponsesRequest(
   const body: OpenAIResponsesRequest = {
     model: modelId,
     input,
-    // Stay stateless: encrypted reasoning content is never round-tripped via include.
+    // Stay stateless and preserve the complete provider history explicitly below.
     store: false,
     ...(instructions !== undefined ? { instructions } : {}),
     ...(stream ? { stream: true } : {}),
@@ -320,14 +321,20 @@ export function buildOpenAIResponsesRequest(
   } else {
     delete body.stream;
   }
-  if (webSearch) {
+  const requiredIncludes = [
+    ...(reasoning ? [OPENAI_REASONING_ENCRYPTED_CONTENT_INCLUDE] : []),
+    ...(webSearch ? [OPENAI_WEB_SEARCH_SOURCES_INCLUDE] : []),
+  ];
+  if (requiredIncludes.length > 0) {
     const providerIncludes = Array.isArray(body.include)
       ? body.include.filter((value): value is string => typeof value === "string")
       : [];
-    body.include = [...new Set([
-      ...providerIncludes,
-      OPENAI_WEB_SEARCH_SOURCES_INCLUDE,
-    ])];
+    body.include = [
+      ...new Set([
+        ...providerIncludes,
+        ...requiredIncludes,
+      ]),
+    ];
   }
   if (Object.hasOwn(body, "background")) {
     delete body.background;

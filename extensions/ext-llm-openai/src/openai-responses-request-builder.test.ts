@@ -166,6 +166,65 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(Object.hasOwn(generated, "stream"), false);
   });
 
+  it("replays exact validated response output items before the next user turn", () => {
+    const rawOutputItems = [
+      {
+        id: "rs_1",
+        type: "reasoning",
+        status: "completed",
+        summary: [{ type: "summary_text", text: "Summary" }],
+        content: [{ type: "reasoning_text", text: "Reasoning" }],
+        encrypted_content: "encrypted_1",
+      },
+      {
+        id: "fc_1",
+        type: "function_call",
+        status: "completed",
+        call_id: "call_1",
+        name: "lookup",
+        arguments: '{"id":"one"}',
+      },
+      {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: "Answer" }],
+      },
+    ];
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Question" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "A lossy projection" }],
+        providerMetadata: {
+          openai: { rawResponseOutputItems: rawOutputItems },
+        },
+      },
+      { role: "user", content: [{ type: "text", text: "Continue" }] },
+    ];
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.input, [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Question" }],
+      },
+      ...rawOutputItems,
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Continue" }],
+      },
+    ]);
+  });
+
   it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
     const warnings = createWarningCollector();
 
@@ -371,7 +430,10 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(body, {
       model: "o4-mini",
       store: false,
-      include: ["web_search_call.action.sources"],
+      include: [
+        "reasoning.encrypted_content",
+        "web_search_call.action.sources",
+      ],
       input: [
         {
           role: "user",

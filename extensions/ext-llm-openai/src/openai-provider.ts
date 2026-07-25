@@ -30,6 +30,7 @@ import {
   requestJson,
   requestStream,
   type RuntimeUsage,
+  stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
@@ -37,18 +38,27 @@ import {
   buildOpenAIChatRequest,
   type OpenAICompatibleLanguageOptions,
 } from "./openai-chat-request-builder.ts";
-import { streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
+import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import { buildOpenAIResponsesRequest } from "./openai-responses-request-builder.ts";
 import { isOpenAIReasoningModel } from "./openai-reasoning-models.ts";
+import {
+  isBoundedOpenAIStreamString,
+  MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+  MAX_OPENAI_STREAM_ITEM_TYPE_BYTES,
+  MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+} from "./openai-stream-metadata.ts";
 import {
   extractOpenAIResponsesUsage,
   normalizeOpenAIResponsesFinishReason,
   streamOpenAIResponsesParts,
 } from "./openai-responses-stream.ts";
-import { isJsonObjectText } from "./openai-tool-input.ts";
+import { isJsonObjectText, MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES } from "./openai-tool-input.ts";
 import {
   createOpenAIRawResponseMetadata,
+  MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
+  MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS,
   normalizeOpenAIWebSearchCall,
+  readOpenAIRawResponseOutputItems,
   resolveOpenAIWebSearchDescriptor,
   validateOpenAIUrlCitation,
 } from "./openai-web-search.ts";
@@ -77,6 +87,8 @@ export interface OpenAIRuntimeConfig {
   providerName?: string;
   fetch?: typeof globalThis.fetch;
 }
+
+const OPENAI_RESPONSE_TEXT_ENCODER = new TextEncoder();
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -313,34 +325,65 @@ function extractOpenAIContentText(
   context: OpenAIResponseContext,
 ): string {
   if (typeof content === "string") {
+    if (
+      OPENAI_RESPONSE_TEXT_ENCODER.encode(content).byteLength >
+        MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES
+    ) {
+      throw invalidOpenAIResponse(
+        context,
+        `message content exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+      );
+    }
     return content;
   }
 
   if (!Array.isArray(content)) {
     return "";
   }
+  if (content.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS) {
+    throw invalidOpenAIResponse(
+      context,
+      `message content exceeded ${MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS} parts`,
+    );
+  }
 
-  let text = "";
+  const textParts: string[] = [];
+  let retainedBytes = 0;
   for (const part of content) {
     const record = readRecord(part);
     if (!record) {
       throw invalidOpenAIResponse(context, "message content part was not an object");
     }
     const type = record?.type;
+    let value: string;
     if (type === "text") {
       if (typeof record.text !== "string") {
         throw invalidOpenAIResponse(context, "text content part was malformed");
       }
-      text += record.text;
+      value = record.text;
     } else if (type === "refusal") {
       if (typeof record.refusal !== "string") {
         throw invalidOpenAIResponse(context, "refusal content part was malformed");
       }
-      text += record.refusal;
+      value = record.refusal;
+    } else {
+      throw invalidOpenAIResponse(context, "message content part type was unsupported");
     }
+    const valueBytes = OPENAI_RESPONSE_TEXT_ENCODER.encode(value).byteLength;
+    if (
+      valueBytes >
+        MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES - retainedBytes
+    ) {
+      throw invalidOpenAIResponse(
+        context,
+        `message content exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+      );
+    }
+    retainedBytes += valueBytes;
+    textParts.push(value);
   }
 
-  return text;
+  return textParts.join("");
 }
 
 function extractOpenAIToolCalls(
@@ -358,14 +401,31 @@ function extractOpenAIToolCalls(
   if (!Array.isArray(toolCalls)) {
     throw invalidOpenAIResponse(context, "message tool_calls was not an array");
   }
+  if (toolCalls.length > MAX_OPENAI_STREAM_TOOL_CALLS) {
+    throw invalidOpenAIResponse(
+      context,
+      `message exceeded ${MAX_OPENAI_STREAM_TOOL_CALLS} tool calls`,
+    );
+  }
 
   const normalized: Array<{ toolCallId: string; toolName: string; input: string }> = [];
   const seenToolCallIds = new Set<string>();
+  let retainedArgumentBytes = 0;
   for (const entry of toolCalls) {
     const record = readRecord(entry);
-    const id = typeof record?.id === "string" ? record.id : undefined;
+    const id = isBoundedOpenAIStreamString(
+        record?.id,
+        MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+      )
+      ? record.id
+      : undefined;
     const fn = readRecord(record?.function);
-    const name = typeof fn?.name === "string" ? fn.name : undefined;
+    const name = isBoundedOpenAIStreamString(
+        fn?.name,
+        MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+      )
+      ? fn.name
+      : undefined;
     const argumentsText = typeof fn?.arguments === "string" ? fn.arguments : undefined;
     if (record?.type !== "function" || !id || !name || argumentsText === undefined) {
       throw invalidOpenAIResponse(context, "message contained a malformed tool call");
@@ -373,12 +433,23 @@ function extractOpenAIToolCalls(
     if (seenToolCallIds.has(id)) {
       throw invalidOpenAIResponse(context, "message contained duplicate tool call ids");
     }
+    const argumentBytes = OPENAI_RESPONSE_TEXT_ENCODER.encode(argumentsText).byteLength;
+    if (
+      argumentBytes >
+        MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES - retainedArgumentBytes
+    ) {
+      throw invalidOpenAIResponse(
+        context,
+        `message tool call arguments exceeded ${MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES} UTF-8 bytes`,
+      );
+    }
     if (!isJsonObjectText(argumentsText)) {
       throw invalidOpenAIResponse(
         context,
         "message tool call arguments were not valid JSON object text",
       );
     }
+    retainedArgumentBytes += argumentBytes;
     seenToolCallIds.add(id);
     normalized.push({
       toolCallId: id,
@@ -451,6 +522,17 @@ function buildOpenAIGenerateResult(
   }
   const regularText = extractOpenAIContentText(message.content, context);
   const refusalText = typeof message.refusal === "string" ? message.refusal : "";
+  const regularTextBytes = OPENAI_RESPONSE_TEXT_ENCODER.encode(regularText).byteLength;
+  const refusalTextBytes = OPENAI_RESPONSE_TEXT_ENCODER.encode(refusalText).byteLength;
+  if (
+    refusalTextBytes >
+      MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES - regularTextBytes
+  ) {
+    throw invalidOpenAIResponse(
+      context,
+      `message content exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+    );
+  }
   const text = regularText + refusalText;
   const toolCalls = extractOpenAIToolCalls(message, context);
   if ((choice.finish_reason === "tool_calls") !== (toolCalls.length > 0)) {
@@ -484,7 +566,7 @@ type OpenAIResponsesContentPart =
   | { type: "text"; text: string }
   | {
     type: "reasoning";
-    summaries?: Array<{ id?: string; text: string }>;
+    text?: string;
     signature?: string;
   }
   | {
@@ -507,19 +589,35 @@ function assertTerminalOpenAIResponsesOutputItem(
   item: Record<string, unknown>,
   context: OpenAIResponseContext,
 ): void {
-  if (
-    item.status !== undefined &&
-    item.status !== "completed" &&
-    item.status !== "incomplete"
-  ) {
+  const validStatus = item.status === undefined ||
+    item.status === "completed" ||
+    item.status === "incomplete" ||
+    (item.type === "web_search_call" && item.status === "failed");
+  if (!validStatus) {
     throw invalidOpenAIResponse(context, "output item status was unsupported or nonterminal");
   }
+}
+
+function createValidatedOpenAIRawResponseMetadata(
+  outputItems: Array<Record<string, unknown>>,
+  context: OpenAIResponseContext,
+): Record<string, unknown> {
+  const metadata = createOpenAIRawResponseMetadata(outputItems);
+  try {
+    readOpenAIRawResponseOutputItems(metadata);
+  } catch {
+    throw invalidOpenAIResponse(
+      context,
+      "raw response output items were unsafe to replay",
+    );
+  }
+  return metadata;
 }
 
 function buildOpenAIResponsesGenerateResult(
   payload: unknown,
   context: OpenAIResponseContext,
-  webSearchToolName = "web_search",
+  webSearchToolName?: string,
 ): {
   content: OpenAIResponsesContentPart[];
   finishReason?: string | { unified: string; raw: string } | null;
@@ -544,29 +642,60 @@ function buildOpenAIResponsesGenerateResult(
     throw invalidOpenAIResponse(context, "output array missing");
   }
   const output = record.output;
+  if (output.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS) {
+    throw invalidOpenAIResponse(
+      context,
+      `output exceeded ${MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS} items`,
+    );
+  }
   const content: OpenAIResponsesContentPart[] = [];
+  const rawOutputItems: Array<Record<string, unknown>> = [];
   const seenOutputItemIds = new Set<string>();
   const seenToolCallIds = new Set<string>();
+  let normalizedContentBytes = 0;
+
+  function reserveNormalizedContent(value: string, issue: string): void {
+    const valueBytes = OPENAI_RESPONSE_TEXT_ENCODER.encode(value).byteLength;
+    if (
+      valueBytes > MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES -
+          normalizedContentBytes
+    ) {
+      throw invalidOpenAIResponse(
+        context,
+        `${issue} exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+      );
+    }
+    normalizedContentBytes += valueBytes;
+  }
 
   for (const item of output) {
     const itemRecord = readRecord(item);
     if (!itemRecord) {
       throw invalidOpenAIResponse(context, "output item was not an object");
     }
-    const itemType = typeof itemRecord?.type === "string" ? itemRecord.type : undefined;
+    rawOutputItems.push(itemRecord);
+    const itemType = isBoundedOpenAIStreamString(
+        itemRecord.type,
+        MAX_OPENAI_STREAM_ITEM_TYPE_BYTES,
+      )
+      ? itemRecord.type
+      : undefined;
     if (!itemType) {
       throw invalidOpenAIResponse(context, "output item type missing");
     }
     assertTerminalOpenAIResponsesOutputItem(itemRecord, context);
-    if (itemRecord.id !== undefined) {
-      if (typeof itemRecord.id !== "string" || itemRecord.id.length === 0) {
-        throw invalidOpenAIResponse(context, "output item id was malformed");
-      }
-      if (seenOutputItemIds.has(itemRecord.id)) {
-        throw invalidOpenAIResponse(context, "response contained duplicate output item ids");
-      }
-      seenOutputItemIds.add(itemRecord.id);
+    if (
+      !isBoundedOpenAIStreamString(
+        itemRecord.id,
+        MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+      )
+    ) {
+      throw invalidOpenAIResponse(context, "output item id was malformed");
     }
+    if (seenOutputItemIds.has(itemRecord.id)) {
+      throw invalidOpenAIResponse(context, "response contained duplicate output item ids");
+    }
+    seenOutputItemIds.add(itemRecord.id);
 
     if (itemType === "message") {
       if (itemRecord.role !== "assistant") {
@@ -575,8 +704,14 @@ function buildOpenAIResponsesGenerateResult(
       if (!Array.isArray(itemRecord.content)) {
         throw invalidOpenAIResponse(context, "message output content was not an array");
       }
+      if (itemRecord.content.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS) {
+        throw invalidOpenAIResponse(
+          context,
+          "message output contained too many content parts",
+        );
+      }
       // A message item bundles one or more output_text parts.
-      let text = "";
+      const textParts: string[] = [];
       for (const part of itemRecord.content) {
         const p = readRecord(part);
         if (!p) {
@@ -587,26 +722,41 @@ function buildOpenAIResponsesGenerateResult(
             throw invalidOpenAIResponse(context, "output-text content part was malformed");
           }
           if (p.annotations !== undefined) {
-            if (!Array.isArray(p.annotations)) {
+            if (
+              !Array.isArray(p.annotations) ||
+              p.annotations.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+            ) {
               throw invalidOpenAIResponse(context, "output-text annotations were malformed");
             }
             for (const annotation of p.annotations) {
-              validateOpenAIUrlCitation(
+              const citation = validateOpenAIUrlCitation(
                 annotation,
                 (issue) => invalidOpenAIResponse(context, issue),
               );
+              if ((citation.end_index as number) > p.text.length) {
+                throw invalidOpenAIResponse(
+                  context,
+                  "URL citation annotation range exceeded output text",
+                );
+              }
             }
           }
-          text += p.text;
+          reserveNormalizedContent(p.text, "normalized response content");
+          textParts.push(p.text);
         } else if (p.type === "refusal") {
-          if (typeof p.refusal !== "string") {
+          if (
+            typeof p.refusal !== "string" ||
+            p.annotations !== undefined
+          ) {
             throw invalidOpenAIResponse(context, "refusal content part was malformed");
           }
-          text += p.refusal;
+          reserveNormalizedContent(p.refusal, "normalized response content");
+          textParts.push(p.refusal);
         } else {
           throw invalidOpenAIResponse(context, "message content part type was unsupported");
         }
       }
+      const text = textParts.join("");
       if (text.length > 0) {
         content.push({ type: "text", text });
       }
@@ -614,11 +764,26 @@ function buildOpenAIResponsesGenerateResult(
     }
 
     if (itemType === "function_call") {
-      const toolCallId = typeof itemRecord.call_id === "string"
+      const toolCallId = isBoundedOpenAIStreamString(
+          itemRecord.call_id,
+          MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+        )
         ? itemRecord.call_id
-        : (typeof itemRecord.id === "string" ? itemRecord.id : undefined);
-      const toolName = typeof itemRecord.name === "string" ? itemRecord.name : undefined;
-      if (!toolCallId || !toolName || typeof itemRecord.arguments !== "string") {
+        : undefined;
+      const toolName = isBoundedOpenAIStreamString(
+          itemRecord.name,
+          MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+        )
+        ? itemRecord.name
+        : undefined;
+      if (
+        !toolCallId ||
+        !toolName ||
+        !isBoundedOpenAIStreamString(
+          itemRecord.arguments,
+          MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
+        )
+      ) {
         throw invalidOpenAIResponse(context, "function call output item was malformed");
       }
       if (seenToolCallIds.has(toolCallId)) {
@@ -630,6 +795,7 @@ function buildOpenAIResponsesGenerateResult(
           "function call arguments were not valid JSON object text",
         );
       }
+      reserveNormalizedContent(itemRecord.arguments, "normalized response content");
       content.push({
         type: "tool-call",
         toolCallId,
@@ -641,6 +807,12 @@ function buildOpenAIResponsesGenerateResult(
     }
 
     if (itemType === "web_search_call") {
+      if (!webSearchToolName) {
+        throw invalidOpenAIResponse(
+          context,
+          "provider emitted web search without a configured web-search tool",
+        );
+      }
       const webSearch = normalizeOpenAIWebSearchCall(
         itemRecord,
         (issue) => invalidOpenAIResponse(context, issue),
@@ -648,6 +820,11 @@ function buildOpenAIResponsesGenerateResult(
       if (seenToolCallIds.has(webSearch.id)) {
         throw invalidOpenAIResponse(context, "response contained duplicate tool call ids");
       }
+      reserveNormalizedContent(webSearch.input, "normalized response content");
+      reserveNormalizedContent(
+        stringifyJsonValue(webSearch.result),
+        "normalized response content",
+      );
       content.push({
         type: "tool-call",
         toolCallId: webSearch.id,
@@ -668,34 +845,73 @@ function buildOpenAIResponsesGenerateResult(
     }
 
     if (itemType === "reasoning") {
-      if (itemRecord.summary !== undefined && !Array.isArray(itemRecord.summary)) {
-        throw invalidOpenAIResponse(context, "reasoning summary was not an array");
+      if (
+        (itemRecord.summary !== undefined && !Array.isArray(itemRecord.summary)) ||
+        (itemRecord.content !== undefined && !Array.isArray(itemRecord.content))
+      ) {
+        throw invalidOpenAIResponse(
+          context,
+          "reasoning summary or content was not an array",
+        );
       }
       const summary = Array.isArray(itemRecord.summary) ? itemRecord.summary : [];
-      const summaries: Array<{ id?: string; text: string }> = [];
-      for (const s of summary) {
-        const sr = readRecord(s);
-        if (
-          !sr ||
-          sr.type !== "summary_text" ||
-          typeof sr.text !== "string"
-        ) {
-          throw invalidOpenAIResponse(context, "reasoning summary item was malformed");
+      const reasoningContent = Array.isArray(itemRecord.content) ? itemRecord.content : [];
+      if (
+        summary.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS ||
+        reasoningContent.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+      ) {
+        throw invalidOpenAIResponse(context, "reasoning contained too many parts");
+      }
+      const reasoningText: string[] = [];
+      for (
+        const [parts, expectedType] of [
+          [summary, "summary_text"],
+          [reasoningContent, "reasoning_text"],
+        ] as const
+      ) {
+        for (const rawPart of parts) {
+          const part = readRecord(rawPart);
+          if (
+            !part ||
+            part.type !== expectedType ||
+            typeof part.text !== "string" ||
+            (part.id !== undefined &&
+              !isBoundedOpenAIStreamString(
+                part.id,
+                MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+              ))
+          ) {
+            throw invalidOpenAIResponse(
+              context,
+              expectedType === "summary_text"
+                ? "reasoning summary item was malformed"
+                : "reasoning content item was malformed",
+            );
+          }
+          if (part.text.length > 0) {
+            reserveNormalizedContent(part.text, "normalized response content");
+            reasoningText.push(part.text);
+          }
         }
-        if (sr.text.length > 0) {
-          summaries.push({
-            ...(typeof sr.id === "string" ? { id: sr.id } : {}),
-            text: sr.text,
-          });
-        }
+      }
+      if (
+        itemRecord.encrypted_content !== undefined &&
+        (typeof itemRecord.encrypted_content !== "string" ||
+          OPENAI_RESPONSE_TEXT_ENCODER.encode(itemRecord.encrypted_content).byteLength >
+            MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES)
+      ) {
+        throw invalidOpenAIResponse(context, "reasoning encrypted content was malformed");
       }
       const signature = typeof itemRecord.encrypted_content === "string"
         ? itemRecord.encrypted_content
         : undefined;
-      if (summaries.length > 0 || signature !== undefined) {
+      if (signature !== undefined) {
+        reserveNormalizedContent(signature, "normalized response content");
+      }
+      if (reasoningText.length > 0 || signature !== undefined) {
         content.push({
           type: "reasoning",
-          ...(summaries.length > 0 ? { summaries } : {}),
+          ...(reasoningText.length > 0 ? { text: reasoningText.join("") } : {}),
           ...(signature !== undefined ? { signature } : {}),
         });
       }
@@ -708,9 +924,14 @@ function buildOpenAIResponsesGenerateResult(
     content,
     finishReason: normalizeOpenAIResponsesFinishReason(record?.status),
     usage: sanitizeRuntimeUsage(extractOpenAIResponsesUsage(payload)),
-    providerMetadata: createOpenAIRawResponseMetadata(
-      output as Array<Record<string, unknown>>,
-    ),
+    ...(rawOutputItems.length > 0
+      ? {
+        providerMetadata: createValidatedOpenAIRawResponseMetadata(
+          rawOutputItems,
+          context,
+        ),
+      }
+      : {}),
   };
 }
 
@@ -910,8 +1131,7 @@ export function createOpenAIResponsesRuntime(
         false,
         warnings,
       );
-      const webSearchToolName =
-        resolveOpenAIWebSearchDescriptor(options.tools)?.name ?? "web_search";
+      const webSearchToolName = resolveOpenAIWebSearchDescriptor(options.tools)?.name;
       return requestJson({
         url,
         fetchImpl,
@@ -946,8 +1166,7 @@ export function createOpenAIResponsesRuntime(
         true,
         warnings,
       );
-      const webSearchToolName =
-        resolveOpenAIWebSearchDescriptor(options.tools)?.name ?? "web_search";
+      const webSearchToolName = resolveOpenAIWebSearchDescriptor(options.tools)?.name;
       const providerAbortScope = createOpenAIProviderAbortScope(options.abortSignal);
       try {
         const responseStream = await requestStream({
@@ -969,6 +1188,7 @@ export function createOpenAIResponsesRuntime(
               streamOpenAIResponsesParts(responseStream, {
                 ...responseContext,
                 webSearchToolName,
+                preserveRawOutputItems: true,
               }),
             ),
             providerAbortScope.controller,

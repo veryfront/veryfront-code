@@ -1,6 +1,7 @@
 export const MAX_OPENAI_STREAM_IDENTIFIER_BYTES = 512;
 export const MAX_OPENAI_STREAM_TOOL_NAME_BYTES = 256;
 export const MAX_OPENAI_STREAM_ITEM_TYPE_BYTES = 128;
+export const MAX_OPENAI_STREAM_CONTENT_PARTS = 4_096;
 
 const encoder = new TextEncoder();
 

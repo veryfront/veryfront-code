@@ -41,9 +41,17 @@ function streamFromTexts(texts: Iterable<string>): ReadableStream<Uint8Array> {
   });
 }
 
-async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown[]> {
+async function collectParts(
+  stream: ReadableStream<Uint8Array>,
+  context?: {
+    providerKind?: "openai" | "mistral" | "moonshotai";
+    providerLabel?: string;
+    webSearchToolName?: string;
+    preserveRawOutputItems?: boolean;
+  },
+): Promise<unknown[]> {
   const parts: unknown[] = [];
-  for await (const part of streamOpenAIResponsesParts(stream)) {
+  for await (const part of streamOpenAIResponsesParts(stream, context)) {
     parts.push(part);
   }
   return parts;
@@ -55,84 +63,87 @@ function data(payload: unknown): string {
 
 describe("ext-llm-openai/openai-responses-stream", () => {
   it("preserves reasoning, text, tool-call assembly, usage, and finish events", async () => {
-    const parts = await collectParts(streamFromText([
-      data({ type: "response.output_item.added", item: { id: "rs_1", type: "reasoning" } }),
-      data({
-        type: "response.reasoning_summary_text.delta",
-        item_id: "rs_1",
-        delta: "Thinking",
-      }),
-      data({
-        type: "response.output_item.done",
-        item: {
-          id: "rs_1",
-          type: "reasoning",
-          summary: [{ type: "summary_text", text: "Thinking" }],
-        },
-      }),
-      data({
-        type: "response.output_item.added",
-        item: { id: "fc_1", type: "function_call", call_id: "call_1", name: "lookup" },
-      }),
-      data({
-        type: "response.function_call_arguments.delta",
-        item_id: "fc_1",
-        delta: '{"id":',
-      }),
-      data({
-        type: "response.function_call_arguments.delta",
-        item_id: "fc_1",
-        delta: '"abc"}',
-      }),
-      data({
-        type: "response.function_call_arguments.done",
-        item_id: "fc_1",
-        name: "lookup",
-        arguments: '{"id":"abc"}',
-      }),
-      data({
-        type: "response.output_item.done",
-        item: {
-          id: "fc_1",
-          type: "function_call",
-          call_id: "call_1",
+    const parts = await collectParts(
+      streamFromText([
+        data({ type: "response.output_item.added", item: { id: "rs_1", type: "reasoning" } }),
+        data({
+          type: "response.reasoning_summary_text.delta",
+          item_id: "rs_1",
+          delta: "Thinking",
+        }),
+        data({
+          type: "response.output_item.done",
+          item: {
+            id: "rs_1",
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "Thinking" }],
+          },
+        }),
+        data({
+          type: "response.output_item.added",
+          item: { id: "fc_1", type: "function_call", call_id: "call_1", name: "lookup" },
+        }),
+        data({
+          type: "response.function_call_arguments.delta",
+          item_id: "fc_1",
+          delta: '{"id":',
+        }),
+        data({
+          type: "response.function_call_arguments.delta",
+          item_id: "fc_1",
+          delta: '"abc"}',
+        }),
+        data({
+          type: "response.function_call_arguments.done",
+          item_id: "fc_1",
           name: "lookup",
           arguments: '{"id":"abc"}',
-        },
-      }),
-      data({
-        type: "response.output_item.added",
-        item: { id: "msg_1", type: "message", role: "assistant", content: [] },
-      }),
-      data({
-        type: "response.output_text.delta",
-        item_id: "msg_1",
-        delta: "Done.",
-      }),
-      data({
-        type: "response.output_item.done",
-        item: {
-          id: "msg_1",
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "Done." }],
-        },
-      }),
-      data({
-        type: "response.completed",
-        response: {
-          status: "completed",
-          usage: {
-            input_tokens: 5,
-            output_tokens: 7,
-            total_tokens: 12,
-            input_tokens_details: { cached_tokens: 3 },
-            output_tokens_details: { reasoning_tokens: 2 },
+        }),
+        data({
+          type: "response.output_item.done",
+          item: {
+            id: "fc_1",
+            type: "function_call",
+            call_id: "call_1",
+            name: "lookup",
+            arguments: '{"id":"abc"}',
           },
-        },
-      }),
-      "data: [DONE]\r\n\r\n",
-    ].join("")));
+        }),
+        data({
+          type: "response.output_item.added",
+          item: { id: "msg_1", type: "message", role: "assistant", content: [] },
+        }),
+        data({
+          type: "response.output_text.delta",
+          item_id: "msg_1",
+          delta: "Done.",
+        }),
+        data({
+          type: "response.output_item.done",
+          item: {
+            id: "msg_1",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Done." }],
+          },
+        }),
+        data({
+          type: "response.completed",
+          response: {
+            status: "completed",
+            usage: {
+              input_tokens: 5,
+              output_tokens: 7,
+              total_tokens: 12,
+              input_tokens_details: { cached_tokens: 3 },
+              output_tokens_details: { reasoning_tokens: 2 },
+            },
+          },
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")),
+      { preserveRawOutputItems: true },
+    );
 
     assertEquals(parts, [
       { type: "reasoning-start", id: "reasoning-0" },
@@ -158,8 +169,588 @@ describe("ext-llm-openai/openai-responses-stream", () => {
           cacheReadInputTokens: 3,
           reasoningTokens: 2,
         },
+        providerMetadata: {
+          openai: {
+            rawResponseOutputItems: [
+              {
+                id: "rs_1",
+                type: "reasoning",
+                summary: [{ type: "summary_text", text: "Thinking" }],
+              },
+              {
+                id: "fc_1",
+                type: "function_call",
+                call_id: "call_1",
+                name: "lookup",
+                arguments: '{"id":"abc"}',
+              },
+              {
+                id: "msg_1",
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Done." }],
+              },
+            ],
+          },
+        },
       },
     ]);
+  });
+
+  it("preserves hosted web-search lifecycle, citations, and replay metadata", async () => {
+    const webSearchItem = {
+      id: "ws_1",
+      type: "web_search_call",
+      status: "completed",
+      action: {
+        type: "search",
+        queries: ["Veryfront production hardening"],
+        sources: [{ type: "url", url: "https://example.test/source" }],
+      },
+    };
+    const citation = {
+      type: "url_citation",
+      start_index: 0,
+      end_index: 7,
+      url: "https://example.test/source",
+      title: "Source",
+    };
+    const messageItem = {
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{
+        type: "output_text",
+        text: "Sources",
+        annotations: [citation],
+      }],
+    };
+    const parts = await collectParts(
+      streamFromText([
+        data({
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            id: "ws_1",
+            type: "web_search_call",
+            status: "in_progress",
+          },
+        }),
+        data({
+          type: "response.web_search_call.in_progress",
+          output_index: 0,
+          item_id: "ws_1",
+        }),
+        data({
+          type: "response.web_search_call.searching",
+          output_index: 0,
+          item_id: "ws_1",
+        }),
+        data({
+          type: "response.web_search_call.completed",
+          output_index: 0,
+          item_id: "ws_1",
+        }),
+        data({
+          type: "response.output_item.done",
+          output_index: 0,
+          item: webSearchItem,
+        }),
+        data({
+          type: "response.output_item.added",
+          output_index: 1,
+          item: {
+            id: "msg_1",
+            type: "message",
+            role: "assistant",
+            status: "in_progress",
+            content: [],
+          },
+        }),
+        data({
+          type: "response.content_part.added",
+          item_id: "msg_1",
+          output_index: 1,
+          content_index: 0,
+          part: { type: "output_text", text: "", annotations: [] },
+        }),
+        data({
+          type: "response.output_text.delta",
+          item_id: "msg_1",
+          output_index: 1,
+          content_index: 0,
+          delta: "Sources",
+        }),
+        data({
+          type: "response.output_text.annotation.added",
+          item_id: "msg_1",
+          output_index: 1,
+          content_index: 0,
+          annotation_index: 0,
+          annotation: citation,
+        }),
+        data({
+          type: "response.output_text.done",
+          item_id: "msg_1",
+          output_index: 1,
+          content_index: 0,
+          text: "Sources",
+        }),
+        data({
+          type: "response.content_part.done",
+          item_id: "msg_1",
+          output_index: 1,
+          content_index: 0,
+          part: {
+            type: "output_text",
+            text: "Sources",
+            annotations: [citation],
+          },
+        }),
+        data({
+          type: "response.output_item.done",
+          output_index: 1,
+          item: messageItem,
+        }),
+        data({
+          type: "response.completed",
+          response: { status: "completed" },
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")),
+      { webSearchToolName: "web" },
+    );
+
+    const input = '{"type":"search","queries":["Veryfront production hardening"]}';
+    assertEquals(parts, [
+      {
+        type: "tool-input-start",
+        id: "ws_1",
+        toolName: "web",
+        providerExecuted: true,
+      },
+      {
+        type: "tool-input-delta",
+        id: "ws_1",
+        delta: input,
+      },
+      {
+        type: "tool-call",
+        toolCallId: "ws_1",
+        toolName: "web",
+        input,
+        providerExecuted: true,
+      },
+      {
+        type: "tool-result",
+        toolCallId: "ws_1",
+        toolName: "web",
+        result: {
+          status: "completed",
+          sources: [{ type: "url", url: "https://example.test/source" }],
+        },
+        providerExecuted: true,
+      },
+      { type: "text-delta", delta: "Sources" },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "completed" },
+        providerMetadata: {
+          openai: {
+            rawResponseOutputItems: [webSearchItem, messageItem],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("retains every completed output item in exact order when web search is used", async () => {
+    const reasoningItem = {
+      id: "rs_before",
+      type: "reasoning",
+      status: "completed",
+      summary: [],
+    };
+    const webSearchItem = {
+      id: "ws_middle",
+      type: "web_search_call",
+      status: "completed",
+      action: { type: "search", query: "Veryfront" },
+    };
+    const messageItem = {
+      id: "msg_after",
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "Done", annotations: [] }],
+    };
+    const parts = await collectParts(
+      streamFromText([
+        data({
+          type: "response.output_item.added",
+          output_index: 1,
+          item: {
+            id: "ws_middle",
+            type: "web_search_call",
+            status: "in_progress",
+          },
+        }),
+        data({
+          type: "response.output_item.done",
+          output_index: 1,
+          item: webSearchItem,
+        }),
+        data({
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            id: "rs_before",
+            type: "reasoning",
+            status: "in_progress",
+            summary: [],
+          },
+        }),
+        data({
+          type: "response.output_item.done",
+          output_index: 0,
+          item: reasoningItem,
+        }),
+        data({
+          type: "response.output_item.added",
+          output_index: 2,
+          item: {
+            id: "msg_after",
+            type: "message",
+            role: "assistant",
+            status: "in_progress",
+            content: [],
+          },
+        }),
+        data({
+          type: "response.output_item.done",
+          output_index: 2,
+          item: messageItem,
+        }),
+        data({
+          type: "response.completed",
+          response: { status: "completed" },
+        }),
+      ].join("")),
+      { webSearchToolName: "web" },
+    );
+
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "completed" },
+      providerMetadata: {
+        openai: {
+          rawResponseOutputItems: [
+            reasoningItem,
+            webSearchItem,
+            messageItem,
+          ],
+        },
+      },
+    });
+  });
+
+  it("surfaces a failed hosted web-search item as an error result", async () => {
+    const failedItem = {
+      id: "ws_failed",
+      type: "web_search_call",
+      status: "failed",
+      action: { type: "open_page", url: null },
+    };
+    const parts = await collectParts(
+      streamFromText([
+        data({
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            id: "ws_failed",
+            type: "web_search_call",
+            status: "in_progress",
+          },
+        }),
+        data({
+          type: "response.web_search_call.in_progress",
+          output_index: 0,
+          item_id: "ws_failed",
+        }),
+        data({
+          type: "response.web_search_call.searching",
+          output_index: 0,
+          item_id: "ws_failed",
+        }),
+        data({
+          type: "response.web_search_call.completed",
+          output_index: 0,
+          item_id: "ws_failed",
+        }),
+        data({
+          type: "response.output_item.done",
+          output_index: 0,
+          item: failedItem,
+        }),
+        data({
+          type: "response.completed",
+          response: { status: "completed" },
+        }),
+      ].join("")),
+      { webSearchToolName: "web" },
+    );
+
+    assertEquals(parts, [
+      {
+        type: "tool-input-start",
+        id: "ws_failed",
+        toolName: "web",
+        providerExecuted: true,
+      },
+      {
+        type: "tool-input-delta",
+        id: "ws_failed",
+        delta: '{"type":"open_page","url":null}',
+      },
+      {
+        type: "tool-call",
+        toolCallId: "ws_failed",
+        toolName: "web",
+        input: '{"type":"open_page","url":null}',
+        providerExecuted: true,
+      },
+      {
+        type: "tool-result",
+        toolCallId: "ws_failed",
+        toolName: "web",
+        result: {
+          status: "failed",
+          action: { type: "open_page", url: null },
+        },
+        isError: true,
+        providerExecuted: true,
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "stop", raw: "completed" },
+        providerMetadata: {
+          openai: { rawResponseOutputItems: [failedItem] },
+        },
+      },
+    ]);
+  });
+
+  it("rejects partially indexed or noncontiguous raw output order", async () => {
+    const completed = data({
+      type: "response.completed",
+      response: { status: "completed" },
+    });
+    const messageEvents = (id: string, outputIndex?: number) => [
+      data({
+        type: "response.output_item.added",
+        ...(outputIndex !== undefined ? { output_index: outputIndex } : {}),
+        item: {
+          id,
+          type: "message",
+          role: "assistant",
+          status: "in_progress",
+          content: [],
+        },
+      }),
+      data({
+        type: "response.output_item.done",
+        ...(outputIndex !== undefined ? { output_index: outputIndex } : {}),
+        item: {
+          id,
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [],
+        },
+      }),
+    ];
+
+    await assertRejects(
+      () =>
+        collectParts(
+          streamFromText([
+            ...messageEvents("msg_unindexed"),
+            ...messageEvents("msg_indexed", 1),
+            completed,
+          ].join("")),
+          { preserveRawOutputItems: true },
+        ),
+      ProviderRequestError,
+      "raw response output order was only partially indexed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(
+          streamFromText([
+            ...messageEvents("msg_gap", 1),
+            completed,
+          ].join("")),
+          { preserveRawOutputItems: true },
+        ),
+      ProviderRequestError,
+      "raw response output indexes were not contiguous",
+    );
+  });
+
+  it("rejects unconfigured, miscorrelated, or non-monotonic web-search lifecycle", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            id: "ws_unconfigured",
+            type: "web_search_call",
+            status: "in_progress",
+          },
+        }))),
+      ProviderRequestError,
+      "without a configured web-search tool",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(
+          streamFromText([
+            data({
+              type: "response.output_item.added",
+              output_index: 0,
+              item: {
+                id: "ws_repeat",
+                type: "web_search_call",
+                status: "in_progress",
+              },
+            }),
+            data({
+              type: "response.web_search_call.searching",
+              output_index: 0,
+              item_id: "ws_repeat",
+            }),
+            data({
+              type: "response.web_search_call.in_progress",
+              output_index: 0,
+              item_id: "ws_repeat",
+            }),
+          ].join("")),
+          { webSearchToolName: "web" },
+        ),
+      ProviderRequestError,
+      "moved backward or repeated a phase",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(
+          streamFromText([
+            data({
+              type: "response.output_item.added",
+              output_index: 0,
+              item: {
+                id: "ws_index",
+                type: "web_search_call",
+                status: "in_progress",
+              },
+            }),
+            data({
+              type: "response.web_search_call.searching",
+              output_index: 1,
+              item_id: "ws_index",
+            }),
+          ].join("")),
+          { webSearchToolName: "web" },
+        ),
+      ProviderRequestError,
+      "output index changed",
+    );
+  });
+
+  it("rejects citations that disagree with streamed annotations or exceed final text", async () => {
+    const citation = {
+      type: "url_citation",
+      start_index: 0,
+      end_index: 4,
+      url: "https://example.test/source",
+      title: "Source",
+    };
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            type: "response.output_item.added",
+            item: {
+              id: "msg_annotation",
+              type: "message",
+              role: "assistant",
+              content: [],
+            },
+          }),
+          data({
+            type: "response.output_text.annotation.added",
+            item_id: "msg_annotation",
+            content_index: 0,
+            annotation_index: 0,
+            annotation: citation,
+          }),
+          data({
+            type: "response.output_item.done",
+            item: {
+              id: "msg_annotation",
+              type: "message",
+              role: "assistant",
+              content: [{
+                type: "output_text",
+                text: "Done",
+                annotations: [{
+                  ...citation,
+                  url: "https://example.test/changed",
+                }],
+              }],
+            },
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "disagreed with streamed annotations",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            type: "response.output_item.added",
+            item: {
+              id: "msg_range",
+              type: "message",
+              role: "assistant",
+              content: [],
+            },
+          }),
+          data({
+            type: "response.output_item.done",
+            item: {
+              id: "msg_range",
+              type: "message",
+              role: "assistant",
+              content: [{
+                type: "output_text",
+                text: "Done",
+                annotations: [{
+                  ...citation,
+                  end_index: 5,
+                }],
+              }],
+            },
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "annotation range exceeded its text",
+    );
   });
 
   it("normalizes incomplete and failed terminal events", async () => {

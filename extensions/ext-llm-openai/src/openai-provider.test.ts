@@ -14,6 +14,16 @@ import {
   createOpenAIResponsesRuntime,
   OpenAIProvider,
 } from "./openai-provider.ts";
+import { MAX_OPENAI_STREAM_TOOL_CALLS } from "./openai-chat-stream.ts";
+import {
+  MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+  MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+} from "./openai-stream-metadata.ts";
+import { MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES } from "./openai-tool-input.ts";
+import {
+  MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES,
+  MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS,
+} from "./openai-web-search.ts";
 
 // ---------------------------------------------------------------------------
 // Shared test helpers (inlined — no external fixture file needed)
@@ -285,6 +295,158 @@ describe("openai-provider", () => {
       unified: "content-filter",
       raw: "content_filter",
     });
+  });
+
+  it("rejects unsupported Chat content parts instead of silently dropping them", async () => {
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "future_content", value: "not represented" }],
+                },
+              }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "gpt-4o-mini");
+
+    await assertRejects(
+      async () =>
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        }),
+      ProviderRequestError,
+      "message content part type was unsupported",
+    );
+  });
+
+  it("bounds direct Chat content and retained tool-call data", async () => {
+    const prompt = [{ role: "user", content: [{ type: "text", text: "Hi" }] }] as const;
+    const cases: Array<{ expected: string; choice: Record<string, unknown> }> = [
+      {
+        expected: `message content exceeded ${MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS} parts`,
+        choice: {
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: Array.from(
+              { length: MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS + 1 },
+              () => ({ type: "text", text: "" }),
+            ),
+          },
+        },
+      },
+      {
+        expected: `message content exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+        choice: {
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "x".repeat(MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES + 1),
+          },
+        },
+      },
+      {
+        expected: "message contained a malformed tool call",
+        choice: {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "é".repeat(MAX_OPENAI_STREAM_IDENTIFIER_BYTES / 2 + 1),
+              type: "function",
+              function: { name: "lookup", arguments: "{}" },
+            }],
+          },
+        },
+      },
+      {
+        expected: "message contained a malformed tool call",
+        choice: {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call_large_name",
+              type: "function",
+              function: {
+                name: "é".repeat(MAX_OPENAI_STREAM_TOOL_NAME_BYTES / 2 + 1),
+                arguments: "{}",
+              },
+            }],
+          },
+        },
+      },
+      {
+        expected:
+          `message tool call arguments exceeded ${MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES} UTF-8 bytes`,
+        choice: {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call_large_arguments",
+              type: "function",
+              function: {
+                name: "lookup",
+                arguments: JSON.stringify({
+                  value: "x".repeat(MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES),
+                }),
+              },
+            }],
+          },
+        },
+      },
+      {
+        expected: `message exceeded ${MAX_OPENAI_STREAM_TOOL_CALLS} tool calls`,
+        choice: {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: Array.from(
+              { length: MAX_OPENAI_STREAM_TOOL_CALLS + 1 },
+              (_, index) => ({
+                id: `call_${index}`,
+                type: "function",
+                function: { name: "lookup", arguments: "{}" },
+              }),
+            ),
+          },
+        },
+      },
+    ];
+
+    for (const { expected, choice } of cases) {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ choices: [choice] }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      await assertRejects(
+        async () => await runtime.doGenerate({ prompt }),
+        ProviderRequestError,
+        expected,
+      );
+    }
   });
 
   it("rejects non-object or malformed Chat function arguments", async () => {
@@ -1904,6 +2066,18 @@ describe("openai-provider", () => {
     it("rejects nonterminal, unsupported, or ambiguously correlated output items", async () => {
       const cases: Array<{ expected: string; output: unknown[] }> = [
         {
+          expected: `output exceeded ${MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS} items`,
+          output: Array.from(
+            { length: MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS + 1 },
+            (_, index) => ({
+              id: `msg_${index}`,
+              type: "message",
+              role: "assistant",
+              content: [],
+            }),
+          ),
+        },
+        {
           expected: "message output role was not assistant",
           output: [{
             id: "msg_user",
@@ -1950,6 +2124,58 @@ describe("openai-provider", () => {
         {
           expected: "output item type missing",
           output: [{}],
+        },
+        {
+          expected: "output item id was malformed",
+          output: [{
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", text: "missing id" }],
+          }],
+        },
+        {
+          expected: "function call output item was malformed",
+          output: [{
+            id: "fc_missing_call_id",
+            type: "function_call",
+            name: "lookup",
+            arguments: "{}",
+            status: "completed",
+          }],
+        },
+        {
+          expected: "message output contained too many content parts",
+          output: [{
+            id: "msg_many_parts",
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            content: Array.from(
+              { length: MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS + 1 },
+              () => ({ type: "output_text", text: "" }),
+            ),
+          }],
+        },
+        {
+          expected: "URL citation annotation range exceeded output text",
+          output: [{
+            id: "msg_bad_citation_range",
+            type: "message",
+            role: "assistant",
+            status: "completed",
+            content: [{
+              type: "output_text",
+              text: "short",
+              annotations: [{
+                type: "url_citation",
+                start_index: 0,
+                end_index: 6,
+                url: "https://example.test/",
+                title: "Example",
+              }],
+            }],
+          }],
         },
         {
           expected: "response contained duplicate function call ids",
@@ -2083,8 +2309,12 @@ describe("openai-provider", () => {
         prompt: [userPrompt],
         reasoning: { enabled: true, effort: "high" },
       });
-      const body = getBody() as { reasoning: Record<string, string> } | null;
+      const body = getBody() as {
+        reasoning: Record<string, string>;
+        include: string[];
+      } | null;
       assertEquals(body!.reasoning, { effort: "high", summary: "auto" });
+      assertEquals(body!.include, ["reasoning.encrypted_content"]);
     });
 
     it("drops sampling params on reasoning models and emits warnings", async () => {
@@ -2137,6 +2367,32 @@ describe("openai-provider", () => {
     });
 
     it("parses message + reasoning + function_call output items into UI parts", async () => {
+      const output = [
+        {
+          type: "reasoning",
+          id: "rs_1",
+          summary: [
+            { type: "summary_text", text: "First, I'll check the weather." },
+          ],
+          content: [
+            { type: "reasoning_text", text: "Detailed reasoning." },
+          ],
+          encrypted_content: "sig_abc",
+        },
+        {
+          type: "function_call",
+          id: "fc_1",
+          call_id: "call_weather",
+          name: "get_weather",
+          arguments: '{"city":"Tokyo"}',
+        },
+        {
+          type: "message",
+          id: "msg_1",
+          role: "assistant",
+          content: [{ type: "output_text", text: "It is sunny." }],
+        },
+      ];
       const runtime = createOpenAIResponsesRuntime({
         apiKey: "k",
         baseURL: "https://example.openai.test/v1",
@@ -2147,29 +2403,7 @@ describe("openai-provider", () => {
                 id: "resp_1",
                 object: "response",
                 status: "completed",
-                output: [
-                  {
-                    type: "reasoning",
-                    id: "rs_1",
-                    summary: [
-                      { type: "summary_text", text: "First, I'll check the weather." },
-                    ],
-                    encrypted_content: "sig_abc",
-                  },
-                  {
-                    type: "function_call",
-                    id: "fc_1",
-                    call_id: "call_weather",
-                    name: "get_weather",
-                    arguments: '{"city":"Tokyo"}',
-                  },
-                  {
-                    type: "message",
-                    id: "msg_1",
-                    role: "assistant",
-                    content: [{ type: "output_text", text: "It is sunny." }],
-                  },
-                ],
+                output,
                 usage: {
                   input_tokens: 12,
                   output_tokens: 34,
@@ -2185,7 +2419,7 @@ describe("openai-provider", () => {
       assertEquals(result.content, [
         {
           type: "reasoning",
-          summaries: [{ text: "First, I'll check the weather." }],
+          text: "First, I'll check the weather.Detailed reasoning.",
           signature: "sig_abc",
         },
         {
@@ -2203,6 +2437,209 @@ describe("openai-provider", () => {
         totalTokens: 46,
       });
       assertEquals(result.finishReason, { unified: "stop", raw: "completed" });
+      assertEquals(result.providerMetadata, {
+        openai: { rawResponseOutputItems: output },
+      });
+    });
+
+    it("preserves hosted web-search output exactly for the next stateless request", async () => {
+      const requests: Array<Record<string, unknown>> = [];
+      const webSearchItem = {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: {
+          type: "search",
+          queries: ["Veryfront"],
+          sources: [{ type: "url", url: "https://example.test/source" }],
+        },
+      };
+      const messageItem = {
+        type: "message",
+        id: "msg_web",
+        role: "assistant",
+        status: "completed",
+        content: [{
+          type: "output_text",
+          text: "Result",
+          annotations: [{
+            type: "url_citation",
+            start_index: 0,
+            end_index: 6,
+            url: "https://example.test/source",
+            title: "Source",
+          }],
+        }],
+      };
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          requests.push(raw ? JSON.parse(raw) : {});
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_web",
+                object: "response",
+                status: "completed",
+                output: [webSearchItem, messageItem],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "gpt-5.4-nano");
+      const tools = [{
+        type: "provider",
+        name: "research",
+        id: "openai.web_search",
+        args: {},
+      }] as const;
+
+      const first = await runtime.doGenerate({ prompt: [userPrompt], tools });
+      assertEquals(first.content, [
+        {
+          type: "tool-call",
+          toolCallId: "ws_1",
+          toolName: "research",
+          input: '{"type":"search","queries":["Veryfront"]}',
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "ws_1",
+          toolName: "research",
+          result: {
+            status: "completed",
+            sources: [{ type: "url", url: "https://example.test/source" }],
+          },
+          providerExecuted: true,
+        },
+        { type: "text", text: "Result" },
+      ]);
+      assertEquals(first.providerMetadata, {
+        openai: {
+          rawResponseOutputItems: [webSearchItem, messageItem],
+        },
+      });
+
+      await runtime.doGenerate({
+        prompt: [
+          userPrompt,
+          {
+            role: "assistant",
+            content: first.content,
+            providerMetadata: first.providerMetadata,
+          },
+          {
+            role: "user",
+            content: [{ type: "text", text: "Continue" }],
+          },
+        ],
+        tools,
+      });
+      assertEquals(requests[1].input, [
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "Hi" }],
+        },
+        webSearchItem,
+        messageItem,
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "Continue" }],
+        },
+      ]);
+    });
+
+    it("surfaces a failed hosted web-search call as a provider-executed error result", async () => {
+      const webSearchItem = {
+        type: "web_search_call",
+        id: "ws_failed",
+        status: "failed",
+        action: { type: "open_page", url: null },
+      };
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_failed_web",
+                object: "response",
+                status: "completed",
+                output: [webSearchItem],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-5.4-nano");
+
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        tools: [{
+          type: "provider",
+          name: "research",
+          id: "openai.web_search",
+          args: {},
+        }],
+      });
+
+      assertEquals(result.content, [
+        {
+          type: "tool-call",
+          toolCallId: "ws_failed",
+          toolName: "research",
+          input: '{"type":"open_page","url":null}',
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "ws_failed",
+          toolName: "research",
+          result: {
+            status: "failed",
+            action: { type: "open_page", url: null },
+          },
+          isError: true,
+          providerExecuted: true,
+        },
+      ]);
+      assertEquals(result.providerMetadata, {
+        openai: { rawResponseOutputItems: [webSearchItem] },
+      });
+    });
+
+    it("rejects provider-executed web search that was not configured by the caller", async () => {
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_unexpected_web",
+                object: "response",
+                status: "completed",
+                output: [{
+                  type: "web_search_call",
+                  id: "ws_unexpected",
+                  status: "completed",
+                  action: { type: "search", query: "unexpected" },
+                }],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-5.4-nano");
+
+      await assertRejects(
+        async () => await runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderRequestError,
+        "without a configured web-search tool",
+      );
     });
 
     it("parses Responses streaming events into UI parts (text + reasoning + tool call)", async () => {
@@ -2273,11 +2710,36 @@ describe("openai-provider", () => {
 
       const finish = parts.find((p) => (p as { type: string }).type === "finish") as {
         usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+        providerMetadata?: Record<string, unknown>;
       };
       assertEquals(finish.usage, {
         inputTokens: 12,
         outputTokens: 34,
         totalTokens: 46,
+      });
+      assertEquals(finish.providerMetadata, {
+        openai: {
+          rawResponseOutputItems: [
+            {
+              id: "rs_1",
+              type: "reasoning",
+              summary: [{ type: "summary_text", text: "Thinking..." }],
+            },
+            {
+              id: "fc_1",
+              type: "function_call",
+              call_id: "call_w",
+              name: "weather",
+              arguments: '{"city":"Tokyo"}',
+            },
+            {
+              id: "msg_1",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "It is sunny." }],
+            },
+          ],
+        },
       });
 
       const toolCall = parts.find((p) => (p as { type: string }).type === "tool-call") as {

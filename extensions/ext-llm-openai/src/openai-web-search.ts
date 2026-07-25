@@ -1,11 +1,10 @@
-import {
-  readRecord,
-  stringifyJsonValue,
-} from "veryfront/provider/shared";
+import { readRecord, stringifyJsonValue } from "veryfront/provider/shared";
 import {
   isBoundedOpenAIStreamString,
   MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+  MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
 } from "./openai-stream-metadata.ts";
+import { isJsonObjectText, MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES } from "./openai-tool-input.ts";
 
 const OPENAI_WEB_SEARCH_TYPES = new Set([
   "web_search",
@@ -14,8 +13,15 @@ const OPENAI_WEB_SEARCH_TYPES = new Set([
   "web_search_preview_2025_03_11",
 ]);
 
-export const OPENAI_WEB_SEARCH_SOURCES_INCLUDE =
-  "web_search_call.action.sources";
+export const OPENAI_WEB_SEARCH_SOURCES_INCLUDE = "web_search_call.action.sources";
+export const OPENAI_REASONING_ENCRYPTED_CONTENT_INCLUDE = "reasoning.encrypted_content";
+export const MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES = 8 * 1024 * 1024;
+export const MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS = 4_096;
+export const MAX_OPENAI_WEB_SEARCH_TEXT_BYTES = 64 * 1024;
+export const MAX_OPENAI_WEB_SEARCH_URL_BYTES = 16 * 1024;
+export const MAX_OPENAI_WEB_SEARCH_VALUES = 256;
+
+const textEncoder = new TextEncoder();
 
 type ProviderTool = {
   type: "provider";
@@ -37,10 +43,21 @@ export type OpenAIWebSearchResult = {
 };
 
 function isHttpUrl(value: unknown): value is string {
-  if (typeof value !== "string") return false;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.trim() !== value ||
+    /[\u0000-\u001F\u007F]/u.test(value) ||
+    textEncoder.encode(value).byteLength > MAX_OPENAI_WEB_SEARCH_URL_BYTES
+  ) {
+    return false;
+  }
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
+    return (url.protocol === "http:" || url.protocol === "https:") &&
+      url.hostname.length > 0 &&
+      url.username.length === 0 &&
+      url.password.length === 0;
   } catch {
     return false;
   }
@@ -50,15 +67,29 @@ function hasOnlyKeys(record: Record<string, unknown>, allowed: Set<string>): boo
   return Object.keys(record).every((key) => allowed.has(key));
 }
 
+function isBoundedText(value: unknown, allowEmpty = false): value is string {
+  return typeof value === "string" &&
+    (allowEmpty || value.length > 0) &&
+    textEncoder.encode(value).byteLength <= MAX_OPENAI_WEB_SEARCH_TEXT_BYTES;
+}
+
 export function resolveOpenAIWebSearchDescriptor(
-  tools: Array<
-    | ProviderTool
-    | { type: "function"; name: string; description?: string; inputSchema: unknown }
-  > | undefined,
+  tools:
+    | Array<
+      | ProviderTool
+      | { type: "function"; name: string; description?: string; inputSchema: unknown }
+    >
+    | undefined,
 ): OpenAIWebSearchDescriptor | undefined {
   let resolved: OpenAIWebSearchDescriptor | undefined;
   for (const tool of tools ?? []) {
-    if (tool.type !== "provider" || !tool.id.startsWith("openai.")) continue;
+    if (
+      tool.type !== "provider" ||
+      typeof tool.id !== "string" ||
+      !tool.id.startsWith("openai.")
+    ) {
+      continue;
+    }
     const providerType = tool.id.slice("openai.".length);
     if (!OPENAI_WEB_SEARCH_TYPES.has(providerType)) {
       throw new TypeError(`Unsupported OpenAI provider tool: ${tool.id}`);
@@ -67,11 +98,21 @@ export function resolveOpenAIWebSearchDescriptor(
       throw new TypeError("Only one OpenAI web-search provider tool is supported per request");
     }
     if (
-      !hasOnlyKeys(tool.args, new Set(["searchContextSize"])) ||
-      (tool.args.searchContextSize !== undefined &&
-        tool.args.searchContextSize !== "low" &&
-        tool.args.searchContextSize !== "medium" &&
-        tool.args.searchContextSize !== "high")
+      !isBoundedOpenAIStreamString(
+        tool.name,
+        MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+      )
+    ) {
+      throw new TypeError("OpenAI web-search tool name was malformed");
+    }
+    const args = readRecord(tool.args);
+    if (
+      !args ||
+      !hasOnlyKeys(args, new Set(["searchContextSize"])) ||
+      (args.searchContextSize !== undefined &&
+        args.searchContextSize !== "low" &&
+        args.searchContextSize !== "medium" &&
+        args.searchContextSize !== "high")
     ) {
       throw new TypeError("OpenAI web-search tool arguments were unsupported");
     }
@@ -79,8 +120,8 @@ export function resolveOpenAIWebSearchDescriptor(
       name: tool.name,
       requestTool: {
         type: providerType,
-        ...(tool.args.searchContextSize !== undefined
-          ? { search_context_size: tool.args.searchContextSize }
+        ...(args.searchContextSize !== undefined
+          ? { search_context_size: args.searchContextSize }
           : {}),
       },
     };
@@ -95,7 +136,9 @@ export function normalizeOpenAIWebSearchCall(
   if (
     !isBoundedOpenAIStreamString(item.id, MAX_OPENAI_STREAM_IDENTIFIER_BYTES) ||
     item.type !== "web_search_call" ||
-    (item.status !== "completed" && item.status !== "incomplete")
+    (item.status !== "completed" &&
+      item.status !== "failed" &&
+      item.status !== "incomplete")
   ) {
     throw invalid("web-search output item identity or status was malformed");
   }
@@ -108,16 +151,19 @@ export function normalizeOpenAIWebSearchCall(
   if (action.type === "search") {
     if (
       !hasOnlyKeys(action, new Set(["type", "query", "queries", "sources"])) ||
-      (action.query !== undefined &&
-        (typeof action.query !== "string" || action.query.length === 0)) ||
+      (action.query !== undefined && !isBoundedText(action.query, true)) ||
       (action.queries !== undefined &&
         (!Array.isArray(action.queries) ||
-          action.queries.some((query) => typeof query !== "string" || query.length === 0)))
+          action.queries.length > MAX_OPENAI_WEB_SEARCH_VALUES ||
+          action.queries.some((query) => !isBoundedText(query, true))))
     ) {
       throw invalid("web-search search action was malformed");
     }
     if (action.sources !== undefined) {
-      if (!Array.isArray(action.sources)) {
+      if (
+        !Array.isArray(action.sources) ||
+        action.sources.length > MAX_OPENAI_WEB_SEARCH_VALUES
+      ) {
         throw invalid("web-search sources were malformed");
       }
       sources = action.sources.map((source) => {
@@ -136,7 +182,9 @@ export function normalizeOpenAIWebSearchCall(
   } else if (action.type === "open_page") {
     if (
       !hasOnlyKeys(action, new Set(["type", "url"])) ||
-      !isHttpUrl(action.url)
+      (action.url !== undefined &&
+        action.url !== null &&
+        !isHttpUrl(action.url))
     ) {
       throw invalid("web-search open-page action was malformed");
     }
@@ -144,8 +192,7 @@ export function normalizeOpenAIWebSearchCall(
     if (
       !hasOnlyKeys(action, new Set(["type", "url", "pattern"])) ||
       !isHttpUrl(action.url) ||
-      typeof action.pattern !== "string" ||
-      action.pattern.length === 0
+      !isBoundedText(action.pattern)
     ) {
       throw invalid("web-search find-in-page action was malformed");
     }
@@ -154,16 +201,23 @@ export function normalizeOpenAIWebSearchCall(
   }
 
   const { sources: _sources, ...invocationAction } = action;
+  const input = stringifyJsonValue(invocationAction);
+  if (
+    textEncoder.encode(input).byteLength >
+      MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES
+  ) {
+    throw invalid("web-search action exceeded the tool-input limit");
+  }
   return {
     id: item.id,
-    input: stringifyJsonValue(invocationAction),
+    input,
     result: item.status === "completed"
       ? {
         status: "completed",
         ...(sources !== undefined ? { sources } : {}),
       }
-      : { status: "incomplete", action },
-    isError: item.status === "incomplete",
+      : { status: item.status, action },
+    isError: item.status !== "completed",
   };
 }
 
@@ -182,9 +236,9 @@ export function validateOpenAIUrlCitation(
     !Number.isSafeInteger(annotation.start_index) ||
     (annotation.start_index as number) < 0 ||
     !Number.isSafeInteger(annotation.end_index) ||
-    (annotation.end_index as number) < (annotation.start_index as number) ||
+    (annotation.end_index as number) <= (annotation.start_index as number) ||
     !isHttpUrl(annotation.url) ||
-    typeof annotation.title !== "string"
+    !isBoundedText(annotation.title, true)
   ) {
     throw invalid("URL citation annotation was malformed");
   }
@@ -202,8 +256,33 @@ export function readOpenAIRawResponseOutputItems(
 ): Array<Record<string, unknown>> | undefined {
   if (!providerMetadata || providerMetadata.openai === undefined) return undefined;
   const openai = readRecord(providerMetadata.openai);
-  if (!openai || !Array.isArray(openai.rawResponseOutputItems)) {
+  if (!openai || !Object.hasOwn(openai, "rawResponseOutputItems")) {
+    return undefined;
+  }
+  if (!Array.isArray(openai.rawResponseOutputItems)) {
     throw new TypeError("OpenAI raw response metadata was malformed");
+  }
+  if (openai.rawResponseOutputItems.length === 0) {
+    throw new TypeError("OpenAI raw response metadata contained no output items");
+  }
+  if (
+    openai.rawResponseOutputItems.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+  ) {
+    throw new TypeError("OpenAI raw response metadata contained too many output items");
+  }
+  let serialized: string;
+  try {
+    serialized = stringifyJsonValue(openai.rawResponseOutputItems);
+  } catch {
+    throw new TypeError("OpenAI raw response metadata was not serializable");
+  }
+  if (
+    textEncoder.encode(serialized).byteLength >
+      MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES
+  ) {
+    throw new TypeError(
+      `OpenAI raw response metadata exceeded ${MAX_OPENAI_RAW_RESPONSE_METADATA_BYTES} UTF-8 bytes`,
+    );
   }
   const seenIds = new Set<string>();
   return openai.rawResponseOutputItems.map((value) => {
@@ -219,7 +298,125 @@ export function readOpenAIRawResponseOutputItems(
     ) {
       throw new TypeError("OpenAI raw response metadata item was malformed");
     }
+    const validStatus = item.status === undefined ||
+      item.status === "completed" ||
+      item.status === "incomplete" ||
+      (item.type === "web_search_call" && item.status === "failed");
+    if (!validStatus) {
+      throw new TypeError("OpenAI raw response metadata item was malformed");
+    }
+    try {
+      validateRawOutputItem(item);
+    } catch {
+      throw new TypeError("OpenAI raw response metadata item was malformed");
+    }
     seenIds.add(item.id);
     return item;
   });
+}
+
+function validateRawOutputItem(item: Record<string, unknown>): void {
+  if (item.type === "web_search_call") {
+    normalizeOpenAIWebSearchCall(item, (issue) => new TypeError(issue));
+    return;
+  }
+  if (item.type === "function_call") {
+    if (
+      !isBoundedOpenAIStreamString(
+        item.call_id,
+        MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+      ) ||
+      !isBoundedOpenAIStreamString(
+        item.name,
+        MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+      ) ||
+      typeof item.arguments !== "string" ||
+      textEncoder.encode(item.arguments).byteLength >
+        MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES ||
+      !isJsonObjectText(item.arguments)
+    ) {
+      throw new TypeError("function call was malformed");
+    }
+    return;
+  }
+  if (item.type === "message") {
+    if (
+      item.role !== "assistant" ||
+      !Array.isArray(item.content) ||
+      item.content.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+    ) {
+      throw new TypeError("message was malformed");
+    }
+    for (const value of item.content) {
+      const part = readRecord(value);
+      if (!part) throw new TypeError("message part was malformed");
+      if (part.type === "output_text") {
+        const annotations = part.annotations ?? [];
+        if (
+          typeof part.text !== "string" ||
+          !Array.isArray(annotations) ||
+          annotations.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+        ) {
+          throw new TypeError("output text was malformed");
+        }
+        for (const annotation of annotations) {
+          const citation = validateOpenAIUrlCitation(
+            annotation,
+            (issue) => new TypeError(issue),
+          );
+          if ((citation.end_index as number) > part.text.length) {
+            throw new TypeError("citation exceeded output text");
+          }
+        }
+      } else if (part.type === "refusal") {
+        if (
+          typeof part.refusal !== "string" ||
+          part.annotations !== undefined
+        ) {
+          throw new TypeError("refusal was malformed");
+        }
+      } else {
+        throw new TypeError("message part type was unsupported");
+      }
+    }
+    return;
+  }
+  if (item.type === "reasoning") {
+    validateRawReasoningParts(item.summary, "summary_text");
+    validateRawReasoningParts(item.content, "reasoning_text");
+    if (
+      item.encrypted_content !== undefined &&
+      typeof item.encrypted_content !== "string"
+    ) {
+      throw new TypeError("reasoning signature was malformed");
+    }
+  }
+}
+
+function validateRawReasoningParts(
+  value: unknown,
+  expectedType: "summary_text" | "reasoning_text",
+): void {
+  if (value === undefined) return;
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_OPENAI_RAW_RESPONSE_OUTPUT_ITEMS
+  ) {
+    throw new TypeError("reasoning parts were malformed");
+  }
+  for (const rawPart of value) {
+    const part = readRecord(rawPart);
+    if (
+      !part ||
+      part.type !== expectedType ||
+      typeof part.text !== "string" ||
+      (part.id !== undefined &&
+        !isBoundedOpenAIStreamString(
+          part.id,
+          MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+        ))
+    ) {
+      throw new TypeError("reasoning part was malformed");
+    }
+  }
 }

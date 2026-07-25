@@ -15,6 +15,7 @@ import {
 } from "./openai-tool-input.ts";
 import {
   isBoundedOpenAIStreamString,
+  MAX_OPENAI_STREAM_CONTENT_PARTS,
   MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
   MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
 } from "./openai-stream-metadata.ts";
@@ -160,8 +161,14 @@ function extractOpenAIContentText(
   if (!Array.isArray(content)) {
     throw invalidOpenAIStream(context, "choice delta content had an invalid type");
   }
+  if (content.length > MAX_OPENAI_STREAM_CONTENT_PARTS) {
+    throw invalidOpenAIStream(
+      context,
+      `choice delta content exceeded ${MAX_OPENAI_STREAM_CONTENT_PARTS} parts`,
+    );
+  }
 
-  let text = "";
+  const textParts: string[] = [];
   for (const part of content) {
     const record = readRecord(part);
     if (!record) {
@@ -171,15 +178,17 @@ function extractOpenAIContentText(
       if (typeof record.text !== "string") {
         throw invalidOpenAIStream(context, "choice delta text part was malformed");
       }
-      text += record.text;
+      textParts.push(record.text);
     } else if (record.type === "refusal") {
       if (typeof record.refusal !== "string") {
         throw invalidOpenAIStream(context, "choice delta refusal part was malformed");
       }
-      text += record.refusal;
+      textParts.push(record.refusal);
+    } else {
+      throw invalidOpenAIStream(context, "choice delta content part type was unsupported");
     }
   }
-  return text;
+  return textParts.join("");
 }
 
 function assertCompleteToolInput(
