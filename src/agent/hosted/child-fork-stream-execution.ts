@@ -492,6 +492,7 @@ export async function executeHostedChildForkStream(
   let shouldSeparateNextTextBlock = false;
   let softIdleHeartbeatCount = 0;
   const mirroredSourceDocumentIds = new Set<string>();
+  const derivedMirroredSourceDocumentIds = new Set<string>();
 
   if (input.durableRunMirror) {
     input.markDurableStepStarted();
@@ -613,10 +614,19 @@ export async function executeHostedChildForkStream(
 
       for (const mirroredChunk of mirroredChunks) {
         if (mirroredChunk.type === "source-document") {
-          if (mirroredSourceDocumentIds.has(mirroredChunk.sourceId)) {
+          const replacesDerivedSource = part.type === "source" &&
+            mirroredSourceDocumentIds.has(mirroredChunk.sourceId) &&
+            derivedMirroredSourceDocumentIds.delete(mirroredChunk.sourceId);
+          if (
+            mirroredSourceDocumentIds.has(mirroredChunk.sourceId) &&
+            !replacesDerivedSource
+          ) {
             continue;
           }
           mirroredSourceDocumentIds.add(mirroredChunk.sourceId);
+          if (part.type === "tool-result") {
+            derivedMirroredSourceDocumentIds.add(mirroredChunk.sourceId);
+          }
         }
 
         if (isAlreadyMirroredHostedChunk(part.type, mirroredChunk.type)) {

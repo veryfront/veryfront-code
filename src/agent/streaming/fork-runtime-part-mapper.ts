@@ -185,6 +185,30 @@ export function mapAgUiRuntimeEventToForkParts(
     case "text-delta":
       return typeof event.delta === "string" ? [{ type: "text-delta", text: event.delta }] : [];
 
+    case "source-document": {
+      const sourceId = typeof event.sourceId === "string" && event.sourceId.length > 0
+        ? event.sourceId
+        : null;
+      const mediaType = typeof event.mediaType === "string" && event.mediaType.length > 0
+        ? event.mediaType
+        : null;
+      if (!sourceId || !mediaType) {
+        return [];
+      }
+      return [{
+        type: "source",
+        id: sourceId,
+        sourceType: "document",
+        mediaType,
+        ...(typeof event.title === "string" && event.title.length > 0
+          ? { title: event.title }
+          : {}),
+        ...(typeof event.filename === "string" && event.filename.length > 0
+          ? { filename: event.filename }
+          : {}),
+      }];
+    }
+
     case "tool-input-start": {
       const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : null;
       const toolName = typeof event.toolName === "string" ? event.toolName : null;

@@ -43,6 +43,15 @@ interface ForkErrorPart {
   error: Error;
 }
 
+interface ForkSourceDocumentPart {
+  type: "source";
+  id: string;
+  sourceType: "document";
+  mediaType: string;
+  title?: string;
+  filename?: string;
+}
+
 /** Public API contract for fork runtime step. */
 export interface ForkRuntimeStep {
   text: string;
@@ -64,6 +73,7 @@ export interface ForkRuntimeStep {
 /** Public API contract for fork part. */
 export type ForkPart =
   | ForkStreamPart
+  | ForkSourceDocumentPart
   | ForkToolInputStartPart
   | ForkToolInputDeltaPart
   | ForkToolCallPart

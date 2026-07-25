@@ -7,6 +7,31 @@ import {
 } from "./fork-runtime-part-mapper.ts";
 
 describe("agent/fork-runtime-part-mapper", () => {
+  it("preserves authoritative source metadata for child stream mirroring", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    assertEquals(
+      mapAgUiRuntimeEventToForkParts(
+        {
+          type: "source-document",
+          sourceId: "knowledge/product/limits.md",
+          mediaType: "text/x-markdown",
+          title: "Curated product limits",
+          filename: "limits.md",
+        },
+        state,
+      ),
+      [{
+        type: "source",
+        id: "knowledge/product/limits.md",
+        sourceType: "document",
+        mediaType: "text/x-markdown",
+        title: "Curated product limits",
+        filename: "limits.md",
+      }],
+    );
+  });
+
   it("emits a missing tool-call before a final tool-result", () => {
     const state = createForkRuntimeStreamMappingState();
 
