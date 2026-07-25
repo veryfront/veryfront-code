@@ -4,6 +4,7 @@ import type {
   ChatToolResultPart,
   ChatUiMessage,
   ChatUiMessagePart,
+  ChatUiMessageRole,
   ProviderModelMessage,
 } from "./types.ts";
 
@@ -196,6 +197,47 @@ export interface ReasoningPartLike {
 /** Chat UI tool part with a call ID and state. */
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+/** Stored tool-call replay part accepted by provider conversion. */
+export type ChatProviderModelInputToolCallPart = {
+  type: "tool_call";
+  id?: string;
+  name?: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  toolCallId?: string;
+  toolName?: string;
+  input?: unknown;
+  state?: string;
+};
+
+/** Stored tool-result replay part accepted by provider conversion. */
+export type ChatProviderModelInputToolResultPart = {
+  type: "tool_result";
+  id?: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  toolCallId?: string;
+  toolName?: string;
+  name?: string;
+  output?: unknown;
+  is_error?: boolean;
+  isError?: boolean;
+};
+
+/** Message part accepted by provider conversion. */
+export type ChatProviderModelInputPart =
+  | ChatUiMessagePart
+  | ChatProviderModelInputToolCallPart
+  | ChatProviderModelInputToolResultPart;
+
+/** Message accepted by provider conversion. */
+export interface ChatProviderModelInputMessage<TMessageMetadata = unknown> {
+  id: string;
+  role: ChatUiMessageRole;
+  parts: ChatProviderModelInputPart[];
+  metadata?: TMessageMetadata;
+}
 
 /** Shared UUID pattern value. */
 export const UUID_PATTERN =
@@ -808,7 +850,7 @@ function buildToolResultOutput(toolPart: { state: string; output?: unknown; erro
   return null;
 }
 
-function convertSystemMessage(message: ChatUiMessage): ProviderModelMessage[] {
+function convertSystemMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
   const content = message.parts.flatMap((part) => (isTextPart(part) ? [part.text] : [])).join("");
   if (content.length === 0) {
     return [];
@@ -822,7 +864,7 @@ function convertSystemMessage(message: ChatUiMessage): ProviderModelMessage[] {
   ];
 }
 
-function convertUserMessage(message: ChatUiMessage): ProviderModelMessage[] {
+function convertUserMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
   const content: Array<
     { type: "text"; text: string } | {
       type: "file" | "image";
@@ -859,7 +901,7 @@ function convertUserMessage(message: ChatUiMessage): ProviderModelMessage[] {
   ];
 }
 
-function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[] {
+function convertAssistantMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
   const rawToolNamesById = buildRawToolNameMap(message.parts);
   const assistantContent: Array<
     | { type: "text"; text: string }
@@ -1033,7 +1075,7 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   return messages;
 }
 
-function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
+function convertToolMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
   const rawToolNameMap = buildRawToolNameMap(message.parts);
   const toolResults: ChatToolResultPart[] = [];
 
@@ -1060,7 +1102,7 @@ function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
 
 /** Convert UI messages to provider model messages. */
 export function convertUiMessagesToProviderModelMessages(
-  messages: ChatUiMessage[],
+  messages: readonly ChatProviderModelInputMessage[],
 ): ProviderModelMessage[] {
   const providerMessages: ProviderModelMessage[] = [];
 

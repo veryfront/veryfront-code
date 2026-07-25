@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ChatProviderModelInputMessage } from "#veryfront/chat/conversation";
 import type { ChatUiMessage, ProviderModelMessage } from "veryfront/chat/types";
 import {
   apiConversationSchema,
@@ -390,7 +391,7 @@ describe("chat/conversation helpers", () => {
 
 describe("convertUiMessagesToProviderModelMessages", () => {
   it("converts assistant tool UI parts into assistant and tool provider model messages", () => {
-    const messages: ChatUiMessage[] = [
+    const messages: ChatProviderModelInputMessage[] = [
       {
         id: "message-1",
         role: "assistant",
@@ -440,7 +441,7 @@ describe("convertUiMessagesToProviderModelMessages", () => {
   });
 
   it("passes through pre-split role:tool messages from normalized replay history", () => {
-    const messages: ChatUiMessage[] = [
+    const messages: ChatProviderModelInputMessage[] = [
       {
         id: "message-1",
         role: "assistant",
@@ -529,7 +530,7 @@ describe("convertUiMessagesToProviderModelMessages", () => {
   });
 
   it("groups interleaved persisted tool call/result parts from one assistant turn", () => {
-    const messages: ChatUiMessage[] = [
+    const messages: ChatProviderModelInputMessage[] = [
       {
         id: "assistant-interleaved",
         role: "assistant",
@@ -610,7 +611,7 @@ describe("convertUiMessagesToProviderModelMessages", () => {
   });
 
   it("groups consecutive role:tool replay messages after parallel tool calls", () => {
-    const messages: ChatUiMessage[] = [
+    const messages: ChatProviderModelInputMessage[] = [
       {
         id: "message-1",
         role: "assistant",
