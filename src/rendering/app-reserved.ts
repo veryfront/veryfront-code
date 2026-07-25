@@ -73,7 +73,12 @@ export function createErrorBoundary(
   };
 }
 
-export async function tryLoadReservedInDirs(
+/**
+ * Like {@link tryLoadReservedInDirs}, but also returns the absolute source path
+ * of the file that was loaded — the client hydration bundle needs the path (in
+ * the same absolute form as `appPath`) to load the same component in the browser.
+ */
+export async function loadReservedWithPath(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
@@ -82,7 +87,7 @@ export async function tryLoadReservedInDirs(
   projectId?: string,
   contentSourceId?: string,
   reactVersion?: string,
-): Promise<ReservedComponent | null> {
+): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
   const { loadComponentFromSource } = await import(
@@ -100,7 +105,9 @@ export async function tryLoadReservedInDirs(
           contentSourceId,
           reactVersion,
         });
-        if (typeof Cmp === "function") return Cmp as ReservedComponent;
+        if (typeof Cmp === "function") {
+          return { component: Cmp as ReservedComponent, filePath: file };
+        }
       } catch (_) {
         /* expected: component not found in this path, continue to next */
       }
@@ -108,4 +115,27 @@ export async function tryLoadReservedInDirs(
   }
 
   return null;
+}
+
+export async function tryLoadReservedInDirs(
+  dirs: string[],
+  which: keyof typeof RESERVED_COMPONENTS,
+  projectDir: string,
+  mode: "development" | "production",
+  adapter: RuntimeAdapter,
+  projectId?: string,
+  contentSourceId?: string,
+  reactVersion?: string,
+): Promise<ReservedComponent | null> {
+  const loaded = await loadReservedWithPath(
+    dirs,
+    which,
+    projectDir,
+    mode,
+    adapter,
+    projectId,
+    contentSourceId,
+    reactVersion,
+  );
+  return loaded?.component ?? null;
 }

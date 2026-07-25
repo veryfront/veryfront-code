@@ -185,7 +185,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       });
       return true;
     };
-    const rejectUnresolvedCompletedToolCalls = (message: string): boolean => {
+    const rejectUnresolvedTerminalToolCalls = (message: string): boolean => {
       let rejected = false;
       for (const openToolCall of openToolCalls.values()) {
         if (!openToolCall.requiresResult) {
@@ -206,7 +206,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       return rejected;
     };
     const closeOpenBatchBeforeContinuation = (): void => {
-      rejectUnresolvedCompletedToolCalls(
+      rejectUnresolvedTerminalToolCalls(
         "terminal tool_call requires an adjacent tool_result before conversation continuation",
       );
       openToolCalls.clear();
@@ -443,7 +443,7 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       closeOpenBatchAfterSameMessageContinuation();
     }
 
-    rejectUnresolvedCompletedToolCalls("terminal tool_call requires a matching tool_result");
+    rejectUnresolvedTerminalToolCalls("terminal tool_call requires a matching tool_result");
   })
 );
 
