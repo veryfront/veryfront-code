@@ -6,7 +6,7 @@ import { deriveKnowledgeSourceDocumentChunk } from "./knowledge-source-document.
 const KNOWLEDGE_PATH =
   "knowledge/knowledge-ingest-20260723131451088-6d16440c-veryfront-equity-story-13july26.md";
 
-describe("agent/streaming/knowledge-source-document", () => {
+describe("chat/knowledge-source-document", () => {
   it("preserves a canonical get_file knowledge path character-for-character", () => {
     assertEquals(
       deriveKnowledgeSourceDocumentChunk({
@@ -27,7 +27,7 @@ describe("agent/streaming/knowledge-source-document", () => {
     assertEquals(
       deriveKnowledgeSourceDocumentChunk({
         toolName: "get_file",
-        output: { structuredContent: { path: KNOWLEDGE_PATH } },
+        output: { structuredContent: { path: KNOWLEDGE_PATH, content: "# Equity story" } },
       })?.sourceId,
       KNOWLEDGE_PATH,
     );
@@ -50,6 +50,13 @@ describe("agent/streaming/knowledge-source-document", () => {
     );
     assertEquals(
       deriveKnowledgeSourceDocumentChunk({ toolName: "get_file", output: {} }),
+      null,
+    );
+    assertEquals(
+      deriveKnowledgeSourceDocumentChunk({
+        toolName: "get_file",
+        output: { path: KNOWLEDGE_PATH },
+      }),
       null,
     );
   });

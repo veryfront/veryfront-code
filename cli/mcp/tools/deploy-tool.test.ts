@@ -329,7 +329,11 @@ describe("mcp/tools/deploy-tool", () => {
         const mismatchResult = await withMockFetch(handleRequest, runDeploy);
 
         assertEquals(mismatchResult.success, false);
-        assertEquals(mismatchResult.error?.includes("does not match pushed commit"), true);
+        assertEquals(
+          mismatchResult.error?.includes("does not match pushed commit"),
+          true,
+          mismatchResult.error,
+        );
         assertEquals(
           capturedRequests.map(({ method, url }) => `${method} ${new URL(url).pathname}`),
           [
@@ -462,6 +466,37 @@ describe("mcp/tools/deploy-tool", () => {
           result.error,
           "Not authenticated. Run 'veryfront login' first.",
         );
+      } finally {
+        if (originalToken !== undefined) {
+          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+        } else {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+        }
+      }
+    });
+
+    it("does not treat 401 digits embedded in another error as an auth failure", async () => {
+      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const sourceError =
+        "Release rel-42 source does not match pushed commit abc401def0000000000000000000000000000000";
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "test-token-abc");
+
+        const result = await withMockFetch(
+          async () =>
+            Response.json({ error: "release_mismatch", message: sourceError }, {
+              status: 500,
+            }),
+          async () =>
+            await triggerDeploy({
+              projectSlug: "my-app",
+              environment: "production",
+              branch: "main",
+            }),
+        );
+
+        assertEquals(result.success, false);
+        assertEquals(result.error, sourceError);
       } finally {
         if (originalToken !== undefined) {
           Deno.env.set("VERYFRONT_API_TOKEN", originalToken);

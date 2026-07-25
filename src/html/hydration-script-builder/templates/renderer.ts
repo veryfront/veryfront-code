@@ -224,6 +224,29 @@ export const getRendererScript = () => `
           }
         }
 
+        // App-router error.tsx boundary. Wraps the page (inside the providers,
+        // matching the server wrap) so a throw during render/hydration is caught
+        // on the client and error.tsx renders — with a working reset().
+        if (data.errorPath) {
+          const ErrorComponent = await loadHydrationComponent(data.errorPath, shouldRenderRscClientPage);
+          if (ErrorComponent) {
+            class AppRouterErrorBoundary extends React.Component {
+              constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+              static getDerivedStateFromError(error) { return { hasError: true, error: error }; }
+              render() {
+                if (this.state.hasError) {
+                  return React.createElement(ErrorComponent, {
+                    error: this.state.error,
+                    reset: () => this.setState({ hasError: false, error: null }),
+                  });
+                }
+                return this.props.children;
+              }
+            }
+            tree = React.createElement(AppRouterErrorBoundary, null, tree);
+          }
+        }
+
         const headings = data.headings || [];
         const pageContext = {
           slug: data.slug || '',
@@ -231,6 +254,7 @@ export const getRendererScript = () => `
           params: normalizedParams,
           query: Object.fromEntries(new URLSearchParams(window.location.search)),
           frontmatter: data.frontmatter || {},
+          data: data.props || {},
           headings,
           mdxHeadings: headings, // Alias for backwards compatibility
         };

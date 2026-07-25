@@ -257,9 +257,11 @@ export class ConversationRunEventEncoder {
       }
 
       case "source-document":
+      case "source-url":
+      case "file":
         return [{
           type: conversationRunEventTypes.custom,
-          name: "source-document",
+          name: chunk.type,
           value: chunk,
         }];
 
@@ -267,8 +269,6 @@ export class ConversationRunEventEncoder {
       case "finish":
       case "abort":
       case "message-metadata":
-      case "source-url":
-      case "file":
       case "tool-approval-request":
       case "start-step":
       case "finish-step":

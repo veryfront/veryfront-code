@@ -282,6 +282,7 @@ export class LayoutOrchestrator {
     headings?: Array<{ id: string; text: string; level: number }>,
     projectSlug?: string,
     clientPageIsland?: { clientLayoutPaths: readonly string[] },
+    pageProps?: Record<string, unknown>,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
@@ -307,6 +308,7 @@ export class LayoutOrchestrator {
           requestUrl,
           params,
           frontmatter,
+          pageProps,
           headings,
           reactVersion,
         });

@@ -11,6 +11,8 @@ export interface HydrationDataStructure {
   params: Record<string, string | string[]>;
   layouts: HydrationLayout[];
   appPath?: string;
+  /** Project-relative path to the app-router error.tsx that wraps the page (client boundary). */
+  errorPath?: string;
   /** Project-relative directory that contains App Router routes. */
   appRouterRoot?: string;
   /** The page and advertised client layouts mount inside a server-owned layout island. */

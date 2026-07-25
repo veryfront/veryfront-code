@@ -9,6 +9,22 @@ DOM semantics, compatibility impact, security defaults, and migration risk
 belong in the RFC or in its breaking-change ledger. Do not use `TBD` in public
 contract tables.
 
-Move accepted current-state implementation details into
-[`docs/architecture/`](../architecture/) only after the corresponding code
-exists.
+Architecture pages in [docs/architecture/](../architecture/) describe how
+Veryfront works today. Move accepted current-state implementation details into
+architecture or guide docs only after the corresponding code exists.
+
+## Index
+
+| RFC                                     | Title                                | Status |
+| --------------------------------------- | ------------------------------------ | ------ |
+| [0001](./0001-ui-primitive-adapters.md) | Bring-your-own UI primitive adapters | Draft  |
+| [0029](./29-chat-api-shape.md)          | Chat API shape                       | Draft  |
+
+## Writing an RFC
+
+- Number sequentially: `NNNN-kebab-title.md`.
+- Open with the metadata table (Status, Author, Created, Branch, Affects).
+- Lead with a one-paragraph summary a reader can act on.
+- Prefer concrete file paths, real code boundaries, and quoted current behavior
+  over abstractions.
+- Include goals, non-goals, alternatives considered, risks, and open questions.

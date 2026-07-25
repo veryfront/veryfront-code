@@ -1,5 +1,6 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { compile } from "npm:@mdx-js/mdx@3.1.1";
 
 describe("generate-api-reference", () => {
   it("documents alias re-exports from Deno doc reference declarations", async () => {
@@ -43,6 +44,15 @@ describe("generate-api-reference", () => {
       const rootReference = await Deno.readTextFile(
         `${outputDir}/veryfront/index.md`,
       );
+      const clientReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/index.client.md`,
+      );
+      const uiReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/ui.md`,
+      );
+      const providerReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/provider.md`,
+      );
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
@@ -50,9 +60,28 @@ describe("generate-api-reference", () => {
         false,
         "generated reference pages must not duplicate the frontmatter description as body copy",
       );
+      assertEquals(
+        clientReference.includes("#veryfront/"),
+        false,
+        "generated client reference must not expose internal import specifiers",
+      );
+      assertStringIncludes(
+        uiReference,
+        "| `AppShellProps` | Props accepted by `AppShell`. |",
+      );
       assertStringIncludes(
         routerReference,
         "| Name | Description | Source |",
+      );
+      assertStringIncludes(
+        providerReference,
+        "| `RuntimeMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L1) |",
+        "first-line declarations must keep a source anchor",
+      );
+      assertStringIncludes(
+        providerReference,
+        "| `ModelRuntimeGenerateResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L8) |",
+        "Deno's zero-based locations must render as one-based GitHub anchors",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning
@@ -124,6 +153,13 @@ describe("generate-api-reference", () => {
         const markdown = await Deno.readTextFile(
           `${outputDir}/veryfront/${entry.name}`,
         );
+        try {
+          await compile(markdown);
+        } catch (error) {
+          throw new Error(`${entry.name} must compile as MDX`, {
+            cause: error,
+          });
+        }
         for (const line of markdown.split("\n")) {
           const description =
             line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
@@ -168,6 +204,11 @@ describe("generate-api-reference", () => {
           markdown.includes("#L0"),
           false,
           `${entry.name} must not contain invalid source line anchors`,
+        );
+        assertEquals(
+          markdown.includes("{@"),
+          false,
+          `${entry.name} must not contain raw inline JSDoc tags`,
         );
       }
     } finally {

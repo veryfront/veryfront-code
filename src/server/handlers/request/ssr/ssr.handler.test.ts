@@ -1,6 +1,6 @@
 import { RENDER_ERROR } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isProductionMode, SSRHandler } from "./ssr.handler.ts";
 import type { HandlerContext } from "../../types.ts";
@@ -201,6 +201,39 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
       assertEquals(result.continue, false);
       assertEquals(result.response!.status, 500);
+    });
+
+    it("returns app-router error boundary HTML without probing legacy error pages", async () => {
+      const mockService = createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 500,
+            html: "<html><body>segment boundary</body></html>",
+            isStreaming: false,
+            cacheStrategy: "no-cache" as const,
+            errorType: "app-router-error-boundary" as const,
+            error: new Error("Render failed"),
+            slug: "broken",
+          }),
+      });
+      const adapter = createMockAdapter();
+      const statted: string[] = [];
+      const inner = adapter.fs.stat;
+      adapter.fs.stat = (path: string) => {
+        statted.push(path);
+        return inner(path);
+      };
+      const handler = new SSRHandler(mockService);
+
+      const result = await handler.handle(
+        new Request("http://localhost/broken"),
+        makeCtx({ adapter }),
+      );
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response!.status, 500);
+      assertStringIncludes(await result.response!.text(), "segment boundary");
+      assertEquals(statted.some((path) => path.endsWith("/pages")), false);
     });
 
     it("passes slug correctly from URL to service", async () => {

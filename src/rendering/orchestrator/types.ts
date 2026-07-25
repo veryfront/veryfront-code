@@ -32,6 +32,8 @@ export interface RenderOptions {
   params?: Record<string, string | string[]>;
   props?: Record<string, unknown>;
   delivery?: "string" | "stream";
+  /** Set on the SSR error path: absolute path to the app-router error.tsx to hydrate. */
+  errorPath?: string;
   request?: Request;
   /** Internal signal for the render owner's total deadline. */
   abortSignal?: AbortSignal;
@@ -96,6 +98,8 @@ export interface PageDataResponse {
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
   appPath?: string;
+  /** Project-relative path to the app-router error.tsx that wraps the page (client boundary). */
+  errorPath?: string;
   /** Page and client layout modules render inside a server-owned layout island. */
   isolatedClientPage?: boolean;
   /** Server-owned layout markup requires a document navigation for this target. */

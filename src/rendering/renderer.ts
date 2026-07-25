@@ -917,6 +917,7 @@ export class Renderer {
       elementValidator: shared.elementValidator,
       ssrRenderer,
       htmlGenerator,
+      layoutOrchestrator,
     });
 
     const pipelineCacheCoordinator = {
