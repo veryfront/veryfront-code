@@ -23,6 +23,12 @@ interface TransformConfig {
   reactVersion?: string;
   /** JSX import source */
   jsxImportSource?: string;
+  /** Module server URL for rewritten browser imports */
+  moduleServerUrl?: string;
+  /** Vendor bundle hash for rewritten vendor imports */
+  vendorBundleHash?: string;
+  /** API base URL for rewritten cross-project imports */
+  apiBaseUrl?: string;
   /** Enable Studio Navigator embed */
   studioEmbed?: boolean;
   /** Development mode */
@@ -39,6 +45,9 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     transformVersion: VERSION,
     reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
     jsxImportSource: config.jsxImportSource ?? "react",
+    moduleServerUrl: config.moduleServerUrl ?? null,
+    vendorBundleHash: config.vendorBundleHash ?? null,
+    apiBaseUrl: config.apiBaseUrl ?? null,
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
     csstype: CSSTYPE_VERSION,
@@ -58,9 +67,17 @@ export function computeConfigHashSync(config: TransformConfig): string {
     `v${VERSION}`,
     config.reactVersion ?? DEFAULT_REACT_VERSION,
     config.jsxImportSource ?? "react",
+    encodeConfigPart("modules", config.moduleServerUrl),
+    encodeConfigPart("vendor", config.vendorBundleHash),
+    encodeConfigPart("api", config.apiBaseUrl),
     config.studioEmbed ? "studio" : "",
     config.dev ? "dev" : "",
   ].filter(Boolean);
 
   return parts.join(":");
+}
+
+function encodeConfigPart(label: string, value: string | undefined): string {
+  if (!value) return "";
+  return `${label}:${value.length}:${value}`;
 }

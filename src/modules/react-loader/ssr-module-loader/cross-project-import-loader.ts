@@ -11,6 +11,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
+import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
@@ -47,17 +48,24 @@ function getRegistryBaseUrl(apiBaseUrl?: string): string {
   return resolvedApiBaseUrl.replace(/\/api\/?$/, "");
 }
 
-function getCrossProjectCacheKey(
-  specifier: string,
-  projectId: string,
-  reactVersion: string,
-  importMapFingerprint?: string,
+interface CrossProjectImportCacheKeyOptions {
+  specifier: string;
+  projectId: string;
+  reactVersion?: string;
+  registryBaseUrl: string;
+  importMapFingerprint?: string;
+}
+
+export function buildCrossProjectImportCacheKey(
+  options: CrossProjectImportCacheKeyOptions,
 ): string {
-  // Keep existing standalone cache identities stable. Hosted callers add the
-  // request-bound map fingerprint through a framed key.
-  return importMapFingerprint
-    ? JSON.stringify([specifier, projectId, reactVersion, importMapFingerprint])
-    : `${specifier}:${projectId}:${reactVersion}`;
+  const reactVersion = options.reactVersion ?? "default";
+  const registryKey = base64urlEncode(options.registryBaseUrl);
+  const baseKey =
+    `${options.specifier}:${options.projectId}:${reactVersion}:registry:${registryKey}`;
+  return options.importMapFingerprint
+    ? `${baseKey}:import-map:${options.importMapFingerprint}`
+    : baseKey;
 }
 
 export async function transformCrossProjectImportFlow(
@@ -76,18 +84,18 @@ export async function transformCrossProjectImportFlow(
   } = flowOptions;
 
   const { specifier, projectSlug, version, path } = crossProjectImport;
-  const reactVersion = options.reactVersion ?? "default";
-  const cacheKey = getCrossProjectCacheKey(
+  const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
+  const cacheKey = buildCrossProjectImportCacheKey({
     specifier,
-    options.projectId,
-    reactVersion,
-    options.importMapIdentity?.fingerprint,
-  );
+    projectId: options.projectId,
+    reactVersion: options.reactVersion,
+    registryBaseUrl,
+    importMapFingerprint: options.importMapIdentity?.fingerprint,
+  });
 
   const cachedEntry = globalCrossProjectCache.get(cacheKey);
   if (cachedEntry) return cachedEntry.tempPath;
 
-  const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
   const projectRef = `${projectSlug}@${version}`;
   const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
 

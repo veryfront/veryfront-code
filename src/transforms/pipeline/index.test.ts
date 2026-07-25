@@ -6,7 +6,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
   mkdir,
@@ -15,13 +15,19 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
+import * as esbuild from "veryfront/extensions/bundler";
 import { computeDependencyCacheIdentity } from "./dependency-cache-identity.ts";
+import { transformToESM } from "./index.ts";
 import { createPipelineReadFile } from "./read-file.ts";
 
 describe(
   "transform pipeline dependency identity",
   { sanitizeResources: false, sanitizeOps: false },
   () => {
+    afterAll(async () => {
+      await esbuild.stop();
+    });
+
     it("uses local fs for file:// deps outside projectDir", async () => {
       const projectDir = await makeTempDir({ prefix: "vf-pipeline-proj-" });
       const externalDir = await makeTempDir({ prefix: "vf-pipeline-ext-" });
@@ -120,6 +126,45 @@ describe(
         );
 
         assertEquals(adapterReads, [mainFile, mainFile]);
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("keeps browser transform cache entries separate by moduleServerUrl", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-cache-proj-" });
+      const mainFile = join(projectDir, "main.tsx");
+      const depFile = join(projectDir, "dep.ts");
+
+      try {
+        const mainSource = `import { dep } from "./dep";
+export default function App() { return dep; }`;
+
+        await writeTextFile(mainFile, mainSource);
+        await writeTextFile(depFile, "export const dep = 1;");
+
+        const adapter = {
+          fs: {
+            readFile: (path: string): Promise<string> => readTextFile(path),
+          },
+        };
+
+        const firstCode = await transformToESM(mainSource, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: true,
+          projectId: "test-project",
+          moduleServerUrl: "https://modules-a.example.test/_vf_modules",
+        });
+
+        const secondCode = await transformToESM(mainSource, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: true,
+          projectId: "test-project",
+          moduleServerUrl: "https://modules-b.example.test/_vf_modules",
+        });
+
+        assertStringIncludes(firstCode, "https://modules-a.example.test/_vf_modules");
+        assertStringIncludes(secondCode, "https://modules-b.example.test/_vf_modules");
       } finally {
         await remove(projectDir, { recursive: true });
       }

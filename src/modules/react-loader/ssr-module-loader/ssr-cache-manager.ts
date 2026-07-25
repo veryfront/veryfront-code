@@ -49,6 +49,7 @@ export class SSRCacheManager {
       const transformConfigHash = computeConfigHashSync({
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
+        apiBaseUrl: this.options.apiBaseUrl,
       });
       const importMapFingerprint = this.options.importMapIdentity?.fingerprint;
       this.cachedConfigHash = importMapFingerprint

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -92,6 +92,37 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(mapAKey, mapARepeatKey);
     assertEquals(mapAKey === mapBKey, false);
     assertEquals(mapAKey === standaloneKey, false);
+  });
+
+  it("separates SSR module cache identity by API base URL", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const baseOptions = {
+      projectDir,
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+      reactVersion: "19.1.1",
+    };
+
+    try {
+      const registryA = new SSRCacheManager({
+        ...baseOptions,
+        apiBaseUrl: "https://registry-a.example.com/api",
+      });
+      const registryB = new SSRCacheManager({
+        ...baseOptions,
+        apiBaseUrl: "https://registry-b.example.com/api",
+      });
+
+      assertNotEquals(registryA.getConfigHash(), registryB.getConfigHash());
+      assertNotEquals(
+        registryA.getCacheKey("/project/pages/index.tsx"),
+        registryB.getCacheKey("/project/pages/index.tsx"),
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
   });
 
   it("recovers missing vfmod dependencies for redis cache entries", async () => {

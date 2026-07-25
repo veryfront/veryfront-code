@@ -209,7 +209,7 @@ Reproducible evidence for this open checkpoint:
   and architecture ratchets, documentation validation, and every configured
   entrypoint typecheck.
 - The corrected test-server adapter passes the full lifecycle, dev-server, and
-  production-health suites: 48 steps pass, with one intentional dev-server
+  production-health suites: 47 steps pass, with one intentional dev-server
   virtual-module step ignored. It wraps readonly runtime handles and reports
   the actual ephemeral port instead of mutating production objects.
 
