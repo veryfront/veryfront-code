@@ -45,17 +45,86 @@ export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
  */
 export const hostedChatRuntimeOverridesSchema = lazySchema(getHostedChatRuntimeOverridesSchema);
 
+const getHostedChatRawToolCallPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool_call"),
+    id: v.string().min(1),
+    name: v.string().min(1),
+    input: v.record(v.string(), v.unknown()),
+    state: v.enum(["streaming", "pending", "completed", "error"]),
+  }).strip()
+);
+
+const getHostedChatRawToolResultPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool_result"),
+    tool_call_id: v.string().min(1),
+    output: v.unknown(),
+    is_error: v.boolean().optional(),
+    tool_name: v.string().min(1).optional(),
+  }).strip()
+);
+
+const getHostedChatRequestMessagePartSchema = defineSchema((v) =>
+  v.union([
+    getChatUiMessagePartSchema(),
+    getHostedChatRawToolCallPartSchema(),
+    getHostedChatRawToolResultPartSchema(),
+  ])
+);
+
 const getHostedChatRequestMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
     role: getChatUiMessageRoleSchema(),
-    parts: v.array(getChatUiMessagePartSchema()),
+    parts: v.array(getHostedChatRequestMessagePartSchema()),
     metadata: v.record(v.string(), v.unknown()).optional(),
   }).strip()
 );
 
 const getHostedChatRequestMessagesSchema = defineSchema((v) =>
-  v.array(getHostedChatRequestMessageSchema())
+  v.array(getHostedChatRequestMessageSchema()).superRefine((messages, ctx) => {
+    const knownToolNames = new Map<string, string>();
+
+    for (const [messageIndex, message] of messages.entries()) {
+      for (const [partIndex, part] of message.parts.entries()) {
+        if (part.type === "tool_call" && "id" in part && "name" in part) {
+          knownToolNames.set(part.id, part.name);
+          continue;
+        }
+
+        if (
+          part.type === "tool_call" && "toolCallId" in part && "toolName" in part &&
+          typeof part.toolName === "string"
+        ) {
+          knownToolNames.set(part.toolCallId, part.toolName);
+          continue;
+        }
+
+        if (part.type !== "tool_result") {
+          continue;
+        }
+
+        const knownToolName = knownToolNames.get(part.tool_call_id);
+        if (!knownToolName) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result requires a preceding matching tool_call",
+            path: [messageIndex, "parts", partIndex, "tool_name"],
+          });
+          continue;
+        }
+
+        if (part.tool_name && part.tool_name !== knownToolName) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result tool_name must match its preceding tool_call",
+            path: [messageIndex, "parts", partIndex, "tool_name"],
+          });
+        }
+      }
+    }
+  })
 );
 
 export const getHostedChatRequestSchema = defineSchema((v) =>

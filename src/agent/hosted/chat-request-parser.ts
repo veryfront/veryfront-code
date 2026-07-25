@@ -1,7 +1,10 @@
 import type {
   ChatRequestContext,
   ChatRuntimeOverrides,
+  ChatToolPartState,
   ChatUiMessage,
+  ChatUiMessagePart,
+  ChatUiMessageRole,
   DurableRootRunDescriptor,
 } from "#veryfront/chat/types.ts";
 import {
@@ -123,6 +126,106 @@ function normalizeProjectSlug(projectSlug: string | undefined): string | undefin
   return normalized || undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mapRawToolCallState(state: string): ChatToolPartState {
+  switch (state) {
+    case "streaming":
+      return "input-streaming";
+    case "pending":
+      return "pending";
+    case "error":
+      return "error";
+    default:
+      return "completed";
+  }
+}
+
+function normalizeHostedChatRequestMessages(
+  messages: HostedChatRequest["messages"],
+): ChatUiMessage[] {
+  const knownToolNames = new Map<string, string>();
+
+  return messages.map((message) => {
+    const parts: ChatUiMessagePart[] = [];
+    const partIndexByToolCallId = new Map<string, number>();
+
+    for (const part of message.parts) {
+      if (
+        part.type === "tool_call" && "toolCallId" in part && "toolName" in part &&
+        typeof part.toolCallId === "string" && typeof part.toolName === "string"
+      ) {
+        knownToolNames.set(part.toolCallId, part.toolName);
+        partIndexByToolCallId.set(part.toolCallId, parts.length);
+      }
+
+      if (isRecord(part) && part.type === "tool_call" && ("id" in part || "name" in part)) {
+        const rawPart: Record<string, unknown> = part;
+        const rawId = rawPart["id"];
+        const rawName = rawPart["name"];
+        const toolCallId = typeof rawId === "string" ? rawId : "";
+        const toolName = typeof rawName === "string" ? rawName : "";
+        const state = typeof part.state === "string" ? part.state : "completed";
+        if (!toolCallId || !toolName) continue;
+
+        knownToolNames.set(toolCallId, toolName);
+        partIndexByToolCallId.set(toolCallId, parts.length);
+        parts.push({
+          type: "tool_call",
+          toolCallId,
+          toolName,
+          input: isRecord(part.input) ? part.input : {},
+          state: mapRawToolCallState(state),
+        });
+        continue;
+      }
+
+      if (isRecord(part) && part.type === "tool_result") {
+        const toolCallId = typeof part.tool_call_id === "string" ? part.tool_call_id : "";
+        const explicitToolName = typeof part.tool_name === "string" ? part.tool_name : "";
+        const toolName = explicitToolName || knownToolNames.get(toolCallId);
+        if (!toolCallId || !toolName) continue;
+
+        const resultPart: ChatUiMessagePart = {
+          type: "tool_call",
+          toolCallId,
+          toolName,
+          input: {},
+          state: part.is_error === true ? "output-error" : "output-available",
+          output: part.output,
+          ...(part.is_error === true ? { errorText: String(part.output ?? "Tool error") } : {}),
+        };
+
+        const existingIndex = partIndexByToolCallId.get(toolCallId);
+        if (existingIndex !== undefined) {
+          const existingPart = parts[existingIndex];
+          if (existingPart && isRecord(existingPart)) {
+            parts[existingIndex] = {
+              ...existingPart,
+              state: resultPart.state,
+              output: resultPart.output,
+              ...(resultPart.errorText ? { errorText: resultPart.errorText } : {}),
+            } as ChatUiMessagePart;
+          }
+        } else {
+          parts.push(resultPart);
+        }
+        continue;
+      }
+
+      parts.push(part as ChatUiMessagePart);
+    }
+
+    return {
+      ...message,
+      role: message.role as ChatUiMessageRole,
+      parts,
+    };
+  });
+}
+
 function isBlankProjectSlug(projectSlug: string | undefined): boolean {
   return projectSlug !== undefined && !normalizeProjectSlug(projectSlug);
 }
@@ -228,7 +331,7 @@ export async function buildParsedHostedChatRequest(input: {
     agentId: input.agentId,
     userId: input.userId,
     authToken: input.authToken,
-    messages: messages as ChatUiMessage[],
+    messages: normalizeHostedChatRequestMessages(messages),
     validatedContext,
     projectId,
     projectSlug: verifiedProjectSlug,

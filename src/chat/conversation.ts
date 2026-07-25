@@ -197,32 +197,29 @@ export interface ReasoningPartLike {
 /** Chat UI tool part with a call ID and state. */
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type ProviderToolResultContent = {
+  type: "tool-result";
+  toolCallId: string;
+  toolName: string;
+  output:
+    | {
+      type: "json";
+      value: JsonValue;
+    }
+    | {
+      type: "error-text";
+      value: string;
+    };
+};
+type RawToolCallMessagePart = Extract<MessagePart, { type: "tool_call" }>;
+type RawToolResultMessagePart = Extract<MessagePart, { type: "tool_result" }>;
 
 /** Stored tool-call replay part accepted by provider conversion. */
-export type ChatProviderModelInputToolCallPart = {
-  type: "tool_call";
-  id?: string;
-  name?: string;
-  tool_call_id?: string;
-  tool_name?: string;
-  toolCallId?: string;
-  toolName?: string;
-  input?: unknown;
-  state?: string;
-};
+export type ChatProviderModelInputToolCallPart = RawToolCallMessagePart;
 
 /** Stored tool-result replay part accepted by provider conversion. */
-export type ChatProviderModelInputToolResultPart = {
-  type: "tool_result";
-  id?: string;
-  tool_call_id?: string;
+export type ChatProviderModelInputToolResultPart = RawToolResultMessagePart & {
   tool_name?: string;
-  toolCallId?: string;
-  toolName?: string;
-  name?: string;
-  output?: unknown;
-  is_error?: boolean;
-  isError?: boolean;
 };
 
 /** Message part accepted by provider conversion. */
@@ -820,6 +817,25 @@ function buildRawToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string>
   return toolNames;
 }
 
+function resolveRawToolResultPart(
+  rawResult: NonNullable<ReturnType<typeof getRawToolResultPart>>,
+  rawToolNamesById: ReadonlyMap<string, string>,
+  knownRawToolNamesById: ReadonlyMap<string, string>,
+): ProviderToolResultContent | null {
+  const toolName = rawResult.toolName ?? rawToolNamesById.get(rawResult.toolCallId) ??
+    knownRawToolNamesById.get(rawResult.toolCallId);
+  if (!toolName) {
+    return null;
+  }
+
+  return {
+    type: "tool-result",
+    toolCallId: rawResult.toolCallId,
+    toolName,
+    output: rawResult.output,
+  };
+}
+
 function buildToolResultOutput(toolPart: { state: string; output?: unknown; errorText?: string }):
   | {
     type: "json";
@@ -901,7 +917,10 @@ function convertUserMessage(message: ChatProviderModelInputMessage): ProviderMod
   ];
 }
 
-function convertAssistantMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
+function convertAssistantMessage(
+  message: ChatProviderModelInputMessage,
+  knownRawToolNamesById: ReadonlyMap<string, string>,
+): ProviderModelMessage[] {
   const rawToolNamesById = buildRawToolNameMap(message.parts);
   const assistantContent: Array<
     | { type: "text"; text: string }
@@ -910,20 +929,7 @@ function convertAssistantMessage(message: ChatProviderModelInputMessage): Provid
     | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }
   > = [];
   const deferredAssistantContent: typeof assistantContent = [];
-  const toolResults: Array<{
-    type: "tool-result";
-    toolCallId: string;
-    toolName: string;
-    output:
-      | {
-        type: "json";
-        value: JsonValue;
-      }
-      | {
-        type: "error-text";
-        value: string;
-      };
-  }> = [];
+  const toolResults: ProviderToolResultContent[] = [];
   const pendingToolCallIds = new Set<string>();
   const messages: ProviderModelMessage[] = [];
 
@@ -984,20 +990,7 @@ function convertAssistantMessage(message: ChatProviderModelInputMessage): Provid
     assistantContent.push(part);
   };
 
-  const pushToolResult = (part: {
-    type: "tool-result";
-    toolCallId: string;
-    toolName: string;
-    output:
-      | {
-        type: "json";
-        value: JsonValue;
-      }
-      | {
-        type: "error-text";
-        value: string;
-      };
-  }) => {
+  const pushToolResult = (part: ProviderToolResultContent) => {
     toolResults.push(part);
     pendingToolCallIds.delete(part.toolCallId);
   };
@@ -1047,6 +1040,7 @@ function convertAssistantMessage(message: ChatProviderModelInputMessage): Provid
 
     const rawToolCall = getRawToolCallPart(part);
     if (rawToolCall) {
+      rawToolNamesById.set(rawToolCall.toolCallId, rawToolCall.toolName);
       pushAssistantPart({
         type: "tool-call",
         toolCallId: rawToolCall.toolCallId,
@@ -1058,13 +1052,14 @@ function convertAssistantMessage(message: ChatProviderModelInputMessage): Provid
 
     const rawToolResult = getRawToolResultPart(part);
     if (rawToolResult) {
-      pushToolResult({
-        type: "tool-result",
-        toolCallId: rawToolResult.toolCallId,
-        toolName: rawToolResult.toolName ?? rawToolNamesById.get(rawToolResult.toolCallId) ??
-          "unknown",
-        output: rawToolResult.output,
-      });
+      const toolResult = resolveRawToolResultPart(
+        rawToolResult,
+        rawToolNamesById,
+        knownRawToolNamesById,
+      );
+      if (toolResult) {
+        pushToolResult(toolResult);
+      }
     }
   }
 
@@ -1075,22 +1070,41 @@ function convertAssistantMessage(message: ChatProviderModelInputMessage): Provid
   return messages;
 }
 
-function convertToolMessage(message: ChatProviderModelInputMessage): ProviderModelMessage[] {
+function convertToolMessage(
+  message: ChatProviderModelInputMessage,
+  knownRawToolNamesById: ReadonlyMap<string, string>,
+): ProviderModelMessage[] {
   const rawToolNameMap = buildRawToolNameMap(message.parts);
   const toolResults: ChatToolResultPart[] = [];
 
   for (const part of message.parts) {
+    const toolPart = getToolPart(part);
+    if (toolPart) {
+      const output = buildToolResultOutput(toolPart);
+      if (output) {
+        toolResults.push({
+          type: "tool-result",
+          toolCallId: toolPart.toolCallId,
+          toolName: toolPart.toolName,
+          output,
+        });
+      }
+      continue;
+    }
+
     const rawResult = getRawToolResultPart(part);
     if (!rawResult) {
       continue;
     }
 
-    toolResults.push({
-      type: "tool-result",
-      toolCallId: rawResult.toolCallId,
-      toolName: rawResult.toolName ?? rawToolNameMap.get(rawResult.toolCallId) ?? "unknown",
-      output: rawResult.output,
-    });
+    const toolResult = resolveRawToolResultPart(
+      rawResult,
+      rawToolNameMap,
+      knownRawToolNamesById,
+    );
+    if (toolResult) {
+      toolResults.push(toolResult);
+    }
   }
 
   if (toolResults.length === 0) {
@@ -1105,8 +1119,13 @@ export function convertUiMessagesToProviderModelMessages(
   messages: readonly ChatProviderModelInputMessage[],
 ): ProviderModelMessage[] {
   const providerMessages: ProviderModelMessage[] = [];
+  const knownRawToolNamesById = new Map<string, string>();
 
   for (const message of messages) {
+    for (const [toolCallId, toolName] of buildRawToolNameMap(message.parts)) {
+      knownRawToolNamesById.set(toolCallId, toolName);
+    }
+
     const converted = (() => {
       switch (message.role) {
         case "system":
@@ -1114,9 +1133,9 @@ export function convertUiMessagesToProviderModelMessages(
         case "user":
           return convertUserMessage(message);
         case "assistant":
-          return convertAssistantMessage(message);
+          return convertAssistantMessage(message, knownRawToolNamesById);
         case "tool":
-          return convertToolMessage(message);
+          return convertToolMessage(message, knownRawToolNamesById);
         default:
           return [];
       }

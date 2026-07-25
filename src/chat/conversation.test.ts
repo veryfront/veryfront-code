@@ -529,6 +529,78 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     ]);
   });
 
+  it("resolves raw role:tool results from matching raw tool calls", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: "tool-1",
+            name: "github__get_pr_diff",
+            input: { repo: "api", owner: "veryfront", pull_number: 1 },
+            state: "completed",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            output: { files: ["src/chat/conversation.ts"] },
+          },
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "github__get_pr_diff",
+            input: { repo: "api", owner: "veryfront", pull_number: 1 },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "github__get_pr_diff",
+            output: { type: "json", value: { files: ["src/chat/conversation.ts"] } },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("drops orphan raw tool results without a resolvable tool name", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1:tool:tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            output: { files: ["src/chat/conversation.ts"] },
+          },
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), []);
+  });
+
   it("groups interleaved persisted tool call/result parts from one assistant turn", () => {
     const messages: ChatProviderModelInputMessage[] = [
       {

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { convertUiMessagesToProviderModelMessages } from "#veryfront/chat/conversation";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
@@ -12,6 +13,7 @@ import {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -21,8 +23,68 @@ const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
 const environmentId = "10000000-1000-4000-8000-100000000008";
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
+const replayToolName = "github__get_pr_diff";
+const replayOutput = { files: ["src/chat/conversation.ts"] };
+const rawReplayToolCallPart = {
+  type: "tool_call",
+  id: "tool-call-1",
+  name: replayToolName,
+  input: { pullNumber: 3077 },
+  state: "completed",
+} as const;
+const rawReplayToolResultPart = {
+  type: "tool_result",
+  tool_call_id: rawReplayToolCallPart.id,
+  tool_name: replayToolName,
+  output: replayOutput,
+  is_error: false,
+} as const;
+const rawReplayParts = [rawReplayToolCallPart, rawReplayToolResultPart] as const;
 
-function createRuntimeInvocation() {
+type ParsedHostedChatRequestMessagePart = ParsedHostedChatRequest["messages"][number]["parts"][
+  number
+];
+
+const parsedHostedChatRequestToolResultPart: ParsedHostedChatRequestMessagePart = {
+  type: "tool_call",
+  toolCallId: rawReplayToolCallPart.id,
+  toolName: replayToolName,
+  input: {},
+  state: "output-available",
+  output: replayOutput,
+};
+
+function createHostedChatRequestBody(messages: unknown[]): {
+  messages: unknown[];
+  context: {
+    conversationId: string;
+    projectId: string;
+    branchId: string;
+  };
+} {
+  return {
+    messages,
+    context: {
+      conversationId,
+      projectId,
+      branchId,
+    },
+  };
+}
+
+function assertHostedChatRequestError(messages: unknown[], expectedMessage: string): void {
+  const parsed = hostedChatRequestSchema.safeParse(createHostedChatRequestBody(messages));
+
+  assertEquals(parsed.success, false);
+  if (!parsed.success) {
+    assertStringIncludes(
+      parsed.error instanceof Error ? parsed.error.message : String(parsed.error),
+      expectedMessage,
+    );
+  }
+}
+
+function createRuntimeInvocation(): ReturnType<typeof RuntimeAgentRunInvocationSchema.parse> {
   return RuntimeAgentRunInvocationSchema.parse({
     run: {
       agentServiceId: "runtime-provider",
@@ -137,6 +199,158 @@ describe("agent/hosted-chat-request", () => {
     });
   });
 
+  it("preserves raw replay tool parts in hosted chat requests", () => {
+    const parsed = hostedChatRequestSchema.parse(
+      createHostedChatRequestBody([
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: rawReplayParts,
+        },
+      ]),
+    );
+
+    assertEquals(parsed.messages[0]?.parts as unknown, rawReplayParts);
+  });
+
+  it("rejects orphan raw replay tool results without a tool name", () => {
+    assertHostedChatRequestError(
+      [
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [
+            {
+              type: "tool_result",
+              tool_call_id: "missing-tool-call",
+              output: { files: [] },
+            },
+          ],
+        },
+      ],
+      "tool_result requires a preceding matching tool_call",
+    );
+  });
+
+  it("rejects explicit raw tool-result names without a matching call or with a mismatch", () => {
+    assertHostedChatRequestError(
+      [
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [
+            {
+              ...rawReplayToolResultPart,
+              tool_call_id: "missing-tool-call",
+            },
+          ],
+        },
+      ],
+      "tool_result requires a preceding matching tool_call",
+    );
+
+    assertHostedChatRequestError(
+      [
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [rawReplayToolCallPart],
+        },
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [
+            {
+              ...rawReplayToolResultPart,
+              tool_name: "github__get_pr",
+            },
+          ],
+        },
+      ],
+      "tool_result tool_name must match its preceding tool_call",
+    );
+  });
+
+  it("parses hosted chat requests with raw replay tool parts", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(
+          createHostedChatRequestBody([
+            {
+              id: "assistant-message-1",
+              role: "assistant",
+              parts: [rawReplayToolCallPart],
+            },
+            {
+              id: "tool-message-1",
+              role: "tool",
+              parts: [
+                {
+                  type: "tool_result",
+                  tool_call_id: rawReplayToolCallPart.id,
+                  output: replayOutput,
+                  is_error: false,
+                },
+              ],
+            },
+          ]),
+        ),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(
+      parsed.messages[0]?.parts[0] as unknown,
+      {
+        type: "tool_call",
+        toolCallId: rawReplayToolCallPart.id,
+        toolName: replayToolName,
+        input: rawReplayToolCallPart.input,
+        state: "completed",
+      },
+    );
+
+    assertEquals(
+      parsed.messages[1]?.parts[0] as unknown,
+      parsedHostedChatRequestToolResultPart,
+    );
+    assertEquals(convertUiMessagesToProviderModelMessages(parsed.messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: rawReplayToolCallPart.id,
+            toolName: replayToolName,
+            input: rawReplayToolCallPart.input,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: rawReplayToolCallPart.id,
+            toolName: replayToolName,
+            output: {
+              type: "json",
+              value: replayOutput,
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("builds a hosted chat request from a runtime agent invocation", () => {
     const invocation = createRuntimeInvocation();
     const forwardedProps = buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
@@ -162,6 +376,23 @@ describe("agent/hosted-chat-request", () => {
       parentRunId: "run_parent_1",
       spawnedFromToolCallId: "tool_1",
     });
+  });
+
+  it("builds hosted chat requests with raw replay tool parts from runtime invocations", () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      messages: [
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: rawReplayParts,
+        },
+      ],
+    });
+
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(request.messages[0]?.parts as unknown, rawReplayParts);
   });
 
   it("carries environment runtime target metadata from runtime invocations", () => {
