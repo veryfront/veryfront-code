@@ -285,6 +285,20 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier, null);
     });
 
+    it("preserves a dist-tag specifier (pkg@next) and does not override it with a numeric pin", () => {
+      // pkg@next has a version specifier (the dist-tag "next"); the pin ladder
+      // must not treat it as unversioned and inject a cached numeric version.
+      scheduleNpmVersionResolution("some-pkg", "4.0.0", "/project");
+      const result = bareStrategy.rewrite(
+        makeInfo("some-pkg@next"),
+        makeCtx({ target: "browser" }),
+      );
+      // The specifier already has a version (@next); it should be passed through
+      // to the esm.sh URL builder as-is.
+      assertEquals(result.specifier?.includes("some-pkg@next"), true);
+      assertEquals(result.specifier?.includes("4.0.0"), false);
+    });
+
     it("treats a compound range in package.json as unpinned and falls back to registry cache", () => {
       // Compound ranges like ">=1.0.0 <2.0.0" strip to "1.0.0 <2.0.0" which is
       // not a valid semver and would produce a malformed esm.sh URL. The strategy

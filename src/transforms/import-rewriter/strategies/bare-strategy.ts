@@ -16,10 +16,7 @@ import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
 import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
-import {
-  getProjectDependenciesSync,
-  stripSemverRange,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { getProjectDependenciesSync } from "#veryfront/transforms/esm/package-registry.ts";
 import {
   getCachedNpmVersion,
   isDependencyPinningEnabled,
@@ -33,7 +30,10 @@ const logger = rendererLogger.component("esm");
 const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
-  return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
+  // Use the package specifier parser so that dist-tags (e.g. @next, @beta,
+  // @canary) are recognised as version specifiers and are never overridden by
+  // a cached numeric pin.
+  return parseBarePackageSpecifier(specifier)?.version != null;
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
@@ -63,22 +63,21 @@ function resolvePinnedVersion(
   packageName: string,
   ctx: RewriteContext,
 ): string | undefined {
-  // 1. package.json pin from the warm in-process cache.
+  // 1. package.json exact version pin (the raw value must already be an exact
+  //    semver — never strip range prefixes to manufacture a pin that the file
+  //    didn't literally contain; ranges go through the resolution client).
   const allDeps = getProjectDependenciesSync(ctx.projectDir);
   const rawPin = allDeps?.[packageName];
-  if (rawPin) {
-    const stripped = stripSemverRange(rawPin);
-    // Only use if it resolves to an exact version; compound ranges like
-    // ">=1.0.0 <2.0.0" would produce a malformed URL, so fall through.
-    if (isExactSemver(stripped)) return stripped;
-  }
+  if (rawPin && isExactSemver(rawPin)) return rawPin;
 
   // 2. npm registry cache (populated by a prior background fetch).
   const registryVersion = getCachedNpmVersion(packageName, ctx.projectDir);
   if (registryVersion) return registryVersion;
 
   // 3. Cache cold: schedule a background resolution for the next render.
-  scheduleNpmVersionResolution(packageName, undefined, ctx.projectDir, (version) => {
+  // Pass the package.json range hint (if any) — the client uses it to skip the
+  // network fetch when the hint itself resolves to an exact version.
+  scheduleNpmVersionResolution(packageName, rawPin, ctx.projectDir, (version) => {
     void postDependencyResolution(ctx.projectId, [`${packageName}@${version}`]);
   });
 

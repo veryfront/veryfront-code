@@ -2,7 +2,6 @@ import {
   DEFAULT_REACT_VERSION,
   getProjectDependenciesSync,
   getReactImportMap,
-  stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
@@ -126,11 +125,9 @@ function resolveBareImportPin(bareSpecifier: string, projectDir: string): string
 
   const allDeps = getProjectDependenciesSync(projectDir);
   const rawPin = allDeps?.[parsed.packageName];
-  if (rawPin) {
-    const stripped = stripSemverRange(rawPin);
-    // Compound ranges like ">=1.0.0 <2.0.0" would produce a malformed URL; skip them.
-    if (isExactSemver(stripped)) return stripped;
-  }
+  // Only use the raw package.json value as a pin when it is already an exact
+  // semver — never strip range prefixes to manufacture a pin.
+  if (rawPin && isExactSemver(rawPin)) return rawPin;
 
   return getCachedNpmVersion(parsed.packageName, projectDir);
 }

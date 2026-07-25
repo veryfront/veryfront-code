@@ -321,6 +321,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             ssrRewriteOptions: {
               projectSlug: snippetProjectSlug,
               branch: snippetBranch,
+              projectDir,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
                 projectDir,
@@ -417,6 +418,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             isSSR,
             ssrRewriteOptions: {
               crossProjectRef: projectRef,
+              projectDir,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
                 projectDir,
@@ -613,6 +615,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             ssrRewriteOptions: {
               projectSlug,
               branch,
+              projectDir,
               resolveCacheBuster: createSSRTargetCacheBusterResolver({
                 secureFs,
                 projectDir,

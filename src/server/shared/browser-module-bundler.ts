@@ -165,6 +165,7 @@ export function bundleBrowserModuleWithMetadata(
           }),
           createBareExternalPlugin({
             importMapImports: importMap.imports,
+            projectDir: options.projectDir,
           }),
           createHttpExternalPlugin(),
         ],

@@ -24,13 +24,11 @@ import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
-import {
-  getProjectDependenciesSync,
-  stripSemverRange,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { getProjectDependenciesSync } from "#veryfront/transforms/esm/package-registry.ts";
 import {
   getCachedNpmVersion,
   isDependencyPinningEnabled,
+  isExactSemver,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 
@@ -319,8 +317,10 @@ function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string
     if (parsed && !parsed.version) {
       const allDeps = getProjectDependenciesSync(projectDir);
       const rawPin = allDeps?.[parsed.packageName];
-      const version = rawPin
-        ? stripSemverRange(rawPin)
+      // Only use the raw package.json value when it is already an exact semver —
+      // never strip range prefixes to manufacture a pin.
+      const version = (rawPin && isExactSemver(rawPin))
+        ? rawPin
         : getCachedNpmVersion(parsed.packageName, projectDir);
       if (version) {
         const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;

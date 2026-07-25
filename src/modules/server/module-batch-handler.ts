@@ -381,6 +381,7 @@ async function transformModule(
       ? {
         projectSlug: options.projectSlug,
         branch: options.branch,
+        projectDir,
         resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
           projectDir,
           secureFs,

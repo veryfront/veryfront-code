@@ -52,10 +52,12 @@ describe("getCachedNpmVersion", () => {
     assertStrictEquals(getCachedNpmVersion("lodash", PROJECT_DIR), "4.17.21");
   });
 
-  it("strips semver range prefix when the hint is a caret range over an exact version", () => {
+  it("leaves cache cold when the hint is a caret range (range goes to background fetch)", () => {
+    // Policy: only an exact semver literal (no prefix) is stored synchronously.
+    // Caret ranges must go through the resolution client (background fetch) so
+    // we never manufacture a pin by floor-stripping a range the file didn't pin.
     scheduleNpmVersionResolution("zod", "^3.22.4", PROJECT_DIR);
-    // ^3.22.4 strips to 3.22.4 which matches /^\d+\.\d+\.\d+/ — stored synchronously.
-    assertStrictEquals(getCachedNpmVersion("zod", PROJECT_DIR), "3.22.4");
+    assertEquals(getCachedNpmVersion("zod", PROJECT_DIR), undefined);
   });
 
   it("keeps caches scoped per project directory", () => {
@@ -94,12 +96,19 @@ describe("scheduleNpmVersionResolution", () => {
     assertEquals(resolvedVersion, "5.0.0");
   });
 
-  it("calls onResolved synchronously for a caret range over an exact semver base", () => {
+  it("does not call onResolved synchronously for a caret range (range triggers background fetch)", async () => {
+    // Policy: caret ranges are NOT treated as pinned versions; they go to the
+    // resolution client. onResolved must NOT fire synchronously here.
     let resolved = "";
     scheduleNpmVersionResolution("date-fns", "^3.6.0", PROJECT_DIR, (v) => {
       resolved = v;
     });
-    assertStrictEquals(resolved, "3.6.0");
+    // Synchronously: callback must not have fired yet.
+    assertEquals(resolved, "");
+    // Let the (mocked, 503) background fetch settle.
+    await new Promise<void>((r) => setTimeout(r, 1));
+    // Even after the fetch, the 503 means no version was cached — still empty.
+    assertEquals(resolved, "");
   });
 
   it("does not double-schedule a fetch when called twice for the same package+project", () => {

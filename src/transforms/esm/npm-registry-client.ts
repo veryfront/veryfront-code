@@ -14,7 +14,6 @@
 import { rendererLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
-import { stripSemverRange } from "./package-registry.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 
 const logger = rendererLogger.component("npm-registry-client");
@@ -86,13 +85,12 @@ export function scheduleNpmVersionResolution(
   if (versionCache.get(projectDir)?.has(packageName)) return;
 
   // Exact version from package.json: use it immediately without a network fetch.
-  if (rangeHint) {
-    const stripped = stripSemverRange(rangeHint);
-    if (isExactSemver(stripped)) {
-      setCachedVersion(projectDir, packageName, stripped);
-      onResolved?.(stripped, packageName, projectDir);
-      return;
-    }
+  // Only short-circuit when the raw hint is already an exact semver — never strip
+  // range prefixes (^, ~, >=) to manufacture a pin that package.json didn't contain.
+  if (rangeHint && isExactSemver(rangeHint)) {
+    setCachedVersion(projectDir, packageName, rangeHint);
+    onResolved?.(rangeHint, packageName, projectDir);
+    return;
   }
 
   // In-flight deduplication.
