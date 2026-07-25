@@ -111,22 +111,25 @@ export async function loadMiddlewareFile(
     try {
       logger.debug(`Loading ${middlewareFile}`);
 
-      if (isVirtualFilesystem(adapter.fs)) {
-        return await loadMiddlewareFromVirtualFS(
+      // Transpile via the embedded esbuild before importing, for both FS kinds.
+      // A `deno compile` binary does not transpile an external on-disk `.ts` at
+      // import time, so a raw `import(middleware.ts)` throws on TS syntax and
+      // takes down every route. The virtual-FS path already transpiled; the
+      // real-FS path now does too (writing the output adjacent to the source so
+      // its bare/relative imports resolve identically to the original file).
+      return isVirtualFilesystem(adapter.fs)
+        ? await loadMiddlewareFromVirtualFS(
+          middlewarePath,
+          adapter,
+          options.throwOnError === true,
+          middlewareFile,
+        )
+        : await loadMiddlewareFromRealFS(
           middlewarePath,
           adapter,
           options.throwOnError === true,
           middlewareFile,
         );
-      }
-
-      const middlewareUrl = `file://${middlewarePath}?t=${Date.now()}-${crypto.randomUUID()}`;
-      const middlewareModule = await import(middlewareUrl);
-      return normalizeMiddlewareExport(
-        middlewareModule,
-        options.throwOnError === true,
-        middlewareFile,
-      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn(`Failed to load ${middlewareFile}: ${errorMessage}`);
@@ -137,16 +140,15 @@ export async function loadMiddlewareFile(
   return [];
 }
 
-async function loadMiddlewareFromVirtualFS(
+/**
+ * Transpile a middleware source file to ESM JavaScript via the embedded esbuild.
+ * A `deno compile` binary cannot transpile an external `.ts` at import time, so
+ * middleware is always transpiled to JS before it is imported.
+ */
+async function transpileMiddlewareSource(
+  source: string,
   middlewarePath: string,
-  adapter: RuntimeAdapter,
-  strictExport: boolean,
-  sourceFile = "middleware.ts",
-): Promise<MiddlewareFunction[]> {
-  const fs = createFileSystem();
-
-  const content = await adapter.fs.readFile(middlewarePath);
-  const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+): Promise<string> {
   const loader = getEsbuildLoader(middlewarePath);
 
   const { build } = await import("veryfront/extensions/bundler");
@@ -169,7 +171,20 @@ async function loadMiddlewareFromVirtualFS(
     throw COMPILATION_ERROR.create({ detail: `Failed to transpile middleware: ${firstError}` });
   }
 
-  const js = result.outputFiles?.[0]?.text ?? "export default []";
+  return result.outputFiles?.[0]?.text ?? "export default []";
+}
+
+async function loadMiddlewareFromVirtualFS(
+  middlewarePath: string,
+  adapter: RuntimeAdapter,
+  strictExport: boolean,
+  sourceFile = "middleware.ts",
+): Promise<MiddlewareFunction[]> {
+  const fs = createFileSystem();
+
+  const content = await adapter.fs.readFile(middlewarePath);
+  const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+  const js = await transpileMiddlewareSource(source, middlewarePath);
 
   const tempDir = await fs.makeTempDir({ prefix: "vf-middleware-" });
   const tempFile = join(tempDir, "middleware.mjs");
@@ -180,6 +195,37 @@ async function loadMiddlewareFromVirtualFS(
     return normalizeMiddlewareExport(middlewareModule, strictExport, sourceFile);
   } finally {
     await fs.remove(tempDir, { recursive: true });
+  }
+}
+
+/**
+ * Load a real-filesystem middleware file. Transpiles to ESM JS and imports the
+ * output from a temp file written ADJACENT to the source, so the middleware's
+ * bare (`veryfront/middleware`) and relative imports resolve exactly as they
+ * would when importing the original file. This is what lets a TypeScript root
+ * `middleware.ts` load under the compiled binary, where a raw `import()` of a
+ * `.ts` is not transpiled by the `deno compile` runtime.
+ */
+async function loadMiddlewareFromRealFS(
+  middlewarePath: string,
+  adapter: RuntimeAdapter,
+  strictExport: boolean,
+  sourceFile = "middleware.ts",
+): Promise<MiddlewareFunction[]> {
+  const fs = createFileSystem();
+
+  const content = await adapter.fs.readFile(middlewarePath);
+  const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+  const js = await transpileMiddlewareSource(source, middlewarePath);
+
+  const tempFile = join(dirname(middlewarePath), `.vf-middleware-${crypto.randomUUID()}.mjs`);
+
+  try {
+    await fs.writeTextFile(tempFile, js);
+    const middlewareModule = await import(`file://${tempFile}?v=${Date.now()}`);
+    return normalizeMiddlewareExport(middlewareModule, strictExport, sourceFile);
+  } finally {
+    await fs.remove(tempFile).catch(() => {});
   }
 }
 
