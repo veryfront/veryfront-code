@@ -4,7 +4,7 @@ description: "Declarative metadata, Open Graph, and structured data."
 order: 16
 ---
 
-Set page metadata with the `Head` component: title, description, Open Graph and Twitter cards, favicons, fonts, and JSON-LD. Multiple `Head` components in the tree merge; page-level tags override layout-level tags for duplicate keys.
+Set page metadata with the `Head` component: title, description, Open Graph and Twitter cards, favicons, fonts, and JSON-LD. Multiple `Head` components in the tree merge; for single-valued tags (title, description, canonical, `og:title`, robots, …) a page-level tag overrides the layout-level tag with the same key, while repeatable tags (`og:image`, `<link rel="preload">`, icons, …) accumulate.
 
 Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
@@ -33,7 +33,16 @@ export default function AboutPage() {
 }
 ```
 
-The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge: page-level tags override layout-level tags for duplicate keys.
+The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge:
+
+| Merge behavior | Tags |
+|---|---|
+| **Single-valued** (a page's tag overrides the same tag from a layout) | `<title>`, `<meta name="description">`, `<link rel="canonical">`, `og:title`, `robots`, `viewport`, and the other one-per-document tags |
+| **Repeatable** (tags accumulate instead of overriding) | `og:image` (and its `og:image:*` sub-tags), `og:video`, `og:audio`, `article:tag`, `article:author`, and `<link>` tags with a repeatable `rel`: `stylesheet`, `preload`, `modulepreload`, `prefetch`, `preconnect`, `dns-prefetch`, `icon`, `apple-touch-icon`, `alternate` |
+
+So you can define defaults in a layout and override the single-valued ones per page.
+
+Children may be grouped in a fragment (`<>…</>`) or produced with `.map()`; both are treated the same as direct children.
 
 ## Open Graph
 
