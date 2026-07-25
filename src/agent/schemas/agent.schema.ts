@@ -96,6 +96,23 @@ const inlineToolCallPartShape = (v: SchemaValidator) =>
     args: v.record(v.string(), v.unknown()),
   });
 
+const sourceUrlPartShape = (v: SchemaValidator) =>
+  v.object({
+    type: v.literal("source-url"),
+    sourceId: v.string(),
+    url: v.string(),
+    title: v.string().optional(),
+  });
+
+const sourceDocumentPartShape = (v: SchemaValidator) =>
+  v.object({
+    type: v.literal("source-document"),
+    sourceId: v.string(),
+    title: v.string(),
+    mediaType: v.string().optional(),
+    filename: v.string().optional(),
+  });
+
 export const getMessagePartSchema = defineSchema((v) =>
   v.union([
     v.object({
@@ -111,6 +128,8 @@ export const getMessagePartSchema = defineSchema((v) =>
     getToolCallPartSchema(),
     inlineToolCallPartShape(v),
     getToolResultPartSchema(),
+    sourceUrlPartShape(v),
+    sourceDocumentPartShape(v),
     v.object({
       type: v.literal("image"),
       url: v.string(),

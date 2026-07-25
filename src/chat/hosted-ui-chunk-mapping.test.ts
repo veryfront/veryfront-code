@@ -29,6 +29,49 @@ describe("chat/hosted-ui-chunk-mapping", () => {
       [{ type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: '{"q":"voice"}' }],
     );
 
+    const knowledgePath = "knowledge/knowledge-ingest-exact.md";
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks({
+        type: "tool-result",
+        toolCallId: "tool-knowledge",
+        toolName: "get_file",
+        input: { path: knowledgePath },
+        output: { path: knowledgePath, content: "# Exact source" },
+      }),
+      [
+        {
+          type: "tool-output-available",
+          toolCallId: "tool-knowledge",
+          output: { path: knowledgePath, content: "# Exact source" },
+        },
+        {
+          type: "source-document",
+          sourceId: knowledgePath,
+          mediaType: "text/markdown",
+          title: knowledgePath,
+          filename: knowledgePath,
+        },
+      ],
+    );
+
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        {
+          type: "tool-result",
+          toolCallId: "tool-knowledge-hidden",
+          toolName: "get_file",
+          input: { path: knowledgePath },
+          output: { path: knowledgePath, content: "# Exact source" },
+        },
+        { sendSources: false },
+      ),
+      [{
+        type: "tool-output-available",
+        toolCallId: "tool-knowledge-hidden",
+        output: { path: knowledgePath, content: "# Exact source" },
+      }],
+    );
+
     assertEquals(
       mapHostedStreamPartToChatUiChunks({
         type: "tool-error",

@@ -4,6 +4,7 @@ import {
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
 } from "../../../../chat/ag-ui.ts";
+import { toRenderableCustomChunk } from "../../../../chat/ag-ui-helpers.ts";
 import { normalizeChatMessageMetadata } from "../../../../chat/chat-ui-message-helpers.ts";
 import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
 import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
@@ -208,6 +209,16 @@ function processStreamEvent(
       handleToolOutputAvailable(parsed, state, onUpdate, getBuildParts);
       return;
 
+    case "source-url":
+    case "source-document":
+    case "file": {
+      const part = toRenderableCustomChunk(parsed);
+      if (part) {
+        handleRenderableMessagePart(part, state, onUpdate, getBuildParts);
+      }
+      return;
+    }
+
     case "tool-input-error":
     case "tool-output-error":
       handleToolError(parsed, state, onUpdate, getBuildParts);
@@ -309,6 +320,12 @@ function processChatStreamEvent(
       handleToolOutputAvailable(event, state, onUpdate, getBuildParts);
       return;
 
+    case "source-url":
+    case "source-document":
+    case "file":
+      handleRenderableMessagePart(event, state, onUpdate, getBuildParts);
+      return;
+
     case "reasoning-start":
       handleReasoningStart(event, state, onUpdate, getBuildParts);
       return;
@@ -380,10 +397,24 @@ function handleStart(
   }
 }
 
+function getTextBlockId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.contentId === "string" && parsed.contentId) {
+    return parsed.contentId;
+  }
+  return typeof parsed.id === "string" && parsed.id ? parsed.id : undefined;
+}
+
+function getTextMessageId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.messageId === "string" && parsed.messageId) {
+    return parsed.messageId;
+  }
+  return typeof parsed.id === "string" && parsed.id ? parsed.id : undefined;
+}
+
 function handleTextStart(parsed: Record<string, unknown>, state: StreamingState): void {
-  state.currentTextId = (parsed.id as string) || generateClientId("text");
+  state.currentTextId = getTextBlockId(parsed) ?? generateClientId("text");
   if (!state.messageId) {
-    state.messageId = state.currentTextId;
+    state.messageId = getTextMessageId(parsed) ?? state.currentTextId;
   }
   state.textBlocks.set(state.currentTextId, { text: "", state: "streaming", order: null });
 }
@@ -394,11 +425,12 @@ function handleTextDelta(
   onUpdate: StreamingCallbacks["onUpdate"],
   getBuildParts: () => ChatMessagePart[],
 ): void {
-  const textId = (parsed.id as string) || state.currentTextId || "default";
+  const textId = (getTextBlockId(parsed) ?? state.currentTextId) || "default";
   const delta = (parsed.textDelta ?? parsed.delta ?? "") as string;
 
   if (!state.messageId) {
-    state.messageId = textId === "default" ? generateClientId("msg") : textId;
+    state.messageId = getTextMessageId(parsed) ??
+      (textId === "default" ? generateClientId("msg") : textId);
   }
 
   let block = state.textBlocks.get(textId);
@@ -418,7 +450,7 @@ function handleTextDelta(
 }
 
 function handleTextEnd(parsed: Record<string, unknown>, state: StreamingState): void {
-  const textId = (parsed.id as string) || state.currentTextId;
+  const textId = getTextBlockId(parsed) ?? state.currentTextId;
   const block = state.textBlocks.get(textId);
   if (!block) return;
 
@@ -457,6 +489,37 @@ function isRenderableDataPartType(type: string): boolean {
   return type !== "data-state-snapshot" &&
     type !== "data-state-delta" &&
     type !== "data-messages-snapshot";
+}
+
+function handleRenderableMessagePart(
+  part: Extract<ChatStreamEvent, { type: "source-url" | "source-document" | "file" }>,
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => ChatMessagePart[],
+): void {
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
+  if (part.type !== "file") {
+    const existingSource = state.dataParts.find(({ part: existingPart }) =>
+      existingPart.type === part.type &&
+      "sourceId" in existingPart &&
+      existingPart.sourceId === part.sourceId
+    );
+    if (existingSource) {
+      existingSource.part = part;
+      emitUpdate(state, onUpdate, getBuildParts);
+      return;
+    }
+  }
+
+  state.dataParts.push({
+    order: state.partOrderCounter++,
+    part,
+  });
+
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function getProviderExecuted(parsed: Record<string, unknown>): boolean | undefined {

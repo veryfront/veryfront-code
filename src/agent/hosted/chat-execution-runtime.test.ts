@@ -7,6 +7,7 @@ import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirro
 import type {
   HostedChatRuntimeAgent,
   HostedChatRuntimeStreamInput,
+  HostedChatRuntimeStreamResult,
   HostedChatRuntimeToUiMessageStreamOptions,
 } from "./chat-runtime-contract.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
@@ -873,6 +874,101 @@ describe("agent/hosted-chat-execution-runtime", () => {
     });
     await runtime.waitForFinish();
 
+    assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
+  it("mirrors a pending knowledge source before response finalization flushes", async () => {
+    const knowledgePath = "knowledge/product/limits.md";
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const lifecycleOrder: string[] = [];
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    let resolveFinalizationFlush!: () => void;
+    const finalizationFlushed = new Promise<void>((resolve) => {
+      resolveFinalizationFlush = resolve;
+    });
+    const durableRunMirror = createDurableRunMirror({ chunks, flushes: lifecycleOrder });
+    const handleChunk = durableRunMirror.handleChunk;
+    const flush = durableRunMirror.flush;
+    durableRunMirror.handleChunk = async (chunk) => {
+      lifecycleOrder.push(chunk.type);
+      await handleChunk(chunk);
+    };
+    durableRunMirror.flush = async () => {
+      const snapshot = await flush();
+      resolveFinalizationFlush();
+      return snapshot;
+    };
+    const streamResult: HostedChatRuntimeStreamResult = {
+      steps: Promise.resolve([{}]),
+      toUIMessageStream: (options = {}) =>
+        (async function* () {
+          yield {
+            type: "tool-input-available" as const,
+            toolCallId: "tc-knowledge",
+            toolName: "get_file",
+            input: { path: knowledgePath },
+          };
+          yield {
+            type: "tool-output-available" as const,
+            toolCallId: "tc-knowledge",
+            output: { path: knowledgePath, content: "# Limits" },
+          };
+          await options.onFinish?.({
+            messages: [],
+            isContinuation: false,
+            responseMessage: createResponseMessage({
+              parts: [{ type: "text", text: "The documented limit applies." }],
+            }),
+            isAborted: false,
+            finishReason: "stop",
+          });
+          await finalizationFlushed;
+          yield { type: "finish" as const, finishReason: "stop" as const };
+        })(),
+    };
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ durableRunMirror, terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult,
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    const outputChunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+
+    for await (const chunk of runtime.agentUIStream) {
+      outputChunks.push(chunk);
+    }
+    await runtime.waitForFinish();
+
+    const sourceChunk = {
+      type: "source-document" as const,
+      sourceId: knowledgePath,
+      mediaType: "text/markdown",
+      title: knowledgePath,
+      filename: knowledgePath,
+    };
+    assertEquals(
+      outputChunks.filter((chunk) => chunk.type === "source-document"),
+      [sourceChunk],
+    );
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-document"),
+      [sourceChunk],
+    );
+    assertEquals(
+      lifecycleOrder.indexOf("source-document") < lifecycleOrder.indexOf("flush"),
+      true,
+    );
     assertEquals(terminalStates, [{ status: "completed" }]);
   });
 
