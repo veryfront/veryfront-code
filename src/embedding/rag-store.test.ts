@@ -656,6 +656,7 @@ describe("ragStore", () => {
     const embeddingVectors = new Map<string, number[]>();
     const authHeaders: Array<string | null> = [];
     const postContentTypes: Array<string | null> = [];
+    const deletionOrder: string[] = [];
 
     await withMockFetch(
       async (input: string | URL | Request, init?: RequestInit) => {
@@ -697,6 +698,7 @@ describe("ragStore", () => {
           }
 
           if (request.method === "DELETE" && docId) {
+            deletionOrder.push("document");
             ragDocuments.delete(docId);
             return Response.json({ deleted: 1 });
           }
@@ -714,6 +716,7 @@ describe("ragStore", () => {
         }
 
         if (request.method === "DELETE" && filePath) {
+          deletionOrder.push("chunks");
           fileChunks.delete(filePath);
           return Response.json({ deleted: 1 });
         }
@@ -764,10 +767,9 @@ describe("ragStore", () => {
 
         if (request.method === "POST" && path.endsWith("/search")) {
           const manifestChunks = fileChunks.get(".veryfront/rag/manifest.json") ?? [];
-          const documentFilePath = [...fileChunks.keys()].find((key) =>
+          const documentEntries = [...fileChunks.entries()].filter(([key]) =>
             key.startsWith(".veryfront/rag/documents/")
           );
-          const documentChunks = documentFilePath ? (fileChunks.get(documentFilePath) ?? []) : [];
 
           return Response.json({
             data: [
@@ -779,14 +781,16 @@ describe("ragStore", () => {
                 },
                 score: 0.99,
               })),
-              ...documentChunks.map((chunk) => ({
-                chunk: {
-                  file_path: documentFilePath,
-                  content: chunk.content,
-                  metadata: chunk.metadata,
-                },
-                score: 0.91,
-              })),
+              ...documentEntries.flatMap(([documentFilePath, documentChunks]) =>
+                documentChunks.map((chunk) => ({
+                  chunk: {
+                    file_path: documentFilePath,
+                    content: chunk.content,
+                    metadata: chunk.metadata,
+                  },
+                  score: documentFilePath.includes("stale") ? 0.98 : 0.91,
+                }))
+              ),
             ],
           });
         }
@@ -807,6 +811,33 @@ describe("ragStore", () => {
         assertEquals(documents.length, 1);
         assertEquals(documents[0]?.id, id);
 
+        fileChunks.set(".veryfront/rag/documents/stale.txt", [{
+          id: "stale",
+          index: 0,
+          content: "stale replacement",
+          metadata: {
+            kind: "rag-document",
+            document_id: id,
+            title: "Stale",
+            source: "upload:stale.txt",
+            type: "txt",
+            branch: "main",
+          },
+        }]);
+        fileChunks.set(".veryfront/rag/documents/orphan.txt", [{
+          id: "orphan",
+          index: 0,
+          content: "orphaned content",
+          metadata: {
+            kind: "rag-document",
+            document_id: "missing-document",
+            title: "Orphan",
+            source: "upload:orphan.txt",
+            type: "txt",
+            branch: "main",
+          },
+        }]);
+
         const results = await store.search("cloud", { topK: 1 });
         assertEquals(results.length, 1);
         assertEquals(results[0]?.documentId, id);
@@ -821,6 +852,259 @@ describe("ragStore", () => {
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);
+        assertEquals(deletionOrder, ["chunks", "document"]);
+      },
+    );
+  });
+
+  it("isolates cloud document metadata by branch while retaining main-branch legacy records", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    const documents = [
+      {
+        id: "main-doc",
+        title: "Main",
+        source: "main.md",
+        type: "md",
+        created_at: "2026-06-25T00:00:00.000Z",
+        updated_at: "2026-06-25T00:00:00.000Z",
+        metadata: { branch: "main", filePath: "main-path" },
+      },
+      {
+        id: "feature-doc",
+        title: "Feature",
+        source: "feature.md",
+        type: "md",
+        created_at: "2026-06-25T00:00:00.000Z",
+        updated_at: "2026-06-25T00:00:00.000Z",
+        metadata: { branch: "feature", filePath: "feature-path" },
+      },
+      {
+        id: "legacy-doc",
+        title: "Legacy",
+        source: "legacy.md",
+        type: "md",
+        created_at: "2026-06-25T00:00:00.000Z",
+        updated_at: "2026-06-25T00:00:00.000Z",
+        metadata: { filePath: "legacy-path" },
+      },
+    ];
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.method === "GET" && new URL(request.url).pathname.endsWith("/rag/documents")) {
+          return Response.json({ documents });
+        }
+        throw new Error(`Unhandled ${request.method} ${request.url}`);
+      },
+      async () => {
+        const feature = ragStore({
+          branch: "feature",
+          model: "test/demo",
+        });
+        const main = ragStore({
+          branch: "main",
+          model: "test/demo",
+        });
+
+        assertEquals(
+          (await feature.listDocuments()).map((document) => document.id),
+          ["feature-doc"],
+        );
+        assertEquals(
+          (await main.listDocuments()).map((document) => document.id),
+          ["main-doc", "legacy-doc"],
+        );
+      },
+    );
+  });
+
+  it("removes new chunks when cloud document publication fails", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+    const storedPaths = new Set<string>();
+    const deletedPaths: string[] = [];
+    let documentRollbackDeletes = 0;
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        const fileMatch = url.pathname.match(
+          /^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/,
+        );
+        const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
+
+        if (request.method === "POST" && filePath) {
+          const body = await request.json() as {
+            chunks: Array<{ chunk_index: number }>;
+          };
+          storedPaths.add(filePath);
+          return Response.json({
+            chunks: body.chunks.map((entry) => ({
+              id: `${filePath}:${entry.chunk_index}`,
+              index: entry.chunk_index,
+            })),
+          });
+        }
+        if (request.method === "DELETE" && filePath) {
+          storedPaths.delete(filePath);
+          deletedPaths.push(filePath);
+          return Response.json({ deleted: 1 });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/embeddings")) {
+          const body = await request.json() as { chunk_ids: string[] };
+          return Response.json({
+            embeddings: body.chunk_ids.map((id) => ({ id: `embedding:${id}` })),
+          });
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/rag/documents")) {
+          return new Response("document publication failed", { status: 500 });
+        }
+        if (
+          request.method === "DELETE" &&
+          url.pathname.includes("/rag/documents/")
+        ) {
+          documentRollbackDeletes++;
+          return Response.json({ deleted: 0 });
+        }
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(
+          () => store.ingest("Doc", "content"),
+          Error,
+          "request failed (500",
+        );
+        assertEquals(storedPaths.size, 0);
+        assertEquals(deletedPaths.length, 1);
+        assertEquals(documentRollbackDeletes, 1);
+      },
+    );
+  });
+
+  it("does not report cloud deletion success when searchable chunk cleanup fails", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    let documentDeleteCalled = false;
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname.endsWith("/rag/documents")) {
+          return Response.json({
+            documents: [{
+              id: "doc-1",
+              title: "Doc",
+              source: "upload:doc.txt",
+              type: "txt",
+              created_at: "2026-06-25T00:00:00.000Z",
+              updated_at: "2026-06-25T00:00:00.000Z",
+              metadata: {
+                branch: "main",
+                filePath: ".veryfront/rag/documents/doc-1.txt",
+              },
+            }],
+          });
+        }
+        if (
+          request.method === "DELETE" &&
+          url.pathname.includes("/branches/") &&
+          url.pathname.endsWith("/chunks")
+        ) {
+          return new Response("chunk cleanup failed", { status: 500 });
+        }
+        if (request.method === "DELETE" && url.pathname.endsWith("/rag/documents/doc-1")) {
+          documentDeleteCalled = true;
+          return Response.json({ deleted: 1 });
+        }
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(
+          () => store.removeDocument("doc-1"),
+          Error,
+          "request failed (500",
+        );
+        assertEquals(documentDeleteCalled, false);
+      },
+    );
+  });
+
+  it("rejects malformed cloud document responses", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          Response.json({
+            documents: [{
+              id: 123,
+              title: "Malformed",
+            }],
+          }),
+        ),
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(
+          () => store.listDocuments(),
+          Error,
+          "failed validation",
+        );
+      },
+    );
+  });
+
+  it("bounds published-file pagination and rejects cursor cycles", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    let fileListCalls = 0;
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname.endsWith("/rag/documents")) {
+          return Response.json({ documents: [] });
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname === "/projects/cloud-project/releases/rel-cycle/files"
+        ) {
+          fileListCalls++;
+          return Response.json({
+            data: [],
+            page_info: { next: "same-cursor" },
+          });
+        }
+        throw new Error(`Unhandled ${request.method} ${url.pathname}`);
+      },
+      async () => {
+        const store = ragStore({
+          contentDir: "knowledge",
+          model: "test/demo",
+        });
+        await assertRejects(
+          () =>
+            runWithRequestContext(
+              {
+                projectSlug: "cloud-project",
+                token: "vf_request_token",
+                productionMode: true,
+                releaseId: "rel-cycle",
+              },
+              () => store.indexContentDir(),
+            ),
+          Error,
+          "repeated a cursor",
+        );
+        assertEquals(fileListCalls, 2);
       },
     );
   });
@@ -1000,7 +1284,7 @@ describe("ragStore", () => {
           type: "pptx",
           created_at: "2026-06-25T00:00:00.000Z",
           updated_at: "2026-06-25T01:00:00.000Z",
-          metadata: { filePath: refreshedFilePath },
+          metadata: { filePath: refreshedFilePath, branch: "main" },
         });
         const chunks = fileChunks.get(refreshedFilePath as string) ?? [];
         assertEquals(chunks.length, 1);
@@ -1011,6 +1295,7 @@ describe("ragStore", () => {
           title: "Better Deck",
           source: "upload:better.pptx",
           type: "pptx",
+          branch: "main",
         });
         assertEquals(embeddingVectors.size, 1);
 
@@ -1125,7 +1410,7 @@ describe("ragStore", () => {
         await assertRejects(
           () => refresh("doc-pptx", "# Better Deck\n\nBody text"),
           Error,
-          "embedding write failed",
+          "request failed (500",
         );
 
         assertEquals(deletedFilePaths.includes(".veryfront/rag/documents/doc-pptx.pptx"), false);
@@ -1156,7 +1441,79 @@ describe("ragStore", () => {
 
         const results = await store.search("   ");
         assertEquals(results, []);
+
+        for (
+          const options of [
+            { topK: 0 },
+            { topK: 101 },
+            { threshold: Number.NaN },
+            { threshold: -0.1 },
+            { threshold: 1.1 },
+          ]
+        ) {
+          await assertRejects(
+            () => store.search("query", options),
+            RangeError,
+          );
+        }
+
+        const controller = new AbortController();
+        controller.abort(new Error("cloud search cancelled"));
+        await assertRejects(
+          () => store.search("query", { abortSignal: controller.signal }),
+          Error,
+          "cloud search cancelled",
+        );
+        await assertRejects(
+          () => store.ingest("Blank", " \n\t "),
+          Error,
+          "no extractable text",
+        );
         assertEquals(fetchCalls, 0);
+      },
+    );
+  });
+
+  it("propagates cloud search cancellation into the outbound request", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+    const searchStarted = Promise.withResolvers<void>();
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (
+          request.method === "POST" &&
+          new URL(request.url).pathname.endsWith("/search")
+        ) {
+          searchStarted.resolve();
+          return await new Promise<Response>((_resolve, reject) => {
+            const rejectForAbort = () => reject(request.signal.reason);
+            if (request.signal.aborted) rejectForAbort();
+            else {
+              request.signal.addEventListener("abort", rejectForAbort, {
+                once: true,
+              });
+            }
+          });
+        }
+        throw new Error(`Unhandled ${request.method} ${request.url}`);
+      },
+      async () => {
+        const controller = new AbortController();
+        const store = ragStore({ model: "test/demo" });
+        const search = store.search("cancel me", {
+          abortSignal: controller.signal,
+        });
+        await searchStarted.promise;
+        controller.abort(new Error("caller stopped"));
+
+        await assertRejects(
+          () => search,
+          Error,
+          "caller stopped",
+        );
       },
     );
   });

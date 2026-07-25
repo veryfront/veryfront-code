@@ -57,6 +57,11 @@ dimension with their vectors. Changing `model` or `documentPrefix` causes all
 stored document chunks to be re-embedded on the next search instead of mixing
 incompatible vectors.
 
+Cloud RAG documents and their searchable chunks are isolated by branch.
+Documents created before branch metadata was recorded are treated as
+main-branch documents; refresh them from the intended branch if they belong
+elsewhere.
+
 Set `contentDir: "knowledge"` to index `knowledge/` instead of `content/`.
 
 ## Add upload routes
