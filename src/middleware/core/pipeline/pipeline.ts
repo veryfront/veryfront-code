@@ -86,24 +86,12 @@ export class MiddlewarePipeline {
     handler: (req: Request) => Response | Promise<Response>,
   ): Promise<Response> {
     let middlewareThrew = false;
-    let handlerThrew = false;
     const composedMiddleware = this.compose();
     const monitoredMiddleware: MiddlewareHandler = async (context, next) => {
       try {
         return await composedMiddleware(context, next);
       } catch (error) {
         middlewareThrew = true;
-        throw error;
-      }
-    };
-    const monitoredHandler = (request: Request): Promise<Response> => {
-      try {
-        return Promise.resolve(handler(request)).catch((error: unknown) => {
-          handlerThrew = true;
-          throw error;
-        });
-      } catch (error) {
-        handlerThrew = true;
         throw error;
       }
     };
@@ -116,7 +104,7 @@ export class MiddlewarePipeline {
         undefined,
         undefined,
         undefined,
-        monitoredHandler,
+        handler,
       );
     } catch (error) {
       await this.runTeardownCallbacks();
@@ -124,7 +112,7 @@ export class MiddlewarePipeline {
     }
 
     return await this.withResponseTeardown(response, {
-      immediate: middlewareThrew || handlerThrew,
+      immediate: middlewareThrew,
     });
   }
 
@@ -135,7 +123,9 @@ export class MiddlewarePipeline {
    * after response bodies close, are canceled, or error; immediately for
    * bodyless, locked, or already-read responses and handler/middleware
    * exceptions. Callback errors are logged and swallowed so cleanup failures
-   * never surface to the client.
+   * never surface to the client. Locked or already-read response bodies cannot
+   * be wrapped by the Fetch API, so immediate cleanup is the unavoidable
+   * fallback for those invalid response states.
    */
   private async runTeardownCallbacks(): Promise<void> {
     for (const cb of this.teardownCallbacks) {
@@ -151,6 +141,8 @@ export class MiddlewarePipeline {
     response: Response,
     options: { immediate: boolean },
   ): Promise<Response> {
+    if (this.teardownCallbacks.length === 0) return response;
+
     const body = response.body;
 
     if (options.immediate || body === null || body.locked || response.bodyUsed) {
@@ -159,11 +151,27 @@ export class MiddlewarePipeline {
     }
 
     const wrappedBody = this.wrapBodyWithTeardown(body);
-    return new Response(wrappedBody, {
+    const wrappedResponse = new Response(wrappedBody, {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
     });
+    this.copyResponseMetadata(response, wrappedResponse);
+    return wrappedResponse;
+  }
+
+  private copyResponseMetadata(source: Response, target: Response): void {
+    for (const property of ["url", "redirected", "type"] as const) {
+      try {
+        Object.defineProperty(target, property, {
+          value: source[property],
+          configurable: true,
+          enumerable: true,
+        });
+      } catch {
+        // Some fetch implementations may make these properties non-configurable.
+      }
+    }
   }
 
   private wrapBodyWithTeardown(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
@@ -176,7 +184,8 @@ export class MiddlewarePipeline {
       await teardownPromise;
     };
 
-    return new ReadableStream<Uint8Array>({
+    const source: UnderlyingByteSource = {
+      type: "bytes",
       pull: async (controller) => {
         try {
           const chunk = await reader.read();
@@ -189,7 +198,9 @@ export class MiddlewarePipeline {
             return;
           }
 
-          controller.enqueue(chunk.value);
+          if (chunk.value.byteLength > 0) {
+            controller.enqueue(chunk.value);
+          }
         } catch (error) {
           await runOnce();
           if (streamCanceled) return;
@@ -199,18 +210,19 @@ export class MiddlewarePipeline {
       cancel: async (reason) => {
         streamCanceled = true;
         let cancelError: unknown;
+        const cancelPromise = Promise.resolve()
+          .then(() => reader.cancel(reason))
+          .catch((error: unknown) => {
+            cancelError = error;
+          });
 
-        try {
-          await reader.cancel(reason);
-        } catch (error) {
-          cancelError = error;
-        }
-
-        await runOnce();
+        await Promise.all([runOnce(), cancelPromise]);
 
         if (cancelError) throw cancelError;
       },
-    });
+    };
+
+    return new ReadableStream(source) as ReadableStream<Uint8Array>;
   }
 
   /**

@@ -14,6 +14,17 @@ afterEach(() => {
 
 describe("middleware/core/pipeline/MiddlewarePipeline", () => {
   const encoder = new TextEncoder();
+  const supportsByobReader = (body: ReadableStream<Uint8Array> | null): boolean => {
+    if (!body) return false;
+
+    try {
+      const reader = body.getReader({ mode: "byob" });
+      reader.releaseLock();
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   describe("use", () => {
     it("should add middleware and return this for chaining", () => {
@@ -213,6 +224,59 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       assertEquals(count, 3);
     });
 
+    it("should preserve the original response when no teardown callbacks are registered", async () => {
+      const pipeline = new MiddlewarePipeline();
+      const originalResponse = new Response("ok");
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/"),
+        () => originalResponse,
+      );
+
+      assert(response === originalResponse);
+      assertEquals(await response.text(), "ok");
+    });
+
+    it("should preserve response metadata while deferring teardown for streaming bodies", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const originalResponse = await fetch("data:text/plain,wrapped metadata");
+      const response = await pipeline.handle(
+        new Request("http://localhost/"),
+        () => originalResponse,
+      );
+
+      assert(response !== originalResponse);
+      assertEquals(response.url, originalResponse.url);
+      assertEquals(response.redirected, originalResponse.redirected);
+      assertEquals(response.type, originalResponse.type);
+      assertEquals(cleanupCount, 0);
+      assertEquals(await response.text(), "wrapped metadata");
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should preserve BYOB reader support when wrapping byte-stream responses", async () => {
+      const pipeline = new MiddlewarePipeline();
+
+      pipeline.onTeardown(() => {});
+
+      const originalResponse = await fetch("data:text/plain,byob");
+      assert(supportsByobReader(originalResponse.body));
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/"),
+        () => originalResponse,
+      );
+
+      assert(supportsByobReader(response.body));
+      assertEquals(await response.text(), "byob");
+    });
+
     it("should still run teardown callbacks when the handler throws", async () => {
       const pipeline = new MiddlewarePipeline();
       let cleaned = false;
@@ -230,6 +294,46 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
 
       assertEquals(response.status, 500);
       assertEquals(cleaned, true);
+    });
+
+    it("should defer teardown when middleware recovers from a handler error with a lazy stream", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      pipeline.use(async (_ctx, next) => {
+        try {
+          return await next();
+        } catch {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (cleanupCount > 0) {
+                  controller.error(new Error("resource was cleaned before read"));
+                  return;
+                }
+
+                controller.enqueue(encoder.encode("recovered"));
+                controller.close();
+              },
+            }),
+          );
+        }
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/"),
+        () => {
+          throw new Error("handler blew up");
+        },
+      );
+
+      assertEquals(cleanupCount, 0);
+      assertEquals(await response.text(), "recovered");
+      assertEquals(cleanupCount, 1);
     });
 
     it("should run teardown callbacks when execution rejects before a response exists", async () => {
@@ -453,6 +557,47 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       assertEquals(cleanupCount, 1);
       assertEquals(await pendingRead, { done: true, value: undefined });
       assertEquals(cleanupCount, 1);
+    });
+
+    it("should run teardown when upstream stream cancellation stalls", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
+
+      const response = await pipeline.handle(
+        new Request("http://localhost/stream"),
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("partial"));
+              },
+              cancel() {
+                return new Promise(() => {});
+              },
+            }),
+          ),
+      );
+
+      const reader = response.body?.getReader();
+      assertExists(reader);
+      assertEquals((await reader.read()).done, false);
+
+      let cancelSettled = false;
+      const cancelPromise = reader.cancel("client disconnected").then(() => {
+        cancelSettled = true;
+      });
+      cancelPromise.catch(() => {});
+
+      for (let i = 0; i < 10 && cleanupCount === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      assertEquals(cleanupCount, 1);
+      assertEquals(cancelSettled, false);
     });
 
     it("should make concurrent stream terminal paths await the same teardown", async () => {
