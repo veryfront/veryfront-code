@@ -7,7 +7,7 @@
  * - Route file presence detection
  **************************/
 
-import { join } from "#veryfront/compat/path";
+import { isAbsolute, join, normalize, relative } from "#veryfront/compat/path";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -59,6 +59,51 @@ export function primeRouterDetectionCache(
 export interface DetectAppRouterOptions {
   /** Project ID for cache isolation in multi-tenant deployments */
   projectId?: string;
+}
+
+function isPathInside(path: string, directory: string): boolean {
+  const relativePath = relative(directory, path).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath));
+}
+
+function resolveProjectPath(projectDir: string, path: string): string {
+  return normalize(isAbsolute(path) ? path : join(projectDir, path));
+}
+
+/**
+ * Resolve the router that owns an already-resolved page.
+ *
+ * Auto-detection decides which router to try first, but mixed projects can
+ * legitimately fall back to the other router. Per-page rendering must follow
+ * the route that actually resolved instead of the project-wide preference.
+ */
+export async function resolveRouterModeForPage(
+  projectDir: string,
+  pagePath: string,
+  config: VeryfrontConfig,
+  adapter: RuntimeAdapter,
+  options?: DetectAppRouterOptions,
+): Promise<"app" | "pages"> {
+  if (config.router === "app") return "app";
+  if (config.router === "pages") return "pages";
+
+  const resolvedPagePath = resolveProjectPath(projectDir, pagePath);
+  const appRoot = resolveProjectPath(
+    projectDir,
+    config.directories?.app ?? "app",
+  );
+  const pagesRoot = resolveProjectPath(
+    projectDir,
+    config.directories?.pages ?? "pages",
+  );
+
+  if (isPathInside(resolvedPagePath, appRoot)) return "app";
+  if (isPathInside(resolvedPagePath, pagesRoot)) return "pages";
+
+  return (await detectAppRouter(projectDir, config, adapter, options)) ? "app" : "pages";
 }
 
 /**

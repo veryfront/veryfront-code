@@ -19,7 +19,7 @@ import {
   createErrorBoundary,
   tryLoadReservedInDirs,
 } from "../app-reserved.ts";
-import { detectAppRouter } from "../router-detection.ts";
+import { resolveRouterModeForPage } from "../router-detection.ts";
 import { getProjectReact } from "#veryfront/react";
 import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -151,16 +151,20 @@ export class LayoutApplicator {
           );
         }
 
-        const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
-          projectId: this.projectId,
-        });
         const pageFilePath = pageInfo.entity.path;
+        const routerMode = await resolveRouterModeForPage(
+          this.projectDir,
+          pageFilePath,
+          this.config,
+          this.adapter,
+          { projectId: this.projectId },
+        );
 
         const isDotPath = pageFilePath
           .split("/")
           .some((s) => s.startsWith(".") && s !== "." && s !== "..");
 
-        if (useAppRouter) {
+        if (routerMode === "app") {
           wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
         } else if (isDotPath) {
           logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
