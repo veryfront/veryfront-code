@@ -820,18 +820,22 @@ async function findSourceFile(
     ".ts",
     ".jsx",
     ".js",
+    ".mjs",
+    ".cjs", // Already-compiled ESM/CJS (e.g. Panda's generated styled-system/*.mjs)
     ".mdx",
     ".md", // Regular sources
   ];
 
   logger.debug("findSourceFile called", { projectDir, basePath });
 
-  const knownExtMatch = basePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
-  const requestedExtMatch = requestedModulePath.match(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/);
+  const knownExtMatch = basePath.match(/\.(json|tsx|ts|jsx|js|mjs|cjs|mdx|md)(\.src)?$/);
+  const requestedExtMatch = requestedModulePath.match(
+    /\.(json|tsx|ts|jsx|js|mjs|cjs|mdx|md)(\.src)?$/,
+  );
   const hasKnownExt = knownExtMatch !== null;
   const requestedExt = requestedExtMatch?.[1] ?? knownExtMatch?.[1] ?? null;
   const rawBasePathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(json|tsx|ts|jsx|js|mdx|md)(\.src)?$/, "")
+    ? basePath.replace(/\.(json|tsx|ts|jsx|js|mjs|cjs|mdx|md)(\.src)?$/, "")
     : basePath;
   let basePathWithoutExt = rawBasePathWithoutExt.replace(/^\/+/, "");
   if (basePathWithoutExt.startsWith("_vf_modules/")) {

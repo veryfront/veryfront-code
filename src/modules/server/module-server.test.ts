@@ -331,6 +331,31 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("serves a project-local generated .mjs module (Panda styled-system) — #219", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-mjs-module-" });
+    try {
+      await Deno.mkdir(`${projectDir}/styled-system/css`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/styled-system/css/index.mjs`,
+        `export function css() { return "panda-class"; }\n`,
+      );
+
+      // A page's relative import `../../styled-system/css/index.mjs` resolves in
+      // the browser to this /_vf_modules/ URL. Before #219 the resolver stripped
+      // the .mjs and never probed it back, so this 404'd and hydration failed.
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/styled-system/css/index.mjs"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      const text = await response.text();
+      assertStringIncludes(text, "css");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("should prefer project deno.js over the dnt-relative deno fallback", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-project-deno-module-" });
     try {
