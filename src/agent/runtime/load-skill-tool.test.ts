@@ -135,6 +135,39 @@ Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the
   assertStringIncludes(reload.instructions, 'Skill "plan" is already loaded');
 });
 
+Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known skill manifest", async () => {
+  const loaderCalls: string[] = [];
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (_context, skillId) => {
+        loaderCalls.push(skillId);
+        return Promise.resolve(
+          skillId === "plan" ? { instructions: "# Project plan", references: [] } : null,
+        );
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
+  const reload = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+
+  assertEquals(result.skillId, "plan");
+  assertEquals(loaderCalls, ["plan"]);
+  assertStringIncludes(reload.instructions, 'Skill "plan" is already loaded');
+  for (const invalidSkillId of ["plan.md.md", "plan.MD", "bad/path.md"]) {
+    await assertRejects(
+      () => tool.execute({ skillId: invalidSkillId }),
+      Error,
+      "input validation failed",
+    );
+  }
+});
+
 Deno.test("createRuntimeLoadSkillTool falls back to builtin skills and filters allowed tools", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext({
