@@ -21,7 +21,7 @@ Context is **scoped, not app-wide magic**: a `<ChatInput>` shares state with _it
 | `ChatContextProvider`      | [`ChatRoot`](./components/chat-root.md)   | [`useChatContext`](./hooks/use-chat-context.md) (`…Optional`)                   | The shared chat session (`chat={useChat()}`).           |
 | `ChatInputContextProvider` | [`ChatInput`](./components/chat-input.md) | [`useChatInputContext`](./hooks/use-chat-input-context.md) (`…Optional`)        | Composer state for _its_ children only.                 |
 | `MessageContextProvider`   | [`Message`](./components/message.md)      | [`useMessageContext`](./hooks/use-message-context.md) (`…Optional`)             | One message row: message, role, streaming, editing.     |
-| `ColorModeProvider`        | rendered directly (from `veryfront/ui`)   | [`useColorMode`](./hooks/consumed-from-ui.md)                                     | Color mode.                                             |
+| `ColorModeProvider`        | rendered directly (from `veryfront/ui`)   | [`useColorMode`](./hooks/consumed-from-ui.md)                                   | Color mode.                                             |
 
 `ChatContextProvider`, `ChatInputContextProvider`, and `MessageContextProvider` are not components you normally render yourself — they are provided _via_ `ChatRoot`, `ChatInput`, and `Message` respectively. `ConversationsProvider` and `ColorModeProvider` are rendered directly at the top of your tree.
 

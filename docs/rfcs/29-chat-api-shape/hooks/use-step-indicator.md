@@ -30,8 +30,8 @@ interface UseStepIndicatorResult {
 
 Explicit at L3, context at L2 — the same **explicit arg › nearest context › default** precedence the other readers follow (mirrors `useToolCall(part?)` / `useSources(message?)` / `useReasoning(input?)`).
 
-| Option | Type | Default | Description |
-| ------ | ---- | ------- | ----------- |
+| Option | Type                                      | Default                              | Description                                                                                                                                             |
+| ------ | ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `step` | `{ stepIndex: number; state: StepState }` | nearest `StepIndicator.Root` context | Pass the boundary explicitly so the L3 eject works **without** a `StepIndicator.Root`. Argless, the hook reads the surrounding `StepIndicator` context. |
 
 ## Returns

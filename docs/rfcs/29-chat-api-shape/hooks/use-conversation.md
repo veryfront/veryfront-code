@@ -31,20 +31,20 @@ interface UseConversationResult {
 
 ## Options
 
-| Argument | Type     | Description                  |
-| -------- | -------- | ---------------------------- |
-| `id`       | `string` | The conversation id to load. |
-| `options.store` | `ConversationsStore` | Injectable store — keeps the hook backend-agnostic (defaults to the same store `useConversations` uses). |
-| `options.storageKey` | `string` | Storage key for the default store. |
+| Argument             | Type                 | Description                                                                                              |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
+| `id`                 | `string`             | The conversation id to load.                                                                             |
+| `options.store`      | `ConversationsStore` | Injectable store — keeps the hook backend-agnostic (defaults to the same store `useConversations` uses). |
+| `options.storageKey` | `string`             | Storage key for the default store.                                                                       |
 
 ## Returns
 
 ### State
 
-| Name           | Type                        | Description              |
-| -------------- | --------------------------- | ------------------------ |
+| Name           | Type                   | Description                                                                                         |
+| -------------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
 | `conversation` | `Conversation \| null` | The loaded conversation (`null`, never `undefined`, when absent — per the library-wide convention). |
-| `isLoading`    | `boolean`                   | Fetch in flight.         |
+| `isLoading`    | `boolean`              | Fetch in flight.                                                                                    |
 
 ### Actions
 
