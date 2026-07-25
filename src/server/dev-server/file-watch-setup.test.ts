@@ -33,6 +33,12 @@ describe("shouldIgnorePath", () => {
     expect(shouldIgnorePath("/proj/scratch.tmp")).toBe(true);
   });
 
+  it("ignores transient middleware modules written beside root middleware", () => {
+    expect(shouldIgnorePath("/proj/.vf-middleware-123.mjs")).toBe(true);
+    expect(shouldIgnorePath(String.raw`C:\proj\.vf-middleware-123.mjs`)).toBe(true);
+    expect(shouldIgnorePath("/proj/.vf-middleware-config.ts")).toBe(false);
+  });
+
   it("does not ignore legitimate source files", () => {
     expect(shouldIgnorePath("/proj/pages/index.tsx")).toBe(false);
     expect(shouldIgnorePath("/proj/components/Button.jsx")).toBe(false);
