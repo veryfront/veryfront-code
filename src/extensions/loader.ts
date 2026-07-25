@@ -20,6 +20,7 @@ import {
 } from "./validation.ts";
 import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
 import { describeThrownValue } from "./safe-value.ts";
+import { getDeferredExtensionState } from "./deferred-extension.ts";
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30_000;
 // JavaScript runtimes clamp larger delays to an implementation-specific short
@@ -312,7 +313,8 @@ export class ExtensionLoader {
     options?: SetupAllOptions,
   ): Promise<void> {
     const timeoutMs = this.normalizeSetupTimeout(options?.setupTimeoutMs);
-    const { loadOrder, contractWinner } = this.prepareLoadPlan(extensions);
+    const materialized = await this.materializeExtensions(extensions);
+    const { loadOrder, contractWinner } = this.prepareLoadPlan(materialized);
 
     // A timed-out setup can keep running after Promise.race settles. Do not
     // activate a replacement until that work settles and receives a final
@@ -387,6 +389,35 @@ export class ExtensionLoader {
       }
       throw error;
     }
+  }
+
+  private async materializeExtensions(
+    candidates: ResolvedExtension[],
+  ): Promise<ResolvedExtension[]> {
+    const resolved: ResolvedExtension[] = [];
+    for (const candidate of candidates) {
+      const deferred = getDeferredExtensionState(candidate);
+      if (!deferred) {
+        resolved.push(candidate);
+        continue;
+      }
+
+      const extension = await deferred.load(this.logger);
+      if (extension === undefined) continue;
+      this.assertValidExtension(extension);
+      if (extension.name !== deferred.expectedName) {
+        throw EXTENSION_VALIDATION_ERROR.create({
+          message:
+            `Deferred extension "${deferred.expectedName}" materialized as "${extension.name}"`,
+        });
+      }
+      resolved.push({
+        extension,
+        source: candidate.source,
+        origin: candidate.origin,
+      });
+    }
+    return resolved;
   }
 
   private prepareLoadPlan(extensions: ResolvedExtension[]): LoadPlan {

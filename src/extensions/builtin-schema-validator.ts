@@ -4,7 +4,7 @@ import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts
 
 /** Ensure the default schema validator is available to schema-backed framework APIs. */
 export function ensureBuiltinSchemaValidator(): void {
-  if (!tryResolve<SchemaValidator>("SchemaValidator")) {
+  if (tryResolve<SchemaValidator>("SchemaValidator") === undefined) {
     register<SchemaValidator>("SchemaValidator", createZodAdapter());
   }
 }

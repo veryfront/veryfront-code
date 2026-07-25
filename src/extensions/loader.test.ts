@@ -10,6 +10,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
 import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionContext, ExtensionSource, ResolvedExtension } from "./types.ts";
+import { createDeferredResolvedExtension } from "./deferred-extension.ts";
 
 type AbortAwareExtensionContext = ExtensionContext & {
   readonly signal?: AbortSignal;
@@ -26,6 +27,18 @@ function makeExt(name: string, overrides: Partial<Extension> = {}): Extension {
   return { name, version: "1.0.0", capabilities: [], ...overrides };
 }
 
+function makeDeferred(
+  name: string,
+  load: (logger: typeof noopLogger) => Promise<Extension | undefined>,
+): ResolvedExtension {
+  return createDeferredResolvedExtension({
+    name,
+    source: "builtin",
+    origin: `veryfront/${name}`,
+    load,
+  });
+}
+
 const noopLogger = {
   debug: () => {},
   info: () => {},
@@ -36,6 +49,110 @@ const noopLogger = {
 describe("ExtensionLoader", () => {
   afterEach(() => {
     reset();
+  });
+
+  describe("deferred extension materialization", () => {
+    it("materializes candidates before activation and runs the loaded extension normally", async () => {
+      const order: string[] = [];
+      const loader = new ExtensionLoader(noopLogger);
+      const deferred = makeDeferred("optional", () => {
+        order.push("materialize");
+        return Promise.resolve(makeExt("optional", {
+          contracts: { provides: ["OptionalContract"] },
+          setup(ctx) {
+            order.push("setup");
+            ctx.provide("OptionalContract", { ready: true });
+          },
+        }));
+      });
+
+      await loader.setupAll([deferred], {}, {
+        beforeActivate() {
+          order.push("activate");
+        },
+      });
+
+      assertEquals(order, ["materialize", "activate", "setup"]);
+      assertEquals(tryResolve("OptionalContract"), { ready: true });
+      await loader.teardownAll();
+    });
+
+    it("keeps the active generation when deferred materialization is invalid", async () => {
+      let activeTeardownCount = 0;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("active", {
+          provides: { ActiveContract: { active: true } },
+          teardown() {
+            activeTeardownCount++;
+          },
+        })),
+      ], {});
+
+      await assertRejects(
+        () =>
+          loader.setupAll([
+            makeDeferred("invalid", () =>
+              Promise.resolve({
+                name: "invalid",
+                version: "1.0.0",
+                capabilities: "not-an-array",
+              } as unknown as Extension)),
+          ], {}),
+        Error,
+        'Extension "invalid" is invalid',
+      );
+
+      assertEquals(activeTeardownCount, 0);
+      assertEquals(tryResolve("ActiveContract"), { active: true });
+      await loader.teardownAll();
+      assertEquals(activeTeardownCount, 1);
+    });
+
+    it("skips unavailable candidates and preflights dependent contracts", async () => {
+      let activeTeardownCount = 0;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("active", {
+          provides: { ActiveContract: { active: true } },
+          teardown() {
+            activeTeardownCount++;
+          },
+        })),
+      ], {});
+
+      await assertRejects(
+        () =>
+          loader.setupAll([
+            makeDeferred("unavailable", () => Promise.resolve(undefined)),
+            makeResolved(makeExt("consumer", {
+              contracts: { requires: ["OptionalContract"] },
+            })),
+          ], {}),
+        Error,
+        '"consumer" requires "OptionalContract"',
+      );
+
+      assertEquals(activeTeardownCount, 0);
+      assertEquals(tryResolve("ActiveContract"), { active: true });
+      await loader.teardownAll();
+    });
+
+    it("rejects materialized identity drift before activation", async () => {
+      const loader = new ExtensionLoader(noopLogger);
+
+      await assertRejects(
+        () =>
+          loader.setupAll([
+            makeDeferred(
+              "expected",
+              () => Promise.resolve(makeExt("unexpected")),
+            ),
+          ], {}),
+        Error,
+        'Deferred extension "expected" materialized as "unexpected"',
+      );
+    });
   });
 
   describe("topologicalSort()", () => {

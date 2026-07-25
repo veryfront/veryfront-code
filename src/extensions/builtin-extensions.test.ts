@@ -13,6 +13,8 @@ import {
   ensureBuiltinSchemaValidator,
   OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
+import { mergeExtensions } from "./discovery.ts";
+import { getDeferredExtensionState } from "./deferred-extension.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 import { EvalReportMlflowExtensionMetadata } from "../../extensions/ext-eval-report-mlflow/src/index.ts";
 import { ExtensionLoader } from "./loader.ts";
@@ -22,16 +24,6 @@ const noopLogger = {
   info: () => {},
   warn: () => {},
   error: () => {},
-};
-
-const noopExtensionContext = {
-  get: () => undefined,
-  require: () => {
-    throw new Error("not used");
-  },
-  provide: () => {},
-  config: {},
-  logger: noopLogger,
 };
 
 function canonicalizeUnorderedMetadata(value: unknown): unknown {
@@ -128,24 +120,70 @@ describe("ensureBuiltinEvalReportExporterRegistry", () => {
 });
 
 describe("createBuiltinExtensions", () => {
-  it("declares the built-in AuthProvider extension contract", () => {
-    const authExtension = createBuiltinExtensions().find((entry) =>
+  async function loadOptionalBuiltin(name: string): Promise<Extension> {
+    const candidate = createBuiltinExtensions().find((entry) => entry.extension.name === name);
+    assert(candidate);
+    const deferred = getDeferredExtensionState(candidate);
+    assert(deferred);
+    const extension = await deferred.load(noopLogger);
+    assert(extension);
+    return extension;
+  }
+
+  it("uses the loaded AuthProvider extension contract as runtime metadata", async () => {
+    const authExtension = await loadOptionalBuiltin("ext-auth-jwt");
+
+    assertEquals(
+      Object.hasOwn(authExtension.provides ?? {}, "AuthProvider") ||
+        authExtension.contracts?.provides?.includes("AuthProvider"),
+      true,
+    );
+  });
+
+  it("uses the loaded OpenTelemetry contracts as runtime metadata", async () => {
+    const otelExtension = await loadOptionalBuiltin(
+      "ext-observability-opentelemetry",
+    );
+
+    assertEquals(
+      otelExtension.contracts?.provides?.includes("TracingExporter"),
+      true,
+    );
+    assertEquals(
+      otelExtension.contracts?.provides?.includes("NodeTelemetryProvider"),
+      true,
+    );
+  });
+
+  it("keeps optional candidates deferred until the loader selects them", () => {
+    const authCandidate = createBuiltinExtensions().find((entry) =>
       entry.extension.name === "ext-auth-jwt"
     );
 
-    assertEquals(authExtension?.extension.contracts?.provides?.includes("AuthProvider"), true);
+    assert(authCandidate);
+    assert(getDeferredExtensionState(authCandidate));
   });
 
-  it("declares the OpenTelemetry observability extension contracts", () => {
-    const otelExtension = createBuiltinExtensions().find((entry) =>
-      entry.extension.name === "ext-observability-opentelemetry"
-    );
+  it("captures optional definitions before deferred loading", async () => {
+    const definition = {
+      name: "ext-captured",
+      origin: "veryfront/ext-captured",
+      sourceDirectory: "ext-captured",
+      factory: () => ({
+        name: "ext-captured",
+        version: "1.0.0",
+        capabilities: [],
+      }),
+    };
+    const candidate = createOptionalBuiltinExtension(definition);
+    definition.name = "ext-mutated";
+    definition.factory = () => {
+      throw new Error("mutated factory must not run");
+    };
 
-    assertEquals(otelExtension?.extension.contracts?.provides?.includes("TracingExporter"), true);
-    assertEquals(
-      otelExtension?.extension.contracts?.provides?.includes("NodeTelemetryProvider"),
-      true,
-    );
+    const extension = await getDeferredExtensionState(candidate)!.load(noopLogger);
+
+    assertEquals(extension?.name, "ext-captured");
   });
 
   it("does not statically import optional implementation extensions", async () => {
@@ -164,201 +202,93 @@ describe("createBuiltinExtensions", () => {
   });
 
   it("skips unavailable optional built-in implementations", async () => {
-    const extension = createOptionalBuiltinExtension({
+    const candidate = createOptionalBuiltinExtension({
       name: "ext-missing",
       origin: "veryfront/ext-missing",
       sourceDirectory: "ext-missing",
-      contracts: { provides: ["MissingContract"] },
-      capabilities: [],
-    }).extension;
-
-    const logs: string[] = [];
-    await extension.setup?.({
-      get: () => undefined,
-      require: () => {
-        throw new Error("not used");
-      },
-      provide: () => {
-        throw new Error("should not provide when implementation is missing");
-      },
-      config: {},
-      logger: {
-        debug: (message) => logs.push(message),
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-      },
     });
 
+    const logs: string[] = [];
+    const deferred = getDeferredExtensionState(candidate);
+    assert(deferred);
+    const loaded = await deferred.load({
+      debug: (message) => logs.push(message),
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    });
+
+    assertEquals(loaded, undefined);
     assertEquals(logs.some((message) => message.includes("ext-missing")), true);
   });
 
   it("rejects an invalid optional built-in factory result", async () => {
-    const extension = createOptionalBuiltinExtension({
+    const candidate = createOptionalBuiltinExtension({
       name: "ext-invalid",
       origin: "veryfront/ext-invalid",
       sourceDirectory: "ext-invalid",
-      capabilities: [],
       factory: () => null as unknown as Extension,
-    }).extension;
+    });
 
     await assertRejects(
-      () => Promise.resolve(extension.setup?.(noopExtensionContext)),
+      () => getDeferredExtensionState(candidate)!.load(noopLogger),
       Error,
       "returned an invalid extension",
     );
   });
 
-  it("tears down a successful optional implementation only once", async () => {
-    let teardownCount = 0;
-    const extension = createOptionalBuiltinExtension({
-      name: "ext-success",
-      origin: "veryfront/ext-success",
-      sourceDirectory: "ext-success",
-      capabilities: [],
+  it("rejects optional factory identity drift", async () => {
+    const candidate = createOptionalBuiltinExtension({
+      name: "ext-expected",
+      origin: "veryfront/ext-expected",
+      sourceDirectory: "ext-expected",
       factory: () => ({
-        name: "success-implementation",
+        name: "ext-unexpected",
         version: "1.0.0",
         capabilities: [],
-        teardown() {
-          teardownCount++;
-        },
-      }),
-    }).extension;
-
-    await extension.setup?.(noopExtensionContext);
-    await extension.teardown?.();
-    await extension.teardown?.();
-
-    assertEquals(teardownCount, 1);
-  });
-
-  it("tears down a rejected optional implementation only once", async () => {
-    let teardownCount = 0;
-    const extension = createOptionalBuiltinExtension({
-      name: "ext-rejection",
-      origin: "veryfront/ext-rejection",
-      sourceDirectory: "ext-rejection",
-      capabilities: [],
-      factory: () => ({
-        name: "rejection-implementation",
-        version: "1.0.0",
-        capabilities: [],
-        setup() {
-          throw new Error("setup rejected");
-        },
-        teardown() {
-          teardownCount++;
-        },
-      }),
-    }).extension;
-
-    await assertRejects(
-      () => Promise.resolve(extension.setup?.(noopExtensionContext)),
-      Error,
-      "setup rejected",
-    );
-    await extension.teardown?.();
-    await extension.teardown?.();
-
-    assertEquals(teardownCount, 1);
-  });
-
-  it("retains an optional implementation until a failed teardown is retried", async () => {
-    let teardownCount = 0;
-    const extension = createOptionalBuiltinExtension({
-      name: "ext-retryable-cleanup",
-      origin: "veryfront/ext-retryable-cleanup",
-      sourceDirectory: "ext-retryable-cleanup",
-      capabilities: [],
-      factory: () => ({
-        name: "retryable-cleanup-implementation",
-        version: "1.0.0",
-        capabilities: [],
-        teardown() {
-          teardownCount++;
-          if (teardownCount === 1) throw new Error("transient optional teardown failure");
-        },
-      }),
-    }).extension;
-
-    await extension.setup?.(noopExtensionContext);
-    await assertRejects(
-      () => Promise.resolve(extension.teardown?.()),
-      Error,
-      "transient optional teardown failure",
-    );
-    await extension.teardown?.();
-    await extension.teardown?.();
-
-    assertEquals(teardownCount, 2);
-  });
-
-  it("retains a timed-out implementation until cleanup precedes replacement", async () => {
-    const setupStarted = Promise.withResolvers<void>();
-    const releaseSetup = Promise.withResolvers<void>();
-    let resourceOpen = false;
-    let teardownCount = 0;
-    let replacementStarted = false;
-    let replacementSawOpenResource = false;
-    const wrapped = createOptionalBuiltinExtension({
-      name: "ext-late-cleanup",
-      origin: "veryfront/ext-late-cleanup",
-      sourceDirectory: "ext-late-cleanup",
-      capabilities: [],
-      factory: () => ({
-        name: "late-cleanup-implementation",
-        version: "1.0.0",
-        capabilities: [],
-        async setup() {
-          setupStarted.resolve();
-          await releaseSetup.promise;
-          resourceOpen = true;
-        },
-        teardown() {
-          teardownCount++;
-          resourceOpen = false;
-        },
       }),
     });
-    const replacement = {
-      source: "config" as const,
-      origin: "replacement",
-      extension: {
-        name: "replacement",
-        version: "1.0.0",
-        capabilities: [],
-        setup() {
-          replacementStarted = true;
-          replacementSawOpenResource = resourceOpen;
-        },
+
+    await assertRejects(
+      () => getDeferredExtensionState(candidate)!.load(noopLogger),
+      Error,
+      'returned extension "ext-unexpected"',
+    );
+  });
+
+  it("does not materialize an optional builtin hidden by a higher-priority extension", async () => {
+    let factoryCalls = 0;
+    const deferred = createOptionalBuiltinExtension({
+      name: "ext-overridden",
+      origin: "veryfront/ext-overridden",
+      sourceDirectory: "ext-overridden",
+      factory: () => {
+        factoryCalls++;
+        return {
+          name: "ext-overridden",
+          version: "1.0.0",
+          capabilities: [],
+        };
       },
+    });
+    const explicit: Extension = {
+      name: "ext-overridden",
+      version: "2.0.0",
+      capabilities: [],
     };
+    const merged = mergeExtensions(
+      [{ extension: explicit, source: "config", origin: "config" }],
+      [],
+      [],
+      [],
+      undefined,
+      [deferred],
+    );
     const loader = new ExtensionLoader(noopLogger);
-    const timedOut = loader.setupAll([wrapped], {}, { setupTimeoutMs: 20 });
 
-    await setupStarted.promise;
-    await assertRejects(() => timedOut, Error, "ext-late-cleanup");
-    assertEquals(resourceOpen, false);
-    assertEquals(teardownCount, 0);
+    await loader.setupAll(merged, {});
 
-    const manualTeardown = Promise.resolve(wrapped.extension.teardown?.());
-    await Promise.resolve();
-    assertEquals(teardownCount, 0);
-
-    const replacementSetup = loader.setupAll([replacement], {});
-    await Promise.resolve();
-    await Promise.resolve();
-    assertEquals(replacementStarted, false);
-
-    releaseSetup.resolve();
-    await Promise.all([manualTeardown, replacementSetup]);
-
-    assertEquals(resourceOpen, false);
-    assertEquals(teardownCount, 1);
-    assertEquals(replacementStarted, true);
-    assertEquals(replacementSawOpenResource, false);
-
+    assertEquals(factoryCalls, 0);
     await loader.teardownAll();
   });
 
@@ -389,9 +319,12 @@ describe("createBuiltinExtensions", () => {
         capabilities: unknown;
       };
     };
+    const candidate = createOptionalBuiltinExtension(mlflow);
+    const extension = await getDeferredExtensionState(candidate)!.load(noopLogger);
+    assert(extension);
     const builtinMetadata = {
-      contracts: mlflow.contracts,
-      capabilities: mlflow.capabilities,
+      contracts: extension.contracts,
+      capabilities: extension.capabilities,
     };
     const manifestMetadata = {
       contracts: manifest.veryfront.contracts,

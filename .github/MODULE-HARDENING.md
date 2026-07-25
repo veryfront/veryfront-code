@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     6 |      10.3% | Current formal closure evidence remains valid       |
+| Closed                         |     7 |      12.1% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | Review findings exist; remediation is not complete  |
-| Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
 | Pending current review         |    14 |      24.1% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -41,6 +41,7 @@ stricter closure count.
 - `config`
 - `embedding`
 - `eval`
+- `extensions`
 - `metrics`
 - `schemas`
 - `version.ts`
@@ -59,7 +60,6 @@ None.
 - `data`
 - `discovery`
 - `errors`
-- `extensions`
 - `fs`
 - `html`
 - `integrations`
@@ -121,14 +121,14 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `config`, `embedding`, `metrics`, and
-`eval`. Each closure includes a complete consumer map, deep module-level
+The current closed review chain covers `config`, `embedding`, `metrics`, `eval`,
+and `extensions`. Each closure includes a complete consumer map, deep module-level
 review, adversarial boundary tests, public-contract documentation, and
 repository-wide verification. Cross-module consumers changed by a fix remain
 in revalidation; focused evidence for one boundary does not by itself close
-the consumer's top-level unit. `extensions` is the next dependency-adjacent
-revalidation target because eval construction and parsing use its built-in
-schema-validator boundary.
+the consumer's top-level unit. `provider` is the next dependency-adjacent
+revalidation target because its model and embedding registries consume the
+extension contracts hardened in this checkpoint.
 
 ### Rebase integration checkpoint
 
@@ -301,6 +301,67 @@ Reproducible checkpoint evidence:
 
 No unresolved critical or high-confidence eval production risk remains.
 
+### Extensions remediation checkpoint
+
+The extensions findings are remediated on the current branch:
+
+- Extension factories, metadata, contract names, capability scopes, lifecycle
+  hooks, dynamic module exports, and registry entries are validated at their
+  runtime boundaries. Hostile accessors and thrown values produce bounded,
+  contextual failures instead of escaping audit or cleanup paths.
+- Dynamic `provide()` calls are restricted to declared contracts. Required
+  contracts and primed infrastructure are preflighted before activation, and
+  declared winning contracts must actually be published. Source priority is
+  immutable, discovery order is deterministic, and ambiguous same-priority
+  providers fail closed.
+- Setup generations are serialized. Timeouts revoke registry authority,
+  teardown is reverse ordered and retryable, late non-cooperative setup remains
+  quarantined, and invalid replacements do not tear down the active
+  generation.
+- Parser, bundler, LLM-provider, and eval-exporter registrations validate
+  their concrete method surfaces and capture identity once. Malformed
+  registrations cannot mutate registries, exporter failures do not abort later
+  exporters, and teardown uses the captured identity rather than mutable
+  accessors.
+- Optional first-party built-ins are filtered by disable directives and source
+  priority before import. Remaining candidates materialize before lifecycle
+  activation and use the factory's actual contracts and capabilities, removing
+  the duplicated hardcoded metadata table. Missing packages are skipped;
+  broken factories, invalid metadata, identity drift, and unavailable required
+  contracts fail before replacement.
+- Deferred built-in state is opaque, branded, immutable, and definition
+  snapshots are stable. The public loader and orchestration signatures remain
+  on the existing `ResolvedExtension[]` contract; the implementation did not
+  leak a new authoring API into generated declarations.
+- OpenTelemetry and sandbox extension dependencies are stripped from the root
+  npm package boundary. `gaxios`, `gcp-metadata`, and `brace-expansion` now ship
+  only with the extension packages that own them.
+- The extension guide documents optional-package selection, preflight failure,
+  and active-generation preservation. Generated API references were refreshed
+  deterministically.
+
+Reproducible checkpoint evidence:
+
+- The complete `src/extensions` surface passed 24 test suites and 275 steps
+  with zero failures, including adversarial validation, registry, priority,
+  timeout, rollback, quarantine, and deferred-materialization coverage.
+- The Kreuzberg built-in integration passed one suite and five end-to-end
+  steps, including upload extraction through the registered
+  `DocumentExtractor`.
+- Binary inclusion and npm package-boundary coverage passed 23 tests and 44
+  steps with zero failures.
+- `deno task docs:validate` passed 45 groups and 87 steps plus all 720 link
+  checks.
+- `deno task verify:quick` passed manifests, formatting, lint and architecture
+  ratchets, extension contract and capability audits, documentation
+  validation, and every configured entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilt the root npm package and all
+  first-party extension packages, verified root import lifecycle behavior, and
+  passed the documented consumer-composition typecheck against generated
+  declarations.
+
+No unresolved critical or high-confidence extensions production risk remains.
+
 ### Config closure checkpoint verification
 
 The current config closure checkpoint has the following reproducible evidence:
@@ -324,7 +385,7 @@ The current config closure checkpoint has the following reproducible evidence:
   checks.
 
 These gates certify this integration checkpoint, not the 14 pending module
-reviews or the 38 touched units that still require current-branch
+reviews or the 37 touched units that still require current-branch
 revalidation. The broader unit and integration portfolio remains part of the
 final repository production gate.
 
