@@ -460,6 +460,16 @@ describe("agent runtime message adapter", () => {
         ],
         0,
       ),
+      agentRuntimeMessage(
+        "assistant",
+        [{
+          type: "source-document",
+          sourceId: "knowledge/citation-only.md",
+          title: "Citation only",
+          mediaType: "text/markdown",
+        }],
+        1,
+      ),
     ]);
 
     assertEquals(providerMessages, [
