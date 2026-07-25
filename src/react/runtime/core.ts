@@ -413,14 +413,34 @@ export function usePageContext(): PageContextValue {
   return React.useContext(PageContextContext);
 }
 
+/**
+ * Flattens `Head` children into host elements, unwrapping React fragments so
+ * `<Head><>…</></Head>` behaves like direct children — matching React's
+ * transparent-fragment semantics. `React.Children` already flattens arrays
+ * (so `.map()` works), but passes a fragment through as a single element whose
+ * `type` is `Symbol(react.fragment)`, which matched none of the tag branches
+ * and was silently dropped.
+ */
+function flattenHeadChildren(children: React.ReactNode): React.ReactElement[] {
+  const out: React.ReactElement[] = [];
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    if (child.type === React.Fragment) {
+      const nested = (child.props as { children?: React.ReactNode }).children;
+      out.push(...flattenHeadChildren(nested));
+      return;
+    }
+    out.push(child);
+  });
+  return out;
+}
+
 /** Applies document head elements during SSR and client rendering. */
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
   const isSSR = isServerEnvironment();
 
   if (isSSR && children) {
-    React.Children.forEach(children, (child) => {
-      if (!React.isValidElement(child)) return;
-
+    flattenHeadChildren(children).forEach((child) => {
       const { type } = child;
       const props = child.props as Record<string, unknown>;
       if (typeof type !== "string" || type === "body") return;
@@ -478,9 +498,7 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
     const addedElements: Element[] = [];
     const nonce = getDocumentNonce();
 
-    React.Children.forEach(children, (child) => {
-      if (!React.isValidElement(child)) return;
-
+    flattenHeadChildren(children).forEach((child) => {
       const { type } = child;
       const props = child.props as Record<string, unknown>;
       if (typeof type !== "string" || type === "body") return;
