@@ -311,7 +311,8 @@ export async function* createHostedMirroredUiStream(
         pendingDerivedSource = null;
         if (!emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
           emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
-          await mirrorSourceOnce(sourceChunk);
+          mirroredKnowledgeSourceIds.add(sourceChunk.sourceId);
+          await mirrorChunk(sourceChunk);
           yield sourceChunk;
         }
         continue;

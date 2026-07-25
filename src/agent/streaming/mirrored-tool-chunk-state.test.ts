@@ -371,6 +371,69 @@ describe("mirrored-tool-chunk-state", () => {
     assertEquals(appendedChunks, outputChunks);
   });
 
+  it("mirrors a richer upstream source after an early fallback flush", async () => {
+    const path = "knowledge/product/limits.md";
+    const toolInput: Chunk = {
+      type: "tool-input-available",
+      toolCallId: "tc-1",
+      toolName: "get_file",
+      input: { path },
+    };
+    const toolOutput: Chunk = {
+      type: "tool-output-available",
+      toolCallId: "tc-1",
+      output: { path, content: "# Limits" },
+    };
+    const upstreamSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/x-markdown",
+      title: "Curated product limits",
+      filename: path,
+    };
+    const fallbackSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+    const appendedChunks: Chunk[] = [];
+    let flushPendingDerivedSource = async (): Promise<void> => {};
+
+    async function* sourceStream(): AsyncIterable<Chunk> {
+      yield toolInput;
+      yield toolOutput;
+      await flushPendingDerivedSource();
+      yield upstreamSource;
+    }
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: sourceStream(),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+        registerPendingDerivedSourceFlush: (flush) => {
+          flushPendingDerivedSource = flush;
+        },
+      }),
+    );
+
+    assertEquals(outputChunks, [toolInput, toolOutput, upstreamSource]);
+    assertEquals(appendedChunks, [
+      toolInput,
+      toolOutput,
+      fallbackSource,
+      upstreamSource,
+    ]);
+  });
+
   it("derives one source document for direct streams with repeated knowledge reads", async () => {
     const path = "knowledge/product/limits.md";
     const sourceChunks: Chunk[] = [
