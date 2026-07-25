@@ -18,6 +18,7 @@ export interface SSRResult {
   stream?: ReadableStream<Uint8Array>;
   pipe?: (writable: NodeJS.WritableStream) => void;
   abort?: () => void;
+  allReady?: Promise<unknown>;
 }
 
 export interface SSRResponseOptions extends SSROptions {

@@ -99,6 +99,18 @@ function createMockRendererProvider(
   };
 }
 
+function createReactReadyStream(rejection: unknown): ReadableStream<Uint8Array> {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("<main>shell</main>"));
+    },
+  });
+
+  return Object.assign(stream, {
+    allReady: Promise.reject(rejection),
+  });
+}
+
 describe("server/services/rendering/ssr.service", () => {
   describe("SSRService", () => {
     describe("constructor", () => {
@@ -440,6 +452,57 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
+      it("maps a notFound() reported after the streaming shell to a 404 before responding", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "",
+              stream: createReactReadyStream(notFound()),
+              ssrHash: undefined,
+              frontmatter: {},
+            }),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: true }),
+        );
+
+        assertEquals(result.status, 404);
+        assertEquals(result.errorType, "not-found");
+        assertEquals(result.isStreaming, false);
+        assertEquals(result.cacheStrategy, "no-cache");
+      });
+
+      it("maps a redirect() reported after the streaming shell to a redirect before responding", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "",
+              stream: createReactReadyStream(redirect("/login")),
+              ssrHash: undefined,
+              frontmatter: {},
+            }),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: true }),
+        );
+
+        assertEquals(result.status, 302);
+        assertEquals(result.errorType, "redirect");
+        assertEquals(result.redirectLocation, "/login");
+        assertEquals(result.isStreaming, false);
+        assertEquals(result.cacheStrategy, "no-cache");
+      });
+
       it("maps a permanent thrown redirect() to a 301", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
@@ -488,7 +551,7 @@ describe("server/services/rendering/ssr.service", () => {
       it("treats an unbranded notFound-shaped throw as a server error", async () => {
         // A loader doing `throw await response.json()` against an upstream
         // answering `{ notFound: true }` is reporting a failure, not requesting a
-        // 404. Only the brand — never the shape — routes to not-found.
+        // 404. Only the brand, never the shape, routes to not-found.
         const adapter = createMockRendererAdapter({
           renderPage: () => {
             throw { notFound: true, message: "record locked" };

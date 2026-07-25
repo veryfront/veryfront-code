@@ -41,7 +41,7 @@ export interface SSRRenderingResult {
 export interface SSRIsolationOptions {
   /** Temp file path for the page component module */
   pageModulePath: string;
-  /** Ordered layout module temp paths (innermost → outermost) */
+  /** Ordered layout module temp paths (innermost to outermost) */
   layoutModulePaths: string[];
   /** Page component props */
   pageProps: Record<string, unknown>;
@@ -57,6 +57,17 @@ function getElementTypeName(el: React.ReactElement | null | undefined): string {
 
   const type = el.type as { name?: string; displayName?: string };
   return type.name || type.displayName || "Component";
+}
+
+function attachAllReady<T extends ReadableStream | null>(
+  target: T,
+  source: ReadableStream | null | undefined,
+): T {
+  const allReady = (source as { allReady?: unknown } | null | undefined)?.allReady;
+  if (!target || !allReady || typeof (allReady as { then?: unknown }).then !== "function") {
+    return target;
+  }
+  return Object.assign(target, { allReady });
 }
 
 export class SSROrchestrator {
@@ -145,7 +156,7 @@ export class SSROrchestrator {
         collectedHead,
       });
 
-      return { fullHtml: html, finalStream, ssrHash };
+      return { fullHtml: html, finalStream: attachAllReady(finalStream, stream), ssrHash };
     }
 
     const ssrHash = await withSpan(SpanNames.SSR_CONTENT_HASH, () => computeHash(html), {

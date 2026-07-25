@@ -105,7 +105,7 @@ interface RedirectResultContext {
  * `throw notFound()` is documented to work like `return notFound()`. The data
  * loaders already recognise a thrown branded result (server-data-fetcher.ts),
  * but a control result thrown from a page COMPONENT render surfaces here in the
- * SSR error handler instead — where, unrecognised, it became a 500. Matching the
+ * SSR error handler instead, where, unrecognised, it became a 500. Matching the
  * brand lets it behave like the returned/loader form: a 404 (custom
  * `not-found.tsx`) or a redirect. The check is on the brand, never the shape.
  *
@@ -173,6 +173,12 @@ function buildNotFoundResult(slug: string): SSRRenderResult {
     errorType: "not-found",
     slug,
   };
+}
+
+function getAllReady(stream: ReadableStream | null | undefined): Promise<unknown> | null {
+  const allReady = (stream as { allReady?: unknown } | null | undefined)?.allReady;
+  if (!allReady || typeof (allReady as { then?: unknown }).then !== "function") return null;
+  return allReady as Promise<unknown>;
 }
 
 export class SSRService implements SSRServiceLike {
@@ -297,6 +303,19 @@ export class SSRService implements SSRServiceLike {
       const cacheStrategy = useNoCache ? "no-cache" : "short";
       const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
 
+      if (isStreaming) {
+        const allReady = getAllReady(result.stream);
+        if (allReady) {
+          try {
+            await allReady;
+          } catch (error) {
+            if (findThrownControlResult(error)) {
+              return this.handleRenderError(error, ctx, slug, request, nonce);
+            }
+          }
+        }
+      }
+
       return {
         status: HTTP_OK,
         html: result.html,
@@ -323,14 +342,14 @@ export class SSRService implements SSRServiceLike {
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     // Dev-only overlay (full stack, absolute paths, line numbers) must never
-    // be exposed outside a local project — including remote preview, which is
+    // be exposed outside a local project, including remote preview, which is
     // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
     const isDev = Boolean(ctx.isLocalProject);
 
     // `throw notFound()` / `throw redirect()` from a page component surfaces here
     // as a thrown control result. Recognise the brand and behave like the loader
-    // form: notFound → 404 (routed to the segment's custom not-found.tsx by the
-    // handler), redirect → 301/302. Otherwise it falls through to a 500.
+    // form: notFound to 404 (routed to the segment's custom not-found.tsx by the
+    // handler), redirect to 301/302. Otherwise it falls through to a 500.
     const control = findThrownControlResult(error);
     if (control?.redirect) {
       logger.debug("SSR control-result redirect (thrown from component)", {
