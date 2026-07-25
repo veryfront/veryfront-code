@@ -7,6 +7,7 @@ import {
   hasDataFetchingFunction,
   MODULE_LOAD_HARD_TIMEOUT_MS,
   MODULE_LOAD_TIMEOUT_MS,
+  moduleLoadLabel,
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
 
@@ -17,6 +18,22 @@ describe("module-collection", () => {
       assertEquals(MODULE_LOAD_HARD_TIMEOUT_MS, 45000);
       assertEquals(DATA_FETCH_TIMEOUT_MS, 15000);
       assertEquals(SSR_RENDER_TIMEOUT_MS, 20000);
+    });
+  });
+
+  describe("moduleLoadLabel", () => {
+    it("uses the slug when present", () => {
+      assertEquals(moduleLoadLabel("blog/post", "/blog/post"), "Module loading for blog/post");
+    });
+
+    it("falls back to the pathname when the slug is empty (index route)", () => {
+      // The index route's slug is "", which previously rendered a blank
+      // "Module loading for " label that named no route on a stalled load.
+      assertEquals(moduleLoadLabel("", "/"), "Module loading for /");
+    });
+
+    it("never renders a blank target", () => {
+      assertEquals(moduleLoadLabel("", ""), "Module loading for unknown route");
     });
   });
 

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   PageContextProvider,
   type PageContextValue,
@@ -395,7 +396,10 @@ describe("react/runtime/RouterProvider (reactive)", () => {
           </RouterProvider>,
         );
       });
-      await tick();
+      await waitFor(
+        () => (rootElement.textContent ?? "").includes("m:true"),
+        { interval: 10, message: "RouterProvider did not finish its client mount" },
+      );
       assertStringIncludes(rootElement.textContent ?? "", "m:true");
       root.unmount();
     } finally {

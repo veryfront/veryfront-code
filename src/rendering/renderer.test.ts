@@ -9,6 +9,7 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
@@ -441,14 +442,18 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh render</html>");
   });
 
-  it("preserves the original request while refreshing stale HTML", async () => {
+  it("preserves request metadata while refreshing stale HTML after disconnect", async () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
       adapter: { fs: { exists: async () => true } },
     } as unknown as RenderContext;
     const url = new URL("https://example.com/data?filter=recent");
-    const request = new Request(url, { headers: { "accept-language": "en" } });
+    const requestAbort = new AbortController();
+    const request = new Request(url, {
+      headers: { "accept-language": "en" },
+      signal: requestAbort.signal,
+    });
     const requestCacheKey = "/data?filter=recent";
     const cacheKey = buildRenderCacheKey(ctx.cachePrefix, `page:${requestCacheKey}`);
     store.data.set(cacheKey, {
@@ -513,7 +518,9 @@ describe("Renderer release asset cache isolation", () => {
       pipeline: {
         renderPage: (_slug, options) => {
           assertEquals(options?.skipCacheCheck, true);
-          assertEquals(options?.request, request);
+          assertEquals(options?.request?.url, request.url);
+          assertEquals(options?.request?.headers.get("accept-language"), "en");
+          assertEquals(options?.request?.signal.aborted, false);
           assertEquals(options?.url, url);
           return Promise.resolve({
             html: "<html>fresh data render</html>",
@@ -535,6 +542,7 @@ describe("Renderer release asset cache isolation", () => {
 
     assertEquals(result.html, "<html>stale data render</html>");
 
+    requestAbort.abort(new Error("request disconnected"));
     await waitForProductionPrewarm(renderer);
 
     assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh data render</html>");
@@ -1005,6 +1013,184 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(results.length, 11);
     assertEquals(renderCalls, 1);
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
+  });
+
+  it("detaches a cancelled caller without aborting a shared cacheable render", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    const renderStarted = Promise.withResolvers<void>();
+    const renderGate = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    let observedSignal: AbortSignal | undefined;
+    let observedRequestSignal: AbortSignal | undefined;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal; request?: Request },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (slug, options) => {
+          renderCalls++;
+          observedSignal = options?.abortSignal;
+          observedRequestSignal = options?.request?.signal;
+          renderStarted.resolve();
+          return new Promise((resolve, reject) => {
+            const onAbort = () => reject(options?.abortSignal?.reason);
+            options?.abortSignal?.addEventListener("abort", onAbort, { once: true });
+            renderGate.promise.then(() => {
+              options?.abortSignal?.removeEventListener("abort", onAbort);
+              resolve({
+                html: `<html>${slug}</html>`,
+                frontmatter: {},
+                headings: [],
+                stream: null,
+              });
+            });
+          });
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const sharedOptions = {
+      cacheKey: "shared-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const cancelledRender = renderer.renderPage("/shared", ctx, {
+      ...sharedOptions,
+      request: new Request("https://example.com/shared", { signal: caller.signal }),
+    });
+    await renderStarted.promise;
+
+    const followerRender = renderer.renderPage("/shared", ctx, sharedOptions);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const reason = new Error("caller disconnected");
+    caller.abort(reason);
+    renderGate.resolve();
+    await assertRejects(() => cancelledRender, Error, reason.message);
+
+    assertEquals(observedSignal?.aborted, false);
+    assertEquals(observedRequestSignal?.aborted, false);
+
+    const result = await followerRender;
+    assertEquals(result.html, "<html>/shared</html>");
+    assertEquals(renderCalls, 1);
+  });
+
+  it("aborts underlying render work when the pipeline deadline expires", async () => {
+    using time = new FakeTime();
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedSignal: AbortSignal | undefined;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedSignal = options?.abortSignal;
+          markStarted();
+          return new Promise<never>(() => {});
+        },
+      },
+    });
+
+    const render = renderer.renderPage("/deadline", makeRenderContext(), {
+      environment: "production",
+      releaseAssetManifest: null,
+    });
+    const rejected = assertRejects(
+      () => render,
+      Error,
+      "Render pipeline for proj-1:/deadline timed out after 60000ms",
+    );
+    await started;
+
+    await time.tickAsync(60_000);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
+  });
+
+  it("propagates caller cancellation into render pipeline work", async () => {
+    using time = new FakeTime();
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const caller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const started = Promise.withResolvers<void>();
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<never>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedSignal = options?.abortSignal;
+          started.resolve();
+          return new Promise<never>((_, reject) => {
+            options?.abortSignal?.addEventListener(
+              "abort",
+              () => reject(options.abortSignal?.reason),
+              { once: true },
+            );
+          });
+        },
+      },
+    });
+
+    const reason = new Error("request aborted");
+    const render = renderer.renderPage("/caller-abort", makeRenderContext(), {
+      abortSignal: caller.signal,
+      environment: "production",
+      releaseAssetManifest: null,
+      request: new Request("https://example.com/caller-abort", {
+        headers: { cookie: "session=caller" },
+        signal: caller.signal,
+      }),
+    });
+    const rejected = assertRejects(() => render, Error, "request aborted");
+    await started.promise;
+
+    caller.abort(reason);
+    await time.tickAsync(0);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, reason);
   });
 });
 

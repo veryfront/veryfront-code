@@ -15,6 +15,7 @@ import type {
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
+import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -60,7 +61,8 @@ export class BareStrategy implements ImportRewriteStrategy {
       specifier === "react-dom" ||
       specifier.startsWith("react/") ||
       specifier.startsWith("react-dom/") ||
-      specifier.startsWith("node:")
+      specifier.startsWith("node:") ||
+      isCrossProjectImport(specifier)
     ) {
       return false;
     }
@@ -87,7 +89,20 @@ export class BareStrategy implements ImportRewriteStrategy {
       return { specifier: null };
     }
 
-    if (ctx.target === "ssr") return { specifier: null };
+    if (ctx.target === "ssr") {
+      // On the server an installed package is resolved by name from node_modules
+      // (Node) — a bare specifier carrying an explicit version, e.g.
+      // `next-themes@0.4.6`, has no matching `node_modules/next-themes@0.4.6`
+      // entry, so `import()` never resolves it and the cold module load stalls
+      // to a timeout/500. The version is only meaningful for the browser's
+      // esm.sh URL, so strip it here and resolve the installed package by name
+      // (preserving any subpath). `npm:` specifiers keep their version — the
+      // Deno npm resolver understands them.
+      if (!isNpmScheme && parsed?.version) {
+        return { specifier: `${parsed.packageName}${parsed.subpath ?? ""}` };
+      }
+      return { specifier: null };
+    }
 
     if (parsed == null) {
       return { specifier: null };

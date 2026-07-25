@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
 import { markBuildFailure } from "./module-loader/build-failure.ts";
@@ -181,6 +182,160 @@ describe("RenderPipeline behavior", () => {
       assertEquals(config.contentSourceId, "preview-request-source");
       assertEquals(config.reactVersion, "18.3.1");
     }
+  });
+
+  it("keeps a cold module graph alive while distinct transforms keep completing", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/large-cold-graph.tsx");
+    const owner = new AbortController();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: { onProgress?: (event: { phase: string; filePath: string }) => void },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>((resolve) => {
+        let completed = 0;
+        const interval = setInterval(() => {
+          completed += 1;
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: `/framework/module-${completed}.js`,
+          });
+          if (completed === 10) {
+            clearInterval(interval);
+            resolve({});
+          }
+        }, 5_000);
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/large-cold-graph", {
+      abortSignal: owner.signal,
+      request: new Request("http://localhost/large-cold-graph"),
+      url: new URL("http://localhost/large-cold-graph"),
+    });
+    await started;
+    await time.tickAsync(50_000);
+
+    assertEquals((await pageData).props, {});
+  });
+
+  it("preserves a hard cap for unowned cold module graphs", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/unowned-cold-graph.tsx");
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: {
+        onProgress?: (event: { phase: string; filePath: string }) => void;
+        signal?: AbortSignal;
+      },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>((_, reject) => {
+        let completed = 0;
+        const intervalId = setInterval(() => {
+          completed += 1;
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: `/framework/unowned-module-${completed}.js`,
+          });
+        }, 5_000);
+        config.signal?.addEventListener(
+          "abort",
+          () => {
+            clearInterval(intervalId);
+            reject(config.signal?.reason);
+          },
+          { once: true },
+        );
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/unowned-cold-graph", {
+      request: new Request("http://localhost/unowned-cold-graph"),
+      url: new URL("http://localhost/unowned-cold-graph"),
+    });
+    const rejected = assertRejects(
+      () => pageData,
+      Error,
+      "Module loading for /unowned-cold-graph timed out after 45000ms",
+    );
+
+    await started;
+    await time.tickAsync(45_000);
+
+    assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "hard");
+  });
+
+  it("does not treat a repeated transform milestone as continuing progress", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/repeating-graph.tsx");
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: { onProgress?: (event: { phase: string; filePath: string }) => void },
+    ) => {
+      markStarted();
+      return new Promise<Record<string, unknown>>(() => {
+        setInterval(() => {
+          config.onProgress?.({
+            phase: "framework:module-transformed",
+            filePath: "/framework/repeating.js",
+          });
+        }, 5_000);
+      });
+    };
+
+    const pageData = pipeline.resolvePageData("/repeating-graph", {
+      request: new Request("http://localhost/repeating-graph"),
+      url: new URL("http://localhost/repeating-graph"),
+    });
+    const rejected = assertRejects(
+      () => pageData,
+      Error,
+      "Module loading for /repeating-graph timed out",
+    );
+    await started;
+    await time.tickAsync(45_000);
+
+    assertEquals((await rejected as Error & { timeoutKind?: string }).timeoutKind, "idle");
+  });
+
+  it("cancels module loading when the owning render is aborted", async () => {
+    using time = new FakeTime();
+    const pipeline = createPipeline("/project/pages/cancelled-graph.tsx");
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => markStarted = resolve);
+    (pipeline as any).loadModule = (
+      _path: string,
+      config: { signal?: AbortSignal },
+    ) => {
+      observedSignal = config.signal;
+      markStarted();
+      return new Promise<Record<string, unknown>>(() => {});
+    };
+
+    const pageData = pipeline.resolvePageData("/cancelled-graph", {
+      abortSignal: controller.signal,
+      request: new Request("http://localhost/cancelled-graph"),
+      url: new URL("http://localhost/cancelled-graph"),
+    });
+    const rejected = assertRejects(() => pageData, Error, "render cancelled");
+    await started;
+
+    controller.abort(new Error("render cancelled"));
+    await time.tickAsync(10_000);
+
+    await rejected;
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, controller.signal.reason);
   });
 
   it("renderPage uses a non-empty cache key for the root slug", async () => {

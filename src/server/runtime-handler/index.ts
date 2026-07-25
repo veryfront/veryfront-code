@@ -15,13 +15,10 @@ import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfro
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
-import { createRequestContext } from "../context/request-context.ts";
 
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -89,7 +86,6 @@ import {
   startRequestTracking,
   timeAsync,
 } from "./request-lifecycle.ts";
-import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import {
   checkRequestIsolation,
   completeIsolatedRequest,
@@ -97,18 +93,10 @@ import {
   createIsolationErrorResponse,
   startIsolatedRequest,
 } from "./isolation.ts";
-import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
-import { resolveEnvironment } from "./environment-resolution.ts";
-import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
+import { buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import {
-  HTTP_GATEWAY_TIMEOUT,
-  isLightweightPath,
-  isMonitoringPath,
-  isWebSocketPath,
-  shouldSkipEnrichedContext,
-} from "./request-utils.ts";
+import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
   EnvironmentVariableCache,
@@ -117,8 +105,12 @@ import {
   runWithProjectEnv,
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
-import { isProxyTrusted } from "../utils/proxy-trust.ts";
 import { projectMiddlewareRuntime } from "./project-middleware.ts";
+import {
+  prepareProjectRequest,
+  resolveProjectIdentity,
+  resolveProjectRuntimeContext,
+} from "./project-runtime-context.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -378,32 +370,31 @@ export function createVeryfrontHandler(
       }
     }
 
-    // Build logger context
-    const hostHeader = req.headers.get("host") ?? url.host;
-    const domain = hostHeader.replace(/:\d+$/, "");
-    const proxyTrustPublicKeyPem = adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-      getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    const proxyTrusted = isProxyMode
-      ? await isProxyTrusted(req, { publicKeyPem: proxyTrustPublicKeyPem })
-      : undefined;
-    const headers = extractRequestHeaders(req, url, proxyTrusted);
+    const preparedRequest = await prepareProjectRequest({
+      req,
+      url,
+      isProxyMode,
+      adapterEnv: adapter.env,
+    });
+    const { headers, requestContext: reqCtx } = preparedRequest;
+    const { proxyTrusted } = preparedRequest.proxyTrust;
 
     const loggerContext: RequestContext = {
       logger: logger.child({
         requestId: lifecycle.requestId,
         request_url: req.url,
-        domain,
-        project_slug: headers.projectSlug,
-        project_id: headers.projectId,
-        release_id: headers.releaseId,
-        branch_id: headers.branchId,
-        branch_name: headers.branchName,
-        pathname: url.pathname,
+        domain: preparedRequest.loggerFacts.domain,
+        project_slug: preparedRequest.loggerFacts.projectSlug,
+        project_id: preparedRequest.loggerFacts.projectId,
+        release_id: preparedRequest.loggerFacts.releaseId,
+        branch_id: preparedRequest.loggerFacts.branchId,
+        branch_name: preparedRequest.loggerFacts.branchName,
+        pathname: preparedRequest.loggerFacts.pathname,
       }),
       requestId: lifecycle.requestId,
-      projectSlug: headers.projectSlug,
-      projectId: headers.projectId,
-      domain,
+      projectSlug: preparedRequest.loggerFacts.projectSlug,
+      projectId: preparedRequest.loggerFacts.projectId,
+      domain: preparedRequest.loggerFacts.domain,
     };
 
     return runWithRequestContextAsync(loggerContext, async () => {
@@ -412,11 +403,11 @@ export function createVeryfrontHandler(
 
       startRequestTracking(
         lifecycle.requestId,
-        headers.projectSlug,
-        url.pathname,
-        req.method,
-        headers.environment,
-        headers.releaseId,
+        preparedRequest.trackingFacts.projectSlug,
+        preparedRequest.trackingFacts.pathname,
+        preparedRequest.trackingFacts.method,
+        preparedRequest.trackingFacts.environment,
+        preparedRequest.trackingFacts.releaseId,
       );
 
       startContentMetrics();
@@ -442,57 +433,23 @@ export function createVeryfrontHandler(
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
-        // Early validation: in proxy mode, required context headers must be present.
-        // Without these, the server cannot authenticate or resolve the project, and
-        // proceeding would cause cryptic 500s deep in the rendering pipeline.
-        if (isProxyMode && !isLightweightPath(url.pathname) && !isWebSocketPath(url.pathname)) {
-          const token = req.headers.get("x-token");
-
-          const missingHeader = !headers.projectSlug
-            ? {
-              error: "Missing project context",
-              detail: "x-project-slug header is required in proxy mode",
-            }
-            : !token
-            ? {
-              error: "Missing authentication context",
-              detail: "x-token header is required in proxy mode",
-            }
-            : null;
-
-          const hasTrustSensitiveProxyHeaders = !!req.headers.get("x-project-path");
-          const untrustedProxyContext = !missingHeader && hasTrustSensitiveProxyHeaders &&
-            !proxyTrusted;
-          const proxyContextError = untrustedProxyContext
-            ? {
-              error: "Untrusted proxy context",
-              detail: "proxy context headers require a trusted upstream proxy",
-            }
-            : null;
-
-          const proxyGuardError = missingHeader ?? proxyContextError;
-
-          if (proxyGuardError) {
-            logger.warn(proxyGuardError.detail, {
-              pathname: url.pathname,
-              domain,
-              projectSlug: headers.projectSlug,
-              host: req.headers.get("host"),
-              forwardedHost: req.headers.get("x-forwarded-host"),
-            });
-            endContentMetrics({
-              requestId: lifecycle.requestId,
-              pathname: url.pathname,
-              mode: "proxy",
-            });
-            completeRequestTracking(lifecycle.requestId, 502, false);
-            completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
-            endRequestTracing(spanInfo.span, 502);
-            return new Response(
-              JSON.stringify(proxyGuardError),
-              { status: 502, headers: { "Content-Type": "application/json" } },
-            );
-          }
+        if (preparedRequest.proxyGuard) {
+          logger.warn(preparedRequest.proxyGuard.detail, {
+            pathname: url.pathname,
+            domain: preparedRequest.loggerFacts.domain,
+            projectSlug: headers.projectSlug,
+            host: req.headers.get("host"),
+            forwardedHost: req.headers.get("x-forwarded-host"),
+          });
+          endContentMetrics({
+            requestId: lifecycle.requestId,
+            pathname: url.pathname,
+            mode: "proxy",
+          });
+          completeRequestTracking(lifecycle.requestId, 502, false);
+          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
+          endRequestTracing(spanInfo.span, 502);
+          return preparedRequest.proxyGuard.response;
         }
 
         const profileCategory = url.pathname.startsWith("/_vf_styles/")
@@ -523,22 +480,23 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const reqCtx = createRequestContext(request, { proxyTrusted });
-
           const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
 
           // Resolve project from various sources
           const projectRes = await profilePhase(
             "runtime.resolve_project",
             () =>
-              resolveProject(request, url, headers, {
+              resolveProjectIdentity({
+                req: request,
+                url,
+                headers,
                 config,
-                reqCtx,
+                requestContext: reqCtx,
                 defaultProjectSlug: opts.defaultProjectSlug,
                 defaultProjectId: opts.defaultProjectId,
                 defaultReleaseId: opts.defaultReleaseId,
                 wsSlugOverride,
-                proxyTrusted,
+                proxyTrust: { proxyTrusted },
               }),
           );
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
@@ -564,108 +522,44 @@ export function createVeryfrontHandler(
             if (response) return response;
           }
 
-          // Resolve adapter and config for project.
-          // Note: `x-project-path` is NOT forwarded via `headers.projectPath` anymore;
-          // `resolveAdapter` reads it directly from `req` and only honours it when the
-          // request is proxy-trusted (see isProxyTrusted).
-          const adapterRes = await profilePhase("runtime.resolve_adapter", () =>
-            resolveAdapter({
-              req: request,
-              projectDir,
-              adapter,
-              config,
-              projectSlug: projectRes.projectSlug,
-              projectId: projectRes.projectId,
-              proxyToken: reqCtx.token,
-              releaseId: projectRes.releaseId,
-              proxyEnv: projectRes.proxyEnv,
-              branch: reqCtx.branch,
-              environmentName: projectRes.environmentName,
-              parsedDomain: projectRes.parsedDomain,
-              pathname: url.pathname,
-              isProxyMode,
-              proxyTrusted,
-            }));
-
-          // Resolve environment and validate
-          const host = request.headers.get("x-forwarded-host") ||
-            request.headers.get("host") || url.host;
-          const envRes = resolveEnvironment({
-            proxyEnv: projectRes.proxyEnv,
-            reqCtxMode: reqCtx.mode,
-            releaseId: projectRes.releaseId,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            environmentName: projectRes.environmentName,
-            host,
-            isLocalProject: adapterRes.isLocalProject,
+          const runtimeContext = await resolveProjectRuntimeContext({
+            req: request,
+            url,
+            projectDir,
+            adapter,
+            config,
+            projectIdentity: projectRes,
+            headers,
+            requestContext: reqCtx,
             isProxyMode,
-            pathname: url.pathname,
+            proxyTrust: { proxyTrusted },
+            securityConfig: securityLoader.getSecurityConfig(),
+            cspUserHeader: securityLoader.getCspUserHeader(),
+            debug: opts.debug,
+            routeRegistry: registry,
+            moduleServerUrl: opts.moduleServerUrl,
             defaultEnvironment: opts.defaultEnvironment,
+            envVarCache,
+            profileAdapter: (operation) => profilePhase("runtime.resolve_adapter", operation),
+            profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
+            onEnvironmentResolved: (envRes) => {
+              updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
+            },
+            logDebug,
           });
+          const adapterRes = runtimeContext.adapter;
+          const envRes = runtimeContext.environment;
 
           if (envRes.errorResponse) {
             return envRes.errorResponse;
           }
-          updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
 
-          const skipRenderEnrichedContext = shouldSkipEnrichedContext(url.pathname);
-
-          // Build handler context
-          const ctx = buildHandlerContext({
-            projectDir: adapterRes.projectDir,
-            adapter: adapterRes.adapter,
-            securityConfig: securityLoader.getSecurityConfig(),
-            cspUserHeader: securityLoader.getCspUserHeader(),
-            debug: opts.debug,
-            config: adapterRes.config,
-            parsedDomain: projectRes.parsedDomain,
-            projectSlug: projectRes.projectSlug,
-            projectId: projectRes.projectId,
-            releaseId: envRes.releaseId,
-            proxyToken: reqCtx.token,
-            environmentName: projectRes.environmentName,
-            resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
-            requestContext: reqCtx,
-            routeRegistry: registry,
-            isLocalProject: adapterRes.isLocalProject,
-            moduleServerUrl: opts.moduleServerUrl,
-            environmentId: headers.environmentId,
-            skipEnrichedContext: skipRenderEnrichedContext,
-          });
-
-          // Fetch per-project env vars for remote projects
-          let envVarsForRequest: Record<string, string> = {};
-          if (
-            !adapterRes.isLocalProject &&
-            headers.environmentId &&
-            reqCtx.token &&
-            projectRes.projectSlug
-          ) {
-            const environmentId = headers.environmentId;
-            const projectSlug = projectRes.projectSlug;
-            envVarsForRequest = await profilePhase(
-              "runtime.load_env_vars",
-              () =>
-                envVarCache.get(
-                  environmentId,
-                  reqCtx.token,
-                  projectSlug,
-                ),
-            );
-
-            logDebug("[runtime-handler] Project env vars fetched", {
-              projectSlug,
-              environmentId,
-              count: Object.keys(envVarsForRequest).length,
-            });
-          }
+          const ctx = runtimeContext.handlerContext!;
+          const envVarsForRequest = runtimeContext.rawEnvVars;
 
           await incrementRequestMetrics();
 
-          const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
-            adapterRes.config?.integrations,
-          );
+          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
           const executeProjectRoute = () =>
             projectMiddlewareRuntime.execute({
               request,
