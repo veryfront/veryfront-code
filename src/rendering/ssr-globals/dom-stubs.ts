@@ -183,14 +183,7 @@ export function createDocumentStub(): {
   getElementsByName: () => [];
   documentElement: ReturnType<typeof createElementStub>;
   body: ReturnType<typeof createElementStub>;
-  head: {
-    appendChild: () => void;
-    removeChild: () => void;
-    insertBefore: () => void;
-    querySelector: () => null;
-    querySelectorAll: () => [];
-    contains: () => false;
-  };
+  head: ReturnType<typeof createElementStub>;
   activeElement: null;
   hidden: false;
   visibilityState: "visible";
@@ -235,14 +228,11 @@ export function createDocumentStub(): {
     // helpers) don't crash on a missing `getAttribute`/`setAttribute`.
     documentElement: createElementStub(),
     body: createElementStub(),
-    head: {
-      appendChild: noop,
-      removeChild: noop,
-      insertBefore: noop,
-      querySelector: noopNull,
-      querySelectorAll: noopEmptyArray,
-      contains: noopFalse,
-    },
+    // head gets the full element stub too, so CSS-in-JS libraries (emotion,
+    // styled-components, etc.) that insert <style> tags via
+    // `document.head.insertBefore(...)` during SSR don't crash on a missing
+    // `insertBefore`.
+    head: createElementStub(),
     activeElement: null,
     hidden: false,
     visibilityState: "visible",
