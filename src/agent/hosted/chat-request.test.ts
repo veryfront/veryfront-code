@@ -666,6 +666,7 @@ describe("agent/hosted-chat-request", () => {
       ]);
 
       assertEquals(parsed.messages[1]?.parts as unknown, [{ type: "text", text: "" }]);
+      assertProviderMessages(parsed.messages, expectedRawReplayProviderMessages());
     }
   });
 

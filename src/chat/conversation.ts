@@ -1188,7 +1188,9 @@ function convertUserMessage(message: ChatProviderModelInputMessage): ProviderMod
 
   for (const part of message.parts) {
     if (isTextPart(part)) {
-      content.push({ type: "text", text: part.text });
+      if (part.text.length > 0) {
+        content.push({ type: "text", text: part.text });
+      }
       continue;
     }
 
@@ -1332,7 +1334,9 @@ function convertAssistantMessage(
 
   for (const part of message.parts) {
     if (isTextPart(part)) {
-      pushAssistantPart({ type: "text", text: part.text });
+      if (part.text.length > 0) {
+        pushAssistantPart({ type: "text", text: part.text });
+      }
       continue;
     }
 

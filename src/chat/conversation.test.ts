@@ -1178,17 +1178,24 @@ describe("convertUiMessagesToProviderModelMessages", () => {
 
     assertEquals(
       convertUiMessagesToProviderModelMessages(emptyTextMessages),
-      [
-        {
-          role: "assistant",
-          content: [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
-        },
-        { role: "assistant", content: [{ type: "text", text: "" }] },
-        {
-          role: "tool",
-          content: [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
-        },
-      ],
+      expectedToolExchange(
+        [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
+        [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
+
+    const emptyUserTextMessages: ChatProviderModelInputMessage[] = [
+      skippedMessages[0]!,
+      userInputMessage("", "user-empty-text"),
+      skippedMessages[2]!,
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(emptyUserTextMessages),
+      expectedToolExchange(
+        [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
+        [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
     );
   });
 
