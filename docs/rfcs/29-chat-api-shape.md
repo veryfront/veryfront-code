@@ -67,10 +67,12 @@ hooks"; it's "never render an element the consumer can't supply themselves."
 
 **Every public hook and component must be reusable by ANY consumer to build ANY chat UI — not tied to the veryfront application.** This is non-negotiable. A full-surface review found the surface is overwhelmingly generic, but a small set of pieces are hard-wired to veryfront's backend/product and are currently documented as neutral "signature kept," hiding the coupling. Those must move behind a **veryfront adapter** (or gain injectable transport), leaving a clean generic core.
 
+> **`veryfront/chat` is an AG-UI client (`src/agent/ag-ui/`).** The agent / tool-call / status / streaming **shape is the [AG-UI protocol](https://ag-ui.com)** — a generic open standard the library is *meant* to implement. That shape is **not** app coupling; supporting it is the point. So agent status values (`thinking` / `tool_execution` / `completed` / …), tool-call lifecycle, and streaming events are all generic. The genuine coupling is the veryfront-specific bits **around** the protocol — the REST agent-catalog transport, brand strings, product settings, and skill vocabulary — listed below.
+
 | Coupled piece | Coupling (verified in `src/`) | Decouple path |
 | --- | --- | --- |
 | `useAgents` · `useAgentMetadata` · `useAgent` | hardcoded `fetch("/api/agents")`, veryfront envelope/normalizers, error registry, SDK types | move to the adapter, or require an injected `transport`/`fetcher` and document the backend contract |
-| `AgentCard` | baked to veryfront's six-value agent-status enum (`thinking` / `tool_execution` / …) | generalize `status` to a caller string + presentation map, or adapter |
+| `AgentCard` | imports veryfront agent-SDK message/tool **types** and duplicates `Message`/`ToolCall` for a runtime view (the status *values* are AG-UI-standard, so **not** the coupling) | type against the generic AG-UI shape, or move the SDK-typed card to the adapter |
 | `ToolCall` + `isSkillToolPart` | auto-compacts by hardcoded tool names (`load_skill`, `execute_skill_script`); "skill" is a veryfront concept | default `variant="card"`; opt a tool into compact via the `tools` registry; drop the skill guard from the public generic API |
 | `ChatEmptyState.Avatar` | default `alt="Veryfront Agent"` — brand string shipped to screen readers | neutral default (`"Agent"`) or make `alt` required |
 | `ChatActions.Preset` `settings` | `autoSubmit` / `autoFixErrors` are agent-runtime toggles | drop from the public reader; consumers compose a settings submenu from generic `.Item`s |
