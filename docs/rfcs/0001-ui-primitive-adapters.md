@@ -359,10 +359,10 @@ engine.**
   in their app and bump it on their own schedule. We never pin, track, or chase
   an engine version.
 - **Reference adapters are vendored, not versioned (the shadcn model).** We ship
-  Base UI / Radix / React Aria adapter *source* via a registry /
-  `npx veryfront add adapter base-ui` that copies one file into the developer's
-  repo. They own it; we don't publish or semver it. There is no adapter release
-  train to keep in lockstep, so there is nothing to drift *from*.
+  Base UI / Radix / React Aria adapter *source* that the developer copies into
+  their repo (see "Distribution" below). They own it; we don't publish or semver
+  it. There is no adapter release train to keep in lockstep, so there is nothing
+  to drift *from*.
 - **Drift is detected, not prevented — by the conformance suite (§6.7).** The
   contract is a small, stable, versioned interface. If an engine's new version
   changes an API an adapter uses, the shared conformance test **fails loudly**
@@ -373,6 +373,27 @@ engine.**
 Net: our surface stays tiny and version-independent. The only party who bumps an
 engine is the developer who chose it; the only thing that can drift is a single
 file they own, guarded by a test we ship.
+
+**Distribution — decided: CLI-vendored, docs-mirrored.** How the developer *gets*
+the vendored file:
+
+- **Primary: `veryfront generate adapter <name>`.** This matches the CLI's
+  existing scaffolding family (`veryfront generate type`, `generate app-router`,
+  `generate pages-router`) — not a new shadcn-style `add` verb. The command copies
+  `ui-adapters/<name>.tsx` into the app, adds the engine to the project's
+  dependencies, and prints the one-line `UIAdapterProvider` wiring (or patches
+  `veryfront.config.ts` when the optional build-time bind is used). One command,
+  discoverable via `veryfront generate --help`, consistent with how everything
+  else in the framework is scaffolded.
+- **Mirror: a docs "reference adapters" page** renders the *same* templates the
+  CLI copies, for readers who want to eyeball or hand-paste. Critically, the CLI
+  template is the **single source of truth** and the docs page is generated from
+  it — so there is no copy that can drift from the other. (This is the "both"
+  option, made safe by one canonical source.)
+- **Not chosen: a hosted JSON registry** à la shadcn's `registry:` endpoint. It
+  buys remote/third-party registries we do not need for first-party adapters and
+  adds hosting + versioning surface — the exact overhead this design avoids.
+  Left as a future extension point if a community-adapter ecosystem emerges.
 
 ### 6.7 Conformance — proving an adapter is correct
 
@@ -702,6 +723,34 @@ interface is the sum of these per-primitive parts, and §6.3 rules 1–7 are exa
 the tools each seam needs. It also shows the payoff concretely: **five of these
 list a builtin `TODO(a11y)` gap that a mature engine closes for free.**
 
+### 6.11 Engine coverage gaps — decided: builtin fallback + dev warning + matrix
+
+Not every engine ships every primitive (survey §13.3): Ariakit has no Slider,
+Table, or DatePicker; Radix has no Number Field; etc. What happens when the
+selected adapter lacks a primitive the app uses?
+
+- **Tier-1 has no gaps.** All four engines cover Dialog, Popover, Menu, Tooltip,
+  and Select, and Drawer is a skin over Dialog (§6.10). So this question is
+  entirely a **Tier-2** concern (Slider, and the like) — Tier-1 selection is
+  always complete.
+- **Default behaviour: per-primitive fallback to builtin.** The per-component map
+  (§6.5) already merges over `BuiltinAdapter`, so an unmapped/missing primitive
+  transparently uses the zero-dep builtin. The app never breaks because an engine
+  is missing one component.
+- **But not *silently*.** Silent fallback would hide a real quality gap — a team
+  that picked "Ariakit" for its a11y would get a builtin Slider without knowing.
+  So a missing primitive emits a **dev-mode warning** (`[veryfront/ui] Ariakit has
+  no Slider; falling back to the builtin Slider`) and is documented in a
+  **coverage matrix** (engine × primitive) in the docs, derived from the survey.
+  Production builds do not warn.
+- **Opt-in strictness for teams that want the gap to block.** A
+  `ui: { adapter: "ariakit", strict: true }` flag turns a missing-primitive
+  fallback into a **build-time error**, for teams that would rather fail the build
+  than ship a mixed-engine surface. Off by default (graceful > strict).
+
+This follows the project's "no silent caps" principle: fall back so nothing
+breaks, but surface exactly what was substituted so it is never a surprise.
+
 ## 7. Recommendation
 
 The survey (§13) drives four concrete calls.
@@ -838,21 +887,22 @@ engine axis; being Base-UI/Radix-backed is all the shadcn story this RFC owes.
 4. **Do nothing.** Keep shipping `TODO(a11y)` forks. Rejected — it is an active
    adoption and accessibility liability.
 
-## 12. Open questions
+### Decided in this RFC
 
-1. **Distribution of reference adapters — leaning resolved (§6.6).** The RFC now
-   recommends the context-injected per-component map + *vendored* reference
-   adapters (shadcn model), so core publishes **no** `@veryfront/ui-adapter-*`
-   packages and depends on no engine — directly to kill the version-bump/drift
-   burden. Open sub-question: do we ship the vendor step as `npx veryfront add
-   adapter <name>`, a copy-paste docs registry, or both?
-2. Do Tier-2 primitives ship in this RFC's milestone or a follow-up?
-3. Confirm **Base UI** as the flagship reference adapter (§7.1) and the Base-UI +
+- **Distribution of reference adapters → `veryfront generate adapter <name>`,
+  docs-mirrored from the same template; no hosted registry (§6.6).** Context map +
+  vendored source means core publishes no `@veryfront/ui-adapter-*` package and
+  depends on no engine.
+- **Engine coverage gaps → per-primitive builtin fallback + dev-mode warning +
+  coverage matrix, with opt-in `strict: true` to hard-error (§6.11).** Tier-1 has
+  no gaps; this is a Tier-2-only concern.
+
+### Still open
+
+1. Do Tier-2 primitives ship in this RFC's milestone or a follow-up?
+2. Confirm **Base UI** as the flagship reference adapter (§7.1) and the Base-UI +
    React-Aria "two archetypes first" rollout order (§7.2).
-4. How do adapters that lack a primitive (survey gaps — e.g. Ariakit has no
-   Slider) degrade — fall back to `BuiltinAdapter` per-primitive (map merge already
-   does this), or hard-error so the gap is explicit?
-5. Is the optional build-time bind (§6.5) worth the module-resolver work in v1, or
+3. Is the optional build-time bind (§6.5) worth the module-resolver work in v1, or
    is the context map alone enough until profiling shows the read matters?
 
 ## 13. Appendix — engine survey
