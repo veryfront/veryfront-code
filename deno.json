@@ -6,6 +6,7 @@
   "minimumDependencyAge": {
     "age": "P2D",
     "exclude": [
+      "npm:brace-expansion",
       "npm:esbuild",
       "npm:@esbuild/aix-ppc64",
       "npm:@esbuild/android-arm",

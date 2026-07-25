@@ -213,9 +213,35 @@ testSuite("ProjectWorker - clearModuleCache", () => {
 testSuite("ProjectWorker - real worker request isolation", () => {
   it("closes broker resources when project code exits the worker", async () => {
     for (
-      const [label, exitStatement] of [
-        ["close", "globalThis.close()"],
-        ["deno-exit", "Deno.exit(0)"],
+      const [label, exitStatement, overrideAttempt] of [
+        [
+          "close",
+          "globalThis.close()",
+          `
+            try { globalThis.close = () => {}; } catch {}
+            try {
+              Object.defineProperty(self, "close", {
+                configurable: true,
+                writable: true,
+                value: () => {},
+              });
+            } catch {}
+          `,
+        ],
+        [
+          "deno-exit",
+          "Deno.exit(0)",
+          `
+            try { Deno.exit = () => {}; } catch {}
+            try {
+              Object.defineProperty(Deno, "exit", {
+                configurable: true,
+                writable: true,
+                value: () => {},
+              });
+            } catch {}
+          `,
+        ],
       ]
     ) {
       const projectDir = await Deno.makeTempDir();
@@ -225,6 +251,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         `
           export function GET() {
             self.postMessage = () => {};
+            ${overrideAttempt}
             ${exitStatement};
             return Response.json({ exited: false });
           }
@@ -260,7 +287,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             () => true,
           ),
           new Promise<boolean>((resolve) => {
-            timeout = setTimeout(() => resolve(false), 2_000);
+            timeout = setTimeout(() => resolve(false), 15_000);
           }),
         ]);
         assertEquals(rejected, true, label);

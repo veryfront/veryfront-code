@@ -34,7 +34,7 @@ type CoreMirroredPartType =
   | "tool-call"
   | "tool-result";
 
-type MirroredPartType = CoreMirroredPartType | "tool-error" | "error";
+type MirroredPartType = CoreMirroredPartType | "source" | "tool-error" | "error";
 
 type DurableMirrorChunkType = ChatUiMessageChunk<ChatMessageMetadata>["type"];
 
