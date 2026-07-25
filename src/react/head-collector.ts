@@ -46,6 +46,60 @@ export interface CollectedHead {
 
 export const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
 
+/**
+ * Head tags that are single-valued per the HTML / Open Graph / Twitter-card
+ * specs — a document has exactly one canonical URL, one title, one `og:title`,
+ * one robots directive, and so on. For these keys a later (page) tag overrides
+ * an earlier (layout) tag with the same key, honouring the documented
+ * page-over-layout contract.
+ *
+ * Every *other* tag accumulates, and accumulate is the deliberate safe default:
+ * `rel` values and OG property namespaces are open-ended and full of
+ * legitimately-repeatable tags (`og:image`, `<link rel="preload">`, `hreflang`
+ * alternates, `rel="me"`, the vertical `article:` / `video:` / `music:`
+ * namespaces). Mis-classifying an unlisted key as single-valued would silently
+ * drop valid metadata; mis-classifying an unlisted single-valued key as
+ * repeatable merely leaves a duplicate — the pre-existing behaviour, never data
+ * loss. So we enumerate the small, closed singleton set and default the
+ * open-ended rest to accumulate.
+ */
+const SINGLETON_META_KEYS = new Set<string>([
+  // Standard HTML metas
+  "description",
+  "robots",
+  "viewport",
+  "referrer",
+  "color-scheme",
+  "application-name",
+  "generator",
+  // Open Graph — single-valued core
+  "og:title",
+  "og:description",
+  "og:url",
+  "og:type",
+  "og:site_name",
+  "og:locale",
+  // Twitter cards — one per document
+  "twitter:card",
+  "twitter:site",
+  "twitter:creator",
+  "twitter:title",
+  "twitter:description",
+  "twitter:image",
+  "twitter:image:alt",
+]);
+
+const SINGLETON_LINK_RELS = new Set<string>([
+  "canonical",
+  "manifest",
+  "amphtml",
+]);
+
+/** The dedupe key for a meta: `property` (og/twitter) or `name`, else none. */
+function metaKey(meta: HeadMeta): string | undefined {
+  return meta.property ?? meta.name ?? undefined;
+}
+
 function createEmpty(): CollectedHead {
   return { metas: [], links: [], styles: [], scripts: [] };
 }
@@ -78,10 +132,32 @@ export function collectHead(data: Partial<CollectedHead>): void {
     if (meta.name === "description" && meta.content) {
       collected.description = meta.content;
     }
+    const key = metaKey(meta);
+    // Single-valued keys override the earlier (layout) tag; every other key
+    // (and keyless metas) accumulates.
+    if (key && SINGLETON_META_KEYS.has(key)) {
+      const idx = collected.metas.findIndex((m) => metaKey(m) === key);
+      if (idx !== -1) {
+        collected.metas[idx] = meta;
+        continue;
+      }
+    }
     collected.metas.push(meta);
   }
 
-  if (data.links?.length) collected.links.push(...data.links);
+  for (const link of data.links ?? []) {
+    const rel = link.rel;
+    // A single-valued `rel` (canonical, manifest, …) overrides the earlier
+    // tag; every other rel (stylesheet, preload, icon, alternate, …) accumulates.
+    if (rel && SINGLETON_LINK_RELS.has(rel)) {
+      const idx = collected.links.findIndex((l) => l.rel === rel);
+      if (idx !== -1) {
+        collected.links[idx] = link;
+        continue;
+      }
+    }
+    collected.links.push(link);
+  }
   if (data.styles?.length) collected.styles.push(...data.styles);
   for (const script of data.scripts ?? []) {
     // Dedupe by id or src
