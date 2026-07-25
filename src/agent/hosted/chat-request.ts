@@ -86,6 +86,7 @@ const getHostedChatRequestMessageSchema = defineSchema((v) =>
 const getHostedChatRequestMessagesSchema = defineSchema((v) =>
   v.array(getHostedChatRequestMessageSchema()).superRefine((messages, ctx) => {
     const knownToolNames = new Map<string, string>();
+    const knownToolResultIds = new Set<string>();
     const recordToolCall = (
       toolCallId: string,
       toolName: string,
@@ -108,6 +109,16 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
       toolCallIdPath: Array<string | number>,
       toolNamePath: Array<string | number>,
     ) => {
+      if (knownToolResultIds.has(toolCallId)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tool_result for tool_call_id must be unique",
+          path: toolCallIdPath,
+        });
+        return;
+      }
+
+      knownToolResultIds.add(toolCallId);
       const knownToolName = knownToolNames.get(toolCallId);
       if (!knownToolName) {
         ctx.addIssue({
@@ -175,7 +186,12 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
               partIndex,
               "toolCallId",
             ]);
-          } else {
+          }
+
+          const hasUiToolResult = "state" in part &&
+            (part.state === "output-available" || part.state === "output-error" ||
+              part.state === "output-denied" || part.state === "error");
+          if (message.role === "tool" || hasUiToolResult) {
             validateToolResult(
               uiToolIdentity.toolCallId,
               uiToolIdentity.toolName,

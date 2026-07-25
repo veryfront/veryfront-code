@@ -350,6 +350,60 @@ describe("agent/hosted-chat-request", () => {
     }
   });
 
+  it("rejects duplicate replay tool results", () => {
+    const parsed = hostedChatRequestSchema.safeParse(
+      createHostedChatRequestBody([
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [
+            rawReplayToolCallPart,
+            rawReplayToolResultPart,
+            rawReplayToolResultPart,
+          ],
+        },
+      ]),
+    );
+
+    assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      const validationError = parsed.error as {
+        message?: unknown;
+        issues?: Array<{ path: Array<string | number> }>;
+      };
+      assertStringIncludes(
+        typeof validationError.message === "string" ? validationError.message : "",
+        "tool_result for tool_call_id must be unique",
+      );
+      assertEquals(validationError.issues?.[0]?.path, [
+        "messages",
+        0,
+        "parts",
+        2,
+        "tool_call_id",
+      ]);
+    }
+
+    assertHostedChatRequestError(
+      [
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [rawReplayToolCallPart],
+        },
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [
+            parsedHostedChatRequestReplayToolCallPart,
+            parsedHostedChatRequestReplayToolCallPart,
+          ],
+        },
+      ],
+      "tool_result for tool_call_id must be unique",
+    );
+  });
+
   it("rejects orphan raw replay tool results without a tool name", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([

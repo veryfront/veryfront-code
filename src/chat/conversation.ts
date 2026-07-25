@@ -1040,7 +1040,6 @@ function convertAssistantMessage(
 
     const rawToolCall = getRawToolCallPart(part);
     if (rawToolCall) {
-      rawToolNamesById.set(rawToolCall.toolCallId, rawToolCall.toolName);
       pushAssistantPart({
         type: "tool-call",
         toolCallId: rawToolCall.toolCallId,
