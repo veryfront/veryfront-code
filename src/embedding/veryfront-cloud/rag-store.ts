@@ -5,6 +5,7 @@ import {
   INVALID_ARGUMENT,
   isVeryfrontError,
   NETWORK_ERROR,
+  PERMISSION_DENIED,
   TIMEOUT_ERROR,
 } from "#veryfront/errors";
 import { computeHashBytes, serverLogger } from "#veryfront/utils";
@@ -21,10 +22,19 @@ import {
   normalizeContentRoot,
 } from "../content-index.ts";
 import { embedding } from "../embedding.ts";
-import { requirePositiveSafeInteger, requireUnitInterval } from "../validation.ts";
+import {
+  MAX_RAG_DOCUMENT_TEXT_BYTES,
+  requirePositiveSafeInteger,
+  requireUnitInterval,
+  validateRagDocumentMetadata,
+  validateRagRemoveOptions,
+} from "../validation.ts";
 import type {
   RagDocumentMeta,
+  RagIngestMeta,
+  RagOperationOptions,
   RagRefreshOptions,
+  RagRemoveOptions,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -32,7 +42,6 @@ import type {
 } from "../types.ts";
 
 const DEFAULT_TOP_K = 5;
-const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 const MAX_API_CHUNK_BATCH = 500;
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
@@ -110,12 +119,10 @@ type CloudRagDocumentMeta = RagDocumentMeta & {
   managedBy?: "content-dir";
 };
 
-interface CloudDocumentWriteMeta {
+interface CloudDocumentWriteMeta extends RagIngestMeta {
   contentIndexFingerprint?: string;
   contentRoot?: string;
   managedBy?: "content-dir";
-  source?: string;
-  type?: string;
 }
 
 interface CloudRefreshOptions extends RagRefreshOptions {
@@ -315,16 +322,23 @@ function parseCloudRagDocumentMetadata(
   contentRoot?: string;
   filePath?: string;
   managedBy?: "content-dir";
+  mediaType?: string;
+  size?: number;
 } {
   const branch = metadata.branch;
   const filePath = metadata.filePath;
+  const mediaType = metadata.mediaType;
+  const size = metadata.size;
   if (
     (branch !== undefined &&
       (typeof branch !== "string" || !branch.trim() || branch.length > 512)) ||
     (filePath !== undefined &&
-      (typeof filePath !== "string" || !filePath || filePath.length > 4_096))
+      (typeof filePath !== "string" || !filePath || filePath.length > 4_096)) ||
+    (mediaType !== undefined &&
+      (typeof mediaType !== "string" || !mediaType || mediaType.length > 256)) ||
+    (size !== undefined && (!Number.isSafeInteger(size) || Number(size) < 0))
   ) {
-    invalidCloudResponse(`document entry ${index} has malformed branch or file metadata`);
+    invalidCloudResponse(`document entry ${index} has malformed upload or file metadata`);
   }
 
   const contentIndexFingerprint = metadata.contentIndexFingerprint;
@@ -350,6 +364,8 @@ function parseCloudRagDocumentMetadata(
   return {
     ...(typeof branch === "string" ? { branch } : {}),
     ...(typeof filePath === "string" ? { filePath } : {}),
+    ...(typeof mediaType === "string" ? { mediaType } : {}),
+    ...(typeof size === "number" ? { size } : {}),
     ...(hasContentIndexMetadata
       ? {
         contentIndexFingerprint: contentIndexFingerprint as string,
@@ -474,7 +490,9 @@ function toPublicRagDocumentMeta(document: CloudRagDocumentMeta): RagDocumentMet
     source: document.source,
     type: document.type,
     createdAt: document.createdAt,
-    url: document.url,
+    ...(document.size !== undefined ? { size: document.size } : {}),
+    ...(document.mediaType !== undefined ? { mediaType: document.mediaType } : {}),
+    ...(document.url !== undefined ? { url: document.url } : {}),
   };
 }
 
@@ -691,6 +709,7 @@ async function upsertFileChunks(
   context: CloudStoreContext,
   filePath: string,
   chunks: ChunkMutationInput[],
+  abortSignal?: AbortSignal,
 ): Promise<Array<{ id: string; index: number }>> {
   if (chunks.length === 0) {
     return [];
@@ -706,6 +725,7 @@ async function upsertFileChunks(
         method: "POST",
         body: JSON.stringify({ chunks: batch }),
       },
+      { abortSignal },
     );
 
     results.push(...parseCloudChunkMutationResponse(response, batch.length).chunks);
@@ -731,6 +751,7 @@ async function upsertEmbeddings(
   chunkIds: string[],
   vectors: number[][],
   model: { name: string; provider: string; dimension: SupportedDimension },
+  abortSignal?: AbortSignal,
 ): Promise<void> {
   for (let i = 0; i < chunkIds.length; i += MAX_API_EMBEDDING_BATCH) {
     const batchChunkIds = chunkIds.slice(i, i + MAX_API_EMBEDDING_BATCH);
@@ -747,6 +768,7 @@ async function upsertEmbeddings(
           model,
         }),
       },
+      { abortSignal },
     );
     parseCloudEmbeddingMutationResponse(response, batchChunkIds.length);
   }
@@ -788,6 +810,8 @@ async function listRagDocuments(
       contentRoot: metadata.contentRoot,
       filePath: metadata.filePath,
       managedBy: metadata.managedBy,
+      mediaType: metadata.mediaType,
+      size: metadata.size,
     }));
 }
 
@@ -800,6 +824,7 @@ async function upsertRagDocument(
     type?: string;
     metadata?: Record<string, unknown>;
   },
+  abortSignal?: AbortSignal,
 ): Promise<void> {
   const response = await requestJson<unknown>(
     context,
@@ -817,6 +842,7 @@ async function upsertRagDocument(
         },
       }),
     },
+    { abortSignal },
   );
   if (!isRecord(response)) {
     invalidCloudResponse("document mutation response must be an object");
@@ -862,9 +888,13 @@ async function ingestDocument(
   title: string,
   text: string,
   meta?: CloudDocumentWriteMeta,
+  options?: RagOperationOptions,
 ): Promise<string> {
+  options?.abortSignal?.throwIfAborted();
   const documentId = crypto.randomUUID();
-  await writeDocumentContent(context, config, documentId, title, text, meta);
+  await writeDocumentContent(context, config, documentId, title, text, meta, {
+    abortSignal: options?.abortSignal,
+  });
   return documentId;
 }
 
@@ -874,8 +904,10 @@ async function refreshCloudDocument(
   documentId: string,
   text: string,
   meta?: CloudRefreshOptions,
+  operationOptions?: RagOperationOptions,
 ): Promise<void> {
-  const documents = await listRagDocuments(context);
+  operationOptions?.abortSignal?.throwIfAborted();
+  const documents = await listRagDocuments(context, operationOptions?.abortSignal);
   const existing = documents.find((doc) => doc.id === documentId);
   if (!existing) {
     throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${documentId}` });
@@ -894,11 +926,17 @@ async function refreshCloudDocument(
     {
       source: meta?.source ?? existing.source,
       type,
+      size: meta?.size ?? existing.size,
+      mediaType: meta?.mediaType ?? existing.mediaType,
       contentIndexFingerprint: meta?.contentIndexFingerprint,
       contentRoot: meta?.contentRoot,
       managedBy: meta?.managedBy,
     },
-    { filePath, rollbackDocument: existing },
+    {
+      filePath,
+      rollbackDocument: existing,
+      abortSignal: operationOptions?.abortSignal,
+    },
   );
 
   if (previousFilePath !== filePath) {
@@ -925,22 +963,25 @@ async function writeDocumentContent(
   text: string,
   meta?: CloudDocumentWriteMeta,
   options?: {
+    abortSignal?: AbortSignal;
     filePath?: string;
     rollbackDocument?: CloudRagDocumentMeta;
   },
 ): Promise<void> {
+  options?.abortSignal?.throwIfAborted();
   if (typeof text !== "string" || !text.trim()) {
     throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
   }
-  if (text.length > MAX_TEXT_BYTES) {
+  if (text.length > MAX_RAG_DOCUMENT_TEXT_BYTES) {
     throw INVALID_ARGUMENT.create({
-      detail: `Upload text exceeds the ${MAX_TEXT_BYTES}-byte limit`,
+      detail: `Upload text exceeds the ${MAX_RAG_DOCUMENT_TEXT_BYTES}-byte limit`,
     });
   }
   const textBytes = new TextEncoder().encode(text).byteLength;
-  if (textBytes > MAX_TEXT_BYTES) {
+  if (textBytes > MAX_RAG_DOCUMENT_TEXT_BYTES) {
     throw INVALID_ARGUMENT.create({
-      detail: `Upload text is ${textBytes} bytes, exceeding the ${MAX_TEXT_BYTES}-byte limit`,
+      detail:
+        `Upload text is ${textBytes} bytes, exceeding the ${MAX_RAG_DOCUMENT_TEXT_BYTES}-byte limit`,
     });
   }
 
@@ -949,10 +990,14 @@ async function writeDocumentContent(
   if (chunkTexts.length === 0) {
     throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
   }
+  options?.abortSignal?.throwIfAborted();
 
   const filePath = options?.filePath ?? buildDocumentFilePath(documentId, meta?.type);
   const embedder = createEmbedder(config);
-  const vectors = await embedder.embedMany(chunkTexts);
+  const vectors = await embedder.embedMany(chunkTexts, {
+    abortSignal: options?.abortSignal,
+  });
+  options?.abortSignal?.throwIfAborted();
   const dimension = toSupportedDimension(vectors[0]?.length ?? 0);
   const chunkInputs = buildDocumentChunks(text, chunkTexts, {
     kind: "rag-document",
@@ -960,12 +1005,19 @@ async function writeDocumentContent(
     title,
     source: meta?.source ?? "",
     type: meta?.type ?? "",
+    ...(meta?.size !== undefined ? { size: meta.size } : {}),
+    ...(meta?.mediaType !== undefined ? { mediaType: meta.mediaType } : {}),
     branch: context.branch,
   });
 
   let publicationAttempted = false;
   try {
-    const createdChunks = await upsertFileChunks(context, filePath, chunkInputs);
+    const createdChunks = await upsertFileChunks(
+      context,
+      filePath,
+      chunkInputs,
+      options?.abortSignal,
+    );
     const chunkIds = createdChunks.map((entry) => entry.id);
 
     if (chunkIds.length !== vectors.length) {
@@ -980,27 +1032,34 @@ async function writeDocumentContent(
       chunkIds,
       vectors,
       normalizeEmbeddingModelDescriptor(config.model, dimension),
+      options?.abortSignal,
     );
 
     // The server-side document record is authoritative for RAG visibility.
     // Publish it only after every chunk and vector has been accepted.
     publicationAttempted = true;
-    await upsertRagDocument(context, {
-      id: documentId,
-      title,
-      source: meta?.source ?? "",
-      type: meta?.type ?? "",
-      metadata: {
-        filePath,
-        ...(meta?.managedBy === CONTENT_INDEX_MANAGED_BY
-          ? {
-            contentIndexFingerprint: meta.contentIndexFingerprint,
-            contentRoot: meta.contentRoot,
-            managedBy: CONTENT_INDEX_MANAGED_BY,
-          }
-          : {}),
+    await upsertRagDocument(
+      context,
+      {
+        id: documentId,
+        title,
+        source: meta?.source ?? "",
+        type: meta?.type ?? "",
+        metadata: {
+          filePath,
+          ...(meta?.size !== undefined ? { size: meta.size } : {}),
+          ...(meta?.mediaType !== undefined ? { mediaType: meta.mediaType } : {}),
+          ...(meta?.managedBy === CONTENT_INDEX_MANAGED_BY
+            ? {
+              contentIndexFingerprint: meta.contentIndexFingerprint,
+              contentRoot: meta.contentRoot,
+              managedBy: CONTENT_INDEX_MANAGED_BY,
+            }
+            : {}),
+        },
       },
-    });
+      options?.abortSignal,
+    );
   } catch (error) {
     const rollbackErrors: unknown[] = [error];
     try {
@@ -1020,6 +1079,8 @@ async function writeDocumentContent(
             metadata: {
               filePath: previous.filePath ??
                 buildDocumentFilePath(previous.id, previous.type),
+              ...(previous.size !== undefined ? { size: previous.size } : {}),
+              ...(previous.mediaType !== undefined ? { mediaType: previous.mediaType } : {}),
               ...(previous.managedBy === CONTENT_INDEX_MANAGED_BY
                 ? {
                   contentIndexFingerprint: previous.contentIndexFingerprint,
@@ -1256,19 +1317,38 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
     async ingest(
       title: string,
       text: string,
-      meta?: { source?: string; type?: string },
+      meta?: RagIngestMeta,
+      options?: RagOperationOptions,
     ): Promise<string> {
+      options?.abortSignal?.throwIfAborted();
+      try {
+        validateRagDocumentMetadata({ title }, "ragStore ingest document");
+        validateRagDocumentMetadata(meta, "ragStore ingest metadata");
+      } catch (error) {
+        throw INVALID_ARGUMENT.create({
+          detail: error instanceof Error ? error.message : "Invalid RAG document metadata",
+        });
+      }
       const context = getCloudStoreContext(config);
-      return ingestDocument(context, config, title, text, meta);
+      return ingestDocument(context, config, title, text, meta, options);
     },
 
     async refreshDocument(
       id: string,
       text: string,
       meta?: RagRefreshOptions,
+      options?: RagOperationOptions,
     ): Promise<void> {
+      options?.abortSignal?.throwIfAborted();
+      try {
+        validateRagDocumentMetadata(meta, "ragStore refresh metadata");
+      } catch (error) {
+        throw INVALID_ARGUMENT.create({
+          detail: error instanceof Error ? error.message : "Invalid RAG document metadata",
+        });
+      }
       const context = getCloudStoreContext(config);
-      await refreshCloudDocument(context, config, id, text, meta);
+      await refreshCloudDocument(context, config, id, text, meta, options);
     },
 
     async search(
@@ -1350,19 +1430,37 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       return results.slice(0, topK);
     },
 
-    async listDocuments(): Promise<RagDocumentMeta[]> {
+    async listDocuments(options?: RagOperationOptions): Promise<RagDocumentMeta[]> {
+      options?.abortSignal?.throwIfAborted();
       const context = getCloudStoreContext(config);
-      const documents = await listRagDocuments(context);
+      const documents = await listRagDocuments(context, options?.abortSignal);
       return documents.map(toPublicRagDocumentMeta);
     },
 
-    async removeDocument(id: string): Promise<void> {
+    async removeDocument(id: string, options?: RagRemoveOptions): Promise<void> {
+      options?.abortSignal?.throwIfAborted();
+      try {
+        validateRagRemoveOptions(options, "ragStore remove options");
+      } catch (error) {
+        throw INVALID_ARGUMENT.create({
+          detail: error instanceof Error ? error.message : "Invalid RAG remove options",
+        });
+      }
       const context = getCloudStoreContext(config);
 
-      const documents = await listRagDocuments(context);
+      const documents = await listRagDocuments(context, options?.abortSignal);
       const target = documents.find((doc) => doc.id === id);
       if (!target) return;
+      if (
+        options?.requiredSourcePrefix !== undefined &&
+        !target.source.startsWith(options.requiredSourcePrefix)
+      ) {
+        throw PERMISSION_DENIED.create({
+          detail: `RAG document "${id}" does not satisfy the required source provenance`,
+        });
+      }
 
+      options?.abortSignal?.throwIfAborted();
       await removeCloudDocument(context, target);
     },
 
@@ -1408,7 +1506,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
           continue;
         }
 
-        if (content.length > MAX_TEXT_BYTES) {
+        if (content.length > MAX_RAG_DOCUMENT_TEXT_BYTES) {
           if (
             existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
             existing.contentRoot === contentRoot
@@ -1419,12 +1517,12 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
           }
           serverLogger.warn(
             `[rag-store/cloud] Skipping ${file.path}: text exceeds ` +
-              `${MAX_TEXT_BYTES}-byte limit`,
+              `${MAX_RAG_DOCUMENT_TEXT_BYTES}-byte limit`,
           );
           continue;
         }
         const contentBytes = new TextEncoder().encode(content);
-        if (contentBytes.byteLength > MAX_TEXT_BYTES) {
+        if (contentBytes.byteLength > MAX_RAG_DOCUMENT_TEXT_BYTES) {
           if (
             existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
             existing.contentRoot === contentRoot
@@ -1435,7 +1533,7 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
           }
           serverLogger.warn(
             `[rag-store/cloud] Skipping ${file.path}: ${contentBytes.byteLength} bytes exceeds ` +
-              `${MAX_TEXT_BYTES}-byte text limit`,
+              `${MAX_RAG_DOCUMENT_TEXT_BYTES}-byte text limit`,
           );
           continue;
         }

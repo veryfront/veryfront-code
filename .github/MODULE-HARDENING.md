@@ -136,6 +136,52 @@ and application-failure isolation in `metrics`. Neither unit is closed until
 those findings are fixed, regression-tested, documented where public behavior
 changes, and verified through its affected integration gates.
 
+### Embedding remediation checkpoint
+
+The non-breaking embedding findings are remediated on the current branch:
+
+- Upload source, multipart-body, extracted-text, CSV record/column/field, list,
+  and local-store reads are bounded and validated before persistence.
+- Text MIME types and UTF-8 are validated. CSV parsing handles quoted fields,
+  escaped quotes, CRLF, and multiline records while rejecting malformed or
+  amplifying inputs.
+- Request cancellation reaches multipart reads, extraction workers, RAG
+  admission, embedding providers, and cloud mutations. Cloud ingestion rolls
+  back partial chunks and document records on cancellation or publication
+  failure.
+- Local and cloud RAG stores validate mutation metadata before writes, persist
+  upload size and media type, and enforce upload provenance before deletion.
+- Upload listing is upload-only, deterministically ordered, paginated, and
+  enriched with bounded Cloud metadata lookups. Deletion is idempotent and
+  reports incomplete Cloud source cleanup as retryable instead of returning a
+  false success.
+- Internal failures are logged without returning provider or persistence
+  details to clients. The React upload registry retains failed deletions so the
+  user can retry.
+- Public API reference and the RAG how-to guide document limits, pagination,
+  provenance, cancellation, and retry behavior.
+
+Reproducible checkpoint evidence:
+
+- The embedding, provider, and knowledge regression surface passed 24 test
+  groups and 276 steps with zero failures; five model-download steps remain
+  intentionally ignored.
+- The upload registry React suite passed six steps, and the Kreuzberg extension
+  suite passed 16 steps, including explicit cancellation propagation.
+- `deno task docs:validate` passed 45 groups and 87 steps plus all 716 link
+  checks.
+- `deno task verify:quick` passed manifests, formatting, lint and architecture
+  ratchets, documentation validation, and all configured entrypoint
+  typechecks.
+
+Formal closure is blocked on one deliberate breaking-change decision:
+`createUploadHandler()` currently preserves its historical fail-open behavior
+when `auth` is omitted, and an `authorize` callback returning `undefined`
+currently means allow. The handler warns when auth is omitted and the public
+guide uses explicit auth, but production-grade fail-closed behavior requires
+making auth configuration explicit and tightening the callback result
+contract. That compatibility break must be approved before implementation.
+
 ### Config closure checkpoint verification
 
 The current config closure checkpoint has the following reproducible evidence:

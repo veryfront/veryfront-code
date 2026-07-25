@@ -26,7 +26,9 @@ export const EXTRACTION_TIMEOUT_MS = NATIVE_PROGRESS_HARD_TIMEOUT_MS;
 function extractInWorkerDeno(
   buffer: ArrayBuffer,
   mimeType: string,
+  options: DocumentExtractionOptions = {},
 ): Promise<string> {
+  options.abortSignal?.throwIfAborted();
   return new Promise<string>((resolve, reject) => {
     // The worker ships as raw TypeScript in the compiled binary and from source
     // (where `compile-binary.ts` force-includes it), but as transpiled JS in the
@@ -37,10 +39,30 @@ function extractInWorkerDeno(
       : "./upload-extraction-worker.js";
     const workerUrl = new URL(workerFile, import.meta.url);
     const worker = new Worker(workerUrl, { type: "module" });
-
-    const timer = setTimeout(() => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const abortSignal = options.abortSignal;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+      abortSignal?.removeEventListener("abort", onAbort);
       worker.terminate();
-      reject(
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => {
+      fail(
+        abortSignal?.reason ??
+          new DOMException("The extraction was aborted", "AbortError"),
+      );
+    };
+
+    timer = setTimeout(() => {
+      fail(
         new Error(
           `Text extraction timed out after ${
             EXTRACTION_TIMEOUT_MS / 1000
@@ -48,10 +70,12 @@ function extractInWorkerDeno(
         ),
       );
     }, EXTRACTION_TIMEOUT_MS);
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
 
     worker.onmessage = (event: MessageEvent) => {
-      clearTimeout(timer);
-      worker.terminate();
+      if (settled) return;
+      settled = true;
+      cleanup();
       const { content, error } = event.data as { content?: string; error?: string };
       if (error) {
         reject(new Error(error));
@@ -61,9 +85,7 @@ function extractInWorkerDeno(
     };
 
     worker.onerror = (event) => {
-      clearTimeout(timer);
-      worker.terminate();
-      reject(new Error(`Text extraction worker failed: ${event.message ?? "unknown"}`));
+      fail(new Error(`Text extraction worker failed: ${event.message ?? "unknown"}`));
     };
 
     worker.postMessage({ buffer, mimeType }, [buffer]);
@@ -124,6 +146,7 @@ function extractWithNativeProgressDeno(
   mimeType: string,
   options: DocumentExtractionOptions,
 ): Promise<string> {
+  options.abortSignal?.throwIfAborted();
   return new Promise<string>((resolve, reject) => {
     const workerFile = import.meta.url.endsWith(".ts")
       ? "./native-progress-extraction-worker.ts"
@@ -144,12 +167,20 @@ function extractWithNativeProgressDeno(
       settled = true;
       clearIdleTimer();
       clearTimeout(hardTimer);
+      options.abortSignal?.removeEventListener("abort", onAbort);
       worker.terminate();
     };
     const fail = (error: Error) => {
       if (settled) return;
       cleanup();
       reject(error);
+    };
+    const onAbort = () => {
+      fail(
+        options.abortSignal?.reason instanceof Error
+          ? options.abortSignal.reason
+          : new DOMException("The extraction was aborted", "AbortError"),
+      );
     };
     const resetIdleTimer = () => {
       clearIdleTimer();
@@ -172,6 +203,7 @@ function extractWithNativeProgressDeno(
     }, hardTimeoutMs);
 
     resetIdleTimer();
+    options.abortSignal?.addEventListener("abort", onAbort, { once: true });
 
     worker.onmessage = async (event: MessageEvent<NativeProgressWorkerResponse>) => {
       if (settled) return;
@@ -217,6 +249,7 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
     mimeType: string,
     options: DocumentExtractionOptions = {},
   ): Promise<string> {
+    options.abortSignal?.throwIfAborted();
     const isDenoRuntime = this.deps.isDenoRuntime ?? isDeno;
     const extractWithWorker = this.deps.extractInWorkerDeno ?? extractInWorkerDeno;
 
@@ -225,11 +258,13 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
     // PDF path can hang on valid large manuals.
     if (!isDenoRuntime) {
       const { extractBytes } = await loadKreuzberg();
+      options.abortSignal?.throwIfAborted();
       const result = await extractBytes(
         new Uint8Array(buffer),
         mimeType,
         extractionConfigForMimeType(mimeType),
       );
+      options.abortSignal?.throwIfAborted();
       return result.content;
     }
 
@@ -241,6 +276,7 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
           options,
         );
       } catch (error) {
+        if (options.abortSignal?.aborted) throw error;
         // Keep progress opportunistic: if page/slide extraction cannot handle a
         // document, fall back to the previous opaque extraction path.
         const message =
@@ -256,17 +292,20 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
 
     if (isPdfMimeType(mimeType)) {
       try {
-        return await extractWithNativeKreuzberg(
+        const content = await extractWithNativeKreuzberg(
           buffer,
           mimeType,
           this.deps.loadNativeKreuzberg ?? loadKreuzbergNative,
         );
+        options.abortSignal?.throwIfAborted();
+        return content;
       } catch (error) {
+        if (options.abortSignal?.aborted) throw error;
         if (!isMissingPackageError(error)) throw error;
       }
     }
 
-    return extractWithWorker(buffer, mimeType);
+    return extractWithWorker(buffer, mimeType, options);
   }
 }
 

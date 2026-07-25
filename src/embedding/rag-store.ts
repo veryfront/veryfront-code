@@ -12,7 +12,7 @@ import { resolve } from "#veryfront/platform/compat/path/resolution.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { INVALID_ARGUMENT, SERVICE_OVERLOADED } from "#veryfront/errors";
+import { INVALID_ARGUMENT, PERMISSION_DENIED, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
 import {
@@ -26,16 +26,22 @@ import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 import { waitWithAbort } from "./admission.ts";
 import {
   MAX_EMBEDDING_DIMENSION,
+  MAX_RAG_DOCUMENT_TEXT_BYTES,
   requirePositiveSafeInteger,
   requireUnitInterval,
   validateEmbeddingBatch,
   validateEmbeddingVector,
+  validateRagDocumentMetadata,
+  validateRagRemoveOptions,
 } from "./validation.ts";
 import type {
   RagChunk,
   RagDocumentMeta,
   RagEmbeddingFingerprint,
+  RagIngestMeta,
+  RagOperationOptions,
   RagRefreshOptions,
+  RagRemoveOptions,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -66,7 +72,6 @@ type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 const DEFAULT_TOP_K = 5;
 const MAX_TOP_K = 10_000;
 const DEFAULT_MAX_STORAGE_BYTES = 64 * 1024 * 1024;
-const MAX_DOCUMENT_TEXT_BYTES = 5 * 1024 * 1024;
 const MAX_CONTENT_FILES = 10_000;
 const MAX_LOCAL_STORE_WAITERS = 256;
 const RAG_STORE_SCHEMA_VERSION = 1;
@@ -149,6 +154,11 @@ function isRagDocumentMeta(value: unknown): value is RagStoredDocumentMeta {
     typeof value.source === "string" &&
     typeof value.type === "string" &&
     isNonNegativeInteger(value.createdAt) &&
+    (value.size === undefined || isNonNegativeInteger(value.size)) &&
+    (value.mediaType === undefined ||
+      (typeof value.mediaType === "string" &&
+        value.mediaType.length > 0 &&
+        value.mediaType.length <= 256)) &&
     (value.url === undefined || typeof value.url === "string");
 }
 
@@ -377,24 +387,24 @@ export function ragStore(config: RagStoreConfig): RagStore {
   }
 
   return {
-    ingest(title, text, meta) {
-      return getStore().ingest(title, text, meta);
+    ingest(title, text, meta, options) {
+      return getStore().ingest(title, text, meta, options);
     },
-    refreshDocument(id, text, meta) {
+    refreshDocument(id, text, meta, options) {
       const store = getStore();
       if (!store.refreshDocument) {
         throw INVALID_ARGUMENT.create({ detail: "RAG store does not support document refresh" });
       }
-      return store.refreshDocument(id, text, meta);
+      return store.refreshDocument(id, text, meta, options);
     },
     search(query, options) {
       return getStore().search(query, options);
     },
-    listDocuments() {
-      return getStore().listDocuments();
+    listDocuments(options) {
+      return getStore().listDocuments(options);
     },
-    removeDocument(id) {
-      return getStore().removeDocument(id);
+    removeDocument(id, options) {
+      return getStore().removeDocument(id, options);
     },
     indexContentDir() {
       return getStore().indexContentDir();
@@ -746,16 +756,16 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         detail: "Upload contains no extractable text",
       });
     }
-    if (text.length > MAX_DOCUMENT_TEXT_BYTES) {
+    if (text.length > MAX_RAG_DOCUMENT_TEXT_BYTES) {
       throw INVALID_ARGUMENT.create({
-        detail: `Upload text exceeds the ${MAX_DOCUMENT_TEXT_BYTES}-byte limit`,
+        detail: `Upload text exceeds the ${MAX_RAG_DOCUMENT_TEXT_BYTES}-byte limit`,
       });
     }
     const textBytes = encodeUtf8(text);
-    if (textBytes.byteLength > MAX_DOCUMENT_TEXT_BYTES) {
+    if (textBytes.byteLength > MAX_RAG_DOCUMENT_TEXT_BYTES) {
       throw INVALID_ARGUMENT.create({
         detail:
-          `Upload text is ${textBytes.byteLength} bytes, exceeding the ${MAX_DOCUMENT_TEXT_BYTES}-byte limit`,
+          `Upload text is ${textBytes.byteLength} bytes, exceeding the ${MAX_RAG_DOCUMENT_TEXT_BYTES}-byte limit`,
       });
     }
     return textBytes;
@@ -792,12 +802,23 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     async ingest(
       title: string,
       text: string,
-      meta?: { source?: string; type?: string },
+      meta?: RagIngestMeta,
+      options?: RagOperationOptions,
     ): Promise<string> {
+      options?.abortSignal?.throwIfAborted();
+      try {
+        validateRagDocumentMetadata({ title }, "ragStore ingest document");
+        validateRagDocumentMetadata(meta, "ragStore ingest metadata");
+      } catch (error) {
+        throw INVALID_ARGUMENT.create({
+          detail: error instanceof Error ? error.message : "Invalid RAG document metadata",
+        });
+      }
       return withLock(async () => {
         const data = await load();
         const documentId = crypto.randomUUID();
         const chunks = await createChunkTexts(text);
+        options?.abortSignal?.throwIfAborted();
 
         const doc: RagDocumentMeta = {
           id: documentId,
@@ -805,6 +826,8 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
           source: meta?.source ?? "",
           type: meta?.type ?? "",
           createdAt: Date.now(),
+          ...(meta?.size !== undefined ? { size: meta.size } : {}),
+          ...(meta?.mediaType !== undefined ? { mediaType: meta.mediaType } : {}),
         };
 
         const chunkRecords: RagChunk[] = chunks.map((chunkText, i) => ({
@@ -820,14 +843,23 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         await save(data);
 
         return documentId;
-      });
+      }, options?.abortSignal);
     },
 
     async refreshDocument(
       id: string,
       text: string,
       meta?: RagRefreshOptions,
+      options?: RagOperationOptions,
     ): Promise<void> {
+      options?.abortSignal?.throwIfAborted();
+      try {
+        validateRagDocumentMetadata(meta, "ragStore refresh metadata");
+      } catch (error) {
+        throw INVALID_ARGUMENT.create({
+          detail: error instanceof Error ? error.message : "Invalid RAG document metadata",
+        });
+      }
       return withLock(async () => {
         const data = await load();
         const document = data.documents.find((doc) => doc.id === id);
@@ -835,10 +867,13 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
           throw INVALID_ARGUMENT.create({ detail: `RAG document not found: ${id}` });
         }
         const chunks = await createChunkTexts(text);
+        options?.abortSignal?.throwIfAborted();
 
         document.title = meta?.title ?? document.title;
         document.source = meta?.source ?? document.source;
         document.type = meta?.type ?? document.type;
+        document.size = meta?.size ?? document.size;
+        document.mediaType = meta?.mediaType ?? document.mediaType;
         delete document.contentIndexFingerprint;
         delete document.contentRoot;
         delete document.managedBy;
@@ -853,7 +888,7 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
           })),
         );
         await save(data);
-      });
+      }, options?.abortSignal);
     },
 
     async search(
@@ -906,8 +941,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
       }, normalized.abortSignal);
     },
 
-    async listDocuments(): Promise<RagDocumentMeta[]> {
+    async listDocuments(options?: RagOperationOptions): Promise<RagDocumentMeta[]> {
       return withLock(async () => {
+        options?.abortSignal?.throwIfAborted();
         const data = await load();
         return data.documents.map((document) => ({
           id: document.id,
@@ -915,18 +951,39 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
           source: document.source,
           type: document.type,
           createdAt: document.createdAt,
+          ...(document.size !== undefined ? { size: document.size } : {}),
+          ...(document.mediaType !== undefined ? { mediaType: document.mediaType } : {}),
           ...(document.url !== undefined ? { url: document.url } : {}),
         }));
-      });
+      }, options?.abortSignal);
     },
 
-    async removeDocument(id: string): Promise<void> {
+    async removeDocument(id: string, options?: RagRemoveOptions): Promise<void> {
+      options?.abortSignal?.throwIfAborted();
+      try {
+        validateRagRemoveOptions(options, "ragStore remove options");
+      } catch (error) {
+        throw INVALID_ARGUMENT.create({
+          detail: error instanceof Error ? error.message : "Invalid RAG remove options",
+        });
+      }
       return withLock(async () => {
         const data = await load();
+        options?.abortSignal?.throwIfAborted();
+        const document = data.documents.find((candidate) => candidate.id === id);
+        if (
+          document &&
+          options?.requiredSourcePrefix !== undefined &&
+          !document.source.startsWith(options.requiredSourcePrefix)
+        ) {
+          throw PERMISSION_DENIED.create({
+            detail: `RAG document "${id}" does not satisfy the required source provenance`,
+          });
+        }
         data.documents = data.documents.filter((d) => d.id !== id);
         data.chunks = data.chunks.filter((c) => c.documentId !== id);
         await save(data);
-      });
+      }, options?.abortSignal);
     },
 
     async indexContentDir(): Promise<void> {

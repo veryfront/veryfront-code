@@ -43,8 +43,10 @@ function installDom(): () => void {
   };
 }
 
-/** Stub fetch: POST → an upload response; DELETE → ok. Records DELETE ids. */
-function stubFetch(): { deletes: string[]; gets: string[]; restore: () => void } {
+/** Stub fetch: POST → an upload response; DELETE → configured status. Records DELETE ids. */
+function stubFetch(
+  options: { deleteStatus?: number } = {},
+): { deletes: string[]; gets: string[]; restore: () => void } {
   const previous = globalThis.fetch;
   const deletes: string[] = [];
   const gets: string[] = [];
@@ -69,7 +71,11 @@ function stubFetch(): { deletes: string[]; gets: string[]; restore: () => void }
     }
     if (method === "DELETE") {
       deletes.push(new URL(url, "https://example.com").searchParams.get("id") ?? "");
-      return Promise.resolve(new Response(JSON.stringify({ deleted: true }), { status: 200 }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ deleted: options.deleteStatus === undefined }), {
+          status: options.deleteStatus ?? 200,
+        }),
+      );
     }
     gets.push(url);
     return Promise.resolve(new Response("{}", { status: 200 }));
@@ -204,6 +210,27 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
 
       assert(fetchStub.deletes.includes(id), "a DELETE was sent for the removed id");
       assertEquals(reg.get().items.length, 0, "the item is gone from the registry");
+      flushSync(() => reg.root.unmount());
+      await flush(() => {});
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("remove() keeps the item when server cleanup is incomplete", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch({ deleteStatus: 502 });
+    try {
+      const reg = mount("test-uploads-del-retry");
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
+      const id = reg.get().items[0]!.id;
+
+      await reg.get().remove(id);
+      flushSync(() => {});
+
+      assert(fetchStub.deletes.includes(id), "a DELETE was attempted");
+      assertEquals(reg.get().items.map((item) => item.id), [id]);
       flushSync(() => reg.root.unmount());
       await flush(() => {});
     } finally {

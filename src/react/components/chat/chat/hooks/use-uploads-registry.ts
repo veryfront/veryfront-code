@@ -189,12 +189,15 @@ export function useAttachments(
   const remove = React.useCallback(
     async (id: string): Promise<void> => {
       try {
-        await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, {
+        const response = await fetch(`${endpoint}?id=${encodeURIComponent(id)}`, {
           method: "DELETE",
           headers: headersRef.current,
         });
-      } catch (_) { /* best-effort server delete; still drop locally */ }
-      setItems((prev) => prev.filter((f) => f.id !== id));
+        if (!response.ok) return;
+        setItems((prev) => prev.filter((f) => f.id !== id));
+      } catch (_) {
+        // Keep the local item so a transient network failure remains retryable.
+      }
     },
     [endpoint, headersKey],
   );

@@ -34,7 +34,10 @@ export type {
   RagChunk,
   RagDocumentMeta,
   RagEmbeddingFingerprint,
+  RagIngestMeta,
+  RagOperationOptions,
   RagRefreshOptions,
+  RagRemoveOptions,
   RagSearchOptions,
   RagSearchResult,
   RagStore,
@@ -52,3 +55,4 @@ export type {
   UploadHandlerAuthConfig,
   UploadHandlerConfig,
 } from "./upload-handler.ts";
+export type { UploadLoadOptions } from "./upload-loader.ts";

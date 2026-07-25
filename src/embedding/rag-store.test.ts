@@ -79,22 +79,28 @@ describe("ragStore", () => {
       const id = await store.ingest("Doc", "Hello world", {
         source: "upload:test.txt",
         type: "txt",
+        size: 11,
+        mediaType: "text/plain",
       });
       assert(id.length > 0);
 
       const documents = await store.listDocuments();
       assertEquals(documents.length, 1);
       assertEquals(documents[0]?.id, id);
+      assertEquals(documents[0]?.size, 11);
+      assertEquals(documents[0]?.mediaType, "text/plain");
 
       const persisted = await readTextFile(storagePath);
       const parsed = JSON.parse(persisted) as {
         schemaVersion?: number;
-        documents: unknown[];
+        documents: Array<{ size?: number; mediaType?: string }>;
         chunks: unknown[];
       };
       assertEquals(parsed.schemaVersion, 1);
       assertEquals(Array.isArray(parsed.documents), true);
       assertEquals(Array.isArray(parsed.chunks), true);
+      assertEquals(parsed.documents[0]?.size, 11);
+      assertEquals(parsed.documents[0]?.mediaType, "text/plain");
       assertEquals(persisted, JSON.stringify(parsed));
       assertEquals(await exists(storagePath + ".tmp"), false);
       const temporaryEntries: string[] = [];
@@ -102,6 +108,48 @@ describe("ragStore", () => {
         if (entry.name.startsWith("index.json.tmp.")) temporaryEntries.push(entry.name);
       }
       assertEquals(temporaryEntries, []);
+    });
+  });
+
+  it("rejects invalid local metadata before persistence", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      await assertRejects(
+        () =>
+          store.ingest("Doc", "Hello world", {
+            source: "upload:test.txt",
+            size: -1,
+          }),
+        Error,
+        "size must be a non-negative safe integer",
+      );
+      assertEquals(await store.listDocuments(), []);
+      assertEquals(await exists(storagePath), false);
+    });
+  });
+
+  it("enforces local deletion provenance without mutating the document", async () => {
+    await withTempDir(async (tempDir) => {
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath: join(tempDir, "data", "index.json"),
+      });
+      const id = await store.ingest("Managed content", "Hello world", {
+        source: "content/guide.md",
+        type: "md",
+      });
+
+      await assertRejects(
+        () => store.removeDocument(id, { requiredSourcePrefix: "upload:" }),
+        Error,
+        "does not satisfy the required source provenance",
+      );
+      assertEquals((await store.listDocuments()).map((document) => document.id), [id]);
     });
   });
 
@@ -865,11 +913,15 @@ describe("ragStore", () => {
         const id = await store.ingest("Cloud Doc", "Hello cloud world", {
           source: "upload:cloud.txt",
           type: "txt",
+          size: 17,
+          mediaType: "text/plain",
         });
 
         const documents = await store.listDocuments();
         assertEquals(documents.length, 1);
         assertEquals(documents[0]?.id, id);
+        assertEquals(documents[0]?.size, 17);
+        assertEquals(documents[0]?.mediaType, "text/plain");
 
         fileChunks.set(".veryfront/rag/documents/stale.txt", [{
           id: "stale",
@@ -1092,6 +1144,50 @@ describe("ragStore", () => {
           "request failed (500",
         );
         assertEquals(documentDeleteCalled, false);
+      },
+    );
+  });
+
+  it("enforces cloud deletion provenance before issuing mutations", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    let deleteCalled = false;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.method === "GET") {
+          return Promise.resolve(Response.json({
+            documents: [{
+              id: "content-doc",
+              title: "Guide",
+              source: "content/guide.md",
+              type: "md",
+              created_at: "2026-06-25T00:00:00.000Z",
+              updated_at: "2026-06-25T00:00:00.000Z",
+              metadata: {
+                branch: "main",
+                filePath: ".veryfront/rag/documents/content-doc.md",
+              },
+            }],
+          }));
+        }
+        if (request.method === "DELETE") {
+          deleteCalled = true;
+        }
+        return Promise.reject(new Error(`Unexpected ${request.method} ${request.url}`));
+      },
+      async () => {
+        const store = ragStore({ model: "test/demo" });
+        await assertRejects(
+          () =>
+            store.removeDocument("content-doc", {
+              requiredSourcePrefix: "upload:",
+            }),
+          Error,
+          "does not satisfy the required source provenance",
+        );
+        assertEquals(deleteCalled, false);
       },
     );
   });
@@ -1574,6 +1670,65 @@ describe("ragStore", () => {
           Error,
           "caller stopped",
         );
+      },
+    );
+  });
+
+  it("cancels cloud ingestion requests and rolls back partial chunks", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
+    setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
+    registerTestEmbeddingProvider();
+    const mutationStarted = Promise.withResolvers<AbortSignal>();
+    let rollbackDeletes = 0;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const path = new URL(request.url).pathname;
+        if (
+          request.method === "POST" &&
+          path.includes("/branches/") &&
+          path.endsWith("/chunks")
+        ) {
+          mutationStarted.resolve(request.signal);
+          return new Promise<Response>((_resolve, reject) => {
+            request.signal.addEventListener(
+              "abort",
+              () => reject(request.signal.reason),
+              { once: true },
+            );
+          });
+        }
+        if (
+          request.method === "DELETE" &&
+          path.includes("/branches/") &&
+          path.endsWith("/chunks")
+        ) {
+          rollbackDeletes++;
+          return Promise.resolve(Response.json({ deleted: 0 }));
+        }
+        return Promise.reject(new Error(`Unexpected ${request.method} ${path}`));
+      },
+      async () => {
+        const controller = new AbortController();
+        const store = ragStore({ model: "test/demo" });
+        const ingestPromise = store.ingest(
+          "Cloud Doc",
+          "Cloud ingestion cancellation content",
+          { source: "upload:cloud.txt", type: "txt" },
+          { abortSignal: controller.signal },
+        );
+
+        const requestSignal = await mutationStarted.promise;
+        controller.abort(new DOMException("ingestion cancelled", "AbortError"));
+
+        await assertRejects(
+          () => ingestPromise,
+          DOMException,
+          "ingestion cancelled",
+        );
+        assertEquals(requestSignal.aborted, true);
+        assertEquals(rollbackDeletes, 1);
       },
     );
   });

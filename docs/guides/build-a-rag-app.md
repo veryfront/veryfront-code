@@ -91,14 +91,41 @@ document. For local-only prototypes, pass
 `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
 unauthenticated upload routes.
 
+The handler bounds each source file to 10 MiB, the complete multipart body to
+the file limit plus 64 KiB, and extracted UTF-8 text to 5 MiB by default. Set
+`maxFileSize`, `maxBodySize`, or `maxExtractedTextBytes` only when your
+deployment has a different, still-bounded budget. Invalid configuration fails
+when the handler is created. Request cancellation is propagated through
+multipart reading, extraction, and RAG ingestion.
+
+`GET /api/uploads?limit=25&offset=0` returns only upload-origin documents,
+newest first:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "offset": 0,
+  "limit": 25,
+  "hasMore": false
+}
+```
+
+The default and maximum page sizes are controlled by `maxListItems` (100 by
+default, at most 1,000). `DELETE` accepts an `id` route parameter or query
+parameter and refuses to delete documents that did not originate from the
+upload route. In Cloud mode, a `502` means the RAG entry was removed but source
+blob cleanup is incomplete; retry the same deletion safely.
+
 ## Understand ingestion
 
 Upload ingestion does three things:
 
 - **Extracts text**: Text, Markdown, and MDX are read directly. CSV files are
-  converted into row text with headers. PDF, DOCX, XLS, XLSX, PPTX, HTML, RTF,
-  EPUB, JSON, and XML use the `DocumentExtractor` extension backed by
-  `@veryfront/ext-document-kreuzberg`.
+  converted into row text with headers. CSV parsing honors quoted commas,
+  escaped quotes, and quoted line breaks, and rejects malformed or amplifying
+  input. PDF, DOCX, XLS, XLSX, PPTX, HTML, RTF, EPUB, JSON, and XML use the
+  `DocumentExtractor` extension backed by `@veryfront/ext-document-kreuzberg`.
 - **Chunks and embeds**: Text is split with `chunkOptions` before embedding.
   Defaults are `maxChars: 2000`, `overlap: 200`, `maxChunks: 10000`, and
   `separators: ["\n\n", "\n", " ", ""]`.

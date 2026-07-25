@@ -6,11 +6,14 @@
  * @module extensions/ext-document-kreuzberg/test
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import JSZip from "jszip";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
-import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
+import type {
+  DocumentExtractionOptions,
+  DocumentExtractionProgressEvent,
+} from "veryfront/extensions/compat";
 import factory, {
   EXTRACTION_TIMEOUT_MS,
   KreuzbergDocumentExtractor,
@@ -586,5 +589,51 @@ describe("ext-document-kreuzberg extension", () => {
 
     assertEquals(content, "worker pdf text");
     assertEquals(workerCalls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
+  });
+
+  it("propagates cancellation options to the Deno fallback worker", async () => {
+    const controller = new AbortController();
+    let receivedOptions: DocumentExtractionOptions | undefined;
+    const extractor = new KreuzbergDocumentExtractor({
+      isDenoRuntime: true,
+      extractInWorkerDeno: async (_buffer, _mimeType, options) => {
+        receivedOptions = options;
+        return "worker text";
+      },
+    });
+
+    const content = await extractor.extractInWorker(
+      new Uint8Array([1, 2, 3]).buffer,
+      PPTX_MIME_TYPE,
+      { abortSignal: controller.signal },
+    );
+
+    assertEquals(content, "worker text");
+    assertEquals(receivedOptions?.abortSignal, controller.signal);
+  });
+
+  it("rejects pre-aborted extraction before invoking a worker", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("extraction cancelled"));
+    let workerCalled = false;
+    const extractor = new KreuzbergDocumentExtractor({
+      isDenoRuntime: true,
+      extractInWorkerDeno: async () => {
+        workerCalled = true;
+        return "unexpected";
+      },
+    });
+
+    await assertRejects(
+      () =>
+        extractor.extractInWorker(
+          new Uint8Array([1, 2, 3]).buffer,
+          PPTX_MIME_TYPE,
+          { abortSignal: controller.signal },
+        ),
+      Error,
+      "extraction cancelled",
+    );
+    assertEquals(workerCalled, false);
   });
 });

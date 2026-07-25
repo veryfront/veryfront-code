@@ -58,6 +58,8 @@ export type DocumentExtractionProgress = (
 ) => void | Promise<void>;
 
 export interface DocumentExtractionOptions {
+  /** Abort extraction and release any owned worker resources. */
+  abortSignal?: AbortSignal;
   onProgress?: DocumentExtractionProgress;
   idleTimeoutMs?: number;
   hardTimeoutMs?: number;

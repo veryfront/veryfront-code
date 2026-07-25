@@ -1,4 +1,95 @@
 export const MAX_EMBEDDING_DIMENSION = 65_536;
+/** Maximum UTF-8 payload accepted for one persisted RAG document. */
+export const MAX_RAG_DOCUMENT_TEXT_BYTES = 5 * 1024 * 1024;
+/** Maximum length accepted for user-controlled RAG document metadata strings. */
+export const MAX_RAG_DOCUMENT_METADATA_LENGTH = 4_096;
+/** Maximum length accepted for compact RAG document metadata strings. */
+export const MAX_RAG_DOCUMENT_COMPACT_METADATA_LENGTH = 256;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateOptionalString(
+  value: unknown,
+  label: string,
+  maximum: number,
+  allowEmpty: boolean,
+): void {
+  if (value === undefined) return;
+  if (
+    typeof value !== "string" ||
+    (!allowEmpty && value.length === 0) ||
+    value.length > maximum
+  ) {
+    const emptyRequirement = allowEmpty ? "" : " non-empty";
+    throw new TypeError(
+      `${label} must be a${emptyRequirement} string no longer than ${maximum} characters`,
+    );
+  }
+}
+
+/**
+ * Validate caller-supplied metadata before it reaches either RAG persistence
+ * backend. TypeScript types are not a runtime trust boundary.
+ */
+export function validateRagDocumentMetadata(
+  value: unknown,
+  label: string,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+
+  validateOptionalString(
+    value.title,
+    `${label}.title`,
+    MAX_RAG_DOCUMENT_METADATA_LENGTH,
+    false,
+  );
+  validateOptionalString(
+    value.source,
+    `${label}.source`,
+    MAX_RAG_DOCUMENT_METADATA_LENGTH,
+    true,
+  );
+  validateOptionalString(
+    value.type,
+    `${label}.type`,
+    MAX_RAG_DOCUMENT_COMPACT_METADATA_LENGTH,
+    true,
+  );
+  validateOptionalString(
+    value.mediaType,
+    `${label}.mediaType`,
+    MAX_RAG_DOCUMENT_COMPACT_METADATA_LENGTH,
+    false,
+  );
+  if (
+    value.size !== undefined &&
+    (!Number.isSafeInteger(value.size) || Number(value.size) < 0)
+  ) {
+    throw new RangeError(`${label}.size must be a non-negative safe integer`);
+  }
+}
+
+/** Validate a provenance precondition before applying a RAG deletion. */
+export function validateRagRemoveOptions(
+  value: unknown,
+  label: string,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  validateOptionalString(
+    value.requiredSourcePrefix,
+    `${label}.requiredSourcePrefix`,
+    MAX_RAG_DOCUMENT_METADATA_LENGTH,
+    false,
+  );
+}
 
 export function requirePositiveSafeInteger(
   value: number,

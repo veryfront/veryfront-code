@@ -83,6 +83,10 @@ export interface RagDocumentMeta {
   source: string;
   type: string;
   createdAt: number;
+  /** Original upload size in bytes when known. */
+  size?: number;
+  /** Original upload media type when known. */
+  mediaType?: string;
   url?: string;
 }
 
@@ -158,14 +162,45 @@ export interface RagRefreshOptions {
   title?: string;
   source?: string;
   type?: string;
+  size?: number;
+  mediaType?: string;
+}
+
+/** Metadata accepted when ingesting a rag document. */
+export interface RagIngestMeta {
+  source?: string;
+  type?: string;
+  size?: number;
+  mediaType?: string;
+}
+
+/** Cancellation accepted by RAG reads and transactional mutations. */
+export interface RagOperationOptions {
+  abortSignal?: AbortSignal;
+}
+
+/** Preconditions accepted when removing a rag document. */
+export interface RagRemoveOptions extends RagOperationOptions {
+  /** Remove only when the authoritative document source starts with this prefix. */
+  requiredSourcePrefix?: string;
 }
 
 /** Public API contract for rag store. */
 export interface RagStore {
-  ingest(title: string, text: string, meta?: { source?: string; type?: string }): Promise<string>;
-  refreshDocument?(id: string, text: string, meta?: RagRefreshOptions): Promise<void>;
+  ingest(
+    title: string,
+    text: string,
+    meta?: RagIngestMeta,
+    options?: RagOperationOptions,
+  ): Promise<string>;
+  refreshDocument?(
+    id: string,
+    text: string,
+    meta?: RagRefreshOptions,
+    options?: RagOperationOptions,
+  ): Promise<void>;
   search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;
-  listDocuments(): Promise<RagDocumentMeta[]>;
-  removeDocument(id: string): Promise<void>;
+  listDocuments(options?: RagOperationOptions): Promise<RagDocumentMeta[]>;
+  removeDocument(id: string, options?: RagRemoveOptions): Promise<void>;
   indexContentDir(): Promise<void>;
 }
