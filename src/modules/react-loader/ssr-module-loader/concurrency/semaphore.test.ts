@@ -3,6 +3,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Semaphore } from "./semaphore.ts";
 
+function abortBeforeListenerRegistration(
+  controller: AbortController,
+  reason: DOMException,
+): AbortSignal {
+  return new Proxy(controller.signal, {
+    get(target, property) {
+      if (property === "addEventListener") controller.abort(reason);
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
   describe("Semaphore", () => {
     it("should acquire immediately when permits available", async () => {
@@ -94,6 +107,26 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
         DOMException,
         "request cancelled",
       );
+      assertEquals(sem.available, 1);
+    });
+
+    it("should reject an abort missed immediately before listener registration", async () => {
+      const sem = new Semaphore(1);
+      const controller = new AbortController();
+      const reason = new DOMException("registration race", "AbortError");
+
+      await sem.tryAcquire();
+      await assertRejects(
+        () =>
+          sem.tryAcquire(10, {
+            signal: abortBeforeListenerRegistration(controller, reason),
+          }),
+        DOMException,
+        "registration race",
+      );
+      assertEquals(sem.waiting, 0);
+
+      sem.release();
       assertEquals(sem.available, 1);
     });
 

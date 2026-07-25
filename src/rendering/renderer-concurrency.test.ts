@@ -3,6 +3,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Mutex } from "./renderer-concurrency.ts";
 
+function abortBeforeListenerRegistration(
+  controller: AbortController,
+  reason: DOMException,
+): AbortSignal {
+  return new Proxy(controller.signal, {
+    get(target, property) {
+      if (property === "addEventListener") controller.abort(reason);
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 describe("Mutex", () => {
   it("acquires immediately when unlocked", async () => {
     const mutex = new Mutex();
@@ -255,6 +268,44 @@ describe("project render slots", () => {
         "request cancelled",
       );
       await concurrency.releaseProjectSlot(projectId);
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      await concurrency.releaseProjectSlot(projectId);
+    } finally {
+      if (previousLimit === undefined) {
+        Deno.env.delete("RENDER_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("RENDER_PER_PROJECT_LIMIT", previousLimit);
+      }
+    }
+  });
+
+  it("rejects an abort missed immediately before listener registration", async () => {
+    const previousLimit = Deno.env.get("RENDER_PER_PROJECT_LIMIT");
+    Deno.env.set("RENDER_PER_PROJECT_LIMIT", "1");
+    try {
+      const concurrency = await import(
+        `./renderer-concurrency.ts?abort-registration-slot=${crypto.randomUUID()}`
+      );
+      const projectId = `project-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      const reason = new DOMException("registration race", "AbortError");
+
+      assertEquals(await concurrency.acquireProjectSlot(projectId), true);
+      try {
+        await assertRejects(
+          () =>
+            concurrency.acquireProjectSlot(projectId, {
+              wait: true,
+              timeoutMs: 10,
+              signal: abortBeforeListenerRegistration(controller, reason),
+            }),
+          DOMException,
+          "registration race",
+        );
+      } finally {
+        await concurrency.releaseProjectSlot(projectId);
+      }
+
       assertEquals(await concurrency.acquireProjectSlot(projectId), true);
       await concurrency.releaseProjectSlot(projectId);
     } finally {

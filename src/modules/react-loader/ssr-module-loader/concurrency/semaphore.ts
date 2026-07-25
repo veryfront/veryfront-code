@@ -73,6 +73,10 @@ export class Semaphore {
         );
       };
       signal?.addEventListener("abort", waiter.onAbort, { once: true });
+      if (signal?.aborted) {
+        waiter.onAbort();
+        return;
+      }
 
       if (Number.isFinite(timeoutMs)) {
         waiter.timeoutId = setTimeout(() => {
