@@ -63,8 +63,45 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
       outputTokens: 5,
       totalTokens: 15,
       cacheReadInputTokens: 4,
+      cachedInputTokens: 4,
       reasoningTokens: 2,
     });
+  });
+
+  it("canonicalizes the legacy cached-input alias while preserving the alias", () => {
+    assertEquals(
+      sanitizeRuntimeUsage({ cachedInputTokens: 7 }),
+      {
+        cacheReadInputTokens: 7,
+        cachedInputTokens: 7,
+      },
+    );
+  });
+
+  it("prefers the canonical cached-input counter over the compatibility alias", () => {
+    assertEquals(
+      sanitizeRuntimeUsage({
+        cacheReadInputTokens: 2,
+        cachedInputTokens: 99,
+      }),
+      {
+        cacheReadInputTokens: 2,
+        cachedInputTokens: 2,
+      },
+    );
+  });
+
+  it("treats the compatibility alias as the latest cached-input counter when merging", () => {
+    assertEquals(
+      mergeUsage(
+        { cacheReadInputTokens: 2 },
+        { cachedInputTokens: 4 },
+      ),
+      {
+        cacheReadInputTokens: 4,
+        cachedInputTokens: 4,
+      },
+    );
   });
 
   it("preserves gateway billing metadata from a final usage event", () => {
@@ -92,6 +129,7 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
       outputTokens: 5,
       totalTokens: 15,
       cacheReadInputTokens: 4,
+      cachedInputTokens: 4,
       billableInputTokens: 10,
       billableOutputTokens: 5,
       providerInputCostUsd: 0.0004,
