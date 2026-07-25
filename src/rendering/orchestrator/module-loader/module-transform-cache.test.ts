@@ -22,6 +22,7 @@ function createDeps(
     validateCachedBundlesByManifestOrCode: () => {
       throw new Error("validateCachedBundlesByManifestOrCode was not configured");
     },
+    findMissingFrameworkBundlePaths: () => Promise.resolve([]),
     getHttpBundleCacheDir: () => "/tmp/vf-http-bundles",
     setCachedTransformAsync: () => Promise.resolve(),
     runPipeline: () => {
@@ -71,8 +72,8 @@ describe("module-loader/module-transform-cache", () => {
   });
 
   it("re-transforms cached code when HTTP bundle validation fails", async () => {
-    const setCalls: Array<{ key: string; code: string; hash: string; ttl: number }> = [];
     let transformCalls = 0;
+    let validatorCalls = 0;
 
     const result = await transformModuleCodeWithCache({
       fileContent: "export const page = 1;",
@@ -83,12 +84,16 @@ describe("module-loader/module-transform-cache", () => {
       adapter: {} as RuntimeAdapter,
       ttlSeconds: 123,
       deps: createDeps({
-        getOrComputeTransform: (_key, _compute) =>
-          Promise.resolve({
+        getOrComputeTransform: async (_key, compute, _ttl, _onProgress, _signal, validator) => {
+          validatorCalls++;
+          const cacheEntry = {
             code: 'import x from "file:///tmp/veryfront-http-bundle/http-deadbeef.mjs";',
             cacheHit: true,
             bundleManifestId: "manifest-abc",
-          }),
+          };
+          if (await validator?.(cacheEntry)) return cacheEntry;
+          return { code: await compute(), cacheHit: false };
+        },
         validateCachedBundlesByManifestOrCode: (code, manifestId, cacheDir) => {
           assertEquals(code.includes("deadbeef"), true);
           assertEquals(manifestId, "manifest-abc");
@@ -104,19 +109,60 @@ describe("module-loader/module-transform-cache", () => {
           transformCalls++;
           return Promise.resolve("export const page = 1;");
         },
-        setCachedTransformAsync: (key, code, hash, ttl) => {
-          setCalls.push({ key, code, hash, ttl: ttl ?? -1 });
-          return Promise.resolve();
-        },
       }),
     });
 
     assertEquals(result.code, "export const page = 1;");
     assertEquals(transformCalls, 1);
-    assertEquals(setCalls.length, 1);
-    assertEquals(setCalls[0]!.code, "export const page = 1;");
-    assertEquals(setCalls[0]!.hash, hashCodeHex("export const page = 1;"));
-    assertEquals(setCalls[0]!.ttl, 123);
+    assertEquals(validatorCalls, 1);
+  });
+
+  it("re-transforms cached code when a referenced framework file URL is missing", async () => {
+    const missingFrameworkPath =
+      "/tmp/.cache/veryfront/veryfront-mdx-esm/framework/vfmod-vf-framework-deadbeef.mjs";
+    const freshCode = "export const page = 3;";
+    let transformCalls = 0;
+    let validatorCalls = 0;
+
+    const result = await transformModuleCodeWithCache({
+      fileContent: "export const page = 3;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-3",
+      mode: "production",
+      adapter: {} as RuntimeAdapter,
+      ttlSeconds: 789,
+      deps: createDeps({
+        getOrComputeTransform: async (_key, compute, _ttl, _onProgress, _signal, validator) => {
+          validatorCalls++;
+          const cacheEntry = {
+            code: `import helper from "file://${missingFrameworkPath}";\nexport default helper;`,
+            cacheHit: true,
+            bundleManifestId: "manifest-valid",
+          };
+          if (await validator?.(cacheEntry)) return cacheEntry;
+          return { code: await compute(), cacheHit: false };
+        },
+        validateCachedBundlesByManifestOrCode: () =>
+          Promise.resolve({
+            valid: true,
+            failedHashes: [],
+            source: "manifest",
+          }),
+        findMissingFrameworkBundlePaths: (code) => {
+          assertEquals(code.includes(missingFrameworkPath), true);
+          return Promise.resolve([missingFrameworkPath]);
+        },
+        transformToESM: () => {
+          transformCalls++;
+          return Promise.resolve(freshCode);
+        },
+      }),
+    });
+
+    assertEquals(result.code, freshCode);
+    assertEquals(transformCalls, 1);
+    assertEquals(validatorCalls, 1);
   });
 
   it("retries through the transform pipeline when cached code has unresolved _vf_modules imports", async () => {
