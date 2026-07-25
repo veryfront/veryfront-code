@@ -156,6 +156,72 @@ This is a test post.
     });
   });
 
+  it("preserves convention layouts when the project has a hidden ancestor", async () => {
+    await withTestContext("layout-mixed-router-pages-conventions", async (context) => {
+      const projectDir = join(context.projectDir, ".worktrees", "project");
+      await mkdir(join(projectDir, "app"), { recursive: true });
+      await mkdir(join(projectDir, "components"), { recursive: true });
+      await mkdir(join(projectDir, "pages/chat"), { recursive: true });
+
+      await writeTextFile(
+        join(projectDir, "app/layout.tsx"),
+        `export default function AppLayout({ children }) {
+  return <div id="app-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "components/layout.tsx"),
+        `export default function DashboardLayout({ children }) {
+  return <aside id="dashboard-layout">{children}</aside>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "components/app.tsx"),
+        `export default function App({ children }) {
+  return <div id="pages-app-wrapper">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "pages/review.tsx"),
+        `export default function ReviewPage() {
+  return <div>Review page</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "pages/chat/layout.tsx"),
+        `export default function ChatLayout({ children }) {
+  return <main id="chat-route-layout">{children}</main>;
+}`,
+      );
+
+      await writeTextFile(
+        join(projectDir, "pages/chat/index.tsx"),
+        `export default function ChatPage() {
+  return <div>Chat page</div>;
+}`,
+      );
+
+      await withRenderer(projectDir, async (renderer) => {
+        const review = await renderer.renderPage("review");
+        assertExists(review.html);
+        assertStringIncludes(review.html, 'id="dashboard-layout"');
+        assertStringIncludes(review.html, 'id="pages-app-wrapper"');
+        assertEquals(review.html.includes('id="app-layout"'), false);
+
+        const chat = await renderer.renderPage("chat");
+        assertExists(chat.html);
+        assertStringIncludes(chat.html, 'id="chat-route-layout"');
+        assertStringIncludes(chat.html, 'id="pages-app-wrapper"');
+        assertEquals(chat.html.includes('id="dashboard-layout"'), false);
+        assertEquals(chat.html.includes('id="app-layout"'), false);
+      });
+    });
+  });
+
   it("named layout", async () => {
     await withTestContext("layout-named", async (context) => {
       await mkdir(join(context.projectDir, "layouts"), { recursive: true });
