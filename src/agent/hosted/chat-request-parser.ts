@@ -1,9 +1,13 @@
 import type {
   ChatRequestContext,
   ChatRuntimeOverrides,
+  ChatToolPartState,
   ChatUiMessage,
+  ChatUiMessagePart,
+  ChatUiMessageRole,
   DurableRootRunDescriptor,
 } from "#veryfront/chat/types.ts";
+import { stringifyUnknown } from "#veryfront/chat/conversation.ts";
 import {
   buildHostedChatRequestInputFromRuntimeAgentInvocation,
   type HostedChatRequest,
@@ -20,6 +24,7 @@ import {
   type HostedRuntimeSourceIdentity,
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
+import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 
 /** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
@@ -121,6 +126,115 @@ function getValidationErrorMessage(error: unknown): string {
 function normalizeProjectSlug(projectSlug: string | undefined): string | undefined {
   const normalized = projectSlug?.trim();
   return normalized || undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mapRawToolCallState(state: string): ChatToolPartState {
+  switch (state) {
+    case "streaming":
+      return "input-streaming";
+    case "pending":
+      return "pending";
+    case "error":
+      return "completed";
+    default:
+      return "completed";
+  }
+}
+
+function normalizeHostedChatRequestMessages(
+  messages: HostedChatRequest["messages"],
+): ChatUiMessage[] {
+  const knownToolNames = new Map<string, string>();
+  const knownToolInputs = new Map<string, Record<string, unknown>>();
+
+  return messages.map((message) => {
+    const parts: ChatUiMessagePart[] = [];
+    const partIndexByToolCallId = new Map<string, number>();
+
+    for (const part of message.parts) {
+      const uiToolIdentity = getHostedChatUiToolIdentity(part);
+      if (uiToolIdentity) {
+        knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
+        const input = isRecord(part as unknown)
+          ? (part as Record<string, unknown>)["input"]
+          : undefined;
+        if (isRecord(input)) {
+          knownToolInputs.set(uiToolIdentity.toolCallId, input);
+        }
+        partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
+      }
+
+      if (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) {
+        const rawPart: Record<string, unknown> = part;
+        const rawId = rawPart["id"];
+        const rawName = rawPart["name"];
+        const toolCallId = typeof rawId === "string" ? rawId : "";
+        const toolName = typeof rawName === "string" ? rawName : "";
+        const state = typeof part.state === "string" ? part.state : "completed";
+        if (!toolCallId || !toolName) continue;
+
+        const input = isRecord(part.input) ? part.input : {};
+        knownToolNames.set(toolCallId, toolName);
+        knownToolInputs.set(toolCallId, input);
+        partIndexByToolCallId.set(toolCallId, parts.length);
+        parts.push({
+          type: "tool_call",
+          toolCallId,
+          toolName,
+          input,
+          state: mapRawToolCallState(state),
+        });
+        continue;
+      }
+
+      if (isRecord(part) && part.type === "tool_result") {
+        const toolCallId = typeof part.tool_call_id === "string" ? part.tool_call_id : "";
+        const explicitToolName = typeof part.tool_name === "string" ? part.tool_name : "";
+        const toolName = explicitToolName || knownToolNames.get(toolCallId);
+        if (!toolCallId || !toolName) continue;
+
+        const resultPart: ChatUiMessagePart = {
+          type: "tool_call",
+          toolCallId,
+          toolName,
+          input: knownToolInputs.get(toolCallId) ?? {},
+          state: part.is_error === true ? "output-error" : "output-available",
+          output: part.output,
+          ...(part.is_error === true
+            ? { errorText: stringifyUnknown(part.output ?? "Tool error") }
+            : {}),
+        };
+
+        const existingIndex = partIndexByToolCallId.get(toolCallId);
+        if (existingIndex !== undefined) {
+          const existingPart = parts[existingIndex];
+          if (existingPart && isRecord(existingPart)) {
+            parts[existingIndex] = {
+              ...existingPart,
+              state: resultPart.state,
+              output: resultPart.output,
+              ...(resultPart.errorText ? { errorText: resultPart.errorText } : {}),
+            } as ChatUiMessagePart;
+          }
+        } else {
+          parts.push(resultPart);
+        }
+        continue;
+      }
+
+      parts.push(part as ChatUiMessagePart);
+    }
+
+    return {
+      ...message,
+      role: message.role as ChatUiMessageRole,
+      parts,
+    };
+  });
 }
 
 function isBlankProjectSlug(projectSlug: string | undefined): boolean {
@@ -228,7 +342,7 @@ export async function buildParsedHostedChatRequest(input: {
     agentId: input.agentId,
     userId: input.userId,
     authToken: input.authToken,
-    messages: messages as ChatUiMessage[],
+    messages: normalizeHostedChatRequestMessages(messages),
     validatedContext,
     projectId,
     projectSlug: verifiedProjectSlug,
