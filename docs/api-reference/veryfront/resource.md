@@ -1,7 +1,7 @@
 ---
 title: "veryfront/resource"
 description: "Declare and register resources exposable over MCP."
-order: 23
+order: 24
 ---
 
 ## Import

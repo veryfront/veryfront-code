@@ -63,7 +63,13 @@ export interface SSRRenderResult {
   etag?: string;
   cacheStrategy: "no-cache" | "short";
   error?: Error;
-  errorType?: "not-found" | "undeployed" | "redirect" | "server-error" | "runtime";
+  errorType?:
+    | "not-found"
+    | "undeployed"
+    | "redirect"
+    | "server-error"
+    | "runtime"
+    | "app-router-error-boundary";
   showDevOverlay?: boolean;
   redirectLocation?: string;
   slug: string;
@@ -262,7 +268,7 @@ export class SSRService implements SSRServiceLike {
         html: errorBoundaryHtml,
         isStreaming: false,
         cacheStrategy: "no-cache",
-        errorType: "server-error",
+        errorType: "app-router-error-boundary",
         slug,
       };
     }

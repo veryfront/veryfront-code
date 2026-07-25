@@ -5,7 +5,7 @@ import {
 } from "../streaming/data-stream.ts";
 import type { AgUiRuntimeStreamEvent } from "./browser-encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
-import { mapFinishReason } from "../../chat/ag-ui-helpers.ts";
+import { mapFinishReason, toRenderableCustomChunk } from "../../chat/ag-ui-helpers.ts";
 
 /** Usage metadata captured from an AG-UI runtime finish event. */
 export type AgUiRuntimeChatStreamUsage = {
@@ -543,6 +543,11 @@ export function createAgUiRuntimeChatStreamEncoder(
             : undefined;
           if (name) {
             const dataValue = data && Object.hasOwn(data, "value") ? data.value : undefined;
+            const renderableCustomChunk = toRenderableCustomChunk(dataValue);
+            if (renderableCustomChunk?.type === name) {
+              events.push(renderableCustomChunk);
+              return events;
+            }
             events.push({
               type: `data-${name}`,
               data: dataValue,
@@ -566,6 +571,11 @@ export function createAgUiRuntimeChatStreamEncoder(
           return events;
         }
         default: {
+          const renderableCustomChunk = toRenderableCustomChunk(event);
+          if (renderableCustomChunk) {
+            events.push(renderableCustomChunk);
+            return events;
+          }
           if (!event.type.startsWith("data-")) {
             return events;
           }

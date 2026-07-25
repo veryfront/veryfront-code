@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
+import {
+  handleAgUiStreamingResponse,
+  handleStreamingResponse,
+} from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type { ChatProps } from "#veryfront/react/components/chat/chat.tsx";
 import type { ChatFilePart, ChatMessage } from "./types.ts";
 import type { UseChatResult } from "./types.ts";
@@ -173,6 +176,192 @@ describe("use-chat internal state helpers", () => {
     assertEquals(message.parts, [
       { type: "data-dora.report", data: { overall: "fail" } },
       { type: "text", text: "Done", state: "done" },
+    ]);
+  });
+
+  it("preserves renderable AG-UI custom events as assistant message parts", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Done"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:0"}',
+          "",
+          "event: Custom",
+          'data: {"name":"source-url","value":{"type":"source-url","sourceId":"web-1","url":"https://example.com/reference","title":"Reference"}}',
+          "",
+          "event: Custom",
+          'data: {"name":"source-document","value":{"type":"source-document","sourceId":"knowledge/handbook.md","mediaType":"text/markdown","title":"knowledge/handbook.md","filename":"knowledge/handbook.md"}}',
+          "",
+          "event: Custom",
+          'data: {"name":"file","value":{"type":"file","url":"https://cdn.example.com/report.pdf","mediaType":"application/pdf","filename":"report.pdf"}}',
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages[0]?.parts, [
+      { type: "text", text: "Done", state: "done" },
+      {
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      },
+      {
+        type: "source-document",
+        sourceId: "knowledge/handbook.md",
+        mediaType: "text/markdown",
+        title: "knowledge/handbook.md",
+        filename: "knowledge/handbook.md",
+      },
+      {
+        type: "file",
+        url: "https://cdn.example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      },
+    ]);
+  });
+
+  it("preserves text blocks around an AG-UI citation", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Before citation"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:0"}',
+          "",
+          "event: Custom",
+          'data: {"name":"source-url","value":{"type":"source-url","sourceId":"web-1","url":"https://example.com/reference","title":"Reference"}}',
+          "",
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:1","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:1","delta":"After citation"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:1"}',
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages[0]?.id, "msg-1");
+    assertEquals(messages[0]?.parts, [
+      { type: "text", text: "Before citation", state: "done" },
+      {
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      },
+      { type: "text", text: "After citation", state: "done" },
+    ]);
+  });
+
+  it("replaces a fallback citation with richer metadata during durable replay", async () => {
+    const encoder = new TextEncoder();
+    const sourceId = "knowledge/handbook.md";
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: Custom",
+          `data: {"name":"source-document","value":{"type":"source-document","sourceId":"${sourceId}","mediaType":"text/markdown","title":"${sourceId}","filename":"${sourceId}"}}`,
+          "",
+          "event: Custom",
+          `data: {"name":"source-document","value":{"type":"source-document","sourceId":"${sourceId}","mediaType":"text/x-markdown","title":"Curated handbook","filename":"${sourceId}"}}`,
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages[0]?.parts, [{
+      type: "source-document",
+      sourceId,
+      mediaType: "text/x-markdown",
+      title: "Curated handbook",
+      filename: sourceId,
+    }]);
+  });
+
+  it("preserves valid legacy source events and ignores malformed source events", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          'data: {"type":"text-start","id":"text:0"}',
+          'data: {"type":"text-delta","id":"text:0","delta":"Done"}',
+          'data: {"type":"text-end","id":"text:0"}',
+          'data: {"type":"source-url","sourceId":"web-1","url":"https://example.com/reference","title":"Reference"}',
+          'data: {"type":"source-document","sourceId":"broken","title":"Broken"}',
+          'data: {"type":"message-finish"}',
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages[0]?.parts, [
+      { type: "text", text: "Done", state: "done" },
+      {
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      },
     ]);
   });
 

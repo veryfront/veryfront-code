@@ -56,6 +56,11 @@ const RULES: Rule[] = [
     message: "Do not expose internal #veryfront imports in public docs.",
   },
   {
+    pattern: /\{@[A-Za-z]/,
+    message:
+      "Do not publish raw inline JSDoc tags. Regenerate the API reference after changing source JSDoc or the generator.",
+  },
+  {
     pattern: /_test-setup/,
     message: "Do not expose test-only setup modules in public docs.",
   },

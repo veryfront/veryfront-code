@@ -98,7 +98,7 @@ export interface PageDataResponse {
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
   appPath?: string;
-  /** Absolute path to the app-router error.tsx that wraps the page (client boundary). */
+  /** Project-relative path to the app-router error.tsx that wraps the page (client boundary). */
   errorPath?: string;
   /** Page and client layout modules render inside a server-owned layout island. */
   isolatedClientPage?: boolean;

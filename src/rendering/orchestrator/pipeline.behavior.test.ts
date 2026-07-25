@@ -73,6 +73,7 @@ function createPipeline(
         finalStream: null,
         ssrHash: "test-hash",
       }),
+      resolveErrorComponentPath: async () => null,
     } as any,
     adapter: {
       env: { get: () => undefined },
@@ -452,6 +453,7 @@ describe("RenderPipeline behavior", () => {
             ssrHash: "test-hash",
           };
         },
+        resolveErrorComponentPath: async () => null,
       } as any,
     });
 
@@ -808,6 +810,40 @@ describe("RenderPipeline behavior", () => {
     assertEquals(pageData.appPath, "components/app.tsx");
   });
 
+  it("resolvePageData includes the matched app-router error boundary path", async () => {
+    const slug = "/blog/hello";
+    const projectId = "proj-error-path";
+    const pagePath = "/project/app/blog/[slug]/page.tsx";
+    let receivedPagePath: string | undefined;
+    const pipeline = createPipeline(pagePath, {
+      ssrOrchestrator: {
+        performSSRRendering: async () => ({
+          fullHtml: "<!doctype html><html><body>ok</body></html>",
+          finalStream: null,
+          ssrHash: "test-hash",
+        }),
+        resolveErrorComponentPath: async (
+          context: { pageInfo?: { entity?: { path?: string } } },
+        ) => {
+          receivedPagePath = context.pageInfo?.entity?.path;
+          return "/project/app/blog/[slug]/error.tsx";
+        },
+      } as any,
+    });
+    primeCssCache(slug, projectId);
+
+    (pipeline as any).loadModule = async () => ({});
+
+    const pageData = await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(receivedPagePath, pagePath);
+    assertEquals(pageData.errorPath, "app/blog/[slug]/error.tsx");
+  });
+
   it("resolvePageData includes release asset modules when a manifest is provided", async () => {
     const slug = "/behavior-release-modules";
     const projectId = "proj-release-modules";
@@ -1052,6 +1088,7 @@ describe("RenderPipeline behavior", () => {
             ssrHash: "test-hash",
           };
         },
+        resolveErrorComponentPath: async () => null,
       } as any,
     });
 

@@ -7,6 +7,7 @@ import type { ElementValidator } from "../element-validator/index.ts";
 import type { SSRRenderer } from "../ssr-renderer.ts";
 import { computeHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
+import type { LayoutOrchestrator } from "./layout.ts";
 import type { RenderOptions } from "./types.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 import { getWorkerPool, isSSRIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
@@ -43,6 +44,7 @@ export interface SSROrchestratorConfig {
   elementValidator: ElementValidator;
   ssrRenderer: SSRRenderer;
   htmlGenerator: HTMLGenerator;
+  layoutOrchestrator?: Pick<LayoutOrchestrator, "applyLayoutsAndWrappers">;
 }
 
 export interface SSRRenderingResult {
@@ -82,6 +84,15 @@ export class SSROrchestrator {
 
   constructor(config: SSROrchestratorConfig) {
     this.config = config;
+  }
+
+  async resolveErrorComponentPath(
+    generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
+  ): Promise<string | null> {
+    const resolved = await this.config.htmlGenerator.resolveErrorComponentPath(
+      { ...generationContext, html: "", ssrHash: "" } as HTMLGenerationContext,
+    );
+    return resolved?.path ?? null;
   }
 
   async performSSRRendering(
@@ -251,8 +262,30 @@ export class SSROrchestrator {
     );
     if (!errorInfo) return null;
 
+    const renderOptions = generationContext.options;
+    const mergedFrontmatter = {
+      ...generationContext.pageInfo?.entity?.frontmatter,
+      ...generationContext.pageBundle?.frontmatter,
+    };
+    const fallbackElement = this.config.layoutOrchestrator
+      ? await this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+        errorInfo.element as React.ReactElement,
+        generationContext.pageInfo,
+        generationContext.layoutBundle,
+        generationContext.nestedLayouts,
+        undefined,
+        renderOptions?.url,
+        renderOptions?.params,
+        mergedFrontmatter,
+        generationContext.pageBundle?.headings,
+        renderOptions?.projectSlug,
+        renderOptions?.clientPageIsland,
+        renderOptions?.props,
+      )
+      : errorInfo.element;
+
     const rendered = await runWithHeadCollector(() =>
-      this.config.ssrRenderer.renderToHTML(errorInfo.element as React.ReactElement, {
+      this.config.ssrRenderer.renderToHTML(fallbackElement as React.ReactElement, {
         mode: this.config.mode,
         wantsStream: false,
         debugMode: this.config.debugMode,

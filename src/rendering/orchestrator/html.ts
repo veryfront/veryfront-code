@@ -1,4 +1,4 @@
-import { join } from "#veryfront/compat/path";
+import { dirname, join } from "#veryfront/compat/path";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
@@ -454,6 +454,32 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     error: Error,
   ): Promise<{ element: unknown; path: string } | null> {
+    const loaded = await this.resolveErrorComponentPath(context);
+    if (!loaded) return null;
+
+    try {
+      const reactVersion = await resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+      });
+      const { getProjectReact } = await import(
+        "#veryfront/react/compat/ssr-adapter/index.ts"
+      );
+      const React = await getProjectReact(reactVersion);
+      const createElement = React.createElement as (
+        component: unknown,
+        props: unknown,
+      ) => unknown;
+      const element = createElement(loaded.component, { error, reset: () => {} });
+      return { element, path: loaded.path };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async resolveErrorComponentPath(
+    context: HTMLGenerationContext,
+  ): Promise<{ component: unknown; path: string } | null> {
     try {
       const appRoot = join(
         this.config.projectDir,
@@ -469,7 +495,13 @@ export class HTMLGenerator {
       const { collectAncestorDirs, loadReservedWithPath } = await import(
         "../app-reserved.ts"
       );
-      const segmentDir = context.slug ? join(appRoot, context.slug) : appRoot;
+      const matchedPath = context.pageInfo?.entity?.path;
+      const absolutePagePath = matchedPath
+        ? matchedPath.startsWith(this.config.projectDir)
+          ? matchedPath
+          : join(this.config.projectDir, matchedPath)
+        : appRoot;
+      const segmentDir = matchedPath ? dirname(absolutePagePath) : appRoot;
       const dirs = await collectAncestorDirs(segmentDir, appRoot);
       const reactVersion = await resolveProjectReactVersion({
         projectDir: this.config.projectDir,
@@ -494,16 +526,7 @@ export class HTMLGenerator {
       );
       if (!loaded) return null;
 
-      const { getProjectReact } = await import(
-        "#veryfront/react/compat/ssr-adapter/index.ts"
-      );
-      const React = await getProjectReact(reactVersion);
-      const createElement = React.createElement as (
-        component: unknown,
-        props: unknown,
-      ) => unknown;
-      const element = createElement(loaded.component, { error, reset: () => {} });
-      return { element, path: loaded.filePath };
+      return { component: loaded.component, path: loaded.filePath };
     } catch (_) {
       return null; // error.tsx resolution is best-effort
     }

@@ -1,11 +1,12 @@
 {
   "name": "veryfront",
-  "version": "0.1.1128",
+  "version": "0.1.1136",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
     "age": "P2D",
     "exclude": [
+      "npm:brace-expansion",
       "npm:esbuild",
       "npm:@esbuild/aix-ppc64",
       "npm:@esbuild/android-arm",

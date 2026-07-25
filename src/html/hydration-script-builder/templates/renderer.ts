@@ -254,6 +254,7 @@ export const getRendererScript = () => `
           params: normalizedParams,
           query: Object.fromEntries(new URLSearchParams(window.location.search)),
           frontmatter: data.frontmatter || {},
+          data: data.props || {},
           headings,
           mdxHeadings: headings, // Alias for backwards compatibility
         };

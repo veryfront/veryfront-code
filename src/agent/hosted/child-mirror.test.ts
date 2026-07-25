@@ -15,6 +15,8 @@ describe("agent/hosted-child-mirror", () => {
     assertEquals(isAlreadyMirroredHostedChunk("reasoning-delta", "reasoning-delta"), true);
     assertEquals(isAlreadyMirroredHostedChunk("tool-call", "tool-input-start"), true);
     assertEquals(isAlreadyMirroredHostedChunk("tool-result", "tool-output-available"), true);
+    assertEquals(isAlreadyMirroredHostedChunk("source", "source-document"), false);
+    assertEquals(isAlreadyMirroredHostedChunk("source", "source-url"), false);
     assertEquals(isAlreadyMirroredHostedChunk("error", "text-delta"), false);
   });
 

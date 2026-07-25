@@ -1,7 +1,7 @@
 ---
 title: "veryfront/server"
 description: "Create and run Veryfront servers."
-order: 29
+order: 30
 ---
 
 ## Import
@@ -40,7 +40,7 @@ await server.fetch(new Request("https://example.com/health"));
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ReloadNotifier` | Render reload notifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/reload-notifier.ts#L159) |
+| `ReloadNotifier` | Render reload notifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/reload-notifier.ts#L146) |
 
 ### Functions
 

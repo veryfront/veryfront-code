@@ -555,6 +555,57 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     });
   });
 
+  it("should expose getServerData props to a layout via usePageContext().data at SSR", async () => {
+    const projectDir = await createTestProject(
+      "page-context-server-data-test",
+      `
+import type { DataContext } from "veryfront";
+
+export async function getServerData(_ctx: DataContext) {
+  return { props: { greeting: "hello-from-server-data" } };
+}
+
+export default function Home() {
+  return <div id="page-content">page</div>;
+}
+`,
+      {
+        "pages/layout.tsx": `
+import { usePageContext } from "veryfront/context";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // The layout was never passed the page's server data as a prop; it reads it
+  // from the page context. This must work during the server render.
+  const ctx = usePageContext();
+  const greeting = (ctx?.data?.greeting as string) || "MISSING";
+  return (
+    <div id="layout-wrapper">
+      <header id="layout-data">Layout data: {greeting}</header>
+      <main>{children}</main>
+    </div>
+  );
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const html = await response.text();
+
+      assertEquals(response.status, 200, "Should return 200");
+      const normalizedHtml = stripReactSSRMarkers(html);
+      // The layout rendered the page's getServerData value at SSR — proving
+      // server data reaches a layout via usePageContext().data without drilling.
+      assertStringIncludes(normalizedHtml, "Layout data: hello-from-server-data");
+
+      const errors = server.logs.filter((l) =>
+        l.includes("Invalid hook call") || l.includes("Module not found")
+      );
+      assertEquals(errors.length, 0, `Should have no errors: ${errors.join("\n")}`);
+    });
+  });
+
   it("should handle API routes returning JSON", async () => {
     const projectDir = await createTestProject(
       "api-json-test",
@@ -699,6 +750,80 @@ export function GET() {
       const json = await response.json();
       assertEquals(json.count, 2, "Should return user count");
       assertEquals(json.users.length, 2, "Should return users array");
+    });
+  });
+
+  it("should load a TypeScript middleware.ts in the compiled binary (issue #206)", async () => {
+    const projectDir = await createTestProject(
+      "ts-middleware",
+      `export default function Home() { return <div id="content">home</div>; }`,
+      {
+        "middleware.ts": `
+export default async function middleware(
+  c: { req: Request },
+  next: () => Promise<Response | undefined>,
+): Promise<Response | undefined> {
+  const response = await next();
+  response?.headers.set("x-vf-middleware", new URL(c.req.url).pathname);
+  return response;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      await response.body?.cancel();
+      // Before the fix, the compiled binary raw-import()s the .ts source and
+      // every route 500s with "Unexpected token ':'". Transpiling the source
+      // (shared with the virtual-FS loader) before import fixes it.
+      assertEquals(
+        response.status,
+        200,
+        `TS middleware.ts should not 500 the route in the compiled binary.\nLogs:\n${
+          server.logs.join("\n").slice(-4000)
+        }`,
+      );
+      assertEquals(
+        response.headers.get("x-vf-middleware"),
+        "/",
+        "TS middleware should have run and stamped the response header",
+      );
+    });
+  });
+
+  it("should resolve a sibling import from a compiled-binary middleware.ts (issue #206)", async () => {
+    const projectDir = await createTestProject(
+      "ts-middleware-sibling",
+      `export default function Home() { return <div id="content">home</div>; }`,
+      {
+        "mw-marker.mjs": `export const MARKER = "sibling-import-ok";`,
+        "middleware.ts": `
+import { MARKER } from "./mw-marker.mjs";
+export default async function middleware(
+  c: { req: Request },
+  next: () => Promise<Response | undefined>,
+): Promise<Response | undefined> {
+  const response = await next();
+  response?.headers.set("x-vf-sibling", MARKER);
+  return response;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      await response.body?.cancel();
+      assertEquals(response.status, 200, "Route should load");
+      // The transpiled middleware is written ADJACENT to the source so its
+      // relative sibling imports resolve exactly as the original would; an
+      // OS-temp write would break this specifier.
+      assertEquals(
+        response.headers.get("x-vf-sibling"),
+        "sibling-import-ok",
+        "Sibling import from the transpiled middleware should resolve",
+      );
     });
   });
 

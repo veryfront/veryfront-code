@@ -159,11 +159,14 @@ export async function triggerDeploy(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const status = typeof error === "object" && error !== null
+      ? (error as { status?: unknown }).status
+      : undefined;
 
     if (
       message.includes("Missing API token") ||
       message.includes("Authentication required") ||
-      message.includes("401")
+      status === 401
     ) {
       return {
         success: false,
