@@ -94,16 +94,36 @@ function sanitizeFileName(raw: string): string {
   return sanitized || "untitled";
 }
 
-export type UploadAuthorizationResult = boolean | Response | void | undefined;
+/**
+ * Result returned by an upload-route authorizer.
+ *
+ * Only the literal value `true` permits the request. `false` denies it with a
+ * 401 response, while a `Response` lets the authorizer return a custom denial
+ * or challenge response.
+ */
+export type UploadAuthorizationResult = boolean | Response;
 
+/**
+ * Authorizes one upload-route request.
+ *
+ * Return `true` to permit access, `false` to return the default 401 response,
+ * or a `Response` to return a custom denial or authentication challenge.
+ */
 export type UploadAuthorize = (
   request: Request,
 ) => UploadAuthorizationResult | Promise<UploadAuthorizationResult>;
 
+/**
+ * Explicit authorization policy for upload routes.
+ *
+ * Public access requires the conspicuous `none` opt-in; omitting the policy is
+ * invalid.
+ */
 export type UploadHandlerAuthConfig =
   | { type: "none"; allowUnauthenticated: true }
   | { authorize: UploadAuthorize };
 
+/** Configuration for bounded, explicitly authorized upload route handlers. */
 export interface UploadHandlerConfig {
   /** Maximum source file bytes accepted by POST. Defaults to 10 MiB. */
   maxFileSize?: number;
@@ -114,14 +134,14 @@ export interface UploadHandlerConfig {
   /** Maximum upload records returned per GET request. Defaults to 100, maximum 1,000. */
   maxListItems?: number;
   /**
-   * Route authorization. Protected deployments should provide `authorize`;
-   * explicitly public local prototypes must opt in with `type: "none"`.
+   * Required route authorization policy. Provide `authorize` for protected
+   * routes. Intentionally public routes must opt in explicitly with
+   * `{ type: "none", allowUnauthenticated: true }`.
    */
-  auth?: UploadHandlerAuthConfig;
+  auth: UploadHandlerAuthConfig;
 }
 
 const MAX_CONCURRENT_URL_LOOKUPS = 5;
-let missingAuthWarningEmitted = false;
 
 interface ResolvedUploadLimits {
   maxBodySize: number;
@@ -179,21 +199,21 @@ function resolveUploadLimits(config: UploadHandlerConfig | undefined): ResolvedU
   }
 }
 
-function warnMissingAuthConfig(): void {
-  if (missingAuthWarningEmitted) return;
-  missingAuthWarningEmitted = true;
-  serverLogger.warn(
-    "createUploadHandler registered without auth. Pass auth: { authorize } for protected routes, " +
-      "or auth: { type: 'none', allowUnauthenticated: true } to explicitly allow unauthenticated uploads.",
-  );
-}
-
 function resolveUploadAuthorize(
   auth: UploadHandlerAuthConfig | undefined,
 ): UploadAuthorize | null {
   if (auth === undefined) {
-    warnMissingAuthConfig();
-    return null;
+    throw CONFIG_INVALID.create({
+      detail: "createUploadHandler auth is required. Pass { authorize } or " +
+        "{ type: 'none', allowUnauthenticated: true }.",
+    });
+  }
+
+  if (auth === null || typeof auth !== "object") {
+    throw CONFIG_INVALID.create({
+      detail: "createUploadHandler auth must be { authorize } or " +
+        "{ type: 'none', allowUnauthenticated: true }.",
+    });
   }
 
   if ("type" in auth) {
@@ -222,10 +242,7 @@ async function authorizeUploadRequest(
 
   const result = await authorize(request);
   if (result instanceof Response) return result;
-  if (result === false) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  return null;
+  return result === true ? null : Response.json({ error: "Unauthorized" }, { status: 401 });
 }
 
 async function enrichUploadsWithSourceUrls(
@@ -448,8 +465,9 @@ function uploadFailureResponse(error: unknown, signal?: AbortSignal): Response {
  * Pass `auth: { authorize }` to protect these handlers before they read
  * request bodies or access the RAG store. For local development, pass
  * `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
- * unauthenticated upload routes. Omitting `auth` still allows the route for
- * compatibility and logs a warning.
+ * unauthenticated upload routes. Omitting `auth` fails at construction.
+ * Authorizers must return the literal value `true` to permit a request;
+ * `false` and invalid runtime results such as `undefined` deny with 401.
  *
  * Returns `{ POST, GET, DELETE }` handlers compatible with file-based routing.
  * POST accepts multipart form data with a `file` field, extracts text via
@@ -484,7 +502,7 @@ function uploadFailureResponse(error: unknown, signal?: AbortSignal): Response {
  */
 export function createUploadHandler(
   store: RagStore,
-  config?: UploadHandlerConfig,
+  config: UploadHandlerConfig,
 ) {
   const limits = resolveUploadLimits(config);
   const authorize = resolveUploadAuthorize(config?.auth);

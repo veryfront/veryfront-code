@@ -36,7 +36,7 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 |------|-------------|--------|
 | `chunk` | Splits text into overlapping chunks for embedding. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/chunk.ts#L36) |
 | `clearEmbeddingProviders` | Clear embedding providers registered in the current project source scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L180) |
-| `createUploadHandler` | Creates HTTP route handlers for upload, listing, and deletion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L485) |
+| `createUploadHandler` | Creates HTTP route handlers for upload, listing, and deletion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L503) |
 | `embedding` | Creates an embedding facade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/embedding.ts#L36) |
 | `loadUpload` | Extracts embedding-ready text or Markdown from upload formats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-loader.ts#L56) |
 | `ragStore` | Creates a persistent RAG store with lazy embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/rag-store.ts#L372) |
@@ -68,10 +68,10 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 | `RagStoreData` | Public API contract for rag store data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L117) |
 | `SearchOptions` | Options accepted by search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L45) |
 | `SearchResult` | Result returned from search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L56) |
-| `UploadAuthorizationResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L97) |
-| `UploadAuthorize` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L99) |
-| `UploadHandlerAuthConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L103) |
-| `UploadHandlerConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L107) |
+| `UploadAuthorizationResult` | Result returned by an upload-route authorizer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L104) |
+| `UploadAuthorize` | Authorizes one upload-route request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L112) |
+| `UploadHandlerAuthConfig` | Explicit authorization policy for upload routes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L122) |
+| `UploadHandlerConfig` | Configuration for bounded, explicitly authorized upload route handlers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L127) |
 | `UploadLoadOptions` | Options controlling upload extraction resource use and cancellation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-loader.ts#L14) |
 | `VectorStore` | Public API contract for vector store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L64) |
 | `VectorStoreConfig` | Configuration used by vector store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L40) |

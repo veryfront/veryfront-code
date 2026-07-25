@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     3 |       5.2% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     2 |       3.4% | Review findings exist; remediation is not complete  |
+| Closed                         |     4 |       6.9% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     1 |       1.7% | Review findings exist; remediation is not complete  |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
 | Pending current review         |    15 |      25.9% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -39,12 +39,12 @@ stricter closure count.
 ### Closed
 
 - `config`
+- `embedding`
 - `schemas`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
 
-- `embedding`
 - `metrics`
 
 ### Touched, revalidation required
@@ -127,14 +127,12 @@ verification. Cross-module consumers changed by the fixes remain in
 revalidation; focused evidence for a config boundary does not by itself close
 their top-level units.
 
-`embedding` and `metrics` have received deep reviews and are the next
-remediation targets. Their findings include authorization, input-size,
-cancellation, persistence-integrity, model-identity, batching, and remote
-transaction boundaries in `embedding`; and tenant/destination identity,
-cardinality, queue and payload bounds, OTLP serialization, provider lifecycle,
-and application-failure isolation in `metrics`. Neither unit is closed until
-those findings are fixed, regression-tested, documented where public behavior
-changes, and verified through its affected integration gates.
+This checkpoint closes `embedding` after deep review and remediation of its
+authorization, input-size, cancellation, persistence-integrity,
+model-identity, batching, and remote-transaction boundaries. `metrics` remains
+the next reviewed remediation target; its open findings cover
+tenant/destination identity, cardinality, queue and payload bounds, OTLP
+serialization, provider lifecycle, and application-failure isolation.
 
 ### Embedding remediation checkpoint
 
@@ -158,13 +156,18 @@ The non-breaking embedding findings are remediated on the current branch:
 - Internal failures are logged without returning provider or persistence
   details to clients. The React upload registry retains failed deletions so the
   user can retry.
+- Upload routes require an explicit authorization policy at construction.
+  Authorizers permit access only by returning literal `true`; `false` and
+  invalid runtime results fail closed with 401. Intentionally public routes
+  retain a conspicuous `allowUnauthenticated: true` opt-in.
 - Public API reference and the RAG how-to guide document limits, pagination,
-  provenance, cancellation, and retry behavior.
+  provenance, cancellation, retry behavior, and the fail-closed authorization
+  contract.
 
 Reproducible checkpoint evidence:
 
 - The embedding, provider, and knowledge regression surface passed 24 test
-  groups and 276 steps with zero failures; five model-download steps remain
+  groups and 277 steps with zero failures; five model-download steps remain
   intentionally ignored.
 - The upload registry React suite passed six steps, and the Kreuzberg extension
   suite passed 16 steps, including explicit cancellation propagation.
@@ -173,14 +176,17 @@ Reproducible checkpoint evidence:
 - `deno task verify:quick` passed manifests, formatting, lint and architecture
   ratchets, documentation validation, and all configured entrypoint
   typechecks.
+- `deno task typecheck:consumer` rebuilt the npm and extension packages and
+  passed the documented consumer-composition typecheck against the generated
+  declarations.
 
-Formal closure is blocked on one deliberate breaking-change decision:
-`createUploadHandler()` currently preserves its historical fail-open behavior
-when `auth` is omitted, and an `authorize` callback returning `undefined`
-currently means allow. The handler warns when auth is omitted and the public
-guide uses explicit auth, but production-grade fail-closed behavior requires
-making auth configuration explicit and tightening the callback result
-contract. That compatibility break must be approved before implementation.
+The deliberate upload-auth compatibility break was explicitly approved on
+2026-07-25. `createUploadHandler()` now requires `auth`, omission fails at
+construction, and an authorizer must return literal `true` to allow access.
+Regression tests cover omitted configuration, `false`, invalid `undefined`
+runtime results, custom `Response` denials, successful authorization, and the
+explicit public opt-in. No unresolved critical or high-confidence embedding
+production risk remains.
 
 ### Config closure checkpoint verification
 
@@ -205,7 +211,7 @@ The current config closure checkpoint has the following reproducible evidence:
   checks.
 
 These gates certify this integration checkpoint, not the 15 pending module
-reviews or the two reviewed units whose fixes are still pending. The broader
+reviews or the reviewed `metrics` unit whose fixes are still pending. The broader
 unit and integration portfolio remains part of the final repository production
 gate.
 

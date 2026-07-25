@@ -91,6 +91,13 @@ document. For local-only prototypes, pass
 `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
 unauthenticated upload routes.
 
+The `auth` policy is required and fails closed. An `authorize` callback must
+return the literal value `true` to permit a request; `false` or an accidental
+missing return denies it with `401`. Return a `Response` when the route needs a
+custom denial or authentication-challenge response. Calling
+`createUploadHandler(store)` without an explicit auth policy now fails when the
+handler is created.
+
 The handler bounds each source file to 10 MiB, the complete multipart body to
 the file limit plus 64 KiB, and extracted UTF-8 text to 5 MiB by default. Set
 `maxFileSize`, `maxBodySize`, or `maxExtractedTextBytes` only when your

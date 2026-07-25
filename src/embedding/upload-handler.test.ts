@@ -1,15 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertExists,
-  assertStringIncludes,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { serverLogger } from "#veryfront/utils";
 import { createUploadHandler } from "./upload-handler.ts";
+import type { UploadAuthorize, UploadHandlerConfig } from "./upload-handler.ts";
 import type {
   RagIngestMeta,
   RagOperationOptions,
@@ -28,6 +23,10 @@ const CLOUD_ENV_KEYS = [
 const ORIGINAL_CLOUD_ENV = new Map(
   CLOUD_ENV_KEYS.map((key) => [key, getEnv(key)] as const),
 );
+
+const PUBLIC_UPLOAD_CONFIG = {
+  auth: { type: "none", allowUnauthenticated: true },
+} as const satisfies UploadHandlerConfig;
 
 function clearCloudEnv(): void {
   for (const key of CLOUD_ENV_KEYS) {
@@ -76,24 +75,22 @@ describe("createUploadHandler", () => {
     restoreCloudEnv();
   });
 
-  it("warns once when registered without explicit auth", () => {
-    const originalWarn = serverLogger.warn;
-    const warnings: string[] = [];
-    serverLogger.warn = (message: string) => {
-      warnings.push(message);
-    };
+  it("fails construction when an explicit auth policy is missing", () => {
+    const createWithoutRequiredConfig = createUploadHandler as unknown as (
+      store: RagStore,
+      config?: unknown,
+    ) => unknown;
 
-    try {
-      createUploadHandler(createStubStore());
-      createUploadHandler(createStubStore());
-    } finally {
-      serverLogger.warn = originalWarn;
-    }
-
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0] ?? "", "createUploadHandler");
-    assertStringIncludes(warnings[0] ?? "", "auth");
-    assertStringIncludes(warnings[0] ?? "", "allowUnauthenticated");
+    assertThrows(
+      () => createWithoutRequiredConfig(createStubStore()),
+      Error,
+      "auth is required",
+    );
+    assertThrows(
+      () => createWithoutRequiredConfig(createStubStore(), {}),
+      Error,
+      "auth is required",
+    );
   });
 
   it("rejects invalid resource-limit configuration at construction", () => {
@@ -164,6 +161,29 @@ describe("createUploadHandler", () => {
     assertEquals(ingestCalls, 0);
     assertEquals(listCalls, 0);
     assertEquals(removeCalls, 0);
+  });
+
+  it("fails closed when an authorizer returns false or an invalid runtime result", async () => {
+    for (const result of [false, undefined] as const) {
+      let listCalls = 0;
+      const store = createStubStore({
+        async listDocuments() {
+          listCalls++;
+          return [];
+        },
+      });
+      const authorize = (() => result) as unknown as UploadAuthorize;
+      const { GET } = createUploadHandler(store, {
+        auth: { authorize },
+      });
+
+      const response = await GET(
+        new Request("http://test/uploads", { method: "GET" }),
+      );
+
+      assertEquals(response.status, 401);
+      assertEquals(listCalls, 0);
+    }
   });
 
   it("allows upload routes when auth accepts", async () => {
@@ -641,7 +661,7 @@ describe("createUploadHandler", () => {
 
     const calls: Array<{ method: string; url: string; body?: unknown }> = [];
     const store = createStubStore();
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -714,7 +734,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -781,7 +801,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { DELETE } = createUploadHandler(store);
+    const { DELETE } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -818,7 +838,7 @@ describe("createUploadHandler", () => {
         }];
       },
     });
-    const { GET } = createUploadHandler(store);
+    const { GET } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -893,7 +913,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { DELETE } = createUploadHandler(store);
+    const { DELETE } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -915,7 +935,7 @@ describe("createUploadHandler", () => {
 
   it("does not use cloud uploads without bootstrap", async () => {
     const store = createStubStore();
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     await withMockFetch(async () => {
       throw new Error("fetch should not be called");
@@ -945,7 +965,7 @@ describe("createUploadHandler", () => {
         return "doc-xss";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     // Use a filename with angle brackets (the key XSS vector).
     // Deno's FormData mangles filenames with = and control chars,
@@ -982,7 +1002,7 @@ describe("createUploadHandler", () => {
         return "doc-amp";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     // Deno's FormData truncates filenames at & so we test with
     // a filename where & appears after a safe prefix
@@ -1012,7 +1032,7 @@ describe("createUploadHandler", () => {
         return "doc-path";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     const formData = new FormData();
     formData.append(
@@ -1036,7 +1056,7 @@ describe("createUploadHandler", () => {
         return "doc-empty";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     // Filename of only angle brackets — sanitization removes everything
     const formData = new FormData();
@@ -1067,7 +1087,7 @@ describe("createUploadHandler", () => {
         return "doc-untitled";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     // Filename of only stripped characters (no extension)
     const formData = new FormData();
@@ -1096,7 +1116,7 @@ describe("createUploadHandler", () => {
         return "doc-normal";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     const formData = new FormData();
     formData.append(
@@ -1124,7 +1144,7 @@ describe("createUploadHandler", () => {
         return "doc-unicode";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     const formData = new FormData();
     formData.append(
@@ -1152,7 +1172,7 @@ describe("createUploadHandler", () => {
         return "doc-long";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, PUBLIC_UPLOAD_CONFIG);
 
     const longName = "a".repeat(300) + ".txt";
     const formData = new FormData();
