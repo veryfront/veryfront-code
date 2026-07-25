@@ -31,6 +31,12 @@ export interface ClientRuntimeHydrationData {
   params?: Record<string, string | string[]>;
   /** Page frontmatter — exposed reactively via `usePageContext()`. */
   frontmatter?: Record<string, unknown>;
+  /**
+   * Props returned by the page's `getServerData` — exposed reactively via
+   * `usePageContext().data` so a hydrated client tree under an App/RSC page
+   * reseeds with the same server data the server render used.
+   */
+  props?: Record<string, unknown>;
 }
 
 export interface ClientModuleUrlOptions {

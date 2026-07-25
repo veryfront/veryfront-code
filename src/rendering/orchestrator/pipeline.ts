@@ -733,6 +733,7 @@ export class RenderPipeline {
                         headings,
                         options?.projectSlug,
                         clientPageIsland,
+                        dataFetchingProps,
                       ),
                     {
                       "render.slug": slug,
