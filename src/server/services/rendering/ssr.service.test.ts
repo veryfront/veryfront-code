@@ -7,7 +7,7 @@ import type { RendererProvider, SSRRenderOptions } from "./ssr.service.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import type { RendererAdapter } from "../../shared/renderer-factory.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
 
 function createMockAdapter(): RuntimeAdapter {
@@ -581,6 +581,32 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.errorType, "server-error");
         assertEquals(result.showDevOverlay, undefined);
         assertEquals(typeof result.html, "string");
+      });
+
+      it("returns 503 for service-overloaded errors", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw SERVICE_OVERLOADED.create({
+              detail: "Per-project render queue is full",
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ isLocalProject: true }),
+          makeRenderOptions(),
+        );
+        assertEquals(result.status, 503);
+        assertEquals(result.errorType, "server-error");
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.isStreaming, false);
+        assertEquals(result.showDevOverlay, undefined);
+        assertEquals(typeof result.html, "string");
+        assertEquals(result.html?.includes("503"), true);
+        assertEquals(result.html?.includes("Service Temporarily Unavailable"), true);
       });
 
       it("returns runtime error overlay in dev mode", async () => {
