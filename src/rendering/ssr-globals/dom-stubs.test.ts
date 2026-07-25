@@ -5,6 +5,7 @@ import {
   createDocumentStub,
   createElementClass,
   createElementStub,
+  createObserverClass,
   createWindowStub,
 } from "./dom-stubs.ts";
 
@@ -46,6 +47,29 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       const el = createElementStub();
       el.classList.add();
       assertEquals(el.classList.contains(), false);
+    });
+
+    // Regression: `style` is a bag AND carries CSSOM methods. Libraries set CSS
+    // custom properties during render (Floating UI, Radix Presence, vaul); a
+    // bare {} would throw "el.style.setProperty is not a function" on SSR.
+    it("should expose style.setProperty/getPropertyValue/removeProperty", () => {
+      const el = createElementStub();
+      assertEquals(typeof el.style.setProperty, "function");
+      assertEquals(typeof el.style.getPropertyValue, "function");
+      assertEquals(typeof el.style.removeProperty, "function");
+      el.style.setProperty("--x", "1"); // must not throw
+      (el.style as Record<string, unknown>).color = "red"; // still a bag
+    });
+
+    // Regression: methods focus/scroll-lock/click-outside libs call during render.
+    it("should expose closest/matches/contains/focus/remove/scrollIntoView", () => {
+      const el = createElementStub();
+      assertEquals(el.closest(), null);
+      assertEquals(el.matches(), false);
+      assertEquals(el.contains(), false);
+      for (const m of ["focus", "blur", "click", "scrollIntoView", "remove"] as const) {
+        assertEquals(typeof el[m], "function");
+      }
     });
 
     it("should clone to a new element stub", () => {
@@ -120,6 +144,38 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       const doc = createDocumentStub();
       assertEquals(doc.fullscreenElement, null);
       assertEquals(doc.exitFullscreen, undefined);
+    });
+
+    // Regression: CSS-in-JS (emotion, styled-components) query/insert <style> in
+    // <head> during SSR; the head stub must carry querySelector, not just append.
+    it("head exposes querySelector/querySelectorAll/contains", () => {
+      const doc = createDocumentStub();
+      assertEquals(typeof doc.head.querySelector, "function");
+      assertEquals(doc.head.querySelector(), null);
+      assertEquals(doc.head.querySelectorAll().length, 0);
+      assertEquals(doc.head.contains(), false);
+    });
+
+    it("exposes activeElement/createDocumentFragment/createComment/visibilityState", () => {
+      const doc = createDocumentStub();
+      assertEquals(doc.activeElement, null);
+      assertEquals(doc.visibilityState, "visible");
+      assertEquals(typeof doc.createDocumentFragment().setAttribute, "function");
+      assertEquals(doc.createComment().textContent, "");
+    });
+  });
+
+  describe("createObserverClass", () => {
+    // Regression: libs constructing an observer at render/module scope (not in an
+    // effect) threw "ResizeObserver is not defined" during SSR.
+    it("constructs and exposes observe/unobserve/disconnect/takeRecords", () => {
+      const RO = createObserverClass("ResizeObserver");
+      assertEquals(RO.name, "ResizeObserver");
+      const ro = new RO(() => {});
+      ro.observe();
+      ro.unobserve();
+      ro.disconnect();
+      assertEquals(ro.takeRecords().length, 0);
     });
   });
 
