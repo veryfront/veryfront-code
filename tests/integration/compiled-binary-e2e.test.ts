@@ -702,6 +702,80 @@ export function GET() {
     });
   });
 
+  it("should load a TypeScript middleware.ts in the compiled binary (issue #206)", async () => {
+    const projectDir = await createTestProject(
+      "ts-middleware",
+      `export default function Home() { return <div id="content">home</div>; }`,
+      {
+        "middleware.ts": `
+export default async function middleware(
+  c: { req: Request },
+  next: () => Promise<Response | undefined>,
+): Promise<Response | undefined> {
+  const response = await next();
+  response?.headers.set("x-vf-middleware", new URL(c.req.url).pathname);
+  return response;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      await response.body?.cancel();
+      // Before the fix, the compiled binary raw-import()s the .ts source and
+      // every route 500s with "Unexpected token ':'". Transpiling the source
+      // (shared with the virtual-FS loader) before import fixes it.
+      assertEquals(
+        response.status,
+        200,
+        `TS middleware.ts should not 500 the route in the compiled binary.\nLogs:\n${
+          server.logs.join("\n").slice(-4000)
+        }`,
+      );
+      assertEquals(
+        response.headers.get("x-vf-middleware"),
+        "/",
+        "TS middleware should have run and stamped the response header",
+      );
+    });
+  });
+
+  it("should resolve a sibling import from a compiled-binary middleware.ts (issue #206)", async () => {
+    const projectDir = await createTestProject(
+      "ts-middleware-sibling",
+      `export default function Home() { return <div id="content">home</div>; }`,
+      {
+        "mw-marker.mjs": `export const MARKER = "sibling-import-ok";`,
+        "middleware.ts": `
+import { MARKER } from "./mw-marker.mjs";
+export default async function middleware(
+  c: { req: Request },
+  next: () => Promise<Response | undefined>,
+): Promise<Response | undefined> {
+  const response = await next();
+  response?.headers.set("x-vf-sibling", MARKER);
+  return response;
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      await response.body?.cancel();
+      assertEquals(response.status, 200, "Route should load");
+      // The transpiled middleware is written ADJACENT to the source so its
+      // relative sibling imports resolve exactly as the original would; an
+      // OS-temp write would break this specifier.
+      assertEquals(
+        response.headers.get("x-vf-sibling"),
+        "sibling-import-ok",
+        "Sibling import from the transpiled middleware should resolve",
+      );
+    });
+  });
+
   it("should render MDX pages correctly", async () => {
     const projectDir = await createTestProject(
       "mdx-basic-test",
