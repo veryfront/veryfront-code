@@ -88,6 +88,26 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
     for (const [messageIndex, message] of messages.entries()) {
       for (const [partIndex, part] of message.parts.entries()) {
+        if (part.type === "tool_call" && message.role !== "assistant") {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_call is only allowed in assistant messages",
+            path: [messageIndex, "parts", partIndex, "type"],
+          });
+          continue;
+        }
+
+        if (
+          part.type === "tool_result" && message.role !== "assistant" && message.role !== "tool"
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            message: "tool_result is only allowed in assistant or tool messages",
+            path: [messageIndex, "parts", partIndex, "type"],
+          });
+          continue;
+        }
+
         if (part.type === "tool_call" && "id" in part && "name" in part) {
           knownToolNames.set(part.id, part.name);
           continue;

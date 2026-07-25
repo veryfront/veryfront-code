@@ -213,6 +213,40 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[0]?.parts as unknown, rawReplayParts);
   });
 
+  it("rejects raw replay tool parts on provider-incompatible message roles", () => {
+    assertHostedChatRequestError(
+      [
+        {
+          id: "user-message-1",
+          role: "user",
+          parts: [rawReplayToolCallPart],
+        },
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [rawReplayToolResultPart],
+        },
+      ],
+      "tool_call is only allowed in assistant messages",
+    );
+
+    assertHostedChatRequestError(
+      [
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [rawReplayToolCallPart],
+        },
+        {
+          id: "user-message-1",
+          role: "user",
+          parts: [rawReplayToolResultPart],
+        },
+      ],
+      "tool_result is only allowed in assistant or tool messages",
+    );
+  });
+
   it("rejects orphan raw replay tool results without a tool name", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([
