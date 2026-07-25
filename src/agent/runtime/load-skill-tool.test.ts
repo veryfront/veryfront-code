@@ -135,6 +135,58 @@ Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the
   assertStringIncludes(reload.instructions, 'Skill "plan" is already loaded');
 });
 
+Deno.test("createRuntimeLoadSkillTool preserves canonical .md skill IDs", async () => {
+  const loaderCalls: string[] = [];
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: ["plan", "plan.md"],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (_context, skillId) => {
+        loaderCalls.push(skillId);
+        return Promise.resolve({
+          skillId,
+          instructions: `# ${skillId}`,
+          references: [],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertEquals(tool.inputSchemaJson, {
+    type: "object",
+    properties: {
+      skillId: {
+        type: "string",
+        enum: ["plan", "plan.md"],
+        description: "Unloaded skill ID to load. Available unloaded skill IDs: plan, plan.md",
+      },
+      file: {
+        type: "string",
+        description:
+          "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
+      },
+    },
+    required: ["skillId"],
+  });
+
+  const markdownNamed = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
+  const extensionless = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
+
+  assertEquals(markdownNamed.skillId, "plan.md");
+  assertEquals(extensionless.skillId, "plan");
+  assertEquals(loaderCalls, ["plan.md", "plan"]);
+  await assertRejects(
+    () => tool.execute({ skillId: "plan.md.md" }),
+    Error,
+    "input validation failed",
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known skill manifest", async () => {
   const loaderCalls: string[] = [];
   const tool = createRuntimeLoadSkillTool({
