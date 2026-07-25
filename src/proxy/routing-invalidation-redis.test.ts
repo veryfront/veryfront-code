@@ -198,7 +198,10 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "redis://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 20,
+      // This assertion is about configured replica convergence, not scheduler
+      // speed. Leave enough time for WebCrypto verification under a parallel
+      // repository test run.
+      acknowledgementTimeoutMs: 1_000,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {},

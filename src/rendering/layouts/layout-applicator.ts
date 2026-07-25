@@ -19,7 +19,7 @@ import {
   createErrorBoundary,
   tryLoadReservedInDirs,
 } from "../app-reserved.ts";
-import { detectAppRouter } from "../router-detection.ts";
+import { resolveRouterModeForPage } from "../router-detection.ts";
 import { getProjectReact } from "#veryfront/react";
 import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -28,6 +28,7 @@ import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { toMDXFrontmatter } from "../frontmatter.ts";
+import { isDotPath } from "../orchestrator/path-helpers.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -152,18 +153,22 @@ export class LayoutApplicator {
           );
         }
 
-        const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter, {
-          projectId: this.projectId,
-        });
         const pageFilePath = pageInfo.entity.path;
+        const routerMode = resolveRouterModeForPage(
+          this.projectDir,
+          pageFilePath,
+          this.config,
+        );
 
-        const isDotPath = pageFilePath
-          .split("/")
-          .some((s) => s.startsWith(".") && s !== "." && s !== "..");
+        const dotPath = isDotPath({
+          slug: pageInfo.entity.slug ?? "",
+          filePath: pageFilePath,
+          projectDir: this.projectDir,
+        });
 
-        if (useAppRouter) {
+        if (routerMode === "app") {
           wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
-        } else if (isDotPath) {
+        } else if (dotPath) {
           logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
         } else {
           wrappedElement = await this.wrapWithAppComponent(wrappedElement);

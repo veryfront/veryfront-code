@@ -11,12 +11,6 @@ import {
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 
-function isDotPath(pageFilePath: string): boolean {
-  return pageFilePath
-    .split("/")
-    .some((segment) => segment.startsWith(".") && segment !== "." && segment !== "..");
-}
-
 function buildSSRRouter(
   requestUrl: URL | undefined,
   pageFilePath: string,
@@ -87,30 +81,6 @@ describe("LayoutApplicator helpers", () => {
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);
-  });
-
-  describe("isDotPath", () => {
-    it("should detect .veryfront paths", () => {
-      assertEquals(isDotPath("/project/.veryfront/chat/page.tsx"), true);
-    });
-
-    it("should detect hidden directory paths", () => {
-      assertEquals(isDotPath("/project/.hidden/page.tsx"), true);
-    });
-
-    it("should not flag normal paths", () => {
-      assertEquals(isDotPath("/project/pages/about.tsx"), false);
-      assertEquals(isDotPath("/project/app/blog/page.tsx"), false);
-    });
-
-    it("should not flag . or .. segments", () => {
-      assertEquals(isDotPath("./relative/path.tsx"), false);
-      assertEquals(isDotPath("../parent/path.tsx"), false);
-    });
-
-    it("should handle root-level dot paths", () => {
-      assertEquals(isDotPath(".config/page.tsx"), true);
-    });
   });
 
   describe("buildSSRRouter", () => {

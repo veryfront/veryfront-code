@@ -254,10 +254,17 @@ Deno.test("DiskCacheBackend", async (t) => {
 
   await t.step("short TTL expires after delay", async () => {
     const backend = makeBackend();
-    await backend.set("ttl-short", "val", 1);
-    assertEquals(await backend.get("ttl-short"), "val");
-    await new Promise((r) => setTimeout(r, 1100));
-    assertEquals(await backend.get("ttl-short"), null);
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
+    try {
+      await backend.set("ttl-short", "val", 1);
+      assertEquals(await backend.get("ttl-short"), "val");
+      now += 1_000;
+      assertEquals(await backend.get("ttl-short"), null);
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   await t.step("omitted TTL uses the shared backend default", async () => {

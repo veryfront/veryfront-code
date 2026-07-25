@@ -28,12 +28,12 @@ Generated-only changes do not count as module review evidence.
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
 | Closed                         |     9 |      15.5% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation remains incomplete          |
-| Touched, revalidation required |    35 |      60.3% | Substantive recovered or current work exists        |
-| Pending current review         |    14 |      24.1% | No current authoritative-branch review delta exists |
+| Touched, revalidation required |    36 |      62.1% | Substantive recovered or current work exists        |
+| Pending current review         |    13 |      22.4% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 44/58 (75.9%). This is progress coverage, not a substitute for the
+coverage of 45/58 (77.6%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -80,6 +80,7 @@ stricter closure count.
 - `schedule`
 - `security`
 - `server`
+- `skill`
 - `task`
 - `testing`
 - `tool`
@@ -103,7 +104,6 @@ stricter closure count.
 - `resource`
 - `runs`
 - `sandbox`
-- `skill`
 - `studio`
 - `workflow`
 
@@ -130,13 +130,18 @@ and repository-wide static verification. Cross-module consumers changed by a
 fix remain in revalidation; focused evidence for one boundary does not by
 itself close the consumer's top-level unit. The next target will be selected
 from the remaining dependency-adjacent units after this checkpoint is
-committed, pushed, and rebased.
+committed, pushed, and synchronized with `origin/main`.
 
-### Rebase integration checkpoint
+### Main integration checkpoint
 
-The reviewed history was rebased onto the then-current `origin/main`. The
-regenerated root lockfile passes frozen resolution, generated manifests are
-current, and the repository and consumer-package typecheck gates pass.
+The reviewed history was previously rebased onto `origin/main`. The latest
+upstream synchronization was merged from a clean, pushed checkpoint because
+replaying the recovered merge topology would have forced already-reviewed
+conflicts across the complete recovery chain. The merge incorporated only the
+new upstream commits; its sole conflict retained two independent layout
+applicator imports. The regenerated root lockfile passes frozen resolution,
+generated manifests are current, and the repository and consumer-package
+typecheck gates pass.
 
 - `src/version.ts` remains intentionally absent. Its only content was a stale
   single-image build test comment, so removing the non-production marker closed
@@ -147,6 +152,14 @@ current, and the repository and consumer-package typecheck gates pass.
   mutable project state or shifting positional arguments.
 - `rendering` remains in touched/revalidation-required status. This focused
   integration repair and its passing tests are not a full module closure.
+- The new upstream skill-loading, knowledge-cursor, module-resolution, and
+  layout-routing surface passed 37 focused tests and 161 steps with zero
+  failures.
+- The post-sync repository unit suite passed 3,070 tests and 24,181 steps with
+  zero failures; one intentional test remained ignored with five steps.
+- Load-sensitive tests now use controlled cache time, an explicitly
+  unauthenticated skill request context, and a production-realistic Redis
+  acknowledgement budget instead of wall-clock or ambient-state assumptions.
 
 ### Metrics remediation checkpoint
 
@@ -507,7 +520,7 @@ Reproducible checkpoint evidence:
   zero failures.
 - The `src/extensions` orchestration surface passed 24 tests and 275 steps with
   zero failures.
-- The repository unit suite passed 3,066 tests and 24,178 steps with zero
+- The repository unit suite passed 3,070 tests and 24,181 steps with zero
   failures; one intentional test remained ignored with five steps.
 - `deno task docs:validate` passed every public-doc contract and all 723 link
   checks.

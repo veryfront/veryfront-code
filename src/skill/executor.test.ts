@@ -187,8 +187,17 @@ describe("src/skill/executor", () => {
       assertStringIncludes(fetchCalls[4]!.init?.body?.toString() ?? "", "kill -9 -1");
     });
 
-    it("falls back to local execution without cloud credentials", () => {
-      const executor = getSkillScriptExecutor();
+    it("falls back to local execution for an explicitly unauthenticated request", async () => {
+      // Mask both ambient credential sources so this assertion remains valid
+      // when the repository suite initializes a process-wide cloud bootstrap.
+      setEnv("SANDBOX_AUTH_TOKEN", "");
+      const executor = await runWithRequestContext(
+        {
+          projectSlug: "skill-test",
+          token: "",
+        },
+        async () => getSkillScriptExecutor(),
+      );
       assertEquals(executor instanceof LocalScriptExecutor, true);
     });
   });
