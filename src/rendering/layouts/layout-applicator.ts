@@ -45,6 +45,8 @@ export interface LayoutApplicationOptions {
   requestUrl?: URL;
   params?: Record<string, string | string[]>;
   frontmatter?: Record<string, unknown>;
+  /** Props from the page's `getServerData`, exposed on the page context as `data`. */
+  pageProps?: Record<string, unknown>;
   headings?: Array<{ id: string; text: string; level: number }>;
   reactVersion?: string;
 }
@@ -59,6 +61,7 @@ export class LayoutApplicator {
   private requestUrl?: URL;
   private params?: Record<string, string | string[]>;
   private frontmatter?: Record<string, unknown>;
+  private pageProps?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
   private projectId: string;
   private projectSlug: string;
@@ -85,6 +88,7 @@ export class LayoutApplicator {
     this.requestUrl = options.requestUrl;
     this.params = options.params;
     this.frontmatter = options.frontmatter;
+    this.pageProps = options.pageProps;
     this.headings = options.headings;
     this.configuredReactVersion = options.reactVersion;
   }
@@ -175,6 +179,7 @@ export class LayoutApplicator {
           params: flatParams,
           query,
           frontmatter: this.frontmatter ?? pageInfo.entity.frontmatter ?? {},
+          data: this.pageProps ?? {},
           headings: headingsArray,
           mdxHeadings: headingsArray,
         };

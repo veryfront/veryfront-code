@@ -143,6 +143,7 @@ export class VeryfrontRenderer {
       elementValidator: this.services.elementValidator,
       ssrRenderer: this.services.ssrRenderer,
       htmlGenerator: this.htmlGenerator,
+      layoutOrchestrator: this.layoutOrchestrator,
     });
 
     this.renderPipeline = new RenderPipeline({

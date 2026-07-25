@@ -80,6 +80,9 @@ export function generateHydrationData(
     appPath: options.appPath
       ? toProjectRelativePath(options.appPath, options.projectDir) || undefined
       : undefined,
+    errorPath: options.errorPath
+      ? toProjectRelativePath(options.errorPath, options.projectDir) || undefined
+      : undefined,
     appRouterRoot: toProjectRelativePath(
       options.config?.directories?.app ?? "app",
       options.projectDir,

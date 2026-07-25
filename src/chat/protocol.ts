@@ -36,6 +36,23 @@ export interface ChatFilePart {
   size?: number;
 }
 
+/** Chat message part that carries a URL citation source. */
+export interface ChatSourceUrlPart {
+  type: "source-url";
+  sourceId: string;
+  url: string;
+  title?: string;
+}
+
+/** Chat message part that carries a document citation source. */
+export interface ChatSourceDocumentPart {
+  type: "source-document";
+  sourceId: string;
+  title: string;
+  mediaType?: string;
+  filename?: string;
+}
+
 /** State for chat tool. */
 export type ChatToolState =
   | "input-streaming"
@@ -95,6 +112,8 @@ export interface ChatDataPart {
 export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
+  | ChatSourceUrlPart
+  | ChatSourceDocumentPart
   | ChatFilePart
   | ChatToolPart
   | ChatToolResultPart
@@ -352,6 +371,16 @@ type IdDeltaChunk<TType extends string> = IdChunk<TType> & {
   delta: string;
 };
 
+/** Public API contract for content-addressed message chunks. */
+type ContentIdChunk<TType extends string> = IdChunk<TType> & {
+  contentId?: string;
+};
+
+/** Public API contract for content-addressed message delta chunks. */
+type ContentIdDeltaChunk<TType extends string> = ContentIdChunk<TType> & {
+  delta: string;
+};
+
 /** Public API contract for tool call chunk. */
 type ToolCallChunk<TType extends string> = {
   type: TType;
@@ -395,9 +424,9 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
     signature?: string;
     redactedData?: string;
   }
-  | IdChunk<"text-start">
-  | IdDeltaChunk<"text-delta">
-  | IdChunk<"text-end">
+  | ContentIdChunk<"text-start">
+  | ContentIdDeltaChunk<"text-delta">
+  | ContentIdChunk<"text-end">
   | {
     type: "source-url";
     sourceId: string;

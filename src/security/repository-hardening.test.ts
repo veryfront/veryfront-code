@@ -23,7 +23,7 @@ function topLevelJobNames(workflow: string): string[] {
 
   const jobsBlock = workflow.slice(jobsStart + "\njobs:\n".length);
   const matches = jobsBlock.matchAll(/^[ ]{2}([A-Za-z0-9_-]+):\s*$/gm);
-  return Array.from(matches, (match) => match[1]);
+  return Array.from(matches, (match) => match[1]!);
 }
 
 function jobBlock(workflow: string, jobName: string): string {
@@ -159,6 +159,50 @@ describe("repository hardening", () => {
         `expected workflows to use ${required}`,
       );
     }
+  });
+
+  it("scopes Homebrew tap pull request lookup to the pushed repository owner", async () => {
+    const workflow = await readText(".github/workflows/cicd.yml");
+    const updateHomebrew = jobBlock(workflow, "update-homebrew");
+
+    assertEquals(
+      updateHomebrew.includes("gh pr list"),
+      false,
+      "expected Homebrew updates not to look up PRs by unqualified branch name",
+    );
+    assert(
+      updateHomebrew.includes("gh api repos/veryfront/homebrew-tap/pulls"),
+      "expected Homebrew updates to query tap PRs through the Pulls API",
+    );
+    assert(
+      updateHomebrew.includes("--method GET"),
+      "expected gh api fields to remain query parameters instead of switching the lookup to POST",
+    );
+    assert(
+      updateHomebrew.includes('-f head="veryfront:${BRANCH}"'),
+      "expected Homebrew tap PR lookup to be scoped to the pushed repository owner and branch",
+    );
+    assert(
+      updateHomebrew.includes("gh pr create"),
+      "expected Homebrew updates to create tap PRs with gh pr create",
+    );
+    assert(
+      updateHomebrew.includes("--repo veryfront/homebrew-tap"),
+      "expected Homebrew tap PR commands to stay scoped to the tap repository",
+    );
+    assertEquals(
+      updateHomebrew.match(/--head "\$\{BRANCH\}"/g)?.length,
+      1,
+      "expected only PR creation to pass a branch-only head after lookup is owner-scoped",
+    );
+    assert(
+      updateHomebrew.includes('PR_NUMBER="${PR_URL##*/}"'),
+      "expected Homebrew tap PR creation to read the number from the returned URL",
+    );
+    assert(
+      updateHomebrew.includes('GH_TOKEN="${HOMEBREW_TAP_TOKEN}"'),
+      "expected Homebrew tap PR commands to use the scoped App token",
+    );
   });
 
   it("does not run npm lifecycle scripts while building the npm package", async () => {

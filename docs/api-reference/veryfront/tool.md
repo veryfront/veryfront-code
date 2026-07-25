@@ -1,7 +1,7 @@
 ---
 title: "veryfront/tool"
 description: "Define tools with schema-backed inputs for agents and MCP."
-order: 33
+order: 34
 ---
 
 ## Import
@@ -129,9 +129,9 @@ Create a typed tool definition.
 | `createProjectScopedRemoteToolCatalog` | Create project scoped remote tool catalog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L243) |
 | `createRemoteMCPToolSource` | Create remote MCP tool source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-mcp.ts#L505) |
 | `createSleepTool` | Create sleep tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L53) |
-| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L85) |
-| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L90) |
-| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L95) |
+| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L99) |
+| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L104) |
+| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L109) |
 | `createToolsFromRemoteDefinitions` | Create tools from remote definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L28) |
 | `dynamicTool` | Create a dynamic tool definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L182) |
 | `executeTool` | Execute a tool definition with validated input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/executor.ts#L15) |
@@ -142,7 +142,7 @@ Create a typed tool definition.
 | `isProjectNavigationRemoteTool` | Check whether a remote tool is project-navigation scoped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L146) |
 | `isRemoteToolNameAllowed` | Check whether a remote tool name is allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L158) |
 | `isToolVisibleTo` | Whether a registered tool is visible to the caller identified by the execution context. Unowned tools are project/global; owned tools are only visible to their owning agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/executor.ts#L10) |
-| `listProjectScopedRemoteToolNames` | List project scoped remote tool names. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L334) |
+| `listProjectScopedRemoteToolNames` | List project scoped remote tool names. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L340) |
 | `loadRemoteToolsFromSource` | Loads remote tools from source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L57) |
 | `resolveProjectScopedRemoteToolProjectId` | Resolves project scoped remote tool project ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L204) |
 | `tool` | Create a typed tool definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L115) |
@@ -156,7 +156,7 @@ Create a typed tool definition.
 | `CreateSleepToolOptions` | Options accepted by create sleep tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L13) |
 | `DynamicToolConfig` | Configuration used by dynamic tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L171) |
 | `HostToolDefinition` | Definition for host tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L11) |
-| `HostToolMaterializationOptions` | Options accepted by host tool materialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L38) |
+| `HostToolMaterializationOptions` | Options accepted by host tool materialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L37) |
 | `HostToolSet` | Public API contract for host tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L29) |
 | `HostToolTraceAttributeInput` | Input payload for host tool trace attribute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L14) |
 | `HostToolTraceAttributes` | Public API contract for host tool trace attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L11) |
