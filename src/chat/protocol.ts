@@ -48,8 +48,8 @@ export interface ChatSourceUrlPart {
 export interface ChatSourceDocumentPart {
   type: "source-document";
   sourceId: string;
-  mediaType: string;
   title: string;
+  mediaType?: string;
   filename?: string;
 }
 
@@ -112,9 +112,9 @@ export interface ChatDataPart {
 export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
-  | ChatFilePart
   | ChatSourceUrlPart
   | ChatSourceDocumentPart
+  | ChatFilePart
   | ChatToolPart
   | ChatToolResultPart
   | ChatDynamicToolPart

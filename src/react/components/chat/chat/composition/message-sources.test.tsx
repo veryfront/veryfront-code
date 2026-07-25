@@ -48,17 +48,28 @@ describe("Message.Sources (MessageSources)", () => {
     assertStringIncludes(html, "Runs guide");
   });
 
-  it("renders native source parts without a tool result", () => {
+  it("renders native URL and document citations", () => {
     const message: ChatMessage = {
       ...baseMessage,
       parts: [
         ...baseMessage.parts,
         {
+          type: "source-url",
+          sourceId: "docs",
+          url: "https://veryfront.com/docs",
+          title: "Veryfront docs",
+        },
+        {
           type: "source-document",
-          sourceId: "knowledge/handbook.md",
+          sourceId: "knowledge/runtime.md",
+          title: "Runtime guide",
           mediaType: "text/markdown",
-          title: "knowledge/handbook.md",
-          filename: "knowledge/handbook.md",
+          filename: "runtime.md",
+        },
+        {
+          type: "source-url",
+          sourceId: "reference",
+          url: "https://veryfront.com/reference",
         },
       ],
     };
@@ -68,7 +79,9 @@ describe("Message.Sources (MessageSources)", () => {
       </Message.Root>,
     );
 
-    assertStringIncludes(html, "knowledge/handbook.md");
+    assertStringIncludes(html, "Veryfront docs");
+    assertStringIncludes(html, "Runtime guide");
+    assertStringIncludes(html, "https://veryfront.com/reference");
   });
 
   it("maps each source through a function child instead of the default pill", () => {

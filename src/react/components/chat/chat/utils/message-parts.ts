@@ -157,8 +157,9 @@ export function groupPartsInOrder(parts: ChatMessagePart[]): PartGroup[] {
 }
 
 /**
- * Extract sources from tool result parts.
- * Looks for `documents` arrays in tool outputs and maps them to Source[].
+ * Extract sources from native citations and tool result parts.
+ * Native source parts map directly, while tool outputs may expose a
+ * `documents` array.
  */
 export function extractSourcesFromParts(parts: ChatMessagePart[]): Source[] {
   const sources: Source[] = [];
@@ -173,9 +174,7 @@ export function extractSourcesFromParts(parts: ChatMessagePart[]): Source[] {
     }
 
     if (part.type === "source-document") {
-      sources.push({
-        title: part.title,
-      });
+      sources.push({ title: part.title });
       continue;
     }
 
