@@ -510,7 +510,9 @@ describe("ProjectMiddlewareRuntime", () => {
     const response = await execute(
       runtime,
       context,
-      new Request("https://example.com/_ws?x-environment=preview&x-project-slug=trusted-project"),
+      new Request("https://example.com/_ws?x-environment=preview&x-project-slug=trusted-project", {
+        headers: { upgrade: "websocket" },
+      }),
       () => {
         routeCalls++;
         return Promise.resolve(new Response("hmr"));
