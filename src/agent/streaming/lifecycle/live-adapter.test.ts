@@ -401,7 +401,7 @@ describe("stream lifecycle live adapter", () => {
         },
       ],
       finishReason: null,
-      usage: {},
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       hasStreamOutput: false,
       hasSemanticProgress: true,
     };
