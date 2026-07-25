@@ -52,6 +52,14 @@ interface ForkSourceDocumentPart {
   filename?: string;
 }
 
+interface ForkSourceUrlPart {
+  type: "source";
+  id: string;
+  sourceType: "url";
+  url: string;
+  title?: string;
+}
+
 /** Public API contract for fork runtime step. */
 export interface ForkRuntimeStep {
   text: string;
@@ -74,6 +82,7 @@ export interface ForkRuntimeStep {
 export type ForkPart =
   | ForkStreamPart
   | ForkSourceDocumentPart
+  | ForkSourceUrlPart
   | ForkToolInputStartPart
   | ForkToolInputDeltaPart
   | ForkToolCallPart

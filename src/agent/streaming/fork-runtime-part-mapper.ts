@@ -1,4 +1,5 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
+import { toRenderableCustomChunk } from "#veryfront/chat/ag-ui-helpers.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/browser-encoder.ts";
 import {
@@ -11,6 +12,7 @@ import type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-
 type ForkToolCallPart = Extract<ForkPart, { type: "tool-call" }>;
 type ForkToolResultPart = Extract<ForkPart, { type: "tool-result" }>;
 type ForkToolErrorPart = Extract<ForkPart, { type: "tool-error" }>;
+type ForkSourcePart = Extract<ForkPart, { type: "source" }>;
 
 export interface RecoveredToolObservation {
   sawInputStart: boolean;
@@ -159,6 +161,32 @@ function buildToolCallPartIfNeeded(
   ];
 }
 
+function mapRenderableSourceToForkParts(value: unknown): ForkSourcePart[] {
+  const source = toRenderableCustomChunk(value);
+  if (source?.type === "source-document") {
+    return [{
+      type: "source",
+      id: source.sourceId,
+      sourceType: "document",
+      mediaType: source.mediaType,
+      title: source.title,
+      ...(source.filename ? { filename: source.filename } : {}),
+    }];
+  }
+
+  if (source?.type === "source-url") {
+    return [{
+      type: "source",
+      id: source.sourceId,
+      sourceType: "url",
+      url: source.url,
+      ...(source.title ? { title: source.title } : {}),
+    }];
+  }
+
+  return [];
+}
+
 /** State for create fork runtime stream mapping. */
 export function createForkRuntimeStreamMappingState(
   input: { logger?: ForkRuntimeStreamLogger } = {},
@@ -185,28 +213,22 @@ export function mapAgUiRuntimeEventToForkParts(
     case "text-delta":
       return typeof event.delta === "string" ? [{ type: "text-delta", text: event.delta }] : [];
 
-    case "source-document": {
-      const sourceId = typeof event.sourceId === "string" && event.sourceId.length > 0
-        ? event.sourceId
-        : null;
-      const mediaType = typeof event.mediaType === "string" && event.mediaType.length > 0
-        ? event.mediaType
-        : null;
-      if (!sourceId || !mediaType) {
+    case "source-document":
+    case "source-url":
+      return mapRenderableSourceToForkParts(event);
+
+    case "data": {
+      if (!isRecord(event.data)) {
         return [];
       }
-      return [{
-        type: "source",
-        id: sourceId,
-        sourceType: "document",
-        mediaType,
-        ...(typeof event.title === "string" && event.title.length > 0
-          ? { title: event.title }
-          : {}),
-        ...(typeof event.filename === "string" && event.filename.length > 0
-          ? { filename: event.filename }
-          : {}),
-      }];
+      const name = event.data.name;
+      if (name !== "source-document" && name !== "source-url") {
+        return [];
+      }
+      const parts = mapRenderableSourceToForkParts(event.data.value);
+      return parts.filter((part) =>
+        name === "source-document" ? part.sourceType === "document" : part.sourceType === "url"
+      );
     }
 
     case "tool-input-start": {
