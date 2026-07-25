@@ -241,6 +241,60 @@ describe("use-chat internal state helpers", () => {
     ]);
   });
 
+  it("preserves text blocks around an AG-UI citation", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:0","delta":"Before citation"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:0"}',
+          "",
+          "event: Custom",
+          'data: {"name":"source-url","value":{"type":"source-url","sourceId":"web-1","url":"https://example.com/reference","title":"Reference"}}',
+          "",
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","contentId":"text:1","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","contentId":"text:1","delta":"After citation"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1","contentId":"text:1"}',
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    assertEquals(messages[0]?.id, "msg-1");
+    assertEquals(messages[0]?.parts, [
+      { type: "text", text: "Before citation", state: "done" },
+      {
+        type: "source-url",
+        sourceId: "web-1",
+        url: "https://example.com/reference",
+        title: "Reference",
+      },
+      { type: "text", text: "After citation", state: "done" },
+    ]);
+  });
+
   it("replaces a fallback citation with richer metadata during durable replay", async () => {
     const encoder = new TextEncoder();
     const sourceId = "knowledge/handbook.md";

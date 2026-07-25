@@ -397,10 +397,24 @@ function handleStart(
   }
 }
 
+function getTextBlockId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.contentId === "string" && parsed.contentId) {
+    return parsed.contentId;
+  }
+  return typeof parsed.id === "string" && parsed.id ? parsed.id : undefined;
+}
+
+function getTextMessageId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.messageId === "string" && parsed.messageId) {
+    return parsed.messageId;
+  }
+  return typeof parsed.id === "string" && parsed.id ? parsed.id : undefined;
+}
+
 function handleTextStart(parsed: Record<string, unknown>, state: StreamingState): void {
-  state.currentTextId = (parsed.id as string) || generateClientId("text");
+  state.currentTextId = getTextBlockId(parsed) ?? generateClientId("text");
   if (!state.messageId) {
-    state.messageId = state.currentTextId;
+    state.messageId = getTextMessageId(parsed) ?? state.currentTextId;
   }
   state.textBlocks.set(state.currentTextId, { text: "", state: "streaming", order: null });
 }
@@ -411,11 +425,12 @@ function handleTextDelta(
   onUpdate: StreamingCallbacks["onUpdate"],
   getBuildParts: () => ChatMessagePart[],
 ): void {
-  const textId = (parsed.id as string) || state.currentTextId || "default";
+  const textId = (getTextBlockId(parsed) ?? state.currentTextId) || "default";
   const delta = (parsed.textDelta ?? parsed.delta ?? "") as string;
 
   if (!state.messageId) {
-    state.messageId = textId === "default" ? generateClientId("msg") : textId;
+    state.messageId = getTextMessageId(parsed) ??
+      (textId === "default" ? generateClientId("msg") : textId);
   }
 
   let block = state.textBlocks.get(textId);
@@ -435,7 +450,7 @@ function handleTextDelta(
 }
 
 function handleTextEnd(parsed: Record<string, unknown>, state: StreamingState): void {
-  const textId = (parsed.id as string) || state.currentTextId;
+  const textId = getTextBlockId(parsed) ?? state.currentTextId;
   const block = state.textBlocks.get(textId);
   if (!block) return;
 
