@@ -96,7 +96,12 @@ import {
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
+import {
+  HTTP_GATEWAY_TIMEOUT,
+  isHMRWebSocketUpgrade,
+  isLightweightPath,
+  isMonitoringPath,
+} from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
   EnvironmentVariableCache,
@@ -610,7 +615,13 @@ export function createVeryfrontHandler(
 
         const { response, error, settled } = await withRequestTimeout(
           (signal) => {
-            const timeoutRequest = new Request(req, { signal });
+            // Deno.upgradeWebSocket requires the exact Request received by
+            // Deno.serve. Cloning it to attach the timeout signal lets the
+            // handshake return 101, but the upgraded connection immediately
+            // closes with an unexpected EOF.
+            const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
+              ? req
+              : new Request(req, { signal });
             return runWithRequestProfiling(
               {
                 category: profileCategory,
