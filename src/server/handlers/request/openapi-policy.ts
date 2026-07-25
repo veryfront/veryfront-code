@@ -1,12 +1,22 @@
 import type { HandlerContext } from "../types.ts";
 import { ResponseBuilder } from "#veryfront/security";
 import { HTTP_UNAVAILABLE } from "#veryfront/utils/constants/index.ts";
-import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
+import {
+  isExplicitHostProjectCodeExecutionAllowed,
+  isExplicitlyLocalProject,
+} from "#veryfront/security/project-locality.ts";
 
 export const OPENAPI_UNAVAILABLE_MESSAGE = "OpenAPI specification unavailable";
 
 export function snapshotOpenAPIRequestLocality(ctx: HandlerContext): boolean {
   return isExplicitlyLocalProject(ctx);
+}
+
+export function snapshotOpenAPIHostExecutionPermission(
+  ctx: HandlerContext,
+  isLocalProject: boolean,
+): boolean {
+  return isLocalProject || isExplicitHostProjectCodeExecutionAllowed(ctx);
 }
 
 export function createOpenAPIResponseBuilder(

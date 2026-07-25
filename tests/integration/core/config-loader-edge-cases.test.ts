@@ -57,29 +57,64 @@ async function withConfigTest(
   }
 }
 
+async function assertConfigValidationFailure(
+  operation: () => Promise<unknown>,
+  field: string,
+  expectedIncludes: readonly string[],
+): Promise<void> {
+  const error = await assertRejects(operation);
+  assertEquals(error instanceof VeryfrontError, true);
+  if (!(error instanceof VeryfrontError)) {
+    throw new TypeError("Expected a VeryfrontError");
+  }
+
+  assertEquals(error.slug, "config-validation-failed");
+  assertStringIncludes(error.message, `Invalid veryfront.config at ${field}:`);
+
+  const context = error.context as
+    | { field?: unknown; expected?: unknown }
+    | undefined;
+  assertEquals(context?.field, field);
+  assertEquals(typeof context?.expected, "string");
+  for (const expected of expectedIncludes) {
+    assertStringIncludes(context?.expected as string, expected);
+  }
+}
+
 describe("Config Loader - Edge Cases and Error Handling", () => {
   describe("Invalid config structure", () => {
-    it("should reject non-object config exports", async () => {
-      await withConfigTest(`export default "not an object";`, async ({ projectDir, adapter }) => {
-        await assertRejects(
-          () => getConfig(projectDir, adapter),
-          Error,
-          "Expected object, received string",
-        );
+    for (
+      const { name, source, received } of [
+        {
+          name: "string",
+          source: `export default "not an object";`,
+          received: "string",
+        },
+        {
+          name: "empty string",
+          source: `export default "";`,
+          received: "string",
+        },
+        { name: "null", source: "export default null;", received: "null" },
+        {
+          name: "undefined",
+          source: "export default undefined;",
+          received: "undefined",
+        },
+        { name: "false", source: "export default false;", received: "boolean" },
+        { name: "zero", source: "export default 0;", received: "number" },
+      ] as const
+    ) {
+      it(`should reject ${name} config export`, async () => {
+        await withConfigTest(source, async ({ projectDir, adapter }) => {
+          await assertConfigValidationFailure(
+            () => getConfig(projectDir, adapter),
+            "<root>",
+            ["expected object", `received ${received}`],
+          );
+        });
       });
-    });
-
-    it("should reject null config export", async () => {
-      await withConfigTest("export default null;", async ({ projectDir, adapter }) => {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
-      });
-    });
-
-    it("should reject undefined config export", async () => {
-      await withConfigTest("export default undefined;", async ({ projectDir, adapter }) => {
-        await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
-      });
-    });
+    }
 
     it("should reject config with syntax errors", async () => {
       await withConfigTest(
@@ -236,7 +271,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+          await assertConfigValidationFailure(
+            () => getConfig(projectDir, adapter),
+            "<root>",
+            ["unknownKey1", "unknownKey2", "validKey"],
+          );
         },
       );
     });
@@ -250,7 +289,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+          await assertConfigValidationFailure(
+            () => getConfig(projectDir, adapter),
+            "<root>",
+            ["unknownKey1", "unknownKey2"],
+          );
         },
       );
     });
@@ -485,10 +528,10 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         export default config;
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(
+          await assertConfigValidationFailure(
             () => getConfig(projectDir, adapter),
-            Error,
-            "Unknown config keys: self",
+            "<root>",
+            ["self"],
           );
         },
       );
@@ -506,7 +549,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Unknown config keys");
+          await assertConfigValidationFailure(
+            () => getConfig(projectDir, adapter),
+            "<root>",
+            ["onBuild", "plugins"],
+          );
         },
       );
     });
@@ -585,10 +632,10 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
           },
         ],
         async ({ projectDir, adapter }) => {
-          await assertRejects(
+          await assertConfigValidationFailure(
             () => getConfig(projectDir, adapter),
-            Error,
-            "Unknown config keys: port",
+            "<root>",
+            ["port"],
           );
         },
       );

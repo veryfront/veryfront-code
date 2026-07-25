@@ -218,6 +218,8 @@ interface ServerOptions {
   discoveryConfig?: DiscoveryOptions;
   /** Map of project slugs to their filesystem paths (seeds local project discovery). */
   localProjects?: Record<string, string>;
+  /** Injectable HTTP capability for hosted routing metadata and project environment reads. */
+  projectEnvFetch?: typeof globalThis.fetch;
 }
 
 /** Public API contract for server handle. */
@@ -307,6 +309,7 @@ async function startProductionServerWithAuthorization(
     requestInterceptor,
     discoveryConfig,
     localProjects,
+    projectEnvFetch,
     adapter: requestedAdapter,
     bootstrapResult: suppliedBootstrap,
   } = options;
@@ -515,6 +518,7 @@ async function startProductionServerWithAuthorization(
           defaultReleaseId,
           defaultEnvironment,
           localProjects,
+          projectEnvFetch,
         });
 
         const coreHandler = baseHandler;

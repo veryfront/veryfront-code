@@ -124,7 +124,8 @@ export interface ExecuteAppRouteRequest {
   modulePath: string;
   method: string;
   request: SerializedRequest;
-  params: Record<string, string | string[]>;
+  /** App Router's public handler contract uses slash-flattened catch-all values. */
+  params: Record<string, string>;
   projectDir: string;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;

@@ -87,8 +87,15 @@ export interface HandlerContext {
   resolvedEnvironment?: "preview" | "production";
   /** Unified project request context containing credential, slug, branch, and mode. */
   requestContext?: RequestContext;
-  /** Whether the request targets a local filesystem project. */
+  /** Whether the request targets a local development project. */
   isLocalProject?: boolean;
+  /**
+   * Whether runtime trust resolution permits project modules to execute in the
+   * server process. This is distinct from `isLocalProject`: a standalone
+   * production runtime can load its own disk-backed source without enabling
+   * development-only behavior.
+   */
+  allowHostProjectCodeExecution?: boolean;
   /** Environment identifier used to resolve per-project environment variables. */
   environmentId?: string;
   /** Read-only route registry view used by development diagnostics. */

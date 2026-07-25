@@ -26,8 +26,17 @@ import {
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
+import {
+  computeDependencyCacheIdentity,
+} from "#veryfront/transforms/pipeline/dependency-cache-identity.ts";
+import { createPipelineReadFile } from "#veryfront/transforms/pipeline/read-file.ts";
+import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+export type SSRSourceGraphCacheIdentity =
+  | { cacheable: true; hash: string; dependencyHash: string }
+  | { cacheable: false; error: unknown };
 
 /**
  * Manages caching concerns for SSR module loading:
@@ -79,6 +88,44 @@ export class SSRCacheManager {
 
   async hashContentAsync(content: string): Promise<string> {
     return await computeHash(content);
+  }
+
+  /**
+   * Bind an authored source snapshot to its complete local dependency graph.
+   *
+   * The transform cache already uses this graph identity. The SSR loader has
+   * outer memory, distributed, and disk caches that can return before the
+   * transform pipeline runs, so they must use the same dependency boundary or
+   * an unchanged parent can retain paths to obsolete child artifacts.
+   */
+  async getSourceGraphCacheIdentity(
+    filePath: string,
+    sourceContentHash: string,
+    dependencyHashCache: DependencyHashCache,
+  ): Promise<SSRSourceGraphCacheIdentity> {
+    const dependencyIdentity = await computeDependencyCacheIdentity(
+      filePath,
+      this.options.projectDir,
+      createPipelineReadFile(this.options.adapter, this.options.projectDir),
+      dependencyHashCache,
+      this.options.importMapIdentity?.importMap,
+      this.options.importMapIdentity?.fingerprint,
+    );
+    if (!dependencyIdentity.cacheable) return dependencyIdentity;
+    if (!dependencyIdentity.depsHash) {
+      return {
+        cacheable: false,
+        error: new TypeError("Dependency cache identity did not include a graph hash"),
+      };
+    }
+
+    return {
+      cacheable: true,
+      hash: await this.hashContentAsync(
+        JSON.stringify([sourceContentHash, dependencyIdentity.depsHash]),
+      ),
+      dependencyHash: dependencyIdentity.depsHash,
+    };
   }
 
   async getTempPath(filePath: string, contentHash?: string): Promise<string> {

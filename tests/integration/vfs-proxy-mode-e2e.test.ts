@@ -6,24 +6,27 @@
  * PROXY_MODE=1 is set, and resolves project slugs from Host headers.
  *
  * Run:
- *   deno test --allow-all tests/integration/vfs-proxy-mode-e2e.test.ts
+ *   deno task test:e2e:binary:vfs-proxy
  */
 import "../_helpers/contract-init.ts";
 
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
+import { SERVER_CONFIG, TEST_TIMEOUTS } from "../_helpers/constants.ts";
+import { fetchWithTimeout, pollHttpReadyByTimeout } from "../_helpers/http-polling.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
-import { computeSourceHash } from "../e2e/setup/binary.ts";
+import {
+  BINARY_PATH,
+  cleanupCompiledBinaryArtifacts,
+  ensureBinaryCompiled,
+} from "./compiled-binary-e2e.test-helpers.ts";
 
 try {
   await loadEnv({ export: true, allowEmptyValues: true, examplePath: null });
 } catch { /* no .env */ }
 
-const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-vfs-e2e-bin-${Deno.pid}`;
-const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 const VERYFRONT_API_TOKEN = Deno.env.get("VERYFRONT_API_TOKEN");
 
 async function getAvailablePort(): Promise<number> {
@@ -33,44 +36,6 @@ async function getAvailablePort(): Promise<number> {
   return port;
 }
 
-async function ensureBinaryCompiled(): Promise<void> {
-  const denoPath = Deno.execPath();
-  const forceFresh = Deno.env.get("VERYFRONT_BINARY_FRESH") === "1";
-  const binaryExists = await exists(BINARY_PATH);
-  const currentHash = await computeSourceHash();
-
-  if (binaryExists && !forceFresh) {
-    try {
-      const storedHash = await Deno.readTextFile(BINARY_HASH_PATH);
-      if (storedHash.trim() === currentHash) return;
-    } catch { /* recompile */ }
-  }
-
-  if (binaryExists) await Deno.remove(BINARY_PATH);
-
-  const prep = await new Deno.Command(denoPath, {
-    args: ["task", "build:prepare"],
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  if (!prep.success) throw new Error("Failed to prepare build artifacts");
-
-  const compile = await new Deno.Command(denoPath, {
-    args: [
-      "run",
-      "-A",
-      "scripts/build/compile-binary.ts",
-      "--output",
-      BINARY_PATH,
-    ],
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  if (!compile.success) throw new Error("Failed to compile binary");
-
-  await Deno.writeTextFile(BINARY_HASH_PATH, currentHash);
-}
-
 interface TestServer {
   process: Deno.ChildProcess;
   port: number;
@@ -78,18 +43,26 @@ interface TestServer {
   kill: () => Promise<void>;
 }
 
-function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
-  (async () => {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        logs.push(decoder.decode(value));
-      }
-    } catch { /* closed */ }
-  })();
+async function collectLogs(
+  logs: string[],
+  stream: ReadableStream<Uint8Array>,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const decoded = decoder.decode(value, { stream: true });
+      if (decoded) logs.push(decoded);
+    }
+  } catch {
+    /* process stream closed during teardown */
+  } finally {
+    const trailing = decoder.decode();
+    if (trailing) logs.push(trailing);
+    reader.releaseLock();
+  }
 }
 
 async function startVFSServer(
@@ -119,8 +92,10 @@ async function startVFSServer(
     stderr: "piped",
   }).spawn();
 
-  collectLogs(logs, process.stdout);
-  collectLogs(logs, process.stderr);
+  const logReaders = [
+    collectLogs(logs, process.stdout),
+    collectLogs(logs, process.stderr),
+  ];
 
   return {
     process,
@@ -131,12 +106,52 @@ async function startVFSServer(
         process.kill();
         await process.status;
       } catch { /* dead */ }
-      await new Promise((r) => setTimeout(r, 300));
+      await Promise.allSettled(logReaders);
       try {
         await Deno.remove(cacheDir, { recursive: true });
       } catch { /* ok */ }
     },
   };
+}
+
+function getServerLogs(server: TestServer): string {
+  return server.logs.join("");
+}
+
+async function waitForVFSServerReady(server: TestServer): Promise<void> {
+  const readinessController = new AbortController();
+  const readiness = pollHttpReadyByTimeout(
+    `http://127.0.0.1:${server.port}/readyz`,
+    {
+      timeoutMs: TEST_TIMEOUTS.E2E,
+      requestTimeoutMs: SERVER_CONFIG.FETCH_TIMEOUT,
+      verifyWithSecondRequest: true,
+      signal: readinessController.signal,
+    },
+  );
+  const earlyExit: Promise<never> = server.process.status.then((status) => {
+    throw new Error(
+      `Compiled server exited before readiness (code ${status.code}, signal ${
+        status.signal ?? "none"
+      }). Logs:\n${getServerLogs(server).slice(-3000)}`,
+    );
+  });
+  const result = await (async () => {
+    try {
+      return await Promise.race([readiness, earlyExit]);
+    } finally {
+      readinessController.abort();
+    }
+  })();
+
+  if (result.ready) return;
+
+  throw new Error(
+    `Compiled server was not ready after ${TEST_TIMEOUTS.E2E}ms ` +
+      `(${result.attempts} attempts). Last error: ${result.lastError?.message ?? "none"}. Logs:\n${
+        getServerLogs(server).slice(-3000)
+      }`,
+  );
 }
 
 /**
@@ -145,9 +160,11 @@ async function startVFSServer(
  * bypasses the proxy, we must do it ourselves.
  */
 async function getActiveReleaseId(slug: string, token: string): Promise<string | null> {
-  const res = await fetch(`https://api.veryfront.com/projects/${encodeURIComponent(slug)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetchWithTimeout(
+    `https://api.veryfront.com/projects/${encodeURIComponent(slug)}`,
+    TEST_TIMEOUTS.E2E,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
   if (!res.ok) return null;
   const project = await res.json();
   const prodEnv = project.environments?.find((e: { name: string }) => e.name === "production");
@@ -171,37 +188,25 @@ async function createMinimalVFSProject(): Promise<string> {
 
 describe(
   "VFS Proxy Mode - Compiled Binary",
-  { sanitizeOps: false, sanitizeResources: false },
+  {
+    sanitizeOps: false,
+    sanitizeResources: false,
+    timeout: 600_000,
+  },
   () => {
     beforeAll(async () => {
       await ensureBinaryCompiled();
     });
     afterAll(async () => {
-      try {
-        await Deno.remove(BINARY_PATH);
-        await Deno.remove(BINARY_HASH_PATH);
-      } catch { /* ok */ }
+      await cleanupCompiledBinaryArtifacts();
     });
 
     it("should detect PROXY_MODE=1 and configure veryfront-api filesystem", async () => {
       const projectDir = await createMinimalVFSProject();
       const server = await startVFSServer(projectDir);
       try {
-        // Wait for the server to actually start by polling the health endpoint
-        // or for the expected log to appear (up to 30s)
-        const deadline = Date.now() + 30_000;
-        while (Date.now() < deadline) {
-          const allLogs = server.logs.join("\n");
-          if (allLogs.includes("Production server listening")) break;
-          try {
-            const r = await fetch(`http://127.0.0.1:${server.port}/`);
-            await r.text();
-            break;
-          } catch { /* server not ready yet */ }
-          await new Promise((r) => setTimeout(r, 500));
-        }
-
-        const allLogs = server.logs.join("\n");
+        await waitForVFSServerReady(server);
+        const allLogs = getServerLogs(server);
 
         // Config loader should detect proxy mode and select veryfront-api
         assert(
@@ -227,17 +232,7 @@ describe(
       // dist/framework-src/ embedded in the compiled binary.
       const server = await startVFSServer(projectDir, { PROXY_MODE: "0" });
       try {
-        // Wait for server to be ready
-        const deadline = Date.now() + 30_000;
-        while (Date.now() < deadline) {
-          try {
-            const r = await fetch(`http://127.0.0.1:${server.port}/`);
-            await r.text();
-            break;
-          } catch {
-            await new Promise((r) => setTimeout(r, 500));
-          }
-        }
+        await waitForVFSServerReady(server);
 
         // Framework modules under _veryfront/ should be served from embedded sources
         // These are resolved from dist/framework-src/ in compiled binaries
@@ -249,8 +244,9 @@ describe(
         ];
 
         for (const modulePath of modulePaths) {
-          const response = await fetch(
+          const response = await fetchWithTimeout(
             `http://127.0.0.1:${server.port}/_vf_modules/${modulePath}`,
+            TEST_TIMEOUTS.E2E,
           );
           const body = await response.text();
 
@@ -288,29 +284,23 @@ describe(
         });
 
         try {
-          // Wait for server to be ready
-          const deadline = Date.now() + 60_000;
-          while (Date.now() < deadline) {
-            try {
-              const r = await fetch(`http://127.0.0.1:${server.port}/`);
-              await r.text();
-              break;
-            } catch {
-              await new Promise((r) => setTimeout(r, 500));
-            }
-          }
+          await waitForVFSServerReady(server);
 
           // Use flow-ops.lvh.me (*.lvh.me resolves to 127.0.0.1)
           // Include proxy headers that a real proxy would set — without x-release-id
           // the renderer rejects production requests in proxy mode with 502.
-          const response = await fetch(`http://flow-ops.lvh.me:${server.port}/api/flows`, {
-            headers: {
-              "x-release-id": releaseId,
-              "x-environment": "production",
-              "x-project-slug": "flow-ops",
-              "x-token": "test-token",
+          const response = await fetchWithTimeout(
+            `http://flow-ops.lvh.me:${server.port}/api/flows`,
+            TEST_TIMEOUTS.E2E,
+            {
+              headers: {
+                "x-release-id": releaseId,
+                "x-environment": "production",
+                "x-project-slug": "flow-ops",
+                "x-token": "test-token",
+              },
             },
-          });
+          );
           await response.text();
 
           // Verify the server resolved the slug from the Host header, not the
@@ -319,7 +309,7 @@ describe(
           // failed (slug wasn't resolved); anything else means the request was
           // accepted and processed (even if the VFS adapter itself errors out
           // with 500 due to multi-tenant slug propagation issues).
-          const allLogs = server.logs.join("\n");
+          const allLogs = getServerLogs(server);
           assert(
             allLogs.includes("project_slug=flow-ops"),
             "Should resolve slug 'flow-ops' from Host header",

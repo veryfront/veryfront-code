@@ -8,11 +8,16 @@ import {
   getBrowserDiagnosticMessages,
   launchChromium,
 } from "../_helpers/playwright.ts";
+import { SERVER_CONFIG, TEST_TIMEOUTS } from "../_helpers/constants.ts";
+import { fetchWithTimeout } from "../_helpers/http-polling.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 import { computeSourceHash } from "../e2e/setup/binary.ts";
 
-export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
+const configuredBinaryPath = Deno.env.get("VERYFRONT_BINARY");
+
+export const BINARY_PATH = configuredBinaryPath ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
+export const MANAGES_BINARY_ARTIFACT = configuredBinaryPath === undefined;
 
 let binaryTestCacheRoot: string | undefined;
 
@@ -56,6 +61,21 @@ export interface BrowserPageSession {
 export async function ensureBinaryCompiled(): Promise<void> {
   const forceFresh = Deno.env.get("VERYFRONT_BINARY_FRESH") === "1";
   const binaryExists = await exists(BINARY_PATH);
+
+  if (!MANAGES_BINARY_ARTIFACT) {
+    if (forceFresh) {
+      throw new Error(
+        "VERYFRONT_BINARY_FRESH cannot be combined with VERYFRONT_BINARY; " +
+          "the configured binary is caller-owned and will not be overwritten",
+      );
+    }
+    if (!binaryExists) {
+      throw new Error(`Configured VERYFRONT_BINARY does not exist: ${BINARY_PATH}`);
+    }
+    console.log("✅ Using caller-provided binary:", BINARY_PATH);
+    return;
+  }
+
   const currentHash = await computeSourceHash();
 
   if (binaryExists && !forceFresh) {
@@ -103,20 +123,26 @@ export async function ensureBinaryCompiled(): Promise<void> {
   console.log("✅ Binary compiled");
 }
 
-function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
-  (async () => {
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        logs.push(decoder.decode(value));
-      }
-    } catch {
-      // closed
+async function collectLogs(
+  logs: string[],
+  stream: ReadableStream<Uint8Array>,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const decoded = decoder.decode(value, { stream: true });
+      if (decoded) logs.push(decoded);
     }
-  })();
+  } catch {
+    // Process streams can close while the child is being terminated.
+  } finally {
+    const trailing = decoder.decode();
+    if (trailing) logs.push(trailing);
+    reader.releaseLock();
+  }
 }
 
 async function getBinaryTestCacheDir(nodeEnv: string): Promise<string> {
@@ -131,19 +157,62 @@ export async function cleanupBinaryTestCache(): Promise<void> {
   await Deno.remove(cacheRoot, { recursive: true }).catch(() => {});
 }
 
-async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    try {
-      const resp = await fetch(`http://127.0.0.1:${port}/readyz`);
-      // Consume the response body to avoid connection issues
-      await resp.text();
-      if (resp.status === 200) return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
+export async function cleanupCompiledBinaryArtifacts(): Promise<void> {
+  await cleanupBinaryTestCache();
+  if (!MANAGES_BINARY_ARTIFACT) return;
+
+  for (const path of [BINARY_PATH, BINARY_HASH_PATH]) {
+    if (await exists(path)) await Deno.remove(path);
   }
-  throw new Error(`Server failed to start on port ${port}`);
+}
+
+async function waitForServer(
+  process: Deno.ChildProcess,
+  port: number,
+  logs: string[],
+  deadlineMs = TEST_TIMEOUTS.E2E,
+): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  const readinessController = new AbortController();
+  const poll = (async () => {
+    while (
+      !readinessController.signal.aborted &&
+      Date.now() < deadline
+    ) {
+      try {
+        const response = await fetchWithTimeout(
+          `http://127.0.0.1:${port}/readyz`,
+          SERVER_CONFIG.FETCH_TIMEOUT,
+          { signal: readinessController.signal },
+        );
+        await response.body?.cancel();
+        if (response.status === 200) return;
+      } catch {
+        // The listener is not ready yet.
+      }
+      if (readinessController.signal.aborted) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (readinessController.signal.aborted) return;
+    throw new Error(
+      `Server failed to start on port ${port} within ${deadlineMs}ms. Logs:\n${
+        logs.join("").slice(-3000)
+      }`,
+    );
+  })();
+  const earlyExit: Promise<never> = process.status.then((status) => {
+    throw new Error(
+      `Server on port ${port} exited before readiness (code ${status.code}, signal ${
+        status.signal ?? "none"
+      }). Logs:\n${logs.join("").slice(-3000)}`,
+    );
+  });
+
+  try {
+    await Promise.race([poll, earlyExit]);
+  } finally {
+    readinessController.abort();
+  }
 }
 
 async function startBinaryServer(
@@ -173,11 +242,13 @@ async function startBinaryServer(
       stderr: "piped",
     }).spawn();
 
-    collectLogs(logs, process.stdout);
-    collectLogs(logs, process.stderr);
+    const logReaders = [
+      collectLogs(logs, process.stdout),
+      collectLogs(logs, process.stderr),
+    ];
 
     try {
-      await waitForServer(port);
+      await waitForServer(process, port, logs);
     } catch {
       try {
         process.kill();
@@ -185,20 +256,18 @@ async function startBinaryServer(
       } catch {
         // already dead
       }
+      await Promise.allSettled(logReaders);
 
       // Retry on port collision
-      const logOutput = logs.join("\n");
+      const logOutput = logs.join("");
       if (attempt < maxRetries - 1 && logOutput.includes("already in use")) {
         continue;
       }
 
       throw new Error(
-        `Server failed to start on port ${port} within 60s. Logs:\n${logOutput.slice(-3000)}`,
+        `Server failed to start on port ${port}. Logs:\n${logOutput.slice(-3000)}`,
       );
     }
-
-    // Give the server a moment to stabilize after first request
-    await new Promise((r) => setTimeout(r, 500));
 
     return {
       process,
@@ -211,7 +280,7 @@ async function startBinaryServer(
         } catch {
           // already dead
         }
-        await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
+        await Promise.allSettled(logReaders);
       },
     };
   }
@@ -265,12 +334,15 @@ export async function withServer(
   nodeEnv?: string,
   extraEnv?: Record<string, string>,
 ): Promise<void> {
-  const server = await startBinaryServer(projectDir, nodeEnv, extraEnv);
+  let server: TestServer | undefined;
   try {
+    server = await startBinaryServer(projectDir, nodeEnv, extraEnv);
     await fn(server);
   } finally {
-    await server.kill();
-    await Deno.remove(projectDir, { recursive: true });
+    await server?.kill();
+    if (await exists(projectDir)) {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   }
 }
 

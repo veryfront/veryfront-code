@@ -26,7 +26,7 @@ import {
   generateOperationId,
   type OpenAPIPathDescription,
 } from "./path-utils.ts";
-import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -56,9 +56,14 @@ const serializationErrors = new NativeWeakSet<object>();
 interface GenerateSpecOptions {
   /**
    * OpenAPI metadata is currently read from live route exports. Only an
-   * explicitly local caller may opt into that host-realm import boundary.
+   * explicitly local development project retains the historical capability.
    */
   isLocalProject?: boolean;
+  /**
+   * Whether runtime trust resolution permits route exports to be inspected in
+   * the server process.
+   */
+  allowHostProjectCodeExecution?: boolean;
   /** API title for OpenAPI info */
   title?: string;
   /** API version */
@@ -223,7 +228,9 @@ export async function generateOpenAPISpec(
   config?: VeryfrontConfig,
   options?: GenerateSpecOptions,
 ): Promise<OpenAPISpec> {
-  if (!isExplicitlyLocalProject(options)) throw new OpenAPISpecUnavailableError();
+  if (!isHostProjectCodeExecutionAllowed(options)) {
+    throw new OpenAPISpecUnavailableError();
+  }
 
   const spec: OpenAPISpec = {
     openapi: "3.1.0",

@@ -1416,12 +1416,6 @@ export function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontCon
 }
 
 function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
-  if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) {
-    throw CONFIG_VALIDATION_FAILED.create({
-      detail: `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
-    });
-  }
-
   const normalizedConfig = validateConfigShape(userConfig);
 
   const merged = mergeConfigs(normalizedConfig);
@@ -1431,6 +1425,26 @@ function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
   }
 
   return merged;
+}
+
+/**
+ * Select the authored configuration value from an imported module namespace.
+ *
+ * Presence, rather than truthiness, determines whether the default export is
+ * authoritative. This preserves explicit falsy exports for validation while
+ * retaining named-export-only configuration modules.
+ */
+function selectConfigModuleValue(configModule: object): unknown {
+  const defaultExport = getOwnPropertyDescriptor(configModule, "default");
+  if (defaultExport === undefined) return configModule;
+
+  const value = getOwnPropertyDescriptor(defaultExport, "value");
+  if (value === undefined) {
+    throw CONFIG_PARSE_ERROR.create({
+      detail: "The configuration module default export is not a data binding",
+    });
+  }
+  return value.value;
 }
 
 function translateHostedConfigEvaluationError(
@@ -1500,7 +1514,7 @@ async function loadConfigFromTempFile(
       await rewriteBareVeryfrontConfigImports(processedSource),
     );
     const configModule = await import(loadUrl(tempFile));
-    return configModule.default || configModule;
+    return selectConfigModuleValue(configModule);
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
@@ -1614,7 +1628,10 @@ function loadTrustedConfigFromVirtualFS(
         hasApp: !!(userConfig as Record<string, unknown>)?.app,
         hasLayout: !!(userConfig as Record<string, unknown>)?.layout,
         hasRouter: !!(userConfig as Record<string, unknown>)?.router,
-        configKeys: Object.keys(userConfig as Record<string, unknown>),
+        configKeys: userConfig !== null &&
+            (typeof userConfig === "object" || typeof userConfig === "function")
+          ? ownKeys(userConfig)
+          : [],
       });
 
       return validateAndMergeConfig(userConfig);
@@ -1726,7 +1743,7 @@ async function loadAndMergeConfig(
   const configUrl = toFileUrl(absolutePath);
   configUrl.searchParams.set("t", `${Date.now()}-${crypto.randomUUID()}`);
   const configModule = await import(configUrl.href);
-  return validateAndMergeConfig(configModule.default || configModule);
+  return validateAndMergeConfig(selectConfigModuleValue(configModule));
 }
 
 /**

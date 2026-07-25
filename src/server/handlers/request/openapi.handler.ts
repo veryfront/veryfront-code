@@ -14,6 +14,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import {
   createOpenAPIResponseBuilder,
   createOpenAPIUnavailableResponse,
+  snapshotOpenAPIHostExecutionPermission,
   snapshotOpenAPIRequestLocality,
 } from "./openapi-policy.ts";
 
@@ -47,16 +48,25 @@ export class OpenAPIHandler extends BaseHandler {
     const { yamlPath } = this.getPaths(ctx);
     const isYaml = url.pathname === yamlPath;
     const isLocalProject = snapshotOpenAPIRequestLocality(ctx);
+    const allowHostProjectCodeExecution = snapshotOpenAPIHostExecutionPermission(
+      ctx,
+      isLocalProject,
+    );
 
     // Route metadata currently lives on executable exports. Until metadata
     // inspection is worker-owned, remote and unknown projects must not cause
     // their route modules to be imported into the server process.
-    if (!isLocalProject) {
+    if (!allowHostProjectCodeExecution) {
       return this.respond(createOpenAPIUnavailableResponse(req, ctx));
     }
 
     try {
-      const spec = await this.getOrGenerateSpec(ctx, url, isLocalProject);
+      const spec = await this.getOrGenerateSpec(
+        ctx,
+        url,
+        isLocalProject,
+        allowHostProjectCodeExecution,
+      );
       const content = isYaml ? specToYaml(spec) : specToJson(spec);
 
       const response = createOpenAPIResponseBuilder(ctx, isLocalProject)
@@ -99,6 +109,7 @@ export class OpenAPIHandler extends BaseHandler {
     ctx: HandlerContext,
     url: URL,
     isLocalProject: boolean,
+    allowHostProjectCodeExecution: boolean,
   ): Promise<OpenAPISpec> {
     const discover = async (): Promise<OpenAPISpec> => {
       const router = new ApiRouteMatcher();
@@ -124,6 +135,7 @@ export class OpenAPIHandler extends BaseHandler {
         const serverUrl = `${url.protocol}//${url.host}`;
         return await generateOpenAPISpec(router, ctx.projectDir, ctx.adapter, ctx.config, {
           isLocalProject,
+          allowHostProjectCodeExecution,
           servers: [{ url: serverUrl, description: "Current server" }],
         });
       } finally {

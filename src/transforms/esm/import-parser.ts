@@ -76,29 +76,34 @@ async function compileMdxForParsing(
   return compiled.compiledCode;
 }
 
-export async function parseLocalImports(
+/**
+ * Lower an authored module to syntax the ESM lexer can parse.
+ *
+ * The lexer intentionally does not understand TypeScript or JSX. Dependency
+ * discovery is used by more than the SSR import resolver, so keep this
+ * normalization in one place rather than letting each cache layer invent a
+ * partial source preprocessor.
+ *
+ * `null` means the source kind cannot contain runtime module dependencies.
+ *
+ * @internal
+ */
+export async function prepareModuleSourceForImportParsing(
   code: string,
   filePath: string,
   projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<ParseLocalImportsResult> {
+): Promise<string | null> {
   // Markdown compiles to a fixed template whose only import is the bare JSX
-  // runtime, which this parser discards, so the answer for a `.md` file is
-  // always "no dependencies". Compiling one to learn that is pure cost on a
-  // path that runs per render.
+  // runtime, which dependency discovery discards. CSS and JSON are handled by
+  // their dedicated loaders and are not JavaScript dependency roots.
   if (filePath.endsWith(".css") || filePath.endsWith(".json") || /\.md$/i.test(filePath)) {
-    return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
+    return null;
   }
 
-  // MDX is not JSX, so handing the raw source to esbuild under the `jsx` loader
-  // fails with "<stdin>:1:1: ERROR: Syntax error", which surfaced to users as
-  // "Component has missing dependencies" for a file that exists. Compile
-  // content to JSX first, exactly as the transform pipeline's parse stage does,
-  // then read the imports out of that.
-  let parseSource = code;
-  if (/\.mdx$/i.test(filePath)) {
-    parseSource = await compileMdxForParsing(code, filePath, projectDir);
-  }
+  // MDX is not JSX, so compile it before applying the syntax-only transform.
+  const parseSource = /\.mdx$/i.test(filePath)
+    ? await compileMdxForParsing(code, filePath, projectDir)
+    : code;
 
   const esbuild = await getEsbuild();
   const result = await esbuild.transform(parseSource, {
@@ -113,7 +118,24 @@ export async function parseLocalImports(
     keepNames: true,
   });
 
-  const imports = await parseImports(result.code);
+  return result.code;
+}
+
+export async function parseLocalImports(
+  code: string,
+  filePath: string,
+  projectDir: string,
+  adapter?: RuntimeAdapter,
+): Promise<ParseLocalImportsResult> {
+  const parseSource = await prepareModuleSourceForImportParsing(
+    code,
+    filePath,
+    projectDir,
+  );
+  if (parseSource === null) {
+    return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
+  }
+  const imports = await parseImports(parseSource);
   const localImports: LocalImport[] = [];
   const cssImports: LocalImport[] = [];
   const crossProjectImports: CrossProjectImport[] = [];

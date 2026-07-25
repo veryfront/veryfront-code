@@ -386,6 +386,20 @@ async function tryLoadPageFile(
     raw = await context.adapter.fs.readFile(file);
   } catch (error) {
     if (isNotFoundError(error)) return null;
+
+    // A directory can legally occupy a conventional page filename while a
+    // project is being edited. Runtime adapters report that condition with
+    // incompatible error classes/codes, so inspect the candidate through the
+    // filesystem contract before deciding whether the read failure is fatal.
+    try {
+      const info = await context.adapter.fs.stat(file);
+      if (!info.isFile) return null;
+    } catch {
+      // `stat` is only supporting evidence that the candidate is not a file.
+      // If it cannot establish that fact, preserve the original operational
+      // read failure instead of turning it into a false route miss.
+    }
+
     throw error;
   }
 

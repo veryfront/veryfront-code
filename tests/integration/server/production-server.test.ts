@@ -496,18 +496,53 @@ describe(
         it("loads shared proxy middleware after trusted request context is resolved", async () => {
           const projectSlug = "shared-middleware-project";
           const projectId = "shared-middleware-project-id";
+          const environmentId = "shared-middleware-environment-id";
           const releaseId = "shared-middleware-release";
+          const projectEnvRequests: string[] = [];
+          const projectEnvFetch: typeof globalThis.fetch = (input) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            projectEnvRequests.push(url.pathname);
+            if (url.pathname.includes("/projects/-/proxy-routing/")) {
+              return Promise.resolve(Response.json({
+                id: projectId,
+                slug: projectSlug,
+                environments: [{
+                  id: environmentId,
+                  name: "production",
+                  active_release_id: releaseId,
+                }],
+              }));
+            }
+            if (url.pathname.endsWith("/environment-variables")) {
+              return Promise.resolve(Response.json({ data: [] }));
+            }
+            return Promise.resolve(new Response("Not Found", { status: 404 }));
+          };
           const middlewareSource = `export default function projectMiddleware() {
             return new Response("shared middleware", {
               status: 418,
               headers: { "x-shared-middleware": "applied" },
             });
           }`;
+          const styleConfigBinding = Object.freeze({
+            projectSlug,
+            sourceKey: `release:${releaseId}`,
+            sourceRevision: 1,
+          });
+          const middlewarePath = "/app/middleware.ts";
+          const readProjectFile = (path: string): Promise<string> =>
+            path === middlewarePath
+              ? Promise.resolve(middlewareSource)
+              : Promise.reject(new Deno.errors.NotFound(`No such project file: ${path}`));
           const projectFs = {
-            exists: (path: string) => Promise.resolve(path === "/app/middleware.ts"),
-            readFile: () => Promise.resolve(middlewareSource),
-            readTextFile: () => Promise.resolve(middlewareSource),
-            readOptionalTextFile: () => Promise.resolve(middlewareSource),
+            exists: (path: string) => Promise.resolve(path === middlewarePath),
+            readFile: readProjectFile,
+            readTextFile: readProjectFile,
+            readOptionalTextFile: (path: string) =>
+              path === middlewarePath ? Promise.resolve(middlewareSource) : Promise.resolve(null),
+            createStyleConfigBinding: () => Promise.resolve(styleConfigBinding),
+            installStyleConfig: (binding: unknown) =>
+              Promise.resolve(binding === styleConfigBinding),
           };
           const resolvedContexts: Array<{
             projectSlug: string;
@@ -567,6 +602,7 @@ describe(
               port: 0,
               bindAddress: "127.0.0.1",
               adapter: proxyAdapter,
+              projectEnvFetch,
               bootstrapResult: {
                 adapter: proxyAdapter,
                 config: {
@@ -591,6 +627,7 @@ describe(
                 headers: {
                   "x-project-slug": projectSlug,
                   "x-project-id": projectId,
+                  "x-environment-id": environmentId,
                   "x-release-id": releaseId,
                   "x-token": "request-token",
                 },
@@ -613,6 +650,11 @@ describe(
                 context.productionMode === true && context.releaseId === releaseId
               ),
               "Middleware loading must use production release context",
+            );
+            assert(
+              projectEnvRequests.some((path) => path.includes("/projects/-/proxy-routing/")) &&
+                projectEnvRequests.some((path) => path.endsWith("/environment-variables")),
+              "Hosted middleware resolution must verify routing metadata and load its environment",
             );
           } finally {
             invalidateProjectMiddlewareCache(projectSlug, projectId);

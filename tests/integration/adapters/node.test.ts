@@ -256,6 +256,7 @@ describe(
               port,
               bindAddress: "127.0.0.1",
             });
+            await handle.ready;
 
             assertExists(handle);
             assertEquals(typeof handle.stop, "function");

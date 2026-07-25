@@ -130,6 +130,28 @@ describe("routing/api/openapi/spec-generator", () => {
     assertEquals(throwingDescriptorCalls, 1);
   });
 
+  it("accepts an explicit standalone host-execution capability", async () => {
+    const adapter = createMockAdapter();
+    const router = new ApiRouteMatcher();
+
+    try {
+      const spec = await generateOpenAPISpec(
+        router,
+        "/project",
+        adapter,
+        undefined,
+        {
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        },
+      );
+
+      assertEquals(spec.paths, {});
+    } finally {
+      router.destroy();
+    }
+  });
+
   it("documents only routes in the exact /api URL namespace", async () => {
     let fileReads = 0;
     const adapter = {

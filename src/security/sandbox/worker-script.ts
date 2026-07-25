@@ -735,6 +735,20 @@ function consumeStringBudget(
 function snapshotStringRecord(
   value: unknown,
   field: string,
+  valueMayBeArray: false,
+  maxUtf8Bytes?: number,
+  maxValues?: number,
+): Record<string, string>;
+function snapshotStringRecord(
+  value: unknown,
+  field: string,
+  valueMayBeArray: true,
+  maxUtf8Bytes?: number,
+  maxValues?: number,
+): Record<string, string | string[]>;
+function snapshotStringRecord(
+  value: unknown,
+  field: string,
   valueMayBeArray: boolean,
   maxUtf8Bytes = MAX_WORKER_STRING_COLLECTION_UTF8_BYTES,
   maxValues = MAX_WORKER_STRING_COLLECTION_VALUES,
@@ -779,7 +793,7 @@ function snapshotProjectEnv(
     "projectEnv",
     false,
     MAX_WORKER_PROJECT_ENV_UTF8_BYTES,
-  ) as Record<string, string>;
+  );
   const keys = objectKeys(env);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
@@ -1226,7 +1240,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
       params: snapshotStringRecord(
         readDataProperty(request, "params"),
         "params",
-        true,
+        false,
       ),
       projectDir: requireString(
         readDataProperty(request, "projectDir"),
@@ -1983,7 +1997,7 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
         const handlerFn = resolveRouteHandlerExport(mod, req.method) as
           | ((
             request: Request,
-            context: { params: Record<string, string | string[]> },
+            context: { params: Record<string, string> },
           ) => Promise<unknown> | unknown)
           | undefined;
 

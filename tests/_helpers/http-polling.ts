@@ -59,14 +59,21 @@ export async function waitForPromiseWithTimeout<T>(
 export async function fetchWithTimeout(
   url: string,
   timeoutMs: number = SERVER_CONFIG.FETCH_TIMEOUT,
+  init: RequestInit = {},
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const callerSignal = init.signal;
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -89,17 +96,26 @@ export async function closeResponse(res: Response | undefined | null): Promise<v
 
 async function probeHttpReady(
   url: string,
-  options: { requestTimeoutMs?: number; verifyWithSecondRequest?: boolean } = {},
+  options: {
+    requestTimeoutMs?: number;
+    verifyWithSecondRequest?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<boolean> {
-  const { requestTimeoutMs = SERVER_CONFIG.FETCH_TIMEOUT, verifyWithSecondRequest = true } =
-    options;
+  const {
+    requestTimeoutMs = SERVER_CONFIG.FETCH_TIMEOUT,
+    verifyWithSecondRequest = true,
+    signal,
+  } = options;
 
-  const response = await fetchWithTimeout(url, requestTimeoutMs);
+  const response = await fetchWithTimeout(url, requestTimeoutMs, { signal });
   try {
     if (!isReadyStatus(response.status)) return false;
     if (!verifyWithSecondRequest) return true;
 
-    const verifyResponse = await fetchWithTimeout(url, requestTimeoutMs);
+    const verifyResponse = await fetchWithTimeout(url, requestTimeoutMs, {
+      signal,
+    });
     try {
       return isReadyStatus(verifyResponse.status);
     } finally {
@@ -135,6 +151,7 @@ export async function pollHttpReadyByTimeout(
     requestTimeoutMs?: number;
     verifyWithSecondRequest?: boolean;
     delay?: DelayFn;
+    signal?: AbortSignal;
   } = {},
 ): Promise<ReadyByTimeoutPollResult> {
   const {
@@ -143,21 +160,31 @@ export async function pollHttpReadyByTimeout(
     requestTimeoutMs = SERVER_CONFIG.FETCH_TIMEOUT,
     verifyWithSecondRequest = true,
     delay = defaultDelay,
+    signal,
   } = options;
 
   const startTime = Date.now();
   let attempts = 0;
   let lastError: Error | null = null;
 
-  while (Date.now() - startTime < timeoutMs) {
+  while (!signal?.aborted && Date.now() - startTime < timeoutMs) {
     attempts++;
 
     try {
-      const ready = await probeHttpReady(url, { requestTimeoutMs, verifyWithSecondRequest });
+      const ready = await probeHttpReady(url, {
+        requestTimeoutMs,
+        verifyWithSecondRequest,
+        signal,
+      });
       if (ready) return { ready: true, attempts, lastError };
     } catch (error) {
       lastError = error as Error;
-      if (Date.now() - startTime < timeoutMs) await delay(retryDelayMs);
+      if (
+        !signal?.aborted &&
+        Date.now() - startTime < timeoutMs
+      ) {
+        await delay(retryDelayMs);
+      }
     }
   }
 

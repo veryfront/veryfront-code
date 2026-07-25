@@ -19,6 +19,7 @@ import {
   createBuiltinExtensions,
   ensureBuiltinSchemaValidator,
 } from "#veryfront/extensions/builtin-extensions.ts";
+import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/defaults.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
@@ -578,8 +579,13 @@ export async function bootstrap(
       runtime: adapter.id,
     });
 
-    // Initialize esbuild early - extracts binary from VFS if running as deno compile
-    // This must happen before any module imports esbuild
+    // Configuration loading and environment setup can require transforms
+    // before extension orchestration owns the active generation. Restore the
+    // shipped bundler contracts after a prior generation has been disposed so
+    // sequential server lifecycles do not depend on stale global state.
+    await ensureDefaultBundlerContracts();
+
+    // Validate the early transform contract before configuration is loaded.
     await initializeEsbuild();
     await ensureEnvLoaded(projectDir, adapter);
     ensureBuiltinSchemaValidator();

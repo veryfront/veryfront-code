@@ -189,6 +189,7 @@ const allowedWarnings: string[] = [
   "not-found.tsx",
   "loading.tsx",
   "error.tsx",
+  "Neither CORS nor CSRF protection is configured.",
 
   // Primitive discovery warnings (expected when test projects have no agents/tools)
   "Primitive discovery found 0 agents and 0 tools",

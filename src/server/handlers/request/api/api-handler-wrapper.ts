@@ -15,7 +15,7 @@ import {
 import { isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import { internalServerError, serviceUnavailable } from "#veryfront/http/responses";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
-import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
+import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const NativeResponse = Response;
 const stringStartsWith = String.prototype.startsWith;
@@ -137,7 +137,10 @@ export class ApiHandlerWrapper extends BaseHandler {
           // Isolated API handling must never cross that boundary: the route
           // handler either uses worker-owned prepared capabilities or rejects
           // the unsupported project explicitly before creating a worker.
-          if (!isWorkerIsolationEnabled() && isExplicitlyLocalProject(ctx)) {
+          if (
+            !isWorkerIsolationEnabled() &&
+            isHostProjectCodeExecutionAllowed(ctx)
+          ) {
             await ensureProjectDiscovery(ctx);
           }
 

@@ -348,6 +348,75 @@ describe("APIRouteHandler", () => {
       });
     });
 
+    it("allows an explicit standalone host-execution capability without local-development semantics", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("standalone host execution"),
+            });
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            return Promise.reject(new Error("must not prepare standalone local source"));
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+        let accessorCalls = 0;
+        const inherited = Object.create({
+          allowHostProjectCodeExecution: true,
+        }) as HandlerContext;
+        const accessor = Object.defineProperty(
+          {},
+          "allowHostProjectCodeExecution",
+          {
+            get() {
+              accessorCalls++;
+              return true;
+            },
+          },
+        ) as HandlerContext;
+
+        for (const untrustedCtx of [inherited, accessor]) {
+          const rejected = await handler.handle(
+            new Request("http://localhost/api/resource"),
+            untrustedCtx,
+          );
+          assertEquals(rejected?.status, 500);
+        }
+
+        const ctx = {
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+        } as HandlerContext;
+
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          ctx,
+        );
+        const capabilities = await handler.resolveRouteMethods(
+          "/api/resource",
+          undefined,
+          ctx,
+        );
+
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "standalone host execution");
+        assertEquals(capabilities.status, "resolved");
+        assertEquals(hostLoads, 1);
+        assertEquals(preparations, 2);
+        assertEquals(accessorCalls, 0);
+      });
+    });
+
     it("keeps an empty request context remote after prototype poisoning", async () => {
       await withApiWorkerIsolationDisabled(async () => {
         const adapter = createMockAdapter();

@@ -27,6 +27,7 @@ import { clearConfigCache } from "#veryfront/config";
 import { join } from "#veryfront/compat/path";
 import { mkdir } from "#veryfront/compat/fs.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
 import { delay } from "#std/async";
 import {
@@ -889,11 +890,15 @@ describe("bootstrap - Error Handling", () => {
          export default config;`,
       );
 
-      await assertRejects(
+      const error = await assertRejects(
         () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
-        Error,
-        "Unknown config keys: self",
-      );
+        VeryfrontError,
+      ) as VeryfrontError;
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.context, {
+        field: "<root>",
+        expected: 'Unrecognized key: "self"',
+      });
     });
   });
 
@@ -910,11 +915,15 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      await assertRejects(
+      const error = await assertRejects(
         () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
-        Error,
-        "Unknown config keys: onBuild",
-      );
+        VeryfrontError,
+      ) as VeryfrontError;
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.context, {
+        field: "<root>",
+        expected: 'Unrecognized key: "onBuild"',
+      });
     });
   });
 });

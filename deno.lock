@@ -69,6 +69,7 @@
     "npm:mdast-util-to-string@4.0.0": "4.0.0",
     "npm:node-fetch@3.3.2": "3.3.2",
     "npm:pdf-lib@1.17.1": "1.17.1",
+    "npm:playwright@*": "1.60.0",
     "npm:playwright@1.60.0": "1.60.0",
     "npm:protobufjs@7.6.5": "7.6.5",
     "npm:redis@5.11.0": "5.11.0",

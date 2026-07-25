@@ -3,6 +3,7 @@ import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   buildSourceMissCacheKey,
+  clearSourceMissCache,
   hasSourceMiss,
   rememberSourceMiss,
 } from "../../../src/modules/server/module-source-resolution-cache.ts";
@@ -29,14 +30,32 @@ describe("cache-invalidation", () => {
       const cacheKey = buildSourceMissCacheKey({
         resolver: "module-server",
         projectDir: "/test-project",
+        projectSlug: "test-project",
+        basePath: "components/Missing",
+      });
+      const unrelatedCacheKey = buildSourceMissCacheKey({
+        resolver: "module-server",
+        projectDir: "/other-project",
+        projectSlug: "other-project",
         basePath: "components/Missing",
       });
       rememberSourceMiss(cacheKey);
+      rememberSourceMiss(unrelatedCacheKey);
       assertEquals(hasSourceMiss(cacheKey), true);
+      assertEquals(hasSourceMiss(unrelatedCacheKey), true);
 
-      await invalidateProjectCaches("test-project");
+      try {
+        await invalidateProjectCaches("test-project");
 
-      assertEquals(hasSourceMiss(cacheKey), false);
+        assertEquals(hasSourceMiss(cacheKey), false);
+        assertEquals(
+          hasSourceMiss(unrelatedCacheKey),
+          true,
+          "Project invalidation must not evict another tenant's miss entries",
+        );
+      } finally {
+        clearSourceMissCache();
+      }
     });
   });
 });

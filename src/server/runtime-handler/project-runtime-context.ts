@@ -9,6 +9,7 @@ import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/cont
 import { API_CLIENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
@@ -480,6 +481,8 @@ export async function resolveProjectRuntimeContext(
     requestContext: effectiveRequestContext,
     routeRegistry: input.routeRegistry,
     isLocalProject: adapterRes.isLocalProject,
+    allowHostProjectCodeExecution: adapterRes.isLocalProject ||
+      (!input.isProxyMode && !isVirtualFilesystem(adapterRes.adapter.fs)),
     moduleServerUrl: input.moduleServerUrl,
     environmentId: hostedLoad?.environmentId ??
       input.environmentId ??

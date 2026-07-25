@@ -213,15 +213,11 @@ Reproducible evidence for this open checkpoint:
   virtual-module step ignored. It wraps readonly runtime handles and reports
   the actual ephemeral port instead of mutating production objects.
 
-The repository-wide test gate remains open. The latest complete parallel run,
-before the test-server adapter correction, reached 3,503 passing tests and
-27,821 passing steps, with 37 failed tests and 144 failed steps plus one
-intentional ignored test. Serial reproduction after the correction isolates
-the remaining failures outside this prompt/resource slice: four bundle
-dependency-invalidation cases, one source-miss cache invalidation case, and
-seven config-error wording assertions. These failures are retained as work to
-resolve; they are not hidden by treating the focused checkpoint as a full
-repository certification.
+The repository-wide test gate now passes after the cross-module remediation
+checkpoint below: 3,540 tests and 28,025 steps passed with zero failures; one
+intentional test with 36 steps remains ignored. This broad result resolves the
+previous cache, config, and production-server regressions, but it does not
+close the prompt/resource design findings listed below.
 
 The following findings deliberately keep both modules in
 `Deep reviewed, fixes pending`:
@@ -245,6 +241,81 @@ The following findings deliberately keep both modules in
   duplicate/invalid-export diagnostics for nested prompt names.
 - Resource canonicalization for query/fragment variants and non-JSON content
   modes remains an explicit transport-design decision.
+
+### Cross-module cache, routing, and production-server remediation checkpoint
+
+This checkpoint resolves the repository-wide regressions exposed after the
+prompt/resource work without converting focused fixes into formal closure of
+the affected top-level units:
+
+- Dependency discovery lowers authored TypeScript, JSX, TSX, and MDX through
+  one shared syntax-normalization path before lexing. SSR memory, distributed,
+  and MDX-ESM cache identities now include the complete local dependency graph,
+  so an unchanged parent cannot retain transformed paths for a changed child.
+- SSR singleflight returns the exact transformed entry to leaders and waiters
+  instead of recovering it through mutable global cache state. Failed graph
+  scans use request-local coordination, bypass persistent and in-memory cache
+  publication, and cannot alias with a valid no-dependency graph.
+- Configuration module selection is based on default-export presence rather
+  than truthiness. Explicit falsy defaults reach structured schema validation,
+  while named-export-only modules retain their compatibility behavior.
+  Sequential bootstrap lifecycles restore the shipped bundler contracts before
+  early configuration transforms.
+- Malformed import-map JSON fails closed instead of silently replacing authored
+  resolution with defaults. Project source-miss invalidation is tenant-scoped
+  and leaves unrelated project entries intact.
+- App Router page resolution skips a conventional page candidate only when
+  filesystem metadata proves it is not a file; operational read failures remain
+  observable. Catch-all parameters are slash-flattened consistently for both
+  in-process and isolated App Router handlers, and the worker protocol rejects
+  unflattened arrays at that boundary.
+- Local-development policy and permission to execute project modules in the
+  host process are now separate capabilities. Explicit local projects and
+  non-proxy disk-backed standalone projects may load their API modules;
+  proxy-backed and virtual-filesystem projects fail closed. Admission reads
+  only own data properties, so inherited or accessor-based capability forgery
+  cannot authorize execution. Development error-detail and response-header
+  behavior continues to depend on actual locality rather than this narrower
+  execution permission.
+- API discovery, route execution, and OpenAPI inspection share that
+  host-execution boundary. This restores compiled standalone API routes without
+  reclassifying production projects as local or weakening their security
+  headers.
+- Standalone cache-isolation slugs no longer imply a credentialed proxy
+  filesystem. Hosted middleware integration verifies authoritative routing and
+  environment metadata, and server test handles register idempotent cleanup so
+  failed assertions cannot poison later lifecycle tests.
+- The default parallel test portfolio no longer races two suites that own the
+  same compiled-binary artifact. Core and virtual-filesystem proxy coverage run
+  through explicit serial tasks, with static task-boundary and artifact-
+  ownership regressions guarding that split.
+
+Reproducible checkpoint evidence:
+
+- The config loader, bootstrap, schema, import-map, and integration surface
+  passed 11 suites and 274 steps with zero failures.
+- The SSR loader regression surface passed 21 steps with zero failures,
+  including stale artifacts, missing dependencies, singleflight eviction, and
+  uncacheable publication behavior.
+- The route executor, worker boundary, page resolver, and two production-server
+  integration suites passed 180 focused steps with zero failures.
+- The host-execution, handler-context, API-wrapper, OpenAPI, route-executor,
+  adapter, and production-server surface passed 10 focused suites and 304 steps
+  with zero failures.
+- The exact-source compiled-binary core lane passed 61 steps. Its separate
+  virtual-filesystem proxy lane passed three steps, including the fail-closed
+  no-API-token path; the live token-dependent assertion remains conditional.
+- Three focused task-boundary, artifact-ownership, and readiness-cancellation
+  regressions passed. Early child-process exit now cancels the losing HTTP poll
+  instead of leaving it alive until the suite deadline.
+- `deno task verify:quick` passed generated manifests, formatting, lint and
+  architecture ratchets, documentation validation, and every configured
+  entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilt the root npm package and every
+  first-party extension package, verified root import lifecycle behavior, and
+  passed the documented consumer-composition typecheck.
+- `deno task test` passed 3,540 tests and 28,025 steps with zero failures; one
+  intentional test with 36 steps remained ignored.
 
 ### Metrics remediation checkpoint
 
@@ -639,12 +710,17 @@ The following bounded residuals are explicit rather than hidden:
 
 The current config closure checkpoint has the following reproducible evidence:
 
+- The latest loader revalidation preserved explicit falsy defaults for schema
+  rejection, retained named-export-only modules, and aligned integration
+  assertions with structured `config-validation-failed` errors. The affected
+  config/bootstrap/import-map surface passed 11 suites and 274 steps with zero
+  failures.
 - The complete changed test surface passed 81 test groups and 773 steps with
   zero failures, including loader, evaluator, worker, schema, discovery,
   environment, paths, hosted policy, retry, token, runs, GitHub, documentation,
   and release-asset regressions.
-- The repository unit suite passed 2,982 tests and 23,584 steps with zero
-  failures; one intentional case remains ignored with five steps.
+- The current repository suite passed 3,540 tests and 28,025 steps with zero
+  failures; one intentional test with 36 steps remains ignored.
 - `deno task verify:quick` passed, including formatting, linting, static policy
   ratchets, sanitizer and skipped-test baselines, dependency and module
   boundaries, documentation validation, and full entrypoint typechecking.

@@ -5,6 +5,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { getAdapter } from "#veryfront/platform";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "#veryfront/config";
+import { VeryfrontError } from "#veryfront/errors";
 import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -136,11 +137,15 @@ describe("config/loader", () => {
       clearConfigCache();
       const adapter = await getAdapter();
 
-      await assertRejects(
+      const error = await assertRejects(
         () => getConfig(context.projectDir, adapter),
-        Error,
-        "Unknown config keys: unknownKey, anotherUnknown",
-      );
+        VeryfrontError,
+      ) as VeryfrontError;
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.context, {
+        field: "<root>",
+        expected: 'Unrecognized keys: "unknownKey", "anotherUnknown"',
+      });
     });
   });
 

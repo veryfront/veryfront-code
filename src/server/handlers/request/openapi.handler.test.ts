@@ -118,6 +118,28 @@ describe("server/handlers/request/openapi.handler", () => {
     assertEquals(calls.filter((call) => call.startsWith("exists:")).length, 3);
   });
 
+  it("allows approved standalone source without enabling local-development policy", async () => {
+    const { fs, calls } = createMockFs();
+    const handler = new OpenAPIHandler();
+    const ctx = createCtx({
+      adapter: { fs } as never,
+      isLocalProject: false,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/_openapi.json"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(
+      result.response?.headers.get("cache-control"),
+      "no-cache, no-store, must-revalidate",
+    );
+    assertEquals(calls.filter((call) => call.startsWith("exists:")).length, 3);
+  });
+
   it("treats omitted locality as remote without touching the filesystem", async () => {
     const { fs, calls } = createMockFs({ existsReturn: true });
     const handler = new OpenAPIHandler();

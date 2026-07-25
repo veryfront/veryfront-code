@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import * as esbuild from "veryfront/extensions/bundler";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import {
   makeTempDir,
@@ -22,6 +23,7 @@ import {
   serializeMdxModuleRecoveryPayload,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/recovery-payload.ts";
 import { createSSRImportMapIdentity } from "./import-map-identity.ts";
+import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 
 class FakeDistributedCache implements CacheBackend {
   readonly type = "redis" as const;
@@ -43,6 +45,10 @@ class FakeDistributedCache implements CacheBackend {
 }
 
 describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+  afterAll(async () => {
+    await esbuild.stop();
+  });
+
   it("uses full SHA-256 identities for both small and large module content", async () => {
     const manager = new SSRCacheManager({
       projectDir: "/project",
@@ -57,6 +63,58 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(await manager.hashContentAsync(small), await computeHash(small));
     assertEquals(await manager.hashContentAsync(large), await computeHash(large));
     assertEquals((await manager.hashContentAsync(small)).length, 64);
+  });
+
+  it("changes the outer cache identity when a TSX dependency graph changes", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-graph-identity-" });
+    const pagePath = join(projectDir, "app", "page.tsx");
+    const childPath = join(projectDir, "app", "Child.tsx");
+    const pageSource = [
+      `import Child from "./Child";`,
+      `export default function Page() { return <main><Child /></main>; }`,
+    ].join("\n");
+    const manager = new SSRCacheManager({
+      projectDir,
+      projectId: "graph-identity-project",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+    });
+
+    try {
+      await mkdir(join(projectDir, "app"), { recursive: true });
+      await writeTextFile(pagePath, pageSource);
+      await writeTextFile(
+        childPath,
+        `export default function Child() { return <span>one</span>; }`,
+      );
+
+      const sourceHash = await manager.hashContentAsync(pageSource);
+      const first = await manager.getSourceGraphCacheIdentity(
+        pagePath,
+        sourceHash,
+        createDependencyHashCache(),
+      );
+      await writeTextFile(
+        childPath,
+        `export default function Child() { return <span>two</span>; }`,
+      );
+      const second = await manager.getSourceGraphCacheIdentity(
+        pagePath,
+        sourceHash,
+        createDependencyHashCache(),
+      );
+
+      assertEquals(first.cacheable, true);
+      assertEquals(second.cacheable, true);
+      if (!first.cacheable || !second.cacheable) {
+        throw new Error("Expected cacheable dependency graph identities");
+      }
+      assertNotEquals(first.hash, second.hash);
+      assertNotEquals(first.dependencyHash, second.dependencyHash);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
   });
 
   it("isolates SSR module cache identities by import-map fingerprint", async () => {

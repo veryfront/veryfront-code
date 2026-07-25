@@ -8,6 +8,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { HandlerFn, RouteHandlerModule } from "./types.ts";
 import { resolveAppRouteFile } from "./app-router-resolver.ts";
 import { applySecurityHeaders } from "./security-headers.ts";
+import { flattenRouteParams } from "#veryfront/routing";
 import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
@@ -47,7 +48,7 @@ export async function handleAppRouter(
     const [fn, headShim] = resolveHandlerFunction(mod, method);
     if (!fn) return methodNotAllowed(getAllowedMethods(mod));
 
-    const res = await fn(req, { params: match.params });
+    const res = await fn(req, { params: flattenRouteParams(match.params) });
     const headers = new Headers(res.headers);
 
     await applyCORSHeaders({

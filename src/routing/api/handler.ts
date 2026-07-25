@@ -38,6 +38,7 @@ import { isCompiledBinary } from "#veryfront/utils";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { resolvePreparedRemoteHosts } from "./module-loader/security-config.ts";
 import {
+  isExplicitHostProjectCodeExecutionAllowed,
   isExplicitlyLocalProject,
   readOwnDataProperty as readBoundaryOwnDataProperty,
 } from "#veryfront/security/project-locality.ts";
@@ -206,22 +207,31 @@ function isAppRouteModule(modulePath: string): boolean {
   return /\/route\.(ts|js|tsx|jsx)$/.test(modulePath);
 }
 
-interface RequestLocalitySnapshot {
+interface RequestExecutionPolicySnapshot {
   readonly isLocalProject: boolean;
+  readonly allowHostProjectCodeExecution: boolean;
 }
 
 interface HandleOptionsSnapshot {
   readonly applyCORS: boolean;
 }
 
-function snapshotRequestLocality(ctx?: HandlerContext): RequestLocalitySnapshot {
+function snapshotRequestExecutionPolicy(
+  ctx?: HandlerContext,
+): RequestExecutionPolicySnapshot {
   const snapshot = createSnapshotRecord();
+  const isLocalProject = isExplicitlyLocalProject(ctx);
   defineSnapshotProperty(
     snapshot,
     "isLocalProject",
-    isExplicitlyLocalProject(ctx),
+    isLocalProject,
   );
-  return freezeSnapshot(snapshot) as unknown as RequestLocalitySnapshot;
+  defineSnapshotProperty(
+    snapshot,
+    "allowHostProjectCodeExecution",
+    isLocalProject || isExplicitHostProjectCodeExecutionAllowed(ctx),
+  );
+  return freezeSnapshot(snapshot) as unknown as RequestExecutionPolicySnapshot;
 }
 
 function snapshotHandleOptions(
@@ -451,7 +461,7 @@ export class APIRouteHandler {
     options?: APIRouteHandleOptions,
   ): Promise<Response | null> {
     const { pathname } = new URL(request.url);
-    const { isLocalProject } = snapshotRequestLocality(ctx);
+    const { isLocalProject, allowHostProjectCodeExecution } = snapshotRequestExecutionPolicy(ctx);
     const { applyCORS } = snapshotHandleOptions(options);
     this.activeRequests++;
 
@@ -500,7 +510,8 @@ export class APIRouteHandler {
         const isAppRoute = isAppRouteModule(match.route.page);
         let response: Response;
 
-        const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
+        const isolationRequired = isWorkerIsolationEnabled() ||
+          !allowHostProjectCodeExecution;
         if (isolationRequired) {
           const isolationUnavailableReason = await this.ensureIsolationCompatibility(adapter);
           if (isolationUnavailableReason) {
@@ -546,6 +557,7 @@ export class APIRouteHandler {
           response = isAppRoute
             ? await executeAppRoute(handler, request, match, pathname, adapter, {
               isLocalProject,
+              allowHostProjectCodeExecution,
             })
             : await executePagesRoute(
               handler,
@@ -554,7 +566,7 @@ export class APIRouteHandler {
               pathname,
               adapter,
               this.projectDir,
-              { isLocalProject },
+              { isLocalProject, allowHostProjectCodeExecution },
             );
         }
 
@@ -585,7 +597,7 @@ export class APIRouteHandler {
     requestedMethod?: string,
     ctx?: HandlerContext,
   ): Promise<APIRouteMethodResolution> {
-    const { isLocalProject } = snapshotRequestLocality(ctx);
+    const { allowHostProjectCodeExecution } = snapshotRequestExecutionPolicy(ctx);
     this.activeRequests++;
 
     return withSpan<APIRouteMethodResolution>(
@@ -594,7 +606,8 @@ export class APIRouteHandler {
         const match = this.router.match(pathname);
         if (!match) return { status: "not-found" };
 
-        const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
+        const isolationRequired = isWorkerIsolationEnabled() ||
+          !allowHostProjectCodeExecution;
         if (isolationRequired) {
           const adapter = await this.ensureAdapter();
           const isolationUnavailableReason = await this.ensureIsolationCompatibility(adapter);

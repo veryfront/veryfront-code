@@ -1183,6 +1183,75 @@ describe("routing/api/route-executor", () => {
       assertEquals(throwingDescriptorCalls > 0, true);
     });
 
+    it("executes trusted standalone source in-process without treating production as development", async () => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+      let hostExecutions = 0;
+      const handler = {
+        GET: () => {
+          hostExecutions++;
+          return new Response("standalone host execution");
+        },
+      };
+      let accessorCalls = 0;
+      const inherited = Object.create({
+        allowHostProjectCodeExecution: true,
+      }) as ExecuteRouteOptions;
+      const accessor = Object.defineProperty(
+        {},
+        "allowHostProjectCodeExecution",
+        {
+          get() {
+            accessorCalls++;
+            return true;
+          },
+        },
+      ) as ExecuteRouteOptions;
+
+      for (const untrustedOptions of [inherited, accessor]) {
+        const rejected = await executeAppRouteWithBoundary(
+          handler,
+          new Request("http://localhost/api/test"),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          untrustedOptions,
+        );
+        assertEquals(rejected.status, 500);
+      }
+
+      const options = {
+        isLocalProject: false,
+        allowHostProjectCodeExecution: true,
+      } as ExecuteRouteOptions;
+
+      const appResponse = await executeAppRouteWithBoundary(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        options,
+      );
+      const pagesResponse = await executePagesRouteWithBoundary(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        options,
+      );
+
+      assertEquals(appResponse.status, 200);
+      assertEquals(await appResponse.text(), "standalone host execution");
+      assertEquals(pagesResponse.status, 200);
+      assertEquals(await pagesResponse.text(), "standalone host execution");
+      assertEquals(hostExecutions, 2);
+      assertEquals(accessorCalls, 0);
+    });
+
     it("keeps absent App and Pages locality fail-closed after prototype poisoning", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
@@ -2342,6 +2411,36 @@ describe("routing/api/route-executor", () => {
   });
 
   describe("real-worker route parity and error boundaries", () => {
+    it("normalizes catch-all params before isolated App Router execution", async () => {
+      const response = await withRealWorkerRoute(
+        `
+          export function GET(_request, { params }) {
+            return Response.json({
+              slug: params.slug,
+              isArray: Array.isArray(params.slug),
+            });
+          }
+        `,
+        (modulePath, _projectDir, options) =>
+          executeAppRoute(
+            {},
+            new Request("http://localhost/api/docs/guide/intro"),
+            makeMatch("/api/docs/[...slug]", modulePath, {
+              slug: ["guide", "intro"],
+            }),
+            "/api/docs/guide/intro",
+            makeAdapter("production"),
+            { ...options, isLocalProject: false },
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        slug: "guide/intro",
+        isArray: false,
+      });
+    });
+
     it("does not expose rejected module paths or execution scopes to hosted callers", async () => {
       const modulePath = "/private/host/secret-route.ts";
       const executionScopeId = "api:secret-host-scope";

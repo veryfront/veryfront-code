@@ -301,7 +301,7 @@ describe("worker-script request snapshots", () => {
         headers: [["x-test", "before"]],
         body: new Uint8Array([1, 2, 3]),
       },
-      params: { slug: ["before"] },
+      params: { slug: "before" },
       projectDir: "/project",
       sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
       projectEnv: { TENANT_VALUE: "before" },
@@ -311,7 +311,7 @@ describe("worker-script request snapshots", () => {
     original.module.source = "export function POST() {}";
     original.request.headers[0]![1] = "after";
     original.request.body[0] = 9;
-    original.params.slug[0] = "after";
+    original.params.slug = "after";
     original.projectEnv.TENANT_VALUE = "after";
 
     assertEquals(snapshot.type, "execute-app-route");
@@ -321,8 +321,35 @@ describe("worker-script request snapshots", () => {
     assertEquals(snapshot.module.source, "export function GET() {}");
     assertEquals(snapshot.request.headers, [["x-test", "before"]]);
     assertEquals(snapshot.request.body, new Uint8Array([1, 2, 3]));
-    assertEquals(snapshot.params, { slug: ["before"] });
+    assertEquals(snapshot.params, { slug: "before" });
     assertEquals(snapshot.projectEnv, { TENANT_VALUE: "before" });
+  });
+
+  it("rejects array-valued App Router params after the host boundary", () => {
+    assertThrows(
+      () =>
+        snapshotWorkerRequest({
+          type: "execute-app-route",
+          id: "unflattened-app-params",
+          module: {
+            source: "export function GET() {}",
+            sha256: "a".repeat(64),
+          },
+          modulePath: "/project/app/api/route.ts",
+          method: "GET",
+          request: {
+            url: "http://localhost/api/test",
+            method: "GET",
+            headers: [],
+            body: null,
+          },
+          params: { slug: ["before"] },
+          projectDir: "/project",
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        }),
+      TypeError,
+      "Invalid worker request params",
+    );
   });
 
   it("requires a non-empty logical module identity", () => {

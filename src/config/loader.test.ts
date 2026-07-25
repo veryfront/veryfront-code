@@ -3101,6 +3101,41 @@ export default config as const;
       assertEquals(config.title, "single-project-executable");
     });
 
+    it("validates an explicit falsy default from a trusted virtual module", async () => {
+      const adapter = setup();
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+        readFile: async () => "export default false;",
+      });
+
+      const error = await assertRejects(
+        () => getConfig("/falsy-single-project-config", adapter),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      assertEquals(error.slug, "config-validation-failed");
+      assertEquals(error.context, {
+        field: "<root>",
+        expected: "Invalid input: expected object, received boolean",
+      });
+    });
+
+    it("retains named-export-only trusted virtual config modules", async () => {
+      const adapter = setup();
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => false,
+        isVeryfrontAdapter: () => true,
+        readFile: async () => 'export const title = "named-virtual-config";',
+      });
+
+      const config = await getConfig("/named-single-project-config", adapter);
+
+      assertEquals(config.title, "named-virtual-config");
+    });
+
     it("isolates virtual config values by exact branch, release, and environment", async () => {
       const adapter = setup();
       const reads: string[] = [];

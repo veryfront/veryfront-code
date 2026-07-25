@@ -87,7 +87,7 @@ class InProgressTransformWaitTimeoutError extends Error {
 
 function deleteInProgressTransformIfCurrent(
   key: string,
-  transformPromise: Promise<void>,
+  transformPromise: Promise<ModuleCacheEntry>,
 ): boolean {
   if (globalInProgress.get(key) !== transformPromise) return false;
   return globalInProgress.delete(key);
@@ -99,7 +99,7 @@ function shouldRetryRejectedInProgressTransform(rejectedLeaderCount: number): bo
 
 function scheduleStaleInProgressTransformEviction(
   key: string,
-  transformPromise: Promise<void>,
+  transformPromise: Promise<ModuleCacheEntry>,
   filePath: string,
 ): ReturnType<typeof setTimeout> {
   const timer = setTimeout(() => {
@@ -115,11 +115,12 @@ function scheduleStaleInProgressTransformEviction(
 
 function publishTransformCacheIfCurrent(input: {
   inProgressKey: string;
-  transformPromise: Promise<void>;
+  transformPromise: Promise<ModuleCacheEntry>;
   staleEvictionTimer: ReturnType<typeof setTimeout>;
   contentCacheKey: string;
   filePathCacheKey: string;
   entry: ModuleCacheEntry;
+  retainInMemory: boolean;
   publishDistributed?: () => void;
 }): boolean {
   if (globalInProgress.get(input.inProgressKey) !== input.transformPromise) {
@@ -131,8 +132,10 @@ function publishTransformCacheIfCurrent(input: {
   // cache writes below.
   clearTimeout(input.staleEvictionTimer);
   input.publishDistributed?.();
-  globalModuleCache.set(input.contentCacheKey, input.entry);
-  globalModuleCache.set(input.filePathCacheKey, input.entry);
+  if (input.retainInMemory) {
+    globalModuleCache.set(input.contentCacheKey, input.entry);
+    globalModuleCache.set(input.filePathCacheKey, input.entry);
+  }
   return true;
 }
 
@@ -146,12 +149,12 @@ export const __ssrModuleLoaderInternals = {
 };
 
 async function waitForInProgressTransform(
-  transformPromise: Promise<void>,
+  transformPromise: Promise<ModuleCacheEntry>,
   filePath: string,
-): Promise<void> {
+): Promise<ModuleCacheEntry> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
+    return await Promise.race([
       transformPromise,
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(
@@ -184,7 +187,6 @@ export class SSRModuleLoader {
     this.options = Object.freeze({ ...options });
     this.cache = new SSRCacheManager(this.options);
     this.depValidator = new SSRDependencyValidator(
-      (filePath) => this.cache.getCacheKey(filePath),
       (filePath, source, depth, dependencyHashCache) =>
         this.transformWithDependencies(filePath, source, depth, dependencyHashCache),
       (crossImport) => this.transformCrossProjectImport(crossImport),
@@ -363,21 +365,6 @@ export class SSRModuleLoader {
     }
   }
 
-  private getTransformedCacheEntry(filePath: string): ModuleCacheEntry {
-    const cacheKey = this.cache.getCacheKey(filePath);
-    const cacheEntry = globalModuleCache.get(cacheKey);
-    if (!cacheEntry) {
-      throw toError(
-        createError({
-          type: "build",
-          message: `Failed to transform module: ${filePath}`,
-          context: { file: filePath, phase: "transform" },
-        }),
-      );
-    }
-    return cacheEntry;
-  }
-
   private async invalidateMdxEsmCacheEntry(
     filePath: string,
     cacheEntry: ModuleCacheEntry,
@@ -430,10 +417,13 @@ export class SSRModuleLoader {
 
         try {
           const dependencyHashCache = createDependencyHashCache();
-          await this.transformWithDependencies(filePath, source, 0, dependencyHashCache);
+          const cacheEntry = await this.transformWithDependencies(
+            filePath,
+            source,
+            0,
+            dependencyHashCache,
+          );
           this.throwMissingDependencies(filePath);
-
-          const cacheEntry = this.getTransformedCacheEntry(filePath);
 
           try {
             const mod = await this.importModuleFromCacheEntry(filePath, fileName, cacheEntry);
@@ -451,10 +441,14 @@ export class SSRModuleLoader {
             });
 
             const retryDependencyHashCache = createDependencyHashCache();
-            await this.transformWithDependencies(filePath, source, 0, retryDependencyHashCache);
+            const retryCacheEntry = await this.transformWithDependencies(
+              filePath,
+              source,
+              0,
+              retryDependencyHashCache,
+            );
             this.throwMissingDependencies(filePath);
 
-            const retryCacheEntry = this.getTransformedCacheEntry(filePath);
             const mod = await this.importModuleFromCacheEntry(filePath, fileName, retryCacheEntry);
 
             this.circuitBreaker.recordSuccess(circuitKey);
@@ -498,7 +492,7 @@ export class SSRModuleLoader {
     source?: string,
     depth: number = 0,
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
-  ): Promise<void> {
+  ): Promise<ModuleCacheEntry> {
     const fileName = filePath.split("/").pop() || filePath;
 
     return withSpan(
@@ -516,7 +510,7 @@ export class SSRModuleLoader {
     source?: string,
     depth: number = 0,
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
-  ): Promise<void> {
+  ): Promise<ModuleCacheEntry> {
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("Max transform depth exceeded", {
         file: filePath.slice(-40),
@@ -545,11 +539,35 @@ export class SSRModuleLoader {
     }
 
     const contentHash = await this.cache.hashContentAsync(code);
-    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${contentHash}`);
+    const sourceGraphIdentity = await this.cache.getSourceGraphCacheIdentity(
+      filePath,
+      contentHash,
+      dependencyHashCache,
+    );
+    if (!sourceGraphIdentity.cacheable) {
+      logger.warn("Dependency identity unavailable; bypassing SSR module caches", {
+        file: filePath.slice(-60),
+        errorName: sourceGraphIdentity.error instanceof Error
+          ? sourceGraphIdentity.error.name
+          : typeof sourceGraphIdentity.error,
+        error: sourceGraphIdentity.error instanceof Error
+          ? sourceGraphIdentity.error.message
+          : String(sourceGraphIdentity.error),
+      });
+    }
+    const stableSourceGraphHash = sourceGraphIdentity.cacheable
+      ? sourceGraphIdentity.hash
+      : undefined;
+    // A failed dependency scan must not alias with another failed scan. The
+    // unique key is request-local coordination only and is never published to
+    // distributed or disk caches.
+    const cacheIdentity = stableSourceGraphHash ??
+      `uncacheable:${contentHash}:${crypto.randomUUID()}`;
+    const contentCacheKey = this.cache.getCacheKey(`${filePath}:${cacheIdentity}`);
     const filePathCacheKey = this.cache.getCacheKey(filePath);
     const inProgressKey = contentCacheKey;
 
-    const cachedEntry = globalModuleCache.get(contentCacheKey);
+    const cachedEntry = stableSourceGraphHash ? globalModuleCache.get(contentCacheKey) : undefined;
     if (cachedEntry) {
       if (
         await this.cache.validateMemoryCacheEntry(
@@ -561,11 +579,11 @@ export class SSRModuleLoader {
       ) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
         await this.depValidator.ensureDependenciesExist(code, filePath, depth);
-        return;
+        return cachedEntry;
       }
     }
 
-    if (isSSRDistributedCacheEnabled()) {
+    if (stableSourceGraphHash && isSSRDistributedCacheEnabled()) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
         const isValidRedisCode = await this.cache.validateCachedCode(
@@ -596,14 +614,14 @@ export class SSRModuleLoader {
             logger.debug("Redis cache hit", { file: filePath.slice(-40) });
 
             await this.depValidator.ensureDependenciesExist(code, filePath, depth);
-            return;
+            return entry;
           }
           // writeCacheFile returned false — fall through to fresh transform
         }
       }
     }
 
-    if (this.options.projectId && this.options.contentSourceId) {
+    if (stableSourceGraphHash && this.options.projectId && this.options.contentSourceId) {
       const mdxCacheDir = getMdxEsmSsrCacheDir(
         this.options.projectId,
         this.options.contentSourceId,
@@ -613,7 +631,7 @@ export class SSRModuleLoader {
         filePath,
         mdxCacheDir,
         this.options.projectDir,
-        contentHash,
+        stableSourceGraphHash,
         {
           projectId: this.options.projectId,
           contentSourceId: this.options.contentSourceId,
@@ -623,7 +641,10 @@ export class SSRModuleLoader {
       );
 
       if (mdxCacheResult.status === "hit") {
-        const entry: ModuleCacheEntry = { tempPath: mdxCacheResult.path, contentHash };
+        const entry: ModuleCacheEntry = {
+          tempPath: mdxCacheResult.path,
+          contentHash: stableSourceGraphHash,
+        };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
 
@@ -633,7 +654,7 @@ export class SSRModuleLoader {
         });
 
         await this.depValidator.ensureDependenciesExist(code, filePath, depth);
-        return;
+        return entry;
       }
 
       if (mdxCacheResult.status === "corrupted") {
@@ -650,12 +671,11 @@ export class SSRModuleLoader {
       if (!existingTransform) break;
 
       try {
-        await withSpan(
+        return await withSpan(
           SpanNames.SSR_WAIT_IN_PROGRESS,
           () => waitForInProgressTransform(existingTransform, filePath),
           { "ssr.file": filePath.split("/").pop() || filePath },
         );
-        return;
       } catch (error) {
         if (error instanceof InProgressTransformWaitTimeoutError) {
           logger.warn("In-progress transform wait timed out", {
@@ -688,9 +708,9 @@ export class SSRModuleLoader {
       }
     }
 
-    let resolveTransform!: () => void;
+    let resolveTransform!: (entry: ModuleCacheEntry) => void;
     let rejectTransform!: (err: Error) => void;
-    const transformPromise = new Promise<void>((resolve, reject) => {
+    const transformPromise = new Promise<ModuleCacheEntry>((resolve, reject) => {
       resolveTransform = resolve;
       rejectTransform = reject;
     });
@@ -781,126 +801,138 @@ export class SSRModuleLoader {
       }
 
       // Hold project slots only around the actual transform and file write.
-      await this.withTransformCapacity(filePath, "build", async () => {
-        const projectId = this.options.projectId;
-        const importMap = this.options.importMapIdentity?.importMap;
-        const transformOpts: TransformOptions = {
-          projectId,
-          dev: this.options.dev,
-          ssr: true,
-          apiBaseUrl: this.options.apiBaseUrl,
-          reactVersion: this.options.reactVersion,
-          dependencyHashCache,
-          loadImportMap: importMap ? async () => importMap : undefined,
-        };
+      const completedEntry = await this.withTransformCapacity(
+        filePath,
+        "build",
+        async (): Promise<ModuleCacheEntry> => {
+          const projectId = this.options.projectId;
+          const importMap = this.options.importMapIdentity?.importMap;
+          const transformOpts: TransformOptions = {
+            projectId,
+            dev: this.options.dev,
+            ssr: true,
+            apiBaseUrl: this.options.apiBaseUrl,
+            reactVersion: this.options.reactVersion,
+            dependencyHashCache,
+            loadImportMap: importMap ? async () => importMap : undefined,
+          };
 
-        let transformed = await withSpan(
-          SpanNames.SSR_TRANSFORM_SINGLE,
-          () =>
-            transformToESM(
-              code,
-              filePath,
-              this.options.projectDir,
-              this.options.adapter,
-              transformOpts,
-            ),
-          { "ssr.file": filePath.split("/").pop() || filePath },
-        );
+          let transformed = await withSpan(
+            SpanNames.SSR_TRANSFORM_SINGLE,
+            () =>
+              transformToESM(
+                code,
+                filePath,
+                this.options.projectDir,
+                this.options.adapter,
+                transformOpts,
+              ),
+            { "ssr.file": filePath.split("/").pop() || filePath },
+          );
 
-        for (const [specifier, tempPath] of crossProjectPaths.entries()) {
-          transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
-        }
+          for (const [specifier, tempPath] of crossProjectPaths.entries()) {
+            transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
+          }
 
-        transformed = await rewriteLocalImports(
-          transformed,
-          localImportPaths,
-          filePath,
-          this.options.projectDir,
-        );
+          transformed = await rewriteLocalImports(
+            transformed,
+            localImportPaths,
+            filePath,
+            this.options.projectDir,
+          );
 
-        transformed = await resolveVfModuleImports(transformed, {
-          filePath,
-          projectId: this.options.projectId,
-          contentSourceId: this.options.contentSourceId!,
-          adapter: this.options.adapter,
-          projectDir: this.options.projectDir,
-          reactVersion: this.options.reactVersion,
-          importMapIdentity: this.options.importMapIdentity,
-        });
+          transformed = await resolveVfModuleImports(transformed, {
+            filePath,
+            projectId: this.options.projectId,
+            contentSourceId: this.options.contentSourceId!,
+            adapter: this.options.adapter,
+            projectDir: this.options.projectDir,
+            reactVersion: this.options.reactVersion,
+            importMapIdentity: this.options.importMapIdentity,
+          });
 
-        // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
-        const bundlePaths = extractHttpBundlePaths(transformed);
-        if (bundlePaths.length > 0) {
-          const cacheDir = getHttpBundleCacheDir();
-          const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-          if (failed.length > 0) {
-            logger.error("Unrecoverable HTTP bundles", {
-              file: filePath.slice(-40),
-              failed,
-              totalBundles: bundlePaths.length,
-              cacheDir,
-              source: "fresh-transform",
-            });
+          // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
+          const bundlePaths = extractHttpBundlePaths(transformed);
+          if (bundlePaths.length > 0) {
+            const cacheDir = getHttpBundleCacheDir();
+            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+            if (failed.length > 0) {
+              logger.error("Unrecoverable HTTP bundles", {
+                file: filePath.slice(-40),
+                failed,
+                totalBundles: bundlePaths.length,
+                cacheDir,
+                source: "fresh-transform",
+              });
+              throw toError(
+                createError({
+                  type: "build",
+                  message: `Missing HTTP bundles after transform (${failed.length}).`,
+                  context: {
+                    file: filePath,
+                    phase: "http-bundle-validation",
+                    failed,
+                    cacheDir,
+                  },
+                }),
+              );
+            }
+          }
+
+          const transformedHash = await this.cache.hashContentAsync(transformed);
+
+          const tempPath = await this.cache.getTempPath(filePath, transformedHash);
+          const written = await writeCacheFile(
+            this.cache.getFs(),
+            tempPath,
+            transformed,
+            "SSR-MODULE-LOADER",
+          );
+          if (!written) {
             throw toError(
               createError({
                 type: "build",
-                message: `Missing HTTP bundles after transform (${failed.length}).`,
-                context: {
-                  file: filePath,
-                  phase: "http-bundle-validation",
-                  failed,
-                  cacheDir,
-                },
+                message: `Failed to persist transformed module: ${filePath}`,
+                context: { file: filePath, phase: "transform" },
               }),
             );
           }
-        }
 
-        const transformedHash = await this.cache.hashContentAsync(transformed);
-
-        const tempPath = await this.cache.getTempPath(filePath, transformedHash);
-        const written = await writeCacheFile(
-          this.cache.getFs(),
-          tempPath,
-          transformed,
-          "SSR-MODULE-LOADER",
-        );
-        if (!written) {
-          // Cache file write failed (directory removed concurrently or verification failed)
-          return;
-        }
-
-        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-        const published = publishTransformCacheIfCurrent({
-          inProgressKey,
-          transformPromise,
-          staleEvictionTimer,
-          contentCacheKey,
-          filePathCacheKey,
-          entry,
-          ...(isSSRDistributedCacheEnabled()
-            ? {
-              publishDistributed: () => {
-                void setInRedis(contentCacheKey, transformed, {
-                  isProduction: this.cache.isProductionContentSource(),
-                }).catch((error) => {
-                  logger.debug("Distributed cache set failed", {
-                    key: contentCacheKey,
-                    error,
+          const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+          const published = publishTransformCacheIfCurrent({
+            inProgressKey,
+            transformPromise,
+            staleEvictionTimer,
+            contentCacheKey,
+            filePathCacheKey,
+            entry,
+            retainInMemory: stableSourceGraphHash !== undefined,
+            ...(stableSourceGraphHash && isSSRDistributedCacheEnabled()
+              ? {
+                publishDistributed: () => {
+                  void setInRedis(contentCacheKey, transformed, {
+                    isProduction: this.cache.isProductionContentSource(),
+                  }).catch((error) => {
+                    logger.debug("Distributed cache set failed", {
+                      key: contentCacheKey,
+                      error,
+                    });
                   });
-                });
-              },
-            }
-            : {}),
-        });
-        if (!published) {
-          logger.debug("Skipped cache publication from stale transform leader", {
-            file: filePath.slice(-40),
+                },
+              }
+              : {}),
           });
-        }
-      });
+          if (!published) {
+            logger.debug("Skipped cache publication from stale transform leader", {
+              file: filePath.slice(-40),
+            });
+          }
+          return entry;
+        },
+      );
 
-      resolveTransform();
+      resolveTransform(completedEntry);
+      return completedEntry;
     } catch (error) {
       rejectTransform(error instanceof Error ? error : new Error(String(error)));
       throw error;

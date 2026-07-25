@@ -41,6 +41,7 @@ async function startServer(
     defaultProjectId: context.projectId,
   });
   await server.ready;
+  context.addCleanup(() => server.stop());
   return server;
 }
 

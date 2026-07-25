@@ -183,9 +183,32 @@ export function invalidateDependencyHashCache(
   return modulesToInvalidate.size;
 }
 
-export async function extractImports(code: string): Promise<string[]> {
-  const parsed = await parseAllImports(code);
-  return parsed.imports.map((imp) => imp.specifier);
+export async function extractImports(
+  code: string,
+  context?: { filePath: string; projectDir: string },
+): Promise<string[]> {
+  try {
+    const parsed = await parseAllImports(code);
+    return parsed.imports.map((imp) => imp.specifier);
+  } catch (error) {
+    if (!context) throw error;
+
+    // es-module-lexer rejects authored TS/TSX/JSX/MDX syntax. Use the same
+    // syntax-only lowering as the runtime import resolver, then retry the
+    // canonical lexer so dependency hashes cover every supported module kind.
+    const { prepareModuleSourceForImportParsing } = await import(
+      "#veryfront/transforms/esm/import-parser.ts"
+    );
+    const prepared = await prepareModuleSourceForImportParsing(
+      code,
+      context.filePath,
+      context.projectDir,
+    );
+    if (prepared === null) return [];
+
+    const parsed = await parseAllImports(prepared);
+    return parsed.imports.map((imp) => imp.specifier);
+  }
 }
 
 function getLongestMatchingScope(
@@ -567,7 +590,7 @@ async function buildDependencyGraphFresh(
 
   let normalizedDeps: string[];
   try {
-    const allImports = await extractImports(content);
+    const allImports = await extractImports(content, { filePath, projectDir });
     if (allImports.length > MAX_DEPENDENCIES_PER_MODULE) {
       throw new RangeError(`Module contains too many imports: ${filePath}`);
     }

@@ -1,5 +1,5 @@
 import "../../_helpers/contract-init.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { join } from "#veryfront/compat/path";
 import {
@@ -106,15 +106,14 @@ describe("import-map-loader", () => {
       });
     });
 
-    it("should handle malformed JSON gracefully", async () => {
+    it("rejects malformed JSON instead of silently changing resolution", async () => {
       await withImportMapTestContext("import-map-load-malformed", async (context, adapter) => {
         await writeTextFile(join(context.projectDir, "deno.json"), "{invalid json}");
 
-        const importMap = await loadImportMapForTest(context.projectDir, adapter);
-
-        assertExists(importMap);
-        assertExists(importMap.imports);
-        assertExists(importMap.imports!["react"]);
+        await assertRejects(
+          () => loadImportMapForTest(context.projectDir, adapter),
+          SyntaxError,
+        );
       });
     });
 

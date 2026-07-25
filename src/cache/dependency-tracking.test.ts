@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { expect } from "#std/expect.ts";
+import * as esbuild from "veryfront/extensions/bundler";
 import {
   computeDepsHash,
   createDependencyHashCache,
@@ -19,6 +20,10 @@ function createGetContent(files: Map<string, string>): (p: string) => Promise<st
 }
 
 describe("Dependency tracking cache invalidation", () => {
+  afterAll(async () => {
+    await esbuild.stop();
+  });
+
   describe("computeDepsHash", () => {
     it("should produce different hash when dependency content changes", async () => {
       const helperV1 = "export function helper() { return 'v1'; }\n";
@@ -102,6 +107,39 @@ describe("Dependency tracking cache invalidation", () => {
       );
 
       expect(hash1).not.toBe(hash2);
+    });
+
+    it("tracks transitive dependencies through authored TSX and JSX syntax", async () => {
+      const entryPath = "/project/app/page.tsx";
+      const componentPath = "/project/app/Button.tsx";
+      const themePath = "/project/app/theme.ts";
+      const entrySource = [
+        `import Button from "./Button";`,
+        `export default function Page() { return <main><Button /></main>; }`,
+      ].join("\n");
+      const componentSource = [
+        `import { color } from "./theme";`,
+        `export default function Button() { return <button className={color}>Go</button>; }`,
+      ].join("\n");
+      const files = new Map<string, string>([
+        [entryPath, entrySource],
+        [componentPath, componentSource],
+        [themePath, `export const color = "blue";`],
+      ]);
+
+      const first = await computeDepsHash(
+        entryPath,
+        createGetContent(files),
+        "/project",
+      );
+      files.set(themePath, `export const color = "red";`);
+      const second = await computeDepsHash(
+        entryPath,
+        createGetContent(files),
+        "/project",
+      );
+
+      expect(first).not.toBe(second);
     });
 
     it("resolves extensionless imports to the actual source file", async () => {

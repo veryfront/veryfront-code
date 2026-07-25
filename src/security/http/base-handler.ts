@@ -147,6 +147,7 @@ export abstract class BaseHandler implements Handler {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;
       isMultiProjectMode?: () => boolean;
+      isContextualMode?: () => boolean;
       runWithContext?: <R>(
         slug: string,
         token: string,
@@ -170,16 +171,24 @@ export abstract class BaseHandler implements Handler {
     }
 
     const requireToken = options.requireToken ?? false;
+    const isMultiProjectMode = fsWrapper.isMultiProjectMode?.() === true;
+    const isContextualMode = fsWrapper.isContextualMode?.() === true;
+    const hasLegacyContextCapability = fsWrapper.isMultiProjectMode === undefined &&
+      fsWrapper.isContextualMode === undefined &&
+      typeof fsWrapper.setRequestToken === "function";
+    const requiresProjectCredential = isMultiProjectMode ||
+      isContextualMode ||
+      hasLegacyContextCapability;
 
     // No project slug → local dev mode, no proxy context needed.
     if (!ctx.projectSlug) return fn();
 
-    // Token required but missing in proxy mode → run fn() without
-    // project-scoped credentials. This allows embedded framework modules
-    // (e.g. /_vf_modules/_veryfront/...) to be served from the binary
-    // while project-specific content will fail at the filesystem level
-    // (no token = no access to remote project files).
-    if (requireToken && !effectiveToken) {
+    // A project slug is also used to isolate standalone caches; it does not by
+    // itself imply a credentialed proxy filesystem. Warn only when the adapter
+    // actually exposes contextual project access. The callback still runs so
+    // embedded framework modules remain available while remote project reads
+    // fail at their authorization boundary.
+    if (requireToken && !effectiveToken && requiresProjectCredential) {
       serverLogger.warn(
         `[${this.metadata.name}] No API token for proxy context — project content will be unavailable`,
         { projectSlug: ctx.projectSlug },
@@ -187,7 +196,7 @@ export abstract class BaseHandler implements Handler {
       return fn();
     }
 
-    if (fsWrapper.isMultiProjectMode?.()) {
+    if (isMultiProjectMode) {
       if (typeof fsWrapper.runWithContext !== "function") {
         return Promise.reject(
           new TypeError(

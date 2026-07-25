@@ -4,7 +4,8 @@ This directory currently contains multiple end-to-end harnesses:
 
 - `deno task test:e2e:playwright`: Playwright browser E2E tests in `*.playwright.ts` across named runtime projects (`production-host`, `preview-host`)
 - `deno task test:e2e:rsc-browser`: browser-backed Deno regression for proxy-mode RSC hydration
-- `deno task test:e2e:binary`: compiled-binary end-to-end coverage
+- `deno task test:e2e:binary`: compiled-binary end-to-end coverage, including
+  the core runtime and VFS/proxy-mode lanes
 
 `deno task test:e2e` remains as a compatibility alias for `deno task test:e2e:playwright`, but the explicit task names above are the preferred interface.
 
@@ -58,6 +59,15 @@ deno task test:e2e:rsc-browser
 
 ```bash
 deno task test:e2e:binary
+```
+
+The umbrella runs both dedicated lanes serially so binary compilation and
+server startup do not contend with the repository's parallel unit and
+integration suites. To diagnose a single lane:
+
+```bash
+deno task test:e2e:binary:core
+deno task test:e2e:binary:vfs-proxy
 ```
 
 ### Force Fresh Binary Compilation

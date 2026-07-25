@@ -144,6 +144,40 @@ describe("ApiHandlerWrapper", () => {
     }
   });
 
+  it("runs host discovery for an approved standalone source without local-development mode", async () => {
+    const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
+    const previousApi = Deno.env.get("WORKER_ISOLATION_API");
+    Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    Deno.env.delete("WORKER_ISOLATION_API");
+    __resetPoolForTests();
+
+    const ctx = createResponseCtx(false, null);
+    ctx.allowHostProjectCodeExecution = true;
+    let fsExistsCalls = 0;
+    ctx.adapter.fs.exists = () => {
+      fsExistsCalls++;
+      return Promise.resolve(false);
+    };
+    injectApiResponse(new Response("project"));
+
+    try {
+      const result = await new ApiHandlerWrapper(ctx.projectDir, ctx.adapter).handle(
+        new Request("https://project.example/api/data"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(fsExistsCalls > 0, true);
+      assertEquals(ctx.isLocalProject, false);
+    } finally {
+      __resetPoolForTests();
+      if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
+      if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
+      else Deno.env.set("WORKER_ISOLATION_API", previousApi);
+    }
+  });
+
   it("does not trust inherited, accessor, or throwing locality for host discovery", async () => {
     const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
     const previousApi = Deno.env.get("WORKER_ISOLATION_API");
@@ -157,6 +191,7 @@ describe("ApiHandlerWrapper", () => {
     injectApiResponse(new Response("project"));
     let fsExistsCalls = 0;
     let accessorCalls = 0;
+    let hostCapabilityAccessorCalls = 0;
     let throwingDescriptorCalls = 0;
 
     const makeRemoteCtx = (): HandlerContext => {
@@ -180,6 +215,20 @@ describe("ApiHandlerWrapper", () => {
         },
       },
     );
+    const inheritedHostCapability = makeRemoteCtx();
+    Object.setPrototypeOf(inheritedHostCapability, {
+      allowHostProjectCodeExecution: true,
+    });
+    const hostCapabilityAccessor = Object.defineProperty(
+      makeRemoteCtx(),
+      "allowHostProjectCodeExecution",
+      {
+        get() {
+          hostCapabilityAccessorCalls++;
+          return true;
+        },
+      },
+    );
     const throwingProxy = new Proxy(makeRemoteCtx(), {
       getOwnPropertyDescriptor(target, key) {
         if (key === "isLocalProject") {
@@ -191,7 +240,15 @@ describe("ApiHandlerWrapper", () => {
     });
 
     try {
-      for (const ctx of [inherited, accessor, throwingProxy]) {
+      for (
+        const ctx of [
+          inherited,
+          accessor,
+          inheritedHostCapability,
+          hostCapabilityAccessor,
+          throwingProxy,
+        ]
+      ) {
         const result = await new ApiHandlerWrapper(ctx.projectDir, ctx.adapter).handle(
           new Request("https://project.example/api/data"),
           ctx,
@@ -231,6 +288,7 @@ describe("ApiHandlerWrapper", () => {
 
     assertEquals(fsExistsCalls, 0);
     assertEquals(accessorCalls, 0);
+    assertEquals(hostCapabilityAccessorCalls, 0);
     assertEquals(throwingDescriptorCalls > 0, true);
   });
 

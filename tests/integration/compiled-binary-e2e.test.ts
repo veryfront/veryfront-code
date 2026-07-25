@@ -24,6 +24,7 @@ import {
   assert,
   assertEquals,
   assertMatch,
+  assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
@@ -34,9 +35,7 @@ import {
   assertHtmlDoesNotInclude,
   assertNoBrowserHydrationErrors,
   assertNoServerLogErrors,
-  BINARY_HASH_PATH,
-  BINARY_PATH,
-  cleanupBinaryTestCache,
+  cleanupCompiledBinaryArtifacts,
   createTestProject,
   ensureBinaryCompiled,
   fetchOkHtml,
@@ -65,14 +64,7 @@ describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
   });
 
   afterAll(async () => {
-    // Clean up the test binary after all tests complete
-    try {
-      await cleanupBinaryTestCache();
-      await Deno.remove(BINARY_PATH);
-      await Deno.remove(BINARY_HASH_PATH);
-    } catch {
-      // Ignore errors - binary may not exist or may already be cleaned up
-    }
+    await cleanupCompiledBinaryArtifacts();
   });
 
   it("should render page with veryfront/head import correctly", async () => {
@@ -625,14 +617,19 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const json = await response.json();
+      const body = await response.text();
 
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200. Body: ${body}\nLogs:\n${server.logs.join("").slice(-6000)}`,
+      );
       assertEquals(
         response.headers.get("content-type")?.includes("application/json"),
         true,
         "Should be JSON",
       );
+      const json = JSON.parse(body);
       assertEquals(json.message, "Hello from API", "Should return correct message");
       assert(json.timestamp > 0, "Should have timestamp");
     });
@@ -669,7 +666,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/events`);
-      assertEquals(response.status, 200, "Should start the SSE response");
+      assertEquals(
+        response.status,
+        200,
+        `Should start the SSE response. Logs:\n${server.logs.join("").slice(-6000)}`,
+      );
 
       const reader = response.body?.getReader();
       assert(reader, "Should expose the SSE response body");
@@ -745,7 +746,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/users/list`);
-      assertEquals(response.status, 200, "Should return 200");
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200. Logs:\n${server.logs.join("").slice(-6000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.count, 2, "Should return user count");
@@ -2207,7 +2212,11 @@ export function GET() {
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/api/status`);
-      assertEquals(response.status, 201, "Should return custom status 201");
+      assertEquals(
+        response.status,
+        201,
+        `Should return custom status 201. Logs:\n${server.logs.join("").slice(-6000)}`,
+      );
 
       const json = await response.json();
       assertEquals(json.status, "ok", "Should return ok status");
@@ -3062,157 +3071,33 @@ export default function Blog() {
     );
   });
 
-  // Test: Layout rendering with PROXY_MODE=1 (simulates split mode production server)
-  // Regression test: In split:binary mode, the production server runs with PROXY_MODE=1.
-  // Without proxy headers, it should fall back to local config and still render layouts.
-  it("should render layout when PROXY_MODE=1 without proxy headers", async () => {
+  it("fails closed when a compiled proxy runtime has no platform API URL", async () => {
     const projectDir = await createTestProject(
-      "proxy-mode-layout-test",
+      "proxy-mode-missing-api-url",
       `
 export default function Home() {
-  return <div id="page-content">Proxy mode page content</div>;
-}
-`,
-      {
-        "pages/layout.tsx": `
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div id="proxy-layout-wrapper">
-      <header id="proxy-layout-header">Proxy Mode Layout Header</header>
-      <main>{children}</main>
-      <footer id="proxy-layout-footer">Proxy Mode Layout Footer</footer>
-    </div>
-  );
-}
-`,
-      },
-    );
-
-    await withServer(
-      projectDir,
-      async (server) => {
-        const response = await fetch(`http://127.0.0.1:${server.port}/`);
-        const html = await response.text();
-
-        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(
-          html,
-          "proxy-layout-wrapper",
-          "Should have layout wrapper in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy Mode Layout Header",
-          "Should render layout header in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy Mode Layout Footer",
-          "Should render layout footer in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy mode page content",
-          "Should render page content in proxy mode",
-        );
-      },
-      "production",
-      // Clear API env vars to test pure local filesystem fallback
-      {
-        PROXY_MODE: "1",
-        PRODUCTION_MODE: "1",
-        VERYFRONT_API_BASE_URL: "",
-        VERYFRONT_API_TOKEN: "",
-      },
-    );
-  });
-
-  // Test: Config layout with PROXY_MODE=1 and components/layouts/ path
-  // Regression test: In split:binary mode, the production server gets PROXY_MODE=1 and must resolve
-  // config-based layout paths through the API adapter. Without proxy headers, it should
-  // fall back to local filesystem and still render the config layout.
-  it("should render config layout in PROXY_MODE=1 with components/layouts/ path", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-proxy-config-layout-test-" });
-
-    await Deno.writeTextFile(
-      join(projectDir, "package.json"),
-      JSON.stringify(
-        {
-          name: "test-proxy-config-layout",
-          type: "module",
-          dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
-        },
-        null,
-        2,
-      ),
-    );
-
-    await Deno.writeTextFile(
-      join(projectDir, "veryfront.config.ts"),
-      `export default {
-  fs: { type: "local" },
-  layout: "components/layouts/DefaultLayout.tsx"
-};`,
-    );
-
-    await Deno.mkdir(join(projectDir, "components/layouts"), { recursive: true });
-    await Deno.writeTextFile(
-      join(projectDir, "components/layouts/DefaultLayout.tsx"),
-      `
-export default function DefaultLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div id="proxy-config-layout">
-      <nav id="proxy-config-nav">Proxy Config Nav</nav>
-      <main>{children}</main>
-      <footer id="proxy-config-footer">Proxy Config Footer</footer>
-    </div>
-  );
+  return <div>Proxy mode must not reach this page</div>;
 }
 `,
     );
 
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.writeTextFile(
-      join(projectDir, "pages/index.tsx"),
-      `
-export default function Home() {
-  return <div id="page-content">Proxy config layout page</div>;
-}
-`,
-    );
-
-    await withServer(
-      projectDir,
-      async (server) => {
-        const response = await fetch(`http://127.0.0.1:${server.port}/`);
-        const html = await response.text();
-
-        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(
-          html,
-          "proxy-config-layout",
-          "Should have config layout in PROXY_MODE=1",
-        );
-        assertStringIncludes(html, "Proxy Config Nav", "Should render nav from config layout");
-        assertStringIncludes(
-          html,
-          "Proxy Config Footer",
-          "Should render footer from config layout",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy config layout page",
-          "Should render page content",
-        );
-      },
-      "production",
-      // Clear API env vars to test pure local filesystem fallback
-      {
-        PROXY_MODE: "1",
-        PRODUCTION_MODE: "1",
-        VERYFRONT_API_BASE_URL: "",
-        VERYFRONT_API_TOKEN: "",
-      },
+    await assertRejects(
+      () =>
+        withServer(
+          projectDir,
+          async () => {
+            throw new Error("proxy server unexpectedly started");
+          },
+          "production",
+          {
+            PROXY_MODE: "1",
+            PRODUCTION_MODE: "1",
+            VERYFRONT_API_BASE_URL: "",
+            VERYFRONT_API_TOKEN: "",
+          },
+        ),
+      Error,
+      "PROXY_MODE=1 requires VERYFRONT_API_BASE_URL",
     );
   });
 });

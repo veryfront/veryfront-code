@@ -61,6 +61,7 @@ import {
   type ProjectEnvSnapshot,
 } from "#veryfront/platform/compat/process/project-env-contract.ts";
 import {
+  isExplicitHostProjectCodeExecutionAllowed,
   isExplicitlyLocalProject,
   readOwnDataProperty,
 } from "#veryfront/security/project-locality.ts";
@@ -371,6 +372,7 @@ interface ExecuteRouteOptionsSnapshot {
   readonly modulePath?: string;
   readonly projectDir?: string;
   readonly isLocalProject: boolean;
+  readonly allowHostProjectCodeExecution: boolean;
   readonly preparedModule?: PreparedWorkerModule;
   readonly executionScopeId?: string;
 }
@@ -399,6 +401,7 @@ function snapshotExecuteRouteOptions(
   const rawProjectDir = readOwnDataProperty(options, "projectDir");
   const rawPreparedModule = readOwnDataProperty(options, "preparedModule");
   const rawExecutionScopeId = readOwnDataProperty(options, "executionScopeId");
+  const isLocalProject = isExplicitlyLocalProject(options);
   const snapshot = objectCreate(null) as Record<string, unknown>;
   defineExecuteRouteOption(
     snapshot,
@@ -413,7 +416,12 @@ function snapshotExecuteRouteOptions(
   defineExecuteRouteOption(
     snapshot,
     "isLocalProject",
-    isExplicitlyLocalProject(options),
+    isLocalProject,
+  );
+  defineExecuteRouteOption(
+    snapshot,
+    "allowHostProjectCodeExecution",
+    isLocalProject || isExplicitHostProjectCodeExecutionAllowed(options),
   );
   defineExecuteRouteOption(
     snapshot,
@@ -911,7 +919,7 @@ function executeAppRouteIsolated(
             modulePath,
             method,
             request: serialized,
-            params: match.params,
+            params: normalizeParams(match.params),
             projectDir,
             sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
             projectEnv: semanticContext.projectEnv,
@@ -1012,6 +1020,12 @@ export interface ExecuteRouteOptions {
   projectDir?: string;
   /** Whether the handler module belongs to a trusted local development project. */
   isLocalProject?: boolean;
+  /**
+   * Whether runtime trust resolution permits this project module to execute in
+   * the server process. Local development projects retain this capability
+   * through `isLocalProject`.
+   */
+  allowHostProjectCodeExecution?: boolean;
   /** Non-evaluated, policy-checked route source for worker execution. */
   preparedModule?: PreparedWorkerModule;
   /** Opaque tenant/version/handler-lifetime worker isolation key. */
@@ -1110,10 +1124,11 @@ export function executeAppRoute(
 ): Promise<Response> {
   const routeOptions = snapshotExecuteRouteOptions(options);
   const isLocalProject = routeOptions.isLocalProject === true;
-  const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
+  const isolationRequired = isWorkerIsolationEnabled() ||
+    !routeOptions.allowHostProjectCodeExecution;
 
-  // Remote or unknown-locality routes always require prepared worker
-  // execution. Explicitly local projects retain the opt-in isolation flag.
+  // Routes without an explicit host-execution capability require prepared
+  // worker execution. Local development projects retain the legacy capability.
   if (isolationRequired) {
     if (
       routeOptions.modulePath &&
@@ -1184,11 +1199,12 @@ export function executePagesRoute(
 ): Promise<Response> {
   const routeOptions = snapshotExecuteRouteOptions(options);
   const isLocalProject = routeOptions.isLocalProject === true;
-  const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
+  const isolationRequired = isWorkerIsolationEnabled() ||
+    !routeOptions.allowHostProjectCodeExecution;
   const isolatedProjectDir = routeOptions.projectDir ?? projectDir;
 
-  // Remote or unknown-locality routes always require prepared worker
-  // execution. Explicitly local projects retain the opt-in isolation flag.
+  // Routes without an explicit host-execution capability require prepared
+  // worker execution. Local development projects retain the legacy capability.
   if (isolationRequired) {
     if (
       routeOptions.modulePath &&

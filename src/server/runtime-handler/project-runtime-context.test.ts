@@ -577,7 +577,7 @@ describe("resolveProjectIdentity", () => {
 });
 
 describe("resolveProjectRuntimeContext", () => {
-  it("returns handler context, raw env vars, and normalized source policy for remote requests", async () => {
+  it("returns handler context, raw env vars, and normalized source policy for standalone requests", async () => {
     let envLoadCount = 0;
     const adapter = createMockAdapter();
     const routeRegistry = { execute: () => Promise.resolve(undefined) } as any;
@@ -628,6 +628,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(ctx.environmentId, "env-remote");
     assertEquals(ctx.moduleServerUrl, "https://modules.example.test");
     assertEquals(ctx.requestContext?.mode, "preview");
+    assertEquals(ctx.allowHostProjectCodeExecution, true);
     assertEquals(result.environment.resolvedEnvironment, "preview");
   });
 
@@ -686,6 +687,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertStrictEquals(ctx.adapter, adapter);
     assertEquals(ctx.config, undefined);
     assertEquals(ctx.proxyToken, undefined);
+    assertEquals(ctx.allowHostProjectCodeExecution, true);
     assertEquals(ctx.enriched, undefined);
     assertEquals(result.rawEnvVars, {});
   });
@@ -728,6 +730,7 @@ describe("resolveProjectRuntimeContext", () => {
 
     assertEquals(result.adapter.isLocalProject, false);
     assertEquals(result.adapter.projectDir, "/base/project");
+    assertEquals(result.handlerContext?.allowHostProjectCodeExecution, false);
     assertEquals(defaultDiscoveryCache.projects.has("remote-project"), false);
   });
 
@@ -750,6 +753,28 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(standaloneProduction.environment.releaseId, "standalone-dev");
     assertExists(standaloneProduction.handlerContext);
     assertEquals(standaloneProduction.handlerContext.releaseId, "standalone-dev");
+    assertEquals(standaloneProduction.handlerContext.isLocalProject, false);
+    assertEquals(standaloneProduction.handlerContext.allowHostProjectCodeExecution, true);
+  });
+
+  it("keeps standalone virtual project source on isolated execution paths", async () => {
+    const standalone = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      adapter: createExtendedMockAdapter(),
+      isProxyMode: false,
+      defaultEnvironment: "production",
+      projectIdentity: {
+        projectSlug: "remote-project",
+        projectId: "proj-remote",
+        releaseId: undefined,
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertExists(standalone.handlerContext);
+    assertEquals(standalone.handlerContext.isLocalProject, false);
+    assertEquals(standalone.handlerContext.allowHostProjectCodeExecution, false);
   });
 
   it("returns production environment errors before reading source policy config", async () => {

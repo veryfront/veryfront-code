@@ -145,6 +145,30 @@ describe("rendering/app-route-resolver", () => {
       assertEquals(result?.entity.path.endsWith("page.mdx"), true);
     });
 
+    it("skips a directory occupying a conventional page filename", async () => {
+      const files = new Map([
+        ["/project/app/page.tsx", `export default function Page() {}`],
+      ]);
+      const dirs = new Set([
+        "/project/app",
+        "/project/app/page.mdx",
+      ]);
+      const adapter = createMockAdapter(files, dirs);
+      const readFile = adapter.fs.readFile;
+      adapter.fs.readFile = (path) => {
+        if (path === "/project/app/page.mdx") {
+          return Promise.reject(
+            Object.assign(new Error(`EISDIR: ${path}`), { code: "EISDIR" }),
+          );
+        }
+        return readFile(path);
+      };
+
+      const result = await getAppRouteEntity("/project", "", adapter);
+
+      assertEquals(result?.entity.path, "/project/app/page.tsx");
+    });
+
     it("should resolve dynamic route segments", async () => {
       const files = new Map([
         ["/project/app/blog/[slug]/page.mdx", "---\ntitle: Blog Post\n---\nPost"],

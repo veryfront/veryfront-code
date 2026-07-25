@@ -154,26 +154,32 @@ describe("BaseHandler.withProxyContext", () => {
     assertEquals(called, true, "fn should run in local dev mode");
   });
 
-  it("runs fn() without proxy context when requireToken is true but no token", async () => {
+  it("does not misclassify a standalone cache-isolation slug as proxy context", async () => {
     const handler = new TestHandler();
     let called = false;
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
 
-    await handler.testWithProxyContext(
-      createMinimalCtx({ projectSlug: "my-project" }),
-      async () => {
-        called = true;
-        return { continue: true } as HandlerResult;
-      },
-      { requireToken: true },
-    );
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      await handler.testWithProxyContext(
+        createMinimalCtx({ projectSlug: "my-project" }),
+        async () => {
+          called = true;
+          return { continue: true } as HandlerResult;
+        },
+        { requireToken: true },
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
 
-    // fn() should still run so embedded framework modules can be served,
-    // but without project-scoped credentials (no setRequestToken call)
     assertEquals(
       called,
       true,
-      "fn should run without proxy context so embedded modules work",
+      "fn should run directly for a standalone filesystem",
     );
+    assertEquals(warnings, []);
   });
 
   it("runs fn() when requireToken is true and token is present", async () => {
