@@ -35,6 +35,20 @@ describe("cache/config-hash", () => {
       const h2 = await computeConfigHash({ studioEmbed: true });
       assertNotEquals(h1, h2);
     });
+
+    for (
+      const [field, baseValue, changedValue] of [
+        ["moduleServerUrl", "https://modules-a.example.test", "https://modules-b.example.test"],
+        ["vendorBundleHash", "vendor-a", "vendor-b"],
+        ["apiBaseUrl", "https://api-a.example.test", "https://api-b.example.test"],
+      ] as const
+    ) {
+      it(`should differ when ${field} changes`, async () => {
+        const h1 = await computeConfigHash({ [field]: baseValue });
+        const h2 = await computeConfigHash({ [field]: changedValue });
+        assertNotEquals(h1, h2);
+      });
+    }
   });
 
   describe("computeConfigHashSync", () => {
@@ -61,5 +75,19 @@ describe("cache/config-hash", () => {
       const hash = computeConfigHashSync({});
       assertEquals(hash.startsWith("v"), true);
     });
+
+    for (
+      const [field, baseValue, changedValue] of [
+        ["moduleServerUrl", "https://modules-a.example.test", "https://modules-b.example.test"],
+        ["vendorBundleHash", "vendor-a", "vendor-b"],
+        ["apiBaseUrl", "https://api-a.example.test", "https://api-b.example.test"],
+      ] as const
+    ) {
+      it(`should differ when ${field} changes`, () => {
+        const h1 = computeConfigHashSync({ [field]: baseValue });
+        const h2 = computeConfigHashSync({ [field]: changedValue });
+        assertNotEquals(h1, h2);
+      });
+    }
   });
 });

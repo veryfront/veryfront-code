@@ -5,7 +5,10 @@ import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts"
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
 import { globalCrossProjectCache } from "./cache/index.ts";
-import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
+import {
+  buildCrossProjectImportCacheKey,
+  transformCrossProjectImportFlow,
+} from "./cross-project-import-loader.ts";
 
 function createMockCacheFs(overrides: Partial<FileSystem> = {}): FileSystem {
   return {
@@ -41,7 +44,11 @@ const crossProjectImport: CrossProjectImport = {
 describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", () => {
   it("returns cached temp path without fetching", async () => {
     globalCrossProjectCache.clear();
-    const cacheKey = `${crossProjectImport.specifier}:project-a:default`;
+    const cacheKey = buildCrossProjectImportCacheKey({
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      registryBaseUrl: "https://registry.example.com",
+    });
     globalCrossProjectCache.set(cacheKey, {
       tempPath: "/tmp/cached-cross-project.mjs",
       contentHash: "cafe1234",
@@ -56,6 +63,7 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         projectId: "project-a",
         projectDir: "/project",
         dev: true,
+        apiBaseUrl: "https://registry.example.com/api",
         adapter: denoAdapter,
       },
       cache: {
@@ -151,7 +159,12 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
 
     const expectedRegistryUrl =
       "https://registry.example.com/acme-ui@1.2.3/@/components/Button.tsx";
-    const expectedCacheKey = `${crossProjectImport.specifier}:project-a:19.1.1`;
+    const expectedCacheKey = buildCrossProjectImportCacheKey({
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      reactVersion: "19.1.1",
+      registryBaseUrl: "https://registry.example.com",
+    });
 
     assertEquals(result, "/tmp/cross-project-transformed.mjs");
     assertEquals(fetchedUrl, expectedRegistryUrl);
@@ -170,6 +183,65 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(cached?.contentHash, "1234abcd");
     assertEquals(debugLogs.includes("[SSR-MODULE-LOADER] Fetching cross-project import"), true);
     assertEquals(debugLogs.includes("[SSR-MODULE-LOADER] Cross-project import transformed"), true);
+  });
+
+  it("separates cross-project cache entries by API base URL", async () => {
+    globalCrossProjectCache.clear();
+
+    const fetchedUrls: string[] = [];
+    let writeCount = 0;
+
+    const createFlowOptions = (apiBaseUrl: string) => ({
+      crossProjectImport,
+      options: {
+        projectId: "project-a",
+        projectDir: "/project",
+        dev: true,
+        apiBaseUrl,
+        reactVersion: "19.1.1",
+        adapter: denoAdapter,
+      },
+      cache: {
+        hashContentAsync: async (content: string) =>
+          content.includes("registry-a") ? "hash-registry-a" : "hash-registry-b",
+        getTempPath: async (_filePath: string, contentHash?: string) =>
+          `/tmp/${contentHash ?? "missing"}.mjs`,
+        getFs: () =>
+          createMockCacheFs({
+            writeTextFile: async () => {
+              writeCount++;
+            },
+          }),
+      },
+      withTransformCapacity: async <T>(_syntheticFilePath: string, operation: () => Promise<T>) =>
+        await operation(),
+      fetchImpl: async (input: URL | RequestInfo) => {
+        const url = String(input);
+        fetchedUrls.push(url);
+        const source = url.includes("registry-a")
+          ? "export const registry = 'registry-a';"
+          : "export const registry = 'registry-b';";
+        return new Response(source, { status: 200 });
+      },
+      transformToESMImpl: async (source: string) => source,
+      loggerImpl: { debug: () => {}, error: () => {} },
+    });
+
+    const registryAPath = await transformCrossProjectImportFlow(
+      createFlowOptions("https://registry-a.example.com/api"),
+    );
+    const registryBPath = await transformCrossProjectImportFlow(
+      createFlowOptions("https://registry-b.example.com/api"),
+    );
+
+    assertEquals(registryAPath, "/tmp/hash-registry-a.mjs");
+    assertEquals(registryBPath, "/tmp/hash-registry-b.mjs");
+    assertEquals(fetchedUrls, [
+      "https://registry-a.example.com/acme-ui@1.2.3/@/components/Button.tsx",
+      "https://registry-b.example.com/acme-ui@1.2.3/@/components/Button.tsx",
+    ]);
+    assertEquals(writeCount, 2);
+    assertEquals(globalCrossProjectCache.size, 2);
   });
 
   it("rejects source bodies whose UTF-8 byte size exceeds the fallback limit before transform", async () => {
