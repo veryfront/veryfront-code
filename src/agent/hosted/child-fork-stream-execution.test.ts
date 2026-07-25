@@ -217,7 +217,7 @@ describe("hosted child fork stream execution", () => {
             mediaType: "text/x-markdown",
             title: "Curated product limits",
             filename: "limits.md",
-          } as unknown as ForkPart,
+          },
         ]),
         steps: Promise.resolve([createStep({ text: "" })]),
         totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
