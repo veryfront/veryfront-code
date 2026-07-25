@@ -611,13 +611,14 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
-  it("rejects raw errored replay calls without adjacent results", () => {
+  it("rejects raw errored replay calls without adjacent results even with inline output", () => {
     assertHostedChatRequestError(
       [
         assistantMessage([
           {
             ...rawReplayToolCallPart,
             state: "error",
+            output: "authentication_required",
           },
         ]),
       ],
@@ -682,6 +683,18 @@ describe("agent/hosted-chat-request", () => {
       assertEquals(parsed.messages[1]?.parts as unknown, [{ type: "text", text: "" }]);
       assertProviderMessages(parsed.messages, expectedRawReplayProviderMessages());
     }
+  });
+
+  it("ignores non-tool content in tool messages before matching replay results", () => {
+    const parsed = parseHostedChatRequestMessages([
+      assistantMessage([rawReplayToolCallPart]),
+      toolMessage([
+        { type: "text", text: "UI-only tool status" },
+        rawReplayToolResultPart,
+      ]),
+    ]);
+
+    assertProviderMessages(parsed.messages, expectedRawReplayProviderMessages());
   });
 
   it("rejects whitespace text continuations between completed replay calls and results", () => {

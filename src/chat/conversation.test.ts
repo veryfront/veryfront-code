@@ -1236,6 +1236,31 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     );
   });
 
+  it("uses a fallback result for raw errored tool calls without error details", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        rawToolCallInputPart(
+          "raw-error-without-details",
+          "github__get_pr_diff",
+          GITHUB_PR_DIFF_INPUT,
+          "error",
+        ),
+      ]),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall(
+          "raw-error-without-details",
+          "github__get_pr_diff",
+          GITHUB_PR_DIFF_INPUT,
+        )],
+        [expectedErrorResult("raw-error-without-details", "github__get_pr_diff", "Tool error")],
+      ),
+    );
+  });
+
   it("uses adjacent raw results as authoritative for raw errored tool calls", () => {
     const messages: ChatProviderModelInputMessage[] = [
       assistantInputMessage([

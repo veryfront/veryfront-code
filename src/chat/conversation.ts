@@ -904,18 +904,24 @@ function buildRawToolCallResultOutput(
     return null;
   }
 
-  if (
-    rawToolCall.state === "error" && rawToolCall.output === undefined &&
-    rawToolCall.errorText === undefined
-  ) {
-    return null;
-  }
-
   return buildToolResultOutput({
     state: rawToolCall.state,
     ...(rawToolCall.output !== undefined ? { output: rawToolCall.output } : {}),
     ...(rawToolCall.errorText !== undefined ? { errorText: rawToolCall.errorText } : {}),
   });
+}
+
+function hasSelfContainedRawToolCallResult(
+  rawToolCall: NonNullable<ReturnType<typeof getRawToolCallPart>>,
+): boolean {
+  if (
+    rawToolCall.state === "error" && rawToolCall.output === undefined &&
+    rawToolCall.errorText === undefined
+  ) {
+    return false;
+  }
+
+  return buildRawToolCallResultOutput(rawToolCall) !== null;
 }
 
 function shouldSkipTransientToolCall(
@@ -957,7 +963,7 @@ function getReplayToolCallPart(part: unknown, role: ChatUiMessageRole): ReplayTo
     toolCallId: rawToolCall.toolCallId,
     toolName: rawToolCall.toolName,
     transient: isTransientToolState(rawToolCall.state),
-    selfContainedResult: buildRawToolCallResultOutput(rawToolCall) !== null,
+    selfContainedResult: hasSelfContainedRawToolCallResult(rawToolCall),
   };
 }
 
@@ -1062,6 +1068,7 @@ function hasPendingCallsFromEarlierMessages(
 /** Tool replay parts that are valid to expose to provider conversion. */
 export type ProviderVisibleToolReplayMatches = {
   preservedTransientToolParts: WeakSet<object>;
+  matchedToolCallParts: WeakSet<object>;
   matchedToolResultParts: WeakSet<object>;
   matchedToolResultNames: WeakMap<object, string>;
   toolCallPartsStartingNewBatch: WeakSet<object>;
@@ -1074,6 +1081,7 @@ export function findProviderVisibleToolReplayMatches(
   messages: readonly ChatProviderModelInputMessage[],
 ): ProviderVisibleToolReplayMatches {
   const preservedTransientToolParts = new WeakSet<object>();
+  const matchedToolCallParts = new WeakSet<object>();
   const matchedToolResultParts = new WeakSet<object>();
   const matchedToolResultNames = new WeakMap<object, string>();
   const toolCallPartsStartingNewBatch = new WeakSet<object>();
@@ -1146,6 +1154,7 @@ export function findProviderVisibleToolReplayMatches(
               supersededToolResultParts.add(priorResultPart);
             }
           }
+          matchedToolCallParts.add(matchedCall.part);
           matchedToolResultParts.add(result.part);
           matchedToolResultNames.set(result.part, matchedCall.toolName);
           matchedResultPartByCallPart.set(matchedCall.part, result.part);
@@ -1167,6 +1176,7 @@ export function findProviderVisibleToolReplayMatches(
 
   return {
     preservedTransientToolParts,
+    matchedToolCallParts,
     matchedToolResultParts,
     matchedToolResultNames,
     toolCallPartsStartingNewBatch,
@@ -1380,7 +1390,13 @@ function convertAssistantMessage(
 
     const rawToolCall = getRawToolCallPart(part);
     if (rawToolCall) {
-      pushToolCall(part, rawToolCall, buildRawToolCallResultOutput(rawToolCall));
+      const authoritativeResultFollows = isRecord(part) &&
+        replayMatches.matchedToolCallParts.has(part);
+      pushToolCall(
+        part,
+        rawToolCall,
+        authoritativeResultFollows ? null : buildRawToolCallResultOutput(rawToolCall),
+      );
       continue;
     }
 
