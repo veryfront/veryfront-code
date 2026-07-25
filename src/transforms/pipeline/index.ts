@@ -156,6 +156,9 @@ export function runPipeline(
       const configHash = await computeConfigHash({
         reactVersion: ctx.reactVersion,
         jsxImportSource: ctx.jsxImportSource,
+        moduleServerUrl: ctx.moduleServerUrl,
+        vendorBundleHash: ctx.vendorBundleHash,
+        apiBaseUrl: ctx.apiBaseUrl,
         studioEmbed: ctx.studioEmbed,
         dev: ctx.dev,
       });
