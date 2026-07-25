@@ -48,6 +48,29 @@ describe("Message.Sources (MessageSources)", () => {
     assertStringIncludes(html, "Runs guide");
   });
 
+  it("renders native source parts without a tool result", () => {
+    const message: ChatMessage = {
+      ...baseMessage,
+      parts: [
+        ...baseMessage.parts,
+        {
+          type: "source-document",
+          sourceId: "knowledge/handbook.md",
+          mediaType: "text/markdown",
+          title: "knowledge/handbook.md",
+          filename: "knowledge/handbook.md",
+        },
+      ],
+    };
+    const html = renderToString(
+      <Message.Root message={message}>
+        <MessageSources />
+      </Message.Root>,
+    );
+
+    assertStringIncludes(html, "knowledge/handbook.md");
+  });
+
   it("maps each source through a function child instead of the default pill", () => {
     const message = withDocs([{ title: "Runs guide", url: "/runs" }]);
     const html = renderToString(

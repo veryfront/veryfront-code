@@ -4,6 +4,7 @@ import {
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
 } from "../../../../chat/ag-ui.ts";
+import { toRenderableCustomChunk } from "../../../../chat/ag-ui-helpers.ts";
 import { normalizeChatMessageMetadata } from "../../../../chat/chat-ui-message-helpers.ts";
 import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
 import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
@@ -208,6 +209,16 @@ function processStreamEvent(
       handleToolOutputAvailable(parsed, state, onUpdate, getBuildParts);
       return;
 
+    case "source-url":
+    case "source-document":
+    case "file": {
+      const part = toRenderableCustomChunk(parsed);
+      if (part) {
+        handleRenderableMessagePart(part, state, onUpdate, getBuildParts);
+      }
+      return;
+    }
+
     case "tool-input-error":
     case "tool-output-error":
       handleToolError(parsed, state, onUpdate, getBuildParts);
@@ -307,6 +318,12 @@ function processChatStreamEvent(
 
     case "tool-output-available":
       handleToolOutputAvailable(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "source-url":
+    case "source-document":
+    case "file":
+      handleRenderableMessagePart(event, state, onUpdate, getBuildParts);
       return;
 
     case "reasoning-start":
@@ -457,6 +474,24 @@ function isRenderableDataPartType(type: string): boolean {
   return type !== "data-state-snapshot" &&
     type !== "data-state-delta" &&
     type !== "data-messages-snapshot";
+}
+
+function handleRenderableMessagePart(
+  part: Extract<ChatStreamEvent, { type: "source-url" | "source-document" | "file" }>,
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => ChatMessagePart[],
+): void {
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
+  state.dataParts.push({
+    order: state.partOrderCounter++,
+    part,
+  });
+
+  emitUpdate(state, onUpdate, getBuildParts);
 }
 
 function getProviderExecuted(parsed: Record<string, unknown>): boolean | undefined {

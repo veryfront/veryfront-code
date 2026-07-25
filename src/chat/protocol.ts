@@ -36,6 +36,23 @@ export interface ChatFilePart {
   size?: number;
 }
 
+/** Chat message part that carries a URL citation source. */
+export interface ChatSourceUrlPart {
+  type: "source-url";
+  sourceId: string;
+  url: string;
+  title?: string;
+}
+
+/** Chat message part that carries a document citation source. */
+export interface ChatSourceDocumentPart {
+  type: "source-document";
+  sourceId: string;
+  mediaType: string;
+  title: string;
+  filename?: string;
+}
+
 /** State for chat tool. */
 export type ChatToolState =
   | "input-streaming"
@@ -96,6 +113,8 @@ export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
   | ChatFilePart
+  | ChatSourceUrlPart
+  | ChatSourceDocumentPart
   | ChatToolPart
   | ChatToolResultPart
   | ChatDynamicToolPart

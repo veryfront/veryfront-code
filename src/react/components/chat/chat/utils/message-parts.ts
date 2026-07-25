@@ -164,6 +164,21 @@ export function extractSourcesFromParts(parts: ChatMessagePart[]): Source[] {
   const sources: Source[] = [];
 
   for (const part of parts) {
+    if (part.type === "source-url") {
+      sources.push({
+        title: part.title ?? part.url,
+        url: part.url,
+      });
+      continue;
+    }
+
+    if (part.type === "source-document") {
+      sources.push({
+        title: part.title,
+      });
+      continue;
+    }
+
     if (part.type !== "tool-result") continue;
 
     const result = (part as { result?: unknown }).result;
