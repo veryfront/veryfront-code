@@ -251,10 +251,14 @@ describe("provider/model-registry", () => {
 
       return new Response(
         JSON.stringify({
+          id: "resp_lookup",
+          object: "response",
           status: "completed",
           output: [{
+            id: "msg_lookup",
             type: "message",
             role: "assistant",
+            status: "completed",
             content: [{ type: "output_text", text: "Found order." }],
           }],
           usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
@@ -305,10 +309,14 @@ describe("provider/model-registry", () => {
 
       return new Response(
         JSON.stringify({
+          id: "resp_reasoning",
+          object: "response",
           status: "completed",
           output: [{
+            id: "msg_reasoning",
             type: "message",
             role: "assistant",
+            status: "completed",
             content: [{ type: "output_text", text: "Done." }],
           }],
           usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
@@ -340,10 +348,14 @@ describe("provider/model-registry", () => {
 
       return new Response(
         JSON.stringify({
+          id: "resp_options",
+          object: "response",
           status: "completed",
           output: [{
+            id: "msg_options",
             type: "message",
             role: "assistant",
+            status: "completed",
             content: [{ type: "output_text", text: "Done." }],
           }],
           usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },

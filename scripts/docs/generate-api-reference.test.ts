@@ -186,9 +186,6 @@ describe("generate-api-reference", () => {
         "### AI & Automation",
       );
 
-      const middlewareReference = await Deno.readTextFile(
-        `${outputDir}/veryfront/middleware.md`,
-      );
       assertStringIncludes(
         middlewareReference,
         "### `middlewarePipeline.useFor(pattern, ...handlers)`",

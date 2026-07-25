@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     7 |      12.1% | Current formal closure evidence remains valid       |
+| Closed                         |     8 |      13.8% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | Review findings exist; remediation is not complete  |
-| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    36 |      62.1% | Substantive recovered or current work exists        |
 | Pending current review         |    14 |      24.1% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -43,6 +43,7 @@ stricter closure count.
 - `eval`
 - `extensions`
 - `metrics`
+- `provider`
 - `schemas`
 - `version.ts`
 
@@ -69,7 +70,6 @@ None.
 - `oauth`
 - `observability`
 - `platform`
-- `provider`
 - `proxy`
 - `react`
 - `registry`
@@ -122,13 +122,13 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `metrics`, `eval`,
-and `extensions`. Each closure includes a complete consumer map, deep module-level
-review, adversarial boundary tests, public-contract documentation, and
-repository-wide verification. Cross-module consumers changed by a fix remain
-in revalidation; focused evidence for one boundary does not by itself close
-the consumer's top-level unit. `provider` is the next dependency-adjacent
-revalidation target because its model and embedding registries consume the
-extension contracts hardened in this checkpoint.
+`extensions`, and `provider`. Each closure includes a complete consumer map,
+deep module-level review, adversarial boundary tests, public-contract
+documentation, and repository-wide static verification. Cross-module
+consumers changed by a fix remain in revalidation; focused evidence for one
+boundary does not by itself close the consumer's top-level unit. `runtime` is
+the next dependency-adjacent revalidation target because it orchestrates the
+provider and extension contracts hardened in these checkpoints.
 
 ### Rebase integration checkpoint
 
@@ -362,6 +362,68 @@ Reproducible checkpoint evidence:
 
 No unresolved critical or high-confidence extensions production risk remains.
 
+### Provider remediation checkpoint
+
+The provider findings are remediated on the current branch:
+
+- Model and embedding registry inputs, provider identities, configuration
+  buckets, model catalogs, runtime inspection, usage records, and remote
+  response envelopes validate at their trust boundaries. Project-specific
+  runtime resolution remains isolated instead of leaking credentials or
+  provider configuration across tenants.
+- Local inference pipelines use bounded caches and explicit leases. Concurrent
+  loads are deduplicated, cancellation releases waiters without corrupting an
+  active generation, failed initialization is not cached as success, eviction
+  waits for active users, and stop remains idempotent.
+- Provider HTTP requests validate endpoints and request initialization, apply
+  deadlines and cancellation, bound response and error bodies, redact
+  credentials, parse server-sent events incrementally, and normalize retries
+  and usage without inventing missing evidence.
+- Veryfront Cloud preserves its provider identity and nested model IDs while
+  canonicalizing endpoints and rejecting malformed catalogs and responses.
+- Anthropic, Google, and OpenAI runtimes retain provider-native reasoning,
+  citations, grounding, tool calls, usage, and ordered stream state without
+  flattening protocol data that a later turn needs.
+- OpenAI Responses calls are stateless and retain the complete ordered output
+  history in provider metadata. Reasoning calls request encrypted content, and
+  hosted web-search calls retain their source list so exact replay remains
+  possible without server-side storage.
+- OpenAI-hosted web search is available through the public agent tool
+  inventory. Requests that configure it route through Responses even for
+  otherwise chat-completions models; ordinary calls keep their existing
+  transport. Unsupported hosted tools and malformed provider output fail
+  before reaching agent execution.
+- Public provider guidance and the OpenAI extension reference document routing,
+  hosted-search IDs and limits, stateless replay, cancellation, local-runtime
+  behavior, and the provider-native metadata callers must preserve.
+
+Reproducible checkpoint evidence:
+
+- The complete `src/provider` surface passed 21 test suites and 201 steps with
+  zero failures; five model-download cases remain intentionally ignored.
+- The Anthropic, Google, and OpenAI extension surfaces passed 19 suites and 356
+  steps with zero failures.
+- The affected agent, hosted-runtime, fork, and internal-agent consumer surface
+  passed 73 suites and 95 steps with zero failures.
+- `deno task docs:validate` passed 45 groups and 87 steps plus all 720 link
+  checks. The API-reference generator regression also passes in isolation.
+- `deno task verify:quick` passed manifests, formatting, lint and architecture
+  ratchets, documentation validation, and every configured entrypoint
+  typecheck.
+- `deno task typecheck:consumer` rebuilt the root npm package and all
+  first-party extension packages, verified root import lifecycle behavior, and
+  passed the documented consumer-composition typecheck against generated
+  declarations.
+
+The raw OpenAI `providerOptions` escape hatch remains compatibility-oriented:
+advanced callers can still override `tools`, `tool_choice`, or the chat
+completions `n` field. Removing those overrides would be behavior-breaking.
+The normalized runtime path does not emit them, registered provider tool output
+is still validated, and this surface is not advertised as a supported
+high-level contract. It requires an explicit deprecation or breaking-change
+decision before removal. No unresolved critical or high-confidence provider
+production risk remains.
+
 ### Config closure checkpoint verification
 
 The current config closure checkpoint has the following reproducible evidence:
@@ -385,7 +447,7 @@ The current config closure checkpoint has the following reproducible evidence:
   checks.
 
 These gates certify this integration checkpoint, not the 14 pending module
-reviews or the 37 touched units that still require current-branch
+reviews or the 36 touched units that still require current-branch
 revalidation. The broader unit and integration portfolio remains part of the
 final repository production gate.
 
