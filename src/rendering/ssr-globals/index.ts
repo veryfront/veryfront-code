@@ -20,6 +20,7 @@ export {
   createDocumentStub,
   createElementClass,
   createElementStub,
+  createObserverClass,
   createWindowStub,
 } from "./dom-stubs.ts";
 
@@ -72,6 +73,10 @@ export function setupSSRGlobals(): void {
   setGlobalIfMissing("Text", createElementClass("Text"));
   setGlobalIfMissing("Comment", createElementClass("Comment"));
   setGlobalIfMissing("DocumentFragment", createElementClass("DocumentFragment"));
+
+  setGlobalIfMissing("ResizeObserver", windowStub.ResizeObserver);
+  setGlobalIfMissing("IntersectionObserver", windowStub.IntersectionObserver);
+  setGlobalIfMissing("MutationObserver", windowStub.MutationObserver);
 
   markSSRGlobalsInitialized();
 }
