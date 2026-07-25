@@ -5,6 +5,7 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
   _clearNpmVersionCache,
+  _pendingResolutions,
   getCachedNpmVersion,
   isDependencyPinningEnabled,
   scheduleNpmVersionResolution,
@@ -40,7 +41,22 @@ describe("isDependencyPinningEnabled", () => {
 });
 
 describe("getCachedNpmVersion", () => {
-  afterEach(() => _clearNpmVersionCache());
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    // Mock fetch so that tests triggering a background resolution (e.g. a caret
+    // range hint) don't open real network connections or leave long-lived
+    // AbortController timers running past the test boundary.
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+  });
+
+  afterEach(async () => {
+    // Drain all in-flight background fetches before the Deno leak sanitizer runs.
+    await _pendingResolutions();
+    globalThis.fetch = originalFetch;
+    _clearNpmVersionCache();
+  });
 
   it("returns undefined for a cold cache", () => {
     assertEquals(getCachedNpmVersion("lodash", PROJECT_DIR), undefined);
@@ -79,8 +95,8 @@ describe("scheduleNpmVersionResolution", () => {
   });
 
   afterEach(async () => {
-    // Yield one tick so any in-flight microtasks (clearTimeout in finally) settle.
-    await new Promise<void>((r) => setTimeout(r, 1));
+    // Drain all in-flight background fetches so no open handles remain.
+    await _pendingResolutions();
     globalThis.fetch = originalFetch;
     _clearNpmVersionCache();
   });

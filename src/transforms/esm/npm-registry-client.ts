@@ -24,6 +24,13 @@ const versionCache = new Map<string, Map<string, string>>();
 /** Deduplicates concurrent fetches for the same package+project pair */
 const pendingFetches = new Set<string>();
 
+/**
+ * Tracks in-flight background resolution promises so tests can await
+ * _pendingResolutions() to drain all open fetch handles and timers before
+ * the Deno leak sanitizer runs.
+ */
+const pendingResolutionPromises = new Set<Promise<void>>();
+
 function pendingKey(projectDir: string, packageName: string): string {
   return `${projectDir}\0${packageName}`;
 }
@@ -99,7 +106,10 @@ export function scheduleNpmVersionResolution(
 
   pendingFetches.add(key);
 
-  fetchLatestNpmVersion(packageName)
+  // The finally closure captures `resolution` by reference. By the time it
+  // executes (asynchronously after the promise settles), the const is
+  // fully initialized — no temporal dead zone issue.
+  const resolution: Promise<void> = fetchLatestNpmVersion(packageName)
     .then((version) => {
       if (version) {
         setCachedVersion(projectDir, packageName, version);
@@ -111,7 +121,9 @@ export function scheduleNpmVersionResolution(
     })
     .finally(() => {
       pendingFetches.delete(key);
+      pendingResolutionPromises.delete(resolution);
     });
+  pendingResolutionPromises.add(resolution);
 }
 
 /**
@@ -224,4 +236,17 @@ export async function postDependencyResolution(
 export function _clearNpmVersionCache(): void {
   versionCache.clear();
   pendingFetches.clear();
+}
+
+/**
+ * Resolves when all in-flight background npm version resolutions have settled.
+ *
+ * For use in tests only. Call this in afterEach after any test that calls
+ * scheduleNpmVersionResolution with a range hint (which triggers a background
+ * fetch). Awaiting it ensures no open fetch handles or AbortController timers
+ * remain by the time the Deno leak sanitizer inspects the test teardown.
+ */
+export function _pendingResolutions(): Promise<void> {
+  if (pendingResolutionPromises.size === 0) return Promise.resolve();
+  return Promise.allSettled([...pendingResolutionPromises]).then(() => {});
 }
