@@ -1058,6 +1058,48 @@ Deno.test("stripPendingToolParts removes completed duplicate calls superseded by
   ]);
 });
 
+Deno.test("stripPendingToolParts removes split duplicate call/results superseded by later results", () => {
+  const messages = [
+    assistantReplayMessage([
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+    ], "assistant-1"),
+    toolReplayMessage([rawToolResultReplayPart("duplicate-call", { files: ["old.ts"] })]),
+    assistantReplayMessage([
+      dynamicToolReplayPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+    ], "assistant-2"),
+    toolReplayMessage([
+      rawToolResultReplayPart("duplicate-call", { files: ["new.ts"] }),
+    ], "assistant-2:tool"),
+  ];
+
+  assertEquals(stripReplayMessages(messages), [
+    {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "github__get_pr_diff",
+          toolCallId: "duplicate-call",
+          state: "input-available",
+          input: { pull_number: 2 },
+        },
+      ],
+    },
+    {
+      id: "assistant-2:tool",
+      role: "tool",
+      parts: [
+        {
+          type: "tool_result",
+          tool_call_id: "duplicate-call",
+          output: { files: ["new.ts"] },
+        },
+      ],
+    },
+  ]);
+});
+
 Deno.test("stripPendingToolParts rejects name-mismatched replay results", () => {
   const messages = [
     assistantReplayMessage([
@@ -1230,6 +1272,20 @@ Deno.test("stripPendingToolParts treats whitespace text as provider-visible", ()
   ]);
 });
 
+Deno.test("stripPendingToolParts treats empty text as provider-invisible", () => {
+  const messages = [
+    assistantReplayMessage([
+      rawToolCallReplayPart("first-call", "github__get_pr_diff", { pull_number: 1 }),
+    ]),
+    assistantReplayMessage([textReplayPart("")], "assistant-empty-text"),
+    toolReplayMessage([
+      rawToolResultReplayPart("first-call", { files: ["one.ts"] }),
+    ]),
+  ];
+
+  assertEquals(stripReplayMessages(messages), messages);
+});
+
 Deno.test("stripPendingToolParts does not keep prior-message calls after a new call batch starts", () => {
   const messages = [
     assistantReplayMessage([
@@ -1368,6 +1424,46 @@ Deno.test("prepareProviderModelMessagesFromUiMessages normalizes UI history into
           output: {
             type: "json",
             value: { matches: 2 },
+          },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages preserves replay across empty assistant text", () => {
+  const prepared = prepareProviderModelMessagesFromUiMessages([
+    assistantReplayMessage([
+      rawToolCallReplayPart("tool-1", "github__get_pr_diff", { pull_number: 3092 }),
+    ]),
+    assistantReplayMessage([textReplayPart("")], "assistant-empty-text"),
+    toolReplayMessage([
+      rawToolResultReplayPart("tool-1", { files: ["src/chat/conversation.ts"] }),
+    ]),
+  ] as unknown as ChatUiMessage[]);
+
+  assertEquals(prepared, [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "github__get_pr_diff",
+          input: { pull_number: 3092 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "tool-1",
+          toolName: "github__get_pr_diff",
+          output: {
+            type: "json",
+            value: { files: ["src/chat/conversation.ts"] },
           },
         },
       ],

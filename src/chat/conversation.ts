@@ -990,7 +990,7 @@ function getReplayToolResultPart(part: unknown, role: ChatUiMessageRole): {
 
 function isProviderVisibleNonToolPart(part: unknown): boolean {
   if (isTextPart(part)) {
-    return true;
+    return part.text.length > 0;
   }
 
   return isReasoningPart(part) || getFilePart(part) !== null;

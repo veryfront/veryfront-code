@@ -1087,6 +1087,31 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     );
   });
 
+  it("omits split duplicate call/result occurrences superseded by later replay results", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      assistantInputMessage([
+        dynamicToolInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 1 }),
+      ], "assistant-1"),
+      toolInputMessage([
+        rawToolResultInputPart("duplicate-call", { files: ["old.ts"] }),
+      ], "assistant-1:tool"),
+      assistantInputMessage([
+        dynamicToolInputPart("duplicate-call", "github__get_pr_diff", { pull_number: 2 }),
+      ], "assistant-2"),
+      toolInputMessage([
+        rawToolResultInputPart("duplicate-call", { files: ["new.ts"] }),
+      ], "assistant-2:tool"),
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(messages),
+      expectedToolExchange(
+        [expectedToolCall("duplicate-call", "github__get_pr_diff", { pull_number: 2 })],
+        [expectedJsonResult("duplicate-call", "github__get_pr_diff", { files: ["new.ts"] })],
+      ),
+    );
+  });
+
   it("does not preserve a transient call for a name-mismatched result", () => {
     const messages: ChatProviderModelInputMessage[] = [
       assistantInputMessage([
@@ -1144,6 +1169,27 @@ describe("convertUiMessagesToProviderModelMessages", () => {
         content: [{ type: "text", text: "  \n" }],
       },
     ]);
+
+    const emptyTextMessages: ChatProviderModelInputMessage[] = [
+      skippedMessages[0]!,
+      assistantInputMessage([textInputPart("")], "assistant-empty-text"),
+      skippedMessages[2]!,
+    ];
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages(emptyTextMessages),
+      [
+        {
+          role: "assistant",
+          content: [expectedToolCall("tool-1", "github__get_pr_diff", { pull_number: 1 })],
+        },
+        { role: "assistant", content: [{ type: "text", text: "" }] },
+        {
+          role: "tool",
+          content: [expectedJsonResult("tool-1", "github__get_pr_diff", { files: ["new.ts"] })],
+        },
+      ],
+    );
   });
 
   it("maps raw errored tool calls to explicit error-text results", () => {
