@@ -90,28 +90,45 @@ describe("RenderPipeline helpers", () => {
 
   describe("isDotPath", () => {
     it("should detect dot-prefixed slug segments", () => {
-      assertEquals(isDotPath(".veryfront/chat"), true);
-      assertEquals(isDotPath("api/.hidden/route"), true);
+      assertEquals(isDotPath({ slug: ".veryfront/chat", projectDir: "/project" }), true);
+      assertEquals(isDotPath({ slug: "api/.hidden/route", projectDir: "/project" }), true);
     });
 
     it("should detect dot-prefixed filePath segments", () => {
-      assertEquals(isDotPath("normal-slug", "/project/.veryfront/pages/index.tsx"), true);
+      assertEquals(
+        isDotPath({
+          slug: "normal-slug",
+          filePath: "/project/.veryfront/pages/index.tsx",
+          projectDir: "/project",
+        }),
+        true,
+      );
     });
 
     it("should return false for normal paths", () => {
-      assertEquals(isDotPath("about"), false);
-      assertEquals(isDotPath("blog/post-1"), false);
-      assertEquals(isDotPath("normal", "/project/pages/index.tsx"), false);
+      assertEquals(isDotPath({ slug: "about", projectDir: "/project" }), false);
+      assertEquals(isDotPath({ slug: "blog/post-1", projectDir: "/project" }), false);
+      assertEquals(
+        isDotPath({
+          slug: "normal",
+          filePath: "/project/pages/index.tsx",
+          projectDir: "/project",
+        }),
+        false,
+      );
     });
 
     it("should handle missing filePath", () => {
-      assertEquals(isDotPath("normal-slug"), false);
-      assertEquals(isDotPath("normal-slug", undefined), false);
+      assertEquals(isDotPath({ slug: "normal-slug", projectDir: "/project" }), false);
+      assertEquals(
+        isDotPath({ slug: "normal-slug", filePath: undefined, projectDir: "/project" }),
+        false,
+      );
     });
 
     it("should handle '.' and '..' in paths without triggering", () => {
-      assertEquals(isDotPath("./relative"), false);
-      assertEquals(isDotPath("../parent"), false);
+      assertEquals(isDotPath({ slug: "./relative", projectDir: "/project" }), false);
+      assertEquals(isDotPath({ slug: "../parent", projectDir: "/project" }), false);
     });
   });
 
