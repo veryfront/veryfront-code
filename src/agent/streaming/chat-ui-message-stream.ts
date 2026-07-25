@@ -222,7 +222,7 @@ function observeChatStreamEvent(input: {
 
   switch (event.type) {
     case "text-start": {
-      const id = event.id || responseMessageId;
+      const id = event.contentId || event.id || responseMessageId;
       if (!state.textBlocks.has(id)) {
         state.textBlocks.set(id, { id, order: state.nextOrder, text: "" });
         state.nextOrder += 1;
@@ -230,7 +230,7 @@ function observeChatStreamEvent(input: {
       return;
     }
     case "text-delta": {
-      const id = event.id || responseMessageId;
+      const id = event.contentId || event.id || responseMessageId;
       const existingBlock = state.textBlocks.get(id);
       if (existingBlock) {
         existingBlock.text += event.delta;

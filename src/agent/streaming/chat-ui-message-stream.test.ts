@@ -259,8 +259,9 @@ describe("createChatUiMessageStreamFromDataStream", () => {
       [firstSource, secondSource],
     );
     assertEquals(finish?.responseMessage.parts, [
-      { type: "text", text: "Before sourceAfter source" },
+      { type: "text", text: "Before source" },
       firstSource,
+      { type: "text", text: "After source" },
       secondSource,
     ]);
   });
