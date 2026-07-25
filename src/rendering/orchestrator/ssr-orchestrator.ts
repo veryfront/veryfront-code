@@ -144,36 +144,17 @@ export class SSROrchestrator {
       collectedHead = rendered.head;
     } catch (renderError) {
       // A thrown notFound()/redirect() control result is NOT a render error —
-      // let it propagate to the SSR error handler (→ 404 / redirect). error.tsx
-      // is only for genuine errors.
+      // let it propagate to the SSR error handler (→ 404 / redirect).
       if (isThrownControlResult(renderError)) throw renderError;
 
-      // The page threw during SSR (React error boundaries do not catch SSR
-      // render throws). If the segment has an app-router error.tsx, render it
-      // with the caught error as the page body and record its path so the client
-      // hydration bundle wraps the same boundary (which hydrates + makes reset()
-      // work). No error.tsx → re-throw so the normal 500/dev-overlay path runs.
-      const err = renderError instanceof Error ? renderError : new Error(String(renderError));
-      const errorInfo = await this.config.htmlGenerator.resolveErrorComponent(
-        { ...generationContext, html: "", ssrHash: "" } as HTMLGenerationContext,
-        err,
-      );
-      if (!errorInfo) throw renderError;
-
-      const rendered = await runWithHeadCollector(() =>
-        this.config.ssrRenderer.renderToHTML(errorInfo.element as React.ReactElement, {
-          mode: this.config.mode,
-          wantsStream: false,
-          debugMode: this.config.debugMode,
-        })
-      );
-      renderResult = rendered.result;
-      collectedHead = rendered.head;
-      errorBoundaryPath = errorInfo.path;
-      logger.debug("Rendered app-router error.tsx for a page throw", {
-        errorPath: errorBoundaryPath,
-        error: err.message,
-      });
+      // The page threw during SSR (React error boundaries don't catch SSR render
+      // throws). Render the segment's app-router error.tsx instead, if present;
+      // otherwise re-throw for the normal 500 / dev-overlay path.
+      const fallback = await this.renderErrorBoundaryFallback(generationContext, renderError);
+      if (!fallback) throw renderError;
+      renderResult = fallback.result;
+      collectedHead = fallback.head;
+      errorBoundaryPath = fallback.errorPath;
     }
 
     const { html, stream } = renderResult;
@@ -246,6 +227,42 @@ export class SSROrchestrator {
       finalStream: wantsStream ? this.createStream(fullHtml) : null,
       ssrHash,
     };
+  }
+
+  /**
+   * Render the segment's app-router error.tsx as the page body for a caught SSR
+   * render throw. Returns the rendered result + the boundary's source path (for
+   * the client hydration bundle), or null when the segment has no error.tsx.
+   */
+  private async renderErrorBoundaryFallback(
+    generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
+    renderError: unknown,
+  ): Promise<
+    {
+      result: Awaited<ReturnType<SSRRenderer["renderToHTML"]>>;
+      head: Awaited<ReturnType<typeof runWithHeadCollector>>["head"];
+      errorPath: string;
+    } | null
+  > {
+    const err = renderError instanceof Error ? renderError : new Error(String(renderError));
+    const errorInfo = await this.config.htmlGenerator.resolveErrorComponent(
+      { ...generationContext, html: "", ssrHash: "" } as HTMLGenerationContext,
+      err,
+    );
+    if (!errorInfo) return null;
+
+    const rendered = await runWithHeadCollector(() =>
+      this.config.ssrRenderer.renderToHTML(errorInfo.element as React.ReactElement, {
+        mode: this.config.mode,
+        wantsStream: false,
+        debugMode: this.config.debugMode,
+      })
+    );
+    logger.debug("Rendered app-router error.tsx for a page throw", {
+      errorPath: errorInfo.path,
+      error: err.message,
+    });
+    return { result: rendered.result, head: rendered.head, errorPath: errorInfo.path };
   }
 
   /**
