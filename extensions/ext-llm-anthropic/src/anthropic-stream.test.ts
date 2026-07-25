@@ -774,23 +774,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       ProviderRequestError,
       "content block index was reused",
     );
-    for (
-      const terminal of [
-        data({ type: "message_stop" }),
-        "data: [DONE]\r\n\r\n",
-      ]
-    ) {
-      await assertRejects(
-        () =>
-          collectParts(streamFromText([
-            data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
-            data({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
-            terminal,
-          ].join(""))),
-        ProviderRequestError,
-        "stream contained no supported content blocks",
-      );
-    }
     await assertRejects(
       () =>
         collectParts(streamFromText([
@@ -842,6 +825,28 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       ProviderRequestError,
       "signature delta was malformed",
     );
+  });
+
+  it("accepts a complete empty assistant stream", async () => {
+    for (
+      const terminal of [
+        data({ type: "message_stop" }),
+        "data: [DONE]\r\n\r\n",
+      ]
+    ) {
+      assertEquals(
+        await collectParts(streamFromText([
+          data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+          data({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+          terminal,
+        ].join(""))),
+        [{
+          type: "finish",
+          finishReason: { unified: "stop", raw: "end_turn" },
+          usage: { inputTokens: 1, totalTokens: 1 },
+        }],
+      );
+    }
   });
 
   it("does not finish a client-tool stream while a later content block is unfinished", async () => {

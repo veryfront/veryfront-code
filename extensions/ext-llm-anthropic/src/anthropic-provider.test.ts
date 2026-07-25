@@ -220,6 +220,34 @@ describe("anthropic-provider", () => {
     assertEquals(error.message.includes(privatePayload), false);
   });
 
+  it("does not attach raw-assistant metadata to an empty assistant stream", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+
+    assertEquals(await collectAsync(result.stream), [{
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: { inputTokens: 1, totalTokens: 1 },
+    }]);
+  });
+
   it("fails closed on an unknown block mixed into an otherwise valid direct response", async () => {
     const privateBlockType = "future_block_<PRIVATE_PROVIDER_PAYLOAD>";
     const runtime = createAnthropicModelRuntime({

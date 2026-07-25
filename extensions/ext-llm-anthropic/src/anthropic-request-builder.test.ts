@@ -1085,6 +1085,132 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     );
   });
 
+  it("correlates a JSON-round-tripped provider error payload", () => {
+    const rawAssistantContent = [{
+      type: "server_tool_use",
+      id: "server_search_round_trip",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "web_search_tool_result",
+      tool_use_id: "server_search_round_trip",
+      content: {
+        type: "web_search_tool_result_error",
+        error_code: "unavailable",
+      },
+    }];
+    const result = JSON.parse(JSON.stringify(
+      new AnthropicServerToolResultError({
+        code: "unavailable",
+        toolCallId: "server_search_round_trip",
+        toolName: "web_search",
+      }),
+    ));
+
+    const request = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "server_search_round_trip",
+            toolName: "web_search",
+            input: { query: "Veryfront" },
+            providerExecuted: true,
+          }, {
+            type: "tool-result",
+            toolCallId: "server_search_round_trip",
+            toolName: "web_search",
+            result,
+            isError: true,
+            providerExecuted: true,
+          }],
+          providerMetadata: {
+            anthropic: { rawAssistantMessages: [rawAssistantContent] },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(request.messages, [{
+      role: "assistant",
+      content: rawAssistantContent,
+    }]);
+  });
+
+  it("rejects provider error accessors without invoking them", () => {
+    let codeReads = 0;
+    const result = Object.defineProperty(
+      {
+        name: "AnthropicServerToolResultError",
+        provider: "anthropic",
+        toolCallId: "server_search_accessor",
+        toolName: "web_search",
+      },
+      "code",
+      {
+        enumerable: true,
+        get() {
+          codeReads++;
+          return "unavailable";
+        },
+      },
+    );
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId: "server_search_accessor",
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }, {
+                type: "tool-result",
+                toolCallId: "server_search_accessor",
+                toolName: "web_search",
+                result,
+                isError: true,
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "server_tool_use",
+                    id: "server_search_accessor",
+                    name: "web_search",
+                    input: { query: "Veryfront" },
+                  }, {
+                    type: "web_search_tool_result",
+                    tool_use_id: "server_search_accessor",
+                    content: {
+                      type: "web_search_tool_result_error",
+                      error_code: "unavailable",
+                    },
+                  }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+    assertEquals(codeReads, 0);
+  });
+
   it("keeps a cross-assistant provider call and result in one replay transaction", () => {
     const rawProviderCall = {
       type: "server_tool_use",
