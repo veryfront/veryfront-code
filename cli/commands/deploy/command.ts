@@ -165,10 +165,42 @@ interface DeploymentExpectation {
   releaseName?: string;
 }
 
-interface DeploymentVerificationOptions {
+interface VerificationRetryOptions {
   attempts?: number;
   delayMs?: number;
+}
+
+interface DeploymentVerificationOptions extends VerificationRetryOptions {
+  releaseSource?: VerificationRetryOptions;
   verifiedRelease?: ReleaseSourceVerification;
+}
+
+const MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS = 20;
+const MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS = 500;
+
+// Release creation can precede source-snapshot materialization. Only a
+// successfully read, well-formed digest mismatch enters this convergence loop;
+// validation and exhausted API-client transport errors still fail closed.
+function boundedReleaseSourceVerificationOptions(
+  options: VerificationRetryOptions,
+): Required<VerificationRetryOptions> {
+  const attempts = options.attempts === undefined
+    ? MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS
+    : Number.isFinite(options.attempts)
+    ? Math.min(
+      MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS,
+      Math.max(1, Math.trunc(options.attempts)),
+    )
+    : MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS;
+  const delayMs = options.delayMs === undefined
+    ? MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS
+    : Number.isFinite(options.delayMs)
+    ? Math.min(
+      MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS,
+      Math.max(0, Math.trunc(options.delayMs)),
+    )
+    : MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS;
+  return { attempts, delayMs };
 }
 
 /**
@@ -406,6 +438,7 @@ export async function verifyReleaseSource(
   client: ApiClient,
   projectReference: string,
   expected: ReleaseSourceExpectation,
+  options: VerificationRetryOptions = {},
 ): Promise<ReleaseSourceVerification> {
   const release = await getRelease(client, projectReference, expected.releaseId);
   if (release.id !== expected.releaseId) {
@@ -419,20 +452,27 @@ export async function verifyReleaseSource(
     throw new Error(`Release ${expected.releaseId} has no version`);
   }
 
-  const sourceDigest = await getReleaseSourceDigest(client, projectReference, expected.releaseId);
-  if (sourceDigest !== expected.sourceDigest) {
-    throw new Error(
-      `Release ${expected.releaseId} source does not match pushed commit ${expected.commitSha}`,
-    );
+  const { attempts, delayMs } = boundedReleaseSourceVerificationOptions(options);
+  let sourceDigest = "";
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    sourceDigest = await getReleaseSourceDigest(client, projectReference, expected.releaseId);
+    if (sourceDigest === expected.sourceDigest) {
+      return {
+        projectId: expected.projectId,
+        releaseId: expected.releaseId,
+        releaseVersion: release.version,
+        commitSha: expected.commitSha,
+        sourceDigest,
+      };
+    }
+
+    if (attempt < attempts - 1 && delayMs > 0) await wait(delayMs);
   }
 
-  return {
-    projectId: expected.projectId,
-    releaseId: expected.releaseId,
-    releaseVersion: release.version,
-    commitSha: expected.commitSha,
-    sourceDigest,
-  };
+  throw new Error(
+    `Release ${expected.releaseId} source does not match pushed commit ${expected.commitSha}: expected source digest ${expected.sourceDigest}; last observed ${sourceDigest}`,
+  );
 }
 
 export async function verifyDeployment(
@@ -455,6 +495,7 @@ export async function verifyDeployment(
     client,
     projectReference,
     expected,
+    options.releaseSource,
   );
   if (
     verifiedRelease.projectId !== expected.projectId ||

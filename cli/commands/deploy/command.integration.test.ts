@@ -7,6 +7,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { deployCommand, type DeploymentRoutingConvergence } from "./command.ts";
+import { FakeTime } from "#std/testing/time";
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
@@ -73,7 +74,11 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
     _resetEnvironmentConfig();
 
-    let releaseSourceContent = "export const value = 1;\n";
+    const currentReleaseSource = "export const value = 1;\n";
+    let releaseSourceContents: string[] | null = null;
+    let releaseSourceReads = 0;
+    let releaseSourceReadGate: Promise<void> | null = null;
+    let notifyReleaseSourceRead: (() => void) | null = null;
     let routingConvergence: DeploymentRoutingConvergence = {
       status: "converged",
       acknowledged: 2,
@@ -137,10 +142,17 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         request.method === "GET" &&
         url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
       ) {
+        releaseSourceReads++;
+        notifyReleaseSourceRead?.();
+        notifyReleaseSourceRead = null;
+        if (releaseSourceReadGate) await releaseSourceReadGate;
         return Response.json({
           data: [{
             path: "app.ts",
-            data: JSON.stringify({ body: releaseSourceContent, path: "app.ts" }),
+            data: JSON.stringify({
+              body: releaseSourceContents?.shift() ?? currentReleaseSource,
+              path: "app.ts",
+            }),
           }],
           page_info: {},
         });
@@ -163,15 +175,19 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       setJsonMode(jsonMode);
       requests.length = 0;
       environmentReads = 0;
+      releaseSourceReads = 0;
+      releaseSourceContents = ["export const value = 0;\n", currentReleaseSource];
 
       await withMockFetch(handleRequest, runDeploy);
 
       assertEquals(environmentReads, 2);
+      assertEquals(releaseSourceReads, 2);
       assertEquals(requests, [
         "GET /api/projects/my-project",
         `GET /api/projects/${PROJECT_ID}/environments`,
         `POST /api/projects/${PROJECT_ID}/releases`,
         `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}`,
+        `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
         `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
         `POST /api/projects/${PROJECT_ID}/deployments`,
         `GET /api/projects/${PROJECT_ID}/deployments/${DEPLOYMENT_ID}`,
@@ -183,28 +199,72 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     routingConvergence = { status: "pending" };
     requests.length = 0;
     environmentReads = 0;
+    releaseSourceReads = 0;
+    releaseSourceContents = null;
 
     await withMockFetch(handleRequest, runDeploy);
     assertEquals(environmentReads, 2);
 
     setJsonMode(false);
-    releaseSourceContent = "export const value = 2;\n";
+    releaseSourceContents = Array.from(
+      { length: 20 },
+      () => "export const value = 2;\n",
+    );
     requests.length = 0;
     environmentReads = 0;
+    releaseSourceReads = 0;
 
-    await assertRejects(
-      () => withMockFetch(handleRequest, runDeploy),
-      Error,
-      "does not match pushed commit",
-    );
+    const firstReleaseSourceRead = new Promise<void>((resolve) => {
+      notifyReleaseSourceRead = resolve;
+    });
+    let resumeReleaseSourceRead!: () => void;
+    releaseSourceReadGate = new Promise<void>((resolve) => {
+      resumeReleaseSourceRead = resolve;
+    });
+    const deployment = withMockFetch(handleRequest, runDeploy);
+    await firstReleaseSourceRead;
+    {
+      using time = new FakeTime();
+      resumeReleaseSourceRead();
+      await time.tickAsync(0);
+      for (
+        let tick = 0;
+        releaseSourceReads < 20 && tick < 40;
+        tick++
+      ) {
+        await time.tickAsync(500);
+      }
+      assertEquals(
+        releaseSourceReads,
+        20,
+        "release-source polling did not exhaust its fixed read budget",
+      );
+      await assertRejects(
+        () => deployment,
+        Error,
+        "does not match pushed commit",
+      );
+    }
+    releaseSourceReadGate = null;
     assertEquals(environmentReads, 1);
-    assertEquals(requests, [
+    assertEquals(releaseSourceReads, 20);
+    assertEquals(requests.slice(0, 4), [
       "GET /api/projects/my-project",
       `GET /api/projects/${PROJECT_ID}/environments`,
       `POST /api/projects/${PROJECT_ID}/releases`,
       `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}`,
-      `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
     ]);
+    assertEquals(
+      requests.filter((request) =>
+        request ===
+          `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`
+      ).length,
+      20,
+    );
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      false,
+    );
   } finally {
     envKeys.forEach((key, index) => {
       const value = savedEnv[index];

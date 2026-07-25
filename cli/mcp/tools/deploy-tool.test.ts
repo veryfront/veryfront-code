@@ -9,6 +9,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { triggerDeploy, vfTriggerDeploy } from "./deploy-tool.ts";
+import { FakeTime } from "#std/testing/time";
 
 // ---------------------------------------------------------------------------
 // Tool definition (shape)
@@ -210,7 +211,11 @@ describe("mcp/tools/deploy-tool", () => {
 
         const capturedRequests: { method: string; url: string }[] = [];
         let environmentReads = 0;
-        let releaseFiles: Array<{ path: string; data: string }> = [];
+        const releaseFiles: Array<{ path: string; data: string }> = [];
+        let releaseFileResponses: Array<Array<{ path: string; data: string }>> | null = null;
+        let releaseSourceReads = 0;
+        let releaseSourceReadGate: Promise<void> | null = null;
+        let notifyReleaseSourceRead: (() => void) | null = null;
 
         const handleRequest = async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
@@ -267,7 +272,14 @@ describe("mcp/tools/deploy-tool", () => {
           }
 
           if (method === "GET" && pathname.endsWith("/releases/rel-42/versions")) {
-            return Response.json({ data: releaseFiles, page_info: {} });
+            releaseSourceReads++;
+            notifyReleaseSourceRead?.();
+            notifyReleaseSourceRead = null;
+            if (releaseSourceReadGate) await releaseSourceReadGate;
+            return Response.json({
+              data: releaseFileResponses?.shift() ?? releaseFiles,
+              page_info: {},
+            });
           }
 
           if (method === "GET" && pathname.endsWith("/releases/rel-42")) {
@@ -320,20 +332,19 @@ describe("mcp/tools/deploy-tool", () => {
           ],
         );
 
-        releaseFiles = [{
+        releaseFileResponses = [[{
           path: "app.ts",
-          data: JSON.stringify({ body: "changed after push\n", path: "app.ts" }),
-        }];
+          data: JSON.stringify({ body: "stale release source\n", path: "app.ts" }),
+        }], []];
         capturedRequests.length = 0;
         environmentReads = 0;
-        const mismatchResult = await withMockFetch(handleRequest, runDeploy);
+        releaseSourceReads = 0;
+        const staleThenCurrentResult = await withMockFetch(handleRequest, runDeploy);
 
-        assertEquals(mismatchResult.success, false);
-        assertEquals(
-          mismatchResult.error?.includes("does not match pushed commit"),
-          true,
-          mismatchResult.error,
-        );
+        assertEquals(staleThenCurrentResult.success, true, staleThenCurrentResult.error);
+        assertEquals(staleThenCurrentResult.deploymentId, "deploy-99");
+        assertEquals(staleThenCurrentResult.sourceDigest, sourceDigest);
+        assertEquals(releaseSourceReads, 2);
         assertEquals(
           capturedRequests.map(({ method, url }) => `${method} ${new URL(url).pathname}`),
           [
@@ -342,7 +353,59 @@ describe("mcp/tools/deploy-tool", () => {
             "POST /api/projects/project-1/releases",
             "GET /api/projects/project-1/releases/rel-42",
             "GET /api/projects/project-1/releases/rel-42/versions",
+            "GET /api/projects/project-1/releases/rel-42/versions",
+            "POST /api/projects/project-1/deployments",
+            "GET /api/projects/project-1/deployments/deploy-99",
+            "GET /api/projects/project-1/environments",
           ],
+        );
+
+        releaseFileResponses = Array.from({ length: 20 }, () => [{
+          path: "app.ts",
+          data: JSON.stringify({ body: "stale release source\n", path: "app.ts" }),
+        }]);
+        capturedRequests.length = 0;
+        environmentReads = 0;
+        releaseSourceReads = 0;
+
+        const firstReleaseSourceRead = new Promise<void>((resolve) => {
+          notifyReleaseSourceRead = resolve;
+        });
+        let resumeReleaseSourceRead!: () => void;
+        releaseSourceReadGate = new Promise<void>((resolve) => {
+          resumeReleaseSourceRead = resolve;
+        });
+        const deployment = withMockFetch(handleRequest, runDeploy);
+        await firstReleaseSourceRead;
+        let mismatchResult;
+        {
+          using time = new FakeTime();
+          resumeReleaseSourceRead();
+          await time.tickAsync(0);
+          for (
+            let tick = 0;
+            releaseSourceReads < 20 && tick < 40;
+            tick++
+          ) {
+            await time.tickAsync(500);
+          }
+          assertEquals(
+            releaseSourceReads,
+            20,
+            "release-source polling did not exhaust its fixed read budget",
+          );
+          mismatchResult = await deployment;
+        }
+        releaseSourceReadGate = null;
+
+        assertEquals(mismatchResult.success, false);
+        assertEquals(mismatchResult.error?.includes("does not match pushed commit"), true);
+        assertEquals(releaseSourceReads, 20);
+        assertEquals(
+          capturedRequests.some(({ method, url }) =>
+            method === "POST" && new URL(url).pathname.endsWith("/deployments")
+          ),
+          false,
         );
       } finally {
         if (originalToken !== undefined) {
