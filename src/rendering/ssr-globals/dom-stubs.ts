@@ -133,15 +133,8 @@ export function createDocumentStub(): {
   getElementsByClassName: () => [];
   getElementsByTagName: () => [];
   getElementsByName: () => [];
-  documentElement: {
-    style: Record<string, unknown>;
-    classList: Omit<ReturnType<typeof createClassListStub>, "toggle">;
-  };
-  body: {
-    style: Record<string, unknown>;
-    classList: Omit<ReturnType<typeof createClassListStub>, "toggle">;
-    appendChild: () => void;
-  };
+  documentElement: ReturnType<typeof createElementStub>;
+  body: ReturnType<typeof createElementStub>;
   head: { appendChild: () => void; removeChild: () => void };
   readyState: "complete";
   cookie: string;
@@ -156,12 +149,6 @@ export function createDocumentStub(): {
   styleSheets: [];
   adoptedStyleSheets: [];
 } {
-  const classList = {
-    add: noop,
-    remove: noop,
-    contains: noopFalse,
-  };
-
   return {
     __veryfrontSSRStub: true,
     exitFullscreen: undefined,
@@ -183,8 +170,11 @@ export function createDocumentStub(): {
     getElementsByTagName: noopEmptyArray,
     getElementsByName: noopEmptyArray,
 
-    documentElement: { style: {}, classList },
-    body: { style: {}, classList, appendChild: noop },
+    // documentElement/body get the full element stub surface so libraries that
+    // read attributes during render (sonner, next-themes, focus/scroll-lock
+    // helpers) don't crash on a missing `getAttribute`/`setAttribute`.
+    documentElement: createElementStub(),
+    body: createElementStub(),
     head: { appendChild: noop, removeChild: noop },
     readyState: "complete",
     cookie: emptyString,
