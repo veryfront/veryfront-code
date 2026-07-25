@@ -9,7 +9,6 @@
 
 import { getBaseLogger, type RequestContext, runWithRequestContextAsync } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
 import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
@@ -97,7 +96,12 @@ import {
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
-import { HTTP_GATEWAY_TIMEOUT, isLightweightPath, isMonitoringPath } from "./request-utils.ts";
+import {
+  HTTP_GATEWAY_TIMEOUT,
+  isHMRWebSocketUpgrade,
+  isLightweightPath,
+  isMonitoringPath,
+} from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
   EnvironmentVariableCache,
@@ -615,7 +619,9 @@ export function createVeryfrontHandler(
             // Deno.serve. Cloning it to attach the timeout signal lets the
             // handshake return 101, but the upgraded connection immediately
             // closes with an unexpected EOF.
-            const timeoutRequest = isWebSocketUpgrade(req) ? req : new Request(req, { signal });
+            const timeoutRequest = isHMRWebSocketUpgrade(req, url.pathname)
+              ? req
+              : new Request(req, { signal });
             return runWithRequestProfiling(
               {
                 category: profileCategory,
