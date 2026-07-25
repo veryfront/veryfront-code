@@ -35,21 +35,21 @@ if (dailyTriage) {
 
 ### Functions
 
-| Name                     | Description | Source                                                                                           |
-| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------ |
-| `discoverSourceTriggers` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L112)    |
-| `runTriggerTarget`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L178) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `discoverSourceTriggers` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L112) |
+| `runTriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L178) |
 
 ### Types
 
-| Name                              | Description | Source                                                                                          |
-| --------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
-| `RunTriggerTargetOptions`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L18) |
-| `SourceTriggerDiscoveryError`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L25)    |
-| `SourceTriggerDiscoveryErrorCode` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L17)    |
-| `SourceTriggerDiscoveryResult`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L35)    |
-| `SourceTriggerKind`               |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L15)    |
-| `TriggerDefinitionWithId`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L48)    |
-| `TriggerDiscoveryOptions`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L40)    |
-| `TriggerTarget`                   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/target.ts#L2)        |
-| `TriggerTargetRunResult`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L31) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `RunTriggerTargetOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L18) |
+| `SourceTriggerDiscoveryError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L25) |
+| `SourceTriggerDiscoveryErrorCode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L17) |
+| `SourceTriggerDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L35) |
+| `SourceTriggerKind` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L15) |
+| `TriggerDefinitionWithId` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L48) |
+| `TriggerDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L40) |
+| `TriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/target.ts#L2) |
+| `TriggerTargetRunResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L31) |
