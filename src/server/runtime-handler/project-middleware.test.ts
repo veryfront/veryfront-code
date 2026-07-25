@@ -25,16 +25,27 @@ interface ActiveFsContext {
 function createAdapter(
   storage = new AsyncLocalStorage<ActiveFsContext>(),
   middlewareSource?: string,
+  options: { requireContextForFileAccess?: boolean } = {},
 ): RuntimeAdapter {
+  const assertContext = () => {
+    if (options.requireContextForFileAccess && !storage.getStore()) {
+      throw new Error("[test] No request context available");
+    }
+  };
   const fs = {
     getUnderlyingAdapter: () => fs,
     getAdapterType: () => "MultiProjectFSAdapter",
     isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
     isContextualMode: () => true,
-    exists: (path: string) =>
-      Promise.resolve(middlewareSource !== undefined && path.endsWith("/middleware.ts")),
-    readFile: () => Promise.resolve(middlewareSource ?? ""),
+    exists: (path: string) => {
+      assertContext();
+      return Promise.resolve(middlewareSource !== undefined && path.endsWith("/middleware.ts"));
+    },
+    readFile: () => {
+      assertContext();
+      return Promise.resolve(middlewareSource ?? "");
+    },
     runWithContext: <T>(
       projectSlug: string,
       _token: string,
@@ -283,17 +294,19 @@ describe("ProjectMiddlewareRuntime", () => {
     ]);
   });
 
-  it("preserves request and response identity for WebSocket upgrade handling", async () => {
+  it("preserves request and response identity for non-HMR WebSocket upgrade handling", async () => {
     const adapter = createAdapter();
-    const request = new Request("https://example.com/_ws", {
+    const request = new Request("https://example.com/socket", {
       headers: { upgrade: "websocket" },
     });
     const routeResponse = new Response("upgrade handoff");
+    let middlewareSawRequest = false;
     const runtime = new ProjectMiddlewareRuntime({
       loadMiddleware: () =>
         Promise.resolve([
           async (c, next) => {
             assertEquals(c.req === request, true);
+            middlewareSawRequest = true;
             return await next();
           },
         ]),
@@ -306,6 +319,7 @@ describe("ProjectMiddlewareRuntime", () => {
       () => Promise.resolve(routeResponse),
     );
 
+    assertEquals(middlewareSawRequest, true);
     assertEquals(response === routeResponse, true);
   });
 
@@ -471,6 +485,42 @@ describe("ProjectMiddlewareRuntime", () => {
 
     assertEquals(loads, 0);
     assertEquals(routeCalls, 3);
+  });
+
+  it("bypasses project middleware for proxy HMR websockets without request context", async () => {
+    const adapter = createAdapter(
+      undefined,
+      undefined,
+      { requireContextForFileAccess: true },
+    );
+    const runtime = new ProjectMiddlewareRuntime();
+    const context = createContext(adapter, {
+      proxyToken: undefined,
+      releaseId: undefined,
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    let routeCalls = 0;
+
+    const response = await execute(
+      runtime,
+      context,
+      new Request("https://example.com/_ws?x-environment=preview&x-project-slug=trusted-project", {
+        headers: { upgrade: "websocket" },
+      }),
+      () => {
+        routeCalls++;
+        return Promise.resolve(new Response("hmr"));
+      },
+    );
+
+    assertEquals(await response?.text(), "hmr");
+    assertEquals(routeCalls, 1);
   });
 
   it("keeps project middleware enabled for control-plane run execution", async () => {
