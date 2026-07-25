@@ -55,7 +55,7 @@ Add a middleware handler that only runs for matching URL patterns.
 
 ### `middlewarePipeline.onTeardown(cb)`
 
-Register a cleanup callback that runs once per request, after each `execute()`/`handle()` call produces its response.
+Register a cleanup callback that runs once per request after each `execute()`/`handle()` response body closes, is canceled, or errors. Bodyless, locked, or already-read responses and handler/middleware exceptions clean up before the call resolves.
 
 **Returns:** `this`
 
