@@ -391,11 +391,19 @@ rather than comments.
 
 ### 6.8 SSR / RSC / Deno constraints
 
-Every Tier-1 primitive is a client component (`"use client"`), consistent with
-today. Adapters (and the engines they wrap) must:
+Every Tier-1 primitive must become an explicit client boundary before adapter
+mechanics ship. The current `src/react/components/ui/` files are React components
+with client-only behaviour, but they do not consistently declare `"use client"`.
+The migration must add top-level client boundaries, or `.client.` entry modules
+where that better fits the RSC classifier, before an adapter can safely wrap
+client-only engines.
 
-- import cleanly under the Deno + `esm.sh` loader (already proven: the sample app
-  loads Radix via `esm.sh` today — `projects/veryfront/shared/ui/*`);
+Adapters (and the engines they wrap) must:
+
+- import cleanly under the Deno + `esm.sh` loader. The import-rewriter and HTTP
+  cache suites already cover generic `esm.sh` and scoped package URL handling,
+  including `@radix-ui/react-slot`; adapter-specific smoke tests still need to
+  prove each selected engine under the same loader;
 - be SSR-safe (no `document` at import; stable `useId`);
 - carry any required provider (e.g. React Aria historically wants an
   `I18nProvider`/SSR context) internally, so the Skin's SSR contract is uniform.
@@ -916,9 +924,10 @@ load-bearing ones (marked ⚠) before hard-coding.
 - **Ariakit** — client-only; SSR-safe; no mandatory providers; tiny dep graph
   (lightest `esm.sh` resolution).
 - **All React client libs**: under Deno + `esm.sh` the real risk is **duplicate
-  React copies** — pin one `react`/`react-dom` via the import map. The sample app
-  already loads Radix via `esm.sh` (`projects/veryfront/shared/ui/*`), so the path
-  is proven.
+  React copies** — pin one `react`/`react-dom` via the import map. Repo tests
+  already exercise `esm.sh` URL normalization and scoped package handling, but
+  each adapter still needs a loader smoke test against its real engine package
+  before this RFC can treat engine loading as proven.
 
 ### 13.5 Prior art for "one surface, many engines"
 
