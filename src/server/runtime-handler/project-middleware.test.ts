@@ -499,7 +499,7 @@ describe("ProjectMiddlewareRuntime", () => {
       releaseId: undefined,
       resolvedEnvironment: "preview",
       requestContext: {
-        token: undefined,
+        token: "",
         slug: "trusted-project",
         branch: "main",
         mode: "preview",
