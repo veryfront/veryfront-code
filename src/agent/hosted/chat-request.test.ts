@@ -66,7 +66,7 @@ const parsedHostedChatRequestReplayToolCallPart: ParsedHostedChatRequestMessageP
   type: "tool_call",
   toolCallId: rawReplayToolCallPart.id,
   toolName: replayToolName,
-  input: {},
+  input: rawReplayToolCallPart.input,
   state: "output-available",
   output: replayOutput,
 };
@@ -1118,6 +1118,78 @@ describe("agent/hosted-chat-request", () => {
     ]);
   });
 
+  it("preserves pending and streaming raw replay inputs when assistant results arrive next", async () => {
+    for (const state of ["pending", "streaming"] as const) {
+      const toolCallPart = {
+        ...rawReplayToolCallPart,
+        id: `tool-call-${state}-with-result`,
+        state,
+      };
+      const parsed = await parseHostedChatRequestFromRequest(
+        new Request("https://agent.example.com/api/runs", {
+          method: "POST",
+          body: JSON.stringify(
+            createHostedChatRequestBody([
+              assistantMessage([toolCallPart]),
+              assistantMessage([
+                {
+                  type: "tool_result",
+                  tool_call_id: toolCallPart.id,
+                  output: replayOutput,
+                  is_error: false,
+                },
+              ], "assistant-message-2"),
+            ]),
+          ),
+        }),
+        {
+          authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true }),
+        },
+      );
+
+      if (parsed instanceof Response) {
+        throw new Error("Expected parsed request");
+      }
+
+      assertEquals(parsed.messages[1]?.parts[0], {
+        type: "tool_call",
+        toolCallId: toolCallPart.id,
+        toolName: replayToolName,
+        input: rawReplayToolCallPart.input,
+        state: "output-available",
+        output: replayOutput,
+      });
+      assertEquals(convertUiMessagesToProviderModelMessages(parsed.messages), [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: toolCallPart.id,
+              toolName: replayToolName,
+              input: rawReplayToolCallPart.input,
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: toolCallPart.id,
+              toolName: replayToolName,
+              output: {
+                type: "json",
+                value: replayOutput,
+              },
+            },
+          ],
+        },
+      ]);
+    }
+  });
+
   it("merges raw replay results into normalized UI tool parts", async () => {
     const cases = [
       {
@@ -1219,7 +1291,7 @@ describe("agent/hosted-chat-request", () => {
       type: "tool_call",
       toolCallId: rawReplayToolCallPart.id,
       toolName: replayToolName,
-      input: {},
+      input: rawReplayToolCallPart.input,
       state: "output-error",
       output: replayErrorOutput,
       errorText: '{"code":"denied","retryable":false}',

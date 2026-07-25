@@ -149,6 +149,7 @@ function normalizeHostedChatRequestMessages(
   messages: HostedChatRequest["messages"],
 ): ChatUiMessage[] {
   const knownToolNames = new Map<string, string>();
+  const knownToolInputs = new Map<string, Record<string, unknown>>();
 
   return messages.map((message) => {
     const parts: ChatUiMessagePart[] = [];
@@ -158,6 +159,12 @@ function normalizeHostedChatRequestMessages(
       const uiToolIdentity = getHostedChatUiToolIdentity(part);
       if (uiToolIdentity) {
         knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
+        const input = isRecord(part as unknown)
+          ? (part as Record<string, unknown>)["input"]
+          : undefined;
+        if (isRecord(input)) {
+          knownToolInputs.set(uiToolIdentity.toolCallId, input);
+        }
         partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
       }
 
@@ -170,13 +177,15 @@ function normalizeHostedChatRequestMessages(
         const state = typeof part.state === "string" ? part.state : "completed";
         if (!toolCallId || !toolName) continue;
 
+        const input = isRecord(part.input) ? part.input : {};
         knownToolNames.set(toolCallId, toolName);
+        knownToolInputs.set(toolCallId, input);
         partIndexByToolCallId.set(toolCallId, parts.length);
         parts.push({
           type: "tool_call",
           toolCallId,
           toolName,
-          input: isRecord(part.input) ? part.input : {},
+          input,
           state: mapRawToolCallState(state),
         });
         continue;
@@ -192,7 +201,7 @@ function normalizeHostedChatRequestMessages(
           type: "tool_call",
           toolCallId,
           toolName,
-          input: {},
+          input: knownToolInputs.get(toolCallId) ?? {},
           state: part.is_error === true ? "output-error" : "output-available",
           output: part.output,
           ...(part.is_error === true
