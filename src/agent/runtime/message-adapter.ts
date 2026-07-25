@@ -2,6 +2,8 @@ import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conve
 import {
   buildDataFileAnnotation,
   type ChatModelFilePart,
+  type ChatSourceDocumentUiPart,
+  type ChatSourceUrlUiPart,
   type ChatToolResultPart,
   type ChatUserContentPart,
   type ProviderModelMessage,
@@ -61,7 +63,9 @@ type AgentRuntimeMessageLikePart =
     output?: unknown;
   }
   | { type: "image"; url: string; mediaType: string }
-  | { type: "file"; url: string; mediaType: string };
+  | { type: "file"; url: string; mediaType: string }
+  | ChatSourceUrlUiPart
+  | ChatSourceDocumentUiPart;
 
 /** Public API contract for agent runtime message part. */
 export type AgentRuntimeMessagePart =
@@ -80,7 +84,9 @@ export type AgentRuntimeMessagePart =
     result: unknown;
   }
   | { type: "image"; url: string; mediaType: string }
-  | { type: "file"; url: string; mediaType: string };
+  | { type: "file"; url: string; mediaType: string }
+  | ChatSourceUrlUiPart
+  | ChatSourceDocumentUiPart;
 
 /** Message shape for agent runtime. */
 export interface AgentRuntimeMessage {
@@ -433,6 +439,10 @@ function collectAgentRuntimeProviderContentParts(
   const toolNamesById = new Map<string, string>();
 
   for (const part of parts) {
+    if (part.type === "source-url" || part.type === "source-document") {
+      continue;
+    }
+
     const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
       textParts.push(textPart);
@@ -547,6 +557,10 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
   };
 
   for (const part of parts) {
+    if (part.type === "source-url" || part.type === "source-document") {
+      continue;
+    }
+
     const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
       pushAssistantPart(textPart);

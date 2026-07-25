@@ -1,7 +1,7 @@
 ---
 title: "veryfront/middleware"
 description: "CORS, rate limiting, logging, and timeout middleware."
-order: 18
+order: 19
 ---
 
 ## Import
@@ -73,7 +73,7 @@ Execute the pipeline for an incoming request.
 
 ### `middlewarePipeline.handle(req, handler)`
 
-Run the middleware pipeline with a final request handler. Unlike {@link execute}, which returns a 404 when no middleware responds, `handle` invokes the given handler as the terminal step so middleware can add headers, validate auth, etc. before the handler runs.
+Run the middleware pipeline with a final request handler. Unlike `execute`, which returns a 404 when no middleware responds, `handle` invokes the given handler as the terminal step so middleware can add headers, validate auth, etc. before the handler runs.
 
 **Returns:** <code>Promise&lt;Response&gt;</code>
 
@@ -132,7 +132,7 @@ Options accepted by timeout.
 
 | Property | Type | Description | Source |
 |----------|------|-------------|--------|
-| `timeoutMs?` | `number` | Timeout in milliseconds (default: 60000) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L19) |
+| `timeoutMs?` | `number` | Timeout in milliseconds (default: 75000) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L19) |
 | `message?` | `string` | Custom message for timeout response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L22) |
 | `exclude?` | `string[]` | Paths to exclude from timeout (e.g., health checks) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L25) |
 

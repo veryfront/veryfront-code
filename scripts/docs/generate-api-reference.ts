@@ -985,7 +985,23 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 }
 
 function normalizePublicDocText(text: string): string {
-  return text
+  const withoutInlineJsDocLinks = text.replace(
+    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
+    (_match, rawTarget: string) => {
+      const target = rawTarget.trim();
+      const pipeIndex = target.indexOf("|");
+      const display = pipeIndex >= 0
+        ? target.slice(pipeIndex + 1).trim()
+        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
+      return `\`${display.replace(/`/g, "\\`")}\``;
+    },
+  );
+
+  return withoutInlineJsDocLinks
+    .replace(/`[^`]*`|[<>]/g, (token) => {
+      if (token.startsWith("`")) return token;
+      return token === "<" ? "&lt;" : "&gt;";
+    })
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
@@ -1423,8 +1439,10 @@ function getSourceHref(location: DenoDocLocation | undefined): string {
   if (!relativePath) return "";
 
   const lineNumber = location?.line;
-  const line = typeof lineNumber === "number" && lineNumber > 0
-    ? `#L${lineNumber}`
+  // `deno doc --json` reports zero-based source lines; GitHub anchors are
+  // one-based. Preserve an anchor for declarations on the first source line.
+  const line = typeof lineNumber === "number" && lineNumber >= 0
+    ? `#L${lineNumber + 1}`
     : "";
   return `${SOURCE_BASE_URL}/${relativePath}${line}`;
 }
@@ -2073,10 +2091,7 @@ function oneLineDoc(doc: string): string {
     lines.push(line);
   }
 
-  return lines.join(" ")
-    .replace(/[\u2014\u2013]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizePublicDocText(lines.join(" "));
 }
 
 function renderPropertyTable(
