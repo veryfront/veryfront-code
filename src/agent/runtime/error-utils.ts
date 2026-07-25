@@ -8,6 +8,11 @@ export const MAX_TOOL_ERROR_TEXT_BYTES = 4_096;
 const TOOL_ERROR_TEXT_TRUNCATION_SUFFIX = "…";
 const TOOL_ERROR_TEXT_TRUNCATION_SUFFIX_BYTES = 3;
 const UNKNOWN_TOOL_ERROR_TEXT = "Unknown error";
+const apply = Reflect.apply;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
+  ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
+  : undefined;
 
 function codePointUtf8Width(value: string, index: number): { bytes: number; codeUnits: number } {
   const codeUnit = value.charCodeAt(index);
@@ -52,11 +57,27 @@ function readOwnMessage(error: unknown): string | undefined {
   }
 
   try {
-    const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+    const descriptor = getOwnPropertyDescriptor(error, "message");
     return descriptor && Object.hasOwn(descriptor, "value") &&
         typeof descriptor.value === "string"
       ? descriptor.value
       : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readNativeDomExceptionMessage(error: unknown): string | undefined {
+  if (
+    !DOM_EXCEPTION_MESSAGE_GETTER ||
+    ((typeof error !== "object" || error === null) && typeof error !== "function")
+  ) {
+    return undefined;
+  }
+
+  try {
+    const message = apply(DOM_EXCEPTION_MESSAGE_GETTER, error, []);
+    return typeof message === "string" ? message : undefined;
   } catch {
     return undefined;
   }
@@ -70,6 +91,11 @@ export function stringifyToolError(error: unknown): string {
   const ownMessage = readOwnMessage(error);
   if (ownMessage !== undefined && ownMessage.length > 0) {
     return boundToolErrorText(ownMessage);
+  }
+
+  const domExceptionMessage = readNativeDomExceptionMessage(error);
+  if (domExceptionMessage !== undefined && domExceptionMessage.length > 0) {
+    return boundToolErrorText(domExceptionMessage);
   }
 
   try {

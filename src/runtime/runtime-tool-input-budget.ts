@@ -34,6 +34,8 @@ type SnapshotState = {
 
 class ToolInputBudgetExceeded extends Error {}
 
+class NonFiniteRuntimeToolInputNumber extends TypeError {}
+
 function exceedBudget(): never {
   throw new ToolInputBudgetExceeded();
 }
@@ -320,7 +322,9 @@ function snapshotValue(
       return value;
     case "number":
       if (!Number.isFinite(value)) {
-        return invalidInput("numbers must be finite");
+        throw new NonFiniteRuntimeToolInputNumber(
+          "Runtime tool input numbers must be finite",
+        );
       }
       if (Object.is(value, -0)) {
         addBytes(state, 1);
@@ -394,6 +398,19 @@ export function snapshotRuntimeToolInput(
     }
     throw new TypeError("Runtime tool input could not be safely inspected");
   }
+}
+
+/**
+ * Identify the one non-JSON value that native JSON parsing can produce.
+ *
+ * JSON number syntax permits magnitudes that overflow the host number type.
+ * Callers that retain the original JSON text can use this guard to keep that
+ * text correlated with the tool call while the normal validator reports it.
+ */
+export function isNonFiniteParsedRuntimeToolInputError(
+  error: unknown,
+): boolean {
+  return error instanceof NonFiniteRuntimeToolInputNumber;
 }
 
 /**

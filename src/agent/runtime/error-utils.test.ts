@@ -62,6 +62,17 @@ describe("agent/runtime/error-utils", () => {
       assertEquals(stringifyToolError(new Error("tool exploded")), "tool exploded");
     });
 
+    it("preserves native abort and timeout DOMException messages", () => {
+      assertEquals(
+        stringifyToolError(new DOMException("client disconnected", "AbortError")),
+        "client disconnected",
+      );
+      assertEquals(
+        stringifyToolError(new DOMException("provider timed out", "TimeoutError")),
+        "provider timed out",
+      );
+    });
+
     it("stringifies structured values as JSON", () => {
       assertEquals(
         stringifyToolError({ code: "E_TOOL", retryable: true }),

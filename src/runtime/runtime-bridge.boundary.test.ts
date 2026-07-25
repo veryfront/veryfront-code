@@ -116,6 +116,83 @@ function exactByteJsonInput(byteLength: number): string {
 }
 
 describe("runtime bridge boundary validation", () => {
+  it("contains an overflowed JSON number from replay history as a correlated tool error", async () => {
+    let generated = false;
+    const result = await generateText({
+      model: directModel(
+        {
+          content: [{ type: "text", text: "Recovered." }],
+          finishReason: "stop",
+        },
+        () => {
+          generated = true;
+        },
+      ),
+      messages: [{
+        role: "assistant",
+        content: [],
+        providerToolCalls: [{
+          type: "tool-call",
+          toolCallId: "replayed-overflow",
+          toolName: "web_search",
+          input: "1e999",
+          providerExecuted: true,
+        }],
+      }],
+      tools: {
+        web_search: {
+          type: "provider",
+          id: "anthropic.web_search_20250305",
+          args: {},
+          inputSchema: () => createRuntimeJsonSchema({ type: "number" }),
+        },
+      },
+    });
+
+    assertEquals(generated, true);
+    assertEquals(result.text, "Recovered.");
+    assertEquals(result.toolResults?.length, 1);
+    assertEquals(result.toolResults?.[0]?.toolCallId, "replayed-overflow");
+    assertEquals(
+      getErrorName(result.toolResults?.[0]?.result),
+      "AI_MissingToolResultError",
+    );
+  });
+
+  it("contains an overflowed streamed JSON number as a correlated tool error", async () => {
+    const result = await generateText({
+      model: {
+        ...streamModel([
+          {
+            type: "tool-call",
+            toolCallId: "streamed-overflow",
+            toolName: "search",
+            input: "1e999",
+          },
+          { type: "finish", finishReason: "tool-calls" },
+        ]),
+        _generateViaStream: true,
+      },
+      messages: [{ role: "user", content: "Search" }],
+      tools: {
+        search: {
+          description: "Search",
+          inputSchema: createRuntimeJsonSchema({ type: "number" }),
+        },
+      },
+    });
+
+    assertEquals(result.toolCalls?.length, 1);
+    assertEquals(result.toolCalls?.[0]?.toolCallId, "streamed-overflow");
+    assertEquals(result.toolCalls?.[0]?.input, "1e999");
+    assertEquals(result.toolResults?.length, 1);
+    assertEquals(result.toolResults?.[0]?.toolCallId, "streamed-overflow");
+    assertEquals(
+      getErrorName(result.toolResults?.[0]?.result),
+      "AI_InvalidToolInputError",
+    );
+  });
+
   it("preserves every supported system prompt representation", async () => {
     const cases: Array<{
       system: unknown;
