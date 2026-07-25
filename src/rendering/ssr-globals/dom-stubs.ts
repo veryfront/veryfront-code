@@ -32,10 +32,10 @@ function createClassListStub(): {
  * "el.style.setProperty is not a function" on the server.
  */
 function createStyleStub(): {
-  setProperty: () => void;
-  getPropertyValue: () => string;
-  removeProperty: () => string;
-  item: () => string;
+  setProperty: (propertyName?: string, value?: string, priority?: string) => void;
+  getPropertyValue: (propertyName?: string) => string;
+  removeProperty: (propertyName?: string) => string;
+  item: (index?: number) => string;
   cssText: string;
   length: number;
   [key: string]: unknown;
