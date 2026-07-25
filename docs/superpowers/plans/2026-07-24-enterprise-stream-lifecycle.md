@@ -8,6 +8,26 @@
 
 **Tech Stack:** Deno, TypeScript, async iterators, `AbortController`, existing Veryfront test helpers, and OpenTelemetry interfaces already in the repository.
 
+## Implementation status
+
+PR #3072 implements and verifies the four gates in this plan:
+
+- [x] Gate 1: Interface and shadow reducer
+- [x] Gate 2: Runtime ownership
+- [x] Gate 3: Deadline consolidation
+- [x] Gate 4: Versioned projection contracts
+
+The task-level checkboxes below preserve the original red-green execution
+recipe. They are not live status markers. The PR commit history, focused test
+corpus, repository checks, and
+`docs/internal/stream-lifecycle-rollout.md` provide the completion evidence.
+
+Phase 5 is intentionally excluded. It requires a separately approved,
+cross-repository Stream Delivery design and implementation plan before any
+production version 2 caller is enabled. Cross-repository ownership and
+sequencing are maintained in the private canonical issue inbox and are not
+linked from this public implementation plan.
+
 ## Global Constraints
 
 - Add no dependency.
