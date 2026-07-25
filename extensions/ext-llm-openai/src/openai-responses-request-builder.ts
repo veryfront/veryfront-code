@@ -13,6 +13,12 @@ import {
   resolveOpenAIReasoningConfig,
   shouldRequestOpenAIReasoningSummary,
 } from "./openai-reasoning-models.ts";
+import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
+import {
+  OPENAI_WEB_SEARCH_SOURCES_INCLUDE,
+  readOpenAIRawResponseOutputItems,
+  resolveOpenAIWebSearchDescriptor,
+} from "./openai-web-search.ts";
 
 export type OpenAIResponsesInputItem = Record<string, unknown>;
 
@@ -51,15 +57,6 @@ type WarningCollector = {
   }>;
 };
 
-function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [
-      key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`),
-      value,
-    ]),
-  );
-}
-
 function toOpenAIResponsesInput(
   prompt: RuntimePromptMessage[],
 ): { instructions?: string; input: OpenAIResponsesInputItem[] } {
@@ -80,6 +77,11 @@ function toOpenAIResponsesInput(
         });
         break;
       case "assistant": {
+        const rawOutputItems = readOpenAIRawResponseOutputItems(message.providerMetadata);
+        if (rawOutputItems) {
+          input.push(...rawOutputItems);
+          break;
+        }
         const messageContent: Array<Record<string, unknown>> = [];
         for (const part of message.content) {
           if (part.type === "text") {
@@ -168,7 +170,9 @@ function toOpenAIResponsesTools(
   tools: RuntimeToolDefinition[] | undefined,
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) return undefined;
+  const webSearch = resolveOpenAIWebSearchDescriptor(tools);
   const normalized: Array<Record<string, unknown>> = [];
+  let addedWebSearch = false;
   for (const tool of tools) {
     if (tool.type === "function") {
       normalized.push({
@@ -185,12 +189,10 @@ function toOpenAIResponsesTools(
       continue;
     }
     if (!tool.id.startsWith("openai.")) continue;
-    const providerType = tool.id.slice("openai.".length);
-    if (providerType.length === 0) continue;
-    normalized.push({
-      type: providerType,
-      ...toSnakeCaseRecord(tool.args),
-    });
+    if (webSearch && !addedWebSearch) {
+      normalized.push(webSearch.requestTool);
+      addedWebSearch = true;
+    }
   }
   return normalized.length > 0 ? normalized : undefined;
 }
@@ -238,6 +240,7 @@ export function buildOpenAIResponsesRequest(
 
   const { instructions, input } = toOpenAIResponsesInput(options.prompt);
   const responsesTools = toOpenAIResponsesTools(options.tools);
+  const webSearch = resolveOpenAIWebSearchDescriptor(options.tools);
 
   const body: OpenAIResponsesRequest = {
     model: modelId,
@@ -293,8 +296,8 @@ export function buildOpenAIResponsesRequest(
 
   // Env-BYOK users historically registered options under "openai-compatible";
   // keep merging that bucket at the lowest precedence.
-  Object.assign(
-    body,
+  defineOpenAIProviderOptions(
+    body as Record<string, unknown>,
     readProviderOptions(
       options.providerOptions,
       ...(providerName === "openai" ? ["openai-compatible"] : []),
@@ -302,5 +305,39 @@ export function buildOpenAIResponsesRequest(
       providerName,
     ),
   );
+  // Keep provider-native tuning extensible without allowing raw options to
+  // replace the runtime-owned transport, prompt, model, or privacy contract.
+  body.model = modelId;
+  body.input = input;
+  body.store = false;
+  if (instructions !== undefined) {
+    body.instructions = instructions;
+  } else {
+    delete body.instructions;
+  }
+  if (stream) {
+    body.stream = true;
+  } else {
+    delete body.stream;
+  }
+  if (webSearch) {
+    const providerIncludes = Array.isArray(body.include)
+      ? body.include.filter((value): value is string => typeof value === "string")
+      : [];
+    body.include = [...new Set([
+      ...providerIncludes,
+      OPENAI_WEB_SEARCH_SOURCES_INCLUDE,
+    ])];
+  }
+  if (Object.hasOwn(body, "background")) {
+    delete body.background;
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "openai",
+      setting: "background",
+      details:
+        "Background Responses are asynchronous and cannot satisfy the runtime's immediate result contract; the value was dropped.",
+    });
+  }
   return body;
 }

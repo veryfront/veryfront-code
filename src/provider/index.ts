@@ -32,7 +32,10 @@ export { getVeryfrontCloudBootstrap } from "../platform/cloud/resolver.ts";
 export type { VeryfrontCloudBootstrap } from "../platform/cloud/resolver.ts";
 export type { VeryfrontCloudProviderId } from "./veryfront-cloud/model-catalog.ts";
 export {
+  DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
   DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
+  DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
+  DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
   findVeryfrontCloudModel,
   findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,

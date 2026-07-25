@@ -1,6 +1,15 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
+import { ProviderRequestError } from "veryfront/provider/shared";
+import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
+import {
+  MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES,
+  MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS,
+} from "./openai-tool-input.ts";
+import {
+  MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
+  MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
+} from "./openai-stream-metadata.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -121,10 +130,14 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     ]);
   });
 
-  it("flushes trailing buffered usage records without a final delimiter", async () => {
+  it("fully processes a trailing terminal record without a final delimiter", async () => {
     const parts = await collectParts(streamFromText(
       `data: ${
         JSON.stringify({
+          choices: [{
+            delta: { content: "tail" },
+            finish_reason: "stop",
+          }],
           usage: {
             prompt_tokens: 1,
             completion_tokens: 2,
@@ -134,14 +147,250 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       }`,
     ));
 
+    assertEquals(parts, [
+      { type: "text-delta", delta: "tail" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        usage: {
+          inputTokens: 1,
+          outputTokens: 2,
+          totalTokens: 3,
+        },
+      },
+    ]);
+  });
+
+  it("accepts a nullable refusal delta", async () => {
+    const parts = await collectParts(streamFromText(data({
+      choices: [{
+        delta: { refusal: null },
+        finish_reason: "stop",
+      }],
+    })));
+
     assertEquals(parts, [{
       type: "finish",
-      finishReason: null,
-      usage: {
-        inputTokens: 1,
-        outputTokens: 2,
-        totalTokens: 3,
-      },
+      finishReason: "stop",
     }]);
+  });
+
+  it("bounds aggregate streamed tool argument bytes and fragment counts", async () => {
+    const oversizedArguments = `{"value":"${
+      "é".repeat(Math.floor(MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES / 2))
+    }"}`;
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "call_bytes",
+                function: { name: "lookup", arguments: oversizedArguments },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      `exceeded ${MAX_OPENAI_STREAM_TOOL_ARGUMENT_BYTES} UTF-8 bytes`,
+    );
+
+    const fragmentEvents = [
+      data({
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: "call_fragments",
+              function: { name: "lookup" },
+            }],
+          },
+        }],
+      }),
+      ...Array.from(
+        { length: MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS + 1 },
+        () =>
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  function: { arguments: "" },
+                }],
+              },
+            }],
+          }),
+      ),
+    ].join("");
+    await assertRejects(
+      () => collectParts(streamFromText(fragmentEvents)),
+      ProviderRequestError,
+      `exceeded ${MAX_OPENAI_STREAM_TOOL_ARGUMENT_FRAGMENTS} fragments`,
+    );
+  });
+
+  it("enforces finish-reason and done-marker ordering", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({ choices: [{ delta: { content: "partial" } }] }),
+          "data: [DONE]\r\n\r\n",
+        ].join(""))),
+      ProviderRequestError,
+      "done marker arrived before a finish reason",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+          data({ choices: [{ delta: { content: "late" } }] }),
+        ].join(""))),
+      ProviderRequestError,
+      "choice data after its finish reason",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+          "data: [DONE]\r\n\r\n",
+          data({ usage: { prompt_tokens: 1 } }),
+        ].join(""))),
+      ProviderRequestError,
+      "data after its done marker",
+    );
+  });
+
+  it("rejects ambiguous tool-call identities, types, and counts", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "call_1",
+                type: "not_function",
+                function: { name: "lookup" },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call type was not function",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [
+                { index: 0, id: "call_dup", function: { name: "first" } },
+                { index: 1, id: "call_dup", function: { name: "second" } },
+              ],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call id was reused at another index",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: Array.from(
+                { length: MAX_OPENAI_STREAM_TOOL_CALLS + 1 },
+                (_, index) => ({
+                  index,
+                  id: `call_${index}`,
+                  function: { name: "lookup" },
+                }),
+              ),
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      `stream exceeded ${MAX_OPENAI_STREAM_TOOL_CALLS} tool calls`,
+    );
+  });
+
+  it("bounds retained tool identifiers and names by UTF-8 bytes", async () => {
+    const exactId = "é".repeat(MAX_OPENAI_STREAM_IDENTIFIER_BYTES / 2);
+    const exactName = "é".repeat(MAX_OPENAI_STREAM_TOOL_NAME_BYTES / 2);
+    const exact = await collectParts(streamFromText(data({
+      choices: [{
+        delta: {
+          tool_calls: [{
+            index: 0,
+            id: exactId,
+            function: { name: exactName, arguments: "{}" },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+    })));
+    assertEquals(
+      exact.find((part) => (part as { type?: string }).type === "tool-call"),
+      {
+        type: "tool-call",
+        toolCallId: exactId,
+        toolName: exactName,
+        input: "{}",
+      },
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: `${exactId}é`,
+                function: { name: "lookup" },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call id was malformed",
+    );
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "call_1",
+                function: { name: `${exactName}é` },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call function name was malformed",
+    );
+  });
+
+  it("rejects structurally empty and unterminated successful streams", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText(data({}))),
+      ProviderRequestError,
+      "event had neither choices nor usage",
+    );
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { content: "partial" } }],
+        }))),
+      ProviderRequestError,
+      "stream ended before a finish reason",
+    );
   });
 });

@@ -16,7 +16,12 @@ import {
 } from "#std/assert";
 import { afterEach, describe, it } from "#std/testing/bdd";
 import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
-import { createLocalModel } from "./model-runtime-adapter.ts";
+import { createLocalModel, createLocalModelRuntime } from "./model-runtime-adapter.ts";
+import { createLocalEmbeddingModel } from "./embedding-runtime-adapter.ts";
+import {
+  LOCAL_EMBEDDING_BATCH_SIZE,
+  validateLocalEmbeddingBatch,
+} from "./local-embedding-engine.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 
@@ -107,6 +112,59 @@ describe("model-runtime-adapter", () => {
     assertEquals(m._isVfLocalModel, true);
   });
 
+  it("omits usage when the local engine does not measure tokens", async () => {
+    const model = createLocalModelRuntime("qwen3.5-0.8b", {
+      generate: () => Promise.resolve("hello"),
+      generateStream: async function* () {
+        yield "hel";
+        yield "lo";
+      },
+    });
+    const options = {
+      prompt: [{ role: "user", content: "hello" }],
+    };
+
+    const generated = await model.doGenerate(options);
+    assertEquals(Object.hasOwn(generated, "usage"), false);
+
+    const { stream } = await model.doStream(options);
+    const parts: Array<Record<string, unknown>> = [];
+    for await (const part of stream) {
+      parts.push(part as Record<string, unknown>);
+    }
+    const finish = parts.find((part) => part.type === "finish");
+    assertExists(finish);
+    assertEquals(Object.hasOwn(finish, "usage"), false);
+  });
+
+  it("rejects unsupported or empty local prompt content instead of dropping it", async () => {
+    let generateCalls = 0;
+    const model = createLocalModelRuntime("qwen3.5-0.8b", {
+      generate: () => {
+        generateCalls++;
+        return Promise.resolve("unused");
+      },
+      generateStream: async function* () {
+        yield "unused";
+      },
+    });
+
+    for (
+      const prompt of [
+        [],
+        [{ role: "tool", content: "hidden result" }],
+        [{ role: "user", content: [{ type: "image", text: "ignored" }] }],
+        [{ role: "user", content: "" }],
+      ]
+    ) {
+      await assertRejects(
+        () => Promise.resolve(model.doGenerate({ prompt })),
+        TypeError,
+      );
+    }
+    assertEquals(generateCalls, 0);
+  });
+
   it("fails before creating a stream when local AI is disabled", async () => {
     const prev = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
     Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");
@@ -125,6 +183,259 @@ describe("model-runtime-adapter", () => {
       if (prev === undefined) Deno.env.delete("VERYFRONT_DISABLE_LOCAL_AI");
       else Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", prev);
     }
+  });
+
+  it("rejects pre-aborted generation before loading the local runtime", async () => {
+    const abortController = new AbortController();
+    abortController.abort(new DOMException("cancelled", "AbortError"));
+    // deno-lint-ignore no-explicit-any
+    const model = createLocalModel("qwen3.5-0.8b") as any;
+
+    await assertRejects(
+      () =>
+        model.doGenerate({
+          prompt: [{ role: "user", content: "hello" }],
+          abortSignal: abortController.signal,
+        }),
+      DOMException,
+      "cancelled",
+    );
+    await assertRejects(
+      () =>
+        model.doStream({
+          prompt: [{ role: "user", content: "hello" }],
+          abortSignal: abortController.signal,
+        }),
+      DOMException,
+      "cancelled",
+    );
+  });
+
+  it("rejects a caller abort even when non-streaming local generation ignores it", async () => {
+    const neverSettles = new Promise<string>(() => {});
+    let engineSignal: AbortSignal | undefined;
+    const model = createLocalModelRuntime("qwen3.5-0.8b", {
+      generate: (_modelId, _messages, options) => {
+        engineSignal = options.abortSignal;
+        return neverSettles;
+      },
+      generateStream: async function* () {
+        yield "unused";
+      },
+    });
+    const abortController = new AbortController();
+    const generation = model.doGenerate({
+      prompt: [{ role: "user", content: "hello" }],
+      abortSignal: abortController.signal,
+    });
+    const reason = new DOMException("caller stopped", "AbortError");
+
+    abortController.abort(reason);
+
+    const error = await Promise.resolve(generation).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    assertEquals(error, reason);
+    assertEquals(engineSignal?.aborted, true);
+    assertEquals(engineSignal?.reason, reason);
+  });
+
+  it("cancels promptly even when a custom local engine ignores abort", async () => {
+    const neverSettles = new Promise<void>(() => {});
+    let engineSignal: AbortSignal | undefined;
+    let returnCalls = 0;
+    const model = createLocalModelRuntime("qwen3.5-0.8b", {
+      generate: () => Promise.resolve("unused"),
+      generateStream: (_modelId, _messages, options) => {
+        engineSignal = options.abortSignal;
+        let emitted = false;
+        const iterator: AsyncIterableIterator<string> = {
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+          next() {
+            if (!emitted) {
+              emitted = true;
+              return Promise.resolve({ done: false, value: "first" });
+            }
+            return neverSettles.then(() => ({ done: true, value: undefined }));
+          },
+          return() {
+            returnCalls++;
+            return Promise.resolve({ done: true, value: undefined });
+          },
+        };
+        return iterator;
+      },
+    });
+    const { stream } = await model.doStream({
+      prompt: [{ role: "user", content: "hello" }],
+    });
+    const reader = stream.getReader();
+    for (let index = 0; index < 4; index++) {
+      assertEquals((await reader.read()).done, false);
+    }
+    const reason = new DOMException("consumer stopped", "AbortError");
+
+    const cancellation = reader.cancel(reason);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let result: string;
+    try {
+      result = await Promise.race([
+        cancellation.then(() => "canceled"),
+        new Promise<string>((resolve) => {
+          timeoutId = setTimeout(() => resolve("timed out"), 100);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+
+    assertEquals(result, "canceled");
+    assertEquals(engineSignal?.aborted, true);
+    assertEquals(engineSignal?.reason, reason);
+    assertEquals(returnCalls, 1);
+  });
+
+  it("surfaces caller abort promptly even when a custom local engine ignores it", async () => {
+    const neverSettles = new Promise<void>(() => {});
+    let engineSignal: AbortSignal | undefined;
+    const model = createLocalModelRuntime("qwen3.5-0.8b", {
+      generate: () => Promise.resolve("unused"),
+      generateStream: async function* (_modelId, _messages, options) {
+        engineSignal = options.abortSignal;
+        yield "first";
+        await neverSettles;
+      },
+    });
+    const abortController = new AbortController();
+    const { stream } = await model.doStream({
+      prompt: [{ role: "user", content: "hello" }],
+      abortSignal: abortController.signal,
+    });
+    const reader = stream.getReader();
+    for (let index = 0; index < 4; index++) {
+      assertEquals((await reader.read()).done, false);
+    }
+    const pendingRead = reader.read();
+    const reason = new DOMException("caller stopped", "AbortError");
+
+    abortController.abort(reason);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let error: unknown;
+    try {
+      error = await Promise.race([
+        pendingRead.then(
+          () => undefined,
+          (caught) => caught,
+        ),
+        new Promise<Error>((resolve) => {
+          timeoutId = setTimeout(() => resolve(new Error("timed out")), 100);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+
+    assertEquals(error, reason);
+    assertEquals(engineSignal?.aborted, true);
+    assertEquals(engineSignal?.reason, reason);
+  });
+
+  it("closes an iterator when acquisition synchronously aborts the caller", async () => {
+    const abortController = new AbortController();
+    const reason = new DOMException("aborted during iterator acquisition", "AbortError");
+    let nextCalls = 0;
+    let returnCalls = 0;
+    const iterator: AsyncIterator<string> = {
+      next() {
+        nextCalls++;
+        return new Promise<IteratorResult<string>>(() => {});
+      },
+      return() {
+        returnCalls++;
+        return Promise.resolve({ done: true, value: undefined });
+      },
+    };
+    const model = createLocalModelRuntime("qwen3.5-0.8b", {
+      generate: () => Promise.resolve("unused"),
+      generateStream: () => ({
+        [Symbol.asyncIterator]() {
+          abortController.abort(reason);
+          return iterator;
+        },
+      }),
+    });
+
+    const { stream } = await model.doStream({
+      prompt: [{ role: "user", content: "hello" }],
+      abortSignal: abortController.signal,
+    });
+    const reader = stream.getReader();
+    const error = await assertRejects(() => reader.read());
+
+    assertEquals(error, reason);
+    assertEquals(nextCalls, 0);
+    assertEquals(returnCalls, 1);
+  });
+});
+
+describe("embedding-runtime-adapter", () => {
+  it("validates local embedding count, dimensions, and finite coordinates", () => {
+    assertEquals(
+      validateLocalEmbeddingBatch([[1, 2], [3, 4]], 2),
+      {
+        embeddings: [[1, 2], [3, 4]],
+        dimension: 2,
+      },
+    );
+    assertThrows(
+      () => validateLocalEmbeddingBatch([[1, 2]], 2),
+      TypeError,
+      "unexpected number of vectors",
+    );
+    assertThrows(
+      () => validateLocalEmbeddingBatch([[1, Number.NaN]], 1),
+      TypeError,
+      "invalid vector",
+    );
+    assertThrows(
+      () => validateLocalEmbeddingBatch([[1], [2, 3]], 2),
+      TypeError,
+      "inconsistent vector dimensions",
+    );
+    assertThrows(
+      () => validateLocalEmbeddingBatch([[1, 2]], 1, 3),
+      TypeError,
+      "inconsistent vector dimensions",
+    );
+  });
+
+  it("advertises a finite local embedding batch size", () => {
+    const model = createLocalEmbeddingModel();
+    assertEquals(model.maxEmbeddingsPerCall, LOCAL_EMBEDDING_BATCH_SIZE);
+    assertEquals(model.supportsParallelCalls, false);
+  });
+
+  it("omits usage when the local embedding engine does not measure tokens", async () => {
+    const model = createLocalEmbeddingModel();
+    const result = await model.doEmbed({ values: [] });
+
+    assertEquals(result.embeddings, []);
+    assertEquals(Object.hasOwn(result, "usage"), false);
+  });
+
+  it("rejects pre-aborted embedding calls before loading the local runtime", async () => {
+    const abortController = new AbortController();
+    abortController.abort(new DOMException("cancelled", "AbortError"));
+    const model = createLocalEmbeddingModel();
+
+    await assertRejects(
+      () => model.doEmbed({ values: ["hello"], abortSignal: abortController.signal }),
+      DOMException,
+      "cancelled",
+    );
   });
 });
 

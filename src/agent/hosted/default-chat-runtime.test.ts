@@ -11,7 +11,6 @@ import type {
 import { toolRegistry } from "#veryfront/tool";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { defineSchema } from "../../schemas/define.ts";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { executeRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
 import {
   createDefaultHostedChatRuntime,
@@ -176,7 +175,16 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
             }],
           });
         }
-        return Response.json({ ok: true });
+        return new Response(
+          [
+            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"done"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+          ].join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
       },
       async () => {
         const result = await runtime.agent.stream({
@@ -283,15 +291,7 @@ Deno.test(
           };
         },
       };
-      await runWithProjectRequestContext(
-        {
-          projectSlug: "project-one",
-          projectId: "11111111-1111-4111-8111-111111111111",
-          token: "project-one-token",
-          productionMode: false,
-        },
-        async () => registerModelProvider("veryfront-cloud", () => model),
-      );
+      registerModelProvider("veryfront-cloud", () => model);
 
       const studioExecutionContexts: ToolExecutionContext[] = [];
       const integrationExecutionContexts: ToolExecutionContext[] = [];

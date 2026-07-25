@@ -37,30 +37,40 @@ function convertPrompt(prompt: ReadonlyArray<PromptMessage>): ChatMessage[] {
   const messages: ChatMessage[] = [];
 
   for (const msg of prompt) {
-    // Skip tool messages. Local models do not support tool calling.
-    if (msg.role === "tool") continue;
+    if (
+      msg.role !== "system" &&
+      msg.role !== "user" &&
+      msg.role !== "assistant"
+    ) {
+      throw new TypeError(
+        `Local models do not support prompt role "${msg.role}"`,
+      );
+    }
 
-    const mappedRole = msg.role === "system"
-      ? "system"
-      : msg.role === "user"
-      ? "user"
-      : "assistant";
-
-    // Extract text content from content array
     let text = "";
     if (typeof msg.content === "string") {
       text = msg.content;
     } else if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
-        if (part.type === "text" && typeof part.text === "string") {
-          text += part.text;
+        if (part.type !== "text" || typeof part.text !== "string") {
+          throw new TypeError(
+            `Local models do not support prompt content type "${part.type}"`,
+          );
         }
+        text += part.text;
       }
+    } else {
+      throw new TypeError("Local model prompt content must be text");
     }
 
-    if (text) {
-      messages.push({ role: mappedRole, content: text });
+    if (text.length === 0) {
+      throw new TypeError("Local model prompt messages must contain text");
     }
+    messages.push({ role: msg.role, content: text });
+  }
+
+  if (messages.length === 0) {
+    throw new TypeError("Local model prompt must contain at least one message");
   }
 
   return messages;
@@ -73,7 +83,26 @@ interface LocalModelOptions {
   topP?: number;
   topK?: number;
   stopSequences?: string[];
+  abortSignal?: AbortSignal;
 }
+
+export interface LocalModelRuntimeEngine {
+  generate(
+    modelId: string,
+    messages: ChatMessage[],
+    options: GenerateOptions,
+  ): Promise<string>;
+  generateStream(
+    modelId: string,
+    messages: ChatMessage[],
+    options: GenerateOptions,
+  ): AsyncIterable<string>;
+}
+
+const defaultLocalModelRuntimeEngine: LocalModelRuntimeEngine = {
+  generate,
+  generateStream,
+};
 
 /** Map model-runtime generation options to local engine GenerateOptions. */
 function toGenerateOptions(options: LocalModelOptions): GenerateOptions {
@@ -83,7 +112,50 @@ function toGenerateOptions(options: LocalModelOptions): GenerateOptions {
     topP: options.topP,
     topK: options.topK,
     stopSequences: options.stopSequences,
+    abortSignal: options.abortSignal,
   };
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortReason(signal);
+}
+
+async function waitForAbortableGeneration<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return await promise;
+  throwIfAborted(signal);
+
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason(signal));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**
@@ -92,7 +164,10 @@ function toGenerateOptions(options: LocalModelOptions): GenerateOptions {
  * The returned object implements the current runtime interface, making it
  * compatible with the framework execution path and related hooks.
  */
-export function createLocalModel(modelId?: string): ModelRuntime {
+export function createLocalModelRuntime(
+  modelId: string | undefined,
+  engine: LocalModelRuntimeEngine,
+): ModelRuntime {
   const resolvedId = modelId || DEFAULT_LOCAL_MODEL;
 
   return {
@@ -106,21 +181,21 @@ export function createLocalModel(modelId?: string): ModelRuntime {
     supportedUrls: {},
 
     async doGenerate(options: LocalModelOptions) {
+      throwIfAborted(options.abortSignal);
       const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
 
       logger.debug(`[local] doGenerate: ${messages.length} messages -> ${resolvedId}`);
 
-      const text = await generate(resolvedId, messages, genOptions);
+      const text = await waitForAbortableGeneration(
+        engine.generate(resolvedId, messages, genOptions),
+        options.abortSignal,
+      );
+      throwIfAborted(options.abortSignal);
 
       return {
         content: [{ type: "text" as const, text }],
         finishReason: "stop" as const,
-        usage: {
-          inputTokens: undefined,
-          outputTokens: undefined,
-          totalTokens: undefined,
-        },
         warnings: [],
       };
     },
@@ -132,71 +207,165 @@ export function createLocalModel(modelId?: string): ModelRuntime {
       // the check here too because doStream creates a ReadableStream wrapper and
       // errors inside it would be swallowed as in-band stream errors.
       throwIfLocalAIDisabled();
+      throwIfAborted(options.abortSignal);
 
       const messages = convertPrompt(options.prompt);
       const genOptions = toGenerateOptions(options);
 
       logger.debug(`[local] doStream: ${messages.length} messages -> ${resolvedId}`);
 
-      const textId = `text-${Date.now()}`;
+      const textId = `text-${crypto.randomUUID()}`;
+      const generationAbortController = new AbortController();
+      let streamController:
+        | ReadableStreamDefaultController<Record<string, unknown>>
+        | undefined;
+      let streamSettled = false;
+      const errorStream = (reason: unknown) => {
+        if (streamSettled) return;
+        streamSettled = true;
+        try {
+          streamController?.error(reason);
+        } catch {
+          // Cancellation may have closed the consumer-facing stream first.
+        }
+      };
+      let inFlight: Promise<void> | undefined;
+      let generationIterator: AsyncIterator<string> | undefined;
+      let generationIteratorCompleted = false;
+      let iteratorCloseStarted = false;
+      const closeGenerationIterator = () => {
+        if (
+          !generationIterator ||
+          iteratorCloseStarted ||
+          generationIteratorCompleted
+        ) {
+          return;
+        }
+        iteratorCloseStarted = true;
+        try {
+          const closing = generationIterator.return?.();
+          void closing?.catch(() => {
+            // The consumer has already been released; cleanup is best effort.
+          });
+        } catch {
+          // A custom iterator may throw synchronously while being closed.
+        }
+      };
+      const abortGeneration = (reason: unknown) => {
+        generationAbortController.abort(reason);
+        closeGenerationIterator();
+      };
+      const forwardAbort = () => {
+        const reason = abortReason(options.abortSignal!);
+        abortGeneration(reason);
+        errorStream(reason);
+      };
+      if (options.abortSignal) {
+        options.abortSignal.addEventListener("abort", forwardAbort, { once: true });
+      }
 
-      const stream = new ReadableStream({
-        async start(controller) {
-          try {
-            // Emit stream-start
-            controller.enqueue({ type: "stream-start", warnings: [] });
+      const stream = new ReadableStream<Record<string, unknown>>({
+        start(controller) {
+          streamController = controller;
+          inFlight = (async () => {
+            try {
+              throwIfAborted(generationAbortController.signal);
 
-            // Emit response metadata
-            controller.enqueue({
-              type: "response-metadata",
-              id: `local-${Date.now()}`,
-              timestamp: new Date(),
-              modelId: `local/${resolvedId}`,
-            });
+              // Emit stream-start
+              controller.enqueue({ type: "stream-start", warnings: [] });
 
-            // Emit text-start
-            controller.enqueue({ type: "text-start", id: textId });
-
-            // Stream tokens
-            for await (const token of generateStream(resolvedId, messages, genOptions)) {
+              // Emit response metadata
               controller.enqueue({
-                type: "text-delta",
-                id: textId,
-                delta: token,
+                type: "response-metadata",
+                id: `local-${crypto.randomUUID()}`,
+                timestamp: new Date(),
+                modelId: `local/${resolvedId}`,
               });
+
+              // Emit text-start
+              controller.enqueue({ type: "text-start", id: textId });
+
+              // Stream tokens
+              generationIterator = engine.generateStream(resolvedId, messages, {
+                ...genOptions,
+                abortSignal: generationAbortController.signal,
+              })[Symbol.asyncIterator]();
+              // A custom iterable can synchronously abort the caller while its
+              // iterator is being acquired. Check again after retaining the
+              // iterator so its return hook is still invoked during cleanup.
+              throwIfAborted(generationAbortController.signal);
+              while (true) {
+                const next = await generationIterator.next();
+                if (next.done) {
+                  generationIteratorCompleted = true;
+                  break;
+                }
+                throwIfAborted(generationAbortController.signal);
+                controller.enqueue({
+                  type: "text-delta",
+                  id: textId,
+                  delta: next.value,
+                });
+              }
+              throwIfAborted(generationAbortController.signal);
+
+              // Emit text-end
+              controller.enqueue({ type: "text-end", id: textId });
+
+              // Emit finish
+              controller.enqueue({
+                type: "finish",
+                finishReason: "stop",
+              });
+
+              streamSettled = true;
+              controller.close();
+            } catch (error) {
+              if (streamSettled) {
+                return;
+              }
+              if (generationAbortController.signal.aborted) {
+                errorStream(abortReason(generationAbortController.signal));
+                return;
+              }
+
+              // Let no_ai_available propagate. The chat handler needs it
+              // for a proper 503 response instead of a 200 with in-band error.
+              const vfError = fromError(error);
+              if (vfError?.type === "no_ai_available") {
+                errorStream(error);
+                return;
+              }
+
+              controller.enqueue({
+                type: "error",
+                error: error instanceof Error ? error : new Error(String(error)),
+              });
+              streamSettled = true;
+              controller.close();
+            } finally {
+              closeGenerationIterator();
+              options.abortSignal?.removeEventListener("abort", forwardAbort);
             }
+          })();
+          void inFlight.catch((error) => errorStream(error));
+        },
 
-            // Emit text-end
-            controller.enqueue({ type: "text-end", id: textId });
-
-            // Emit finish
-            controller.enqueue({
-              type: "finish",
-              finishReason: "stop",
-              usage: {
-                inputTokens: undefined,
-                outputTokens: undefined,
-                totalTokens: undefined,
-              },
-            });
-
-            controller.close();
-          } catch (error) {
-            // Let no_ai_available propagate. The chat handler needs it
-            // for a proper 503 response instead of a 200 with in-band error.
-            const vfError = fromError(error);
-            if (vfError?.type === "no_ai_available") throw error;
-
-            controller.enqueue({
-              type: "error",
-              error: error instanceof Error ? error : new Error(String(error)),
-            });
-            controller.close();
-          }
+        cancel(reason) {
+          streamSettled = true;
+          options.abortSignal?.removeEventListener("abort", forwardAbort);
+          abortGeneration(
+            reason ?? new DOMException("The local stream was canceled.", "AbortError"),
+          );
+          void inFlight?.catch(() => {});
         },
       });
 
       return { stream };
     },
   };
+}
+
+export function createLocalModel(modelId?: string): ModelRuntime {
+  return createLocalModelRuntime(modelId, defaultLocalModelRuntimeEngine);
 }

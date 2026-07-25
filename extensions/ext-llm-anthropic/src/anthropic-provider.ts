@@ -36,13 +36,20 @@ import {
   type OpenAICompatibleLanguageOptions,
 } from "./anthropic-request-builder.ts";
 import {
+  type AnthropicProviderToolNameRegistry,
+  isAnthropicProviderExecutedContentBlockType,
+  isAnthropicProviderToolResultBlockType,
+  parseAnthropicProviderToolUse,
+  parseAnthropicServerToolResult,
+} from "./anthropic-native-content.ts";
+import {
   addAnthropicUsage,
   type AnthropicStreamCompletion,
   extractAnthropicUsage,
   normalizeAnthropicFinishReason,
-  parseAnthropicServerToolResult,
   streamAnthropicCompatibleParts,
 } from "./anthropic-stream.ts";
+import { type AnthropicCitation, normalizeAnthropicCitation } from "./anthropic-citations.ts";
 
 const MAX_PAUSE_TURN_CONTINUATIONS = 5;
 
@@ -79,21 +86,6 @@ type AnthropicReasoningContent = {
   redactedData?: string;
 };
 
-type AnthropicCitation = {
-  type: string;
-  citedText?: string;
-  url?: string;
-  title?: string;
-  startCharIndex?: number;
-  endCharIndex?: number;
-  startBlockIndex?: number;
-  endBlockIndex?: number;
-  startPageNumber?: number;
-  endPageNumber?: number;
-  documentIndex?: number;
-  documentTitle?: string;
-};
-
 type AnthropicTextContent = {
   type: "text";
   text: string;
@@ -123,53 +115,67 @@ type AnthropicGenerateContent =
   | AnthropicToolCallContent
   | AnthropicToolResultContent;
 
-/**
- * Best-effort camelCase normalization of a single Anthropic citation
- * record. Handles the union of fields across web_search_result_location,
- * web_fetch_result_location, char_location, page_location, and
- * content_block_location citation kinds - see
- * https://docs.claude.com/en/docs/build-with-claude/citations
- */
-function normalizeAnthropicCitation(raw: unknown): AnthropicCitation | undefined {
-  const r = readRecord(raw);
-  if (!r) return undefined;
-  const typeStr = typeof r.type === "string" ? r.type : undefined;
-  if (!typeStr) return undefined;
-  const out: AnthropicCitation = { type: typeStr };
-  if (typeof r.cited_text === "string") out.citedText = r.cited_text;
-  if (typeof r.url === "string") out.url = r.url;
-  if (typeof r.title === "string") out.title = r.title;
-  if (typeof r.start_char_index === "number") out.startCharIndex = r.start_char_index;
-  if (typeof r.end_char_index === "number") out.endCharIndex = r.end_char_index;
-  if (typeof r.start_block_index === "number") out.startBlockIndex = r.start_block_index;
-  if (typeof r.end_block_index === "number") out.endBlockIndex = r.end_block_index;
-  if (typeof r.start_page_number === "number") out.startPageNumber = r.start_page_number;
-  if (typeof r.end_page_number === "number") out.endPageNumber = r.end_page_number;
-  if (typeof r.document_index === "number") out.documentIndex = r.document_index;
-  if (typeof r.document_title === "string") out.documentTitle = r.document_title;
-  return out;
+function invalidAnthropicResponse(
+  providerLabel: string,
+  issue: string,
+): ProviderRequestError {
+  return new ProviderRequestError({
+    provider: "anthropic",
+    status: 200,
+    message: `${providerLabel} request failed: invalid successful response (${issue})`,
+    retryable: false,
+  });
 }
 
-function buildAnthropicGenerateResult(payload: unknown): {
+function sanitizeAnthropicUsage(usage: RuntimeUsage | undefined): RuntimeUsage | undefined {
+  const normalized = mergeUsage(undefined, usage);
+  return normalized && Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function buildAnthropicGenerateResult(
+  payload: unknown,
+  providerLabel: string,
+  providerToolNamesById: AnthropicProviderToolNameRegistry,
+): {
   content: AnthropicGenerateContent[];
   finishReason?: string | { unified: string; raw: string } | null;
   usage?: RuntimeUsage;
 } {
   const record = readRecord(payload);
-  const content = Array.isArray(record?.content) ? record.content : [];
+  if (!record) {
+    throw invalidAnthropicResponse(providerLabel, "response body was not an object");
+  }
+  if (!Array.isArray(record.content) || record.content.length === 0) {
+    throw invalidAnthropicResponse(providerLabel, "content array missing or empty");
+  }
+  if (typeof record.stop_reason !== "string" || record.stop_reason.length === 0) {
+    throw invalidAnthropicResponse(providerLabel, "stop reason missing");
+  }
+  const content = record.content;
   const normalized: AnthropicGenerateContent[] = [];
 
   for (const blockValue of content) {
     const block = readRecord(blockValue);
+    if (!block) {
+      throw invalidAnthropicResponse(providerLabel, "content block was not an object");
+    }
     const blockType = typeof block?.type === "string" ? block.type : undefined;
 
-    if (blockType === "text" && typeof block?.text === "string" && block.text.length > 0) {
-      const citationsRaw = Array.isArray(block.citations) ? block.citations : undefined;
-      const citations = citationsRaw
-        ?.flatMap((c) => {
-          const normalizedCitation = normalizeAnthropicCitation(c);
-          return normalizedCitation ? [normalizedCitation] : [];
-        });
+    if (blockType === "text") {
+      if (typeof block.text !== "string") {
+        throw invalidAnthropicResponse(providerLabel, "text content block was malformed");
+      }
+      if (block.text.length === 0) continue;
+      if (block.citations !== undefined && !Array.isArray(block.citations)) {
+        throw invalidAnthropicResponse(providerLabel, "text citations were malformed");
+      }
+      const citations = block.citations?.map((citation) => {
+        const normalizedCitation = normalizeAnthropicCitation(citation);
+        if (!normalizedCitation) {
+          throw invalidAnthropicResponse(providerLabel, "text citation was malformed");
+        }
+        return normalizedCitation;
+      });
       normalized.push({
         type: "text",
         text: block.text,
@@ -183,6 +189,13 @@ function buildAnthropicGenerateResult(payload: unknown): {
     // callers persist them as `reasoning` content parts and replay on
     // the next turn so Claude can continue from the same thinking.
     if (blockType === "thinking") {
+      if (
+        (block.thinking !== undefined && typeof block.thinking !== "string") ||
+        (block.signature !== undefined && typeof block.signature !== "string") ||
+        (typeof block.thinking !== "string" && typeof block.signature !== "string")
+      ) {
+        throw invalidAnthropicResponse(providerLabel, "thinking content block was malformed");
+      }
       normalized.push({
         type: "reasoning",
         ...(typeof block?.thinking === "string" ? { text: block.thinking } : {}),
@@ -195,32 +208,71 @@ function buildAnthropicGenerateResult(payload: unknown): {
     // hides the trace. Pass the encrypted blob through opaquely so the
     // caller can replay it on the next turn (Anthropic still needs the
     // blob to verify continuity even though it can't read it).
-    if (blockType === "redacted_thinking" && typeof block?.data === "string") {
-      normalized.push({
-        type: "reasoning",
-        redactedData: block.data,
-      });
+    if (blockType === "redacted_thinking") {
+      if (typeof block.data !== "string" || block.data.length === 0) {
+        throw invalidAnthropicResponse(
+          providerLabel,
+          "redacted thinking content block was malformed",
+        );
+      }
+      normalized.push({ type: "reasoning", redactedData: block.data });
       continue;
     }
 
-    if (
-      (blockType === "tool_use" || blockType === "server_tool_use") &&
-      typeof block?.id === "string" &&
-      typeof block?.name === "string"
-    ) {
+    if (blockType === "tool_use") {
+      const input = block.input === undefined ? {} : readRecord(block.input);
+      if (
+        typeof block.id !== "string" ||
+        block.id.length === 0 ||
+        typeof block.name !== "string" ||
+        block.name.length === 0 ||
+        !input
+      ) {
+        throw invalidAnthropicResponse(providerLabel, "tool-use content block was malformed");
+      }
       normalized.push({
         type: "tool-call",
         toolCallId: block.id,
         toolName: block.name,
-        input: stringifyJsonValue(block.input ?? {}),
-        ...(blockType === "server_tool_use" ? { providerExecuted: true } : {}),
+        input: stringifyJsonValue(input),
       });
       continue;
     }
 
-    if (blockType === "web_search_tool_result" || blockType === "web_fetch_tool_result") {
-      const parsedResult = parseAnthropicServerToolResult(block);
-      if (!parsedResult) continue;
+    if (blockType === "server_tool_use" || blockType === "mcp_tool_use") {
+      const providerToolUse = parseAnthropicProviderToolUse(block);
+      if (
+        !providerToolUse ||
+        providerToolNamesById.has(providerToolUse.toolCallId)
+      ) {
+        throw invalidAnthropicResponse(
+          providerLabel,
+          "provider tool-use content block was malformed",
+        );
+      }
+      providerToolNamesById.set(
+        providerToolUse.toolCallId,
+        providerToolUse.toolName,
+      );
+      normalized.push({
+        type: "tool-call",
+        toolCallId: providerToolUse.toolCallId,
+        toolName: providerToolUse.toolName,
+        input: stringifyJsonValue(providerToolUse.input),
+        providerExecuted: true,
+      });
+      continue;
+    }
+
+    if (blockType && isAnthropicProviderToolResultBlockType(blockType)) {
+      const parsedResult = parseAnthropicServerToolResult(block, providerToolNamesById);
+      if (!parsedResult) {
+        throw invalidAnthropicResponse(
+          providerLabel,
+          "provider tool-result content block was malformed",
+        );
+      }
+      providerToolNamesById.delete(parsedResult.toolCallId);
       normalized.push({
         type: "tool-result",
         toolCallId: parsedResult.toolCallId,
@@ -229,19 +281,32 @@ function buildAnthropicGenerateResult(payload: unknown): {
         ...(parsedResult.isError === true ? { isError: true } : {}),
         providerExecuted: true,
       });
+      continue;
     }
+
+    throw invalidAnthropicResponse(
+      providerLabel,
+      "unsupported content block type",
+    );
+  }
+  if (normalized.length === 0) {
+    throw invalidAnthropicResponse(providerLabel, "content contained no supported blocks");
   }
 
   return {
     content: normalized,
     finishReason: normalizeAnthropicFinishReason(record?.stop_reason),
-    usage: extractAnthropicUsage(payload),
+    usage: sanitizeAnthropicUsage(extractAnthropicUsage(payload)),
   };
 }
 
 type AnthropicRequestBody = Record<string, unknown> & {
   messages?: unknown[];
 };
+
+function usesAnthropicMcpConnector(body: AnthropicRequestBody): boolean {
+  return Array.isArray(body.mcp_servers) && body.mcp_servers.length > 0;
+}
 
 function createPauseTurnContinuationBody(
   baseBody: AnthropicRequestBody,
@@ -287,8 +352,7 @@ function shouldPreserveAnthropicRawAssistantHistory(
       const block = readRecord(value);
       if (block?.type === "tool_use") hasClientToolUse = true;
       if (
-        block?.type === "server_tool_use" || block?.type === "web_search_tool_result" ||
-        block?.type === "web_fetch_tool_result"
+        isAnthropicProviderExecutedContentBlockType(block?.type)
       ) {
         hasServerToolContent = true;
       }
@@ -391,7 +455,10 @@ export function createAnthropicModelRuntime(
   const fetchImpl = config.fetch ?? globalThis.fetch;
   const providerName = config.name ?? "anthropic";
   const streamOptions = providerName === "veryfront-cloud"
-    ? { clientToolUseTrailingUsageTimeoutMode: "drain" as const }
+    ? {
+      clientToolUseTrailingUsageTimeoutMode: "drain" as const,
+      allowPostTerminalUsage: true,
+    }
     : undefined;
 
   return {
@@ -410,11 +477,13 @@ export function createAnthropicModelRuntime(
         false,
         warnings,
       ) as AnthropicRequestBody;
+      const enableMcpConnector = usesAnthropicMcpConnector(body);
       let requestBody = body;
       let continuationCount = 0;
       let aggregateUsage: RuntimeUsage | undefined;
       const aggregateContent: AnthropicGenerateContent[] = [];
       const rawAssistantMessages: unknown[][] = [];
+      const providerToolNamesById: AnthropicProviderToolNameRegistry = new Map();
       let finalResult: ReturnType<typeof buildAnthropicGenerateResult> | undefined;
 
       while (true) {
@@ -428,11 +497,16 @@ export function createAnthropicModelRuntime(
             apiKey: config.apiKey,
             authToken: config.authToken,
             extraHeaders: options.headers,
+            enableMcpConnector,
             body: JSON.stringify(requestBody),
             signal: options.abortSignal,
           }),
         });
-        const result = buildAnthropicGenerateResult(payload);
+        const result = buildAnthropicGenerateResult(
+          payload,
+          providerName,
+          providerToolNamesById,
+        );
         aggregateContent.push(...result.content);
         aggregateUsage = addAnthropicUsage(aggregateUsage, result.usage);
         finalResult = result;
@@ -475,6 +549,7 @@ export function createAnthropicModelRuntime(
         true,
         warnings,
       ) as AnthropicRequestBody;
+      const enableMcpConnector = usesAnthropicMcpConnector(body);
       throwIfAnthropicRequestAborted(options.abortSignal);
       const providerAbortScope = createProviderAbortScope(options.abortSignal);
       let firstResponseStream: ReadableStream<Uint8Array>;
@@ -489,6 +564,7 @@ export function createAnthropicModelRuntime(
             authToken: config.authToken,
             extraHeaders: options.headers,
             enableFineGrainedToolStreaming: true,
+            enableMcpConnector,
             body: JSON.stringify(body),
             signal: providerAbortScope.controller.signal,
           }),
@@ -505,6 +581,7 @@ export function createAnthropicModelRuntime(
         let aggregateUsage: RuntimeUsage | undefined;
         let requestBody = body;
         const rawAssistantMessages: unknown[][] = [];
+        const providerToolNamesById: AnthropicProviderToolNameRegistry = new Map();
 
         while (true) {
           let completion: AnthropicStreamCompletion | undefined;
@@ -512,6 +589,8 @@ export function createAnthropicModelRuntime(
           for await (
             const part of streamAnthropicCompatibleParts(responseStream, {
               ...streamOptions,
+              providerLabel: providerName,
+              providerToolNamesById,
               onCompletion(value) {
                 completion = value;
               },
@@ -559,6 +638,7 @@ export function createAnthropicModelRuntime(
               authToken: config.authToken,
               extraHeaders: options.headers,
               enableFineGrainedToolStreaming: true,
+              enableMcpConnector,
               body: JSON.stringify(requestBody),
               signal: providerAbortScope.controller.signal,
             }),

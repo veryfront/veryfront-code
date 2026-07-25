@@ -41,6 +41,7 @@ export interface GenerateOptions {
   topP?: number;
   topK?: number;
   stopSequences?: string[];
+  abortSignal?: AbortSignal;
 }
 
 interface TransformersEnv {
@@ -105,6 +106,7 @@ interface ConditionalProcessor {
 
 interface ConditionalModel {
   generate(options: Record<string, unknown>): Promise<unknown>;
+  dispose(): void | Promise<void>;
 }
 
 interface ConditionalModelConstructor {
@@ -126,6 +128,13 @@ type LocalModelLoadInfo = ModelInfo & {
 /** Tokenizer surface used to decode generated token ids back to text. */
 interface DecodingTokenizer {
   decode(tokens: number[]): string;
+}
+
+interface StopSequenceFilter {
+  /** Consume a streamer chunk and return the portion safe to emit. */
+  push(chunk: string): string;
+  /** Flush buffered text after normal model completion. */
+  finish(): string;
 }
 
 /** Options object forwarded to the Transformers.js text-generation pipeline. */
@@ -153,37 +162,102 @@ export interface PipeOptions {
  * mentions "END"), scanning the whole sequence would return `true` on the very
  * first generation step and truncate the response to empty.
  *
- * The prompt token length is not cheaply known where this list is built (the
- * pipeline tokenizes `messages` internally), so per batch item we self-calibrate
- * on the first `_call`: the sequence length seen on the first invocation is
- * recorded as the prompt boundary, and only tokens at or after that boundary are
- * decoded and matched on subsequent steps.
+ * Conditional generation provides the exact prompt length. The text pipeline
+ * tokenizes `messages` internally, so its first `_call` infers the boundary from
+ * the documented Transformers.js order: the first generated token has already
+ * been appended before stopping criteria run.
  */
 function buildStopStringCriteria(
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
   tokenizer: DecodingTokenizer,
   stopSequences: string[],
+  abortSignal?: AbortSignal,
+  knownPromptLengths?: readonly number[],
 ): StoppingCriteriaListInstance {
   const list = new transformers.StoppingCriteriaList();
   const base = new transformers.StoppingCriteria();
   const criterion = base as StoppingCriteriaInstance;
-  // Per-batch-item prompt token length, captured on the first invocation.
-  const promptLengths: number[] = [];
+  // Transformers.js evaluates stopping criteria only after appending the first
+  // generated token. For pipelines that tokenize internally, infer the prompt
+  // boundary by excluding that token on the first invocation. Conditional
+  // generation passes exact prompt lengths when they are already available.
+  const promptLengths: Array<number | undefined> = [...(knownPromptLengths ?? [])];
   criterion._call = (inputIds: number[][]): boolean[] =>
     inputIds.map((ids, item) => {
+      if (abortSignal?.aborted) return true;
+      if (stopSequences.length === 0) return false;
+
       if (promptLengths[item] === undefined) {
-        // First step for this item: everything seen so far is prompt. Record the
-        // boundary and never trip on the prompt itself.
-        promptLengths[item] = ids.length;
-        return false;
+        promptLengths[item] = Math.max(0, ids.length - 1);
       }
-      const generated = ids.slice(promptLengths[item]);
+      const generated = ids.slice(promptLengths[item]!);
       if (generated.length === 0) return false;
       const text = tokenizer.decode(generated);
       return stopSequences.some((stop) => stop.length > 0 && text.includes(stop));
     });
   list.push(criterion);
   return list;
+}
+
+/**
+ * Buffer enough output to recognize stop strings split across streamer chunks.
+ * Text before a stop sequence is returned immediately; the stop sequence and
+ * anything after it are suppressed.
+ */
+export function createStopSequenceFilter(stopSequences: readonly string[]): StopSequenceFilter {
+  const stops = [...new Set(stopSequences.filter((stop) => stop.length > 0))];
+  let pending = "";
+  let stopped = false;
+
+  function longestPossibleStopPrefixSuffix(text: string): number {
+    let retained = 0;
+    for (const stop of stops) {
+      const maxCandidate = Math.min(text.length, stop.length - 1);
+      for (let length = maxCandidate; length > retained; length--) {
+        if (text.endsWith(stop.slice(0, length))) {
+          retained = length;
+          break;
+        }
+      }
+    }
+    return retained;
+  }
+
+  return {
+    push(chunk: string): string {
+      if (stopped || chunk.length === 0) return "";
+      if (stops.length === 0) return chunk;
+
+      pending += chunk;
+      let stopIndex = -1;
+      for (const stop of stops) {
+        const candidate = pending.indexOf(stop);
+        if (candidate >= 0 && (stopIndex < 0 || candidate < stopIndex)) {
+          stopIndex = candidate;
+        }
+      }
+
+      if (stopIndex >= 0) {
+        const safe = pending.slice(0, stopIndex);
+        pending = "";
+        stopped = true;
+        return safe;
+      }
+
+      const retained = longestPossibleStopPrefixSuffix(pending);
+      const safeLength = pending.length - retained;
+      const safe = pending.slice(0, safeLength);
+      pending = pending.slice(safeLength);
+      return safe;
+    },
+
+    finish(): string {
+      if (stopped) return "";
+      const safe = pending;
+      pending = "";
+      return safe;
+    },
+  };
 }
 
 /**
@@ -198,6 +272,7 @@ export function buildPipeOptions(
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
   tokenizer: DecodingTokenizer,
   streamer: unknown,
+  knownPromptLengths?: readonly number[],
 ): PipeOptions {
   const {
     maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
@@ -216,11 +291,13 @@ export function buildPipeOptions(
     streamer,
   };
 
-  if (stopSequences && stopSequences.length > 0) {
+  if (stopSequences?.some((stop) => stop.length > 0) || options.abortSignal) {
     pipeOptions.stopping_criteria = buildStopStringCriteria(
       transformers,
       tokenizer,
-      stopSequences,
+      stopSequences ?? [],
+      options.abortSignal,
+      knownPromptLengths,
     );
   }
 
@@ -229,6 +306,7 @@ export function buildPipeOptions(
 
 interface TextGenerationPipeline {
   tokenizer: unknown;
+  dispose(): void | Promise<void>;
   (
     messages: ChatMessage[],
     options: PipeOptions,
@@ -236,6 +314,35 @@ interface TextGenerationPipeline {
 }
 
 let transformersModule: TransformersModule | null = null;
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortReason(signal);
+}
+
+function createLinkedAbortController(upstream?: AbortSignal): {
+  controller: AbortController;
+  cleanup(): void;
+} {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(abortReason(upstream!));
+
+  if (upstream?.aborted) {
+    forwardAbort();
+  } else {
+    upstream?.addEventListener("abort", forwardAbort, { once: true });
+  }
+
+  return {
+    controller,
+    cleanup() {
+      upstream?.removeEventListener("abort", forwardAbort);
+    },
+  };
+}
 
 /**
  * Lazily import @huggingface/transformers.
@@ -300,7 +407,7 @@ async function ensureWebGpuAvailable(): Promise<void> {
   }
 }
 
-async function getLocalInferenceDevice(): Promise<LocalAIDevice> {
+export async function getLocalInferenceDevice(): Promise<LocalAIDevice> {
   const device = getLocalAIDevice();
   if (device === "webgpu") {
     await ensureWebGpuAvailable();
@@ -338,11 +445,19 @@ function getConditionalModelConstructor(
  * expose a structured error type, so message scanning is the only viable
  * approach. Fail-safe: unrecognized errors are NOT matched and propagate as-is.
  */
-function isOnnxUnavailableError(msg: string): boolean {
+export function isOnnxUnavailableError(msg: string): boolean {
+  const normalized = msg.toLowerCase();
   return (
-    msg.includes("onnx") || msg.includes("ONNX") ||
-    msg.includes("dlopen") || msg.includes("dynamic linking") ||
-    msg.includes("native module") || msg.includes("SharedArrayBuffer")
+    normalized.includes("err_dlopen_failed") ||
+    normalized.includes("dlopen") ||
+    normalized.includes("dynamic linking") ||
+    normalized.includes("onnxruntime-node") ||
+    normalized.includes("native module") ||
+    normalized.includes("sharedarraybuffer") ||
+    (normalized.includes(".node") &&
+      (normalized.includes("cannot find module") ||
+        normalized.includes("failed to load") ||
+        normalized.includes("could not load")))
   );
 }
 
@@ -393,6 +508,11 @@ const textGenerationPipelines = createPipelineCache<TextGenerationPipeline, Loca
       throw error;
     }
   },
+  {
+    dispose: async (pipeline) => {
+      await pipeline.dispose();
+    },
+  },
 );
 
 const conditionalGenerationRuntimes = createPipelineCache<
@@ -410,13 +530,14 @@ const conditionalGenerationRuntimes = createPipelineCache<
         }, ${modelInfo.device}, ~${modelInfo.sizeMB}MB)...`,
       );
 
-      const [processor, model] = await Promise.all([
-        transformers.AutoProcessor.from_pretrained(modelInfo.hfId),
-        ModelClass.from_pretrained(modelInfo.hfId, {
-          dtype: modelInfo.dtype,
-          device: modelInfo.device,
-        }),
-      ]);
+      // Load the lightweight processor first. If it fails, do not start a
+      // multi-GB native model load that would continue after Promise.all rejects
+      // and become unreachable without an explicit dispose().
+      const processor = await transformers.AutoProcessor.from_pretrained(modelInfo.hfId);
+      const model = await ModelClass.from_pretrained(modelInfo.hfId, {
+        dtype: modelInfo.dtype,
+        device: modelInfo.device,
+      });
 
       logger.info(`Model loaded: ${modelInfo.hfId}`);
       return { processor, model };
@@ -437,19 +558,38 @@ const conditionalGenerationRuntimes = createPipelineCache<
       throw error;
     }
   },
+  {
+    dispose: async (runtime) => {
+      await runtime.model.dispose();
+    },
+  },
 );
 
 function getModelCacheKey(modelInfo: ModelInfo, device: LocalAIDevice): string {
   return `${modelInfo.hfId}:${device}`;
 }
 
-async function loadLocalRuntime(modelInfo: ModelInfo): Promise<unknown> {
+async function preloadLocalRuntime(modelInfo: ModelInfo): Promise<void> {
   const device = await getLocalInferenceDevice();
   const loadInfo: LocalModelLoadInfo = { ...modelInfo, device };
   const cacheKey = getModelCacheKey(modelInfo, device);
   return modelInfo.engine === "conditional-generation"
-    ? conditionalGenerationRuntimes.load(cacheKey, loadInfo)
-    : textGenerationPipelines.load(cacheKey, loadInfo);
+    ? conditionalGenerationRuntimes.preload(cacheKey, loadInfo)
+    : textGenerationPipelines.preload(cacheKey, loadInfo);
+}
+
+async function acquireLocalRuntime(modelInfo: ModelInfo, abortSignal?: AbortSignal): Promise<{
+  value: unknown;
+  release(): Promise<void>;
+}> {
+  throwIfAborted(abortSignal);
+  const device = await getLocalInferenceDevice();
+  throwIfAborted(abortSignal);
+  const loadInfo: LocalModelLoadInfo = { ...modelInfo, device };
+  const cacheKey = getModelCacheKey(modelInfo, device);
+  return modelInfo.engine === "conditional-generation"
+    ? conditionalGenerationRuntimes.acquire(cacheKey, loadInfo, abortSignal)
+    : textGenerationPipelines.acquire(cacheKey, loadInfo, abortSignal);
 }
 
 function toConditionalMessages(messages: ChatMessage[]): Array<Record<string, unknown>> {
@@ -464,6 +604,7 @@ export function buildConditionalGenerateOptions(
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
   tokenizer: DecodingTokenizer,
   streamer: unknown,
+  knownPromptLengths?: readonly number[],
 ): PipeOptions {
   const {
     maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
@@ -482,15 +623,29 @@ export function buildConditionalGenerateOptions(
     streamer,
   };
 
-  if (stopSequences && stopSequences.length > 0) {
+  if (stopSequences?.some((stop) => stop.length > 0) || options.abortSignal) {
     generateOptions.stopping_criteria = buildStopStringCriteria(
       transformers,
       tokenizer,
-      stopSequences,
+      stopSequences ?? [],
+      options.abortSignal,
+      knownPromptLengths,
     );
   }
 
   return generateOptions;
+}
+
+function getPromptTokenLengths(inputs: Record<string, unknown>): number[] | undefined {
+  const inputIds = inputs.input_ids as { dims?: readonly number[] } | undefined;
+  const dimensions = inputIds?.dims;
+  if (!dimensions || dimensions.length === 0) return undefined;
+
+  const sequenceLength = Number(dimensions.at(-1));
+  if (!Number.isSafeInteger(sequenceLength) || sequenceLength < 0) return undefined;
+  const batchSize = Number(dimensions.length > 1 ? dimensions.at(-2) : 1);
+  if (!Number.isSafeInteger(batchSize) || batchSize <= 0) return undefined;
+  return Array(batchSize).fill(sequenceLength);
 }
 
 export function buildConditionalChatTemplateOptions(
@@ -526,68 +681,99 @@ async function* generateConditionalStream(
   messages: ChatMessage[],
   options: GenerateOptions,
 ): AsyncGenerator<string, void, undefined> {
-  const runtime = await loadLocalRuntime(modelInfo) as ConditionalGenerationRuntime;
-  const transformers = await getTransformers();
-  const inputs = await prepareConditionalInputs(runtime, modelInfo, messages);
+  const linkedAbort = createLinkedAbortController(options.abortSignal);
+  const abortSignal = linkedAbort.controller.signal;
+  let lease: Awaited<ReturnType<typeof acquireLocalRuntime>> | undefined;
+  let generatePromise: Promise<void> | undefined;
 
-  const tokenQueue: string[] = [];
-  let resolveWaiting: (() => void) | null = null;
-  let done = false;
+  try {
+    throwIfAborted(abortSignal);
+    lease = await acquireLocalRuntime(modelInfo, abortSignal);
+    throwIfAborted(abortSignal);
 
-  function flushWaiting(): void {
-    if (resolveWaiting) {
-      resolveWaiting();
-      resolveWaiting = null;
-    }
-  }
+    const runtime = lease.value as ConditionalGenerationRuntime;
+    const transformers = await getTransformers();
+    const inputs = await prepareConditionalInputs(runtime, modelInfo, messages);
+    throwIfAborted(abortSignal);
 
-  const streamer = new transformers.TextStreamer(runtime.processor.tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function: (text: string) => {
-      tokenQueue.push(text);
+    const tokenQueue: string[] = [];
+    let resolveWaiting: (() => void) | null = null;
+    let done = false;
+    const stopFilter = createStopSequenceFilter(options.stopSequences ?? []);
+
+    const flushWaiting = (): void => {
+      if (resolveWaiting) {
+        resolveWaiting();
+        resolveWaiting = null;
+      }
+    };
+
+    const enqueueFiltered = (text: string): void => {
+      if (abortSignal.aborted) {
+        flushWaiting();
+        return;
+      }
+      const safe = stopFilter.push(text);
+      if (safe.length > 0) tokenQueue.push(safe);
       flushWaiting();
-    },
-  });
+    };
 
-  const generatePromise = (async () => {
-    try {
-      await runtime.model.generate({
-        ...inputs,
-        ...buildConditionalGenerateOptions(
-          options,
-          transformers,
-          runtime.processor.tokenizer as DecodingTokenizer,
-          streamer,
-        ),
-      });
-    } finally {
-      done = true;
-      flushWaiting();
-    }
-  })();
-
-  while (true) {
-    while (tokenQueue.length > 0) {
-      yield tokenQueue.shift()!;
-    }
-
-    if (done) break;
-
-    await new Promise<void>((resolve) => {
-      resolveWaiting = resolve;
+    const streamer = new transformers.TextStreamer(runtime.processor.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: enqueueFiltered,
     });
+
+    generatePromise = (async () => {
+      try {
+        await runtime.model.generate({
+          ...inputs,
+          ...buildConditionalGenerateOptions(
+            { ...options, abortSignal },
+            transformers,
+            runtime.processor.tokenizer as DecodingTokenizer,
+            streamer,
+            getPromptTokenLengths(inputs),
+          ),
+        });
+      } finally {
+        const finalText = stopFilter.finish();
+        if (!abortSignal.aborted && finalText.length > 0) tokenQueue.push(finalText);
+        done = true;
+        flushWaiting();
+      }
+    })();
+
+    while (true) {
+      while (tokenQueue.length > 0) {
+        throwIfAborted(abortSignal);
+        yield tokenQueue.shift()!;
+      }
+
+      if (done) break;
+
+      await new Promise<void>((resolve) => {
+        resolveWaiting = resolve;
+      });
+    }
+
+    try {
+      await generatePromise;
+    } catch (error) {
+      throwIfAborted(abortSignal);
+      throw error;
+    }
+    throwIfAborted(abortSignal);
+  } finally {
+    if (!abortSignal.aborted) {
+      linkedAbort.controller.abort(
+        new DOMException("The generation consumer closed.", "AbortError"),
+      );
+    }
+    await generatePromise?.catch(() => {});
+    await lease?.release();
+    linkedAbort.cleanup();
   }
-
-  await generatePromise;
-}
-
-/**
- * Load a text-generation pipeline for the given model.
- * Returns a cached pipeline if already loaded.
- */
-async function loadPipeline(modelInfo: ModelInfo): Promise<TextGenerationPipeline> {
-  return await loadLocalRuntime(modelInfo) as TextGenerationPipeline;
 }
 
 /**
@@ -608,7 +794,7 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<TextGenerationPipelin
  */
 export async function verifyLocalRuntime(modelId?: string): Promise<void> {
   const modelInfo = resolveLocalModel(modelId || DEFAULT_LOCAL_MODEL);
-  await loadLocalRuntime(modelInfo);
+  await preloadLocalRuntime(modelInfo);
 }
 
 /**
@@ -621,69 +807,103 @@ export async function* generateStream(
   messages: ChatMessage[],
   options: GenerateOptions = {},
 ): AsyncGenerator<string, void, undefined> {
+  throwIfAborted(options.abortSignal);
   const modelInfo = resolveLocalModel(modelId);
   if (modelInfo.engine === "conditional-generation") {
     yield* generateConditionalStream(modelInfo, messages, options);
     return;
   }
 
-  const pipe = await loadPipeline(modelInfo);
-  const transformers = await getTransformers();
+  const linkedAbort = createLinkedAbortController(options.abortSignal);
+  const abortSignal = linkedAbort.controller.signal;
+  let lease: Awaited<ReturnType<typeof acquireLocalRuntime>> | undefined;
+  let generatePromise: Promise<void> | undefined;
 
-  // Use a queue to bridge TextStreamer callbacks to an async generator.
-  const tokenQueue: string[] = [];
-  let resolveWaiting: (() => void) | null = null;
-  let done = false;
+  try {
+    lease = await acquireLocalRuntime(modelInfo, abortSignal);
+    throwIfAborted(abortSignal);
 
-  function flushWaiting(): void {
-    if (resolveWaiting) {
-      resolveWaiting();
-      resolveWaiting = null;
-    }
-  }
+    const pipe = lease.value as TextGenerationPipeline;
+    const transformers = await getTransformers();
+    throwIfAborted(abortSignal);
 
-  const streamer = new transformers.TextStreamer(pipe.tokenizer, {
-    skip_prompt: true,
-    skip_special_tokens: true,
-    callback_function: (text: string) => {
-      tokenQueue.push(text);
+    // Use a queue to bridge TextStreamer callbacks to an async generator.
+    const tokenQueue: string[] = [];
+    let resolveWaiting: (() => void) | null = null;
+    let done = false;
+    const stopFilter = createStopSequenceFilter(options.stopSequences ?? []);
+
+    const flushWaiting = (): void => {
+      if (resolveWaiting) {
+        resolveWaiting();
+        resolveWaiting = null;
+      }
+    };
+
+    const enqueueFiltered = (text: string): void => {
+      if (abortSignal.aborted) {
+        flushWaiting();
+        return;
+      }
+      const safe = stopFilter.push(text);
+      if (safe.length > 0) tokenQueue.push(safe);
       flushWaiting();
-    },
-  });
+    };
 
-  const pipeOptions = buildPipeOptions(
-    options,
-    transformers,
-    pipe.tokenizer as DecodingTokenizer,
-    streamer,
-  );
-
-  // Start generation in the background
-  const generatePromise = (async () => {
-    try {
-      await pipe(messages, pipeOptions);
-    } finally {
-      done = true;
-      flushWaiting();
-    }
-  })();
-
-  // Yield tokens as they arrive
-  while (true) {
-    while (tokenQueue.length > 0) {
-      yield tokenQueue.shift()!;
-    }
-
-    if (done) break;
-
-    // Wait for more tokens
-    await new Promise<void>((resolve) => {
-      resolveWaiting = resolve;
+    const streamer = new transformers.TextStreamer(pipe.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: enqueueFiltered,
     });
-  }
 
-  // Ensure generation has completed
-  await generatePromise;
+    const pipeOptions = buildPipeOptions(
+      { ...options, abortSignal },
+      transformers,
+      pipe.tokenizer as DecodingTokenizer,
+      streamer,
+    );
+
+    generatePromise = (async () => {
+      try {
+        await pipe(messages, pipeOptions);
+      } finally {
+        const finalText = stopFilter.finish();
+        if (!abortSignal.aborted && finalText.length > 0) tokenQueue.push(finalText);
+        done = true;
+        flushWaiting();
+      }
+    })();
+
+    while (true) {
+      while (tokenQueue.length > 0) {
+        throwIfAborted(abortSignal);
+        yield tokenQueue.shift()!;
+      }
+
+      if (done) break;
+
+      await new Promise<void>((resolve) => {
+        resolveWaiting = resolve;
+      });
+    }
+
+    try {
+      await generatePromise;
+    } catch (error) {
+      throwIfAborted(abortSignal);
+      throw error;
+    }
+    throwIfAborted(abortSignal);
+  } finally {
+    if (!abortSignal.aborted) {
+      linkedAbort.controller.abort(
+        new DOMException("The generation consumer closed.", "AbortError"),
+      );
+    }
+    await generatePromise?.catch(() => {});
+    await lease?.release();
+    linkedAbort.cleanup();
+  }
 }
 
 /**
@@ -706,7 +926,7 @@ export async function generate(
  */
 export async function preloadModel(modelId: string): Promise<void> {
   const modelInfo = resolveLocalModel(modelId);
-  await loadLocalRuntime(modelInfo);
+  await preloadLocalRuntime(modelInfo);
 }
 
 /**

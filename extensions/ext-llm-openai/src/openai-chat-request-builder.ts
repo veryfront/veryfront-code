@@ -10,6 +10,7 @@ import {
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
+import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
 
 export type RuntimeToolDefinition =
   | {
@@ -92,6 +93,7 @@ export function buildOpenAIChatRequest(
   const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
   const dropSamplingParams = reasoningEnabled || samplingRejected || fixedSampling;
+  const messages = toOpenAICompatibleMessages(options.prompt);
 
   // OpenAI Chat Completions has no top_k surface.
   if (options.topK !== undefined) {
@@ -130,7 +132,7 @@ export function buildOpenAIChatRequest(
 
   const body: OpenAICompatibleChatRequest = {
     model: modelId,
-    messages: toOpenAICompatibleMessages(options.prompt),
+    messages,
     ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     ...(options.maxOutputTokens !== undefined
       ? isNativeOpenAIModel(modelId)
@@ -193,13 +195,24 @@ export function buildOpenAIChatRequest(
   ];
   const providerOpts: Record<string, unknown> = {};
   for (const bucketName of bucketNames) {
-    Object.assign(
+    defineOpenAIProviderOptions(
       providerOpts,
       normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
     );
   }
 
-  Object.assign(body, providerOpts);
+  defineOpenAIProviderOptions(body as Record<string, unknown>, providerOpts);
+  // Provider-native options may tune request behavior, but they must not
+  // replace the runtime-owned transport mode, model, or conversation.
+  body.model = modelId;
+  body.messages = messages;
+  if (stream) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  } else {
+    delete body.stream;
+    delete body.stream_options;
+  }
   return body;
 }
 

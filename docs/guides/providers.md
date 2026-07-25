@@ -187,6 +187,21 @@ The factory receives the model ID and must return a framework-compatible model
 runtime with the generation surface the framework expects, including
 `doGenerate()` and `doStream()`.
 
+Register application-wide defaults during bootstrap, outside a project request
+or source context. The default is then visible in every project, while a
+registration made inside a project context overrides it only for that project
+source. Framework-provided providers remain available in either case.
+
+Provider names must be non-empty and cannot contain `/`. Resolution rejects a
+factory that does not return callable `doGenerate()` and `doStream()` methods,
+so malformed plugins fail where the model is selected rather than during a
+later generation step.
+
+For scoped test cleanup, call `clearModelProviders()` in the same project
+context where the test registered its override. Calling it outside a project
+context clears bootstrap registrations only. It never deletes another
+project's providers or the framework-provided built-ins.
+
 ## Direct model resolution
 
 For cases outside the agent system:
@@ -197,6 +212,25 @@ import { resolveModel } from "veryfront/provider";
 const model = resolveModel("openai/gpt-5.5");
 const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.5");
 ```
+
+## Failure and cancellation behavior
+
+Provider HTTP response failures use typed errors with status and retryability
+metadata. Only known transient upstream statuses are marked retryable.
+Transport failures that happen before an HTTP response exists, such as DNS or
+TLS errors, retain their native error. Cancellation retains the caller's abort
+reason.
+
+Successful JSON responses have a bounded body, a deadline, and strict UTF-8 and
+JSON decoding. Malformed successful payloads, malformed SSE lifecycle events,
+and invalid embedding vectors fail closed without including the upstream
+payload in the public error. Invalid usage counters are omitted rather than
+reported with imprecise or non-finite values.
+
+Streaming requests bound header acquisition and link cancellation of the
+returned stream to both the request signal and upstream response body. Pass the
+agent or runtime abort signal through custom provider implementations so
+canceled requests release their network and model resources.
 
 ## Verify it worked
 

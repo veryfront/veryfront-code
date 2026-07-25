@@ -115,4 +115,71 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
 
     assertEquals(merged?.billingMode, "deferred");
   });
+
+  it("normalizes one-sided usage through the same total invariant", () => {
+    assertEquals(
+      mergeUsage(undefined, {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 120,
+      }),
+      {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+      },
+    );
+  });
+
+  it("does not invent zero tokens for metadata-only usage", () => {
+    assertEquals(
+      mergeUsage({ billingMode: "direct" }, { usageCaptureStatus: "missing" }),
+      {
+        billingMode: "direct",
+        usageCaptureStatus: "missing",
+      },
+    );
+  });
+
+  it("preserves the legacy public costUsd field", () => {
+    assertEquals(
+      mergeUsage(
+        { inputTokens: 1, costUsd: 0.5 },
+        { outputTokens: 2 },
+      ),
+      {
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        costUsd: 0.5,
+      },
+    );
+  });
+
+  it("omits non-finite, negative, fractional, and unsafe token counters", () => {
+    assertEquals(
+      mergeUsage(undefined, {
+        inputTokens: -1,
+        outputTokens: Number.POSITIVE_INFINITY,
+        totalTokens: 1.5,
+        billableInputTokens: Number.MAX_SAFE_INTEGER + 1,
+        providerCostUsd: Number.NaN,
+      }),
+      {},
+    );
+  });
+
+  it("does not derive an unsafe total from individually safe token counters", () => {
+    assertEquals(
+      mergeUsage(undefined, {
+        inputTokens: Number.MAX_SAFE_INTEGER,
+        outputTokens: 1,
+        totalTokens: Number.MAX_SAFE_INTEGER,
+      }),
+      {
+        inputTokens: Number.MAX_SAFE_INTEGER,
+        outputTokens: 1,
+      },
+    );
+  });
 });

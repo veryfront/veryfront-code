@@ -4,6 +4,12 @@ import {
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import {
+  type AnthropicMcpRequestConfiguration,
+  assertAnthropicMcpRequestContract,
+  normalizeAnthropicMcpServers,
+  normalizeAnthropicMcpToolsetArgs,
+} from "./anthropic-mcp-request.ts";
 
 type ProviderCacheTtl = boolean | "5m" | "1h";
 
@@ -124,21 +130,6 @@ function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unkn
       value,
     ]),
   );
-}
-
-function deepSnakeCase(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(deepSnakeCase);
-  }
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, v]) => [
-        key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`),
-        deepSnakeCase(v),
-      ]),
-    );
-  }
-  return value;
 }
 
 function pushAnthropicUserContent(
@@ -379,7 +370,6 @@ function resolveAnthropicProviderType(rawType: string): string {
 
 function toAnthropicTools(
   tools: RuntimeToolDefinition[] | undefined,
-  toolsCacheControl?: { type: "ephemeral"; ttl?: "1h" },
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) {
     return undefined;
@@ -406,6 +396,16 @@ function toAnthropicTools(
       continue;
     }
 
+    if (rawType === "mcp_toolset") {
+      const args = normalizeAnthropicMcpToolsetArgs(tool.args);
+      normalized.push({
+        type: "mcp_toolset",
+        mcp_server_name: tool.name,
+        ...args,
+      });
+      continue;
+    }
+
     normalized.push({
       type: resolveAnthropicProviderType(rawType),
       name: tool.name,
@@ -417,15 +417,53 @@ function toAnthropicTools(
     return undefined;
   }
 
-  if (toolsCacheControl) {
-    const lastIndex = normalized.length - 1;
-    normalized[lastIndex] = {
-      ...normalized[lastIndex],
-      cache_control: toolsCacheControl,
-    };
-  }
-
   return normalized;
+}
+
+function mergeAnthropicMcpToolsets(
+  tools: Array<Record<string, unknown>> | undefined,
+  mcpConfiguration: AnthropicMcpRequestConfiguration | undefined,
+): Array<Record<string, unknown>> | undefined {
+  if (!mcpConfiguration) return tools;
+
+  const merged = [...(tools ?? [])];
+  const explicitServerNames = new Set(
+    merged.flatMap((tool) =>
+      tool.type === "mcp_toolset" && typeof tool.mcp_server_name === "string"
+        ? [tool.mcp_server_name]
+        : []
+    ),
+  );
+
+  for (const defaultToolset of mcpConfiguration.defaultToolsets) {
+    if (explicitServerNames.has(defaultToolset.mcp_server_name)) {
+      if (mcpConfiguration.legacyConfiguredServerNames.has(defaultToolset.mcp_server_name)) {
+        throw new TypeError(
+          "Anthropic MCP tool configuration must use either mcpServers or a provider tool",
+        );
+      }
+      continue;
+    }
+    merged.push(defaultToolset);
+  }
+  return merged;
+}
+
+function applyAnthropicToolsCacheControl(
+  tools: Array<Record<string, unknown>> | undefined,
+  cacheControl: { type: "ephemeral"; ttl?: "1h" } | undefined,
+): Array<Record<string, unknown>> | undefined {
+  if (!tools || !cacheControl) return tools;
+  const lastIndex = tools.length - 1;
+  return tools.map((tool, index) =>
+    index === lastIndex ? { ...tool, cache_control: cacheControl } : tool
+  );
+}
+
+function containsAnthropicMcpToolset(
+  tools: Array<Record<string, unknown>> | undefined,
+): boolean {
+  return tools?.some((tool) => tool.type === "mcp_toolset") ?? false;
 }
 
 function getAnthropicModelCapabilities(
@@ -477,7 +515,12 @@ function resolveAnthropicThinkingBudget(
   if (!option || option.enabled !== true) {
     return undefined;
   }
-  if (typeof option.budgetTokens === "number" && option.budgetTokens >= 1024) {
+  if (option.budgetTokens !== undefined) {
+    if (!Number.isSafeInteger(option.budgetTokens) || option.budgetTokens < 1024) {
+      throw new TypeError(
+        "Anthropic reasoning budgetTokens must be a safe integer of at least 1024",
+      );
+    }
     return option.budgetTokens;
   }
   switch (option.effort) {
@@ -497,18 +540,34 @@ function resolveAnthropicProviderThinkingBudget(
   options: Record<string, unknown>,
 ): number | undefined {
   const thinking = options.thinking;
-  if (thinking === null || typeof thinking !== "object" || Array.isArray(thinking)) {
+  if (thinking === undefined) {
     return undefined;
   }
+  if (thinking === null || typeof thinking !== "object" || Array.isArray(thinking)) {
+    throw new TypeError("Anthropic provider thinking must be an object");
+  }
   const record = thinking as Record<string, unknown>;
+  if (typeof record.type !== "string" || record.type.length === 0) {
+    throw new TypeError("Anthropic provider thinking.type must be a non-empty string");
+  }
+  const budgetTokens = record.budget_tokens;
+  if (
+    budgetTokens !== undefined &&
+    (!Number.isSafeInteger(budgetTokens) || (budgetTokens as number) < 1024)
+  ) {
+    throw new TypeError(
+      "Anthropic provider thinking.budget_tokens must be a safe integer of at least 1024",
+    );
+  }
   if (record.type !== "enabled") {
     return undefined;
   }
-  const budgetTokens = record.budget_tokens;
-  if (typeof budgetTokens === "number" && Number.isFinite(budgetTokens) && budgetTokens >= 1024) {
-    return budgetTokens;
+  if (budgetTokens === undefined) {
+    throw new TypeError(
+      "Anthropic provider thinking.budget_tokens must be a safe integer of at least 1024",
+    );
   }
-  return undefined;
+  return budgetTokens as number;
 }
 
 export function buildAnthropicMessagesRequest(
@@ -526,12 +585,34 @@ export function buildAnthropicMessagesRequest(
   );
 
   const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
-  const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl);
+  const mcpConfiguration = normalizeAnthropicMcpServers(options.mcpServers);
+  const callerTools = toAnthropicTools(options.tools);
+  const anthropicTools = applyAnthropicToolsCacheControl(
+    mergeAnthropicMcpToolsets(callerTools, mcpConfiguration),
+    toolsCacheControl,
+  );
   const rawProviderOptions = readProviderOptions(
     options.providerOptions,
     "anthropic",
     providerName,
   );
+  if (
+    mcpConfiguration &&
+    (Object.hasOwn(rawProviderOptions, "mcp_servers") ||
+      Object.hasOwn(rawProviderOptions, "tools"))
+  ) {
+    throw new TypeError(
+      "Anthropic MCP configuration must not be split between mcpServers and providerOptions",
+    );
+  }
+  if (
+    Object.hasOwn(rawProviderOptions, "tools") &&
+    containsAnthropicMcpToolset(callerTools)
+  ) {
+    throw new TypeError(
+      "Anthropic MCP toolsets must not be defined in both tools and providerOptions",
+    );
+  }
   const thinkingBudget = resolveAnthropicThinkingBudget(options.reasoning);
   const providerThinkingBudget = resolveAnthropicProviderThinkingBudget(rawProviderOptions);
   const effectiveThinkingBudget = thinkingBudget ?? providerThinkingBudget;
@@ -637,12 +718,14 @@ export function buildAnthropicMessagesRequest(
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { metadata: { user_id: options.userId } }
       : {}),
-    ...(options.mcpServers && options.mcpServers.length > 0
-      ? { mcp_servers: deepSnakeCase(options.mcpServers) as unknown[] }
-      : {}),
+    ...(mcpConfiguration ? { mcp_servers: mcpConfiguration.servers } : {}),
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
   Object.assign(body, rawProviderOptions);
+  if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
+    body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
+  }
+  assertAnthropicMcpRequestContract(body);
   return body;
 }

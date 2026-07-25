@@ -100,6 +100,7 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("mistral-large"),
       "mistral/mistral-large-2512",
     );
+    assertEquals(resolveConfiguredAgentModel("constructor"), "constructor");
   });
 
   it("uses the default model through Veryfront Cloud when cloud bootstrap is available", () => {

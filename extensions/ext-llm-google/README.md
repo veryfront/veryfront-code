@@ -98,7 +98,13 @@ Set `budgetTokens` directly to override the effort mapping:
 reasoning: { enabled: true, budgetTokens: 4096 }
 ```
 
+Explicit budgets must be non-negative safe integers. The `-1` dynamic-budget
+sentinel is reserved for `effort: "max"` and is rejected when supplied through
+`budgetTokens`.
+
 When thinking is enabled, Gemini returns `thought` parts that the runtime emits as `reasoning-start` / `reasoning-delta` / `reasoning-end` stream events.
+
+Gemini `thoughtSignature` fields are retained with the exact assistant parts that produced them and replayed automatically on later turns, including parallel function-call responses.
 
 ## Prompt Caching
 
@@ -117,6 +123,15 @@ When a cached content resource is attached, the response `usageMetadata.cachedCo
 
 Gemini supports provider-native tools alongside function declarations. Use the `provider` tool type with a `google.*` id:
 
+The extension intentionally supports only the provider tools whose request and
+response contracts are normalized end to end:
+
+- `google.code_execution` with name `code_execution`
+- `google.google_search` with name `google_search`
+
+Unknown or duplicate provider-tool IDs, tools for another provider, mismatched
+names, and unsupported argument fields throw before the HTTP request is sent.
+
 ### Code Execution
 
 ```ts
@@ -125,15 +140,46 @@ tools: [
 ];
 ```
 
+Google `executableCode` / `codeExecutionResult` parts are exposed as correlated
+`code_execution` tool calls and results with `providerExecuted: true`. Failed
+and deadline-exceeded outcomes are marked as tool errors. The original ordered
+Google parts, including provider IDs and thought signatures, are retained for
+exact replay on subsequent turns.
+
 ### Google Search
 
 ```ts
 tools: [
-  { type: "provider", name: "google_search", id: "google.google_search", args: {} },
+  {
+    type: "provider",
+    name: "google_search",
+    id: "google.google_search",
+    args: {
+      searchTypes: { webSearch: {}, imageSearch: {} },
+      timeRangeFilter: {
+        startTime: "2026-01-01T00:00:00Z",
+        endTime: "2026-07-01T00:00:00Z",
+      },
+    },
+  },
 ];
 ```
 
-Provider tools can be combined with regular function tools in the same request. When Google Search is used, the response includes `groundingMetadata` with web search queries, grounding chunks, and citation indices.
+Both Google Search argument groups are optional; `{}` keeps Google's default web
+search behavior. A time range requires both RFC 3339 timestamps. The nested
+`webSearch` and `imageSearch` configurations are currently empty objects, as
+defined by Google's API.
+
+Provider tools can be combined with regular function tools in the same request.
+Google Search does not produce a client-executed tool call. Instead, Google
+returns a candidate-level `groundingMetadata` object containing queries,
+grounding chunks, and citation indices. The direct adapter result retains the
+legacy top-level `groundingMetadata` property, and direct and streaming results
+also expose the same opaque object at
+`providerMetadata.google.groundingMetadata`, which survives runtime
+normalization. Only the object envelope is validated; its nested fields remain
+Google-owned so new metadata fields can pass through without an extension
+release.
 
 ## Safety Settings
 
@@ -199,12 +245,11 @@ The following settings emit `unsupported-setting` warnings and are silently drop
 
 The extension surfaces typed provider errors:
 
-| Error Class               | Trigger                       | Retryable |
-| ------------------------- | ----------------------------- | --------- |
-| `ProviderOverloadedError` | HTTP 503                      | Yes       |
-| `ProviderQuotaError`      | HTTP 429 `RESOURCE_EXHAUSTED` | No        |
-| `ProviderRateLimitError`  | HTTP 429 with `Retry-After`   | Yes       |
-| `ProviderRequestError`    | Other HTTP errors             | No        |
+| Error Class               | Trigger                                        | Retryable |
+| ------------------------- | ---------------------------------------------- | --------- |
+| `ProviderOverloadedError` | HTTP 503                                       | Yes       |
+| `ProviderRateLimitError`  | HTTP 429 `RESOURCE_EXHAUSTED` or rate limiting | Yes       |
+| `ProviderRequestError`    | Other HTTP errors                              | No        |
 
 If the extension is not installed and a `google/*` model is requested:
 
@@ -226,22 +271,22 @@ The unified `toolChoice` option maps to Gemini's `functionCallingConfig`:
 
 ```bash
 # From the repository root
-deno test --no-check --allow-all extensions/ext-google/
+deno test --no-check --allow-all extensions/ext-llm-google/src/
 
 # Or from the extension directory
-cd extensions/ext-google
+cd extensions/ext-llm-google
 deno task test
 ```
 
 The test suite covers:
 
 - Generate and stream request/response mapping
-- Extended thinking (thinkingConfig budget mapping, thought-part streaming)
+- Extended thinking (validated thinkingConfig budgets, thought-part streaming)
 - Embedding runtime (single and batch)
 - Error classification (503, 429 RESOURCE_EXHAUSTED)
 - Unsupported-setting warnings (presencePenalty, frequencyPenalty)
 - User ID and request label forwarding
 - Tool choice normalization (auto, any, none, single-tool, multi-tool)
 - Grounding metadata pass-through (google_search)
-- Provider tools (code_execution, google_search)
+- Provider tools (correlated code_execution calls/results and google_search)
 - Safety settings and cached content

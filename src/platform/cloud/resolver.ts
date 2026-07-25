@@ -4,6 +4,9 @@ import {
   getCurrentVeryfrontCloudContext,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 
 // ---------------------------------------------------------------------------
 // GlobalThis bridges — config/ is a middle layer, platform/ is bottom layer.
@@ -42,7 +45,7 @@ export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
     normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
 }
 
-export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/openai/gpt-5.4-nano";
+export const DEFAULT_VERYFRONT_CLOUD_MODEL = DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID;
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =
   "veryfront-cloud/openai/text-embedding-3-small";
 

@@ -1,4 +1,8 @@
 const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
+const ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-11-20";
+const DEPRECATED_ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-04-04";
+const MAX_PROVIDER_CREDENTIAL_BYTES = 8 * 1024;
+const PROVIDER_CREDENTIAL_ENCODER = new TextEncoder();
 
 /**
  * Minimum Anthropic API version this runtime was built against.
@@ -7,6 +11,31 @@ const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-
  * adopting a new API version with breaking changes.
  */
 const ANTHROPIC_API_VERSION = "2023-06-01";
+
+export function requireProviderCredential(
+  value: unknown,
+  credentialName: string,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value !== value.trim() ||
+    !/^[\x21-\x7e]+$/.test(value)
+  ) {
+    throw new TypeError(
+      `${credentialName} must be a non-empty visible ASCII string without surrounding whitespace`,
+    );
+  }
+  if (
+    PROVIDER_CREDENTIAL_ENCODER.encode(value).byteLength >
+      MAX_PROVIDER_CREDENTIAL_BYTES
+  ) {
+    throw new RangeError(
+      `${credentialName} must not exceed ${MAX_PROVIDER_CREDENTIAL_BYTES} bytes`,
+    );
+  }
+  return value;
+}
 
 export function createRequestHeaders(options: {
   apiKeyHeaderName: string;
@@ -19,33 +48,60 @@ export function createRequestHeaders(options: {
   return headers;
 }
 
+function updateAnthropicBetaHeader(
+  headers: Headers,
+  options: {
+    enableFineGrainedToolStreaming?: boolean;
+    enableMcpConnector?: boolean;
+  },
+): void {
+  if (!options.enableFineGrainedToolStreaming && !options.enableMcpConnector) {
+    return;
+  }
+
+  const betas = new Set(
+    (headers.get("anthropic-beta") ?? "")
+      .split(",")
+      .map((beta) => beta.trim())
+      .filter((beta) => beta.length > 0),
+  );
+  if (options.enableMcpConnector) {
+    betas.delete(DEPRECATED_ANTHROPIC_MCP_CLIENT_BETA);
+    betas.add(ANTHROPIC_MCP_CLIENT_BETA);
+  }
+  if (options.enableFineGrainedToolStreaming) {
+    betas.add(ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA);
+  }
+  headers.set("anthropic-beta", Array.from(betas).join(","));
+}
+
 export function createAnthropicRequestHeaders(options: {
   apiKey?: string;
   authToken?: string;
   extraHeaders?: HeadersInit;
   enableFineGrainedToolStreaming?: boolean;
+  enableMcpConnector?: boolean;
 }): Headers {
   const headers = new Headers(options.extraHeaders);
   headers.set("content-type", "application/json");
   headers.set("anthropic-version", headers.get("anthropic-version") ?? ANTHROPIC_API_VERSION);
 
-  if (options.enableFineGrainedToolStreaming) {
-    const existingBetaHeader = headers.get("anthropic-beta");
-    if (!existingBetaHeader) {
-      headers.set("anthropic-beta", ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA);
-    } else {
-      const betas = new Set(
-        existingBetaHeader.split(",").map((beta) => beta.trim()).filter((beta) => beta.length > 0),
-      );
-      betas.add(ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA);
-      headers.set("anthropic-beta", Array.from(betas).join(","));
-    }
-  }
+  updateAnthropicBetaHeader(headers, options);
 
-  if (options.authToken) {
-    headers.set("authorization", `Bearer ${options.authToken}`);
-  } else if (options.apiKey) {
-    headers.set("x-api-key", options.apiKey);
+  if (options.authToken !== undefined) {
+    const authToken = requireProviderCredential(
+      options.authToken,
+      "Anthropic auth token",
+    );
+    headers.delete("x-api-key");
+    headers.set("authorization", `Bearer ${authToken}`);
+  } else if (options.apiKey !== undefined) {
+    const apiKey = requireProviderCredential(
+      options.apiKey,
+      "Anthropic API key",
+    );
+    headers.delete("authorization");
+    headers.set("x-api-key", apiKey);
   }
 
   return headers;
@@ -58,11 +114,12 @@ export function createOpenAIRequestInit(options: {
   body: string;
   signal?: AbortSignal;
 }): RequestInit {
+  const apiKey = requireProviderCredential(options.apiKey, "OpenAI API key");
   return {
     method: "POST",
     headers: createRequestHeaders({
       apiKeyHeaderName: "authorization",
-      apiKey: `Bearer ${options.apiKey}`,
+      apiKey: `Bearer ${apiKey}`,
       extraHeaders: options.extraHeaders,
     }),
     body: options.body,
@@ -76,6 +133,7 @@ export function createAnthropicRequestInit(options: {
   authToken?: string;
   extraHeaders?: HeadersInit;
   enableFineGrainedToolStreaming?: boolean;
+  enableMcpConnector?: boolean;
   body: string;
   signal?: AbortSignal;
 }): RequestInit {
@@ -86,6 +144,7 @@ export function createAnthropicRequestInit(options: {
       authToken: options.authToken,
       extraHeaders: options.extraHeaders,
       enableFineGrainedToolStreaming: options.enableFineGrainedToolStreaming,
+      enableMcpConnector: options.enableMcpConnector,
     }),
     body: options.body,
     signal: options.signal,
@@ -99,11 +158,12 @@ export function createGoogleRequestInit(options: {
   body: string;
   signal?: AbortSignal;
 }): RequestInit {
+  const apiKey = requireProviderCredential(options.apiKey, "Google API key");
   return {
     method: "POST",
     headers: createRequestHeaders({
       apiKeyHeaderName: "x-goog-api-key",
-      apiKey: options.apiKey,
+      apiKey,
       extraHeaders: options.extraHeaders,
     }),
     body: options.body,

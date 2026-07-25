@@ -134,13 +134,19 @@ describe("provider/veryfront-cloud", () => {
               'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
             ),
             encoder.encode(
-              'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking."}\n\n',
+              'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"summary_index":0,"delta":"Thinking."}\n\n',
             ),
             encoder.encode(
-              'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+              'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Thinking."}]}}\n\n',
             ),
             encoder.encode(
-              'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Hello"}\n\n',
+              'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":0,"delta":"Hello"}\n\n',
+            ),
+            encoder.encode(
+              'data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello"}]}}\n\n',
             ),
             encoder.encode(
               'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',
@@ -259,13 +265,49 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
-  it("resolves direct Mistral models through the OpenAI-compatible built-in provider", () => {
+  it("preserves Mistral identity and provider options through the OpenAI-compatible provider", async () => {
     setEnv("MISTRAL_API_KEY", "mistral_test_provider");
+    let capturedRequest: Request | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      capturedRequest = new Request(input, init);
+      capturedBody = JSON.parse(await capturedRequest.text()) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          choices: [{
+            finish_reason: "stop",
+            message: { role: "assistant", content: "Done." },
+          }],
+          usage: {
+            prompt_tokens: 2,
+            completion_tokens: 1,
+            total_tokens: 3,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
 
-    const model = resolveModel("mistral/mistral-large-2512") as Record<string, unknown>;
+    const model = resolveModel("mistral/mistral-large-2512");
+    const result = await model.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Hi" }],
+      }],
+      providerOptions: {
+        mistral: {
+          custom_mistral_option: true,
+        },
+      },
+    });
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
+    assertEquals(model.provider, "mistral");
+    assertEquals(model.modelId, "mistral-large-2512");
+    assertEquals(capturedRequest?.url, "https://api.mistral.ai/v1/chat/completions");
+    assertEquals(capturedBody?.custom_mistral_option, true);
+    assertEquals(result.content, [{ type: "text", text: "Done." }]);
   });
 
   it("resolves veryfront-cloud openai embedding models without project ext-llm-openai installed", () => {

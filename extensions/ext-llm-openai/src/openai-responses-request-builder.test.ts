@@ -90,6 +90,82 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(body.service_tier, "default");
   });
 
+  it("drops unsupported background mode instead of returning a nonterminal response", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+        providerOptions: {
+          openai: { background: true },
+        },
+      },
+      false,
+      warnings,
+    );
+
+    assertEquals(Object.hasOwn(body, "background"), false);
+    assertEquals(warnings.drain(), [{
+      type: "unsupported-setting",
+      provider: "openai",
+      setting: "background",
+      details:
+        "Background Responses are asynchronous and cannot satisfy the runtime's immediate result contract; the value was dropped.",
+    }]);
+  });
+
+  it("protects Responses transport, prompt, model, and statelessness fields", () => {
+    const providerBucket: Record<string, unknown> = {
+      model: "attacker-model",
+      input: [{ role: "user", content: "replaced" }],
+      instructions: "replaced",
+      store: true,
+      stream: false,
+      custom_option: true,
+    };
+    Object.defineProperty(providerBucket, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    const prompt: RuntimePromptMessage[] = [
+      { role: "system", content: "Original instructions" },
+      { role: "user", content: [{ type: "text", text: "Original input" }] },
+    ];
+
+    const streamed = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      { prompt, providerOptions: { openai: providerBucket } },
+      true,
+      createWarningCollector(),
+    );
+    assertEquals(streamed.model, "gpt-5.5");
+    assertEquals(streamed.input, [{
+      role: "user",
+      content: [{ type: "input_text", text: "Original input" }],
+    }]);
+    assertEquals(streamed.instructions, "Original instructions");
+    assertEquals(streamed.store, false);
+    assertEquals(streamed.stream, true);
+    assertEquals(streamed.custom_option, true);
+    assertEquals(Object.getPrototypeOf(streamed), Object.prototype);
+    assertEquals((streamed as Record<string, unknown>).polluted, undefined);
+
+    const generated = buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Original" }] }],
+        providerOptions: { openai: { stream: true } },
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(Object.hasOwn(generated, "stream"), false);
+  });
+
   it("keeps explicit reasoning summaries for direct OpenAI requests", () => {
     const warnings = createWarningCollector();
 
@@ -295,6 +371,7 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
     assertEquals(body, {
       model: "o4-mini",
       store: false,
+      include: ["web_search_call.action.sources"],
       input: [
         {
           role: "user",

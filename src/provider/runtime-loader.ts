@@ -217,14 +217,15 @@ type OpenAICompatibleLanguageOptions = {
    * on the Messages API request body. Lets callers register MCP servers
    * server-side instead of reloading them into local function tools.
    *
-   * Caller must opt into the MCP beta by adding the matching header to
-   * `headers`, e.g. `{ "anthropic-beta": "mcp-client-2025-04-04" }`.
-   * Without that header Anthropic will reject the request.
+   * The Anthropic extension validates these definitions, emits exactly one
+   * matching MCPToolset for each server, and automatically adds the current
+   * `mcp-client-2025-11-20` beta while preserving unrelated caller betas.
    *
-   * Each entry is forwarded with camelCase keys converted to snake_case
-   * so `authorizationToken` → `authorization_token`,
-   * `toolConfiguration.allowedTools` → `tool_configuration.allowed_tools`,
-   * etc.
+   * The existing camelCase convenience fields remain accepted:
+   * `authorizationToken` becomes `authorization_token`, while
+   * `toolConfiguration.allowedTools` is translated into the current
+   * MCPToolset allowlist shape rather than the deprecated server-local
+   * `tool_configuration` field.
    */
   mcpServers?: Array<Record<string, unknown>>;
 };
@@ -321,18 +322,25 @@ export function createWarningCollector(): WarningCollector {
       list.push(warning);
     },
     drain() {
-      return list.slice();
+      return list.splice(0, list.length);
     },
   };
 }
 
 /** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new TypeError("value has no JSON representation");
+    }
+    return serialized;
+  } catch {
+    // Native JSON errors can include object paths or property names from the
+    // rejected tool payload. Keep provider-boundary failures contextual
+    // without retaining caller-controlled diagnostics as a public cause.
+    throw new TypeError("Provider tool value must be JSON-serializable");
   }
-
-  return JSON.stringify(value);
 }
 
 /** Read text content parts from provider messages. */
@@ -466,16 +474,31 @@ export function readProviderOptions(
     return {};
   }
 
-  const merged: Record<string, unknown> = {};
+  const merged = new Map<string, unknown>();
   for (const key of providerNames) {
-    const value = providerOptions[key];
-    const record = readRecord(value);
-    if (record) {
-      Object.assign(merged, record);
+    let ownsKey: boolean;
+    let value: unknown;
+    try {
+      ownsKey = Object.hasOwn(providerOptions, key);
+      if (!ownsKey) continue;
+      value = Reflect.get(providerOptions, key);
+    } catch {
+      throw new TypeError(`Provider options for "${key}" could not be read`);
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+
+    let entries: Array<[string, unknown]>;
+    try {
+      entries = Object.entries(value);
+    } catch {
+      throw new TypeError(`Provider options for "${key}" could not be enumerated`);
+    }
+    for (const [optionName, optionValue] of entries) {
+      merged.set(optionName, optionValue);
     }
   }
 
-  return merged;
+  return Object.fromEntries(merged);
 }
 
 /** Zod schema for unwrap tool input. */
@@ -484,6 +507,11 @@ export function unwrapToolInputSchema(inputSchema: unknown): unknown {
     return inputSchema;
   }
 
-  const candidate = Reflect.get(inputSchema, "jsonSchema");
+  let candidate: unknown;
+  try {
+    candidate = Reflect.get(inputSchema, "jsonSchema");
+  } catch {
+    throw new TypeError("Tool input schema jsonSchema property could not be read");
+  }
   return candidate ?? inputSchema;
 }

@@ -174,6 +174,49 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     assertEquals(body.max_tokens, undefined);
   });
 
+  it("protects runtime-owned Chat transport fields during provider-option merges", () => {
+    const providerBucket: Record<string, unknown> = {
+      model: "attacker-model",
+      messages: [{ role: "user", content: "replaced" }],
+      stream: false,
+      stream_options: { include_usage: false },
+      custom_option: true,
+    };
+    Object.defineProperty(providerBucket, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    const prompt: RuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Original" }],
+    }];
+
+    const streamed = buildOpenAIChatRequest(
+      "gpt-4o-mini",
+      "openai",
+      { prompt, providerOptions: { openai: providerBucket } },
+      true,
+      createWarningCollector(),
+    );
+    assertEquals(streamed.model, "gpt-4o-mini");
+    assertEquals(streamed.messages, [{ role: "user", content: "Original" }]);
+    assertEquals(streamed.stream, true);
+    assertEquals(streamed.stream_options, { include_usage: true });
+    assertEquals(streamed.custom_option, true);
+    assertEquals(Object.getPrototypeOf(streamed), Object.prototype);
+    assertEquals((streamed as Record<string, unknown>).polluted, undefined);
+
+    const generated = buildOpenAIChatRequest(
+      "gpt-4o-mini",
+      "openai",
+      { prompt, providerOptions: { openai: { stream: true, stream_options: {} } } },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(Object.hasOwn(generated, "stream"), false);
+    assertEquals(Object.hasOwn(generated, "stream_options"), false);
+  });
+
   it("preserves chat request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },

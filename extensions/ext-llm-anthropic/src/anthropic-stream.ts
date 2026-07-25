@@ -9,6 +9,19 @@ import {
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
+import { normalizeTimerDurationMs } from "veryfront/utils";
+import {
+  type AnthropicProviderToolNameRegistry,
+  isAnthropicProviderToolResultBlockType,
+  parseAnthropicProviderToolUse,
+  parseAnthropicServerToolResult,
+} from "./anthropic-native-content.ts";
+import { normalizeAnthropicCitation } from "./anthropic-citations.ts";
+
+export {
+  AnthropicServerToolResultError,
+  parseAnthropicServerToolResult,
+} from "./anthropic-native-content.ts";
 
 type AnthropicStreamToolCallState = {
   id: string;
@@ -37,6 +50,9 @@ type AnthropicStreamOptions = {
   clientToolUseTrailingUsageGraceMs?: number;
   clientToolUseTrailingUsageTimeoutMode?: "cancel" | "drain";
   clientToolUseTrailingUsageDrainTimeoutMs?: number;
+  allowPostTerminalUsage?: boolean;
+  providerLabel?: string;
+  providerToolNamesById?: AnthropicProviderToolNameRegistry;
   onCompletion?: (completion: AnthropicStreamCompletion) => void;
 };
 
@@ -53,6 +69,29 @@ const MAX_ANTHROPIC_PARTIAL_JSON_DELTAS = 4_096;
 const MAX_ANTHROPIC_SSE_EVENT_BYTES = 8_388_608;
 const MAX_ANTHROPIC_SSE_REMAINDER_BYTES = 8_388_608;
 const ANTHROPIC_TOOL_INPUT_ENCODER = new TextEncoder();
+
+function invalidAnthropicStream(
+  providerLabel: string,
+  issue: string,
+): ProviderRequestError {
+  return new ProviderRequestError({
+    provider: "anthropic",
+    status: 200,
+    message: `${providerLabel} request failed: invalid successful stream (${issue})`,
+    retryable: false,
+  });
+}
+
+function readAnthropicStreamIndex(
+  record: Record<string, unknown>,
+  eventType: string,
+  providerLabel: string,
+): number {
+  if (!Number.isSafeInteger(record.index) || (record.index as number) < 0) {
+    throw invalidAnthropicStream(providerLabel, `${eventType} index was malformed`);
+  }
+  return record.index as number;
+}
 
 function appendAnthropicToolInput(
   toolCall: AnthropicStreamToolCallState,
@@ -85,19 +124,40 @@ function joinAnthropicToolInput(toolCall: AnthropicStreamToolCallState): string 
 }
 
 class BoundedAnthropicSseParser {
-  readonly #decoder = new TextDecoder();
+  readonly #decoder = new TextDecoder("utf-8", { fatal: true });
+  readonly #providerLabel: string;
   #eventContent: Uint8Array = new Uint8Array(0);
   #eventContentBytes = 0;
   #eventLineCount = 0;
   #eventBytes = 0;
   #line: Uint8Array = new Uint8Array(0);
   #lineBytes = 0;
+  #skipLineFeedAfterCarriageReturn = false;
+
+  constructor(providerLabel: string) {
+    this.#providerLabel = providerLabel;
+  }
 
   push(chunk: Uint8Array): Array<unknown | "[DONE]"> {
     const events: Array<unknown | "[DONE]"> = [];
     let offset = 0;
+
     while (offset < chunk.byteLength) {
-      const newlineIndex = chunk.indexOf(10, offset);
+      if (this.#skipLineFeedAfterCarriageReturn) {
+        this.#skipLineFeedAfterCarriageReturn = false;
+        if (chunk[offset] === 10) {
+          offset++;
+          continue;
+        }
+      }
+
+      let newlineIndex = -1;
+      for (let index = offset; index < chunk.byteLength; index++) {
+        if (chunk[index] === 10 || chunk[index] === 13) {
+          newlineIndex = index;
+          break;
+        }
+      }
       if (newlineIndex < 0) {
         this.#appendLineBytes(chunk.subarray(offset));
         this.#addEventBytes(chunk.byteLength - offset);
@@ -105,26 +165,27 @@ class BoundedAnthropicSseParser {
       }
 
       this.#appendLineBytes(chunk.subarray(offset, newlineIndex));
-      this.#addEventBytes(newlineIndex - offset + 1);
-      const blankLine = this.#lineBytes === 0 ||
-        this.#lineBytes === 1 && this.#lastLineByte() === 13;
-      if (blankLine) {
-        events.push(...this.#completeEvent());
-      } else {
-        this.#appendEventLine();
-      }
-      this.#resetLine();
+      this.#addEventBytes(newlineIndex - offset);
+      const delimiter = chunk[newlineIndex];
+      this.#addEventBytes(1);
+      this.#skipLineFeedAfterCarriageReturn = delimiter === 13;
       offset = newlineIndex + 1;
+      events.push(...this.#completeLine());
     }
     return events;
   }
 
   flush(): Array<unknown | "[DONE]"> {
+    const events: Array<unknown | "[DONE]"> = [];
+    this.#skipLineFeedAfterCarriageReturn = false;
     if (this.#lineBytes > 0) {
       this.#appendEventLine();
       this.#resetLine();
     }
-    return this.#eventBytes > 0 || this.#eventContentBytes > 0 ? this.#completeEvent() : [];
+    if (this.#eventBytes > 0 || this.#eventContentBytes > 0) {
+      events.push(...this.#completeEvent());
+    }
+    return events;
   }
 
   #appendLineBytes(bytes: Uint8Array): void {
@@ -153,14 +214,18 @@ class BoundedAnthropicSseParser {
     this.#eventBytes += bytes;
   }
 
-  #lastLineByte(): number | undefined {
-    return this.#lineBytes > 0 ? this.#line[this.#lineBytes - 1] : undefined;
+  #completeLine(): Array<unknown | "[DONE]"> {
+    const events = this.#lineBytes === 0 ? this.#completeEvent() : [];
+    if (this.#lineBytes > 0) {
+      this.#appendEventLine();
+    }
+    this.#resetLine();
+    return events;
   }
 
   #appendEventLine(): void {
-    const lineContentBytes = this.#lastLineByte() === 13 ? this.#lineBytes - 1 : this.#lineBytes;
     const separatorBytes = this.#eventLineCount > 0 ? 1 : 0;
-    const requiredBytes = this.#eventContentBytes + separatorBytes + lineContentBytes;
+    const requiredBytes = this.#eventContentBytes + separatorBytes + this.#lineBytes;
     this.#eventContent = this.#growBuffer(
       this.#eventContent,
       requiredBytes,
@@ -169,8 +234,8 @@ class BoundedAnthropicSseParser {
     if (separatorBytes > 0) {
       this.#eventContent[this.#eventContentBytes++] = 10;
     }
-    this.#eventContent.set(this.#line.subarray(0, lineContentBytes), this.#eventContentBytes);
-    this.#eventContentBytes += lineContentBytes;
+    this.#eventContent.set(this.#line.subarray(0, this.#lineBytes), this.#eventContentBytes);
+    this.#eventContentBytes += this.#lineBytes;
     this.#eventLineCount++;
   }
 
@@ -190,27 +255,44 @@ class BoundedAnthropicSseParser {
   }
 
   #completeEvent(): Array<unknown | "[DONE]"> {
-    const block = this.#decoder.decode(this.#eventContent.subarray(0, this.#eventContentBytes));
+    let block: string;
+    try {
+      block = this.#decoder.decode(
+        this.#eventContent.subarray(0, this.#eventContentBytes),
+      );
+    } catch {
+      throw invalidAnthropicStream(
+        this.#providerLabel,
+        "SSE event was not valid UTF-8",
+      );
+    }
     this.#eventContentBytes = 0;
     this.#eventLineCount = 0;
     this.#eventBytes = 0;
     if (block.length === 0) return [];
-    return parseSseChunk(`${block}\n\n`).events;
+    try {
+      return parseSseChunk(`${block}\n\n`).events;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw invalidAnthropicStream(
+          this.#providerLabel,
+          "SSE event contained malformed JSON",
+        );
+      }
+      throw error;
+    }
   }
 }
 
 function buildAnthropicSseError(record: Record<string, unknown>): Error {
   const error = readRecord(record.error) ?? record;
   const type = typeof error.type === "string" ? error.type : "unknown_error";
-  const message = typeof error.message === "string"
-    ? error.message
-    : `Anthropic stream failed with ${type}`;
 
   if (type === "overloaded_error") {
     return new ProviderOverloadedError({
       provider: "anthropic",
       status: 529,
-      message,
+      message: "Anthropic stream failed: provider overloaded",
       retryable: true,
     });
   }
@@ -218,7 +300,7 @@ function buildAnthropicSseError(record: Record<string, unknown>): Error {
     return new ProviderRateLimitError({
       provider: "anthropic",
       status: 429,
-      message,
+      message: "Anthropic stream failed: rate limit exceeded",
       retryable: true,
     });
   }
@@ -239,153 +321,36 @@ function buildAnthropicSseError(record: Record<string, unknown>): Error {
   return new ProviderRequestError({
     provider: "anthropic",
     status,
-    message,
+    message: `Anthropic stream failed with status ${status}`,
     retryable: type === "api_error",
   });
 }
 
-export class AnthropicServerToolResultError extends Error {
-  override readonly name = "AnthropicServerToolResultError";
-  readonly provider = "anthropic";
-  readonly code: string;
-  readonly toolCallId: string;
-  readonly toolName: "web_search" | "web_fetch";
-
-  constructor(options: {
-    code: string;
-    toolCallId: string;
-    toolName: "web_search" | "web_fetch";
-  }) {
-    super(
-      `Anthropic ${options.toolName} failed with ${options.code} ` +
-        `(tool call ${options.toolCallId})`,
-    );
-    this.code = options.code;
-    this.toolCallId = options.toolCallId;
-    this.toolName = options.toolName;
-  }
-}
-
-export type AnthropicServerToolResult = {
-  toolCallId: string;
-  toolName: "web_search" | "web_fetch";
-  result: unknown;
-  isError?: true;
-};
-
-function firstDefined(record: Record<string, unknown>, ...keys: string[]): unknown {
-  for (const key of keys) {
-    if (record[key] !== undefined) return record[key];
-  }
-  return undefined;
-}
-
-function setDefined(target: Record<string, unknown>, key: string, value: unknown): void {
-  if (value !== undefined) target[key] = value;
-}
-
-function normalizeWebSearchResult(value: unknown): unknown {
-  const record = readRecord(value);
-  if (!record) return value;
-
-  const normalized: Record<string, unknown> = {};
-  setDefined(normalized, "type", record.type);
-  setDefined(normalized, "url", record.url);
-  setDefined(normalized, "title", record.title);
-  setDefined(normalized, "pageAge", firstDefined(record, "page_age", "pageAge"));
-  setDefined(
-    normalized,
-    "encryptedContent",
-    firstDefined(record, "encrypted_content", "encryptedContent"),
-  );
-  return normalized;
-}
-
-function normalizeWebFetchResult(value: unknown): unknown {
-  const record = readRecord(value);
-  if (!record) return value;
-
-  const rawContent = readRecord(record.content);
-  const rawSource = readRecord(rawContent?.source);
-  const source = rawSource
-    ? {
-      ...rawSource,
-      ...(firstDefined(rawSource, "media_type", "mediaType") === undefined
-        ? {}
-        : { mediaType: firstDefined(rawSource, "media_type", "mediaType") }),
-    }
-    : rawContent?.source;
-  if (source && typeof source === "object" && !Array.isArray(source)) {
-    delete (source as Record<string, unknown>).media_type;
-  }
-  const content = rawContent
-    ? {
-      ...rawContent,
-      ...(source === undefined ? {} : { source }),
-    }
-    : record.content;
-
-  const normalized: Record<string, unknown> = {};
-  setDefined(normalized, "type", record.type);
-  setDefined(normalized, "url", record.url);
-  setDefined(normalized, "content", content);
-  setDefined(normalized, "retrievedAt", firstDefined(record, "retrieved_at", "retrievedAt"));
-  return normalized;
-}
-
-export function parseAnthropicServerToolResult(
-  value: unknown,
-): AnthropicServerToolResult | undefined {
-  const block = readRecord(value);
-  if (!block) return undefined;
-  const blockType = typeof block?.type === "string" ? block.type : undefined;
-  const toolCallId = typeof block?.tool_use_id === "string" ? block.tool_use_id : undefined;
-  const toolName = blockType === "web_search_tool_result"
-    ? "web_search"
-    : blockType === "web_fetch_tool_result"
-    ? "web_fetch"
-    : undefined;
-  if (!toolName || !toolCallId) return undefined;
-
-  const error = readRecord(block.content);
-  const expectedErrorType = `${toolName}_tool_result_error`;
-  if (error?.type === expectedErrorType && typeof error.error_code === "string") {
-    return {
-      toolCallId,
-      toolName,
-      result: new AnthropicServerToolResultError({
-        code: error.error_code,
-        toolCallId,
-        toolName,
-      }),
-      isError: true,
-    };
-  }
-
-  if (toolName === "web_search" && Array.isArray(block.content)) {
-    return {
-      toolCallId,
-      toolName,
-      result: block.content.map(normalizeWebSearchResult),
-    };
-  }
-
-  if (toolName === "web_fetch" && readRecord(block.content)) {
-    return {
-      toolCallId,
-      toolName,
-      result: normalizeWebFetchResult(block.content),
-    };
-  }
-
-  return undefined;
-}
-
-function addOptionalNumber(
+function addOptionalTokenCount(
   left: number | undefined,
   right: number | undefined,
 ): number | undefined {
-  return left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
+  if (left === undefined && right === undefined) {
+    return undefined;
+  }
+  const sum = (left ?? 0) + (right ?? 0);
+  return Number.isSafeInteger(sum) && sum >= 0 ? sum : undefined;
+}
+
+function addOptionalCost(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  if (left === undefined && right === undefined) {
+    return undefined;
+  }
+  const sum = (left ?? 0) + (right ?? 0);
+  return Number.isFinite(sum) && sum >= 0 ? sum : undefined;
+}
+
+function sanitizeUsage(usage: RuntimeUsage | undefined): RuntimeUsage | undefined {
+  const sanitized = mergeUsage(undefined, usage);
+  return sanitized && Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
 function combineCostSource(
@@ -411,65 +376,90 @@ export function addAnthropicUsage(
   current: RuntimeUsage | undefined,
   next: RuntimeUsage | undefined,
 ): RuntimeUsage | undefined {
-  if (!current) return next;
-  if (!next) return current;
+  const sanitizedCurrent = sanitizeUsage(current);
+  const sanitizedNext = sanitizeUsage(next);
+  if (!sanitizedCurrent) return sanitizedNext;
+  if (!sanitizedNext) return sanitizedCurrent;
 
-  const costSource = combineCostSource(current.costSource, next.costSource);
+  const costSource = combineCostSource(sanitizedCurrent.costSource, sanitizedNext.costSource);
   const usageCaptureStatus = combineCaptureStatus(
-    current.usageCaptureStatus,
-    next.usageCaptureStatus,
+    sanitizedCurrent.usageCaptureStatus,
+    sanitizedNext.usageCaptureStatus,
   );
-  const billingMode = current.billingMode === "deferred" || next.billingMode === "deferred"
+  const billingMode = sanitizedCurrent.billingMode === "deferred" ||
+      sanitizedNext.billingMode === "deferred"
     ? "deferred"
-    : current.billingMode ?? next.billingMode;
-  const inputTokens = addOptionalNumber(current.inputTokens, next.inputTokens);
-  const outputTokens = addOptionalNumber(current.outputTokens, next.outputTokens);
-  const totalTokens = addOptionalNumber(current.totalTokens, next.totalTokens);
-  const cacheCreationInputTokens = addOptionalNumber(
-    current.cacheCreationInputTokens,
-    next.cacheCreationInputTokens,
+    : sanitizedCurrent.billingMode ?? sanitizedNext.billingMode;
+  const inputTokens = addOptionalTokenCount(
+    sanitizedCurrent.inputTokens,
+    sanitizedNext.inputTokens,
   );
-  const cacheReadInputTokens = addOptionalNumber(
-    current.cacheReadInputTokens,
-    next.cacheReadInputTokens,
+  const outputTokens = addOptionalTokenCount(
+    sanitizedCurrent.outputTokens,
+    sanitizedNext.outputTokens,
   );
-  const reasoningTokens = addOptionalNumber(current.reasoningTokens, next.reasoningTokens);
-  const billableInputTokens = addOptionalNumber(
-    current.billableInputTokens,
-    next.billableInputTokens,
+  const totalTokens = addOptionalTokenCount(
+    sanitizedCurrent.totalTokens,
+    sanitizedNext.totalTokens,
   );
-  const billableOutputTokens = addOptionalNumber(
-    current.billableOutputTokens,
-    next.billableOutputTokens,
+  const cacheCreationInputTokens = addOptionalTokenCount(
+    sanitizedCurrent.cacheCreationInputTokens,
+    sanitizedNext.cacheCreationInputTokens,
   );
-  const providerInputCostUsd = addOptionalNumber(
-    current.providerInputCostUsd,
-    next.providerInputCostUsd,
+  const cacheReadInputTokens = addOptionalTokenCount(
+    sanitizedCurrent.cacheReadInputTokens,
+    sanitizedNext.cacheReadInputTokens,
   );
-  const providerOutputCostUsd = addOptionalNumber(
-    current.providerOutputCostUsd,
-    next.providerOutputCostUsd,
+  const reasoningTokens = addOptionalTokenCount(
+    sanitizedCurrent.reasoningTokens,
+    sanitizedNext.reasoningTokens,
   );
-  const providerCostUsd = addOptionalNumber(current.providerCostUsd, next.providerCostUsd);
-  const veryfrontInputChargeUsd = addOptionalNumber(
-    current.veryfrontInputChargeUsd,
-    next.veryfrontInputChargeUsd,
+  const billableInputTokens = addOptionalTokenCount(
+    sanitizedCurrent.billableInputTokens,
+    sanitizedNext.billableInputTokens,
   );
-  const veryfrontOutputChargeUsd = addOptionalNumber(
-    current.veryfrontOutputChargeUsd,
-    next.veryfrontOutputChargeUsd,
+  const billableOutputTokens = addOptionalTokenCount(
+    sanitizedCurrent.billableOutputTokens,
+    sanitizedNext.billableOutputTokens,
   );
-  const veryfrontChargeUsd = addOptionalNumber(
-    current.veryfrontChargeUsd,
-    next.veryfrontChargeUsd,
+  const costUsd = addOptionalCost(
+    sanitizedCurrent.costUsd,
+    sanitizedNext.costUsd,
   );
-  const veryfrontBilledUsd = addOptionalNumber(
-    current.veryfrontBilledUsd,
-    next.veryfrontBilledUsd,
+  const providerInputCostUsd = addOptionalCost(
+    sanitizedCurrent.providerInputCostUsd,
+    sanitizedNext.providerInputCostUsd,
   );
-  const costCredits = addOptionalNumber(current.costCredits, next.costCredits);
+  const providerOutputCostUsd = addOptionalCost(
+    sanitizedCurrent.providerOutputCostUsd,
+    sanitizedNext.providerOutputCostUsd,
+  );
+  const providerCostUsd = addOptionalCost(
+    sanitizedCurrent.providerCostUsd,
+    sanitizedNext.providerCostUsd,
+  );
+  const veryfrontInputChargeUsd = addOptionalCost(
+    sanitizedCurrent.veryfrontInputChargeUsd,
+    sanitizedNext.veryfrontInputChargeUsd,
+  );
+  const veryfrontOutputChargeUsd = addOptionalCost(
+    sanitizedCurrent.veryfrontOutputChargeUsd,
+    sanitizedNext.veryfrontOutputChargeUsd,
+  );
+  const veryfrontChargeUsd = addOptionalCost(
+    sanitizedCurrent.veryfrontChargeUsd,
+    sanitizedNext.veryfrontChargeUsd,
+  );
+  const veryfrontBilledUsd = addOptionalCost(
+    sanitizedCurrent.veryfrontBilledUsd,
+    sanitizedNext.veryfrontBilledUsd,
+  );
+  const costCredits = addOptionalCost(
+    sanitizedCurrent.costCredits,
+    sanitizedNext.costCredits,
+  );
 
-  return {
+  const aggregate: RuntimeUsage = {
     ...(inputTokens === undefined ? {} : { inputTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
@@ -478,6 +468,7 @@ export function addAnthropicUsage(
     ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
     ...(billableInputTokens === undefined ? {} : { billableInputTokens }),
     ...(billableOutputTokens === undefined ? {} : { billableOutputTokens }),
+    ...(costUsd === undefined ? {} : { costUsd }),
     ...(providerInputCostUsd === undefined ? {} : { providerInputCostUsd }),
     ...(providerOutputCostUsd === undefined ? {} : { providerOutputCostUsd }),
     ...(providerCostUsd === undefined ? {} : { providerCostUsd }),
@@ -490,6 +481,7 @@ export function addAnthropicUsage(
     ...(billingMode === undefined ? {} : { billingMode }),
     ...(usageCaptureStatus === undefined ? {} : { usageCaptureStatus }),
   };
+  return Object.keys(aggregate).length > 0 ? aggregate : undefined;
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
@@ -537,7 +529,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
   const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
   const usageCaptureStatus = veryfront?.usage_capture_status;
 
-  return {
+  return sanitizeUsage({
     inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
     outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
     totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
@@ -583,7 +575,7 @@ export function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefine
         usageCaptureStatus === "partial"
       ? { usageCaptureStatus }
       : {}),
-  };
+  });
 }
 
 function isToolCallsFinishReason(
@@ -611,7 +603,7 @@ async function readStreamChunk(
   const timeoutPromise = new Promise<AnthropicStreamReadResult>((resolve) => {
     timeoutId = setTimeout(
       () => resolve({ kind: "timeout", readerMode: timeoutMode }),
-      Math.max(1, timeoutMs),
+      timeoutMs,
     );
   });
 
@@ -621,7 +613,7 @@ async function readStreamChunk(
       if (timeoutMode === "drain") {
         void drainStreamReaderAfterTimeout(reader, readPromise, drainTimeoutMs);
       } else {
-        await cancelStreamReader(
+        cancelStreamReader(
           reader,
           "Timed out waiting for trailing Anthropic tool-use usage metadata",
         );
@@ -635,12 +627,17 @@ async function readStreamChunk(
   }
 }
 
-async function cancelStreamReader(
+function cancelStreamReader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   reason: string,
-): Promise<void> {
+): void {
   try {
-    await reader.cancel(reason);
+    // Web Streams closes pending reads immediately, but a hostile underlying
+    // source may return a never-settling cancellation promise. Cleanup must
+    // not keep the consumer or timeout path waiting on that source.
+    void reader.cancel(reason).catch(() => {
+      // The upstream body may already be closed or canceled by the runtime.
+    });
   } catch {
     // The upstream body may already be closed or canceled by the runtime.
   }
@@ -656,7 +653,7 @@ async function drainStreamReaderAfterTimeout(
       reader,
       "Timed out draining trailing Anthropic tool-use usage metadata",
     );
-  }, Math.max(1, timeoutMs));
+  }, timeoutMs);
 
   try {
     const firstRead = await pendingRead;
@@ -683,40 +680,159 @@ export async function* streamAnthropicCompatibleParts(
   stream: ReadableStream<Uint8Array>,
   options: AnthropicStreamOptions = {},
 ): AsyncIterable<unknown> {
-  const sseParser = new BoundedAnthropicSseParser();
-  const reader = stream.getReader();
-  const trailingUsageGraceMs = options.clientToolUseTrailingUsageGraceMs ??
-    DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS;
+  const providerLabel = options.providerLabel ?? "anthropic";
+  const sseParser = new BoundedAnthropicSseParser(providerLabel);
+  const trailingUsageGraceMs = normalizeTimerDurationMs(
+    options.clientToolUseTrailingUsageGraceMs ??
+      DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_GRACE_MS,
+    "clientToolUseTrailingUsageGraceMs",
+  );
   const trailingUsageTimeoutMode = options.clientToolUseTrailingUsageTimeoutMode ?? "cancel";
-  const trailingUsageDrainTimeoutMs = options.clientToolUseTrailingUsageDrainTimeoutMs ??
-    DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS;
+  const trailingUsageDrainTimeoutMs = normalizeTimerDurationMs(
+    options.clientToolUseTrailingUsageDrainTimeoutMs ??
+      DEFAULT_CLIENT_TOOL_USE_TRAILING_USAGE_DRAIN_TIMEOUT_MS,
+    "clientToolUseTrailingUsageDrainTimeoutMs",
+  );
+  if (trailingUsageGraceMs === 0 || trailingUsageDrainTimeoutMs === 0) {
+    throw new RangeError(
+      "Anthropic trailing usage timeouts must be greater than zero",
+    );
+  }
+  const reader = stream.getReader();
+  const allowPostTerminalUsage = options.allowPostTerminalUsage === true;
+  const providerToolNamesById = options.providerToolNamesById ?? new Map<string, string>();
   let readerReleased = false;
   let sourceSettled = false;
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   const rawContentBlocks = new Map<number, Record<string, unknown>>();
+  const openContentBlocks = new Set<number>();
+  const seenContentBlocks = new Set<number>();
+  const supportedContentBlocks = new Set<number>();
   let finishReason: string | { unified: string; raw: string } | null = null;
   let rawStopReason: string | undefined;
   let usage: RuntimeUsage | undefined;
   let completedClientToolUseStep = false;
   let clientToolUseIdleDeadlineMs: number | null = null;
   let clientToolUseTerminalDeadlineMs: number | null = null;
+  let sawMessageStart = false;
+  let sawMessageStop = false;
+  let sawDoneMarker = false;
+  let sawStopReason = false;
+  let completedSupportedContentBlocks = 0;
+
+  const mergeRecordUsage = (record: Record<string, unknown>) => {
+    usage = mergeUsage(usage, extractAnthropicUsage(record));
+  };
+
+  const applyTrailingLifecycleEvent = (event: unknown | "[DONE]") => {
+    if (event === "[DONE]") {
+      if (
+        sawDoneMarker ||
+        !sawMessageStart ||
+        !sawStopReason ||
+        openContentBlocks.size > 0 ||
+        reasoningBlocks.size > 0 ||
+        toolCalls.size > 0
+      ) {
+        throw invalidAnthropicStream(providerLabel, "terminal marker was out of sequence");
+      }
+      sawDoneMarker = true;
+      return;
+    }
+
+    const record = readRecord(event);
+    const eventType = typeof record?.type === "string" && record.type.length > 0
+      ? record.type
+      : undefined;
+    if (!record || !eventType) {
+      throw invalidAnthropicStream(providerLabel, "trailing event type was missing");
+    }
+    if (eventType === "error") {
+      throw buildAnthropicSseError(record);
+    }
+    if (eventType === "ping") {
+      return;
+    }
+    if (eventType === "message_stop") {
+      if (
+        sawDoneMarker ||
+        sawMessageStop ||
+        !sawMessageStart ||
+        !sawStopReason ||
+        openContentBlocks.size > 0 ||
+        reasoningBlocks.size > 0 ||
+        toolCalls.size > 0
+      ) {
+        throw invalidAnthropicStream(providerLabel, "message_stop was out of sequence");
+      }
+      sawMessageStop = true;
+      return;
+    }
+    if (eventType !== "message_delta") {
+      throw invalidAnthropicStream(
+        providerLabel,
+        "trailing event was not a usage-bearing lifecycle event",
+      );
+    }
+
+    const delta = readRecord(record.delta);
+    if (!delta) {
+      throw invalidAnthropicStream(providerLabel, "message delta was malformed");
+    }
+    if (sawMessageStop || sawDoneMarker) {
+      if (
+        !allowPostTerminalUsage ||
+        Object.keys(delta).length > 0 ||
+        !readRecord(record.usage)
+      ) {
+        throw invalidAnthropicStream(
+          providerLabel,
+          "event followed the terminal message_stop",
+        );
+      }
+      mergeRecordUsage(record);
+      return;
+    }
+    if (
+      !sawMessageStart ||
+      openContentBlocks.size > 0 ||
+      reasoningBlocks.size > 0 ||
+      toolCalls.size > 0
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message_delta was out of sequence");
+    }
+    if (
+      delta.stop_reason !== undefined &&
+      delta.stop_reason !== null &&
+      (typeof delta.stop_reason !== "string" || delta.stop_reason.length === 0)
+    ) {
+      throw invalidAnthropicStream(providerLabel, "message stop reason was malformed");
+    }
+    if (typeof delta.stop_reason === "string") {
+      if (sawStopReason) {
+        throw invalidAnthropicStream(providerLabel, "message stop reason was repeated");
+      }
+      sawStopReason = true;
+      rawStopReason = delta.stop_reason;
+      finishReason = normalizeAnthropicFinishReason(delta.stop_reason);
+    }
+    mergeRecordUsage(record);
+  };
 
   const mergeTrailingBufferUsage = () => {
     for (const event of sseParser.flush()) {
-      if (event === "[DONE]") {
-        continue;
-      }
-      const record = readRecord(event);
-      if (record?.type === "error") {
-        throw buildAnthropicSseError(record);
-      }
-      usage = mergeUsage(usage, extractAnthropicUsage(record));
+      applyTrailingLifecycleEvent(event);
     }
   };
 
   const getClientToolUseReadTimeoutMs = () => {
-    if (!completedClientToolUseStep || toolCalls.size > 0) {
+    if (
+      !completedClientToolUseStep ||
+      toolCalls.size > 0 ||
+      reasoningBlocks.size > 0 ||
+      openContentBlocks.size > 0
+    ) {
       return undefined;
     }
 
@@ -724,6 +840,28 @@ export async function* streamAnthropicCompatibleParts(
       ? clientToolUseTerminalDeadlineMs
       : clientToolUseIdleDeadlineMs;
     return deadline === null ? undefined : Math.max(1, deadline - Date.now());
+  };
+
+  const validateCompletion = () => {
+    if (!sawMessageStart) {
+      throw invalidAnthropicStream(providerLabel, "stream contained no provider envelope");
+    }
+    if (
+      openContentBlocks.size > 0 ||
+      reasoningBlocks.size > 0 ||
+      toolCalls.size > 0
+    ) {
+      throw invalidAnthropicStream(providerLabel, "stream ended with unfinished content blocks");
+    }
+    if (completedSupportedContentBlocks === 0) {
+      throw invalidAnthropicStream(providerLabel, "stream contained no supported content blocks");
+    }
+    if (!sawStopReason && !completedClientToolUseStep) {
+      throw invalidAnthropicStream(providerLabel, "stream ended before a stop reason");
+    }
+    if (!sawMessageStop && !sawDoneMarker && !completedClientToolUseStep) {
+      throw invalidAnthropicStream(providerLabel, "stream ended before a terminal marker");
+    }
   };
 
   const buildFinishPart = () => ({
@@ -757,54 +895,119 @@ export async function* streamAnthropicCompatibleParts(
         sourceSettled = true;
         readerReleased = read.readerMode === "drain";
         mergeTrailingBufferUsage();
+        validateCompletion();
         finishReason ??= CLIENT_TOOL_USE_FINISH_REASON;
         notifyCompletion();
         yield buildFinishPart();
         return;
       }
 
-      if (read.kind === "done") {
+      const reachedEndOfStream = read.kind === "done";
+      if (reachedEndOfStream) {
         sourceSettled = true;
-        break;
       }
 
-      for (const event of sseParser.push(read.chunk)) {
+      const events = reachedEndOfStream ? sseParser.flush() : sseParser.push(read.chunk);
+      for (const event of events) {
         if (event === "[DONE]") {
+          applyTrailingLifecycleEvent(event);
           continue;
         }
 
         const record = readRecord(event);
-        const eventType = typeof record?.type === "string" ? record.type : undefined;
-        usage = mergeUsage(usage, extractAnthropicUsage(record));
+        if (!record) {
+          throw invalidAnthropicStream(providerLabel, "event was not an object");
+        }
+        const eventType = typeof record.type === "string" && record.type.length > 0
+          ? record.type
+          : undefined;
+        if (!eventType) {
+          throw invalidAnthropicStream(providerLabel, "event type was missing");
+        }
 
-        if (eventType === "error" && record) {
+        if (sawMessageStop || sawDoneMarker) {
+          applyTrailingLifecycleEvent(event);
+          continue;
+        }
+        mergeRecordUsage(record);
+
+        if (eventType === "error") {
           throw buildAnthropicSseError(record);
         }
 
         if (eventType === "message_start") {
-          usage = mergeUsage(usage, extractAnthropicUsage(record?.message));
+          if (
+            sawMessageStart ||
+            seenContentBlocks.size > 0 ||
+            sawStopReason
+          ) {
+            throw invalidAnthropicStream(providerLabel, "message_start was out of sequence");
+          }
+          const message = readRecord(record.message);
+          if (!message) {
+            throw invalidAnthropicStream(providerLabel, "message_start message was malformed");
+          }
+          sawMessageStart = true;
+          mergeRecordUsage(message);
           continue;
         }
 
         if (eventType === "content_block_start") {
-          const index = typeof record?.index === "number" ? record.index : 0;
-          const contentBlock = readRecord(record?.content_block);
-          const blockType = typeof contentBlock?.type === "string" ? contentBlock.type : undefined;
-          if (contentBlock && blockType) {
-            rawContentBlocks.set(index, { ...contentBlock });
+          if (!sawMessageStart || sawStopReason) {
+            throw invalidAnthropicStream(
+              providerLabel,
+              "content_block_start was out of sequence",
+            );
           }
+          const index = readAnthropicStreamIndex(record, eventType, providerLabel);
+          const contentBlock = readRecord(record.content_block);
+          const blockType = typeof contentBlock?.type === "string" && contentBlock.type.length > 0
+            ? contentBlock.type
+            : undefined;
+          if (!contentBlock || !blockType) {
+            throw invalidAnthropicStream(
+              providerLabel,
+              "content_block_start content block was malformed",
+            );
+          }
+          if (seenContentBlocks.has(index)) {
+            throw invalidAnthropicStream(providerLabel, "content block index was reused");
+          }
+          seenContentBlocks.add(index);
+          openContentBlocks.add(index);
+          clientToolUseIdleDeadlineMs = null;
+          clientToolUseTerminalDeadlineMs = null;
+          rawContentBlocks.set(index, { ...contentBlock });
 
-          if (
-            blockType === "text" && typeof contentBlock?.text === "string" &&
-            contentBlock.text.length > 0
-          ) {
-            yield { type: "text-delta", delta: contentBlock.text };
+          if (blockType === "text") {
+            if (typeof contentBlock.text !== "string") {
+              throw invalidAnthropicStream(providerLabel, "text content block was malformed");
+            }
+            supportedContentBlocks.add(index);
+            if (contentBlock.text.length > 0) {
+              yield { type: "text-delta", delta: contentBlock.text };
+            }
             continue;
           }
 
           if (blockType === "thinking") {
+            if (
+              (contentBlock.thinking !== undefined &&
+                typeof contentBlock.thinking !== "string") ||
+              (contentBlock.signature !== undefined &&
+                typeof contentBlock.signature !== "string")
+            ) {
+              throw invalidAnthropicStream(providerLabel, "thinking content block was malformed");
+            }
+            supportedContentBlocks.add(index);
             const reasoningId = `thinking-${index}`;
-            reasoningBlocks.set(index, { id: reasoningId, text: "" });
+            reasoningBlocks.set(index, {
+              id: reasoningId,
+              text: "",
+              ...(typeof contentBlock.signature === "string"
+                ? { signature: contentBlock.signature }
+                : {}),
+            });
             yield {
               type: "reasoning-start",
               id: reasoningId,
@@ -829,13 +1032,18 @@ export async function* streamAnthropicCompatibleParts(
           // as a zero-length reasoning block so callers know thinking happened
           // without leaking the (legitimately hidden) contents.
           if (blockType === "redacted_thinking") {
+            if (typeof contentBlock.data !== "string" || contentBlock.data.length === 0) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "redacted thinking content block was malformed",
+              );
+            }
+            supportedContentBlocks.add(index);
             const reasoningId = `thinking-${index}`;
             reasoningBlocks.set(index, {
               id: reasoningId,
               text: "",
-              ...(typeof contentBlock?.data === "string"
-                ? { redactedData: contentBlock.data }
-                : {}),
+              redactedData: contentBlock.data,
             });
             yield {
               type: "reasoning-start",
@@ -844,19 +1052,23 @@ export async function* streamAnthropicCompatibleParts(
             continue;
           }
 
-          if (
-            (blockType === "tool_use" || blockType === "server_tool_use") &&
-            typeof contentBlock?.id === "string" &&
-            typeof contentBlock?.name === "string"
-          ) {
-            const providerExecuted = blockType === "server_tool_use" ? true : undefined;
+          if (blockType === "tool_use") {
+            if (
+              typeof contentBlock.id !== "string" ||
+              contentBlock.id.length === 0 ||
+              typeof contentBlock.name !== "string" ||
+              contentBlock.name.length === 0 ||
+              (contentBlock.input !== undefined && !readRecord(contentBlock.input))
+            ) {
+              throw invalidAnthropicStream(providerLabel, "tool-use content block was malformed");
+            }
+            supportedContentBlocks.add(index);
             const current: AnthropicStreamToolCallState = {
               id: contentBlock.id,
               name: contentBlock.name,
               inputChunks: [],
               inputBytes: 0,
               partialJsonDeltaCount: 0,
-              ...(providerExecuted ? { providerExecuted } : {}),
             };
 
             toolCalls.set(index, current);
@@ -866,7 +1078,6 @@ export async function* streamAnthropicCompatibleParts(
               type: "tool-input-start",
               id: current.id,
               toolName: current.name,
-              ...(providerExecuted ? { providerExecuted } : {}),
             };
 
             const initialInput = contentBlock.input;
@@ -882,80 +1093,136 @@ export async function* streamAnthropicCompatibleParts(
             continue;
           }
 
-          if (
-            blockType === "web_search_tool_result" &&
-            typeof contentBlock?.tool_use_id === "string"
-          ) {
-            const parsedResult = parseAnthropicServerToolResult(contentBlock);
-            if (parsedResult) {
-              yield parsedResult.isError === true
-                ? {
-                  type: "tool-error",
-                  toolCallId: parsedResult.toolCallId,
-                  toolName: parsedResult.toolName,
-                  error: parsedResult.result,
-                  isError: true,
-                  providerExecuted: true,
-                }
-                : {
-                  type: "tool-result",
-                  ...parsedResult,
-                  providerExecuted: true,
-                };
+          if (blockType === "server_tool_use" || blockType === "mcp_tool_use") {
+            const providerToolUse = parseAnthropicProviderToolUse(contentBlock);
+            if (
+              !providerToolUse ||
+              providerToolNamesById.has(providerToolUse.toolCallId)
+            ) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "provider tool-use content block was malformed",
+              );
             }
-          }
+            providerToolNamesById.set(
+              providerToolUse.toolCallId,
+              providerToolUse.toolName,
+            );
+            supportedContentBlocks.add(index);
+            const current: AnthropicStreamToolCallState = {
+              id: providerToolUse.toolCallId,
+              name: providerToolUse.toolName,
+              inputChunks: [],
+              inputBytes: 0,
+              partialJsonDeltaCount: 0,
+              providerExecuted: true,
+            };
+            toolCalls.set(index, current);
+            yield {
+              type: "tool-input-start",
+              id: current.id,
+              toolName: current.name,
+              providerExecuted: true,
+            };
 
-          if (
-            blockType === "web_fetch_tool_result" &&
-            typeof contentBlock?.tool_use_id === "string"
-          ) {
-            const parsedResult = parseAnthropicServerToolResult(contentBlock);
-            if (parsedResult) {
-              yield parsedResult.isError === true
-                ? {
-                  type: "tool-error",
-                  toolCallId: parsedResult.toolCallId,
-                  toolName: parsedResult.toolName,
-                  error: parsedResult.result,
-                  isError: true,
-                  providerExecuted: true,
-                }
-                : {
-                  type: "tool-result",
-                  ...parsedResult,
-                  providerExecuted: true,
-                };
+            if (!isEmptyRecord(providerToolUse.input)) {
+              const serializedInput = stringifyJsonValue(providerToolUse.input);
+              appendAnthropicToolInput(current, serializedInput);
+              yield {
+                type: "tool-input-delta",
+                id: current.id,
+                delta: serializedInput,
+              };
             }
-          }
-
-          continue;
-        }
-
-        if (eventType === "content_block_delta") {
-          const index = typeof record?.index === "number" ? record.index : 0;
-          const delta = readRecord(record?.delta);
-          const deltaType = typeof delta?.type === "string" ? delta.type : undefined;
-
-          if (
-            deltaType === "text_delta" && typeof delta?.text === "string" && delta.text.length > 0
-          ) {
-            const rawBlock = rawContentBlocks.get(index);
-            if (rawBlock) {
-              rawBlock.text = `${
-                typeof rawBlock.text === "string" ? rawBlock.text : ""
-              }${delta.text}`;
-            }
-            yield { type: "text-delta", delta: delta.text };
             continue;
           }
 
-          if (
-            deltaType === "thinking_delta" && typeof delta?.thinking === "string" &&
-            delta.thinking.length > 0
-          ) {
+          if (isAnthropicProviderToolResultBlockType(blockType)) {
+            const parsedResult = parseAnthropicServerToolResult(
+              contentBlock,
+              providerToolNamesById,
+            );
+            if (!parsedResult) {
+              const issue = blockType === "web_search_tool_result"
+                ? "web-search result block was malformed"
+                : blockType === "web_fetch_tool_result"
+                ? "web-fetch result block was malformed"
+                : "provider tool-result content block was malformed";
+              throw invalidAnthropicStream(
+                providerLabel,
+                issue,
+              );
+            }
+            providerToolNamesById.delete(parsedResult.toolCallId);
+            supportedContentBlocks.add(index);
+            yield parsedResult.isError === true
+              ? {
+                type: "tool-error",
+                toolCallId: parsedResult.toolCallId,
+                toolName: parsedResult.toolName,
+                error: parsedResult.result,
+                isError: true,
+                providerExecuted: true,
+              }
+              : {
+                type: "tool-result",
+                ...parsedResult,
+                providerExecuted: true,
+              };
+            continue;
+          }
+
+          throw invalidAnthropicStream(
+            providerLabel,
+            "unsupported content block type",
+          );
+        }
+
+        if (eventType === "content_block_delta") {
+          const index = readAnthropicStreamIndex(record, eventType, providerLabel);
+          if (!openContentBlocks.has(index)) {
+            throw invalidAnthropicStream(
+              providerLabel,
+              "content block delta referenced an unopened block",
+            );
+          }
+          const delta = readRecord(record.delta);
+          const deltaType = typeof delta?.type === "string" && delta.type.length > 0
+            ? delta.type
+            : undefined;
+          if (!delta || !deltaType) {
+            throw invalidAnthropicStream(providerLabel, "content block delta was malformed");
+          }
+          if (deltaType === "text_delta") {
+            if (typeof delta.text !== "string") {
+              throw invalidAnthropicStream(providerLabel, "text delta was malformed");
+            }
+            const rawBlock = rawContentBlocks.get(index);
+            if (!rawBlock || rawBlock.type !== "text") {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "text delta did not match its content block",
+              );
+            }
+            rawBlock.text = `${
+              typeof rawBlock.text === "string" ? rawBlock.text : ""
+            }${delta.text}`;
+            if (delta.text.length > 0) {
+              yield { type: "text-delta", delta: delta.text };
+            }
+            continue;
+          }
+
+          if (deltaType === "thinking_delta") {
+            if (typeof delta.thinking !== "string") {
+              throw invalidAnthropicStream(providerLabel, "thinking delta was malformed");
+            }
             const current = reasoningBlocks.get(index);
             if (!current) {
-              continue;
+              throw invalidAnthropicStream(
+                providerLabel,
+                "thinking delta did not match its content block",
+              );
             }
 
             current.text += delta.thinking;
@@ -965,39 +1232,61 @@ export async function* streamAnthropicCompatibleParts(
                 typeof rawBlock.thinking === "string" ? rawBlock.thinking : ""
               }${delta.thinking}`;
             }
-            yield {
-              type: "reasoning-delta",
-              id: current.id,
-              delta: delta.thinking,
-            };
+            if (delta.thinking.length > 0) {
+              yield {
+                type: "reasoning-delta",
+                id: current.id,
+                delta: delta.thinking,
+              };
+            }
             continue;
           }
 
-          if (deltaType === "signature_delta" && typeof delta?.signature === "string") {
-            const current = reasoningBlocks.get(index);
-            if (current) {
-              current.signature = delta.signature;
+          if (deltaType === "signature_delta") {
+            if (typeof delta.signature !== "string") {
+              throw invalidAnthropicStream(providerLabel, "signature delta was malformed");
             }
+            const current = reasoningBlocks.get(index);
+            if (!current) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "signature delta did not match its content block",
+              );
+            }
+            current.signature = delta.signature;
             const rawBlock = rawContentBlocks.get(index);
             if (rawBlock) rawBlock.signature = delta.signature;
             continue;
           }
 
           const citation = readRecord(delta?.citation);
-          if (deltaType === "citations_delta" && citation) {
-            const rawBlock = rawContentBlocks.get(index);
-            if (rawBlock) {
-              const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
-              citations.push(citation);
-              rawBlock.citations = citations;
+          if (deltaType === "citations_delta") {
+            if (!citation || !normalizeAnthropicCitation(citation)) {
+              throw invalidAnthropicStream(providerLabel, "citation delta was malformed");
             }
+            const rawBlock = rawContentBlocks.get(index);
+            if (!rawBlock || rawBlock.type !== "text") {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "citation delta did not match its content block",
+              );
+            }
+            const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
+            citations.push(citation);
+            rawBlock.citations = citations;
             continue;
           }
 
-          if (deltaType === "input_json_delta" && typeof delta?.partial_json === "string") {
+          if (deltaType === "input_json_delta") {
+            if (typeof delta.partial_json !== "string") {
+              throw invalidAnthropicStream(providerLabel, "tool-input delta was malformed");
+            }
             const current = toolCalls.get(index);
             if (!current) {
-              continue;
+              throw invalidAnthropicStream(
+                providerLabel,
+                "tool-input delta did not match its content block",
+              );
             }
 
             appendAnthropicToolInput(current, delta.partial_json, true);
@@ -1006,13 +1295,26 @@ export async function* streamAnthropicCompatibleParts(
               id: current.id,
               delta: delta.partial_json,
             };
+            continue;
           }
 
-          continue;
+          throw invalidAnthropicStream(
+            providerLabel,
+            "unsupported content block delta type",
+          );
         }
 
         if (eventType === "content_block_stop") {
-          const index = typeof record?.index === "number" ? record.index : 0;
+          const index = readAnthropicStreamIndex(record, eventType, providerLabel);
+          if (!openContentBlocks.delete(index)) {
+            throw invalidAnthropicStream(
+              providerLabel,
+              "content block stop referenced an unopened block",
+            );
+          }
+          if (supportedContentBlocks.delete(index)) {
+            completedSupportedContentBlocks++;
+          }
           const reasoning = reasoningBlocks.get(index);
           if (reasoning) {
             yield {
@@ -1029,23 +1331,30 @@ export async function* streamAnthropicCompatibleParts(
           if (!current) {
             continue;
           }
-          const input = joinAnthropicToolInput(current);
+          const input = joinAnthropicToolInput(current) || "{}";
+          let parsedInput: Record<string, unknown>;
+          try {
+            const parsed = JSON.parse(input) as unknown;
+            const parsedRecord = readRecord(parsed);
+            if (!parsedRecord) {
+              throw new TypeError("tool input was not an object");
+            }
+            parsedInput = parsedRecord;
+          } catch {
+            throw invalidAnthropicStream(
+              providerLabel,
+              "tool call arguments were not valid JSON object text",
+            );
+          }
 
           const rawBlock = rawContentBlocks.get(index);
-          if (rawBlock && input.length > 0) {
-            try {
-              rawBlock.input = JSON.parse(input);
-            } catch {
-              // Preserve the provider's initial raw input if a malformed stream
-              // cannot be reconstructed into the assistant replay block.
-            }
-          }
+          if (rawBlock) rawBlock.input = parsedInput;
 
           yield {
             type: "tool-call",
             toolCallId: current.id,
             toolName: current.name,
-            input: input.length > 0 ? input : "{}",
+            input,
             ...(current.providerExecuted ? { providerExecuted: true } : {}),
           };
           if (!current.providerExecuted) {
@@ -1057,36 +1366,93 @@ export async function* streamAnthropicCompatibleParts(
         }
 
         if (eventType === "message_delta") {
-          const delta = readRecord(record?.delta);
-          if (typeof delta?.stop_reason === "string") {
-            rawStopReason = delta.stop_reason;
+          if (
+            !sawMessageStart ||
+            openContentBlocks.size > 0 ||
+            reasoningBlocks.size > 0 ||
+            toolCalls.size > 0
+          ) {
+            throw invalidAnthropicStream(providerLabel, "message_delta was out of sequence");
           }
-          const normalizedFinishReason = normalizeAnthropicFinishReason(delta?.stop_reason);
+          const delta = readRecord(record.delta);
+          if (!delta) {
+            throw invalidAnthropicStream(providerLabel, "message delta was malformed");
+          }
+          if (
+            delta.stop_reason !== undefined &&
+            delta.stop_reason !== null &&
+            (typeof delta.stop_reason !== "string" || delta.stop_reason.length === 0)
+          ) {
+            throw invalidAnthropicStream(providerLabel, "message stop reason was malformed");
+          }
+          if (typeof delta.stop_reason === "string") {
+            if (sawStopReason) {
+              throw invalidAnthropicStream(providerLabel, "message stop reason was repeated");
+            }
+            rawStopReason = delta.stop_reason;
+            sawStopReason = true;
+          }
+          const normalizedFinishReason = normalizeAnthropicFinishReason(delta.stop_reason);
           if (normalizedFinishReason) {
             finishReason = normalizedFinishReason;
           }
+          continue;
         }
+
+        if (eventType === "message_stop") {
+          if (
+            !sawMessageStart ||
+            !sawStopReason ||
+            openContentBlocks.size > 0 ||
+            reasoningBlocks.size > 0 ||
+            toolCalls.size > 0
+          ) {
+            throw invalidAnthropicStream(providerLabel, "message_stop was out of sequence");
+          }
+          sawMessageStop = true;
+          continue;
+        }
+
+        if (eventType === "ping") {
+          continue;
+        }
+        throw invalidAnthropicStream(
+          providerLabel,
+          "unsupported event type",
+        );
       }
 
-      if (completedClientToolUseStep && toolCalls.size === 0) {
+      if (
+        completedClientToolUseStep &&
+        toolCalls.size === 0 &&
+        reasoningBlocks.size === 0 &&
+        openContentBlocks.size === 0
+      ) {
         if (isToolCallsFinishReason(finishReason)) {
           clientToolUseIdleDeadlineMs = null;
           clientToolUseTerminalDeadlineMs ??= Date.now() + trailingUsageGraceMs;
         } else {
           clientToolUseIdleDeadlineMs ??= Date.now() + trailingUsageGraceMs;
         }
+      } else {
+        clientToolUseIdleDeadlineMs = null;
+        clientToolUseTerminalDeadlineMs = null;
+      }
+      if (reachedEndOfStream) {
+        break;
       }
     }
   } finally {
     if (!readerReleased) {
       if (!sourceSettled) {
-        await cancelStreamReader(reader, "Anthropic stream consumer returned before completion");
+        cancelStreamReader(reader, "Anthropic stream consumer returned before completion");
       }
       reader.releaseLock();
     }
   }
 
   mergeTrailingBufferUsage();
+  validateCompletion();
 
   notifyCompletion();
   yield buildFinishPart();

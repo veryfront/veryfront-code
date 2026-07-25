@@ -5,6 +5,8 @@ import {
   buildConditionalChatTemplateOptions,
   buildConditionalGenerateOptions,
   buildPipeOptions,
+  createStopSequenceFilter,
+  isOnnxUnavailableError,
 } from "./local-engine.ts";
 
 const LOCAL_AI_THINKING_ENV = "VERYFRONT_LOCAL_AI_THINKING";
@@ -116,11 +118,24 @@ describe("provider/local/local-engine buildPipeOptions", () => {
 
     // deno-lint-ignore no-explicit-any
     const list = opts.stopping_criteria as any;
-    // First invocation establishes the prompt boundary (empty prompt here).
-    assertEquals(list._call([[]], null), [false]);
-    // Subsequent step: generated suffix decodes to "stop" → must stop.
-    const stopIds = [[18, 19, 14, 15]];
-    assertEquals(list._call(stopIds, null), [true]);
+    const prompt = [0, 1];
+    // Transformers invokes stopping criteria after appending the first token.
+    assertEquals(list._call([[...prompt, 18]], null), [false]); // "s"
+    assertEquals(list._call([[...prompt, 18, 19, 14]], null), [false]); // "sto"
+    assertEquals(list._call([[...prompt, 18, 19, 14, 15]], null), [true]); // "stop"
+  });
+
+  it("can stop on the very first generated token", () => {
+    const opts = buildPipeOptions(
+      { stopSequences: ["s"] },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+
+    // deno-lint-ignore no-explicit-any
+    const list = opts.stopping_criteria as any;
+    assertEquals(list._call([[0, 1, 18]], null), [true]);
   });
 
   it("does NOT trigger when the stop sequence is only in the prompt, not the generated suffix", () => {
@@ -136,13 +151,12 @@ describe("provider/local/local-engine buildPipeOptions", () => {
     // deno-lint-ignore no-explicit-any
     const list = opts.stopping_criteria as any;
 
-    // Prompt tokens [18,19,14,15] decode to "stop" — a user/system message that
-    // happens to mention the stop word. First _call records this as the prompt
-    // boundary and must NOT stop.
+    // Prompt tokens [18,19,14,15] decode to "stop". The real first call also
+    // contains the first generated token, which establishes the boundary.
     const prompt = [18, 19, 14, 15]; // "stop"
-    assertEquals(list._call([[...prompt]], null), [false]);
+    assertEquals(list._call([[...prompt, 6]], null), [false]); // generated "g"
 
-    // Model generates "go" (tokens [6,14]) — suffix has no stop string → continue.
+    // Model completes "go" — suffix has no stop string → continue.
     assertEquals(list._call([[...prompt, 6, 14]], null), [false]);
 
     // Model now generates "stop" in the suffix → must stop, even though the
@@ -164,13 +178,37 @@ describe("provider/local/local-engine buildPipeOptions", () => {
     // Two batch items with different prompt lengths, both mentioning "stop".
     const promptA = [18, 19, 14, 15]; // "stop"
     const promptB = [6, 14, 18, 19, 14, 15]; // "gostop"
-    assertEquals(list._call([[...promptA], [...promptB]], null), [false, false]);
+    assertEquals(list._call([[...promptA, 18], [...promptB, 6]], null), [false, false]);
 
     // Item 0 generates "stop" → stop; item 1 generates "go" → continue.
     assertEquals(
       list._call([[...promptA, 18, 19, 14, 15], [...promptB, 6, 14]], null),
       [true, false],
     );
+  });
+
+  it("uses an abort signal as a generation stopping criterion", () => {
+    const abortController = new AbortController();
+    let decodeCalls = 0;
+    const opts = buildPipeOptions(
+      { abortSignal: abortController.signal },
+      fakeTransformers,
+      {
+        decode(tokens: number[]): string {
+          decodeCalls += 1;
+          return fakeTokenizer.decode(tokens);
+        },
+      },
+      "streamer-sentinel",
+    );
+
+    // deno-lint-ignore no-explicit-any
+    const list = opts.stopping_criteria as any;
+    assertEquals(list._call([[0, 1, 2]], null), [false]);
+    assertEquals(list._call([[0, 1, 2, 3]], null), [false]);
+    assertEquals(decodeCalls, 0, "abort-only criteria must not repeatedly decode generated text");
+    abortController.abort(new DOMException("cancelled", "AbortError"));
+    assertEquals(list._call([[0, 1, 2, 3, 4]], null), [true]);
   });
 
   it("omits stopping_criteria entirely when no stopSequences are given", () => {
@@ -242,6 +280,34 @@ describe("provider/local/local-engine buildPipeOptions", () => {
       {
         add_generation_prompt: true,
       },
+    );
+  });
+
+  it("suppresses stop sequences split across streamer chunks", () => {
+    const filter = createStopSequenceFilter(["STOP"]);
+    assertEquals(filter.push("hello ST"), "hello ");
+    assertEquals(filter.push("OP trailing text"), "");
+    assertEquals(filter.finish(), "");
+  });
+
+  it("flushes a partial stop prefix when generation ends normally", () => {
+    const filter = createStopSequenceFilter(["STOP"]);
+    assertEquals(filter.push("hello ST"), "hello ");
+    assertEquals(filter.finish(), "ST");
+  });
+
+  it("does not classify model URLs containing ONNX as native runtime failures", () => {
+    assertEquals(
+      isOnnxUnavailableError(
+        'Could not locate file: "https://huggingface.co/onnx-community/Qwen3.5-0.8B-ONNX/config.json".',
+      ),
+      false,
+    );
+    assertEquals(
+      isOnnxUnavailableError(
+        "ERR_DLOPEN_FAILED: could not load onnxruntime_binding.node",
+      ),
+      true,
     );
   });
 });

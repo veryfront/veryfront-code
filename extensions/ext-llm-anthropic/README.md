@@ -103,7 +103,13 @@ Already-versioned IDs (e.g. `anthropic.code_execution_20250522`) pass through ve
 
 ### MCP Servers
 
-Pass Anthropic-native MCP servers via `mcpServers`. Keys are automatically converted from camelCase to snake_case:
+Pass Anthropic-native MCP server connection details via `mcpServers`. The runtime validates
+that every server has a unique name and an absolute HTTPS URL, emits the current
+`mcp_servers` wire shape, and adds the required
+`mcp-client-2025-11-20` beta without dropping unrelated caller betas.
+
+Every server is paired with exactly one `mcp_toolset`. When no toolset is supplied, the
+runtime generates one that enables all tools:
 
 ```ts
 runtime.doGenerate({
@@ -112,13 +118,78 @@ runtime.doGenerate({
     type: "url",
     url: "https://example.com/mcp",
     name: "my-server",
-    authorizationToken: "Bearer ...",
-    toolConfiguration: {
-      enabled: true,
-      allowedTools: ["search"],
+    authorizationToken: "opaque-access-token",
+  }],
+});
+```
+
+For current per-tool configuration, add a provider tool whose `name` exactly matches the
+MCP server name. Camel-case arguments are converted recursively to Anthropic's wire names:
+
+```ts
+runtime.doGenerate({
+  prompt: [...],
+  mcpServers: [{
+    type: "url",
+    url: "https://example.com/mcp",
+    name: "my-server",
+    authorizationToken: "opaque-access-token",
+  }],
+  tools: [{
+    type: "provider",
+    id: "anthropic.mcp_toolset",
+    name: "my-server",
+    args: {
+      defaultConfig: {
+        enabled: false,
+        deferLoading: true,
+      },
+      configs: {
+        search: {
+          enabled: true,
+          deferLoading: false,
+        },
+      },
     },
   }],
 });
+```
+
+The previously documented convenience form remains supported and is translated to the
+current MCPToolset allowlist contract:
+
+```ts
+mcpServers: [{
+  type: "url",
+  url: "https://example.com/mcp",
+  name: "my-server",
+  toolConfiguration: {
+    enabled: true,
+    allowedTools: ["search"],
+  },
+}];
+```
+
+Do not configure the same server or toolset through both `mcpServers` and raw
+`providerOptions`. Ambiguous definitions, duplicate names/toolsets, dangling toolsets,
+unknown MCP fields, non-HTTPS URLs, and malformed tool configuration fail before a network
+request is made. If raw `mcp_servers` and `tools` are supplied through `providerOptions`,
+they must already use Anthropic's current wire contract:
+
+```ts
+providerOptions: {
+  anthropic: {
+    mcp_servers: [{
+      type: "url",
+      url: "https://example.com/mcp",
+      name: "my-server",
+    }],
+    tools: [{
+      type: "mcp_toolset",
+      mcp_server_name: "my-server",
+    }],
+  },
+}
 ```
 
 ### Container

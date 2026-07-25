@@ -8,7 +8,7 @@
  * @module provider/local
  */
 
-import { embedTexts } from "./local-embedding-engine.ts";
+import { embedTexts, LOCAL_EMBEDDING_BATCH_SIZE } from "./local-embedding-engine.ts";
 import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "./model-catalog.ts";
 import type { EmbeddingRuntime } from "../types.ts";
 
@@ -26,12 +26,12 @@ export function createLocalEmbeddingModel(modelId?: string): EmbeddingRuntime {
     specificationVersion: "v2",
     provider: "local",
     modelId: `local/${resolvedId}`,
-    maxEmbeddingsPerCall: undefined,
+    maxEmbeddingsPerCall: LOCAL_EMBEDDING_BATCH_SIZE,
     supportsParallelCalls: false,
 
-    async doEmbed({ values }: { values: string[] }) {
-      const embeddings = await embedTexts(resolvedId, values);
-      return { embeddings, usage: { tokens: 0 }, rawResponse: undefined, warnings: [] };
+    async doEmbed({ values, abortSignal }: { values: string[]; abortSignal?: AbortSignal }) {
+      const embeddings = await embedTexts(resolvedId, values, abortSignal);
+      return { embeddings, rawResponse: undefined, warnings: [] };
     },
   };
 }

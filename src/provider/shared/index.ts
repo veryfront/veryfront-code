@@ -34,7 +34,11 @@ export {
 } from "../runtime-loader/tool-input-status.ts";
 
 // SSE chunk parser
-export { parseSseChunk } from "../runtime-loader/provider-sse.ts";
+export {
+  MAX_PROVIDER_SSE_BUFFER_CODE_UNITS,
+  parseFinalSseChunk,
+  parseSseChunk,
+} from "../runtime-loader/provider-sse.ts";
 
 // Retry / error / HTTP plumbing (currently in runtime-loader.ts).
 export {

@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimePromptMessage } from "veryfront/provider/shared";
 import { buildAnthropicMessagesRequest } from "./anthropic-request-builder.ts";
@@ -103,6 +103,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         mcpServers: [{
           type: "url",
           url: "https://example.test/mcp",
+          name: "example-mcp",
           authorizationToken: "token_123",
           toolConfiguration: {
             allowedTools: ["read_file"],
@@ -184,6 +185,14 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
           type: "web_search_20250305",
           name: "web",
           max_uses: 2,
+        },
+        {
+          type: "mcp_toolset",
+          mcp_server_name: "example-mcp",
+          default_config: { enabled: false },
+          configs: {
+            read_file: { enabled: true },
+          },
           cache_control: { type: "ephemeral", ttl: "1h" },
         },
       ],
@@ -193,10 +202,8 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       mcp_servers: [{
         type: "url",
         url: "https://example.test/mcp",
+        name: "example-mcp",
         authorization_token: "token_123",
-        tool_configuration: {
-          allowed_tools: ["read_file"],
-        },
       }],
       container: { id: "ctr_1" },
       custom_anthropic: true,
@@ -213,6 +220,139 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "topP",
       "responseFormat",
     ]);
+  });
+
+  it("maps an explicit generic provider MCP toolset to the matching server identity", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Use docs." }] }],
+        mcpServers: [{
+          type: "url",
+          url: "https://mcp.example.test",
+          name: "docs",
+        }],
+        tools: [{
+          type: "provider",
+          name: "docs",
+          id: "anthropic.mcp_toolset",
+          args: {
+            defaultConfig: { enabled: false, deferLoading: true },
+            configs: {
+              searchEvents: { enabled: true, deferLoading: false },
+            },
+            cacheControl: { type: "ephemeral", ttl: "1h" },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.mcp_servers, [{
+      type: "url",
+      url: "https://mcp.example.test",
+      name: "docs",
+    }]);
+    assertEquals(body.tools, [{
+      type: "mcp_toolset",
+      mcp_server_name: "docs",
+      default_config: { enabled: false, defer_loading: true },
+      configs: {
+        searchEvents: { enabled: true, defer_loading: false },
+      },
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    }]);
+  });
+
+  it("validates an official raw MCP contract supplied through providerOptions", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Use docs." }] }],
+        providerOptions: {
+          anthropic: {
+            mcp_servers: [{
+              type: "url",
+              url: "https://mcp.example.test",
+              name: "docs",
+            }],
+            tools: [{
+              type: "mcp_toolset",
+              mcp_server_name: "docs",
+            }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.mcp_servers, [{
+      type: "url",
+      url: "https://mcp.example.test",
+      name: "docs",
+    }]);
+    assertEquals(body.tools, [{
+      type: "mcp_toolset",
+      mcp_server_name: "docs",
+    }]);
+  });
+
+  it("rejects ambiguous MCP configuration sources", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Use docs." }] },
+    ];
+    const server = {
+      type: "url",
+      url: "https://mcp.example.test",
+      name: "docs",
+    };
+    const explicitToolset = {
+      type: "provider" as const,
+      name: "docs",
+      id: "anthropic.mcp_toolset" as const,
+      args: {},
+    };
+
+    const ambiguousOptions = [{
+      prompt,
+      mcpServers: [server],
+      providerOptions: {
+        anthropic: { mcp_servers: [server] },
+      },
+    }, {
+      prompt,
+      mcpServers: [server],
+      providerOptions: {
+        anthropic: {
+          tools: [{ type: "mcp_toolset", mcp_server_name: "docs" }],
+        },
+      },
+    }, {
+      prompt,
+      mcpServers: [{
+        ...server,
+        toolConfiguration: { enabled: true },
+      }],
+      tools: [explicitToolset],
+    }];
+
+    for (const options of ambiguousOptions) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            options,
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+      );
+    }
   });
 
   it("replays raw mixed server/client assistant blocks before the local tool result", () => {
@@ -388,6 +528,103 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "temperature",
       "topP",
     ]);
+  });
+
+  it("rejects unsafe or non-integral explicit thinking budgets", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Think carefully." }] },
+    ];
+    const invalidBudgets = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1023,
+      1024.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    for (const budgetTokens of invalidBudgets) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt,
+              reasoning: { enabled: true, budgetTokens },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "budgetTokens must be a safe integer of at least 1024",
+      );
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt,
+              providerOptions: {
+                anthropic: {
+                  thinking: { type: "enabled", budget_tokens: budgetTokens },
+                },
+              },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "thinking.budget_tokens must be a safe integer of at least 1024",
+      );
+    }
+
+    for (
+      const thinking of [
+        null,
+        [],
+        "enabled",
+        {},
+        { type: "" },
+        { type: "enabled" },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt,
+              providerOptions: { anthropic: { thinking } },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic provider thinking",
+      );
+    }
+  });
+
+  it("keeps provider-neutral reasoning authoritative over raw thinking options", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think." }] }],
+        reasoning: { enabled: true, budgetTokens: 4096 },
+        providerOptions: {
+          anthropic: {
+            thinking: { type: "enabled", budget_tokens: 2048 },
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.thinking, { type: "enabled", budget_tokens: 4096 });
   });
 
   it("compacts completed historical tool rounds before replaying later user turns", () => {

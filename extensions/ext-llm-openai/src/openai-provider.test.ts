@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 // Error classes are shared plumbing — import from the shared barrel so this
 // test stays decoupled from core's runtime-loader internals.
@@ -25,6 +25,23 @@ async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
     values.push(value);
   }
   return values;
+}
+
+async function waitWithin<T>(promise: Promise<T>, timeoutMs = 1_000): Promise<T> {
+  let timeoutId: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
 }
 
 function readRequestBody(init: RequestInit | undefined): string | null {
@@ -192,6 +209,278 @@ describe("openai-provider", () => {
     });
   });
 
+  it("fails closed on an empty successful chat envelope without leaking its payload", async () => {
+    const privatePayload = "<PRIVATE_PROVIDER_PAYLOAD>";
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.mistral.test/v1",
+      name: "mistral",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ choices: [], diagnostic: privatePayload }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "mistral-large");
+
+    const error = await assertRejects(
+      async () =>
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        }),
+      ProviderRequestError,
+      "invalid successful response",
+    );
+
+    assertEquals(error.provider, "mistral");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+    assertEquals(error.message.includes(privatePayload), false);
+  });
+
+  it("preserves valid refusal and content-filter responses with no ordinary text", async () => {
+    const payloads = [
+      {
+        choices: [{
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: null,
+            refusal: "I cannot help with that.",
+          },
+        }],
+      },
+      {
+        choices: [{
+          finish_reason: "content_filter",
+          message: {
+            role: "assistant",
+            content: null,
+            refusal: null,
+          },
+        }],
+      },
+    ];
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(payloads.shift()),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "gpt-4o-mini");
+    const prompt = [{ role: "user", content: [{ type: "text", text: "Hi" }] }] as const;
+
+    const refusal = await runtime.doGenerate({ prompt });
+    const filtered = await runtime.doGenerate({ prompt });
+
+    assertEquals(refusal.content, [{ type: "text", text: "I cannot help with that." }]);
+    assertEquals(refusal.finishReason, "stop");
+    assertEquals(filtered.content, []);
+    assertEquals(filtered.finishReason, {
+      unified: "content-filter",
+      raw: "content_filter",
+    });
+  });
+
+  it("rejects non-object or malformed Chat function arguments", async () => {
+    const prompt = [{ role: "user", content: [{ type: "text", text: "Hi" }] }] as const;
+    for (const argumentsText of ["[]", "null", '{"city":']) {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [{
+                  finish_reason: "tool_calls",
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [{
+                      id: "call_invalid",
+                      type: "function",
+                      function: { name: "weather", arguments: argumentsText },
+                    }],
+                  },
+                }],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      await assertRejects(
+        async () => await runtime.doGenerate({ prompt }),
+        ProviderRequestError,
+        "arguments were not valid JSON object text",
+      );
+    }
+  });
+
+  it("rejects malformed, duplicate, or finish-inconsistent Chat tool calls", async () => {
+    const cases: Array<{ expected: string; choice: Record<string, unknown> }> = [
+      {
+        expected: "message contained a malformed tool call",
+        choice: {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call_bad_type",
+              type: "not_function",
+              function: { name: "weather", arguments: "{}" },
+            }],
+          },
+        },
+      },
+      {
+        expected: "message contained duplicate tool call ids",
+        choice: {
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_dup",
+                type: "function",
+                function: { name: "first", arguments: "{}" },
+              },
+              {
+                id: "call_dup",
+                type: "function",
+                function: { name: "second", arguments: "{}" },
+              },
+            ],
+          },
+        },
+      },
+      {
+        expected: "choice finish reason and tool calls were inconsistent",
+        choice: {
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call_stop",
+              type: "function",
+              function: { name: "weather", arguments: "{}" },
+            }],
+          },
+        },
+      },
+      {
+        expected: "choice finish reason and tool calls were inconsistent",
+        choice: {
+          finish_reason: "tool_calls",
+          message: { role: "assistant", content: null },
+        },
+      },
+    ];
+    const prompt = [{
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    }] as const;
+
+    for (const { expected, choice } of cases) {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ choices: [choice] }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      await assertRejects(
+        async () => await runtime.doGenerate({ prompt }),
+        ProviderRequestError,
+        expected,
+      );
+    }
+  });
+
+  it("uses the configured OpenAI-compatible provider identity for HTTP errors", async () => {
+    const cases = [
+      { expected: "mistral" as const, config: { name: "mistral" } },
+      {
+        expected: "moonshotai" as const,
+        config: { name: "custom-kimi", providerName: "moonshotai" },
+      },
+    ];
+
+    for (const { expected, config } of cases) {
+      const runtime = createOpenAIModelRuntime({
+        apiKey: "k",
+        baseURL: "https://compatible-provider.test/v1",
+        ...config,
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ error: { message: "<PRIVATE_PROVIDER_PAYLOAD>" } }),
+              { status: 503, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "compatible-model");
+
+      const error = await assertRejects(
+        async () =>
+          await runtime.doGenerate({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          }),
+        ProviderOverloadedError,
+      );
+
+      assertEquals(error.provider, expected);
+      assertEquals(error.retryable, true);
+      assertEquals(error.message.includes("<PRIVATE_PROVIDER_PAYLOAD>"), false);
+    }
+  });
+
+  it("omits malformed chat usage counters", async () => {
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: { role: "assistant", content: "ok" },
+              }],
+              usage: {
+                prompt_tokens: -1,
+                completion_tokens: 1.5,
+                total_tokens: -2,
+                prompt_tokens_details: { cached_tokens: -1 },
+                completion_tokens_details: { reasoning_tokens: 0.5 },
+                veryfront: { provider_cost_usd: -1 },
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "gpt-4o-mini");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+
+    assertEquals(result.usage, undefined);
+  });
+
   it("sends image URL user parts as OpenAI Chat Completions image_url content", async () => {
     let requestedInit: RequestInit | undefined;
 
@@ -329,6 +618,78 @@ describe("openai-provider", () => {
     ]);
   });
 
+  it("aborts and cancels pending upstream pulls when Chat or Responses consumers stop", async () => {
+    const encoder = new TextEncoder();
+    const cases = [
+      {
+        name: "chat",
+        createRuntime: (fetch: typeof globalThis.fetch) =>
+          createOpenAIModelRuntime({
+            apiKey: "k",
+            baseURL: "https://example.openai.test/v1",
+            fetch,
+          }, "gpt-4o-mini"),
+        initialEvents: 'data: {"choices":[{"delta":{"content":"first chat part"}}]}\n\n',
+        expectedDelta: "first chat part",
+      },
+      {
+        name: "responses",
+        createRuntime: (fetch: typeof globalThis.fetch) =>
+          createOpenAIResponsesRuntime({
+            apiKey: "k",
+            baseURL: "https://example.openai.test/v1",
+            fetch,
+          }, "gpt-5.4-nano"),
+        initialEvents: [
+          'data: {"type":"response.output_item.added","item":{"id":"msg_1","type":"message","role":"assistant","content":[]}}\n\n',
+          'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"first responses part"}\n\n',
+        ].join(""),
+        expectedDelta: "first responses part",
+      },
+    ];
+
+    for (const testCase of cases) {
+      let requestSignal: AbortSignal | null | undefined;
+      let upstreamCancelReason: unknown;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(testCase.initialEvents));
+        },
+        cancel(reason) {
+          upstreamCancelReason = reason;
+        },
+      });
+      const runtime = testCase.createRuntime((_input, init) => {
+        requestSignal = init && "signal" in init && init.signal instanceof AbortSignal
+          ? init.signal
+          : undefined;
+        return Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      });
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+      const reader = result.stream.getReader();
+      assertEquals(await waitWithin(reader.read()), {
+        done: false,
+        value: { type: "text-delta", delta: testCase.expectedDelta },
+      });
+      const pendingRead = reader.read();
+      const cancelReason = `consumer stopped ${testCase.name}`;
+
+      await waitWithin(reader.cancel(cancelReason));
+
+      assertEquals(requestSignal?.aborted, true);
+      assertEquals(upstreamCancelReason, cancelReason);
+      assertEquals((await waitWithin(pendingRead)).done, true);
+    }
+  });
+
   it("routes direct OpenAI reasoning models with custom labels through Responses", async () => {
     const encoder = new TextEncoder();
     let requestedUrl = "";
@@ -351,7 +712,7 @@ describe("openai-provider", () => {
                 'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking."}\n\n',
               ),
               encoder.encode(
-                'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+                'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Thinking."}]}}\n\n',
               ),
               encoder.encode(
                 'data: {"type":"response.output_item.added","item":{"id":"msg_1","type":"message"}}\n\n',
@@ -360,7 +721,7 @@ describe("openai-provider", () => {
                 'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"Done."}\n\n',
               ),
               encoder.encode(
-                'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message"}}\n\n',
+                'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}\n\n',
               ),
               encoder.encode(
                 'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":3,"output_tokens_details":{"reasoning_tokens":2},"total_tokens":5}}}\n\n',
@@ -722,6 +1083,120 @@ describe("openai-provider", () => {
     );
     assertEquals(result.embeddings, [[1, 2], [3, 4]]);
     assertEquals(result.usage, { tokens: 7 });
+  });
+
+  it("fails closed when a successful embedding response has the wrong vector count", async () => {
+    const privatePayload = "<PRIVATE_PROVIDER_PAYLOAD>";
+    const runtime = createOpenAIEmbeddingRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ embedding: [1, 2] }],
+              diagnostic: privatePayload,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "text-embedding-3-small");
+
+    const error = await assertRejects(
+      async () => await runtime.doEmbed({ values: ["alpha", "beta"] }),
+      ProviderRequestError,
+      "expected 2 embedding vectors but received 1",
+    );
+
+    assertEquals(error.provider, "openai");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+    assertEquals(error.message.includes(privatePayload), false);
+  });
+
+  it("orders indexed embedding vectors by their requested input position", async () => {
+    const runtime = createOpenAIEmbeddingRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { embedding: [3, 4], index: 1 },
+                { embedding: [1, 2], index: 0 },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "text-embedding-3-small");
+
+    const result = await runtime.doEmbed({ values: ["alpha", "beta"] });
+
+    assertEquals(result.embeddings, [[1, 2], [3, 4]]);
+  });
+
+  it("rejects malformed embedding index sets", async () => {
+    const malformedDataSets = [
+      [
+        { embedding: [1, 2], index: 0 },
+        { embedding: [3, 4] },
+      ],
+      [
+        { embedding: [1, 2], index: 0 },
+        { embedding: [3, 4], index: 0 },
+      ],
+      [
+        { embedding: [1, 2], index: 0 },
+        { embedding: [3, 4], index: 2 },
+      ],
+      [
+        { embedding: [1, 2], index: 0 },
+        { embedding: [3, 4], index: 1.5 },
+      ],
+    ];
+
+    for (const data of malformedDataSets) {
+      const runtime = createOpenAIEmbeddingRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ data }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+      }, "text-embedding-3-small");
+
+      await assertRejects(
+        async () => await runtime.doEmbed({ values: ["alpha", "beta"] }),
+        ProviderRequestError,
+        "embedding",
+      );
+    }
+  });
+
+  it("omits malformed embedding usage instead of inventing zero tokens", async () => {
+    const runtime = createOpenAIEmbeddingRuntime({
+      apiKey: "k",
+      baseURL: "https://example.openai.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [{ embedding: [1, 2] }],
+              usage: { total_tokens: Number.MAX_SAFE_INTEGER + 1 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "text-embedding-3-small");
+
+    const result = await runtime.doEmbed({ values: ["alpha"] });
+
+    assertEquals(result.usage, undefined);
   });
 
   // ---------------------------------------------------------------------------
@@ -1087,6 +1562,9 @@ describe("openai-provider", () => {
                   'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
                 ),
                 encoder.encode(
+                  'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+                ),
+                encoder.encode(
                   'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n',
                 ),
                 encoder.encode("data: [DONE]\n\n"),
@@ -1318,7 +1796,12 @@ describe("openai-provider", () => {
                 id: "resp_1",
                 object: "response",
                 status: "completed",
-                output: [],
+                output: [{
+                  type: "message",
+                  id: "msg_1",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "ok" }],
+                }],
                 usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
               }),
               { status: 200, headers: { "content-type": "application/json" } },
@@ -1328,6 +1811,217 @@ describe("openai-provider", () => {
       }, "gpt-4o-mini");
       await runtime.doGenerate({ prompt: [userPrompt] });
       assertEquals(capturedUrl, "https://example.openai.test/v1/responses");
+    });
+
+    it("fails closed when a successful Responses envelope is missing its output array", async () => {
+      const privatePayload = "<PRIVATE_PROVIDER_PAYLOAD>";
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                status: "completed",
+                diagnostic: privatePayload,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      const error = await assertRejects(
+        async () => await runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderRequestError,
+        "output array missing",
+      );
+
+      assertEquals(error.status, 200);
+      assertEquals(error.retryable, false);
+      assertEquals(error.message.includes(privatePayload), false);
+    });
+
+    it("rejects queued or in-progress Responses instead of treating them as final", async () => {
+      for (const status of ["queued", "in_progress"]) {
+        const runtime = createOpenAIResponsesRuntime({
+          apiKey: "k",
+          baseURL: "https://example.openai.test/v1",
+          fetch: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  id: "resp_background",
+                  object: "response",
+                  status,
+                  output: [],
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            ),
+        }, "gpt-5.4-nano");
+
+        await assertRejects(
+          async () => await runtime.doGenerate({ prompt: [userPrompt] }),
+          ProviderRequestError,
+          "response status was unsupported or nonterminal",
+        );
+      }
+    });
+
+    it("rejects non-object or malformed Responses function arguments", async () => {
+      for (const argumentsText of ["[]", "null", '{"city":']) {
+        const runtime = createOpenAIResponsesRuntime({
+          apiKey: "k",
+          baseURL: "https://example.openai.test/v1",
+          fetch: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  id: "resp_invalid_tool",
+                  object: "response",
+                  status: "completed",
+                  output: [{
+                    type: "function_call",
+                    id: "fc_invalid",
+                    call_id: "call_invalid",
+                    name: "weather",
+                    arguments: argumentsText,
+                  }],
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            ),
+        }, "gpt-5.4-nano");
+
+        await assertRejects(
+          async () => await runtime.doGenerate({ prompt: [userPrompt] }),
+          ProviderRequestError,
+          "arguments were not valid JSON object text",
+        );
+      }
+    });
+
+    it("rejects nonterminal, unsupported, or ambiguously correlated output items", async () => {
+      const cases: Array<{ expected: string; output: unknown[] }> = [
+        {
+          expected: "message output role was not assistant",
+          output: [{
+            id: "msg_user",
+            type: "message",
+            role: "user",
+            status: "completed",
+            content: [{ type: "output_text", text: "wrong role" }],
+          }],
+        },
+        {
+          expected: "output item status was unsupported or nonterminal",
+          output: [{
+            id: "msg_pending",
+            type: "message",
+            role: "assistant",
+            status: "in_progress",
+            content: [{ type: "output_text", text: "not final" }],
+          }],
+        },
+        {
+          expected: "output item status was unsupported or nonterminal",
+          output: [{
+            id: "fc_pending",
+            type: "function_call",
+            call_id: "call_pending",
+            name: "lookup",
+            arguments: "{}",
+            status: "in_progress",
+          }],
+        },
+        {
+          expected: "output item type was unsupported",
+          output: [{ id: "future_1", type: "future", status: "completed" }],
+        },
+        {
+          expected: "reasoning summary item was malformed",
+          output: [{
+            id: "rs_invalid",
+            type: "reasoning",
+            status: "completed",
+            summary: [{ type: "future_summary", text: "ignored before hardening" }],
+          }],
+        },
+        {
+          expected: "output item type missing",
+          output: [{}],
+        },
+        {
+          expected: "response contained duplicate function call ids",
+          output: [
+            {
+              id: "fc_1",
+              type: "function_call",
+              call_id: "call_dup",
+              name: "first",
+              arguments: "{}",
+              status: "completed",
+            },
+            {
+              id: "fc_2",
+              type: "function_call",
+              call_id: "call_dup",
+              name: "second",
+              arguments: "{}",
+              status: "completed",
+            },
+          ],
+        },
+      ];
+
+      for (const { expected, output } of cases) {
+        const runtime = createOpenAIResponsesRuntime({
+          apiKey: "k",
+          baseURL: "https://example.openai.test/v1",
+          fetch: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  id: "resp_invalid_output",
+                  object: "response",
+                  status: "completed",
+                  output,
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            ),
+        }, "gpt-5.4-nano");
+
+        await assertRejects(
+          async () => await runtime.doGenerate({ prompt: [userPrompt] }),
+          ProviderRequestError,
+          expected,
+        );
+      }
+    });
+
+    it("preserves a structurally valid Responses result with an empty output array", async () => {
+      const runtime = createOpenAIResponsesRuntime({
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "resp_empty",
+                object: "response",
+                status: "completed",
+                output: [],
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "gpt-4o-mini");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+
+      assertEquals(result.content, []);
+      assertEquals(result.finishReason, { unified: "stop", raw: "completed" });
     });
 
     it("converts user message to input_text content part on the wire", async () => {
@@ -1528,7 +2222,7 @@ describe("openai-provider", () => {
                   'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Thinking..."}\n\n',
                 ),
                 encoder.encode(
-                  'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+                  'data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Thinking..."}]}}\n\n',
                 ),
                 // Function call item
                 encoder.encode(
@@ -1538,7 +2232,7 @@ describe("openai-provider", () => {
                   'data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\\"city\\":\\"Tokyo\\"}"}\n\n',
                 ),
                 encoder.encode(
-                  'data: {"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call"}}\n\n',
+                  'data: {"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","call_id":"call_w","name":"weather","arguments":"{\\"city\\":\\"Tokyo\\"}"}}\n\n',
                 ),
                 // Text message
                 encoder.encode(
@@ -1548,7 +2242,7 @@ describe("openai-provider", () => {
                   'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"It is sunny."}\n\n',
                 ),
                 encoder.encode(
-                  'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message"}}\n\n',
+                  'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"It is sunny."}]}}\n\n',
                 ),
                 // Completion
                 encoder.encode(
