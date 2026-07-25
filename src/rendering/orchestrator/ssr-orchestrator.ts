@@ -96,6 +96,9 @@ export class SSROrchestrator {
       isolationOptions?.pageModulePath &&
       isolationOptions?.projectDir
     ) {
+      // NOTE: the app-router error.tsx catch below is scoped to the main-process
+      // render path. Under SSR isolation (per-project Worker) a page throw is not
+      // yet routed to error.tsx — a follow-up, isolation being off by default.
       return this.performIsolatedSSR(generationContext, options, isolationOptions);
     }
 
