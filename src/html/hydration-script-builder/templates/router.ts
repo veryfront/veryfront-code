@@ -737,6 +737,8 @@ export const getRouterScript = () => `
       perfEnd('render:loadAll');
 
       const [PageComponent, ...rest] = components;
+      // errorPath is pushed last in getPageDataModulePaths, so pop it first.
+      const ErrorComponent = pageData.errorPath ? rest.pop() : null;
       const AppComponent = pageData.appPath ? rest.pop() : null;
       const LayoutComponents = rest;
 
@@ -799,6 +801,26 @@ export const getRouterScript = () => `
       if (AppComponent) {
         tree = React.createElement(AppComponent, { children: tree });
         log('Wrapped with App component for SPA navigation');
+      }
+
+      // App-router error.tsx boundary — wraps the page so a throw during a
+      // client-side navigation render is caught and error.tsx renders (matching
+      // the server + initial-hydration boundary), with a working reset().
+      if (ErrorComponent) {
+        class AppRouterErrorBoundary extends React.Component {
+          constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+          static getDerivedStateFromError(error) { return { hasError: true, error: error }; }
+          render() {
+            if (this.state.hasError) {
+              return React.createElement(ErrorComponent, {
+                error: this.state.error,
+                reset: () => this.setState({ hasError: false, error: null }),
+              });
+            }
+            return this.props.children;
+          }
+        }
+        tree = React.createElement(AppRouterErrorBoundary, null, tree);
       }
 
       const headingsArray = pageData.headings || [];
@@ -875,6 +897,7 @@ export const getRouterScript = () => `
       const allPaths = [pageData.pagePath, ...layoutPaths].filter(Boolean);
 
       if (pageData.appPath) allPaths.push(pageData.appPath);
+      if (pageData.errorPath) allPaths.push(pageData.errorPath);
 
       return allPaths;
     }

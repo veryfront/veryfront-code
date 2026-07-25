@@ -19,6 +19,7 @@ import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
+import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import { profilePhase, profileSyncPhase } from "#veryfront/observability";
 import {
@@ -442,6 +443,72 @@ export class HTMLGenerator {
     );
   }
 
+  /**
+   * Resolve + load the nearest app-router `error.tsx` for the route's segment and
+   * build a ready-to-render element with the caught error. Returns the element
+   * (for the SSR error render) and the boundary's absolute source path (embedded
+   * as `errorPath` so the client hydration bundle wraps the same boundary and it
+   * hydrates). Null when the project has no matching `error.tsx`.
+   */
+  async resolveErrorComponent(
+    context: HTMLGenerationContext,
+    error: Error,
+  ): Promise<{ element: unknown; path: string } | null> {
+    try {
+      const appRoot = join(
+        this.config.projectDir,
+        this.config.config?.directories?.app ?? "app",
+      );
+      try {
+        const st = await this.config.adapter.fs.stat(appRoot);
+        if (!st.isDirectory) return null;
+      } catch (_) {
+        return null; // no app directory
+      }
+
+      const { collectAncestorDirs, loadReservedWithPath } = await import(
+        "../app-reserved.ts"
+      );
+      const segmentDir = context.slug ? join(appRoot, context.slug) : appRoot;
+      const dirs = await collectAncestorDirs(segmentDir, appRoot);
+      const reactVersion = await resolveProjectReactVersion({
+        projectDir: this.config.projectDir,
+        config: this.config.config,
+      });
+      const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
+      const contentSourceId = computeContentSourceId(
+        this.config.isLocalProject === true,
+        context.options?.environment ?? "preview",
+        null,
+        context.options?.releaseId,
+      );
+      const loaded = await loadReservedWithPath(
+        dirs,
+        "error",
+        this.config.projectDir,
+        this.config.mode,
+        this.config.adapter,
+        context.options?.projectId,
+        contentSourceId,
+        reactVersion,
+      );
+      if (!loaded) return null;
+
+      const { getProjectReact } = await import(
+        "#veryfront/react/compat/ssr-adapter/index.ts"
+      );
+      const React = await getProjectReact(reactVersion);
+      const createElement = React.createElement as (
+        component: unknown,
+        props: unknown,
+      ) => unknown;
+      const element = createElement(loaded.component, { error, reset: () => {} });
+      return { element, path: loaded.filePath };
+    } catch (_) {
+      return null; // error.tsx resolution is best-effort
+    }
+  }
+
   private async loadProjectFile(filename: string): Promise<string | undefined> {
     try {
       const filePath = join(this.config.projectDir, filename);
@@ -530,7 +597,6 @@ export class HTMLGenerator {
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
-
     return profileSyncPhase("html.build_options.finalize", () => ({
       mode: this.config.mode,
       config: this.config.config,
@@ -541,6 +607,9 @@ export class HTMLGenerator {
         componentPath: l.componentPath,
       })),
       appPath: context.options?.clientPageIsland ? undefined : appComponentPath,
+      // Set on the SSR error path so the client hydration bundle wraps the page
+      // in the same app-router error boundary that rendered error.tsx on the server.
+      errorPath: context.options?.errorPath,
       isolatedClientPage: context.options?.clientPageIsland ? true : undefined,
       layoutProps: hydrationLayoutProps,
       pagePath,

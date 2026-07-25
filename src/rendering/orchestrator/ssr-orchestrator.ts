@@ -17,7 +17,25 @@ import {
   hasRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 
+import { isDataControlResult } from "#veryfront/data/helpers.ts";
+
 const logger = rendererLogger.component("ssr-orchestrator");
+
+/** True when the thrown value is (or wraps) a notFound()/redirect() control result. */
+function isThrownControlResult(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [error];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    if (isDataControlResult(current)) return true;
+    seen.add(current);
+    stack.push((current as { cause?: unknown }).cause);
+    const aggregated = (current as { errors?: unknown }).errors;
+    if (Array.isArray(aggregated)) stack.push(...aggregated);
+  }
+  return false;
+}
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -99,21 +117,61 @@ export class SSROrchestrator {
     const wantsStream = options?.delivery === "stream";
 
     // Use AsyncLocalStorage-based head collection for multi-tenant safety
-    const { result: renderResult, head: collectedHead } = await runWithHeadCollector(() =>
-      withSpan(
-        SpanNames.SSR_ORCHESTRATOR_RENDER,
-        () =>
-          this.config.ssrRenderer.renderToHTML(validatedElement, {
-            mode: this.config.mode,
-            wantsStream,
-            debugMode: this.config.debugMode,
-          }),
-        {
-          "ssr.wants_stream": wantsStream,
-          "ssr.mode": this.config.mode,
-        },
-      )
-    );
+    let renderResult: Awaited<ReturnType<SSRRenderer["renderToHTML"]>>;
+    let collectedHead: Awaited<ReturnType<typeof runWithHeadCollector>>["head"];
+    let errorBoundaryPath: string | undefined;
+
+    try {
+      const rendered = await runWithHeadCollector(() =>
+        withSpan(
+          SpanNames.SSR_ORCHESTRATOR_RENDER,
+          () =>
+            this.config.ssrRenderer.renderToHTML(validatedElement, {
+              mode: this.config.mode,
+              wantsStream,
+              debugMode: this.config.debugMode,
+            }),
+          {
+            "ssr.wants_stream": wantsStream,
+            "ssr.mode": this.config.mode,
+          },
+        )
+      );
+      renderResult = rendered.result;
+      collectedHead = rendered.head;
+    } catch (renderError) {
+      // A thrown notFound()/redirect() control result is NOT a render error —
+      // let it propagate to the SSR error handler (→ 404 / redirect). error.tsx
+      // is only for genuine errors.
+      if (isThrownControlResult(renderError)) throw renderError;
+
+      // The page threw during SSR (React error boundaries do not catch SSR
+      // render throws). If the segment has an app-router error.tsx, render it
+      // with the caught error as the page body and record its path so the client
+      // hydration bundle wraps the same boundary (which hydrates + makes reset()
+      // work). No error.tsx → re-throw so the normal 500/dev-overlay path runs.
+      const err = renderError instanceof Error ? renderError : new Error(String(renderError));
+      const errorInfo = await this.config.htmlGenerator.resolveErrorComponent(
+        { ...generationContext, html: "", ssrHash: "" } as HTMLGenerationContext,
+        err,
+      );
+      if (!errorInfo) throw renderError;
+
+      const rendered = await runWithHeadCollector(() =>
+        this.config.ssrRenderer.renderToHTML(errorInfo.element as React.ReactElement, {
+          mode: this.config.mode,
+          wantsStream: false,
+          debugMode: this.config.debugMode,
+        })
+      );
+      renderResult = rendered.result;
+      collectedHead = rendered.head;
+      errorBoundaryPath = errorInfo.path;
+      logger.debug("Rendered app-router error.tsx for a page throw", {
+        errorPath: errorBoundaryPath,
+        error: err.message,
+      });
+    }
 
     const { html, stream } = renderResult;
 
@@ -128,6 +186,8 @@ export class SSROrchestrator {
         ...generationContext.options?.props,
         ...options?.props,
       },
+      // Present only on the error path: the client bundle wraps this boundary.
+      ...(errorBoundaryPath ? { errorPath: errorBoundaryPath } : {}),
     };
 
     if (stream && wantsStream) {
@@ -164,6 +224,19 @@ export class SSROrchestrator {
         }),
       { "ssr.hash": ssrHash },
     );
+
+    if (errorBoundaryPath) {
+      // The page threw and its app-router error.tsx rendered as the response
+      // body. Signal a 500 and bypass caching (an errored page must not cache)
+      // by throwing the already-built document; the SSR error handler returns it.
+      const signal = new Error("app-router-error-boundary-rendered") as Error & {
+        errorBoundaryHtml?: string;
+        errorBoundarySsrHash?: string;
+      };
+      signal.errorBoundaryHtml = fullHtml;
+      signal.errorBoundarySsrHash = ssrHash;
+      throw signal;
+    }
 
     return {
       fullHtml,
