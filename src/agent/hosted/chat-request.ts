@@ -86,6 +86,22 @@ const getHostedChatRequestMessageSchema = defineSchema((v) =>
 const getHostedChatRequestMessagesSchema = defineSchema((v) =>
   v.array(getHostedChatRequestMessageSchema()).superRefine((messages, ctx) => {
     const knownToolNames = new Map<string, string>();
+    const recordToolCall = (
+      toolCallId: string,
+      toolName: string,
+      path: Array<string | number>,
+    ) => {
+      if (knownToolNames.has(toolCallId)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tool_call id must be unique",
+          path,
+        });
+        return;
+      }
+
+      knownToolNames.set(toolCallId, toolName);
+    };
 
     for (const [messageIndex, message] of messages.entries()) {
       for (const [partIndex, part] of message.parts.entries()) {
@@ -112,12 +128,17 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
         }
 
         if (isRawToolCall) {
-          knownToolNames.set(part.id, part.name);
+          recordToolCall(part.id, part.name, [messageIndex, "parts", partIndex, "id"]);
           continue;
         }
 
         if (uiToolIdentity) {
-          knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
+          recordToolCall(uiToolIdentity.toolCallId, uiToolIdentity.toolName, [
+            messageIndex,
+            "parts",
+            partIndex,
+            "toolCallId",
+          ]);
           continue;
         }
 

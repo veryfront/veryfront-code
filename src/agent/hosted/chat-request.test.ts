@@ -247,6 +247,43 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
+  it("rejects duplicate replay tool-call ids", () => {
+    const parsed = hostedChatRequestSchema.safeParse(
+      createHostedChatRequestBody([
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [
+            rawReplayToolCallPart,
+            {
+              ...rawReplayToolCallPart,
+              name: "github__get_pr",
+            },
+          ],
+        },
+      ]),
+    );
+
+    assertEquals(parsed.success, false);
+    if (!parsed.success) {
+      const validationError = parsed.error as {
+        message?: unknown;
+        issues?: Array<{ path: Array<string | number> }>;
+      };
+      assertStringIncludes(
+        typeof validationError.message === "string" ? validationError.message : "",
+        "tool_call id must be unique",
+      );
+      assertEquals(validationError.issues?.[0]?.path, [
+        "messages",
+        0,
+        "parts",
+        1,
+        "id",
+      ]);
+    }
+  });
+
   it("rejects orphan raw replay tool results without a tool name", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([
