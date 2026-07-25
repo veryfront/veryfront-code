@@ -205,6 +205,10 @@ Deno.test("createRuntimeLoadSkillTool normalizes .md aliases without a known ski
     builtinStore: createBuiltinStore({}),
   });
 
+  assertStringIncludes(
+    JSON.stringify(tool.inputSchemaJson),
+    'A lowercase \\".md\\" suffix is accepted',
+  );
   const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan.md" }));
   const reload = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
 

@@ -144,7 +144,9 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
         /^[a-zA-Z0-9_-]+(?:\.md)?$/,
         'skillId must contain only letters, numbers, "_" or "-", with an optional lowercase ".md" suffix',
       )
-      .describe('The skill ID to load (e.g., "react-components", "api-design")'),
+      .describe(
+        'The skill ID to load. A lowercase ".md" suffix is accepted when it is the canonical ID or an unambiguous alias (e.g., "react-components" or "react-components.md").',
+      ),
     file: v.string().optional().describe(
       "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
     ),
@@ -353,7 +355,7 @@ function getReferenceableLoadedRuntimeSkillIds(
 }
 
 function getRuntimeSkillIdInputValues(
-  skillIds: readonly string[],
+  skillIds: readonly [string, ...string[]],
   knownSkillIds: readonly string[],
 ): [string, ...string[]] {
   const knownSkillIdSet = new Set(knownSkillIds);
