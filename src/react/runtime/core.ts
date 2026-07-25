@@ -70,18 +70,37 @@ export interface PageContextValue {
   query: Record<string, string>;
   /** Parsed page frontmatter. */
   frontmatter: Record<string, unknown>;
+  /**
+   * Props returned by the page's `getServerData` (the object under its
+   * `props` key). Exposed here so layouts and nested components can read
+   * server data without prop-drilling from the page. Empty object when the
+   * page has no `getServerData`. Populated identically on the server render,
+   * the hydration seed, and client navigation.
+   */
+  data: Record<string, unknown>;
   /** Headings discovered in the page content. */
   headings: MdxHeading[];
   /** MDX headings discovered in the page content. */
   mdxHeadings: MdxHeading[];
 }
 
+/**
+ * Input accepted by {@link PageContextProvider}. `data` (the page's
+ * `getServerData` props) is optional here so seeds built before the field
+ * existed keep compiling; the provider merges the seed over
+ * {@link defaultPageContext}, so an omitted field surfaces as its documented
+ * empty default rather than `undefined`.
+ */
+export type PageContextSeed =
+  & Omit<PageContextValue, "data">
+  & { data?: Record<string, unknown> };
+
 /** Props accepted by `<PageContextProvider>`. */
 export interface PageContextProviderProps {
   /** React children rendered within the page context. */
   children: React.ReactNode;
-  /** Page context value to expose to descendants. */
-  pageContext?: PageContextValue;
+  /** Page context seed to expose to descendants. */
+  pageContext?: PageContextSeed;
 }
 
 const defaultRouter: RouterValue = {
@@ -104,6 +123,7 @@ const defaultPageContext: PageContextValue = {
   params: {},
   query: {},
   frontmatter: {},
+  data: {},
   headings: [],
   mdxHeadings: [],
 };
@@ -311,6 +331,13 @@ export interface HydrationWrapOptions {
   params?: Record<string, string>;
   /** Page frontmatter, exposed reactively through `usePageContext()`. */
   frontmatter?: Record<string, unknown>;
+  /**
+   * Props returned by the page's `getServerData`, exposed as
+   * `usePageContext().data`. Seeded here so a hydrated client tree under an
+   * App/RSC page reads the same server data the server render saw, instead of
+   * an empty object.
+   */
+  data?: Record<string, unknown>;
 }
 
 /**
@@ -352,6 +379,7 @@ export function wrapForHydration(
     params,
     query,
     frontmatter: options.frontmatter ?? {},
+    data: options.data ?? {},
   };
   return React.createElement(RouterProvider, {
     router,
@@ -393,16 +421,20 @@ export function PageContextProvider({
   children,
   pageContext,
 }: PageContextProviderProps): React.ReactElement {
-  const seed = pageContext ?? defaultPageContext;
   const router = React.useContext(RouterContext);
   const hasRouter = router !== defaultRouter;
 
   const value = React.useMemo<PageContextValue>(
-    () =>
-      hasRouter
+    () => {
+      // Merge the seed over defaults so a seed that omits a newer field (e.g.
+      // `data`) still exposes it as its documented empty default, and unchecked
+      // JS callers never read `undefined` off the context.
+      const seed: PageContextValue = { ...defaultPageContext, ...pageContext };
+      return hasRouter
         ? { ...seed, path: router.pathname, query: router.query, params: router.params }
-        : seed,
-    [seed, hasRouter, router.pathname, router.query, router.params],
+        : seed;
+    },
+    [pageContext, hasRouter, router.pathname, router.query, router.params],
   );
 
   return React.createElement(PageContextContext.Provider, { value }, children);
