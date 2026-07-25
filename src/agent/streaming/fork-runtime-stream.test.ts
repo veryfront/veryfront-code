@@ -2,6 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  executeRemoteIntegrationTool,
+  getRemoteIntegrationToolDefinitions,
+} from "#veryfront/integrations/remote-tools.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import {
   applyPartToStreamedStepState,
@@ -351,6 +358,201 @@ describe("agent/fork-runtime-stream", () => {
       inputTokens: 3,
       outputTokens: 4,
     });
+  });
+
+  it("uses the live project credential context for same-step and next-step integrations", async () => {
+    const environmentKeys = [
+      "PROXY_MODE",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_PROJECT_SLUG",
+    ] as const;
+    const originalEnvironment = new Map(
+      environmentKeys.map((key) => [key, getEnv(key)]),
+    );
+    const requests: Array<{
+      path: string;
+      authorization: string | null;
+      projectSlug: string | null;
+    }> = [];
+    let liveProject = {
+      projectId: "project-1",
+      projectSlug: "project-one",
+    };
+    let stepIndex = 0;
+
+    for (const key of environmentKeys) {
+      deleteEnv(key);
+    }
+    setEnv("PROXY_MODE", "1");
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.test");
+    setEnv("VERYFRONT_API_TOKEN", "ambient-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "ambient-project");
+    refreshEnvironmentConfig();
+
+    try {
+      const streamResult = startAgentRuntimeFork({
+        apiUrl: "https://api.test",
+        authToken: "root-owned-token",
+        projectId: liveProject.projectId,
+        projectSlug: liveProject.projectSlug,
+        resolveStepContext: () => ({
+          authToken: "root-owned-token",
+          projectId: liveProject.projectId,
+          projectSlug: liveProject.projectSlug,
+        }),
+        model: "model-1",
+        maxSteps: 2,
+        prompt: "Switch projects, then inspect the integration.",
+        forkToolNames: ["studio_open_project", "github__list_repos"],
+        runtimeTools: {},
+        buildInstructions: () => "Base instructions.",
+        runStep: async (input) => {
+          if (stepIndex === 0) {
+            assertEquals(input.authToken, "root-owned-token");
+            assertEquals(input.projectId, "project-1");
+            assertEquals(input.projectSlug, "project-one");
+            liveProject = {
+              projectId: "project-2",
+              projectSlug: "project-two",
+            };
+            const switchedContext = input.resolveToolExecutionContext?.();
+            assertEquals(switchedContext, {
+              authToken: "root-owned-token",
+              projectId: "project-2",
+              projectSlug: "project-two",
+            });
+            const toolContext = {
+              authToken: switchedContext?.authToken,
+              projectId: switchedContext?.projectId ?? undefined,
+              projectSlug: switchedContext?.projectSlug,
+            };
+            const definitions = await getRemoteIntegrationToolDefinitions(toolContext);
+            assertEquals(definitions.map((definition) => definition.name), [
+              "github__list_repos",
+            ]);
+            assertEquals(
+              await executeRemoteIntegrationTool("github__list_repos", {}, toolContext),
+              { ok: true },
+            );
+            stepIndex += 1;
+            return {
+              stream: createRuntimeEventStream([]),
+              responsePromise: Promise.resolve({
+                text: "Switched.",
+                messages: [],
+                toolCalls: [{
+                  id: "switch-project",
+                  name: "studio_open_project",
+                  args: { project_reference: "project-two" },
+                  status: "completed",
+                  result: {
+                    success: true,
+                    project_id: "project-2",
+                    slug: "project-two",
+                  },
+                }],
+                status: "completed",
+                metadata: { finishReason: "tool-calls" },
+              }),
+            };
+          }
+
+          assertEquals(input.authToken, "root-owned-token");
+          assertEquals(input.projectId, "project-2");
+          assertEquals(input.projectSlug, "project-two");
+          stepIndex += 1;
+          const toolContext = {
+            authToken: input.authToken,
+            projectId: input.projectId ?? undefined,
+            projectSlug: input.projectSlug,
+          };
+          const definitions = await getRemoteIntegrationToolDefinitions(toolContext);
+          assertEquals(definitions.map((definition) => definition.name), [
+            "github__list_repos",
+          ]);
+          assertEquals(
+            await executeRemoteIntegrationTool("github__list_repos", {}, toolContext),
+            { ok: true },
+          );
+
+          return {
+            stream: createRuntimeEventStream([]),
+            responsePromise: Promise.resolve({
+              text: "Done.",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              metadata: { finishReason: "stop" },
+            }),
+          };
+        },
+      });
+
+      await withMockFetch(
+        async (requestInput: string | URL | Request, init?: RequestInit) => {
+          const request = requestInput instanceof Request
+            ? requestInput
+            : new Request(requestInput, init);
+          const url = new URL(request.url);
+          requests.push({
+            path: url.pathname,
+            authorization: request.headers.get("authorization"),
+            projectSlug: request.headers.get("x-veryfront-project-slug"),
+          });
+
+          if (url.pathname.endsWith("/list")) {
+            return Response.json({
+              tools: [{
+                name: "github__list_repos",
+                description: "List repositories.",
+                inputSchema: {},
+              }],
+            });
+          }
+          return Response.json({ content: [], structuredContent: { ok: true } });
+        },
+        async () => {
+          for await (const _part of streamResult.fullStream) {
+            // Consume both fork steps.
+          }
+        },
+      );
+
+      assertEquals(stepIndex, 2);
+      assertEquals(requests, [
+        {
+          path: "/integrations/tools/list",
+          authorization: "Bearer root-owned-token",
+          projectSlug: "project-two",
+        },
+        {
+          path: "/integrations/tools/call",
+          authorization: "Bearer root-owned-token",
+          projectSlug: "project-two",
+        },
+        {
+          path: "/integrations/tools/list",
+          authorization: "Bearer root-owned-token",
+          projectSlug: "project-two",
+        },
+        {
+          path: "/integrations/tools/call",
+          authorization: "Bearer root-owned-token",
+          projectSlug: "project-two",
+        },
+      ]);
+    } finally {
+      for (const key of environmentKeys) {
+        const value = originalEnvironment.get(key);
+        if (value === undefined) {
+          deleteEnv(key);
+        } else {
+          setEnv(key, value);
+        }
+      }
+      refreshEnvironmentConfig();
+    }
   });
 
   it("does not leak unhandled rejections from side promises when the fork stream fails", async () => {

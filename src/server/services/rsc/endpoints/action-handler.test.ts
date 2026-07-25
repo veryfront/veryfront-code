@@ -352,7 +352,7 @@ describe(
               ? Promise.resolve(
                 "export default async function add(a: number, b: number) { return a + b; }",
               )
-              : Promise.reject(new Error("not found")),
+              : Promise.reject(new Deno.errors.NotFound(`File not found: ${path}`)),
         });
         const req = new Request("http://localhost/_veryfront/rsc/action", {
           method: "POST",

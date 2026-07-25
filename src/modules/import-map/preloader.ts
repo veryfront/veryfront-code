@@ -120,6 +120,7 @@ type ProjectImportMapCache = Map<string, CachedImportMap>;
 interface ProjectImportMapState {
   readonly variants: ProjectImportMapCache;
   generation: object;
+  /** Hashes being computed or retained while their matching load is in flight. */
   readonly identityBuilds: Map<string, Promise<string>>;
 }
 
@@ -413,6 +414,16 @@ export class ImportMapPreloader {
       this.maxConcurrentLoads;
   }
 
+  private releaseIdentityBuild(
+    projectState: ProjectImportMapState,
+    canonicalIdentity: string,
+    promise: Promise<string>,
+  ): void {
+    if (mapGet(projectState.identityBuilds, canonicalIdentity) === promise) {
+      mapDelete(projectState.identityBuilds, canonicalIdentity);
+    }
+  }
+
   private getOrCreateIdentityBuild(
     projectState: ProjectImportMapState,
     canonicalIdentity: string,
@@ -427,13 +438,21 @@ export class ImportMapPreloader {
     const promise = computeHash(canonicalIdentity);
     mapSet(projectState.identityBuilds, canonicalIdentity, promise);
     setAdd(this.activeIdentityBuilds, promise);
-    const release = (): void => {
+    // Hash settlement frees global hashing capacity immediately. Keep the
+    // resolved per-project identity until its load settles, though, so a later
+    // request can reach and join that in-flight entry even when load capacity
+    // is otherwise full.
+    const releaseActive = (): void => {
       setDelete(this.activeIdentityBuilds, promise);
-      if (mapGet(projectState.identityBuilds, canonicalIdentity) === promise) {
-        mapDelete(projectState.identityBuilds, canonicalIdentity);
-      }
     };
-    promiseThen(promise, release, release);
+    promiseThen(
+      promise,
+      releaseActive,
+      () => {
+        releaseActive();
+        this.releaseIdentityBuild(projectState, canonicalIdentity, promise);
+      },
+    );
     return promise;
   }
 
@@ -507,16 +526,32 @@ export class ImportMapPreloader {
     const globalGeneration = this.globalGeneration;
     const projectGeneration = projectState.generation;
 
+    let identityBuild: Promise<string> | undefined;
     let variantKey: string;
     try {
-      variantKey = await this.getOrCreateIdentityBuild(
+      identityBuild = this.getOrCreateIdentityBuild(
         projectState,
         canonicalIdentity,
       );
+      variantKey = await identityBuild;
     } catch (error) {
+      if (identityBuild) {
+        this.releaseIdentityBuild(
+          projectState,
+          canonicalIdentity,
+          identityBuild,
+        );
+      }
       this.removeEmptyProject(cacheKey, projectState);
       throw error;
     }
+    const releaseIdentity = (): void => {
+      this.releaseIdentityBuild(
+        projectState,
+        canonicalIdentity,
+        identityBuild,
+      );
+    };
 
     // Explicit invalidation during asynchronous identity construction must not
     // let pre-clear work enter the post-clear cache generation. The caller can
@@ -530,6 +565,7 @@ export class ImportMapPreloader {
         projectGeneration,
       )
     ) {
+      releaseIdentity();
       return this.startTrackedLoad(
         projectDir,
         adapter,
@@ -541,6 +577,7 @@ export class ImportMapPreloader {
     try {
       now = this.readNow();
     } catch (error) {
+      releaseIdentity();
       this.removeEmptyProject(cacheKey, projectState);
       throw error;
     }
@@ -554,6 +591,7 @@ export class ImportMapPreloader {
         projectGeneration,
       )
     ) {
+      releaseIdentity();
       return this.startTrackedLoad(
         projectDir,
         adapter,
@@ -566,7 +604,12 @@ export class ImportMapPreloader {
       // Removing the empty bucket here would publish the replacement into a
       // detached Map that later callers cannot observe.
       const cached = this.getEntry(cacheKey, variantKey, now, true);
-      if (cached) return cached.promise;
+      if (cached) {
+        if (cached.expiresAt !== null) {
+          releaseIdentity();
+        }
+        return cached.promise;
+      }
 
       const projectCache = projectState.variants;
       this.makeVariantRoom(projectCache, now);
@@ -582,6 +625,7 @@ export class ImportMapPreloader {
       promiseThen(
         promise,
         () => {
+          releaseIdentity();
           if (
             mapGet(this.projects, cacheKey) !== projectState ||
             mapGet(projectCache, variantKey) !== entry
@@ -604,11 +648,15 @@ export class ImportMapPreloader {
             settledAt + this.ttlMs,
           );
         },
-        () => this.deleteEntry(cacheKey, projectState, variantKey, entry),
+        () => {
+          releaseIdentity();
+          this.deleteEntry(cacheKey, projectState, variantKey, entry);
+        },
       );
 
       return promise;
     } catch (error) {
+      releaseIdentity();
       this.removeEmptyProject(cacheKey, projectState);
       throw error;
     }
@@ -624,16 +672,32 @@ export class ImportMapPreloader {
     if (!projectState) return undefined;
     const globalGeneration = this.globalGeneration;
     const projectGeneration = projectState.generation;
+    let identityBuild: Promise<string> | undefined;
     let variantKey: string;
     try {
-      variantKey = await this.getOrCreateIdentityBuild(
+      identityBuild = this.getOrCreateIdentityBuild(
         projectState,
         canonicalIdentity,
       );
+      variantKey = await identityBuild;
     } catch (error) {
+      if (identityBuild) {
+        this.releaseIdentityBuild(
+          projectState,
+          canonicalIdentity,
+          identityBuild,
+        );
+      }
       this.removeEmptyProject(cacheKey, projectState);
       throw error;
     }
+    const releaseIdentity = (): void => {
+      this.releaseIdentityBuild(
+        projectState,
+        canonicalIdentity,
+        identityBuild,
+      );
+    };
     if (
       !this.isCurrentGeneration(
         cacheKey,
@@ -642,16 +706,28 @@ export class ImportMapPreloader {
         projectGeneration,
       )
     ) {
+      releaseIdentity();
       return undefined;
     }
-    const entry = this.getEntry(
-      cacheKey,
-      variantKey,
-      this.readNow(),
-    );
+    let entry: CachedImportMap | undefined;
+    try {
+      entry = this.getEntry(
+        cacheKey,
+        variantKey,
+        this.readNow(),
+      );
+    } catch (error) {
+      releaseIdentity();
+      this.removeEmptyProject(cacheKey, projectState);
+      throw error;
+    }
     if (!entry) {
+      releaseIdentity();
       this.removeEmptyProject(cacheKey, projectState);
       return undefined;
+    }
+    if (entry.expiresAt !== null) {
+      releaseIdentity();
     }
 
     try {

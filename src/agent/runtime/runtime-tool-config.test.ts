@@ -8,6 +8,7 @@ import {
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
+  resolveRuntimeToolExecutionContext,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -19,6 +20,81 @@ function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
 }
 
 describe("agent/runtime-tool-config", () => {
+  describe("resolveRuntimeToolExecutionContext", () => {
+    it("resolves host-owned context at call time and preserves the default path", async () => {
+      const abortSignal = new AbortController().signal;
+      const originalContext = {
+        authToken: "token-one",
+        projectId: "project-one",
+        projectSlug: "project-one",
+        abortSignal,
+        __vfSourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      };
+      assertEquals(
+        await resolveRuntimeToolExecutionContext(runtimeConfig(), originalContext),
+        originalContext,
+      );
+
+      let liveIdentity = {
+        authToken: "token-two",
+        projectId: "project-two",
+        projectSlug: "project-two",
+      };
+      const config = runtimeConfig({
+        __vfResolveToolExecutionContext: async () => ({
+          ...liveIdentity,
+          abortSignal: "resolver-must-not-replace-this",
+          __vfSourceIntegrationPolicy: "resolver-must-not-replace-this",
+        }),
+      });
+
+      const second = await resolveRuntimeToolExecutionContext(config, originalContext);
+      assertEquals(second.authToken, "token-two");
+      assertEquals(second.projectId, "project-two");
+      assertEquals(second.projectSlug, "project-two");
+      assertEquals(second.abortSignal, abortSignal);
+      assertEquals(second.__vfSourceIntegrationPolicy, {
+        schemaVersion: 1,
+        mode: "unrestricted",
+      });
+
+      liveIdentity = {
+        authToken: "token-three",
+        projectId: "project-three",
+        projectSlug: "project-three",
+      };
+      const third = await resolveRuntimeToolExecutionContext(config, originalContext);
+      assertEquals(third.authToken, "token-three");
+      assertEquals(third.projectId, "project-three");
+      assertEquals(third.projectSlug, "project-three");
+    });
+
+    it("clears an absent identity atomically but preserves explicit credential ownership", async () => {
+      const originalContext = {
+        authToken: "stale-token",
+        projectId: "stale-project",
+        projectSlug: "stale-project",
+        runId: "run-one",
+      };
+      const absent = await resolveRuntimeToolExecutionContext(
+        runtimeConfig({ __vfResolveToolExecutionContext: () => ({}) }),
+        originalContext,
+      );
+      assertEquals(absent, { runId: "run-one" });
+
+      const explicitlyInvalid = await resolveRuntimeToolExecutionContext(
+        runtimeConfig({
+          __vfResolveToolExecutionContext: () => ({ authToken: undefined }),
+        }),
+        originalContext,
+      );
+      assertEquals(Object.hasOwn(explicitlyInvalid, "authToken"), true);
+      assertEquals(explicitlyInvalid.authToken, undefined);
+      assertEquals(Object.hasOwn(explicitlyInvalid, "projectId"), false);
+      assertEquals(Object.hasOwn(explicitlyInvalid, "projectSlug"), false);
+    });
+  });
+
   describe("getRuntimeAllowedRemoteTools", () => {
     it("distinguishes absent allow-lists from invalid configured allow-lists", () => {
       assertEquals(getRuntimeAllowedRemoteTools(runtimeConfig()), undefined);

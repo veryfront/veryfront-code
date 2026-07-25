@@ -14,7 +14,7 @@ import {
   ERROR_CONTEXT_MAX_LENGTH_CHARS,
   ERROR_OUTPUT_MAX_LENGTH_CHARS,
   sanitizeDiagnosticText,
-  snapshotErrorForBoundary,
+  snapshotErrorForLoggingBoundary,
 } from "./safe-diagnostics.ts";
 
 export interface ErrorLogEntry {
@@ -40,10 +40,10 @@ function toContextRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function redactAndMergeContext(
-  errorContext: unknown,
+  redactedErrorContext: unknown,
   extraContext?: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
-  const baseContext = toContextRecord(redactForSerialization(errorContext));
+  const baseContext = toContextRecord(redactedErrorContext);
   const safeExtraContext = toContextRecord(redactForSerialization(extraContext));
 
   const merged = !baseContext
@@ -93,9 +93,10 @@ export function logError(
   error: VeryfrontError,
   context?: Record<string, unknown>,
 ): void {
-  const snapshot = snapshotErrorForBoundary(error);
+  const boundary = snapshotErrorForLoggingBoundary(error);
+  const snapshot = boundary.error;
   const slug = sanitizeDiagnosticText(snapshot.slug);
-  const safeContext = redactAndMergeContext(snapshot.context, context);
+  const safeContext = redactAndMergeContext(boundary.context, context);
   const entry: ErrorLogEntry = {
     level: "error",
     slug,

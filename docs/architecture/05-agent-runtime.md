@@ -88,6 +88,22 @@ terminal state, and cloud runtime services.
    and persist execution snapshots.
 5. Lifecycle helpers finalize messages, terminal state, and trace attributes.
 
+Hosted execution treats the authorization token, project ID, and optional
+project slug as one credential-bound identity. The runtime resolves that
+identity immediately before each tool call, including sibling calls in one
+model response, and carries the confirmed identity through direct and durable
+child forks. A cross-project switch resets branch, environment, and skill
+state; if the confirmed identity has no slug, the previous slug is cleared
+rather than paired with the new project.
+
+Project-navigation inputs and results are untrusted boundaries. References are
+bounded and canonicalized, and a claimed success must provide own-data identity
+matching the requested ID or slug before runtime state changes. Malformed,
+accessor-backed, proxy-backed, or mismatched successes fail closed, while
+genuine upstream failures are preserved. Navigation changes tool and steering
+scope; provider transport and billing remain bound to the originating hosted
+run.
+
 Hosted state is separate from provider-neutral agent runtime streaming.
 Child-run tools are a hosted runtime feature, not a workflow DAG primitive.
 
@@ -187,6 +203,9 @@ are available from the public `veryfront/skill` package subpath.
   compatibility.
 - Add tests for durable mirror behavior when changing run event normalization.
 - Keep child-run result snapshots stable when changing child fork execution.
+- Add hosted project-switch tests for same-response sibling tools, direct and
+  durable child propagation, stale-slug clearing, and adversarial navigation
+  results.
 - Redact project and user data in hosted logs and thrown errors.
 - Add factory and registry tests when changing primitive shape, id generation,
   schema normalization, or project scoping.

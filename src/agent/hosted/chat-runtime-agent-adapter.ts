@@ -28,6 +28,8 @@ export type HostedChatRuntimeAgentAdapterInput = {
   runId?: string;
   agentId?: string;
   conversationId?: string;
+  projectId?: string;
+  projectSlug?: string;
   authToken?: string;
   maxOutputTokens?: number;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
@@ -63,7 +65,9 @@ export function createHostedChatRuntimeAgentAdapter(
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.agentId ? { agentId: input.agentId } : {}),
                 ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-                ...(input.authToken ? { authToken: input.authToken } : {}),
+                ...(input.projectId ? { projectId: input.projectId } : {}),
+                ...(input.projectSlug ? { projectSlug: input.projectSlug } : {}),
+                ...(input.authToken !== undefined ? { authToken: input.authToken } : {}),
                 abortSignal: streamInput.abortSignal,
                 publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
               },

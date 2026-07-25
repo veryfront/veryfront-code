@@ -12,6 +12,7 @@ import {
   sanitizeBoundedStackText,
   sanitizeBoundedTerminalText,
 } from "./diagnostic-policy.ts";
+import { type RedactedValue, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
 import { types as nodeUtilTypes } from "node:util";
 
 export {
@@ -142,8 +143,17 @@ function optionalOwnString(
   return typeof value === "string" ? value : MISSING_DATA_FIELD;
 }
 
+function readOwnDataStack(error: Error): string | undefined {
+  const descriptor = getOwnPropertyDescriptor(error, "stack");
+  return descriptor && "value" in descriptor &&
+      typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
 interface ThrowableBoundarySnapshot {
   readonly error: VeryfrontErrorSnapshot;
+  readonly context?: unknown;
   readonly name: string;
   readonly registered: boolean;
 }
@@ -162,8 +172,8 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
   }
 
   try {
-    const rawStack = ownDataField(error, "stack");
-    const stack = typeof rawStack === "string" ? sanitizeStackDiagnosticText(rawStack) : undefined;
+    const rawStack = readOwnDataStack(error);
+    const stack = rawStack === undefined ? undefined : sanitizeStackDiagnosticText(rawStack);
     const rawName = ownDataField(error, "name");
     const name = typeof rawName === "string" && rawName ? sanitizeDiagnosticText(rawName) : "Error";
 
@@ -176,6 +186,7 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
       const detail = optionalOwnString(error, "detail");
       const instance = optionalOwnString(error, "instance");
       const cause = ownDataField(error, "cause");
+      const context = ownDataField(error, "context");
 
       if (
         typeof slug === "string" &&
@@ -201,6 +212,7 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
             instance: instance === undefined ? undefined : sanitizeDiagnosticText(instance),
             stack,
           },
+          context: context === MISSING_DATA_FIELD ? undefined : context,
           name,
           registered: true,
         };
@@ -357,24 +369,52 @@ export function snapshotThrowableDiagnostic(error: unknown): string {
  * Snapshot a throwable once and return a stable Veryfront-shaped diagnostic.
  *
  * Invalid or unreadable VeryfrontError proxies degrade to the canonical
- * unknown-error identity. Plain errors contribute only a safely-read message
- * and stack.
+ * unknown-error identity. Plain errors contribute only safely-read own data.
+ * Object-valued context is intentionally excluded so this generic snapshot
+ * never retains project-owned accessors, proxies, or serializers.
  */
 export function snapshotErrorForBoundary(error: unknown): VeryfrontErrorSnapshot {
-  const candidate = snapshotThrowableBoundary(error).error;
+  return sanitizeBoundaryErrorSnapshot(snapshotThrowableBoundary(error).error);
+}
 
+function sanitizeBoundaryErrorSnapshot(
+  candidate: VeryfrontErrorSnapshot,
+): VeryfrontErrorSnapshot {
   return {
-    ...candidate,
     slug: sanitizeBoundedErrorSlug(candidate.slug),
+    category: candidate.category,
+    status: candidate.status,
     title: sanitizeDiagnosticText(candidate.title),
     message: sanitizeDiagnosticText(candidate.message),
     suggestion: sanitizeOptionalDiagnosticText(candidate.suggestion),
     detail: sanitizeOptionalDiagnosticText(candidate.detail),
     cause: typeof candidate.cause === "string"
       ? sanitizeDiagnosticText(candidate.cause)
-      : candidate.cause,
+      : undefined,
     instance: sanitizeOptionalDiagnosticText(candidate.instance),
     stack: candidate.stack === undefined ? undefined : sanitizeStackDiagnosticText(candidate.stack),
+  };
+}
+
+export interface ErrorLoggingBoundarySnapshot {
+  readonly error: VeryfrontErrorSnapshot;
+  readonly context?: RedactedValue;
+}
+
+/**
+ * Capture the error identity plus a framework-owned context copy for logging.
+ *
+ * The generic boundary snapshot remains context-free. This narrower path
+ * redacts and detaches the context before returning it, so callers can never
+ * retain or serialize the project-owned source object.
+ */
+export function snapshotErrorForLoggingBoundary(
+  error: unknown,
+): ErrorLoggingBoundarySnapshot {
+  const boundary = snapshotThrowableBoundary(error);
+  return {
+    error: sanitizeBoundaryErrorSnapshot(boundary.error),
+    context: boundary.context === undefined ? undefined : redactForSerialization(boundary.context),
   };
 }
 

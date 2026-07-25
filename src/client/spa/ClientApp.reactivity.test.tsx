@@ -7,7 +7,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { mkdir, waitFor, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { ClientApp, type PageDataResponse } from "./ClientApp.tsx";
 import { clearComponentCache, loadComponent } from "./component-loader.ts";
 import { getNavigationStore } from "../../rendering/client/navigation-store.ts";
@@ -79,10 +79,13 @@ function installDom(url: string): () => void {
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function waitForText(element: Element, text: string): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    if ((element.textContent ?? "").includes(text)) return;
-    await tick();
-  }
+  await waitFor(
+    () => (element.textContent ?? "").includes(text),
+    {
+      interval: 10,
+      message: `Expected element text to include "${text}"`,
+    },
+  );
 }
 
 describe("client/spa/ClientApp (reactive)", () => {
@@ -394,6 +397,7 @@ describe("client/spa/ClientApp (reactive)", () => {
       clearComponentCache();
       const originalError = console.error;
       console.error = () => {};
+      let root: ReturnType<typeof createRoot> | undefined;
       try {
         await loadComponent("pages/home.tsx");
         const initialData: PageDataResponse = {
@@ -409,8 +413,9 @@ describe("client/spa/ClientApp (reactive)", () => {
         };
 
         const rootElement = document.getElementById("root")!;
-        const root = createRoot(rootElement);
-        flushSync(() => root.render(<ClientApp initialData={initialData} />));
+        const mountedRoot = createRoot(rootElement);
+        root = mountedRoot;
+        flushSync(() => mountedRoot.render(<ClientApp initialData={initialData} />));
         await waitForText(rootElement, "Failed to load layout component");
 
         await writeModule(
@@ -425,8 +430,8 @@ describe("client/spa/ClientApp (reactive)", () => {
         await waitForText(rootElement, "layout recovered");
 
         assertStringIncludes(rootElement.textContent ?? "", "layout recovered home");
-        root.unmount();
       } finally {
+        root?.unmount();
         console.error = originalError;
         clearComponentCache();
         delete testGlobal.MODULE_SERVER_URL;

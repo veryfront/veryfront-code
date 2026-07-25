@@ -20,7 +20,9 @@ function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   return {
     async readFile(path: string): Promise<string> {
       const content = normalizedFiles[normalize(path)];
-      if (content === undefined) throw new Error(`File not found: ${path}`);
+      if (content === undefined) {
+        throw new Deno.errors.NotFound(`File not found: ${path}`);
+      }
       return content;
     },
     async exists(path: string): Promise<boolean> {
@@ -113,12 +115,12 @@ function makeTaskSource(name: string): string {
   ].join("\n");
 }
 
-function markAdapterAsVirtual(adapter: RuntimeAdapter): void {
+function markAdapterAsSingleProjectVirtual(adapter: RuntimeAdapter): void {
   Object.assign(adapter.fs, {
     getUnderlyingAdapter: () => adapter.fs,
     getAdapterType: () => "VeryfrontFSAdapter",
     isVeryfrontAdapter: () => true,
-    isMultiProjectMode: () => true,
+    isMultiProjectMode: () => false,
   });
 }
 
@@ -332,21 +334,20 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals([...discovery.tasks.keys()], ["sync"]);
   });
 
-  it("isolates virtual project runtime config by cache key", async () => {
+  it("isolates single-project virtual runtime config by cache key", async () => {
     const firstAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
-        '  fs: { type: "veryfront-api" },',
         '  ai: { tasks: { discovery: { paths: ["first-tasks"] } } },',
         "};",
         "",
       ].join("\n"),
       "/project/first-tasks/first.ts": makeTaskSource("First"),
     });
-    markAdapterAsVirtual(firstAdapter);
+    markAdapterAsSingleProjectVirtual(firstAdapter);
 
     const first = await discoverProjectTaskRuntime({
-      projectDir: "/same-local-dir",
+      projectDir: "/project",
       adapter: firstAdapter,
       fsAdapter: firstAdapter.fs,
       cacheKey: "project-a",
@@ -356,17 +357,16 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     const secondAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
-        '  fs: { type: "veryfront-api" },',
         '  ai: { tasks: { discovery: { paths: ["second-tasks"] } } },',
         "};",
         "",
       ].join("\n"),
       "/project/second-tasks/second.ts": makeTaskSource("Second"),
     });
-    markAdapterAsVirtual(secondAdapter);
+    markAdapterAsSingleProjectVirtual(secondAdapter);
 
     const second = await discoverProjectTaskRuntime({
-      projectDir: "/same-local-dir",
+      projectDir: "/project",
       adapter: secondAdapter,
       fsAdapter: secondAdapter.fs,
       cacheKey: "project-b",

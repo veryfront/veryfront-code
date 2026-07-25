@@ -1,6 +1,12 @@
 import type { HostToolDefinition, HostToolSet, ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
-import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
+import {
+  createUnconfirmedProjectContextSwitchResult,
+  getConfirmedProjectContextSwitch,
+  INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+  isClaimedSuccessfulProjectContextSwitchResult,
+  normalizeAgentProjectReference,
+} from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
@@ -14,7 +20,10 @@ export type HostedChildSteeringMutationHandler = (
 ) => Promise<void> | void;
 
 /** Handler for hosted child project switch. */
-export type HostedChildProjectSwitchHandler = (projectId: string) => Promise<void> | void;
+export type HostedChildProjectSwitchHandler = (
+  projectId: string,
+  projectSlug?: string,
+) => Promise<void> | void;
 
 /** Input payload for wrap hosted child steering mutation tool. */
 export type WrapHostedChildSteeringMutationToolInput = {
@@ -84,13 +93,26 @@ export function wrapHostedChildProjectSwitchTool(
     ...toolDefinition,
     execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
+      const projectReference = normalizeAgentProjectReference(
+        normalizedToolInput.project_reference,
+      );
+      if (!projectReference) {
+        throw new TypeError(INVALID_AGENT_PROJECT_REFERENCE_MESSAGE);
+      }
+
       const result = await originalExecute(toolInput, execOptions);
-      const projectReference = normalizedToolInput.project_reference;
-      const confirmedProjectId = typeof projectReference === "string"
-        ? getConfirmedProjectContextSwitchId(result, projectReference)
-        : null;
-      if (confirmedProjectId) {
-        await input.onConfirmedProjectSwitch(confirmedProjectId);
+      if (!isSuccessfulProjectSteeringMutationResult(result)) {
+        return result;
+      }
+
+      const confirmedProject = getConfirmedProjectContextSwitch(result, projectReference);
+      if (confirmedProject) {
+        await input.onConfirmedProjectSwitch(
+          confirmedProject.projectId,
+          confirmedProject.projectSlug,
+        );
+      } else if (isClaimedSuccessfulProjectContextSwitchResult(result)) {
+        return createUnconfirmedProjectContextSwitchResult();
       }
       return result;
     },

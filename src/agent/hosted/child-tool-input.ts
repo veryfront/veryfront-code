@@ -3,6 +3,10 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
 import type { ChildRunResultMode } from "../child-run/result-summary.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
+import {
+  isCanonicalOpaqueProjectIdentifier,
+  MAX_OPAQUE_ID_CODE_UNITS,
+} from "#veryfront/utils/project-identity.ts";
 
 /** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
@@ -19,9 +23,18 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
     context: v.record(v.string(), getJsonValueSchema()).default({}).describe(
       "Structured data payload for the child task. Use this for critical facts, records, ids, decisions, and values the child must act on. Defaults to {} when the delegation has no record or evidence payload.",
     ),
-    project_reference: v.string().optional().describe(
-      "Override project context by UUID or slug. Use after studio_open_project.",
-    ),
+    project_reference: v
+      .string()
+      .min(1)
+      .max(MAX_OPAQUE_ID_CODE_UNITS)
+      .refine(
+        isCanonicalOpaqueProjectIdentifier,
+        "project_reference must be trimmed and contain no control characters",
+      )
+      .optional()
+      .describe(
+        "Override project context by UUID or slug. Use after studio_open_project.",
+      ),
     tools: v.array(v.string()).optional().describe(
       "Tool subset for this fork. Omit = inherit all parent tools.",
     ),

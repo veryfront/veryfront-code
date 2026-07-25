@@ -11,6 +11,7 @@ import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "../../../react/compat/ssr-adapter/server-loader.ts";
+import { getDefaultImportMap } from "#veryfront/modules/import-map/index.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -158,6 +159,8 @@ describe(
           "project-id",
           "project-slug",
           "content-source-id",
+          undefined,
+          getDefaultImportMap(),
         );
 
         const html = await renderToStringAdapter(result);

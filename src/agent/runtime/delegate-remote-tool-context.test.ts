@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { agent } from "../index.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
@@ -259,15 +260,19 @@ Deno.test("local delegates execute inherited MCP tools with the parent credentia
   );
 
   try {
-    const body = await (await root.stream({
-      input: "Run the child",
-      context: {
-        authToken: "parent-token",
-        runId: "parent-run",
-        agentId: rootId,
-        projectId: "project-1",
-      },
-    })).toDataStreamResponse().text();
+    const body = await withMockFetch(
+      async () => Response.json({ tools: [] }),
+      async () =>
+        await (await root.stream({
+          input: "Run the child",
+          context: {
+            authToken: "parent-token",
+            runId: "parent-run",
+            agentId: rootId,
+            projectId: "project-1",
+          },
+        })).toDataStreamResponse().text(),
+    );
 
     assertEquals(childModelCalls, 2);
     assertEquals(rootModelCalls, 2);

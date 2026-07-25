@@ -192,7 +192,7 @@ async function getRemoteToolDefinitions(options?: {
     const { getRemoteIntegrationToolDefinitions } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    for (const def of await getRemoteIntegrationToolDefinitions()) {
+    for (const def of await getRemoteIntegrationToolDefinitions(remoteToolContext)) {
       addDefinition(def);
     }
   } catch {

@@ -17,6 +17,7 @@ import {
 import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
+import { getDefaultImportMap } from "#veryfront/modules/import-map/index.ts";
 
 function getTransformCacheKey(
   projectId: string,
@@ -447,6 +448,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
       try {
         const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {
+          importMap: getDefaultImportMap(),
           strictMissingModules: true,
         });
 
@@ -468,6 +470,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
 
       try {
         const ctx = createModuleFetcherContext(esmCacheDir, adapter, projectDir, "proj-cycle", {
+          importMap: getDefaultImportMap(),
           strictMissingModules: false,
         });
 
@@ -518,7 +521,10 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           createBarrelAdapter(),
           projectDir,
           "proj-barrel",
-          { strictMissingModules: true },
+          {
+            importMap: getDefaultImportMap(),
+            strictMissingModules: true,
+          },
         );
 
         const modulePath = await fetchAndCacheModule("/_vf_modules/lib.js", ctx);

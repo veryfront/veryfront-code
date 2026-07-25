@@ -41,12 +41,14 @@ import {
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
+import { resolveHostedToolExecutionIdentity } from "./runtime-state-resolver.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
   agentId?: string;
   projectId?: string | null;
+  projectSlug?: string;
   branchId?: string | null;
   model?: string;
   clientProfile?: RuntimeClientProfile | null;
@@ -298,6 +300,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
   });
   const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),
+    context: resolveHostedToolExecutionIdentity(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
   const remoteToolNames = applySourceIntegrationPolicy(

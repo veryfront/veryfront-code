@@ -54,6 +54,14 @@ flowchart TD
 9. Tool execution is delegated to the configured API layer and normalized for
    the agent runtime.
 
+An explicit tool-execution credential owns both authorization and project
+selection. If its own `authToken` is invalid or deliberately absent, discovery
+and execution fail closed instead of falling through to request or process
+credentials. Its project identity is read from the same execution context, so
+a token cannot be paired with a project ID or slug from another runtime moment.
+Request-scoped or environment fallback applies only when no explicit execution
+credential owns the call.
+
 ## Boundaries
 
 - Integration runtime owns connector metadata and remote tool bridge behavior.
@@ -81,7 +89,8 @@ child; handler-local tool-list rewriting is not an authorization boundary.
 - Add schema tests when changing connector, auth, endpoint, tool, or prompt
   metadata.
 - Add remote-tool tests when changing request-scoped token resolution, tool
-  listing, call payloads, or result normalization.
+  listing, call payloads, or result normalization. Cover explicit-credential
+  precedence and atomic token/project pairing.
 - Keep per-project tool visibility scoped to the active request or environment
   token.
 - Keep config caches qualified by the exact branch, release, or environment;

@@ -18,6 +18,11 @@ import {
   type VeryfrontError,
 } from "#veryfront/errors";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
+import {
+  isCanonicalProjectSlug,
+  MAX_OPAQUE_ID_CODE_UNITS,
+  MAX_PROJECT_SLUG_CODE_UNITS,
+} from "#veryfront/utils/project-identity.ts";
 
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_MAX_ENTRIES = 1_000;
@@ -27,8 +32,6 @@ const DEFAULT_MAX_INFLIGHT_PER_PROJECT = 16;
 const MAX_RESPONSE_BYTES = 512 * 1_024;
 const MAX_ENVIRONMENTS = 1_000;
 const MAX_DOMAINS_PER_ENVIRONMENT = 100;
-const MAX_PROJECT_SLUG_CODE_UNITS = 256;
-const MAX_OPAQUE_ID_CODE_UNITS = 1_024;
 const MAX_ENVIRONMENT_NAME_CODE_UNITS = 256;
 const MAX_DOMAIN_CODE_UNITS = 253;
 const MAX_BRANCH_CODE_UNITS = 1_024;
@@ -413,7 +416,7 @@ function requireUpstreamString(
 
 function requireProjectSlug(value: unknown, field: string): string {
   const slug = requireString(value, field, MAX_PROJECT_SLUG_CODE_UNITS);
-  if (!regexpTest(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/u, slug)) {
+  if (!isCanonicalProjectSlug(slug)) {
     throw INVALID_ARGUMENT.create({
       detail: `${field} must be a valid project slug`,
     });
@@ -427,7 +430,7 @@ function requireUpstreamProjectSlug(value: unknown): string {
     "project slug",
     MAX_PROJECT_SLUG_CODE_UNITS,
   );
-  if (!regexpTest(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/u, slug)) {
+  if (!isCanonicalProjectSlug(slug)) {
     throw new BindingFailure(
       "invalid-upstream-response",
       502,

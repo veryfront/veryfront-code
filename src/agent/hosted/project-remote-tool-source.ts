@@ -19,7 +19,13 @@ import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { CONFIG_INVALID, PERMISSION_DENIED } from "#veryfront/errors";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
+import {
+  createUnconfirmedProjectContextSwitchResult,
+  getConfirmedProjectContextSwitch,
+  INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+  isClaimedSuccessfulProjectContextSwitchResult,
+  normalizeAgentProjectReference,
+} from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
@@ -36,6 +42,7 @@ export type HostedProjectRemoteToolSourceMutationHandler = (
 /** Handler for hosted project remote tool source project switch. */
 export type HostedProjectRemoteToolSourceProjectSwitchHandler = (
   projectId: string,
+  projectSlug?: string,
 ) => Promise<void> | void;
 
 /** Input payload for hosted project remote tool source prepare tool. */
@@ -172,6 +179,17 @@ export function createHostedProjectRemoteToolSource(
         context,
       }) ?? toChildRunToolInputRecord(args);
       const trustedToolInput = normalizeProjectToolInput(toolName, normalizedToolInput);
+      const isProjectNavigation = isProjectNavigationRemoteTool(
+        toolName,
+        input.projectScopedRemoteToolOptions,
+      );
+      const requestedProjectReference = isProjectNavigation
+        ? normalizeAgentProjectReference(trustedToolInput.project_reference)
+        : null;
+      if (isProjectNavigation && !requestedProjectReference) {
+        throw new TypeError(INVALID_AGENT_PROJECT_REFERENCE_MESSAGE);
+      }
+
       const {
         activeProjectId,
         toolInput: hydratedToolInput,
@@ -210,14 +228,19 @@ export function createHostedProjectRemoteToolSource(
         return result;
       }
 
-      if (isProjectNavigationRemoteTool(toolName, input.projectScopedRemoteToolOptions)) {
-        const requestedProjectReference = trustedToolInput.project_reference;
-        const confirmedProjectId = typeof requestedProjectReference === "string"
-          ? getConfirmedProjectContextSwitchId(result, requestedProjectReference)
-          : null;
+      if (requestedProjectReference) {
+        const confirmedProject = getConfirmedProjectContextSwitch(
+          result,
+          requestedProjectReference,
+        );
 
-        if (confirmedProjectId) {
-          await input.onProjectSwitch?.(confirmedProjectId);
+        if (confirmedProject) {
+          await input.onProjectSwitch?.(
+            confirmedProject.projectId,
+            confirmedProject.projectSlug,
+          );
+        } else if (isClaimedSuccessfulProjectContextSwitchResult(result)) {
+          return createUnconfirmedProjectContextSwitchResult();
         }
 
         return result;

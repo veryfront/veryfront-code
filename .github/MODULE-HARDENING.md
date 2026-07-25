@@ -27,12 +27,12 @@ Generated-only changes do not count as module review evidence.
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
 | Closed                         |     2 |       3.4% | Current formal closure evidence remains valid       |
-| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
-| Pending current review         |    19 |      32.8% | No current authoritative-branch review delta exists |
+| Touched, revalidation required |    39 |      67.2% | Substantive recovered or current work exists        |
+| Pending current review         |    17 |      29.3% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
-Closed plus touched units give current-cycle substantive coverage of 39/58
-(67.2%). This is progress coverage, not a substitute for the stricter closure
+Closed plus touched units give current-cycle substantive coverage of 41/58
+(70.7%). This is progress coverage, not a substitute for the stricter closure
 count.
 
 ### Closed
@@ -72,7 +72,9 @@ count.
 - `schedule`
 - `security`
 - `server`
+- `task`
 - `testing`
+- `tool`
 - `transforms`
 - `trigger`
 - `types`
@@ -98,8 +100,6 @@ count.
 - `sandbox`
 - `skill`
 - `studio`
-- `task`
-- `tool`
 - `workflow`
 
 ## Historical recovery context
@@ -117,11 +117,13 @@ every affected unit.
 ## Active review chain
 
 The active checkpoint is a cross-module boundary revalidation spanning cache
-identity, project credentials and source selection, import-map immutability,
-hosted API isolation, OpenAPI generation, and their rendering/server
-consumers. Focused evidence for a boundary change does not by itself close
-every top-level unit it touches; those units remain in revalidation until their
-complete module review and affected repository gates are current.
+identity, live root, child, and durable project identity, integration and MCP
+credential pairing, untrusted tool-result validation, project credentials and
+source selection, import-map immutability, hosted API isolation, OpenAPI
+generation, and their rendering/server consumers. Focused evidence for a
+boundary change does not by itself close every top-level unit it touches; those
+units remain in revalidation until their complete module review and affected
+repository gates are current.
 
 `config` remains the next module-level closure target after this checkpoint is
 verified, pushed, and rebased. Its declarative evaluator and bounded one-shot
@@ -137,10 +139,14 @@ The current cross-module recovery checkpoint has the following reproducible
 evidence:
 
 - Cache-key and data-cache regressions: 3 files, 86 tests and 67 steps passed.
-- Import-map unit review: 7 files and 85 steps passed.
+- Import-map unit review: 7 files and 86 steps passed.
 - Import-map integration review: 40 files and 487 steps passed.
 - API/OpenAPI isolation and serialization review: 11 files and 300 steps
   passed.
+- Hosted project identity, child propagation, MCP credential pairing, and
+  untrusted tool-result review: 20 files, 168 tests and 98 nested steps passed.
+- Repository unit suite: 2,970 tests and 23,540 steps passed with zero failures;
+  one intentional case remains ignored with five steps.
 - `deno task verify:quick` passed, including formatting, linting, static policy
   ratchets, sanitizer and skipped-test baselines, dependency and module
   boundaries, documentation validation, and full entrypoint typechecking.
@@ -149,7 +155,7 @@ evidence:
 - `deno task docs:validate` passed all documentation contracts and 714 link
   checks.
 
-These gates certify this integration checkpoint, not the 19 pending module
+These gates certify this integration checkpoint, not the 17 pending module
 reviews. The broader unit and integration portfolio remains part of the final
 repository production gate.
 

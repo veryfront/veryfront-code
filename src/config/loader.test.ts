@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __getHostedConfigFlightStateForTests,
@@ -75,20 +76,16 @@ function configCandidateNotFound(path: string): Error {
 async function waitForHostedFlightState(
   expected: Readonly<{ flights: number; waiters: number }>,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const current = __getHostedConfigFlightStateForTests();
-    if (
-      current.flights === expected.flights &&
-      current.waiters === expected.waiters
-    ) {
-      return;
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error(
-    `Timed out waiting for hosted flight state ${JSON.stringify(expected)}; observed ${
-      JSON.stringify(__getHostedConfigFlightStateForTests())
-    }`,
+  await waitFor(
+    () => {
+      const current = __getHostedConfigFlightStateForTests();
+      return current.flights === expected.flights &&
+        current.waiters === expected.waiters;
+    },
+    {
+      interval: 10,
+      message: `Expected hosted flight state ${JSON.stringify(expected)}`,
+    },
   );
 }
 
@@ -1675,13 +1672,18 @@ export default config as const;
         const first = loadProductionHostedConfig(adapter, preparedContext);
         await firstEvaluationStarted.promise;
         const second = loadProductionHostedConfig(adapter, preparedContext);
-        await waitForHostedFlightState({ flights: 1, waiters: 2 });
-        rejectFirstEvaluation.resolve();
+        try {
+          await waitForHostedFlightState({ flights: 1, waiters: 2 });
+          rejectFirstEvaluation.resolve();
 
-        const failures = await Promise.allSettled([first, second]);
-        assert(failures.every((result) => result.status === "rejected"));
-        assertEquals(evaluations, 1);
-        await waitForHostedFlightState({ flights: 0, waiters: 0 });
+          const failures = await Promise.allSettled([first, second]);
+          assert(failures.every((result) => result.status === "rejected"));
+          assertEquals(evaluations, 1);
+          await waitForHostedFlightState({ flights: 0, waiters: 0 });
+        } finally {
+          rejectFirstEvaluation.resolve();
+          await Promise.allSettled([first, second]);
+        }
 
         const recovered = await loadProductionHostedConfig(adapter, preparedContext);
         assertEquals(recovered.title, "recovered");

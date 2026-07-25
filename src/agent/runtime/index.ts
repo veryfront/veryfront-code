@@ -89,6 +89,7 @@ import {
   getRuntimeForwardedIntegrationToolDefs,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
+  resolveRuntimeToolExecutionContext,
 } from "./runtime-tool-config.ts";
 import {
   applySourceIntegrationPolicy,
@@ -1373,9 +1374,11 @@ export class AgentRuntime {
                 hasToolReplacements ? undefined : activeSkillDelegationOverrides,
               );
               const executionContext = {
+                ...await resolveRuntimeToolExecutionContext(this.config, {
+                  ...toolContext,
+                  projectId: cacheCtx?.projectId ?? toolContext?.projectId,
+                }),
                 toolCallId: tc.toolCallId,
-                ...toolContext,
-                projectId: cacheCtx?.projectId ?? toolContext?.projectId,
                 // Caller identity for capability scoping. Stamped after the
                 // spreads so caller-supplied context cannot spoof it.
                 agentId: this.id,
@@ -2038,8 +2041,8 @@ export class AgentRuntime {
           callbacks?.onToolCall?.(toolCall);
 
           const executionContext = {
+            ...await resolveRuntimeToolExecutionContext(this.config, toolContext),
             toolCallId: tc.id,
-            ...toolContext,
             // Caller identity for capability scoping. Stamped after the
             // spread so caller-supplied context cannot spoof it.
             agentId: this.id,

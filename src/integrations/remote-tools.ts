@@ -19,7 +19,7 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
-import type { ToolDefinition } from "#veryfront/tool";
+import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 
 /**
  * Default timeout for outbound integration API calls. Without it, a hung remote
@@ -41,11 +41,6 @@ interface CallToolTextContent {
   text?: string;
 }
 
-type RemoteIntegrationToolExecutionContext = {
-  runId?: string;
-  agentId?: string;
-};
-
 // ---------------------------------------------------------------------------
 // Per-request token resolution
 // ---------------------------------------------------------------------------
@@ -59,7 +54,17 @@ function isValidApiToken(token: unknown): token is string {
  * Proxy mode requires a valid request-scoped project token. Single-project
  * runtimes may use their process-wide environment token.
  */
-function resolveRequestToken(): string | undefined {
+function hasExplicitRequestCredential(
+  context: ToolExecutionContext | undefined,
+): context is ToolExecutionContext & { authToken: unknown } {
+  return context !== undefined && Object.hasOwn(context, "authToken");
+}
+
+function resolveRequestToken(context?: ToolExecutionContext): string | undefined {
+  if (hasExplicitRequestCredential(context)) {
+    return isValidApiToken(context.authToken) ? context.authToken : undefined;
+  }
+
   const requestContext = getCurrentRequestContext();
   if (requestContext) {
     return isValidApiToken(requestContext.token) ? requestContext.token : undefined;
@@ -75,7 +80,11 @@ function normalizeProjectSlug(projectSlug: string | undefined): string | undefin
   return normalized || undefined;
 }
 
-function resolveRequestProjectSlug(): string | undefined {
+function resolveRequestProjectSlug(context?: ToolExecutionContext): string | undefined {
+  if (hasExplicitRequestCredential(context)) {
+    return normalizeProjectSlug(context.projectSlug);
+  }
+
   const requestContext = getCurrentRequestContext();
   if (requestContext) {
     return normalizeProjectSlug(requestContext.projectSlug);
@@ -133,8 +142,9 @@ async function postIntegrationApi(
   path: string,
   token: string,
   body?: unknown,
+  context?: ToolExecutionContext,
 ): Promise<Response> {
-  const projectSlug = resolveRequestProjectSlug();
+  const projectSlug = resolveRequestProjectSlug(context);
 
   return await fetch(`${baseUrl}${path}`, {
     method: "POST",
@@ -148,15 +158,38 @@ async function postIntegrationApi(
   });
 }
 
+async function discardResponseBody(response: Response): Promise<void> {
+  if (!response.body) return;
+
+  try {
+    await response.body.cancel();
+  } catch (error) {
+    // Preserve the API status failure as the primary diagnostic. Cleanup can
+    // fail independently when a transport has already torn down the stream.
+    logger.debug("Failed to discard integration API response body", {
+      status: response.status,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
 async function fetchToolList(
   baseUrl: string,
   token: string,
+  context?: ToolExecutionContext,
 ): Promise<RemoteToolDefinition[]> {
-  const response = await postIntegrationApi(baseUrl, "/integrations/tools/list", token);
+  const response = await postIntegrationApi(
+    baseUrl,
+    "/integrations/tools/list",
+    token,
+    undefined,
+    context,
+  );
 
   if (!response.ok) {
     // Throw so callers can distinguish a fetch failure from "no remote tools
     // available" (which returns an empty tools array with status 200).
+    await discardResponseBody(response);
     throw new Error(
       `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
     );
@@ -174,14 +207,20 @@ async function callRemoteTool(
   token: string,
   toolName: string,
   args: Record<string, unknown>,
-  context?: RemoteIntegrationToolExecutionContext,
+  context?: ToolExecutionContext,
 ): Promise<unknown> {
-  const response = await postIntegrationApi(baseUrl, "/integrations/tools/call", token, {
-    name: toolName,
-    arguments: args,
-    run_id: context?.runId,
-    agent_id: context?.agentId,
-  });
+  const response = await postIntegrationApi(
+    baseUrl,
+    "/integrations/tools/call",
+    token,
+    {
+      name: toolName,
+      arguments: args,
+      run_id: context?.runId,
+      agent_id: context?.agentId,
+    },
+    context,
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -223,15 +262,17 @@ async function callRemoteTool(
  * Called per agent loop iteration — results are scoped to the current
  * project's authorized integration tools via the per-request API token.
  */
-export async function getRemoteIntegrationToolDefinitions(): Promise<
+export async function getRemoteIntegrationToolDefinitions(
+  context?: ToolExecutionContext,
+): Promise<
   ToolDefinition[]
 > {
   const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken();
+  const token = resolveRequestToken(context);
   if (!baseUrl || !token) return [];
 
   try {
-    const remoteDefs = await fetchToolList(baseUrl, token);
+    const remoteDefs = await fetchToolList(baseUrl, token, context);
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
     return remoteDefs.filter((def) =>
       sourceIntegrationPolicy === undefined ||
@@ -266,7 +307,7 @@ export function isRemoteIntegrationTool(toolName: string): boolean {
 export async function executeRemoteIntegrationTool(
   toolName: string,
   args: Record<string, unknown>,
-  context?: RemoteIntegrationToolExecutionContext,
+  context?: ToolExecutionContext,
 ): Promise<unknown> {
   if (!isRemoteIntegrationTool(toolName)) {
     throw new Error(
@@ -283,7 +324,7 @@ export async function executeRemoteIntegrationTool(
   }
 
   const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken();
+  const token = resolveRequestToken(context);
   if (!baseUrl || !token) {
     return { error: "no_api_token", message: "No API token available" };
   }

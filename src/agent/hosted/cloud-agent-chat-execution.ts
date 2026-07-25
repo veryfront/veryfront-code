@@ -168,8 +168,8 @@ export function createAgentRuntime(
         await refreshProjectSkillIds(context, taskContext);
       }
     },
-    onStudioProjectSwitch: async ({ projectId, taskContext }) => {
-      if (!applyAgentProjectContextChange(taskContext, projectId)) {
+    onStudioProjectSwitch: async ({ projectId, projectSlug, taskContext }) => {
+      if (!applyAgentProjectContextChange(taskContext, projectId, projectSlug)) {
         return false;
       }
 

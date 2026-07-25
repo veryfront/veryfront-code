@@ -17,6 +17,7 @@ import {
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
+import { resolveHostedToolExecutionIdentity } from "./runtime-state-resolver.ts";
 
 /** Public API contract for default hosted project steering refresh logger. */
 export type DefaultHostedProjectSteeringRefreshLogger = {
@@ -172,8 +173,14 @@ export function createDefaultHostedProjectSteeringRefresh(
   return async (input) => {
     const projectId = getActiveProjectId(input.taskContext);
     const branchId = getActiveBranchId(input.taskContext);
-    const initialProjectInstructions = input.liveProjectSteering.initialProjectInstructions ?? "";
-    const initialSkills = input.liveProjectSteering.initialSkills ?? [];
+    const canUseInitialProjectSteering = projectId !== null &&
+      projectId === input.initialProjectId;
+    const initialProjectInstructions = canUseInitialProjectSteering
+      ? input.liveProjectSteering.initialProjectInstructions ?? ""
+      : "";
+    const initialSkills = canUseInitialProjectSteering
+      ? input.liveProjectSteering.initialSkills ?? []
+      : [];
 
     const [projectInstructions, skills, remoteToolNames] = await Promise.all([
       projectId
@@ -196,6 +203,7 @@ export function createDefaultHostedProjectSteeringRefresh(
         : Promise.resolve([]),
       listProjectScopedRemoteToolNames(input.toolAssembly.remoteToolSources, {
         projectId,
+        context: resolveHostedToolExecutionIdentity(input.taskContext),
         projectScopedRemoteToolOptions: options.projectScopedRemoteToolOptions,
       }),
     ]);

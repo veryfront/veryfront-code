@@ -37,6 +37,7 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
+  resolveHostedToolExecutionIdentity,
 } from "./runtime-state-resolver.ts";
 import type { ProjectSteeringMutationResult } from "../project/steering-mutation.ts";
 import type {
@@ -44,7 +45,7 @@ import type {
   RuntimeAgentThinkingConfig,
 } from "../runtime/agent-definition.ts";
 import type { AgentConfig } from "../types.ts";
-import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
+import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
@@ -104,6 +105,7 @@ export type CreateDefaultHostedChatRuntimeContextInput = {
 /** Input payload for default hosted chat runtime system refresh. */
 export type DefaultHostedChatRuntimeSystemRefreshInput = {
   taskContext: DefaultHostedChatRuntimeTaskContext;
+  initialProjectId?: string | null;
   liveProjectSteering: NonNullable<DefaultHostedChatRuntimeCreationOptions["liveProjectSteering"]>;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
 };
@@ -117,6 +119,7 @@ export type DefaultHostedChatRuntimeSteeringMutationInput = {
 /** Input payload for default hosted chat runtime project switch. */
 export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
+  projectSlug?: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
 };
 
@@ -216,9 +219,10 @@ async function buildToolAssembly(
         incrementSteeringRevision(input.taskContext);
       }
     },
-    onStudioProjectSwitch: async (projectId) => {
+    onStudioProjectSwitch: async (projectId, projectSlug) => {
       const changed = await input.onStudioProjectSwitch?.({
         projectId,
+        projectSlug,
         taskContext: input.taskContext,
       });
       if (changed) {
@@ -242,6 +246,7 @@ function createRuntimeAgentConfig(input: {
     ? () =>
       systemRefresh({
         taskContext: input.taskContext,
+        initialProjectId: input.options.projectId,
         liveProjectSteering,
         toolAssembly: input.toolAssembly,
       })
@@ -254,7 +259,7 @@ function createRuntimeAgentConfig(input: {
     ]),
   );
 
-  const runtimeConfig: AgentConfig & RuntimeRemoteToolConfig = {
+  const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
@@ -263,6 +268,7 @@ function createRuntimeAgentConfig(input: {
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
+    __vfResolveToolExecutionContext: () => resolveHostedToolExecutionIdentity(input.taskContext),
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
@@ -385,6 +391,8 @@ export async function createDefaultHostedChatRuntime(
             runId: taskContext.runId,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
+            projectId: taskContext.projectId || undefined,
+            projectSlug: taskContext.projectSlug,
             authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
             runStream: (operation) =>

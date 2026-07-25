@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runInNewContext } from "node:vm";
 import {
   buildErrorDocsUrl,
   ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
@@ -13,6 +14,7 @@ import {
   sanitizeStackDiagnosticText,
   sanitizeTerminalDiagnosticText,
   snapshotErrorForBoundary,
+  snapshotErrorForLoggingBoundary,
   snapshotThrowableDiagnostic,
 } from "./safe-diagnostics.ts";
 import { VeryfrontError } from "./types.ts";
@@ -185,5 +187,153 @@ describe("safe-diagnostics", () => {
 
     assertEquals(diagnostic.length, ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
     assert(diagnostic.endsWith("...[truncated]"));
+  });
+
+  it("keeps generic snapshots context-free and detaches redacted logging context", () => {
+    let toJSONCalls = 0;
+    const context = {
+      source: "runtime",
+      toJSON() {
+        toJSONCalls++;
+        return {
+          source: "serialized",
+          token: "raw-context-token",
+        };
+      },
+    };
+    const error = new VeryfrontError("Vendor error", {
+      slug: "vendor-error",
+      category: "GENERAL",
+      status: 500,
+      title: "Vendor error",
+      context,
+    });
+    const snapshot = snapshotErrorForBoundary(error);
+    const serializedSnapshot = JSON.stringify(snapshot);
+
+    assertEquals(Object.hasOwn(snapshot, "context"), false);
+    assertEquals(toJSONCalls, 0);
+    assertEquals(serializedSnapshot.includes("raw-context-token"), false);
+
+    const loggingSnapshot = snapshotErrorForLoggingBoundary(error);
+    const serializedLoggingSnapshot = JSON.stringify(loggingSnapshot);
+
+    assertEquals(toJSONCalls, 1);
+    assertEquals(Object.is(loggingSnapshot.context, context), false);
+    assertEquals(loggingSnapshot.context, {
+      source: "serialized",
+      token: "[REDACTED]",
+    });
+    assertEquals(serializedLoggingSnapshot.includes("raw-context-token"), false);
+
+    let contextReads = 0;
+    Object.defineProperty(error, "context", {
+      configurable: true,
+      get() {
+        contextReads++;
+        return { secret: "must-not-run" };
+      },
+    });
+
+    assertEquals(snapshotErrorForBoundary(error).context, undefined);
+    assertEquals(contextReads, 0);
+  });
+
+  it("reads only an own data stack and never invokes a stack accessor", () => {
+    const dataStackError = new Error("data failure");
+    Object.defineProperty(dataStackError, "stack", {
+      configurable: true,
+      value: "Error: data failure",
+      writable: true,
+    });
+
+    assertEquals(
+      snapshotErrorForBoundary(dataStackError).stack,
+      "Error: data failure",
+    );
+
+    let stackReads = 0;
+    const accessorError = new Error("hostile stack");
+    Object.defineProperty(accessorError, "stack", {
+      configurable: true,
+      get() {
+        stackReads++;
+        return "private stack";
+      },
+    });
+
+    assertEquals(snapshotErrorForBoundary(accessorError).stack, undefined);
+    assertEquals(stackReads, 0);
+  });
+
+  it("does not invoke error field accessors or Error.prepareStackTrace", () => {
+    const originalPrepareStackTrace = Object.getOwnPropertyDescriptor(
+      Error,
+      "prepareStackTrace",
+    );
+    let nameReads = 0;
+    let messageReads = 0;
+    let prepareStackTraceCalls = 0;
+    const accessorError = new Error("hostile fields");
+    Object.defineProperty(accessorError, "name", {
+      configurable: true,
+      get() {
+        nameReads++;
+        return "private-name";
+      },
+    });
+    Object.defineProperty(accessorError, "message", {
+      configurable: true,
+      get() {
+        messageReads++;
+        return "private-message";
+      },
+    });
+    Object.defineProperty(Error, "prepareStackTrace", {
+      configurable: true,
+      value() {
+        prepareStackTraceCalls++;
+        return "private-stack";
+      },
+      writable: true,
+    });
+
+    try {
+      const snapshot = snapshotErrorForBoundary(accessorError);
+
+      assertEquals(snapshot.stack, undefined);
+      assertEquals(snapshot.message, "Unknown/unclassified error");
+      assertEquals(snapshot.detail, "Unknown error");
+      assertEquals(nameReads, 0);
+      assertEquals(messageReads, 0);
+      assertEquals(prepareStackTraceCalls, 0);
+    } finally {
+      if (originalPrepareStackTrace) {
+        Object.defineProperty(
+          Error,
+          "prepareStackTrace",
+          originalPrepareStackTrace,
+        );
+      } else {
+        Reflect.deleteProperty(Error, "prepareStackTrace");
+      }
+    }
+  });
+
+  it("handles cross-realm stacks according to their own descriptor shape", () => {
+    const foreignError = runInNewContext(
+      'new Error("foreign failure")',
+    ) as Error;
+    const descriptor = Object.getOwnPropertyDescriptor(
+      foreignError,
+      "stack",
+    );
+
+    assert(isNativeErrorWithoutHooks(foreignError));
+    const expectedStack = descriptor && "value" in descriptor &&
+        typeof descriptor.value === "string"
+      ? sanitizeStackDiagnosticText(descriptor.value)
+      : undefined;
+    assertEquals(snapshotErrorForBoundary(foreignError).stack, expectedStack);
   });
 });

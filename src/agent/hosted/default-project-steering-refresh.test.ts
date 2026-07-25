@@ -9,6 +9,7 @@ import {
 } from "./default-project-steering-refresh.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.ts";
 
 function createAgent(): RuntimeAgentMarkdownDefinition {
   return {
@@ -40,6 +41,7 @@ function createRefreshInput(
       model: "openai/gpt-test",
       availableSkillIds: ["build"],
     },
+    initialProjectId: "project-1",
     liveProjectSteering: {
       agent: createAgent(),
       environmentContext: "Editor context",
@@ -257,7 +259,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertStringIncludes(system, "- web_search");
   });
 
-  it("falls back to initial steering when refresh lookups fail", async () => {
+  it("falls back to initial steering for the same project when refresh lookups fail", async () => {
     const errors: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.reject(new Error("instructions down")),
@@ -288,5 +290,88 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       "Refreshing project instructions failed during hosted runtime steering update",
       "Refreshing skills failed during hosted runtime steering update",
     ]);
+  });
+
+  it("does not reuse origin steering after a cross-project refresh failure", async () => {
+    let refreshedSteering: { instructions: string; skillIds: string[] } | undefined;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.reject(new Error("instructions down")),
+      fetchSkills: () => Promise.reject(new Error("skills down")),
+      buildInstructions: (input) => {
+        refreshedSteering = {
+          instructions: input.instructions,
+          skillIds: input.skills.map((skill) => skill.id),
+        };
+        return "target system";
+      },
+    });
+    const input = createRefreshInput({
+      taskContext: {
+        authToken: "target-auth-token",
+        projectId: "project-2",
+        branchId: null,
+        model: "openai/gpt-test",
+        availableSkillIds: ["initial"],
+      },
+    });
+
+    await refresh(input);
+
+    assertEquals(refreshedSteering, {
+      instructions: "",
+      skillIds: [],
+    });
+  });
+
+  it("lists refreshed Studio tools with the rotated credential tuple", async () => {
+    const config = createAgentServiceRemoteMcpConfig({
+      server: { kind: "veryfront-studio" },
+      authToken: "initial-token",
+      apiMcpUrl: "https://api.example.com/mcp",
+      studioMcpUrl: "https://studio.example.com/mcp",
+      clientProfile: {
+        id: "veryfront-studio",
+        type: "web",
+        trusted: true,
+        capabilities: ["ui_panels"],
+      },
+      getProjectId: () => "stale-getter-project",
+      conversationId: "conversation-1",
+    });
+    if (!config || typeof config.headers !== "function") {
+      throw new Error("Expected dynamic Studio MCP headers");
+    }
+    const resolveHeaders = config.headers;
+    let observedHeaders: HeadersInit | undefined;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Target instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => input.instructions,
+    });
+    const input = createRefreshInput({
+      taskContext: {
+        authToken: "rotated-token",
+        projectId: "project-2",
+        projectSlug: "project-two",
+        branchId: null,
+        model: "openai/gpt-test",
+      },
+    });
+    input.toolAssembly.remoteToolSources = [{
+      id: "studio-mcp",
+      listTools: async (context) => {
+        observedHeaders = await resolveHeaders(context);
+        return [];
+      },
+      executeTool: () => Promise.resolve({ ok: true }),
+    }];
+
+    await refresh(input);
+
+    assertEquals(observedHeaders, {
+      Authorization: "Bearer rotated-token",
+      "x-conversation-id": "conversation-1",
+      "x-project-id": "project-2",
+    });
   });
 });

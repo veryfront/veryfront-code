@@ -1,7 +1,11 @@
-import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
+import type { RemoteMCPToolSourceConfig, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentMcpToolPolicy } from "../types.ts";
 import { buildStudioMcpHeaders } from "../project/live-studio-mcp-tools.ts";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
+import {
+  resolveToolExecutionAuthToken,
+  resolveToolExecutionIdentity,
+} from "../runtime/tool-execution-identity.ts";
 
 export type AgentServiceVeryfrontApiMcpServerConfig = {
   kind: "veryfront-api";
@@ -62,6 +66,29 @@ function createGenericRemoteMcpConfig(
   return config;
 }
 
+function resolveExecutionAuthToken(
+  context: ToolExecutionContext | undefined,
+  fallbackAuthToken: string,
+): string {
+  return resolveToolExecutionAuthToken(
+    context,
+    fallbackAuthToken,
+    "Execution context",
+  ).authToken;
+}
+
+function resolveStudioExecutionIdentity(
+  context: ToolExecutionContext | undefined,
+  input: Pick<CreateAgentServiceRemoteMcpConfigInput, "authToken" | "getProjectId">,
+) {
+  return resolveToolExecutionIdentity(
+    context,
+    input.authToken,
+    input.getProjectId,
+    "Execution context",
+  );
+}
+
 function createVeryfrontApiRemoteMcpConfig(
   input: Pick<
     CreateAgentServiceRemoteMcpConfigInput,
@@ -73,9 +100,7 @@ function createVeryfrontApiRemoteMcpConfig(
     id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
     endpoint: input.apiMcpUrl,
     headers: (context) => {
-      const authToken = typeof context?.authToken === "string" && context.authToken.length > 0
-        ? context.authToken
-        : input.authToken;
+      const authToken = resolveExecutionAuthToken(context, input.authToken);
       return { Authorization: `Bearer ${authToken}` };
     },
   };
@@ -95,12 +120,14 @@ function createVeryfrontStudioRemoteMcpConfig(
   return {
     id: server.id ?? "studio-mcp",
     endpoint: input.studioMcpUrl,
-    headers: () =>
-      buildStudioMcpHeaders(
-        input.authToken,
-        input.getProjectId?.() ?? null,
+    headers: (context) => {
+      const identity = resolveStudioExecutionIdentity(context, input);
+      return buildStudioMcpHeaders(
+        identity.authToken,
+        identity.projectId,
         input.conversationId,
-      ),
+      );
+    },
   };
 }
 

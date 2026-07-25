@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "#veryfront/tool";
+import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import type { AgentConfig } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -6,11 +6,64 @@ import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/so
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
+/** Host-owned credential identity resolved at one tool-execution boundary. */
+export type RuntimeToolExecutionIdentity = Pick<
+  ToolExecutionContext,
+  "authToken" | "projectId" | "projectSlug"
+>;
+
 export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
+  /**
+   * Internal host boundary for context that can change between sibling tool
+   * calls in one model response. Kept out of AgentConfig so application-facing
+   * runtime-state semantics remain step-based. The resolver receives no base
+   * context and can therefore only contribute the narrow identity it returns.
+   */
+  __vfResolveToolExecutionContext?: () =>
+    | RuntimeToolExecutionIdentity
+    | Promise<RuntimeToolExecutionIdentity>;
 } & RuntimeRemoteToolConfig;
+
+/**
+ * Atomically replace the credential identity without allowing a resolver to
+ * alter unrelated execution capabilities such as abort or source policy.
+ */
+export function applyRuntimeToolExecutionIdentity(
+  context: ToolExecutionContext,
+  identity: RuntimeToolExecutionIdentity,
+): ToolExecutionContext {
+  const nextContext = { ...context };
+  for (const key of ["authToken", "projectId", "projectSlug"] as const) {
+    if (Object.hasOwn(identity, key)) {
+      nextContext[key] = identity[key];
+    } else {
+      delete nextContext[key];
+    }
+  }
+  return nextContext;
+}
+
+/**
+ * Resolve host-owned context immediately before executing one tool.
+ *
+ * Hosts that do not opt into the internal boundary retain the exact context
+ * object and behavior used before this hook was introduced.
+ */
+export async function resolveRuntimeToolExecutionContext(
+  config: AgentConfig,
+  context: ToolExecutionContext,
+): Promise<ToolExecutionContext> {
+  const resolver = (config as RuntimeToolFilterConfig).__vfResolveToolExecutionContext;
+  if (!resolver) {
+    return context;
+  }
+
+  const identity = await resolver();
+  return applyRuntimeToolExecutionIdentity(context, identity);
+}
 
 export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
   const configWithRuntimeFilters = config as RuntimeToolFilterConfig;

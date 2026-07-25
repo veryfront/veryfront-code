@@ -195,6 +195,32 @@ describe("logging", () => {
         assertEquals(output.includes("sk-secret"), false);
       });
 
+      it("detaches and redacts error context serializers before JSON emission", () => {
+        let toJSONCalls = 0;
+        const error = RENDER_ERROR.create({
+          context: {
+            toJSON() {
+              toJSONCalls++;
+              return {
+                source: "runtime",
+                token: "raw-serializer-token",
+              };
+            },
+          },
+        });
+
+        logError(error);
+
+        const output = getOnlyConsoleError();
+        const parsed = JSON.parse(output);
+        assertEquals(toJSONCalls, 1);
+        assertEquals(parsed.context, {
+          source: "runtime",
+          token: "[REDACTED]",
+        });
+        assertEquals(output.includes("raw-serializer-token"), false);
+      });
+
       it("redacts URL credentials embedded in JSON diagnostic details", () => {
         const error = RENDER_ERROR.create({
           detail: "Failed to connect to postgres://admin:super-secret@db.internal/app",

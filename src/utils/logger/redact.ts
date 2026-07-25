@@ -516,6 +516,7 @@ function redactCredentialAssignments(
   input: string,
   prefixPattern: RegExp,
   keyGroup: number,
+  urlParameterBoundaryGroup?: number,
 ): string {
   let cursor = 0;
   let result = "";
@@ -525,6 +526,20 @@ function redactCredentialAssignments(
     if (!isSensitiveKey(key)) continue;
 
     const valueStart = prefixPattern.lastIndex;
+    const boundary = urlParameterBoundaryGroup === undefined
+      ? undefined
+      : match[urlParameterBoundaryGroup];
+    const markerEnd = valueStart + REDACTED.length;
+    if (
+      (boundary === "?" || boundary === "&" || boundary === ";") &&
+      input.startsWith(REDACTED, valueStart) &&
+      input[markerEnd] === "#"
+    ) {
+      // The URL-parameter pass already bounded this credential at the URI
+      // fragment delimiter. Preserve that delimiter without treating an
+      // arbitrary `[REDACTED]suffix` assignment as trustworthy.
+      continue;
+    }
     const redactedValue = redactAssignmentValue(input, valueStart);
     result += input.slice(cursor, match.index);
     result += match[0];
@@ -657,6 +672,7 @@ export function sanitizeUrlCredentials(input: string): string {
     out,
     /(^|[^a-z0-9_.$-])([_$a-z][a-z0-9_.$-]*)(\s*[:=]\s*)/gi,
     2,
+    1,
   );
 
   return out;

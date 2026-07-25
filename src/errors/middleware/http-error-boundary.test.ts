@@ -158,9 +158,17 @@ describe("http-error-boundary", () => {
       }
     });
 
-    it("should include stack trace in dev mode", async () => {
+    it("should include an own data stack trace in dev mode", async () => {
       const handler = httpErrorBoundary(async () => {
-        throw new Error("Dev error");
+        const error = CONFIG_NOT_FOUND.create({
+          detail: "Dev error",
+        });
+        Object.defineProperty(error, "stack", {
+          configurable: true,
+          value: "VeryfrontError: Dev error\n    at trusted-boundary-test",
+          writable: true,
+        });
+        throw error;
       });
 
       const result = await handler(
@@ -176,7 +184,15 @@ describe("http-error-boundary", () => {
 
     it("should omit stack trace in production mode", async () => {
       const handler = httpErrorBoundary(async () => {
-        throw new Error("Production error");
+        const error = CONFIG_NOT_FOUND.create({
+          detail: "Production error",
+        });
+        Object.defineProperty(error, "stack", {
+          configurable: true,
+          value: "VeryfrontError: Production error\n    at trusted-boundary-test",
+          writable: true,
+        });
+        throw error;
       });
 
       const result = await handler(

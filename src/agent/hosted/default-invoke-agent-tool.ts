@@ -40,7 +40,11 @@ import {
 import { createLiveStudioMcpTools } from "../project/live-studio-mcp-tools.ts";
 import {
   applyAgentProjectContextChange,
+  getConfirmedResolvedAgentProjectIdentity,
+  INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
   type MutableAgentProjectContext,
+  normalizeAgentProjectReference,
+  UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
 } from "../project/context.ts";
 import {
   buildHostedDurableChildInvokeFailureResult,
@@ -270,8 +274,9 @@ async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgent
     "context" | "refreshProjectSkillIds"
   >,
   projectId: string,
+  projectSlug?: string,
 ): Promise<void> {
-  if (!applyAgentProjectContextChange(options.context, projectId)) {
+  if (!applyAgentProjectContextChange(options.context, projectId, projectSlug)) {
     return;
   }
 
@@ -318,7 +323,8 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     createRemoteToolSource: options.createRemoteToolSource ?? createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions: options.createToolsFromRemoteDefinitions ??
       createToolsFromRemoteDefinitions,
-    onConfirmedStudioProjectSwitch: (projectId) => applyRequestedProjectId(options, projectId),
+    onConfirmedStudioProjectSwitch: (projectId, projectSlug) =>
+      applyRequestedProjectId(options, projectId, projectSlug),
   });
 }
 
@@ -416,32 +422,64 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
+    projectId?: string | null;
+    projectSlug?: string;
+    runtimeTargetKind?: HostedDurableChildExecutionOptions["runtimeTargetKind"];
+    runtimeTargetEnvironmentId?: string | null;
+    branchId?: string | null;
   },
 ): Promise<ChildRunExecutionResult> {
   const baseConfig = options.getConfig();
   const config = runtimeOptions.childConfig?.mcpServers === undefined
     ? baseConfig
     : { ...baseConfig, mcpServers: runtimeOptions.childConfig.mcpServers };
+  const effectiveContext = {
+    ...options.context,
+    ...(typeof runtimeOptions.projectId === "string"
+      ? { projectId: runtimeOptions.projectId }
+      : {}),
+    ...(runtimeOptions.projectSlug !== undefined
+      ? { projectSlug: runtimeOptions.projectSlug }
+      : {}),
+    ...(runtimeOptions.runtimeTargetKind !== undefined
+      ? { runtimeTargetKind: runtimeOptions.runtimeTargetKind }
+      : {}),
+    ...(runtimeOptions.runtimeTargetEnvironmentId !== undefined
+      ? { runtimeTargetEnvironmentId: runtimeOptions.runtimeTargetEnvironmentId }
+      : {}),
+    ...(runtimeOptions.branchId !== undefined ? { branchId: runtimeOptions.branchId } : {}),
+  };
+  if (
+    typeof runtimeOptions.projectId === "string" &&
+    runtimeOptions.projectId !== options.context.projectId &&
+    runtimeOptions.projectSlug === undefined
+  ) {
+    delete effectiveContext.projectSlug;
+  }
+  const effectiveOptions = {
+    ...options,
+    context: effectiveContext as TContext,
+  };
   const forkInput = withHostedChildInvocationContext(input, {
-    parentConversationId: options.context.conversationId,
-    conversationId: options.context.conversationId,
-    parentRunId: options.context.parentRunId,
-    parentMessageId: options.context.parentMessageId,
+    parentConversationId: effectiveOptions.context.conversationId,
+    conversationId: effectiveOptions.context.conversationId,
+    parentRunId: effectiveOptions.context.parentRunId,
+    parentMessageId: effectiveOptions.context.parentMessageId,
     toolCallId: execution.toolCallId,
-    trustedInvocationContext: options.context.veryfrontInvocationContext,
+    trustedInvocationContext: effectiveOptions.context.veryfrontInvocationContext,
   });
   const invocationContext = forkInput.context?.veryfront_invocation_context as
     | HostedChildInvocationContext
     | undefined;
   const scopedOptions = invocationContext
     ? {
-      ...options,
+      ...effectiveOptions,
       context: {
-        ...options.context,
+        ...effectiveOptions.context,
         veryfrontInvocationContext: invocationContext,
       },
     }
-    : options;
+    : effectiveOptions;
   const instrumentation = buildInstrumentation(scopedOptions);
   const writeHostedChildExecutionLog = createHostedChildExecutionLogWriter(options.logger);
 
@@ -459,7 +497,8 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     resolveModelId: options.resolveModelId,
     resolveProvider: options.resolveProvider,
     resolveModelThinking: options.resolveModelThinking,
-    onRequestedProjectId: (projectId) => applyRequestedProjectId(scopedOptions, projectId),
+    onRequestedProjectId: (projectId, projectSlug) =>
+      applyRequestedProjectId(scopedOptions, projectId, projectSlug),
     onRuntimeConfig: (runtimeConfig) => {
       options.logger.info("Starting child fork", {
         conversationId: scopedOptions.context.conversationId,
@@ -574,19 +613,36 @@ export async function executeDefaultHostedInvokeAgentTool<
   const config = options.getConfig();
   const toolCallId = getToolCallId(executionContext);
   const abortSignal = getAbortSignal(executionContext);
-  const requestedProjectReference = input.project_reference;
+  const rawRequestedProjectReference = input.project_reference;
+  const requestedProjectReference = rawRequestedProjectReference === undefined
+    ? undefined
+    : normalizeAgentProjectReference(rawRequestedProjectReference);
+  if (rawRequestedProjectReference !== undefined && !requestedProjectReference) {
+    throw new TypeError(INVALID_AGENT_PROJECT_REFERENCE_MESSAGE);
+  }
   let targetProjectId = options.context.projectId;
   let resolvedInput = input;
   if (requestedProjectReference) {
     const resolver = options.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const rawResolvedProject = await resolver({
       projectReference: requestedProjectReference,
       authToken: options.context.authToken,
       apiUrl: config.apiUrl,
       abortSignal,
     });
+    const resolvedProject = getConfirmedResolvedAgentProjectIdentity(
+      rawResolvedProject,
+      requestedProjectReference,
+    );
+    if (!resolvedProject) {
+      throw new Error(UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE);
+    }
     targetProjectId = resolvedProject.projectId;
-    await applyRequestedProjectId(options, targetProjectId);
+    await applyRequestedProjectId(
+      options,
+      targetProjectId,
+      resolvedProject.projectSlug,
+    );
     resolvedInput = {
       ...input,
       project_reference: undefined,
@@ -621,12 +677,12 @@ export async function executeDefaultHostedInvokeAgentTool<
         sourceIntegrationPolicy,
       },
       {
+        ...runtimeOptions,
         childAgentId,
         childConfig,
         onSettled: (snapshot) => {
           executionSnapshot = snapshot;
         },
-        durableChildRun: runtimeOptions.durableChildRun,
       },
     );
 
@@ -671,7 +727,8 @@ export async function executeDefaultHostedInvokeAgentTool<
       defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
       resolveModelId: options.resolveModelId,
       resolveProvider: options.resolveProvider,
-      onRequestedProjectId: (projectId) => applyRequestedProjectId(options, projectId),
+      onRequestedProjectId: (projectId, projectSlug) =>
+        applyRequestedProjectId(options, projectId, projectSlug),
       publishParentRunEvents: options.context.publishParentRunEvents,
       contextUnavailableMessage:
         "invoke_agent requires durable conversation context when durable child runs are enabled.",

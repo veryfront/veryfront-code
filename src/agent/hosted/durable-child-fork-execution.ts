@@ -36,10 +36,21 @@ import {
   type HostedProjectReferenceResolver,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
+import {
+  getConfirmedResolvedAgentProjectIdentity,
+  INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+  normalizeAgentProjectReference,
+  UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
+} from "../project/context.ts";
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
+  projectId?: string | null;
+  projectSlug?: string;
+  runtimeTargetKind?: ConversationRunTargets["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
+  branchId?: string | null;
 };
 
 /** Result returned from hosted durable child invoke. */
@@ -392,10 +403,31 @@ export type HostedDurableChildBootstrapContext = {
   parentConversationId: string;
   parentRunId: string;
   parentMessageId: string;
+  projectId: string | null;
+  projectSlug?: string;
   targets: ConversationRunTargets;
   resolvedModel: string;
   provider: string;
 };
+
+type PreparedHostedDurableChildBootstrapContext = HostedDurableChildBootstrapContext & {
+  requestedProjectReference: string | null;
+};
+
+function copyHostedDurableChildBootstrapContext(
+  input: HostedDurableChildBootstrapContext,
+): HostedDurableChildBootstrapContext {
+  return {
+    parentConversationId: input.parentConversationId,
+    parentRunId: input.parentRunId,
+    parentMessageId: input.parentMessageId,
+    projectId: input.projectId,
+    ...(input.projectSlug !== undefined ? { projectSlug: input.projectSlug } : {}),
+    targets: { ...input.targets },
+    resolvedModel: input.resolvedModel,
+    provider: input.provider,
+  };
+}
 
 /** Public API contract for hosted durable child bootstrap callbacks. */
 export type HostedDurableChildBootstrapCallbacks = {
@@ -446,7 +478,10 @@ export type ExecuteHostedDurableChildForkInput<
   defaultModel: string;
   resolveModelId: (model: string) => string;
   resolveProvider: (modelId: string) => string;
-  onRequestedProjectId?: (projectId: string) => Promise<void> | void;
+  onRequestedProjectId?: (
+    projectId: string,
+    projectSlug?: string,
+  ) => Promise<void> | void;
   publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
   contextUnavailableMessage: string;
   setupFailedCode: string;
@@ -499,7 +534,15 @@ async function defaultRunBootstrap<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function getRequestedProjectReference(forkInput: HostedChildForkToolInput): string | null {
-  return forkInput.project_reference ?? null;
+  if (forkInput.project_reference === undefined) {
+    return null;
+  }
+
+  const projectReference = normalizeAgentProjectReference(forkInput.project_reference);
+  if (!projectReference) {
+    throw new TypeError(INVALID_AGENT_PROJECT_REFERENCE_MESSAGE);
+  }
+  return projectReference;
 }
 
 async function prepareHostedDurableChildBootstrapContext<
@@ -511,24 +554,46 @@ async function prepareHostedDurableChildBootstrapContext<
     parentRunId: string;
     parentMessageId: string;
   },
-): Promise<HostedDurableChildBootstrapContext> {
+): Promise<PreparedHostedDurableChildBootstrapContext> {
+  const currentProjectId = input.getProjectId() ?? null;
+  const currentRuntimeTargetKind = getRuntimeTargetKind(input) ?? null;
+  const currentRuntimeTargetEnvironmentId = getRuntimeTargetEnvironmentId(input) ?? null;
+  const currentBranchId = getBranchId(input) ?? null;
   const requestedProjectReference = getRequestedProjectReference(input.forkInput);
+  let projectId = currentProjectId;
+  let projectSlug: string | undefined;
+  let projectChanged = false;
+
   if (requestedProjectReference) {
     const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const resolvedProject: unknown = await resolver({
       projectReference: requestedProjectReference,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       abortSignal: input.executionOptions.abortSignal,
     });
-    await input.onRequestedProjectId?.(resolvedProject.projectId);
+    const identity = getConfirmedResolvedAgentProjectIdentity(
+      resolvedProject,
+      requestedProjectReference,
+    );
+    if (!identity) {
+      throw new Error(UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE);
+    }
+
+    projectId = identity.projectId;
+    projectSlug = identity.projectSlug;
+    projectChanged = projectId !== currentProjectId;
+    await input.onRequestedProjectId?.(
+      projectId,
+      projectSlug,
+    );
   }
 
   const targets = resolveConversationRunTargets({
-    projectId: input.getProjectId() ?? null,
-    runtimeTargetKind: getRuntimeTargetKind(input) ?? null,
-    environmentId: getRuntimeTargetEnvironmentId(input) ?? null,
-    branchId: getBranchId(input) ?? null,
+    projectId,
+    runtimeTargetKind: projectChanged ? "main_branch" : currentRuntimeTargetKind,
+    environmentId: projectChanged ? null : currentRuntimeTargetEnvironmentId,
+    branchId: projectChanged ? null : currentBranchId,
   });
   const resolvedModel = input.resolveModelId(resolveContextModel(input));
 
@@ -536,9 +601,12 @@ async function prepareHostedDurableChildBootstrapContext<
     parentConversationId: input.parentConversationId,
     parentRunId: input.parentRunId,
     parentMessageId: input.parentMessageId,
+    projectId,
+    ...(projectSlug !== undefined ? { projectSlug } : {}),
     targets,
     resolvedModel,
     provider: input.resolveProvider(resolvedModel),
+    requestedProjectReference,
   };
 }
 
@@ -547,13 +615,15 @@ async function bootstrapHostedDurableChildFork<
   TLocalResult extends ChildRunExecutionResult,
 >(
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult> & {
-    bootstrapContext: HostedDurableChildBootstrapContext;
+    bootstrapContext: PreparedHostedDurableChildBootstrapContext;
   },
 ): Promise<HostedChildRunIdentifiers> {
   const runBootstrap = input.bootstrap?.runBootstrap ?? defaultRunBootstrap;
 
   return runBootstrap(async () => {
-    await input.bootstrap?.onBootstrapStart?.(input.bootstrapContext);
+    await input.bootstrap?.onBootstrapStart?.(
+      copyHostedDurableChildBootstrapContext(input.bootstrapContext),
+    );
     const forkInput = withHostedChildInvocationContext(input.forkInput, {
       parentConversationId: input.bootstrapContext.parentConversationId,
       conversationId: input.bootstrapContext.parentConversationId,
@@ -567,12 +637,12 @@ async function bootstrapHostedDurableChildFork<
     const run = await bootstrapChildRun({
       authToken: input.authToken,
       apiUrl: input.apiUrl,
-      ensureProjectId: input.getProjectId() ?? undefined,
-      runProjectId: getRequestedProjectReference(input.forkInput)
-        ? input.getProjectId() ?? undefined
+      ensureProjectId: input.bootstrapContext.projectId ?? undefined,
+      runProjectId: input.bootstrapContext.requestedProjectReference
+        ? input.bootstrapContext.projectId ?? undefined
         : input.runProjectId !== undefined
         ? input.runProjectId
-        : input.getProjectId() ?? undefined,
+        : input.bootstrapContext.projectId ?? undefined,
       parentConversationId: input.bootstrapContext.parentConversationId,
       parentRunId: input.bootstrapContext.parentRunId,
       parentMessageId: input.bootstrapContext.parentMessageId,
@@ -585,9 +655,9 @@ async function bootstrapHostedDurableChildFork<
         runId: input.executionOptions.toolCallId,
       }),
       agentId: input.childAgentId,
-      runtimeTargetKind: getRuntimeTargetKind(input),
-      runtimeTargetEnvironmentId: getRuntimeTargetEnvironmentId(input),
-      branchId: getBranchId(input),
+      runtimeTargetKind: input.bootstrapContext.targets.runtimeTargetKind,
+      runtimeTargetEnvironmentId: input.bootstrapContext.targets.targetEnvironmentId,
+      branchId: input.bootstrapContext.targets.targetBranchId,
     });
     const identifiers: HostedChildRunIdentifiers = {
       childConversationId: run.childConversationId,
@@ -598,8 +668,8 @@ async function bootstrapHostedDurableChildFork<
     };
 
     await input.bootstrap?.onBootstrapComplete?.({
-      ...input.bootstrapContext,
-      identifiers,
+      ...copyHostedDurableChildBootstrapContext(input.bootstrapContext),
+      identifiers: { ...identifiers },
     });
 
     return identifiers;
@@ -624,7 +694,7 @@ async function executeHostedDurableChildLifecycle<
     apiUrl: input.apiUrl,
     parentConversationId: bootstrapContext.parentConversationId,
     parentRunId: bootstrapContext.parentRunId,
-    projectId: input.getProjectId(),
+    projectId: bootstrapContext.projectId,
     publishParentRunEvents: input.publishParentRunEvents,
     progress: {
       toolCallId: input.executionOptions.toolCallId,
@@ -651,7 +721,14 @@ async function executeHostedDurableChildLifecycle<
     abortSignal: input.executionOptions.abortSignal,
     execute: () =>
       input.executeLocal({
-        durableChildRun: identifiers,
+        durableChildRun: { ...identifiers },
+        projectId: bootstrapContext.projectId,
+        ...(bootstrapContext.projectSlug !== undefined
+          ? { projectSlug: bootstrapContext.projectSlug }
+          : {}),
+        runtimeTargetKind: targets.runtimeTargetKind,
+        runtimeTargetEnvironmentId: targets.targetEnvironmentId,
+        branchId: targets.targetBranchId,
       }),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
@@ -677,7 +754,7 @@ async function executeHostedDurableChildLifecycle<
   }
 
   await input.onLifecycleFinalized?.({
-    identifiers,
+    identifiers: { ...identifiers },
     status: lifecycleResult.status,
   });
 

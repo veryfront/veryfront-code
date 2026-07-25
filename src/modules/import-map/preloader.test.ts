@@ -282,6 +282,10 @@ describe("modules/import-map/preloader", () => {
         "https://example.com/scoped-v1.ts",
       );
       assertEquals(
+        await preloader.getCached("immutable-loader-output"),
+        published,
+      );
+      assertEquals(
         await preloader.preload(
           "/immutable-loader-output",
           adapter,
@@ -476,6 +480,76 @@ describe("modules/import-map/preloader", () => {
       assertEquals(replacement === expired, false);
       assertEquals(cachedReplacement, replacement);
       assertEquals(getLoads(), 2);
+    });
+
+    it("deduplicates concurrent direct refreshes at capacity after expiry", async () => {
+      const adapter = createMinimalAdapter();
+      let now = 1_000;
+      const loads: Array<ReturnType<typeof createDeferred<ImportMapConfig>>> = [];
+      const preloader = new ImportMapPreloader({
+        maxProjects: 1,
+        maxVariantsPerProject: 1,
+        ttlMs: 100,
+        now: () => now,
+        loadImportMap: () => {
+          const load = createDeferred<ImportMapConfig>();
+          loads.push(load);
+          return load.promise;
+        },
+      });
+      const context = { contentSourceId: "source-a" };
+
+      const initialPromise = preloader.preload(
+        "/concurrent-direct-expiry",
+        adapter,
+        "concurrent-direct-expiry",
+        context,
+      );
+      await waitForLoadCount(loads, 1);
+      loads[0]!.resolve({ imports: { loaded: "initial" } });
+      const initial = await initialPromise;
+
+      now = 1_100;
+      const replacementPromise = preloader.preload(
+        "/concurrent-direct-expiry",
+        adapter,
+        "concurrent-direct-expiry",
+        context,
+      );
+      await waitForLoadCount(loads, 2);
+      const duplicatePromise = preloader.preload(
+        "/concurrent-direct-expiry",
+        adapter,
+        "concurrent-direct-expiry",
+        context,
+      );
+      const cachedPromise = preloader.getCached(
+        "concurrent-direct-expiry",
+        context,
+      );
+
+      await Promise.resolve();
+      assertEquals(loads.length, 2);
+      loads[1]!.resolve({ imports: { loaded: "replacement" } });
+      const [replacement, duplicate, cached] = await Promise.all([
+        replacementPromise,
+        duplicatePromise,
+        cachedPromise,
+      ]);
+
+      assertEquals(replacement === initial, false);
+      assertEquals(duplicate, replacement);
+      assertEquals(cached, replacement);
+      assertEquals(
+        await preloader.preload(
+          "/concurrent-direct-expiry",
+          adapter,
+          "concurrent-direct-expiry",
+          context,
+        ),
+        replacement,
+      );
+      assertEquals(loads.length, 2);
     });
 
     it("removes a settled entry when the injected clock throws", async () => {

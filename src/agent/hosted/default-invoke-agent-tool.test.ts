@@ -154,6 +154,13 @@ Deno.test("fixed hosted delegates inherit project-agent settings without overrid
 });
 
 Deno.test("default hosted invoke resolves and runs configured child against the target project", async () => {
+  const context: DefaultHostedInvokeAgentContext = {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "original-project",
+    branchId: null,
+    model: "sonnet",
+  };
   const captured: {
     model?: string;
     temperature?: number;
@@ -165,6 +172,7 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
 
   const result = await executeDefaultHostedInvokeAgentTool(
     createTestOptions({
+      context,
       enableDurableInvokeAgent: false,
       config: { mcpServers: [] },
       options: {
@@ -186,6 +194,7 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
         },
         buildGlobalTools: (context, childAgentId, childConfig) => {
           assertEquals(context.projectId, "target-project-id");
+          assertEquals(context.projectSlug, "target-project");
           assertEquals(childAgentId, "extraction-agent");
           assertEquals(childConfig?.toolNames, ["lookup_job"]);
           return {
@@ -257,6 +266,59 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
   assertEquals(captured.system?.includes("Follow the extraction policy."), true);
   assertEquals(captured.system?.includes("Available Skills"), true);
   assertEquals(captured.prompt?.includes("Extract the application."), true);
+  assertEquals(context.projectId, "target-project-id");
+  assertEquals(context.projectSlug, "target-project");
+});
+
+Deno.test("default hosted invoke rejects an unbound custom project resolution before mutation", async () => {
+  const context: DefaultHostedInvokeAgentContext = {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "original-project",
+    branchId: "branch-1",
+    model: "sonnet",
+  };
+  let childConfigResolutionCount = 0;
+
+  await assertRejects(
+    () =>
+      executeDefaultHostedInvokeAgentTool(
+        createTestOptions({
+          context,
+          enableDurableInvokeAgent: false,
+          options: {
+            resolveProjectReference: () =>
+              Promise.resolve({
+                projectId: "different-project-id",
+                slug: "different-project",
+              }),
+            resolveChildAgentExecutionConfig: () => {
+              childConfigResolutionCount += 1;
+              return Promise.resolve(undefined);
+            },
+          },
+        }),
+        {
+          description: "inspect target",
+          prompt: "Inspect the target project.",
+          context: {},
+          agent_id: "security-reviewer",
+          project_reference: "target-project",
+        },
+        "security-reviewer",
+      ),
+    Error,
+    "Project reference resolver returned an unconfirmed project identity",
+  );
+
+  assertEquals(childConfigResolutionCount, 0);
+  assertEquals(context, {
+    authToken: "token-123",
+    projectId: "project-123",
+    projectSlug: "original-project",
+    branchId: "branch-1",
+    model: "sonnet",
+  });
 });
 
 Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure before local execution", async () => {

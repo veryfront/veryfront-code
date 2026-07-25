@@ -21,7 +21,8 @@ function createMockAdapter(
     },
     fs: {
       exists: () => Promise.resolve(false),
-      readFile: () => Promise.resolve(""),
+      readFile: (path: string) =>
+        Promise.reject(new Deno.errors.NotFound(`File not found: ${path}`)),
       writeFile: () => Promise.resolve(),
       readDir: () => Promise.resolve([]),
       mkdir: () => Promise.resolve(),

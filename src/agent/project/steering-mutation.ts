@@ -1,3 +1,9 @@
+import {
+  isErroredToolExecutionResult,
+  readToolResultOwnDataProperty,
+  UNREADABLE_TOOL_RESULT_PROPERTY,
+} from "#veryfront/tool/result.ts";
+
 /** Default value for project steering paths. */
 export const DEFAULT_PROJECT_STEERING_PATHS = {
   instructions: ["AGENTS.md"],
@@ -129,14 +135,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Result returned from is successful project steering mutation. */
 export function isSuccessfulProjectSteeringMutationResult(result: unknown): boolean {
+  if (isErroredToolExecutionResult(result)) {
+    return false;
+  }
+
   if (!isRecord(result)) {
     return true;
   }
 
-  if (result.isError === true) {
+  const success = readToolResultOwnDataProperty(result, "success");
+  if (success === false || success === UNREADABLE_TOOL_RESULT_PROPERTY) {
     return false;
   }
 
-  const structuredContent = result.structuredContent;
-  return !(isRecord(structuredContent) && structuredContent.success === false);
+  const structuredContent = readToolResultOwnDataProperty(result, "structuredContent");
+  if (structuredContent === UNREADABLE_TOOL_RESULT_PROPERTY) {
+    return false;
+  }
+
+  const structuredSuccess = readToolResultOwnDataProperty(structuredContent, "success");
+  return !(
+    isErroredToolExecutionResult(structuredContent) ||
+    structuredSuccess === false ||
+    structuredSuccess === UNREADABLE_TOOL_RESULT_PROPERTY
+  );
 }

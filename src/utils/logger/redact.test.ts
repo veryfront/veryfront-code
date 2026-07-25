@@ -425,6 +425,30 @@ describe("logger/redact", () => {
       );
     });
 
+    it("preserves a URL fragment after masking its query credential", () => {
+      const sanitized = sanitizeUrlCredentials(
+        "https://app.example.test/callback?token=query-secret#fragment%value",
+      );
+
+      assertEquals(
+        sanitized,
+        `https://app.example.test/callback?token=${REDACTED}#fragment%value`,
+      );
+      assertEquals(sanitizeUrlCredentials(sanitized), sanitized);
+      assertEquals(
+        sanitizeUrlCredentials(
+          `?token=${REDACTED}still-secret#fragment`,
+        ),
+        `?token=${REDACTED}#fragment`,
+      );
+      assertEquals(
+        sanitizeUrlCredentials(
+          `token=${REDACTED}still-secret#fragment status=401`,
+        ),
+        `token=${REDACTED} status=401`,
+      );
+    });
+
     it("masks sensitive parameter names containing percent-encoded separators", () => {
       assertEquals(
         sanitizeUrlCredentials("https://app.example.test/?access%5Ftoken=secret&page=2"),

@@ -468,7 +468,9 @@ describe("wireTracingShim()", () => {
     reset();
     const noExporterInstallation = wireTracingShim();
     const snapshot = getGlobalTelemetryAPISnapshot();
-    logger.info("after no-exporter install");
+    // ERROR is never filtered by a supported LOG_LEVEL, so this assertion
+    // exercises emitter ownership under every repository test profile.
+    logger.error("after no-exporter install");
 
     assertNotStrictEquals(snapshot.tracerProvider, a.tracerProvider);
     assertEquals(snapshot.metricsApi, null);
@@ -499,11 +501,11 @@ describe("wireTracingShim()", () => {
     assertStrictEquals(snapshot.contextAccessor, b.contextAccessor);
     assertStrictEquals(snapshot.activeSpanAccessor, b.activeSpanAccessor);
 
-    logger.info("owned by B");
+    logger.error("owned by B");
     assertEquals(emitted, ["B:owned by B"]);
     assertEquals(bInstallation.dispose(), true);
     assertNotStrictEquals(getGlobalTelemetryAPISnapshot().tracerProvider, b.tracerProvider);
-    logger.info("after B disposal");
+    logger.error("after B disposal");
     assertEquals(emitted, ["B:owned by B"]);
     resetTelemetryTestState();
   });
@@ -534,7 +536,7 @@ describe("wireTracingShim()", () => {
     assertStrictEquals(after.contextAccessor, a.contextAccessor);
     assertStrictEquals(after.activeSpanAccessor, a.activeSpanAccessor);
 
-    logger.info("still owned by A");
+    logger.error("still owned by A");
     assertEquals(emitted, ["A:still owned by A"]);
 
     assertEquals(aInstallation.dispose(), true);
