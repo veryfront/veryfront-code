@@ -67,7 +67,9 @@ export function buildBareSpecifierEsmUrl(
 ): string {
   if (getPinVersion) {
     const parsed = parseBarePackageSpecifier(path);
-    if (parsed) {
+    // Only inject a pin when the specifier has no inline version specifier.
+    // An inline version (including dist-tags like @next) must be preserved as-is.
+    if (parsed && parsed.version === null) {
       const pinVersion = getPinVersion(parsed.packageName);
       if (pinVersion) {
         return `https://esm.sh/${parsed.packageName}@${pinVersion}${parsed.subpath ?? ""}`;

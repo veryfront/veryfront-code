@@ -124,6 +124,22 @@ describe("transforms/esm/http-bundler", () => {
       );
     });
 
+    it("does not override an inline numeric version even when a pin callback is provided", () => {
+      // The specifier already has a version (@4.17.21); the pin callback must
+      // not overwrite it with a different version.
+      assertEquals(
+        buildBareSpecifierEsmUrl("lodash@4.17.21", () => "3.0.0"),
+        "https://esm.sh/lodash@4.17.21",
+      );
+    });
+
+    it("does not override an inline dist-tag (pkg@next) with a numeric pin", () => {
+      assertEquals(
+        buildBareSpecifierEsmUrl("some-pkg@next", () => "4.0.0"),
+        "https://esm.sh/some-pkg@next",
+      );
+    });
+
     it("handles scoped packages with a subpath", () => {
       assertEquals(
         buildBareSpecifierEsmUrl("@tanstack/react-query/internals", () => "5.0.0"),
