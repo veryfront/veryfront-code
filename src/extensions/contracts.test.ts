@@ -56,6 +56,20 @@ describe("extensions/contracts", () => {
       register("CSSProcessor", { v: 2 });
       assertEquals(resolve<{ v: number }>("CSSProcessor").v, 2);
     });
+
+    it("rejects ambiguous names and undefined implementations", () => {
+      assertThrows(
+        () => register(" Contract", {}),
+        TypeError,
+        "non-empty canonical string",
+      );
+      assertThrows(
+        () => register("UndefinedContract", undefined),
+        TypeError,
+        "must not be undefined",
+      );
+      assertEquals(tryResolve("UndefinedContract"), undefined);
+    });
   });
 
   describe("unregister()", () => {

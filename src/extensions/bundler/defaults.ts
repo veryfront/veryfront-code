@@ -3,10 +3,9 @@ import {
   importFirstPartyExtensionModule,
   isMissingFirstPartyExtensionModule,
 } from "../first-party-import.ts";
+import { assertRequiredMethods, getConstructibleModuleExport } from "../runtime-validation.ts";
 import type { Bundler } from "./bundler.ts";
 import type { ModuleLexer } from "./module-lexer.ts";
-
-type ZeroArgumentConstructor<T> = new () => T;
 
 const DEFAULT_BUNDLER_EXTENSION_PACKAGE = "@veryfront/ext-bundler-esbuild";
 
@@ -16,97 +15,43 @@ function isMissingDefaultBundlerExtension(error: unknown): boolean {
   ]);
 }
 
-function isConstructor<T>(
-  value: unknown,
-): value is ZeroArgumentConstructor<T> {
-  if (typeof value !== "function") return false;
-  try {
-    Reflect.construct(Object, [], value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function getDefaultBundlerConstructor<T>(
-  extensionModule: unknown,
-  exportName: "EsbuildBundler" | "EsModuleLexer",
-): ZeroArgumentConstructor<T> {
-  if (
-    extensionModule === null ||
-    (typeof extensionModule !== "object" && typeof extensionModule !== "function")
-  ) {
-    throw new TypeError(
-      `Invalid ${DEFAULT_BUNDLER_EXTENSION_PACKAGE} module: expected a module namespace`,
-    );
-  }
-
-  let candidate: unknown;
-  try {
-    candidate = (extensionModule as Record<string, unknown>)[exportName];
-  } catch (cause) {
-    throw new TypeError(
-      `Invalid ${DEFAULT_BUNDLER_EXTENSION_PACKAGE} module: could not read export "${exportName}"`,
-      { cause },
-    );
-  }
-
-  if (!isConstructor<T>(candidate)) {
-    throw new TypeError(
-      `Invalid ${DEFAULT_BUNDLER_EXTENSION_PACKAGE} module: export "${exportName}" must be constructible`,
-    );
-  }
-  return candidate;
-}
-
-function assertRequiredMethods(
-  instance: unknown,
-  exportName: "EsbuildBundler" | "EsModuleLexer",
-  methodNames: readonly string[],
-): void {
-  for (const methodName of methodNames) {
-    let method: unknown;
-    try {
-      method = (instance as Record<string, unknown>)[methodName];
-    } catch (cause) {
-      throw new TypeError(
-        `Invalid ${DEFAULT_BUNDLER_EXTENSION_PACKAGE} module: "${exportName}" instance could not expose method "${methodName}"`,
-        { cause },
-      );
-    }
-    if (typeof method !== "function") {
-      throw new TypeError(
-        `Invalid ${DEFAULT_BUNDLER_EXTENSION_PACKAGE} module: "${exportName}" instance must implement method "${methodName}"`,
-      );
-    }
-  }
-}
-
 function registerDefaultBundlerModule(extensionModule: unknown): void {
   const needsBundler = tryResolve<Bundler>("Bundler") === undefined;
   const needsModuleLexer = tryResolve<ModuleLexer>("ModuleLexer") === undefined;
   if (!needsBundler && !needsModuleLexer) return;
 
   const EsbuildBundler = needsBundler
-    ? getDefaultBundlerConstructor<Bundler>(
+    ? getConstructibleModuleExport<Bundler>(
       extensionModule,
+      DEFAULT_BUNDLER_EXTENSION_PACKAGE,
       "EsbuildBundler",
     )
     : undefined;
   const EsModuleLexer = needsModuleLexer
-    ? getDefaultBundlerConstructor<ModuleLexer>(
+    ? getConstructibleModuleExport<ModuleLexer>(
       extensionModule,
+      DEFAULT_BUNDLER_EXTENSION_PACKAGE,
       "EsModuleLexer",
     )
     : undefined;
 
   const bundler = EsbuildBundler === undefined ? undefined : new EsbuildBundler();
   if (bundler !== undefined) {
-    assertRequiredMethods(bundler, "EsbuildBundler", ["bundle", "transform"]);
+    assertRequiredMethods(
+      bundler,
+      DEFAULT_BUNDLER_EXTENSION_PACKAGE,
+      "EsbuildBundler",
+      ["bundle", "transform"],
+    );
   }
   const moduleLexer = EsModuleLexer === undefined ? undefined : new EsModuleLexer();
   if (moduleLexer !== undefined) {
-    assertRequiredMethods(moduleLexer, "EsModuleLexer", ["parse"]);
+    assertRequiredMethods(
+      moduleLexer,
+      DEFAULT_BUNDLER_EXTENSION_PACKAGE,
+      "EsModuleLexer",
+      ["parse"],
+    );
   }
 
   // Construct and validate every missing implementation before mutating the
@@ -134,7 +79,10 @@ export const defaultBundlerContractsInternals = Object.freeze({
  * is available from workspace source or an installed @veryfront/ext package.
  */
 export async function ensureDefaultBundlerContracts(): Promise<void> {
-  if (tryResolve("Bundler") && tryResolve("ModuleLexer")) return;
+  if (
+    tryResolve("Bundler") !== undefined &&
+    tryResolve("ModuleLexer") !== undefined
+  ) return;
 
   let extensionModule: unknown;
   try {
