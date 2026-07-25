@@ -50,6 +50,7 @@ import {
 } from "./runtime-direct-content.ts";
 import { normalizeRuntimeUsage, projectRuntimeStreamUsage } from "./runtime-usage.ts";
 import {
+  isNonFiniteParsedRuntimeToolInputError,
   MAX_RUNTIME_AGGREGATE_TOOL_INPUT_BYTES,
   MAX_RUNTIME_TOOL_CALLS,
   MAX_RUNTIME_TOOL_INPUT_BYTES,
@@ -408,7 +409,15 @@ function parseToolCallInput(input: unknown): unknown {
   } catch {
     return input;
   }
-  const snapshot = snapshotRuntimeToolInput(parsed);
+  let snapshot: ReturnType<typeof snapshotRuntimeToolInput>;
+  try {
+    snapshot = snapshotRuntimeToolInput(parsed);
+  } catch (error) {
+    if (isNonFiniteParsedRuntimeToolInputError(error)) {
+      return input;
+    }
+    throw error;
+  }
   if (snapshot.exceedsLimit) {
     throw new TypeError("Runtime tool input exceeded its structured snapshot limit");
   }
