@@ -382,9 +382,18 @@ describe("mcp/tools/deploy-tool", () => {
           using time = new FakeTime();
           resumeReleaseSourceRead();
           await time.tickAsync(0);
-          for (let attempt = 1; attempt < 20; attempt++) {
+          for (
+            let tick = 0;
+            releaseSourceReads < 20 && tick < 40;
+            tick++
+          ) {
             await time.tickAsync(500);
           }
+          assertEquals(
+            releaseSourceReads,
+            20,
+            "release-source polling did not exhaust its fixed read budget",
+          );
           mismatchResult = await deployment;
         }
         releaseSourceReadGate = null;

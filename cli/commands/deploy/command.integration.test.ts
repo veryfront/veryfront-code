@@ -227,9 +227,18 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       using time = new FakeTime();
       resumeReleaseSourceRead();
       await time.tickAsync(0);
-      for (let attempt = 1; attempt < 20; attempt++) {
+      for (
+        let tick = 0;
+        releaseSourceReads < 20 && tick < 40;
+        tick++
+      ) {
         await time.tickAsync(500);
       }
+      assertEquals(
+        releaseSourceReads,
+        20,
+        "release-source polling did not exhaust its fixed read budget",
+      );
       await assertRejects(
         () => deployment,
         Error,
