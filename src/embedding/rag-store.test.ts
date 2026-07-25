@@ -631,6 +631,66 @@ describe("ragStore", () => {
     });
   });
 
+  it("synchronizes changed and removed local content files without duplicating documents", async () => {
+    await withTempDir(async (tempDir) => {
+      const contentDir = join(tempDir, "content");
+      const sourcePath = join(contentDir, "guide.md");
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(contentDir, { recursive: true });
+      await Deno.writeTextFile(sourcePath, "first version");
+
+      const store = ragStore({
+        contentDir,
+        model: "local/test-model",
+        storagePath,
+      });
+      await store.indexContentDir();
+
+      const initialDocuments = await store.listDocuments();
+      assertEquals(initialDocuments.length, 1);
+      assertEquals(initialDocuments[0]?.title, "guide");
+      assertEquals(
+        Object.hasOwn(initialDocuments[0] ?? {}, "contentIndexFingerprint"),
+        false,
+      );
+      const documentId = initialDocuments[0]!.id;
+
+      await Deno.writeTextFile(sourcePath, "second version");
+      await store.indexContentDir();
+      const refreshedDocuments = await store.listDocuments();
+      assertEquals(refreshedDocuments.length, 1);
+      assertEquals(refreshedDocuments[0]?.id, documentId);
+
+      const refreshedPayload = await readTextFile(storagePath);
+      const refreshedData = JSON.parse(refreshedPayload) as {
+        documents: Array<Record<string, unknown>>;
+        chunks: Array<{ documentId: string; text: string }>;
+      };
+      assertEquals(refreshedData.documents[0]?.managedBy, "content-dir");
+      assertEquals(
+        typeof refreshedData.documents[0]?.contentIndexFingerprint,
+        "string",
+      );
+      assertEquals(
+        refreshedData.chunks
+          .filter((entry) => entry.documentId === documentId)
+          .map((entry) => entry.text),
+        ["second version"],
+      );
+
+      await store.indexContentDir();
+      assertEquals(await readTextFile(storagePath), refreshedPayload);
+
+      await Deno.remove(sourcePath);
+      await store.indexContentDir();
+      assertEquals(await store.listDocuments(), []);
+      const removedData = JSON.parse(await readTextFile(storagePath)) as {
+        chunks: unknown[];
+      };
+      assertEquals(removedData.chunks, []);
+    });
+  });
+
   it("auto-upgrades to the veryfront-cloud backend when cloud bootstrap is present", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_cloud");
     setEnv("VERYFRONT_PROJECT_SLUG", "cloud-project");
@@ -1627,6 +1687,10 @@ describe("ragStore", () => {
       }>
     >();
     const requestedPaths: string[] = [];
+    let publishedContent = "# Login troubleshooting\n\nEscalate blocked SSO login issues.";
+    let includePublishedFile = true;
+    let chunkWriteCount = 0;
+    let documentWriteCount = 0;
 
     await withMockFetch(
       async (input: string | URL | Request, init?: RequestInit) => {
@@ -1639,19 +1703,21 @@ describe("ragStore", () => {
           url.pathname === "/projects/cloud-project/releases/rel-abc/files"
         ) {
           return Response.json({
-            data: [
-              {
-                id: "file-login",
-                version_id: "version-login",
-                path: "knowledge/login-troubleshooting.md",
-                content: "# Login troubleshooting\n\nEscalate blocked SSO login issues.",
-                size: 62,
-                type: "file",
-                updated_at: "2026-06-25T00:00:00.000Z",
-                release_id: "rel-abc",
-                release_version: "0.0.1",
-              },
-            ],
+            data: includePublishedFile
+              ? [
+                {
+                  id: "file-login",
+                  version_id: "version-login",
+                  path: "knowledge/login-troubleshooting.md",
+                  content: publishedContent,
+                  size: publishedContent.length,
+                  type: "file",
+                  updated_at: "2026-06-25T00:00:00.000Z",
+                  release_id: "rel-abc",
+                  release_version: "0.0.1",
+                },
+              ]
+              : [],
             page_info: { next: null },
             release_id: "rel-abc",
             release_version: "0.0.1",
@@ -1679,7 +1745,13 @@ describe("ragStore", () => {
               created_at: "2026-06-25T00:00:00.000Z",
               updated_at: "2026-06-25T00:00:00.000Z",
             });
+            documentWriteCount++;
             return Response.json({ document: ragDocuments.get(body.id) });
+          }
+
+          if (request.method === "DELETE" && docId) {
+            ragDocuments.delete(docId);
+            return Response.json({ deleted: 1 });
           }
         }
 
@@ -1703,9 +1775,15 @@ describe("ragStore", () => {
             metadata: chunk.metadata,
           }));
           fileChunks.set(filePath, stored);
+          chunkWriteCount++;
           return Response.json({
             chunks: stored.map(({ id, index }) => ({ id, index })),
           });
+        }
+
+        if (request.method === "DELETE" && filePath) {
+          fileChunks.delete(filePath);
+          return Response.json({ deleted: 1 });
         }
 
         if (request.method === "POST" && url.pathname.endsWith("/embeddings")) {
@@ -1736,11 +1814,63 @@ describe("ragStore", () => {
         assertEquals(documents.length, 1);
         assertEquals(documents[0]?.title, "login-troubleshooting");
         assertEquals(documents[0]?.source, "knowledge/login-troubleshooting.md");
+        assertEquals(documents[0]?.metadata?.managedBy, "content-dir");
+        assertEquals(documents[0]?.metadata?.contentRoot, "knowledge");
+        assertEquals(
+          typeof documents[0]?.metadata?.contentIndexFingerprint,
+          "string",
+        );
         assertEquals(fileChunks.size, 1);
         assertEquals(
           requestedPaths.includes("/projects/cloud-project/releases/rel-abc/files"),
           true,
         );
+
+        const initialId = documents[0]!.id;
+        await runWithRequestContext(
+          {
+            projectSlug: "cloud-project",
+            token: "vf_request_token",
+            productionMode: true,
+            releaseId: "rel-abc",
+          },
+          () => store.indexContentDir(),
+        );
+        assertEquals(chunkWriteCount, 1);
+        assertEquals(documentWriteCount, 1);
+
+        publishedContent = "# Login troubleshooting\n\nUse the updated escalation runbook.";
+        await runWithRequestContext(
+          {
+            projectSlug: "cloud-project",
+            token: "vf_request_token",
+            productionMode: true,
+            releaseId: "rel-abc",
+          },
+          () => store.indexContentDir(),
+        );
+        assertEquals(ragDocuments.size, 1);
+        assertEquals(ragDocuments.has(initialId), true);
+        assertEquals(chunkWriteCount, 2);
+        assertEquals(documentWriteCount, 2);
+        assertEquals(fileChunks.size, 1);
+        assertEquals(
+          [...fileChunks.values()][0]?.[0]?.content,
+          publishedContent,
+        );
+
+        includePublishedFile = false;
+        await runWithRequestContext(
+          {
+            projectSlug: "cloud-project",
+            token: "vf_request_token",
+            productionMode: true,
+            releaseId: "rel-abc",
+          },
+          () => store.indexContentDir(),
+        );
+        assertEquals(ragDocuments.size, 0);
+        assertEquals(fileChunks.size, 0);
       },
     );
   });

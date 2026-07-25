@@ -15,6 +15,12 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { INVALID_ARGUMENT, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { embedding } from "./embedding.ts";
 import { chunk } from "./chunk.ts";
+import {
+  computeContentIndexFingerprint,
+  CONTENT_INDEX_MANAGED_BY,
+  contentTitle,
+  normalizeContentRoot,
+} from "./content-index.ts";
 import { createVeryfrontCloudRagStore } from "./veryfront-cloud/rag-store.ts";
 import { resolveConfiguredEmbeddingModel } from "./model-resolution.ts";
 import { waitWithAbort } from "./admission.ts";
@@ -36,6 +42,7 @@ import type {
   RagStoreBackend,
   RagStoreConfig,
   RagStoreData,
+  RagStoredDocumentMeta,
 } from "./types.ts";
 import { cosineSimilarity } from "#veryfront/runtime/runtime-bridge.ts";
 
@@ -60,8 +67,10 @@ const DEFAULT_TOP_K = 5;
 const MAX_TOP_K = 10_000;
 const DEFAULT_MAX_STORAGE_BYTES = 64 * 1024 * 1024;
 const MAX_DOCUMENT_TEXT_BYTES = 5 * 1024 * 1024;
+const MAX_CONTENT_FILES = 10_000;
 const MAX_LOCAL_STORE_WAITERS = 256;
 const RAG_STORE_SCHEMA_VERSION = 1;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 
 interface LocalStoreLockState {
   pending: number;
@@ -120,9 +129,21 @@ function isNonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
-function isRagDocumentMeta(value: unknown): value is RagDocumentMeta {
+function isRagDocumentMeta(value: unknown): value is RagStoredDocumentMeta {
   if (!isRecord(value)) return false;
-  return typeof value.id === "string" &&
+  const hasContentIndexMetadata = value.contentIndexFingerprint !== undefined ||
+    value.contentRoot !== undefined ||
+    value.managedBy !== undefined;
+  const validContentIndexMetadata = !hasContentIndexMetadata ||
+    (typeof value.contentIndexFingerprint === "string" &&
+      SHA256_HEX_PATTERN.test(value.contentIndexFingerprint) &&
+      typeof value.contentRoot === "string" &&
+      value.contentRoot.length > 0 &&
+      value.contentRoot.length <= 4_096 &&
+      value.managedBy === CONTENT_INDEX_MANAGED_BY);
+
+  return validContentIndexMetadata &&
+    typeof value.id === "string" &&
     value.id.length > 0 &&
     typeof value.title === "string" &&
     typeof value.source === "string" &&
@@ -692,38 +713,56 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
   async function listContentFiles(dir: string): Promise<string[]> {
     const files: string[] = [];
-    try {
-      for await (const entry of readDir(dir)) {
-        const fullPath = join(dir, entry.name);
-        if (entry.isDirectory) {
-          files.push(...(await listContentFiles(fullPath)));
-        } else if (entry.isFile && contentExtensions.has(extname(entry.name))) {
-          files.push(fullPath);
+    const pendingDirectories = [dir];
+
+    while (pendingDirectories.length > 0) {
+      const directory = pendingDirectories.pop()!;
+      try {
+        for await (const entry of readDir(directory)) {
+          const fullPath = join(directory, entry.name);
+          if (entry.isDirectory) {
+            pendingDirectories.push(fullPath);
+          } else if (entry.isFile && contentExtensions.has(extname(entry.name))) {
+            files.push(fullPath);
+            if (files.length > MAX_CONTENT_FILES) {
+              throw INVALID_ARGUMENT.create({
+                detail: `RAG content directory exceeds ${MAX_CONTENT_FILES} supported files`,
+              });
+            }
+          }
         }
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
       }
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
     }
+
+    files.sort();
     return files;
   }
 
-  function validateDocumentText(text: string): void {
+  function encodeDocumentText(text: string): Uint8Array<ArrayBuffer> {
     if (typeof text !== "string" || !text.trim()) {
       throw INVALID_ARGUMENT.create({
         detail: "Upload contains no extractable text",
       });
     }
-    const textBytes = encodeUtf8(text).byteLength;
-    if (textBytes > MAX_DOCUMENT_TEXT_BYTES) {
+    if (text.length > MAX_DOCUMENT_TEXT_BYTES) {
       throw INVALID_ARGUMENT.create({
-        detail:
-          `Upload text is ${textBytes} bytes, exceeding the ${MAX_DOCUMENT_TEXT_BYTES}-byte limit`,
+        detail: `Upload text exceeds the ${MAX_DOCUMENT_TEXT_BYTES}-byte limit`,
       });
     }
+    const textBytes = encodeUtf8(text);
+    if (textBytes.byteLength > MAX_DOCUMENT_TEXT_BYTES) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Upload text is ${textBytes.byteLength} bytes, exceeding the ${MAX_DOCUMENT_TEXT_BYTES}-byte limit`,
+      });
+    }
+    return textBytes;
   }
 
   async function createChunkTexts(text: string): Promise<string[]> {
-    validateDocumentText(text);
+    encodeDocumentText(text);
     const chunks = (await chunk(text, chunkOptions)).filter((value) => value.trim().length > 0);
     if (chunks.length === 0) {
       throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
@@ -800,6 +839,9 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
         document.title = meta?.title ?? document.title;
         document.source = meta?.source ?? document.source;
         document.type = meta?.type ?? document.type;
+        delete document.contentIndexFingerprint;
+        delete document.contentRoot;
+        delete document.managedBy;
         data.chunks = data.chunks.filter((chunk) => chunk.documentId !== id);
         data.chunks.push(
           ...chunks.map((chunkText, index) => ({
@@ -867,7 +909,14 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     async listDocuments(): Promise<RagDocumentMeta[]> {
       return withLock(async () => {
         const data = await load();
-        return data.documents;
+        return data.documents.map((document) => ({
+          id: document.id,
+          title: document.title,
+          source: document.source,
+          type: document.type,
+          createdAt: document.createdAt,
+          ...(document.url !== undefined ? { url: document.url } : {}),
+        }));
       });
     },
 
@@ -885,54 +934,126 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
 
       return withLock(async () => {
         const data = await load();
-        const indexedSources = new Set(data.documents.map((d) => d.source));
+        const contentRoot = normalizeContentRoot(contentDir);
+        const files = await listContentFiles(contentRoot);
+        const currentSources = new Set(files);
+        const documentsBySource = new Map<string, RagStoredDocumentMeta>();
+        for (const document of data.documents) {
+          const current = documentsBySource.get(document.source);
+          const documentIsManaged = document.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            document.contentRoot === contentRoot;
+          const currentIsManaged = current?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            current.contentRoot === contentRoot;
+          if (
+            !current ||
+            (documentIsManaged &&
+              (!currentIsManaged || document.id.localeCompare(current.id) < 0))
+          ) {
+            documentsBySource.set(document.source, document);
+          }
+        }
 
-        const files = await listContentFiles(contentDir);
-        const newFiles = files.filter((f) => !indexedSources.has(f));
-        if (newFiles.length === 0) return;
+        let changed = false;
+        const removeManagedDocument = (document: RagStoredDocumentMeta): void => {
+          data.documents = data.documents.filter((candidate) => candidate.id !== document.id);
+          data.chunks = data.chunks.filter((candidate) => candidate.documentId !== document.id);
+          if (documentsBySource.get(document.source)?.id === document.id) {
+            documentsBySource.delete(document.source);
+          }
+          changed = true;
+        };
 
-        for (const file of newFiles) {
+        for (const file of files) {
           const content = await readTextFile(file);
-          if (!content?.trim()) continue;
-          const contentBytes = encodeUtf8(content).byteLength;
-          if (contentBytes > MAX_DOCUMENT_TEXT_BYTES) {
+          const existing = documentsBySource.get(file);
+          if (!content?.trim()) {
+            if (
+              existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+              existing.contentRoot === contentRoot
+            ) {
+              removeManagedDocument(existing);
+            }
+            continue;
+          }
+
+          let contentBytes: Uint8Array<ArrayBuffer>;
+          try {
+            contentBytes = encodeDocumentText(content);
+          } catch (error) {
+            if (
+              existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+              existing.contentRoot === contentRoot
+            ) {
+              removeManagedDocument(existing);
+            }
             serverLogger.warn(
-              `[rag-store] Skipping ${file}: ${contentBytes} bytes exceeds ` +
-                `${MAX_DOCUMENT_TEXT_BYTES}-byte text limit`,
+              `[rag-store] Skipping ${file}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
             );
             continue;
           }
 
-          const title = file.startsWith(contentDir + "/")
-            ? file.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
-            : file.replace(/\.[^.]+$/, "");
-          const documentId = crypto.randomUUID();
-          const type = extname(file).slice(1);
+          const contentHash = await hashStoreBytes(contentBytes);
+          const contentIndexFingerprint = await computeContentIndexFingerprint(
+            contentHash,
+            config,
+          );
+          if (
+            existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            existing.contentRoot === contentRoot &&
+            existing.contentIndexFingerprint === contentIndexFingerprint
+          ) {
+            continue;
+          }
 
-          const chunks = (await chunk(content, chunkOptions))
-            .filter((value) => value.trim().length > 0);
+          const title = contentTitle(contentRoot, file);
+          const type = extname(file).slice(1);
+          const chunks = await createChunkTexts(content);
           if (chunks.length === 0) continue;
 
-          data.documents.push({
-            id: documentId,
+          const document: RagStoredDocumentMeta = existing ?? {
+            id: crypto.randomUUID(),
             title,
             source: file,
             type,
             createdAt: Date.now(),
-          });
+          };
+          document.title = title;
+          document.source = file;
+          document.type = type;
+          document.managedBy = CONTENT_INDEX_MANAGED_BY;
+          document.contentRoot = contentRoot;
+          document.contentIndexFingerprint = contentIndexFingerprint;
+          if (!existing) data.documents.push(document);
 
-          data.chunks.push(
-            ...chunks.map((chunkText, i) => ({
-              id: crypto.randomUUID(),
-              documentId,
-              text: chunkText,
-              embedding: [] as number[],
-              index: i,
-            })),
-          );
+          data.chunks = data.chunks.filter((candidate) => candidate.documentId !== document.id);
+          data.chunks.push(...chunks.map((chunkText, index) => ({
+            id: crypto.randomUUID(),
+            documentId: document.id,
+            text: chunkText,
+            embedding: [] as number[],
+            index,
+          })));
+          documentsBySource.set(file, document);
+          changed = true;
         }
 
-        await save(data);
+        for (const document of [...data.documents]) {
+          const retained = documentsBySource.get(document.source);
+          if (
+            document.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            document.contentRoot === contentRoot &&
+            (
+              !currentSources.has(document.source) ||
+              retained?.id !== document.id
+            )
+          ) {
+            removeManagedDocument(document);
+          }
+        }
+
+        if (changed) await save(data);
       });
     },
   };

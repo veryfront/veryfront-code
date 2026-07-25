@@ -100,7 +100,7 @@ Upload ingestion does three things:
   EPUB, JSON, and XML use the `DocumentExtractor` extension backed by
   `@veryfront/ext-document-kreuzberg`.
 - **Chunks and embeds**: Text is split with `chunkOptions` before embedding.
-  Defaults are `maxChars: 2000`, `overlap: 200`, and
+  Defaults are `maxChars: 2000`, `overlap: 200`, `maxChunks: 10000`, and
   `separators: ["\n\n", "\n", " ", ""]`.
 - **Stores data**: Cloud mode stores the original uploaded file as a source file
   blob under `.veryfront/rag/uploads/`. Local mode stores only the RAG index in
@@ -133,8 +133,13 @@ curl -X POST http://localhost:3000/api/ingest
 ```
 
 Keep indexing out of the chat request path. `indexContentDir()` reads files from
-`contentDir` and skips files that are already tracked by source. Uploaded
-documents do not need this call because the upload route ingests them directly.
+`contentDir` and fingerprints the source content, chunking settings, embedding
+model, and document prefix. Unchanged files are skipped; changed files keep
+their document ID while their chunks are replaced, and managed documents are
+removed when their source file disappears. Existing indexes created before
+these fingerprints were stored are refreshed once on their next indexing run.
+Uploaded documents do not need this call because the upload route ingests them
+directly.
 
 ## Add retrieval to the agent route
 

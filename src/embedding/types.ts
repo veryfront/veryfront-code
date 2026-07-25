@@ -32,6 +32,8 @@ export interface ChunkOptions {
   maxChars?: number; // default 2000 (~512 tokens)
   overlap?: number; // default 200 chars
   separators?: string[]; // default ["\n\n", "\n", " ", ""]
+  /** Maximum chunks returned by one call (default 10,000; hard ceiling 100,000). */
+  maxChunks?: number;
 }
 
 /** Configuration used by vector store. */
@@ -84,6 +86,13 @@ export interface RagDocumentMeta {
   url?: string;
 }
 
+/** Persistence-only metadata used to synchronize configured content directories. */
+export interface RagStoredDocumentMeta extends RagDocumentMeta {
+  contentIndexFingerprint?: string;
+  contentRoot?: string;
+  managedBy?: "content-dir";
+}
+
 /** Public API contract for rag chunk. */
 export interface RagChunk {
   id: string;
@@ -105,7 +114,7 @@ export interface RagStoreData {
   /** Current persisted schema version. Omitted only by compatible legacy stores. */
   schemaVersion?: 1;
   embeddingFingerprint?: RagEmbeddingFingerprint;
-  documents: RagDocumentMeta[];
+  documents: RagStoredDocumentMeta[];
   chunks: RagChunk[];
 }
 

@@ -87,6 +87,8 @@ describe("embedding/chunk", () => {
         { maxChars: 10, overlap: 10 },
         { maxChars: 10, overlap: 11 },
         { maxChars: 10, overlap: 6 },
+        { maxChars: 10, maxChunks: 0 },
+        { maxChars: 10, maxChunks: 100_001 },
       ]
     ) {
       await assertRejects(() => chunk("content", options), RangeError);
@@ -144,5 +146,19 @@ describe("embedding/chunk", () => {
     });
 
     assertEquals(chunks, ["abc", "def", "gh"]);
+  });
+
+  it("bounds chunk output before adversarial character splits exhaust memory", async () => {
+    await assertRejects(
+      () =>
+        chunk("abcdef", {
+          maxChars: 1,
+          overlap: 0,
+          separators: [""],
+          maxChunks: 5,
+        }),
+      RangeError,
+      "maxChunks limit of 5",
+    );
   });
 });

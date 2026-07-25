@@ -7,13 +7,19 @@ import {
   NETWORK_ERROR,
   TIMEOUT_ERROR,
 } from "#veryfront/errors";
-import { serverLogger } from "#veryfront/utils";
+import { computeHashBytes, serverLogger } from "#veryfront/utils";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   createVeryfrontCloudFetch,
   requireVeryfrontCloudBootstrap,
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { chunk } from "../chunk.ts";
+import {
+  computeContentIndexFingerprint,
+  CONTENT_INDEX_MANAGED_BY,
+  contentTitle,
+  normalizeContentRoot,
+} from "../content-index.ts";
 import { embedding } from "../embedding.ts";
 import { requirePositiveSafeInteger, requireUnitInterval } from "../validation.ts";
 import type {
@@ -30,7 +36,6 @@ const MAX_TEXT_BYTES = 5 * 1024 * 1024;
 const MAX_API_CHUNK_BATCH = 500;
 const MAX_API_EMBEDDING_BATCH = 100;
 const MAX_SEARCH_LIMIT = 100;
-const SEARCH_OVERSCAN = 25;
 const DOCUMENTS_DIR = ".veryfront/rag/documents";
 const CLOUD_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_CLOUD_JSON_BYTES = 8 * 1024 * 1024;
@@ -39,6 +44,7 @@ const MAX_CLOUD_DOCUMENTS = 10_000;
 const MAX_CLOUD_FILE_PAGES = 100;
 const MAX_CLOUD_CONTENT_FILES = 10_000;
 const MAX_CLOUD_INLINE_CONTENT_BYTES = 64 * 1024 * 1024;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 
 type SupportedDimension = 768 | 1024 | 1536 | 3072 | 4096;
 
@@ -98,8 +104,25 @@ type ResolvedCloudRagStoreConfig = RagStoreConfig & { model: string };
 
 type CloudRagDocumentMeta = RagDocumentMeta & {
   branch: string;
+  contentIndexFingerprint?: string;
+  contentRoot?: string;
   filePath?: string;
+  managedBy?: "content-dir";
 };
+
+interface CloudDocumentWriteMeta {
+  contentIndexFingerprint?: string;
+  contentRoot?: string;
+  managedBy?: "content-dir";
+  source?: string;
+  type?: string;
+}
+
+interface CloudRefreshOptions extends RagRefreshOptions {
+  contentIndexFingerprint?: string;
+  contentRoot?: string;
+  managedBy?: "content-dir";
+}
 
 interface ContentFile {
   path: string;
@@ -245,6 +268,10 @@ function parseCloudEmbeddingMutationResponse(
     }
     return { id: entry.id };
   });
+  const ids = new Set(embeddings.map((entry) => entry.id));
+  if (ids.size !== embeddings.length) {
+    invalidCloudResponse("embedding mutation response contains duplicate ids");
+  }
   return { embeddings };
 }
 
@@ -262,6 +289,8 @@ function parseCloudRagDocument(
     typeof value.created_at !== "string" ||
     !Number.isFinite(new Date(value.created_at).getTime()) ||
     (value.updated_at !== undefined && typeof value.updated_at !== "string") ||
+    (typeof value.updated_at === "string" &&
+      !Number.isFinite(new Date(value.updated_at).getTime())) ||
     (value.metadata !== undefined && !isRecord(value.metadata))
   ) {
     invalidCloudResponse(`document entry ${index} is malformed`);
@@ -274,6 +303,60 @@ function parseCloudRagDocument(
     metadata: (value.metadata ?? {}) as Record<string, unknown>,
     created_at: value.created_at,
     updated_at: typeof value.updated_at === "string" ? value.updated_at : value.created_at,
+  };
+}
+
+function parseCloudRagDocumentMetadata(
+  metadata: Record<string, unknown>,
+  index: number,
+): {
+  branch?: string;
+  contentIndexFingerprint?: string;
+  contentRoot?: string;
+  filePath?: string;
+  managedBy?: "content-dir";
+} {
+  const branch = metadata.branch;
+  const filePath = metadata.filePath;
+  if (
+    (branch !== undefined &&
+      (typeof branch !== "string" || !branch.trim() || branch.length > 512)) ||
+    (filePath !== undefined &&
+      (typeof filePath !== "string" || !filePath || filePath.length > 4_096))
+  ) {
+    invalidCloudResponse(`document entry ${index} has malformed branch or file metadata`);
+  }
+
+  const contentIndexFingerprint = metadata.contentIndexFingerprint;
+  const contentRoot = metadata.contentRoot;
+  const managedBy = metadata.managedBy;
+  const hasContentIndexMetadata = contentIndexFingerprint !== undefined ||
+    contentRoot !== undefined ||
+    managedBy !== undefined;
+  if (
+    hasContentIndexMetadata &&
+    (
+      typeof contentIndexFingerprint !== "string" ||
+      !SHA256_HEX_PATTERN.test(contentIndexFingerprint) ||
+      typeof contentRoot !== "string" ||
+      !contentRoot ||
+      contentRoot.length > 4_096 ||
+      managedBy !== CONTENT_INDEX_MANAGED_BY
+    )
+  ) {
+    invalidCloudResponse(`document entry ${index} has malformed content index metadata`);
+  }
+
+  return {
+    ...(typeof branch === "string" ? { branch } : {}),
+    ...(typeof filePath === "string" ? { filePath } : {}),
+    ...(hasContentIndexMetadata
+      ? {
+        contentIndexFingerprint: contentIndexFingerprint as string,
+        contentRoot: contentRoot as string,
+        managedBy: CONTENT_INDEX_MANAGED_BY,
+      }
+      : {}),
   };
 }
 
@@ -685,18 +768,26 @@ async function listRagDocuments(
   );
 
   return parseCloudDocumentListResponse(response).documents
-    .filter((doc) => {
-      const branch = doc.metadata?.branch;
-      return typeof branch === "string" ? branch === context.branch : context.branch === "main";
+    .map((doc, index) => ({
+      doc,
+      metadata: parseCloudRagDocumentMetadata(doc.metadata, index),
+    }))
+    .filter(({ metadata }) => {
+      return metadata.branch !== undefined
+        ? metadata.branch === context.branch
+        : context.branch === "main";
     })
-    .map((doc) => ({
+    .map(({ doc, metadata }) => ({
       id: doc.id,
       title: doc.title,
       source: doc.source,
       type: doc.type,
       createdAt: new Date(doc.created_at).getTime(),
-      branch: typeof doc.metadata?.branch === "string" ? doc.metadata.branch : "main",
-      filePath: typeof doc.metadata?.filePath === "string" ? doc.metadata.filePath : undefined,
+      branch: metadata.branch ?? "main",
+      contentIndexFingerprint: metadata.contentIndexFingerprint,
+      contentRoot: metadata.contentRoot,
+      filePath: metadata.filePath,
+      managedBy: metadata.managedBy,
     }));
 }
 
@@ -751,6 +842,16 @@ async function deleteRagDocument(
   );
 }
 
+async function removeCloudDocument(
+  context: CloudStoreContext,
+  document: CloudRagDocumentMeta,
+): Promise<void> {
+  const filePath = document.filePath ??
+    buildDocumentFilePath(document.id, document.type);
+  await deleteFileChunks(context, filePath);
+  await deleteRagDocument(context, document.id);
+}
+
 // ---------------------------------------------------------------------------
 // Document ingestion (chunks + embeddings + server-side record)
 // ---------------------------------------------------------------------------
@@ -760,7 +861,7 @@ async function ingestDocument(
   config: ResolvedCloudRagStoreConfig,
   title: string,
   text: string,
-  meta?: { source?: string; type?: string },
+  meta?: CloudDocumentWriteMeta,
 ): Promise<string> {
   const documentId = crypto.randomUUID();
   await writeDocumentContent(context, config, documentId, title, text, meta);
@@ -772,7 +873,7 @@ async function refreshCloudDocument(
   config: ResolvedCloudRagStoreConfig,
   documentId: string,
   text: string,
-  meta?: RagRefreshOptions,
+  meta?: CloudRefreshOptions,
 ): Promise<void> {
   const documents = await listRagDocuments(context);
   const existing = documents.find((doc) => doc.id === documentId);
@@ -793,6 +894,9 @@ async function refreshCloudDocument(
     {
       source: meta?.source ?? existing.source,
       type,
+      contentIndexFingerprint: meta?.contentIndexFingerprint,
+      contentRoot: meta?.contentRoot,
+      managedBy: meta?.managedBy,
     },
     { filePath, rollbackDocument: existing },
   );
@@ -819,7 +923,7 @@ async function writeDocumentContent(
   documentId: string,
   title: string,
   text: string,
-  meta?: { source?: string; type?: string },
+  meta?: CloudDocumentWriteMeta,
   options?: {
     filePath?: string;
     rollbackDocument?: CloudRagDocumentMeta;
@@ -827,6 +931,11 @@ async function writeDocumentContent(
 ): Promise<void> {
   if (typeof text !== "string" || !text.trim()) {
     throw INVALID_ARGUMENT.create({ detail: "Upload contains no extractable text" });
+  }
+  if (text.length > MAX_TEXT_BYTES) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Upload text exceeds the ${MAX_TEXT_BYTES}-byte limit`,
+    });
   }
   const textBytes = new TextEncoder().encode(text).byteLength;
   if (textBytes > MAX_TEXT_BYTES) {
@@ -881,7 +990,16 @@ async function writeDocumentContent(
       title,
       source: meta?.source ?? "",
       type: meta?.type ?? "",
-      metadata: { filePath },
+      metadata: {
+        filePath,
+        ...(meta?.managedBy === CONTENT_INDEX_MANAGED_BY
+          ? {
+            contentIndexFingerprint: meta.contentIndexFingerprint,
+            contentRoot: meta.contentRoot,
+            managedBy: CONTENT_INDEX_MANAGED_BY,
+          }
+          : {}),
+      },
     });
   } catch (error) {
     const rollbackErrors: unknown[] = [error];
@@ -902,6 +1020,13 @@ async function writeDocumentContent(
             metadata: {
               filePath: previous.filePath ??
                 buildDocumentFilePath(previous.id, previous.type),
+              ...(previous.managedBy === CONTENT_INDEX_MANAGED_BY
+                ? {
+                  contentIndexFingerprint: previous.contentIndexFingerprint,
+                  contentRoot: previous.contentRoot,
+                  managedBy: CONTENT_INDEX_MANAGED_BY,
+                }
+                : {}),
             },
           });
         } else {
@@ -958,6 +1083,7 @@ async function listContentFiles(
     }
   }
 
+  files.sort((left, right) => left.path.localeCompare(right.path));
   return files;
 }
 
@@ -1041,6 +1167,7 @@ async function listPublishedContentFiles(
   let pageCount = 0;
   let inlineContentBytes = 0;
   const seenCursors = new Set<string>();
+  const seenPaths = new Set<string>();
 
   do {
     if (pageCount >= MAX_CLOUD_FILE_PAGES) {
@@ -1064,17 +1191,20 @@ async function listPublishedContentFiles(
     );
     const response = parseCloudFileListResponse(rawResponse);
 
-    files.push(
-      ...response.data
-        .filter((file) => contentExtensions.has(extname(file.path)))
-        .map((file) => ({ path: file.path, content: file.content })),
-    );
     for (const file of response.data) {
       if (
-        file.content !== undefined &&
         contentExtensions.has(extname(file.path))
       ) {
-        inlineContentBytes += new TextEncoder().encode(file.content).byteLength;
+        if (seenPaths.has(file.path)) {
+          invalidCloudResponse(
+            `file listing contains duplicate path "${file.path}"`,
+          );
+        }
+        seenPaths.add(file.path);
+        files.push({ path: file.path, content: file.content });
+        if (file.content !== undefined) {
+          inlineContentBytes += new TextEncoder().encode(file.content).byteLength;
+        }
       }
     }
     if (files.length > MAX_CLOUD_CONTENT_FILES) {
@@ -1093,6 +1223,7 @@ async function listPublishedContentFiles(
     cursor = response.page_info?.next ?? null;
   } while (cursor);
 
+  files.sort((left, right) => left.path.localeCompare(right.path));
   return files;
 }
 
@@ -1108,7 +1239,13 @@ async function readContentFile(
     getPublishedFileDetailPath(context, file.path),
   );
 
-  return parseCloudFileDetailResponse(response).content;
+  const detail = parseCloudFileDetailResponse(response);
+  if (detail.path !== file.path) {
+    invalidCloudResponse(
+      `file detail path "${detail.path}" does not match requested path "${file.path}"`,
+    );
+  }
+  return detail.content;
 }
 
 export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig): RagStore {
@@ -1157,7 +1294,10 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
       const vector = await queryEmbedder.embed(query, {
         abortSignal: options?.abortSignal,
       });
-      const limit = Math.min(MAX_SEARCH_LIMIT, topK + SEARCH_OVERSCAN);
+      // Cloud search can still contain legacy or superseded chunks. Request
+      // the bounded API maximum so client-side authority filtering does not
+      // let a small stale prefix crowd out active matches.
+      const limit = MAX_SEARCH_LIMIT;
       const dimension = toSupportedDimension(vector.length);
       const rawResponse = await requestJson<unknown>(
         context,
@@ -1219,51 +1359,154 @@ export function createVeryfrontCloudRagStore(config: ResolvedCloudRagStoreConfig
     async removeDocument(id: string): Promise<void> {
       const context = getCloudStoreContext(config);
 
-      // Fetch document metadata to find its filePath for chunk cleanup
       const documents = await listRagDocuments(context);
       const target = documents.find((doc) => doc.id === id);
       if (!target) return;
 
-      // Remove searchable content before the authoritative record. If chunk
-      // cleanup fails, retain the record and surface the failure so callers
-      // never receive a false successful deletion while content remains.
-      const filePath = target.filePath ?? buildDocumentFilePath(id, target.type);
-      await deleteFileChunks(context, filePath);
-      await deleteRagDocument(context, id);
+      await removeCloudDocument(context, target);
     },
 
     async indexContentDir(): Promise<void> {
       if (!contentDir) return;
 
       const context = getCloudStoreContext(config);
+      const contentRoot = normalizeContentRoot(contentDir);
       const existingDocuments = await listRagDocuments(context);
-      const indexedSources = new Set(existingDocuments.map((doc) => doc.source));
       const files = context.hasRequestContext
-        ? await listPublishedContentFiles(context, contentDir, contentExtensions)
-        : await listContentFiles(contentDir, contentExtensions);
-      const newFiles = files.filter((file) => !indexedSources.has(file.path));
+        ? await listPublishedContentFiles(context, contentRoot, contentExtensions)
+        : await listContentFiles(contentRoot, contentExtensions);
+      const currentSources = new Set(files.map((file) => file.path));
+      const documentsBySource = new Map<string, CloudRagDocumentMeta>();
+      const removedDocumentIds = new Set<string>();
+      for (const document of existingDocuments) {
+        const current = documentsBySource.get(document.source);
+        const documentIsManaged = document.managedBy === CONTENT_INDEX_MANAGED_BY &&
+          document.contentRoot === contentRoot;
+        const currentIsManaged = current?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+          current.contentRoot === contentRoot;
+        if (
+          !current ||
+          (documentIsManaged &&
+            (!currentIsManaged || document.id.localeCompare(current.id) < 0))
+        ) {
+          documentsBySource.set(document.source, document);
+        }
+      }
 
-      for (const file of newFiles) {
+      for (const file of files) {
         const content = await readContentFile(context, file);
-        if (!content?.trim()) continue;
-        const contentBytes = new TextEncoder().encode(content).byteLength;
-        if (contentBytes > MAX_TEXT_BYTES) {
+        const existing = documentsBySource.get(file.path);
+        if (!content?.trim()) {
+          if (
+            existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            existing.contentRoot === contentRoot
+          ) {
+            await removeCloudDocument(context, existing);
+            removedDocumentIds.add(existing.id);
+            documentsBySource.delete(file.path);
+          }
+          continue;
+        }
+
+        if (content.length > MAX_TEXT_BYTES) {
+          if (
+            existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            existing.contentRoot === contentRoot
+          ) {
+            await removeCloudDocument(context, existing);
+            removedDocumentIds.add(existing.id);
+            documentsBySource.delete(file.path);
+          }
           serverLogger.warn(
-            `[rag-store/cloud] Skipping ${file.path}: ${contentBytes} bytes exceeds ` +
+            `[rag-store/cloud] Skipping ${file.path}: text exceeds ` +
+              `${MAX_TEXT_BYTES}-byte limit`,
+          );
+          continue;
+        }
+        const contentBytes = new TextEncoder().encode(content);
+        if (contentBytes.byteLength > MAX_TEXT_BYTES) {
+          if (
+            existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+            existing.contentRoot === contentRoot
+          ) {
+            await removeCloudDocument(context, existing);
+            removedDocumentIds.add(existing.id);
+            documentsBySource.delete(file.path);
+          }
+          serverLogger.warn(
+            `[rag-store/cloud] Skipping ${file.path}: ${contentBytes.byteLength} bytes exceeds ` +
               `${MAX_TEXT_BYTES}-byte text limit`,
           );
           continue;
         }
 
-        const title = file.path.startsWith(contentDir + "/")
-          ? file.path.slice(contentDir.length + 1).replace(/\.[^.]+$/, "")
-          : file.path.replace(/\.[^.]+$/, "");
-        const type = extname(file.path).slice(1);
+        const contentHash = await computeHashBytes(contentBytes);
+        const contentIndexFingerprint = await computeContentIndexFingerprint(
+          contentHash,
+          config,
+        );
+        if (
+          existing?.managedBy === CONTENT_INDEX_MANAGED_BY &&
+          existing.contentRoot === contentRoot &&
+          existing.contentIndexFingerprint === contentIndexFingerprint
+        ) {
+          continue;
+        }
 
-        await ingestDocument(context, config, title, content, {
+        const title = contentTitle(contentRoot, file.path);
+        const type = extname(file.path).slice(1);
+        const managedMetadata = {
+          contentIndexFingerprint,
+          contentRoot,
+          managedBy: CONTENT_INDEX_MANAGED_BY,
           source: file.path,
           type,
-        });
+        } as const;
+        if (existing) {
+          await refreshCloudDocument(context, config, existing.id, content, {
+            ...managedMetadata,
+            title,
+          });
+          documentsBySource.set(file.path, {
+            ...existing,
+            ...managedMetadata,
+            title,
+          });
+        } else {
+          const id = await ingestDocument(
+            context,
+            config,
+            title,
+            content,
+            managedMetadata,
+          );
+          documentsBySource.set(file.path, {
+            id,
+            title,
+            source: file.path,
+            type,
+            createdAt: Date.now(),
+            branch: context.branch,
+            contentIndexFingerprint,
+            contentRoot,
+            managedBy: CONTENT_INDEX_MANAGED_BY,
+          });
+        }
+      }
+
+      for (const document of existingDocuments) {
+        const retained = documentsBySource.get(document.source);
+        if (
+          document.managedBy === CONTENT_INDEX_MANAGED_BY &&
+          document.contentRoot === contentRoot &&
+          !removedDocumentIds.has(document.id) &&
+          (
+            !currentSources.has(document.source) ||
+            retained?.id !== document.id
+          )
+        ) {
+          await removeCloudDocument(context, document);
+        }
       }
     },
   };
