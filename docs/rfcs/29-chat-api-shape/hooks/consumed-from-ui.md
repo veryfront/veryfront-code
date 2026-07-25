@@ -23,7 +23,7 @@ Use it inside an `AppShell` to read shell state from your own components — for
 Reads and controls the color mode — from `veryfront/ui`. Ships with `ColorModeProvider` (zero-node provider, see [Providers](../providers.md)) and the ready-made `ColorModeToggle` control.
 
 ```tsx
-import { useColorMode, ColorModeProvider, ColorModeToggle } from "veryfront/ui";
+import { ColorModeProvider, ColorModeToggle, useColorMode } from "veryfront/ui";
 
 <ColorModeProvider>
   <App />
@@ -34,11 +34,11 @@ import { useColorMode, ColorModeProvider, ColorModeToggle } from "veryfront/ui";
 - **`ColorModeProvider`** — provides color-mode state to the tree; renders **zero DOM nodes**.
 - **`ColorModeToggle`** — the ready-made toggle control, typically placed in an [`AppShell`](../components/app-shell.md) header.
 
-## Open question — is `useAppShell` too specific?
+## Decision: keep `useAppShell` specific
 
 Because `veryfront/chat` re-exports `useAppShell`, its shape is part of chat's public surface and is fair game to shape here. Its state core — `isOpen(side)` / `toggle(side)` / `setOpen(side, open)` — is just **keyed binary disclosure**, i.e. a generic `useDisclosure` / `useCollapsible`. What makes it shell-specific is layered on top: two docked sides, viewport-aware open state (desktop inline column vs mobile off-canvas overlay), `sidebarId(side)` for `aria-controls`, and the ⌘/Ctrl+B shortcut.
 
-**Proposed direction:** don't rename `useAppShell` to `useCollapsible` — that under-describes what it returns (shell context, not a lone toggle). Instead **extract a generic `useDisclosure` primitive in `veryfront/ui`** and have `useAppShell` compose it, so the reusable disclosure state is available on its own while the shell hook keeps its shell-scoped surface. Implementation lands in `veryfront/ui`; this RFC only records the target.
+Do not rename `useAppShell` to `useCollapsible`. That under-describes what it returns (shell context, not a lone toggle). Instead, **extract a generic `useDisclosure` primitive in `veryfront/ui`** and have `useAppShell` compose it, so the reusable disclosure state is available on its own while the shell hook keeps its shell-scoped surface. Implementation lands in `veryfront/ui`; this RFC records that target.
 
 ## Related
 
