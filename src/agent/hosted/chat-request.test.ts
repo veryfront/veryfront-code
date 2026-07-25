@@ -279,6 +279,40 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[1]?.parts, [parsedHostedChatRequestReplayToolCallPart]);
   });
 
+  it("rejects orphaned or mismatched normalized UI tool results", () => {
+    assertHostedChatRequestError(
+      [
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [parsedHostedChatRequestReplayToolCallPart],
+        },
+      ],
+      "tool_result requires a preceding matching tool_call",
+    );
+
+    assertHostedChatRequestError(
+      [
+        {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [rawReplayToolCallPart],
+        },
+        {
+          id: "tool-message-1",
+          role: "tool",
+          parts: [
+            {
+              ...parsedHostedChatRequestReplayToolCallPart,
+              toolName: "github__get_pr",
+            },
+          ],
+        },
+      ],
+      "tool_result tool_name must match its preceding tool_call",
+    );
+  });
+
   it("rejects duplicate replay tool-call ids", () => {
     const parsed = hostedChatRequestSchema.safeParse(
       createHostedChatRequestBody([

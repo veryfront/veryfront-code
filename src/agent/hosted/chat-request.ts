@@ -102,6 +102,30 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
 
       knownToolNames.set(toolCallId, toolName);
     };
+    const validateToolResult = (
+      toolCallId: string,
+      toolName: string | undefined,
+      toolCallIdPath: Array<string | number>,
+      toolNamePath: Array<string | number>,
+    ) => {
+      const knownToolName = knownToolNames.get(toolCallId);
+      if (!knownToolName) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tool_result requires a preceding matching tool_call",
+          path: toolCallIdPath,
+        });
+        return;
+      }
+
+      if (toolName && toolName !== knownToolName) {
+        ctx.addIssue({
+          code: "custom",
+          message: "tool_result tool_name must match its preceding tool_call",
+          path: toolNamePath,
+        });
+      }
+    };
 
     for (const [messageIndex, message] of messages.entries()) {
       for (const [partIndex, part] of message.parts.entries()) {
@@ -151,6 +175,18 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
               partIndex,
               "toolCallId",
             ]);
+          } else {
+            validateToolResult(
+              uiToolIdentity.toolCallId,
+              uiToolIdentity.toolName,
+              [messageIndex, "parts", partIndex, "toolCallId"],
+              [
+                messageIndex,
+                "parts",
+                partIndex,
+                "toolName" in part ? "toolName" : "type",
+              ],
+            );
           }
           continue;
         }
@@ -159,23 +195,12 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           continue;
         }
 
-        const knownToolName = knownToolNames.get(part.tool_call_id);
-        if (!knownToolName) {
-          ctx.addIssue({
-            code: "custom",
-            message: "tool_result requires a preceding matching tool_call",
-            path: [messageIndex, "parts", partIndex, "tool_call_id"],
-          });
-          continue;
-        }
-
-        if (part.tool_name && part.tool_name !== knownToolName) {
-          ctx.addIssue({
-            code: "custom",
-            message: "tool_result tool_name must match its preceding tool_call",
-            path: [messageIndex, "parts", partIndex, "tool_name"],
-          });
-        }
+        validateToolResult(
+          part.tool_call_id,
+          part.tool_name,
+          [messageIndex, "parts", partIndex, "tool_call_id"],
+          [messageIndex, "parts", partIndex, "tool_name"],
+        );
       }
     }
   })
