@@ -33,7 +33,7 @@
 import { isCompiledBinary, rendererLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
-import { INITIALIZATION_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
+import { INITIALIZATION_ERROR, SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   buildQueryAwareCacheKey,
@@ -120,6 +120,8 @@ interface RendererContextServices {
   componentInitialization: Promise<void> | null;
   componentsInitialized: boolean;
 }
+
+type RenderAdmission = "foreground" | "background";
 
 const RENDER_PREWARM_MAX_ROUTES = getBoundedEnvNumber(
   "VERYFRONT_RENDER_PREWARM_MAX_ROUTES",
@@ -323,6 +325,8 @@ export class Renderer {
    * Key format: {cachePrefix}:{slug}:{colorScheme}
    */
   private renderFlight = new Singleflight<CachedRenderData>();
+  /** Lets foreground followers recover when a background leader fails fast at capacity. */
+  private renderFlightAdmissions = new Map<string, RenderAdmission>();
   private productionPrewarmContexts = new Map<string, Promise<void>>();
   private contextServices = new Map<string, RendererContextServices>();
   /**
@@ -454,6 +458,15 @@ export class Renderer {
   }
 
   renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
+    return this.renderPageWithAdmission(slug, ctx, options, "foreground");
+  }
+
+  private renderPageWithAdmission(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    admission: RenderAdmission,
+  ): Promise<RenderResult> {
     return withSpan(
       "renderer.renderPage",
       async () => {
@@ -521,6 +534,7 @@ export class Renderer {
             cachePolicy,
             renderToken,
             effectiveOptions.abortSignal ?? effectiveOptions.request?.signal,
+            admission,
           );
           if (this.isProjectRenderCurrent(renderToken)) {
             this.scheduleProductionRenderPrewarm(
@@ -736,6 +750,10 @@ export class Renderer {
     ctx: RenderContext,
     options?: RenderOptions,
   ): RenderOptions {
+    const sourceUrl = options?.url ??
+      (options?.request ? new URL(options.request.url) : undefined);
+    const canonicalUrl = sourceUrl ? new URL("/", sourceUrl) : undefined;
+
     return {
       environment: ctx.environment,
       projectId: ctx.projectId,
@@ -745,6 +763,25 @@ export class Renderer {
       releaseAssetManifest: options?.releaseAssetManifest ?? null,
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
+      url: canonicalUrl,
+    };
+  }
+
+  private buildRoutePrewarmOptions(
+    slug: string,
+    options: RenderOptions,
+  ): RenderOptions {
+    if (!options.url) return options;
+
+    const url = new URL(normalizeComparableSlug(slug), options.url);
+    return {
+      ...options,
+      cacheKey: buildQueryAwareCacheKey(slug, url),
+      url,
+      request: new Request(url, {
+        method: "GET",
+        headers: { accept: "text/html" },
+      }),
     };
   }
 
@@ -800,6 +837,7 @@ export class Renderer {
             },
             renderToken,
             undefined,
+            "background",
           );
           if (this.isProjectRenderCurrent(renderToken)) {
             this.scheduleProductionRenderPrewarm(slug, ctx, refreshOptions, cachePolicy);
@@ -816,6 +854,14 @@ export class Renderer {
     promise.finally(() => {
       this.productionPrewarmContexts.delete(refreshKey);
     }).catch((error) => {
+      if (error instanceof VeryfrontError && error.slug === "service-overloaded") {
+        logger.debug("Production stale render refresh skipped at capacity", {
+          slug,
+          projectId: ctx.projectId,
+          releaseId: ctx.releaseId,
+        });
+        return;
+      }
       logger.warn("Production stale render refresh failed", {
         slug,
         projectId: ctx.projectId,
@@ -859,8 +905,21 @@ export class Renderer {
 
         const slug = slugs[index]!;
         try {
-          await this.renderPage(slug, ctx, options);
+          await this.renderPageWithAdmission(
+            slug,
+            ctx,
+            this.buildRoutePrewarmOptions(slug, options),
+            "background",
+          );
         } catch (error) {
+          if (error instanceof VeryfrontError && error.slug === "service-overloaded") {
+            logger.debug("Production render prewarm route skipped at capacity", {
+              slug,
+              projectId: ctx.projectId,
+              releaseId: ctx.releaseId,
+            });
+            continue;
+          }
           logger.warn("Production render prewarm route failed", {
             slug,
             projectId: ctx.projectId,
@@ -888,6 +947,8 @@ export class Renderer {
     cachePolicy: RenderCachePolicy,
     renderToken: ProjectRenderToken,
     callerSignal: AbortSignal | undefined,
+    admission: RenderAdmission,
+    retryBackgroundOverload = true,
   ): Promise<RenderResult> {
     const effectiveKey = cachePolicy.cacheKey ?? crypto.randomUUID();
     const flightKey = this.getSingleflightKey(
@@ -896,11 +957,16 @@ export class Renderer {
       options?.colorScheme,
       renderToken.generation,
     );
-    const isFollower = cachePolicy.singleflight ? this.renderFlight.has(flightKey) : false;
+    const usesSharedFlight = cachePolicy.singleflight && cachePolicy.cacheKey !== null;
+    const isFollower = usesSharedFlight && this.renderFlight.has(flightKey);
+    const leaderAdmission = isFollower ? this.renderFlightAdmissions.get(flightKey) : admission;
 
     const runRenderWithLogging = async (
       signal: AbortSignal | undefined,
     ): Promise<RenderResult> => {
+      if (usesSharedFlight) {
+        this.renderFlightAdmissions.set(flightKey, admission);
+      }
       try {
         return await this.runRenderWithCapacity(
           slug,
@@ -910,6 +976,7 @@ export class Renderer {
           cachePolicy,
           renderToken,
           signal,
+          admission,
         );
       } catch (error) {
         if (error instanceof TimeoutError) {
@@ -920,6 +987,13 @@ export class Renderer {
           });
         }
         throw error;
+      } finally {
+        if (
+          usesSharedFlight &&
+          this.renderFlightAdmissions.get(flightKey) === admission
+        ) {
+          this.renderFlightAdmissions.delete(flightKey);
+        }
       }
     };
 
@@ -938,10 +1012,37 @@ export class Renderer {
         this.endProjectRender(renderToken);
       }
     };
-    const sharedRender = cachePolicy.cacheKey !== null
+    const sharedRender = usesSharedFlight
       ? this.renderFlight.do(flightKey, runSharedRender)
       : runSharedRender();
-    const cachedData = await waitForSharedPromise(sharedRender, callerSignal);
+    let cachedData: CachedRenderData;
+    try {
+      cachedData = await waitForSharedPromise(sharedRender, callerSignal);
+    } catch (error) {
+      if (
+        retryBackgroundOverload &&
+        admission === "foreground" &&
+        isFollower &&
+        leaderAdmission === "background" &&
+        error instanceof VeryfrontError &&
+        error.slug === "service-overloaded"
+      ) {
+        // Background leaders never wait for capacity. Give a foreground follower
+        // its own bounded admission attempt instead of inheriting that fail-fast result.
+        return await this.doRenderPage(
+          slug,
+          ctx,
+          options,
+          startTime,
+          cachePolicy,
+          renderToken,
+          callerSignal,
+          admission,
+          false,
+        );
+      }
+      throw error;
+    }
 
     if (isFollower) {
       logger.debug("Render deduplicated (follower)", {
@@ -963,44 +1064,68 @@ export class Renderer {
     cachePolicy: RenderCachePolicy,
     renderToken: ProjectRenderToken,
     callerSignal: AbortSignal | undefined,
+    admission: RenderAdmission,
   ): Promise<RenderResult> {
-    if (!(await acquireProjectSlot(ctx.projectId))) {
+    const admissionStartedAt = performance.now();
+    const admissionSignal = cachePolicy.singleflight ? undefined : callerSignal;
+    const waitForCapacity = admission === "foreground";
+    const projectAcquired = await acquireProjectSlot(ctx.projectId, {
+      wait: waitForCapacity,
+      timeoutMs: waitForCapacity ? RENDER_ACQUIRE_TIMEOUT_MS : 0,
+      ...(admissionSignal ? { signal: admissionSignal } : {}),
+    });
+
+    if (!projectAcquired) {
       const activeCount = projectRenderCounts.get(ctx.projectId) ?? 0;
-      logger.error("Per-project render limit reached", {
+      const context = {
         slug,
         projectId: ctx.projectId,
         activeRenders: activeCount,
         limit: RENDER_PER_PROJECT_LIMIT,
-      });
+        admission,
+      };
+      if (admission === "background") {
+        logger.debug("Background render skipped at per-project capacity", context);
+      } else {
+        logger.warn("Per-project render admission exhausted", context);
+      }
       throw SERVICE_OVERLOADED.create({
         detail:
-          `Per-project render limit reached (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
-        context: {
+          `Per-project render admission exhausted (${activeCount}/${RENDER_PER_PROJECT_LIMIT} active). Try again shortly.`,
+        context,
+      });
+    }
+
+    let globalAcquired = false;
+    try {
+      const elapsedAdmissionMs = performance.now() - admissionStartedAt;
+      const globalWaitMs = waitForCapacity
+        ? Math.max(0, RENDER_ACQUIRE_TIMEOUT_MS - elapsedAdmissionMs)
+        : 0;
+      globalAcquired = await renderSemaphore.tryAcquire(globalWaitMs, {
+        ...(admissionSignal ? { signal: admissionSignal } : {}),
+      });
+
+      if (!globalAcquired) {
+        const context = {
           slug,
           projectId: ctx.projectId,
-          activeRenders: activeCount,
-          limit: RENDER_PER_PROJECT_LIMIT,
-        },
-      });
-    }
+          waiting: renderSemaphore.waiting,
+          available: renderSemaphore.available,
+          admission,
+        };
+        if (admission === "background") {
+          logger.debug("Background render skipped at global capacity", context);
+        } else {
+          logger.warn("Global render admission exhausted", context);
+        }
+        throw SERVICE_OVERLOADED.create({
+          detail:
+            `Render admission exhausted (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+          context,
+        });
+      }
 
-    const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
-    if (!acquired) {
-      await releaseProjectSlot(ctx.projectId);
-      logger.error("Render capacity exceeded - service overloaded", {
-        slug,
-        projectId: ctx.projectId,
-        waiting: renderSemaphore.waiting,
-        available: renderSemaphore.available,
-      });
-      throw SERVICE_OVERLOADED.create({
-        detail:
-          `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-        context: { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-      });
-    }
-
-    try {
       await this.initializeComponents(ctx);
       const services = this.createServicesForContext(ctx, options?.colorScheme);
       const renderAbortController = new AbortController();
@@ -1053,7 +1178,7 @@ export class Renderer {
 
       return result;
     } finally {
-      renderSemaphore.release();
+      if (globalAcquired) renderSemaphore.release();
       await releaseProjectSlot(ctx.projectId);
     }
   }

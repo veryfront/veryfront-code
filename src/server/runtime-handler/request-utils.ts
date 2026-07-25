@@ -8,6 +8,7 @@
  */
 
 import { getTimeoutFromEnv } from "#veryfront/middleware/builtin/timeout.ts";
+import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 /** Check if host is a private/internal IP address */
@@ -78,6 +79,11 @@ export function isLightweightPath(pathname: string): boolean {
 /** Check if path is the WebSocket endpoint (long-lived, handled by HMR handler) */
 export function isWebSocketPath(pathname: string): boolean {
   return pathname === "/_ws";
+}
+
+/** Check whether a request is the exact HMR WebSocket upgrade that must retain native identity. */
+export function isHMRWebSocketUpgrade(request: Request, pathname: string): boolean {
+  return isWebSocketPath(pathname) && isWebSocketUpgrade(request);
 }
 
 /**

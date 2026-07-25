@@ -6,6 +6,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { clearConfigCache } from "#veryfront/config";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
@@ -460,6 +461,64 @@ describe("server/runtime-handler/index", () => {
       } else {
         Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousTrustSetting);
       }
+    }
+  });
+
+  it("keeps the native HMR upgrade request connected", async () => {
+    const adapter = new DenoAdapter();
+    const projectDir = Deno.cwd();
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: {} as any,
+      defaultProjectSlug: "test-project",
+      defaultEnvironment: "preview",
+      localProjects: { "test-project": projectDir },
+    });
+    await handler.ready;
+
+    let port = 0;
+    const server = await adapter.serve(handler, {
+      hostname: "127.0.0.1",
+      port: 0,
+      onListen: (address) => {
+        port = address.port;
+      },
+    });
+    assertEquals(port > 0, true);
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${port}/_ws?x-environment=preview&x-project-slug=test-project`,
+    );
+
+    try {
+      const message = await new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for the HMR connected message")),
+          2_000,
+        );
+
+        socket.addEventListener("message", (event) => {
+          clearTimeout(timeout);
+          resolve(String(event.data));
+        }, { once: true });
+        socket.addEventListener("close", (event) => {
+          clearTimeout(timeout);
+          reject(
+            new Error(
+              `HMR socket closed before the connected message (code=${event.code}, clean=${event.wasClean})`,
+            ),
+          );
+        }, { once: true });
+        socket.addEventListener("error", () => {
+          clearTimeout(timeout);
+          reject(new Error("HMR socket failed before the connected message"));
+        }, { once: true });
+      });
+
+      assertEquals(JSON.parse(message), { type: "connected" });
+    } finally {
+      socket.close();
+      await HMRHandler.shutdown();
+      await server.stop();
     }
   });
 

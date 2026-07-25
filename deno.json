@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1145",
+  "version": "0.1.1147",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -345,6 +345,7 @@
     "#std/testing.ts": "jsr:@std/testing@1.0.17",
     "#std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "#std/testing/bdd.ts": "jsr:@std/testing@1.0.17/bdd",
+    "#std/testing/mock": "jsr:@std/testing@1.0.17/mock",
     "#std/testing/time": "jsr:@std/testing@1.0.17/time",
     "#std/testing/time.ts": "jsr:@std/testing@1.0.17/time",
     "#std/expect": "jsr:@std/expect@1.0.18",
