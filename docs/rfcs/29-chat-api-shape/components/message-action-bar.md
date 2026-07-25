@@ -4,6 +4,8 @@ The message action buttons — a namespace re-export of the `Message.Actions` fa
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): `MessageActionBar` **is** `Message.Actions` (one implementation, re-exported), yet this page re-documents `.Actions` / `.CopyAction` / `.RegenerateAction` / `.EditAction` verbatim — two authoritative copies invite drift. **Proposed:** trim to a thin alias stub (import + "canonical home: `Message.Actions`" + the one local note: no controlled/context-free fallback).
+
 `MessageActionBar` **is** the `Message.Actions` family — one implementation, re-exported under a standalone name. `Message.*` is canonical; there is never a parallel implementation. This is a real deletion: today `MessageActionBar` is a _second, context-free_ implementation (a `content` prop plus `onCopy`/`onEdit`/`onRegenerate` handler props, leaves `.Copy`/`.Copied`/`.Regenerate`/`.Edit`, each with an `icon` prop). The RFC collapses it onto the context-bound `Message.Actions` family.
 
 ## Import

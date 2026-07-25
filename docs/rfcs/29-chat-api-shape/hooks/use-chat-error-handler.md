@@ -4,6 +4,8 @@ Error state and handlers for chat surfaces — the hook behind `ChatErrorBoundar
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): nothing chat-specific — a bare `{ error, handleError, clearError, hasError }` error-state hook. **Proposed:** move to `veryfront/ui` as a generic `useErrorHandler` rather than ship it as chat API.
+
 ## Import
 
 ```tsx

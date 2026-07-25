@@ -4,6 +4,8 @@ Read a single conversation by id.
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): single-by-id read with **zero internal consumers** — `useConversations` already covers the active-conversation flow. **Proposed cut** until a real consumer exists.
+
 `useConversation` fetches one conversation — useful when you need a specific thread's data outside the active-conversation flow (which [`useConversations`](use-conversations.md) covers with `activeConversation`).
 
 ## Import

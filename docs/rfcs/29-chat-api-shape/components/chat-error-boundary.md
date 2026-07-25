@@ -4,6 +4,8 @@ An error boundary for chat surfaces — catches **render** errors in its subtree
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented; the component exists today and the RFC keeps its signature (existing props kept, a11y contract applied). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): a stock React error boundary with a default card — the only "chat" tie is cosmetic default copy. **Proposed:** move to `veryfront/ui` as a generic `ErrorBoundary` rather than ship it as chat API.
+
 ## Import
 
 ```tsx

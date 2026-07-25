@@ -4,6 +4,8 @@ A compound component for browsing and managing durable uploaded files, with the 
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): the durable "file browser" is a RAG / doc-Q&A product feature (empty state: _"upload files to start asking questions about them"_), sitting at the same altitude as the composer — and it is why the attachment surface has **4 hooks, not 2**. **Proposed:** ship it as an optional module, not core v1; the composer keeps `AttachmentPill` + `useUpload`.
+
 `AttachmentsPanel` renders the _durable_ file surface — files that persist beyond a single composer submission. (Pending, composer-side uploads are `AttachmentPill`.) Like every component in the library, each part renders exactly one node, `extends` the native attributes of that node, spreads `{...props}` onto it, and accepts `asChild`. It is **render-or-compose** (like `ToolCall` / `Sources`): `<AttachmentsPanel />` with no children renders the full default anatomy; children replace it.
 
 ## Import

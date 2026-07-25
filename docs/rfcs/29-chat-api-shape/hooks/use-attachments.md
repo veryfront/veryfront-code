@@ -4,6 +4,8 @@ Headless state and actions for durable uploaded files.
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): owns the durable-list domain that rides with [`AttachmentsPanel`](../components/attachments-panel.md) — proposed for the same optional module, not core v1. Also the clearest proliferation smell: `useUpload` (pending) and `useAttachments` (durable) have near-identical shapes; consider collapsing toward one transport-pluggable primitive parameterized by persistence.
+
 `useAttachments` owns the durable-file domain: the list of uploaded files, their loading state, and the upload/remove lifecycle. It is the L3 foundation that `AttachmentsPanel` is built on — the hook is sufficient to rebuild the panel verbatim.
 
 > **Renamed:** the old `useUploadsRegistry` alias is **deleted** (breaking-changes ledger). `useAttachments` is the name.

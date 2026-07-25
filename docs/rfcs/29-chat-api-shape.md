@@ -82,6 +82,21 @@ hooks"; it's "never render an element the consumer can't supply themselves."
 
 Individual pages flag their coupling inline; this table is the single source of truth for the split.
 
+## Earns its place — proposed v1 scope cuts & relocations
+
+A generic library ships only what a generic consumer needs. The full-surface review flagged pieces that don't earn a place in the core chat surface — app-shaped, not chat-specific, or without a consumer. Each disposition below **removes or relocates public surface**, so it is a proposal to confirm, not a done deal:
+
+| Piece | Finding | Proposed disposition |
+| --- | --- | --- |
+| `AttachmentsPanel` + `useAttachments` + `useAttachmentsPanel` | durable "file browser" is a RAG / doc-Q&A product feature (empty state: _"upload files to start asking questions about them"_); it is the reason the attachment surface has **4 hooks, not 2** | ship as an **optional module** (e.g. `veryfront/chat/attachments`), not core v1 — the composer keeps `AttachmentPill` + `useUpload` |
+| `useCompletion` | self-described non-chat one-shot text generation, no L2 consumer, couples to veryfront errors | **cut** from the chat public surface |
+| `ChatErrorBoundary` + `useChatErrorHandler` | no chat-specific logic — a stock React error boundary + error-state hook | **move to `veryfront/ui`** as `ErrorBoundary` / `useErrorHandler` |
+| `useClipboard` | a generic browser util, not a chat hook (already shared with the code-block copy button) | reposition as a generic util, or fold into `useMessageContext.copy`; disclose the reshaped signature |
+| `useConversation` (single-by-id) | zero internal consumers — speculative public surface | **cut** until a real consumer exists |
+| `MessageActionBar` | a re-export of `Message.Actions` that re-documents the same parts verbatim (drift risk) | trim to a thin alias stub — canonical home is `Message.Actions` |
+
+**Editing + branching stays** — confirmed generic (standard chat UX, fully client-side), so it earns its place despite the coupling worry raised earlier.
+
 ## Hard rules (what "clean" means here)
 
 1. **No `xxxClassName` / `xxxProps` bags. Ever.** One `className` targets one node.

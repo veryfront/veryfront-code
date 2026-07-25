@@ -4,6 +4,8 @@ Reads the `AttachmentsPanel` compound's scoped context.
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): a justified reader, but it exists only because the durable [`AttachmentsPanel`](../components/attachments-panel.md) exists — proposed to move with it into the optional attachments module, not core v1.
+
 `useAttachmentsPanel` is the context reader for the [`AttachmentsPanel`](../components/attachments-panel.md) compound. Use it inside `AttachmentsPanel.Root` to build custom parts that share the same state the built-in parts consume — without re-threading props. Contexts are scoped: the panel shares state with _its_ children only, never as an app-wide store. The raw context object stays unexported; this hook is the supported way in.
 
 ## Import

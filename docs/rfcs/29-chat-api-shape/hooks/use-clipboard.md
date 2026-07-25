@@ -4,6 +4,8 @@ Copies a string to the clipboard and reports transient "copied" feedback.
 
 > **Status: proposed (RFC).** This page documents the _proposed_ API shape — not yet implemented. Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
+> **✂ Earns-its-place flag** (see [proposed v1 scope cuts](../../29-chat-api-shape.md)): this is a generic browser util (already shared with the code-block copy button), not a chat hook — **proposed** to reposition as a generic util or fold into `useMessageContext.copy`. Also: the page silently reshapes the real signature (`useClipboard(timeout)` → `{ copy: (text) => Promise<void> }` becomes `useClipboard(text)` → `{ copy: () => void }`) — disclose the change with a `changed` note or keep the arg on `copy()`.
+
 ## Import
 
 ```tsx
