@@ -188,7 +188,7 @@ describe("hosted child fork stream execution", () => {
     assertStringIncludes(streamState.finalText, "<function_calls>");
   });
 
-  it("mirrors the same knowledge source document only once", async () => {
+  it("deduplicates fallback sources and preserves richer upstream metadata", async () => {
     const chunks: unknown[] = [];
     const streamState = { finalText: "" };
     const knowledgePath = "knowledge/product/limits.md";
@@ -210,6 +210,14 @@ describe("hosted child fork stream execution", () => {
             input: { path: knowledgePath },
             output: { path: knowledgePath, content: "# Limits" },
           },
+          {
+            type: "source",
+            id: knowledgePath,
+            sourceType: "document",
+            mediaType: "text/x-markdown",
+            title: "Curated product limits",
+            filename: "limits.md",
+          } as unknown as ForkPart,
         ]),
         steps: Promise.resolve([createStep({ text: "" })]),
         totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
@@ -255,6 +263,12 @@ describe("hosted child fork stream execution", () => {
         mediaType: "text/markdown",
         title: knowledgePath,
         filename: knowledgePath,
+      }, {
+        type: "source-document",
+        sourceId: knowledgePath,
+        mediaType: "text/x-markdown",
+        title: "Curated product limits",
+        filename: "limits.md",
       }],
     );
   });

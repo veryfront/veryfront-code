@@ -434,6 +434,62 @@ describe("mirrored-tool-chunk-state", () => {
     ]);
   });
 
+  it("mirrors a richer upstream source after a yielded fallback", async () => {
+    const path = "knowledge/product/limits.md";
+    const sourceChunks: Chunk[] = [
+      {
+        type: "tool-input-available",
+        toolCallId: "tc-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { path, content: "# Limits" },
+      },
+      { type: "text-start", id: "message-1" },
+      {
+        type: "source-document",
+        sourceId: path,
+        mediaType: "text/x-markdown",
+        title: "Curated product limits",
+        filename: "limits.md",
+      },
+    ];
+    const fallbackSource: Chunk = {
+      type: "source-document",
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+    const appendedChunks: Chunk[] = [];
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: streamChunks(sourceChunks),
+        rootStreamWatchdog: {
+          observe: () => undefined,
+          dispose: () => undefined,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+      }),
+    );
+
+    assertEquals(outputChunks, [
+      sourceChunks[0],
+      sourceChunks[1],
+      fallbackSource,
+      sourceChunks[2],
+      sourceChunks[3],
+    ]);
+    assertEquals(appendedChunks, outputChunks);
+  });
+
   it("derives one source document for direct streams with repeated knowledge reads", async () => {
     const path = "knowledge/product/limits.md";
     const sourceChunks: Chunk[] = [

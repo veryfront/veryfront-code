@@ -254,6 +254,7 @@ export async function* createHostedMirroredUiStream(
   let streamError: unknown = null;
   const emittedKnowledgeSourceIds = new Set<string>();
   const mirroredKnowledgeSourceIds = new Set<string>();
+  const emittedDerivedKnowledgeSourceIds = new Set<string>();
   let pendingDerivedSource: ReturnType<typeof deriveKnowledgeSourceDocumentChunk> = null;
 
   const mirrorChunk = async (chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void> => {
@@ -320,12 +321,17 @@ export async function* createHostedMirroredUiStream(
 
       const pendingSource = takePendingDerivedSource();
       if (pendingSource) {
+        emittedDerivedKnowledgeSourceIds.add(pendingSource.sourceId);
         await mirrorSourceOnce(pendingSource);
         yield pendingSource;
       }
 
       if (sourceChunk.type === "source-document") {
         if (emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
+          if (emittedDerivedKnowledgeSourceIds.delete(sourceChunk.sourceId)) {
+            await mirrorChunk(sourceChunk);
+            yield sourceChunk;
+          }
           continue;
         }
         emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
@@ -350,6 +356,7 @@ export async function* createHostedMirroredUiStream(
 
     const pendingSource = takePendingDerivedSource();
     if (pendingSource) {
+      emittedDerivedKnowledgeSourceIds.add(pendingSource.sourceId);
       await mirrorSourceOnce(pendingSource);
       yield pendingSource;
     }
@@ -357,6 +364,7 @@ export async function* createHostedMirroredUiStream(
     streamError = error;
     const pendingSource = takePendingDerivedSource();
     if (pendingSource) {
+      emittedDerivedKnowledgeSourceIds.add(pendingSource.sourceId);
       await mirrorSourceOnce(pendingSource);
       yield pendingSource;
     }
