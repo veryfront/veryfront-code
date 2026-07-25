@@ -9,14 +9,27 @@ can be exposed through MCP.
 
 Prompts exist because assistants often need named instructions that are not
 tools. A prompt tells an assistant what to do or how to frame a task. It does not
-execute code and does not own state.
+own executable capability or state. A generated prompt may run application code
+to produce its text, but its public result is still instruction text; generators
+should avoid side effects.
 
 ## Characteristics
 
 - Content contains the instruction text.
-- Variables let the caller fill in task-specific values.
+- Variables fill named `{placeholder}` values supplied directly by the caller.
 - A stable ID lets MCP clients discover the prompt.
 - The caller decides when the prompt is useful.
+
+Static content and generated content share the same contract: resolving a
+prompt produces a string. Empty static content is still deliberate content, and
+unresolved placeholders remain visible instead of being silently erased.
+When both `content` and `generate` are configured, static content takes
+precedence.
+
+Variable values are inserted verbatim. Prompt interpolation does not claim to
+sanitize untrusted text: blacklist rewriting is bypassable and can corrupt
+legitimate input. Apply an explicit input policy at the trusted agent or
+application boundary when variables come from an untrusted caller.
 
 ## Boundary
 

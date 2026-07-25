@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { prompt } from "./factory.ts";
 import { promptRegistry } from "./registry.ts";
 
@@ -27,8 +27,8 @@ describe("prompt registry", () => {
       assertEquals(await promptRegistry.getContent("welcome", { name: "Alice" }), "Hello Alice");
     });
 
-    it("should throw when a prompt is missing", () => {
-      assertThrows(
+    it("should return a rejected promise when a prompt is missing", async () => {
+      await assertRejects(
         () => promptRegistry.getContent("missing"),
         Error,
         'Prompt "missing" not found',

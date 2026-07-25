@@ -7,33 +7,45 @@
  */
 
 import type { Resource, ResourceConfig } from "./types.ts";
-import { createError, toError } from "#veryfront/errors";
+import { compileResourcePattern } from "./pattern.ts";
+import { ResourceParamsValidationError } from "./errors.ts";
+
+let resourcePatternCounter = 0;
 
 /** Create a typed resource definition. */
 export function resource<TParams = unknown, TData = unknown>(
   config: ResourceConfig<TParams, TData>,
 ): Resource<TParams, TData> {
   const pattern = config.pattern ?? generateFallbackPattern();
+  const generatedPattern = config.pattern === undefined ? pattern : undefined;
+  compileResourcePattern(pattern);
   const id = resourcePatternToId(pattern);
 
-  return {
+  const validateParams = (params: TParams): TParams => {
+    try {
+      return config.paramsSchema.parse(params);
+    } catch (error) {
+      throw createParamsValidationError(id, error);
+    }
+  };
+
+  const created: Resource<TParams, TData> = {
     id,
     pattern,
     description: config.description,
     title: config.title,
     paramsSchema: config.paramsSchema,
     load: async (params: TParams): Promise<TData> => {
-      try {
-        config.paramsSchema.parse(params);
-      } catch (error) {
-        throw createParamsValidationError(id, error);
-      }
-
-      return config.load(params);
+      return config.load(validateParams(params));
     },
-    subscribe: config.subscribe,
+    subscribe: config.subscribe
+      ? (params: TParams) => config.subscribe!(validateParams(params))
+      : undefined,
     mcp: config.mcp,
   };
+  return generatedPattern === undefined
+    ? created
+    : { ...created, __veryfrontGeneratedPattern: generatedPattern };
 }
 
 /**
@@ -43,7 +55,7 @@ export function resource<TParams = unknown, TData = unknown>(
  * the filesystem and extracts patterns from resource definitions.
  */
 function generateFallbackPattern(): string {
-  return `/resource_${Date.now()}`;
+  return `/resource_${Date.now()}_${resourcePatternCounter++}`;
 }
 
 /**
@@ -55,11 +67,5 @@ function resourcePatternToId(pattern: string): string {
 }
 
 function createParamsValidationError(resourceId: string, cause: unknown): Error {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return toError(
-    createError({
-      type: "agent",
-      message: `Resource "${resourceId}" params validation failed: ${message}`,
-    }),
-  );
+  return new ResourceParamsValidationError(resourceId, cause);
 }

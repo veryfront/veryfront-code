@@ -396,7 +396,7 @@ export default function HomePage() {
             method: "DELETE",
           });
           assertEquals(response.status, 405);
-          assertEquals(response.headers.get("Allow"), "GET, POST");
+          assertEquals(response.headers.get("Allow"), "GET, HEAD, POST, OPTIONS");
           await response.body?.cancel();
         });
       });

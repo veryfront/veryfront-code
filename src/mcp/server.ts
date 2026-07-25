@@ -12,6 +12,11 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { createMCPHTTPHandler } from "./http-transport.ts";
 import { SessionManager } from "./session.ts";
 import { TaskStore } from "./task-store.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  ResourceParamsValidationError,
+  ResourceUriValidationError,
+} from "#veryfront/resource/errors.ts";
 
 const logger = baseLogger.component("mcp-server");
 const MAX_CONTEXT_HEADER_LENGTH = 255;
@@ -318,7 +323,7 @@ export class MCPServer {
       },
       capabilities: {
         tools: { listChanged: true },
-        resources: { subscribe: true, listChanged: true },
+        resources: { listChanged: true },
         prompts: { listChanged: true },
         completions: {},
         logging: {},
@@ -504,8 +509,9 @@ export class MCPServer {
     const templates: Array<Record<string, unknown>> = [];
 
     for (const [id, resource] of registry.resources.entries()) {
-      if (/:(\w+)/.test(resource.pattern)) {
-        const uriTemplate = resource.pattern.replace(/:(\w+)/g, "{$1}");
+      if (resource.mcp?.enabled === false) continue;
+      if (resourceRegistry.isTemplatePattern(resource.pattern)) {
+        const uriTemplate = resourceRegistry.toUriTemplate(resource.pattern);
         const entry: Record<string, unknown> = {
           uriTemplate,
           name: id,
@@ -527,6 +533,12 @@ export class MCPServer {
     const resources: Array<Record<string, unknown>> = [];
 
     for (const [id, resource] of registry.resources.entries()) {
+      if (
+        resource.mcp?.enabled === false ||
+        resourceRegistry.isTemplatePattern(resource.pattern)
+      ) {
+        continue;
+      }
       const entry: Record<string, unknown> = {
         uri: resource.pattern,
         name: id,
@@ -543,45 +555,74 @@ export class MCPServer {
   private readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const { uri } = toParamsRecord(params);
 
-    if (!uri) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: "Resource URI is required",
-        }),
-      );
+    if (typeof uri !== "string" || uri.length === 0) {
+      throw new JsonRpcError(-32602, "Resource URI must be a non-empty string");
     }
 
-    const resourceUri = String(uri);
+    const resourceUri = uri;
+    const resourceEntry = resourceRegistry.findEntryByPattern(resourceUri);
+
+    // Hidden resources must be indistinguishable from absent resources. This
+    // check applies to direct reads as well as list endpoints so guessing a URI
+    // cannot bypass an explicit MCP exposure opt-out.
+    if (!resourceEntry || resourceEntry[1].mcp?.enabled === false) {
+      throw new JsonRpcError(-32002, `Resource not found: ${resourceUri}`);
+    }
+    const [resourceId, resource] = resourceEntry;
 
     return withSpan(
       "mcp.readResource",
       async () => {
-        const resource = resourceRegistry.findByPattern(resourceUri);
-
-        if (!resource) {
-          throw toError(
-            createError({
-              type: "agent",
-              message: `Resource not found: ${resourceUri}`,
-            }),
+        let resourceParams: Record<string, string>;
+        try {
+          resourceParams = resourceRegistry.extractParams(resourceUri, resource.pattern);
+        } catch (error) {
+          if (error instanceof ResourceUriValidationError) {
+            throw new JsonRpcError(-32602, error.message);
+          }
+          throw new JsonRpcError(-32603, `Resource "${resourceId}" could not be resolved`);
+        }
+        let data: unknown;
+        try {
+          data = await resource.load(resourceParams);
+        } catch (error) {
+          if (error instanceof ResourceParamsValidationError) {
+            throw new JsonRpcError(
+              -32602,
+              `Resource URI does not satisfy parameters for "${resourceId}"`,
+            );
+          }
+          logger.warn("Resource loading failed", {
+            resource: resourceId,
+            errorType: error instanceof Error ? error.name : typeof error,
+          });
+          throw new JsonRpcError(
+            -32603,
+            `Resource "${resourceId}" could not be loaded`,
           );
         }
-
-        const resourceParams = resourceRegistry.extractParams(resourceUri, resource.pattern);
-        const data = await resource.load(resourceParams);
+        const snapshot = snapshotBoundedJsonValue(data);
+        if (!snapshot.success) {
+          throw new JsonRpcError(
+            -32603,
+            `Resource "${resourceId}" returned data that is not bounded JSON`,
+          );
+        }
 
         return {
           contents: [
             {
               uri: resourceUri,
               mimeType: "application/json",
-              text: JSON.stringify(data, null, 2),
+              text: JSON.stringify(snapshot.value, null, 2),
             },
           ],
         };
       },
-      { "mcp.resource.uri": resourceUri },
+      {
+        "mcp.resource.id": resourceId,
+        "mcp.resource.pattern": resource.pattern,
+      },
     );
   }
 
@@ -604,27 +645,44 @@ export class MCPServer {
   private getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const { name, arguments: args } = toParamsRecord(params);
 
-    if (!name) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: "Prompt name is required",
-        }),
-      );
+    if (typeof name !== "string" || name.length === 0) {
+      throw new JsonRpcError(-32602, "Prompt name must be a non-empty string");
     }
 
-    const promptName = String(name);
+    if (
+      args !== undefined &&
+      (args === null || typeof args !== "object" || Array.isArray(args))
+    ) {
+      throw new JsonRpcError(-32602, "Prompt arguments must be an object");
+    }
+
+    const promptName = name;
+    const registeredPrompt = promptRegistry.get(promptName);
+    if (!registeredPrompt) {
+      throw new JsonRpcError(-32602, `Unknown prompt: ${promptName}`);
+    }
 
     return withSpan(
       "mcp.getPrompt",
       async () => {
-        const content = await promptRegistry.getContent(
-          promptName,
-          args as Record<string, unknown> | undefined,
-        );
+        let content: string;
+        try {
+          content = await registeredPrompt.getContent(
+            args as Record<string, unknown> | undefined,
+          );
+        } catch (error) {
+          logger.warn("Prompt rendering failed", {
+            prompt: promptName,
+            errorType: error instanceof Error ? error.name : typeof error,
+          });
+          throw new JsonRpcError(
+            -32603,
+            `Prompt "${promptName}" could not be rendered`,
+          );
+        }
 
         return {
-          description: `Prompt: ${promptName}`,
+          description: registeredPrompt.description,
           messages: [
             {
               role: "user",

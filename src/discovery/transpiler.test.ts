@@ -8,6 +8,7 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
+import { toFileUrl } from "#veryfront/compat/path";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -117,6 +118,26 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
 
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  describe("importModule with native files", () => {
+    it("decodes canonical file URLs exactly once during import", async () => {
+      const parent = await Deno.makeTempDir();
+      const dir = `${parent}/discovery %20 path`;
+      const file = `${dir}/encoded module.ts`;
+      try {
+        await Deno.mkdir(dir);
+        await Deno.writeTextFile(file, `export default { loaded: true };`);
+
+        const mod = await importModule(toFileUrl(file).href, {
+          platform: "node",
+        }) as { default: { loaded: boolean } };
+
+        assertEquals(mod.default.loaded, true);
+      } finally {
+        await Deno.remove(parent, { recursive: true });
+      }
+    });
   });
 
   describe("importModule with fsAdapter", () => {

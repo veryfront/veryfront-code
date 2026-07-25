@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { resource, resourceRegistry } from "#veryfront/resource";
+import { prompt, promptRegistry } from "#veryfront/prompt";
 import { getDashboardApiRoutePaths, handleDashboardAPI } from "./api.ts";
 import type { HandlerContext } from "../../types.ts";
 import { ReloadNotifier, type ReloadProjectInfo } from "../../../reload-notifier.ts";
@@ -388,6 +391,112 @@ describe("Dashboard API - POST endpoints", () => {
     assertEquals(res?.status, 404);
   });
 
+  it("/_dev/api/read-resource rejects non-JSON resource output", async () => {
+    const invalid = resource({
+      pattern: "dashboard://invalid-output",
+      description: "Invalid output",
+      paramsSchema: defineSchema((v) => v.object({}))(),
+      load: () => undefined,
+    });
+    resourceRegistry.register(invalid.id, invalid);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/read-resource", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uri: invalid.pattern }),
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 500);
+      assertEquals(await res?.json(), {
+        error: `Resource "${invalid.id}" returned data that is not bounded JSON`,
+      });
+    } finally {
+      resourceRegistry.delete(invalid.id);
+    }
+  });
+
+  it("/_dev/api/read-resource does not disclose loader failures", async () => {
+    const failing = resource({
+      pattern: "dashboard://failing-resource",
+      description: "Fail safely",
+      paramsSchema: defineSchema((v) => v.object({}))(),
+      load: () => {
+        throw new Error("SECRET_SENTINEL database response");
+      },
+    });
+    resourceRegistry.register(failing.id, failing);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/read-resource", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uri: failing.pattern }),
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 500);
+      assertEquals(await res?.json(), {
+        error: `Resource "${failing.id}" could not be loaded`,
+      });
+    } finally {
+      resourceRegistry.delete(failing.id);
+    }
+  });
+
+  it("/_dev/api/read-resource maps schema rejection to bad input", async () => {
+    const numeric = resource({
+      pattern: "/dashboard-users/:id",
+      description: "Numeric user",
+      paramsSchema: defineSchema((v) => v.object({ id: v.number() }))(),
+      load: ({ id }) => ({ id }),
+    });
+    resourceRegistry.register(numeric.id, numeric);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/read-resource", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uri: "/dashboard-users/not-a-number" }),
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 400);
+      assertEquals(await res?.json(), {
+        error: `Resource URI does not satisfy parameters for "${numeric.id}"`,
+      });
+    } finally {
+      resourceRegistry.delete(numeric.id);
+    }
+  });
+
+  it("/_dev/api/read-resource maps malformed URI encoding without reflecting the URI", async () => {
+    const encoded = resource({
+      pattern: "/dashboard-encoded/:id",
+      description: "Encoded user",
+      paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      load: ({ id }) => ({ id }),
+    });
+    resourceRegistry.register(encoded.id, encoded);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/read-resource", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uri: "/dashboard-encoded/%E0%A4%A-SECRET_SENTINEL" }),
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 400);
+      assertEquals(await res?.json(), {
+        error: 'Resource URI has invalid percent-encoding for parameter "id"',
+      });
+    } finally {
+      resourceRegistry.delete(encoded.id);
+    }
+  });
+
   it("/_dev/api/render-prompt returns 400 without promptId", async () => {
     const req = new Request("http://localhost/_dev/api/render-prompt", {
       method: "POST",
@@ -398,15 +507,41 @@ describe("Dashboard API - POST endpoints", () => {
     assertEquals(res?.status, 400);
   });
 
-  it("/_dev/api/render-prompt returns error for unknown prompt", async () => {
+  it("/_dev/api/render-prompt returns 404 for unknown prompt", async () => {
     const req = new Request("http://localhost/_dev/api/render-prompt", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ promptId: "nonexistent-prompt" }),
     });
     const res = await handleDashboardAPI(req, createMockCtx());
-    // May return 404 or 500 depending on whether getContent returns undefined or throws
-    assertEquals(res!.status >= 400, true);
+    assertEquals(res?.status, 404);
+  });
+
+  it("/_dev/api/render-prompt does not disclose generator failures", async () => {
+    const failing = prompt({
+      id: "dashboard-failing",
+      description: "Fail safely",
+      generate: () => {
+        throw new Error("SECRET_SENTINEL provider response");
+      },
+    });
+    promptRegistry.register(failing.id, failing);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/render-prompt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ promptId: failing.id }),
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 500);
+      assertEquals(await res?.json(), {
+        error: 'Prompt "dashboard-failing" could not be rendered',
+      });
+    } finally {
+      promptRegistry.delete(failing.id);
+    }
   });
 
   it("/_dev/api/start-workflow returns 400 without workflowId", async () => {

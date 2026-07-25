@@ -1,9 +1,8 @@
 import { agent } from "veryfront/agent";
 import { promptRegistry } from "veryfront/prompt";
 
-function getSystemPrompt(): string {
-  const content = promptRegistry.get("assistant")?.getContent();
-  return typeof content === "string" ? content : "You answer weather questions for this template.";
+async function getSystemPrompt(): Promise<string> {
+  return await promptRegistry.getContent("assistant");
 }
 
 export default agent({

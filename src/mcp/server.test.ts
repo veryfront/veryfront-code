@@ -7,10 +7,11 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
-import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { prompt } from "#veryfront/prompt";
+import { resource } from "#veryfront/resource";
 
-import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
+import { clearMCPRegistry, registerPrompt, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
 import type { ToolListEntry } from "./types.ts";
 
@@ -1037,6 +1038,331 @@ describe("mcp/server", () => {
     });
   });
 
+  describe("resource exposure policy", () => {
+    it("excludes templates and MCP-disabled resources from resources/list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "public",
+        resource({
+          pattern: "docs://public",
+          description: "Public docs",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => ({ ok: true }),
+        }),
+      );
+      registerResource(
+        "template",
+        resource({
+          pattern: "/users/:id",
+          description: "User",
+          paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          load: () => ({ ok: true }),
+        }),
+      );
+      registerResource(
+        "disabled",
+        resource({
+          pattern: "docs://disabled",
+          description: "Disabled docs",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => ({ secret: true }),
+          mcp: { enabled: false },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+      });
+
+      const result = response.result as {
+        resources: Array<{ name: string }>;
+      };
+      assertEquals(result.resources.map(({ name }) => name), ["public"]);
+    });
+
+    it("excludes MCP-disabled resources from resources/templates/list", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "disabled-template",
+        resource({
+          pattern: "/private/:id",
+          description: "Private resource",
+          paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          load: () => ({ secret: true }),
+          mcp: { enabled: false },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+
+      assertEquals(
+        (response.result as { resourceTemplates: unknown[] }).resourceTemplates,
+        [],
+      );
+    });
+
+    it("treats MCP-disabled and missing resources as not found", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "disabled",
+        resource({
+          pattern: "docs://disabled",
+          description: "Disabled docs",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => ({ secret: true }),
+          mcp: { enabled: false },
+        }),
+      );
+
+      for (const uri of ["docs://disabled", "docs://missing"]) {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "resources/read",
+          params: { uri },
+        });
+        assertEquals(response.error?.code, -32002);
+        assertStringIncludes(response.error?.message ?? "", "Resource not found");
+      }
+    });
+
+    it("maps malformed encoded resource params to invalid params", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "user",
+        resource({
+          pattern: "/users/:id",
+          description: "User",
+          paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          load: ({ id }) => ({ id }),
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/users/%E0%A4%A" },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(
+        response.error?.message,
+        'Resource URI has invalid percent-encoding for parameter "id"',
+      );
+    });
+
+    it("rejects non-JSON resource output with a stable transport error", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "invalid-output",
+        resource({
+          pattern: "docs://invalid-output",
+          description: "Invalid output",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => undefined,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "docs://invalid-output" },
+      });
+
+      assertEquals(response.error?.code, -32603);
+      assertEquals(
+        response.error?.message,
+        'Resource "invalid-output" returned data that is not bounded JSON',
+      );
+    });
+
+    it("maps resource schema rejection to invalid params without schema details", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "numeric-user",
+        resource({
+          pattern: "/numeric-users/:id",
+          description: "Numeric user",
+          paramsSchema: defineSchema((v) => v.object({ id: v.number() }))(),
+          load: ({ id }) => ({ id }),
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/numeric-users/not-a-number" },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(
+        response.error?.message,
+        'Resource URI does not satisfy parameters for "numeric-user"',
+      );
+    });
+
+    it("does not disclose resource loader failures", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "failing-resource",
+        resource({
+          pattern: "docs://failing-resource",
+          description: "Fail safely",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => {
+            throw new Error("SECRET_SENTINEL database response");
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "docs://failing-resource" },
+      });
+
+      assertEquals(response.error?.code, -32603);
+      assertEquals(
+        response.error?.message,
+        'Resource "failing-resource" could not be loaded',
+      );
+    });
+  });
+
+  describe("prompt retrieval", () => {
+    it("returns the configured prompt description", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "welcome",
+        prompt({
+          id: "welcome",
+          description: "Welcome a named user",
+          content: "Hello {name}",
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "welcome", arguments: { name: "Ada" } },
+      });
+
+      const result = response.result as {
+        description: string;
+        messages: Array<{ content: { text: string } }>;
+      };
+      assertEquals(result.description, "Welcome a named user");
+      assertEquals(result.messages[0]?.content.text, "Hello Ada");
+    });
+
+    it("rejects non-object prompt arguments", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "welcome",
+        prompt({
+          id: "welcome",
+          description: "Welcome",
+          content: "Hello",
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "welcome", arguments: ["unexpected"] },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(response.error?.message, "Prompt arguments must be an object");
+    });
+
+    it("returns invalid params for an unknown prompt", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "missing" },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(response.error?.message, "Unknown prompt: missing");
+    });
+
+    it("does not disclose prompt generator failures", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "failing",
+        prompt({
+          id: "failing",
+          description: "Fail safely",
+          generate: () => {
+            throw new Error("SECRET_SENTINEL provider response");
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "failing" },
+      });
+
+      assertEquals(response.error?.code, -32603);
+      assertEquals(
+        response.error?.message,
+        'Prompt "failing" could not be rendered',
+      );
+    });
+  });
+
   it("declares completions capability in initialize", async () => {
     const server = createMCPServer({
       enabled: true,
@@ -1055,6 +1381,29 @@ describe("mcp/server", () => {
     const caps = (result.result as Record<string, unknown>)
       .capabilities as Record<string, unknown>;
     assertExists(caps.completions);
+  });
+
+  it("does not advertise unsupported resource subscriptions", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+
+    const capabilities = (response.result as {
+      capabilities: { resources: Record<string, unknown> };
+    }).capabilities;
+    assertEquals(capabilities.resources.subscribe, undefined);
+    assertEquals(capabilities.resources.listChanged, true);
   });
 
   it("completion/complete returns empty values for unknown ref", async () => {

@@ -181,7 +181,11 @@ export async function importModule(
   // Ensure veryfront modules are available as globals for compiled binaries
   await ensureVeryfrontGlobals();
 
-  const filePath = file.replace("file://", "");
+  const filePath = file.startsWith("file://")
+    ? context.fsAdapter && !file.startsWith("file:///")
+      ? decodeURIComponent(file.slice("file://".length))
+      : pathHelper.fromFileUrl(file)
+    : file;
 
   let source: string;
   try {

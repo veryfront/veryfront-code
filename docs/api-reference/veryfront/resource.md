@@ -43,11 +43,11 @@ Create a typed resource definition.
 |----------|------|-------------|--------|
 | `pattern?` | `string` | URI template pattern for parameterized resources | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L19) |
 | `description` | `string` | Resource description | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L20) |
-| `title?` | `string` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L21) |
-| `paramsSchema` | <code>Schema&lt;TParams&gt;</code> | Zod schema for URI parameters | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L22) |
+| `title?` | `string` | Optional human-readable title | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L21) |
+| `paramsSchema` | <code>Schema&lt;TParams&gt;</code> | Schema for URI parameters | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L22) |
 | `load` | <code>(params: TParams) =&gt; Promise&lt;TData&gt; &#124; TData</code> | Function returning resource content | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L23) |
-| `subscribe?` | <code>(params: TParams) =&gt; AsyncIterable&lt;TData&gt;</code> | Async iterable for real-time resource updates | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L24) |
-| `mcp?` | `McpConfig` | MCP server configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L25) |
+| `subscribe?` | <code>(params: TParams) =&gt; AsyncIterable&lt;TData&gt;</code> | Optional application-level update stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L30) |
+| `mcp?` | `McpConfig` | MCP exposure metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L37) |
 
 **Returns:** <code>Resource&lt;TParams, TData&gt;</code>
 
@@ -57,17 +57,17 @@ Create a typed resource definition.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `resource` | Create a typed resource definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/factory.ts#L13) |
+| `resource` | Create a typed resource definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/factory.ts#L16) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Resource` | Public API contract for resource. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L29) |
+| `Resource` | Public API contract for resource. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L41) |
 | `ResourceConfig` | Configuration used by resource. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L18) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `resourceRegistry` | Shared resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L50) |
+| `resourceRegistry` | Shared resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L115) |

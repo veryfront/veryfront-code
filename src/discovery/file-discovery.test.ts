@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { discoveryFileExists, listDiscoveryDirectoryEntries } from "./file-discovery.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  discoveryFileExists,
+  findTypeScriptFiles,
+  listDiscoveryDirectoryEntries,
+  readDiscoveryTextFile,
+} from "./file-discovery.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -71,4 +76,59 @@ Deno.test("discoveryFileExists resolves through an fsAdapter", async () => {
 
   assertEquals(await discoveryFileExists("/agents/writer/AGENT.md", context), true);
   assertEquals(await discoveryFileExists("/agents/writer/SKILL.md", context), false);
+});
+
+Deno.test("native discovery emits valid file URLs and reads encoded paths", async () => {
+  const parent = await Deno.makeTempDir();
+  const root = `${parent}/veryfront discovery %20`;
+  try {
+    await Deno.mkdir(root);
+    const file = `${root}/welcome prompt.ts`;
+    await Deno.writeTextFile(file, "export default 'welcome';");
+    const context: FileDiscoveryContext = { platform: "node" };
+
+    const files = await findTypeScriptFiles(root, context);
+
+    assertEquals(files.length, 1);
+    assertEquals(new URL(files[0]!).protocol, "file:");
+    assertEquals(await readDiscoveryTextFile(files[0]!, context), "export default 'welcome';");
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+});
+
+Deno.test("adapter discovery preserves raw relative and percent-containing paths", async () => {
+  const fsAdapter = fakeFsAdapter(
+    {
+      "resources": [
+        { name: "release%20notes.ts", isFile: true, isDirectory: false },
+      ],
+    },
+    new Set(["resources/release%20notes.ts"]),
+  );
+  const context: FileDiscoveryContext = { platform: "node", fsAdapter };
+
+  const files = await findTypeScriptFiles("resources", context);
+
+  assertEquals(files, ["resources/release%20notes.ts"]);
+  assertEquals(
+    await readDiscoveryTextFile(files[0]!, context),
+    "content:resources/release%20notes.ts",
+  );
+});
+
+Deno.test("file discovery propagates source failures instead of treating them as empty", async () => {
+  const fsAdapter = {
+    exists: () => Promise.resolve(true),
+    readDir: async function* () {
+      yield await Promise.reject(new Error("resource source unavailable"));
+    },
+  } as unknown as FileSystemAdapter;
+  const context: FileDiscoveryContext = { platform: "node", fsAdapter };
+
+  await assertRejects(
+    () => findTypeScriptFiles("/resources", context),
+    Error,
+    "resource source unavailable",
+  );
 });

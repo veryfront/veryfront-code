@@ -16,44 +16,41 @@ async function findFilesByExtension(
 ): Promise<string[]> {
   const files: string[] = [];
 
-  try {
-    if (context.fsAdapter) {
-      if (!(await context.fsAdapter.exists(dir))) return files;
+  if (context.fsAdapter) {
+    if (!(await context.fsAdapter.exists(dir))) return files;
 
-      for await (const entry of context.fsAdapter.readDir(dir)) {
-        const filePath = `${dir}/${entry.name}`;
+    for await (const entry of context.fsAdapter.readDir(dir)) {
+      const filePath = `${dir}/${entry.name}`;
 
-        if (entry.isFile && extensions.some((extension) => entry.name.endsWith(extension))) {
-          files.push(`file://${filePath}`);
-          continue;
-        }
-
-        if (entry.isDirectory) {
-          files.push(...(await findFilesByExtension(filePath, context, extensions)));
-        }
-      }
-
-      return files;
-    }
-
-    const { fs, path } = await getNodeDeps(context);
-    if (!fs.existsSync(dir)) return files;
-
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const filePath = path.join(dir, entry.name);
-
-      if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
-        files.push(`file://${path.resolve(filePath)}`);
+      if (entry.isFile && extensions.some((extension) => entry.name.endsWith(extension))) {
+        // Adapter paths are opaque adapter keys, not native file URLs. Keeping
+        // them raw also preserves literal percent signs and relative VFS roots.
+        files.push(filePath);
         continue;
       }
 
-      if (entry.isDirectory()) {
+      if (entry.isDirectory) {
         files.push(...(await findFilesByExtension(filePath, context, extensions)));
       }
     }
-  } catch (_) {
-    /* expected: directory may not exist or be unreadable */
+
     return files;
+  }
+
+  const { fs, path, url } = await getNodeDeps(context);
+  if (!fs.existsSync(dir)) return files;
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const filePath = path.join(dir, entry.name);
+
+    if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
+      files.push(url.pathToFileURL(path.resolve(filePath)).href);
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      files.push(...(await findFilesByExtension(filePath, context, extensions)));
+    }
   }
 
   return files;
@@ -66,11 +63,19 @@ async function findFilesByExtension(
  */
 async function getNodeDeps(
   context: FileDiscoveryContext,
-): Promise<{ fs: typeof import("node:fs"); path: typeof import("node:path") }> {
+): Promise<{
+  fs: typeof import("node:fs");
+  path: typeof import("node:path");
+  url: typeof import("node:url");
+}> {
   if (context.nodeDeps) return context.nodeDeps;
 
-  const [fsModule, pathModule] = await Promise.all([import("node:fs"), import("node:path")]);
-  context.nodeDeps = { fs: fsModule, path: pathModule };
+  const [fsModule, pathModule, urlModule] = await Promise.all([
+    import("node:fs"),
+    import("node:path"),
+    import("node:url"),
+  ]);
+  context.nodeDeps = { fs: fsModule, path: pathModule, url: urlModule };
   return context.nodeDeps;
 }
 
@@ -95,16 +100,18 @@ export function findMarkdownFiles(
 }
 
 export async function readDiscoveryTextFile(
-  fileUrl: string,
+  file: string,
   context: FileDiscoveryContext,
 ): Promise<string> {
-  const path = fileUrl.replace(/^file:\/\//, "");
-
   if (context.fsAdapter) {
+    const path = file.startsWith("file://")
+      ? decodeURIComponent(file.slice("file://".length))
+      : file;
     return await context.fsAdapter.readFile(path);
   }
 
-  const { fs } = await getNodeDeps(context);
+  const { fs, url } = await getNodeDeps(context);
+  const path = file.startsWith("file://") ? url.fileURLToPath(file) : file;
   return fs.readFileSync(path, "utf-8");
 }
 

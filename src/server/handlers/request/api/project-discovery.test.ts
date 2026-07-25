@@ -9,6 +9,8 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import type { HandlerContext } from "../../types.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
+import { promptRegistry } from "#veryfront/prompt/registry.ts";
+import { resourceRegistry } from "#veryfront/resource/registry.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
@@ -77,6 +79,44 @@ async function writeSkillFile(
   );
 }
 
+async function writeResourceFile(
+  ctx: HandlerContext,
+  resourceId: string,
+): Promise<void> {
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/resources/${resourceId}.ts`,
+    [
+      'import { resource } from "veryfront/resource";',
+      'import { defineSchema } from "veryfront/schemas";',
+      "",
+      "export default resource({",
+      `  description: "${resourceId}",`,
+      "  paramsSchema: defineSchema((v) => v.object({}))(),",
+      `  load: () => ({ resource: "${resourceId}" }),`,
+      "});",
+      "",
+    ].join("\n"),
+  );
+}
+
+async function writePromptFile(
+  ctx: HandlerContext,
+  promptId: string,
+): Promise<void> {
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/prompts/${promptId}.ts`,
+    [
+      'import { prompt } from "veryfront/prompt";',
+      "",
+      "export default prompt({",
+      `  description: "${promptId}",`,
+      `  content: "${promptId}",`,
+      "});",
+      "",
+    ].join("\n"),
+  );
+}
+
 describe(
   "server/handlers/request/api/project-discovery",
   { sanitizeOps: false, sanitizeResources: false },
@@ -105,6 +145,34 @@ describe(
       const updatedAgent = getAgent(agentId);
       assertExists(updatedAgent);
       assertEquals(updatedAgent.config.system, "SECOND");
+    });
+
+    it("removes stale resources and prompts when preview discovery commits", async () => {
+      resourceRegistry.clearAll();
+      promptRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/preview-primitives-project",
+        "preview-primitives-project",
+        "preview",
+      );
+      await writeResourceFile(ctx, "old-resource");
+      await writePromptFile(ctx, "old-prompt");
+      await ensureProjectDiscovery(ctx);
+
+      assertExists(resourceRegistry.get("oldResource"));
+      assertExists(promptRegistry.get("oldPrompt"));
+
+      await ctx.adapter.fs.remove(`${ctx.projectDir}/resources/old-resource.ts`);
+      await ctx.adapter.fs.remove(`${ctx.projectDir}/prompts/old-prompt.ts`);
+      await writeResourceFile(ctx, "new-resource");
+      await writePromptFile(ctx, "new-prompt");
+      await ensureProjectDiscovery(ctx);
+
+      assertEquals(resourceRegistry.get("oldResource"), undefined);
+      assertEquals(promptRegistry.get("oldPrompt"), undefined);
+      assertExists(resourceRegistry.get("newResource"));
+      assertExists(promptRegistry.get("newPrompt"));
     });
 
     it("keeps production discovery cached for the same release", async () => {
@@ -259,6 +327,34 @@ describe(
       await runWithRequestContext(requestContext, async () => {
         assertExists(skillRegistry.get("stable-skill"));
       });
+    });
+
+    it("preserves live resources when their source fails during rediscovery", async () => {
+      resourceRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/failed-resource-rediscovery-project",
+        "failed-resource-rediscovery-project",
+        "preview",
+      );
+      await writeResourceFile(ctx, "stable-resource");
+      await ensureProjectDiscovery(ctx);
+      assertExists(resourceRegistry.get("stableResource"));
+
+      const originalExists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+      ctx.adapter.fs.exists = (path: string) => {
+        if (path === `${ctx.projectDir}/resources`) {
+          return Promise.reject(new Error("resource source unavailable"));
+        }
+        return originalExists(path);
+      };
+
+      await assertRejects(
+        () => ensureProjectDiscovery(ctx),
+        Error,
+        "resource source unavailable",
+      );
+      assertExists(resourceRegistry.get("stableResource"));
     });
 
     it("does not deduplicate release-less discovery across environments", async () => {

@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
+import { stub } from "#std/testing/mock";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
 
@@ -14,6 +20,7 @@ describe("resource factory", () => {
         load: async ({ userId }) => ({ id: userId }),
       });
       assertEquals(r.pattern, "/users/:userId");
+      assertEquals(r.__veryfrontGeneratedPattern, undefined);
       assertEquals(r.description, "Get user");
     });
 
@@ -34,6 +41,24 @@ describe("resource factory", () => {
         load: async () => ({}),
       });
       assertStringIncludes(r.pattern, "/resource_");
+      assertEquals(r.__veryfrontGeneratedPattern, r.pattern);
+    });
+
+    it("should generate unique fallback patterns within the same millisecond", () => {
+      using _dateNow = stub(Date, "now", () => 1_234);
+      const first = resource({
+        description: "First",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      const second = resource({
+        description: "Second",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      assertEquals(first.pattern === second.pattern, false);
+      assertEquals(first.id === second.id, false);
     });
 
     it("should preserve paramsSchema", () => {
@@ -59,7 +84,7 @@ describe("resource factory", () => {
       assertEquals(r.mcp?.cachePolicy, "cache-first");
     });
 
-    it("should preserve subscribe function", () => {
+    it("should expose configured subscription support", () => {
       const subscribeFn = async function* () {
         yield { data: "test" };
       };
@@ -70,7 +95,7 @@ describe("resource factory", () => {
         load: async () => ({}),
         subscribe: subscribeFn,
       });
-      assertEquals(r.subscribe, subscribeFn);
+      assertEquals(typeof r.subscribe, "function");
     });
   });
 
@@ -145,6 +170,70 @@ describe("resource factory", () => {
       const result = await r.load({ key: "test" });
       assertEquals(result, { value: "test" });
     });
+
+    it("should pass transformed schema output to the load function", async () => {
+      const r = resource({
+        pattern: "/normalized/:key",
+        description: "Normalized value",
+        paramsSchema: defineSchema((v) =>
+          v.object({
+            key: v.string().transform((value) => value.toUpperCase()),
+          })
+        )(),
+        load: ({ key }) => key,
+      });
+
+      assertEquals(await r.load({ key: "lower" }), "LOWER");
+    });
+  });
+
+  describe("subscribe()", () => {
+    it("should validate and transform params before subscribing", async () => {
+      let received = "";
+      const r = resource({
+        pattern: "/events/:topic",
+        description: "Events",
+        paramsSchema: defineSchema((v) =>
+          v.object({
+            topic: v.string().transform((value) => value.toUpperCase()),
+          })
+        )(),
+        load: ({ topic }) => topic,
+        subscribe: async function* ({ topic }) {
+          received = topic;
+          yield topic;
+        },
+      });
+
+      const values: string[] = [];
+      for await (const value of r.subscribe!({ topic: "news" })) {
+        values.push(value);
+      }
+
+      assertEquals(received, "NEWS");
+      assertEquals(values, ["NEWS"]);
+    });
+
+    it("should reject invalid params before invoking subscribe", () => {
+      let subscribeCalls = 0;
+      const r = resource({
+        pattern: "/events/:topic",
+        description: "Events",
+        paramsSchema: defineSchema((v) => v.object({ topic: v.string() }))(),
+        load: async () => ({}),
+        subscribe: async function* () {
+          subscribeCalls += 1;
+          yield {};
+        },
+      });
+
+      assertThrows(
+        () => r.subscribe!({ topic: 42 } as unknown as { topic: string }),
+        Error,
+        "params validation failed",
+      );
+      assertEquals(subscribeCalls, 0);
+    });
   });
 
   describe("pattern to id conversion", () => {
@@ -176,6 +265,36 @@ describe("resource factory", () => {
         load: async () => ({}),
       });
       assertEquals(r.id, "users_userId_posts_postId");
+    });
+  });
+
+  describe("pattern validation", () => {
+    it("should reject duplicate parameter names at definition time", () => {
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/users/:id/posts/:id",
+            description: "Invalid duplicate",
+            paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+            load: async () => ({}),
+          }),
+        Error,
+        'duplicate parameter "id"',
+      );
+    });
+
+    it("should reject malformed parameter segments", () => {
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/users/:123",
+            description: "Invalid parameter",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: async () => ({}),
+          }),
+        Error,
+        'invalid parameter segment ":123"',
+      );
     });
   });
 });

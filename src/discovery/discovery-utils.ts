@@ -4,11 +4,16 @@
  * Helper functions for ID generation, path manipulation, and agent tracking.
  */
 
+import { fromFileUrl } from "#veryfront/compat/path";
+
 /**
  * Convert a file path to a camelCase ID
  */
 export function filenameToId(filePath: string): string {
-  const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") ?? "";
+  const filename = normalizeDiscoveryPath(filePath)
+    .split("/")
+    .pop()
+    ?.replace(/\.(ts|tsx|js|jsx)$/, "") ?? "";
   return filename
     .replace(/[-_](.)/g, (_, char) => char.toUpperCase())
     .replace(/^[A-Z]/, (char) => char.toLowerCase());
@@ -18,12 +23,68 @@ export function filenameToId(filePath: string): string {
  * Convert a file path to a URL-style pattern for resources
  */
 export function filePathToPattern(filePath: string, baseDir: string): string {
-  const cleanPath = filePath.replace("file://", "");
+  const cleanPath = normalizeDiscoveryPath(filePath);
+  const normalizedBaseDir = normalizeDiscoveryPath(baseDir).replace(/\/+$/, "");
+  const relativePath = cleanPath === normalizedBaseDir
+    ? ""
+    : cleanPath.startsWith(`${normalizedBaseDir}/`)
+    ? cleanPath.slice(normalizedBaseDir.length + 1)
+    : undefined;
 
-  let pattern = cleanPath.replace(baseDir, "").replace(/\.(ts|tsx|js|jsx)$/, "");
-  pattern = pattern.replace(/\[(\w+)\]/g, ":$1").replace(/^\/+/, "");
+  if (relativePath === undefined) {
+    throw new Error(
+      `Discovery file "${filePath}" is outside resource directory "${baseDir}"`,
+    );
+  }
 
-  return "/" + pattern;
+  assertSafeRelativeDiscoveryPath(relativePath, filePath);
+
+  const pattern = relativePath
+    .replace(/\.(ts|tsx|js|jsx)$/, "")
+    .replace(/\[(\w+)\]/g, ":$1");
+
+  const encodedPattern = pattern
+    .split("/")
+    .map((segment) => segment.startsWith(":") ? segment : encodeURIComponent(segment))
+    .join("/");
+  return `/${encodedPattern}`;
+}
+
+function assertSafeRelativeDiscoveryPath(relativePath: string, sourcePath: string): void {
+  const unsafeSegment = relativePath
+    .split("/")
+    .find((segment) => segment === "." || segment === ".." || segment.includes("\0"));
+  if (unsafeSegment !== undefined) {
+    throw new Error(
+      `Discovery path contains an unsafe path segment: "${sourcePath}"`,
+    );
+  }
+}
+
+function normalizeDiscoveryPath(value: string): string {
+  let normalized = value;
+  if (value.startsWith("file:///")) {
+    try {
+      normalized = fromFileUrl(value);
+    } catch {
+      throw new Error("Discovery file URL is invalid");
+    }
+  } else if (value.startsWith("file://")) {
+    // Hosted adapters historically use `file://relative/path.ts` as a virtual
+    // file specifier. It is not a standards-compliant file URL (the first
+    // segment would be interpreted as a host), so decode only this explicit
+    // adapter form. Raw filesystem paths are never decoded: a directory named
+    // `%20` must remain distinct from one containing a space.
+    try {
+      normalized = decodeURIComponent(value.slice("file://".length));
+    } catch {
+      throw new Error("Discovery virtual file URL is invalid");
+    }
+  }
+  normalized = normalized.replaceAll("\\", "/");
+  // A Windows file URL is written as file:///C:/..., while a native Windows
+  // path starts C:/.... Normalize both to the latter for safe prefix checks.
+  return normalized.replace(/^\/([A-Za-z]:\/)/, "$1");
 }
 
 // Track discovered agent paths for index generation

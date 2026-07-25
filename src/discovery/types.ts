@@ -26,6 +26,7 @@ export interface FileDiscoveryContext {
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
+    url: typeof import("node:url");
   };
   baseDir?: string;
 }

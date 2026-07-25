@@ -41,14 +41,15 @@ Create a typed prompt definition.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `prompt` | Create a typed prompt definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L10) |
+| `prompt` | Create a typed prompt definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L5) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `Prompt` | Public API contract for prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L4) |
-| `PromptConfig` | Configuration used by prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L16) |
+| `PromptConfig` | Configuration used by prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L38) |
+| `PromptGenerateFn` | Generate prompt content from interpolation variables. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L5) |
 
 ### Constants
 

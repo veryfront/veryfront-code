@@ -257,6 +257,18 @@ describe("cli/templates", () => {
     assertEquals(featureChat.includes('agentId="assistant"'), true);
   });
 
+  it("awaits the registered prompt in the AI feature agent template", async () => {
+    const assistant = await Deno.readTextFile(
+      new URL("./features/ai/files/agents/assistant.ts", import.meta.url),
+    );
+
+    assertEquals(
+      assistant.includes('return await promptRegistry.getContent("assistant");'),
+      true,
+    );
+    assertEquals(assistant.includes("typeof content ==="), false);
+  });
+
   it("keeps docs-agent on the shared chat shell and uploads components", async () => {
     const layout = await Deno.readTextFile(
       new URL("./files/docs-agent/app/layout.tsx", import.meta.url),

@@ -2064,8 +2064,9 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
   PromptConfig: {
     id: "Unique prompt identifier",
     description: "Human-readable description",
-    arguments: "Named arguments with descriptions",
-    handler: "Function returning prompt messages",
+    content: "Static prompt text with optional `{name}` placeholders",
+    generate: "Function that resolves prompt text from caller-supplied variables",
+    suggestion: "Example message text suitable for a chat suggestion",
   },
   WorkConfig: {
     id: "Unique Work identifier",
@@ -2085,16 +2086,13 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     optional: "Whether completion can ignore this expectation",
   },
   ResourceConfig: {
-    uri: "Resource URI pattern",
-    name: "Human-readable name",
     description: "Resource description",
     pattern: "URI template pattern for parameterized resources",
-    mimeType: "Content MIME type",
-    paramsSchema: "Zod schema for URI parameters",
+    title: "Optional human-readable title",
+    paramsSchema: "Schema for URI parameters",
     load: "Function returning resource content",
-    subscribe: "Async iterable for real-time resource updates",
-    handler: "Function returning resource content",
-    mcp: "MCP server configuration",
+    subscribe: "Optional application-level stream of resource updates",
+    mcp: "MCP exposure configuration",
   },
 };
 

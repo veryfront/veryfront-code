@@ -417,10 +417,17 @@ export class TestContext {
       defaultProjectId: this.projectId,
     });
 
-    const testServer = server as TestServer;
-    testServer.port = port;
-    // Use 127.0.0.1 explicitly to avoid IPv6 resolution issues with localhost
-    testServer.hostname = "127.0.0.1";
+    // Adapt the public server object instead of mutating it. DevServer.port is a
+    // readonly getter and, when port 0 is requested, exposes the actual bound
+    // port rather than the configured value.
+    const testServer: TestServer = {
+      ready: server.ready,
+      stop: () => server.stop(),
+      port: server.port,
+      // Use 127.0.0.1 explicitly to avoid IPv6 resolution issues with localhost
+      hostname: "127.0.0.1",
+      getFileWatcherMetrics: () => server.getFileWatcherMetrics(),
+    };
     this.servers.push(testServer);
 
     await this.waitForServerReady(testServer);
@@ -449,9 +456,12 @@ export class TestContext {
       defaultProjectId: this.projectId,
     });
 
-    const testServer = server as TestServer;
-    testServer.port = port;
-    testServer.hostname = hostname;
+    const testServer: TestServer = {
+      ready: server.ready,
+      stop: () => server.stop(),
+      port: server.port,
+      hostname,
+    };
     this.servers.push(testServer);
 
     await this.waitForServerReady(testServer);

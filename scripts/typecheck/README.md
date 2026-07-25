@@ -1,9 +1,9 @@
 # Consumer typecheck gate
 
-`deno task typecheck:consumer` typechecks the documented `veryfront/ui` and
-`veryfront/chat` composition **the way an external app compiles the published
-package** — real `tsc --noEmit`, real `@types/react`, against the emitted
-`.d.ts` in `npm/`.
+`deno task typecheck:consumer` typechecks documented public package surfaces
+**the way an external app compiles the published package** — real
+`tsc --noEmit`, real consumer dependencies, against the emitted `.d.ts` in
+`npm/`.
 
 ## Why this exists (the gap it closes)
 
@@ -40,6 +40,10 @@ consumer's own `@types/react`. This gate is the regression guard.
 - [`fixtures/chat-composition.tsx`](./fixtures/chat-composition.tsx) — batteries
   `<Chat>`, the `<Chat.Root>` compound, `Message`, `ChatSidebar`, via
   `veryfront/chat`.
+- [`fixtures/mcp-primitives.ts`](./fixtures/mcp-primitives.ts) — prompt
+  generators, resource schemas, and their emitted callback contracts via
+  `veryfront/mcp`, `veryfront/prompt`, `veryfront/resource`, and
+  `veryfront/schemas`.
 
 Add a fixture whenever a new public compound ships; keep them importing the
 published specifiers (not relative `src` paths) so they exercise the real

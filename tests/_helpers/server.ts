@@ -143,8 +143,9 @@ export async function createTestDevServer(options: {
   return {
     ready: server.ready,
     stop: () => server.stop(),
-    port,
+    port: server.port,
     hostname: options.hostname ?? "localhost",
+    getFileWatcherMetrics: () => server.getFileWatcherMetrics(),
   };
 }
 
@@ -219,8 +220,9 @@ export async function createTestProductionServer(options: {
   });
 
   return {
-    ...server,
-    port,
+    ready: server.ready,
+    stop: () => server.stop(),
+    port: server.port,
     hostname,
   };
 }

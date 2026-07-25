@@ -147,6 +147,8 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         "#veryfront/agent/composition/composition.ts"
       );
       const { toolRegistry } = await import("#veryfront/tool/registry.ts");
+      const { promptRegistry } = await import("#veryfront/prompt/registry.ts");
+      const { resourceRegistry } = await import("#veryfront/resource/registry.ts");
 
       return await runWithRegistryTransaction(async () => {
         // Clear stale entries in a transaction-local copy. Concurrent runs keep
@@ -156,6 +158,8 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         clearTranspileCache();
         agentRegistry.clear();
         toolRegistry.clear();
+        promptRegistry.clear();
+        resourceRegistry.clear();
 
         const discoveryOptions = createProjectDiscoveryConfig({
           projectDir: ctx.projectDir,

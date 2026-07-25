@@ -21,7 +21,10 @@ export function registerTool(id: string, tool: Tool): void {
 }
 
 /** Registers resource. */
-export function registerResource(id: string, resource: Resource): void {
+export function registerResource<TParams, TData>(
+  id: string,
+  resource: Resource<TParams, TData>,
+): void {
   resourceRegistry.register(id, resource);
 }
 

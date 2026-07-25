@@ -117,7 +117,7 @@ export default prompt({
 - Code style problems
 
 Code to review:
-{{code}}`,
+{code}`,
 });
 ```
 
@@ -127,17 +127,22 @@ Resources are data sources that MCP clients can read:
 
 ```ts
 // resources/docs.ts
+import { defineSchema } from "veryfront/schemas";
 import { resource } from "veryfront/resource";
 
 export default resource({
   description: "Project documentation",
   pattern: "docs://project",
+  paramsSchema: defineSchema((v) => v.object({}))(),
   load: async () => {
     const docs = await loadDocs();
     return { contents: docs };
   },
 });
 ```
+
+Set `mcp: { enabled: false }` when application code should still be able to
+load a resource but MCP clients must not list or read it.
 
 ## Manual registration
 

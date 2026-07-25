@@ -4,4 +4,8 @@
  * @module prompt/schemas
  */
 
-export { getPromptConfigSchema, type PromptConfig } from "./prompt.schema.ts";
+export {
+  getPromptConfigSchema,
+  type PromptConfig,
+  type PromptGenerateFn,
+} from "./prompt.schema.ts";

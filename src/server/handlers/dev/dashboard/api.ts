@@ -27,11 +27,18 @@ import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { validatePathSync } from "#veryfront/security";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { serverLogger } from "#veryfront/utils";
+import {
+  ResourceParamsValidationError,
+  ResourceUriValidationError,
+} from "#veryfront/resource/errors.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 import { errorResponse, jsonResponse } from "../http-helpers.ts";
 
 const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
+const dashboardApiLogger = serverLogger.component("dashboard-api");
 
 /**
  * Validate a relative path against the project directory.
@@ -251,15 +258,49 @@ async function handleReadResource(req: Request): Promise<Response> {
     const resource = resourceRegistry.findByPattern(uri);
     if (!resource) return errorResponse(`Resource not found for URI: ${uri}`, 404);
 
-    const params = resourceRegistry.extractParams(uri, resource.pattern);
+    let params: Record<string, string>;
+    try {
+      params = resourceRegistry.extractParams(uri, resource.pattern);
+    } catch (error) {
+      if (error instanceof ResourceUriValidationError) {
+        return errorResponse(error.message, 400);
+      }
+      dashboardApiLogger.warn("Resource URI resolution failed", {
+        resource: resource.id,
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
+      return errorResponse(`Resource "${resource.id}" could not be resolved`, 500);
+    }
     const startTime = Date.now();
-    const data = await resource.load(params);
+    let data: unknown;
+    try {
+      data = await resource.load(params);
+    } catch (error) {
+      if (error instanceof ResourceParamsValidationError) {
+        return errorResponse(
+          `Resource URI does not satisfy parameters for "${resource.id}"`,
+          400,
+        );
+      }
+      dashboardApiLogger.warn("Resource loading failed", {
+        resource: resource.id,
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
+      return errorResponse(`Resource "${resource.id}" could not be loaded`, 500);
+    }
+    const snapshot = snapshotBoundedJsonValue(data);
+    if (!snapshot.success) {
+      return errorResponse(
+        `Resource "${resource.id}" returned data that is not bounded JSON`,
+        500,
+      );
+    }
 
     return jsonResponse({
       success: true,
       uri,
       resourceId: resource.id,
-      data,
+      data: snapshot.value,
       duration: Date.now() - startTime,
     });
   } catch (error) {
@@ -274,10 +315,27 @@ async function handleRenderPrompt(req: Request): Promise<Response> {
       variables?: Record<string, unknown>;
     };
     if (!promptId) return errorResponse("promptId is required", 400);
+    if (!promptRegistry.has(promptId)) {
+      return errorResponse(`Prompt not found: ${promptId}`, 404);
+    }
+    if (
+      variables !== undefined &&
+      (variables === null || typeof variables !== "object" || Array.isArray(variables))
+    ) {
+      return errorResponse("variables must be an object", 400);
+    }
 
     const vars = variables ?? {};
-    const content = await promptRegistry.getContent(promptId, vars);
-    if (content === undefined) return errorResponse(`Prompt not found: ${promptId}`, 404);
+    let content: string;
+    try {
+      content = await promptRegistry.getContent(promptId, vars);
+    } catch (error) {
+      dashboardApiLogger.warn("Prompt rendering failed", {
+        prompt: promptId,
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
+      return errorResponse(`Prompt "${promptId}" could not be rendered`, 500);
+    }
 
     return jsonResponse({ success: true, promptId, content, variablesUsed: vars });
   } catch (error) {

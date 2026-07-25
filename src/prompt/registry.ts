@@ -15,9 +15,9 @@ function createMissingPromptError(id: string): Error {
 }
 
 class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
-  getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
+  async getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
     const registeredPrompt = this.get(id);
-    if (registeredPrompt) return registeredPrompt.getContent(variables);
+    if (registeredPrompt) return await registeredPrompt.getContent(variables);
     throw createMissingPromptError(id);
   }
 

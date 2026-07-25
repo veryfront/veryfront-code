@@ -311,14 +311,18 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
 
         const h = await fetch(`http://127.0.0.1:${server.port}/admin`, { method: "HEAD" });
         assertEquals(h.status, 405);
-        assertEquals(h.headers.get("allow") ?? h.headers.get("Allow"), "POST");
+        assertEquals(h.headers.get("allow") ?? h.headers.get("Allow"), "POST, OPTIONS");
         await h.body?.cancel();
 
         const pre = await fetch(`http://127.0.0.1:${server.port}/admin`, { method: "OPTIONS" });
         assertEquals(pre.status, 204);
         const allow = pre.headers.get("allow") ?? pre.headers.get("Allow");
         assert(allow?.includes("POST"));
-        assert((pre.headers.get("access-control-allow-methods") ?? "").includes("POST"));
+        assertEquals(
+          pre.headers.get("access-control-allow-methods"),
+          null,
+          "CORS headers stay disabled without an explicit origin policy",
+        );
         await pre.body?.cancel();
 
         controller.abort();

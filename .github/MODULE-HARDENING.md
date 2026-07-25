@@ -27,13 +27,13 @@ Generated-only changes do not count as module review evidence.
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
 | Closed                         |     9 |      15.5% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation remains incomplete          |
-| Touched, revalidation required |    36 |      62.1% | Substantive recovered or current work exists        |
-| Pending current review         |    13 |      22.4% | No current authoritative-branch review delta exists |
+| Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
+| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
+| Pending current review         |    10 |      17.2% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 45/58 (77.6%). This is progress coverage, not a substitute for the
+coverage of 48/58 (82.8%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -50,7 +50,8 @@ stricter closure count.
 
 ### Deep reviewed, fixes pending
 
-- None.
+- `prompt`
+- `resource`
 
 ### Touched, revalidation required
 
@@ -66,6 +67,7 @@ stricter closure count.
 - `html`
 - `integrations`
 - `internal-agents`
+- `mcp`
 - `middleware`
 - `modules`
 - `oauth`
@@ -97,11 +99,8 @@ stricter closure count.
 - `issues`
 - `knowledge`
 - `markdown`
-- `mcp`
 - `mdx`
-- `prompt`
 - `repositories`
-- `resource`
 - `runs`
 - `sandbox`
 - `studio`
@@ -124,7 +123,9 @@ every affected unit.
 The current closed review chain covers `config`, `embedding`, `eval`,
 `extensions`, `metrics`, `provider`, `runtime`, `schemas`, and `version.ts`.
 The latest independent adversarial provider and runtime findings are remediated
-and revalidated. Each closure requires a complete consumer map, deep
+and revalidated. `prompt` and `resource` have now received deep current-state
+reviews and substantial remediation, but remain open while their documented
+cross-cutting findings are unresolved. Each closure requires a complete consumer map, deep
 module-level review, adversarial boundary tests, public-contract documentation,
 and repository-wide static verification. Cross-module consumers changed by a
 fix remain in revalidation; focused evidence for one boundary does not by
@@ -160,6 +161,90 @@ typecheck gates pass.
 - Load-sensitive tests now use controlled cache time, an explicitly
   unauthenticated skill request context, and a production-realistic Redis
   acknowledgement budget instead of wall-clock or ambient-state assumptions.
+
+### Prompt and resource remediation checkpoint
+
+The current prompt/resource slice removes confirmed runtime lies and
+fail-open behavior while keeping unresolved design work visible:
+
+- Prompt configs now require static content or a generator in both the
+  published TypeScript contract and runtime schema. Empty static content is
+  preserved, async generators have a precise string contract, and invalid
+  generator output is rejected at runtime.
+- Static interpolation reads only caller-owned properties and preserves input
+  verbatim. The bypassable, mutable regex blacklist was removed rather than
+  being represented as a security boundary.
+- Auto-discovery preserves explicit prompt IDs and resource URI patterns while
+  replacing only factory-generated placeholders. Discovery paths are portable,
+  encoded safely, and reject outside-root, traversal, NUL, and malformed
+  percent-encoding inputs.
+- Resource patterns use one validated grammar for registration, lookup,
+  parameter extraction, and URI-template rendering. Duplicate parameters,
+  ambiguous patterns, derived-ID collisions, regex metacharacter drift, and
+  registration-order shadowing fail deterministically.
+- Resource load and direct subscription paths both validate and pass transformed
+  parameters. Same-millisecond generated patterns are unique.
+- MCP hides resources with `mcp.enabled: false`, separates concrete resources
+  from templates, does not advertise unsupported subscriptions, maps malformed
+  parameters to stable protocol errors, emits normalized telemetry, and rejects
+  non-bounded-JSON output.
+- MCP and the local dashboard validate prompt arguments and unknown IDs, return
+  configured descriptions, and redact generator failures. The starter agent
+  template now awaits its registered prompt instead of always selecting a
+  synchronous fallback.
+- Request-time rediscovery atomically clears stale prompt and resource entries,
+  and hard source-read failures preserve the previous live generation.
+- The MCP how-to, prompt/resource explanations, generated API reference, and
+  published-package type fixture now match the implemented contracts.
+
+Reproducible evidence for this open checkpoint:
+
+- The focused prompt, resource, MCP, discovery, and dashboard boundary surface
+  passed 31 suites and 263 steps with zero behavioral failures.
+- Four isolation-sensitive discovery and hosted-agent suites passed 71 steps
+  serially with zero failures.
+- The published-package consumer fixture, generated documentation, public-doc
+  validation, and all 723 documentation links pass.
+- `deno task verify:quick` passes generated-manifest checks, formatting, lint
+  and architecture ratchets, documentation validation, and every configured
+  entrypoint typecheck.
+- The corrected test-server adapter passes the full lifecycle, dev-server, and
+  production-health suites: 48 steps pass, with one intentional dev-server
+  virtual-module step ignored. It wraps readonly runtime handles and reports
+  the actual ephemeral port instead of mutating production objects.
+
+The repository-wide test gate remains open. The latest complete parallel run,
+before the test-server adapter correction, reached 3,503 passing tests and
+27,821 passing steps, with 37 failed tests and 144 failed steps plus one
+intentional ignored test. Serial reproduction after the correction isolates
+the remaining failures outside this prompt/resource slice: four bundle
+dependency-invalidation cases, one source-miss cache invalidation case, and
+seven config-error wording assertions. These failures are retained as work to
+resolve; they are not hidden by treating the focused checkpoint as a full
+repository certification.
+
+The following findings deliberately keep both modules in
+`Deep reviewed, fixes pending`:
+
+- Public registry facades still expose process-wide shared registration,
+  global reset, and aggregate statistics to evaluated project code. That
+  registry-wide capability split must cover prompts, resources, tools, skills,
+  agents, and workflows together.
+- Finalized detached request work can still fall back to the default registry
+  scope. A revoked-context sentinel must fail closed without retaining request
+  credentials.
+- Dev-server HMR still needs one atomic discovery replacement, shared
+  configured paths, and rollback on partial discovery errors.
+- Prompt generators still need an additive cancellation/deadline context.
+  MCP prompt argument metadata, private-prompt exposure, and automatic
+  list-change notification semantics require an explicit public contract.
+- Resource `mcp.cachePolicy` remains a reserved but unenforced setting. Cache
+  key, TTL, invalidation, and failure semantics require a deliberate API
+  decision; no behavior was invented for an existing no-op knob.
+- Discovery still needs a deterministic relative-path fallback and structured
+  duplicate/invalid-export diagnostics for nested prompt names.
+- Resource canonicalization for query/fragment variants and non-JSON content
+  modes remains an explicit transport-design decision.
 
 ### Metrics remediation checkpoint
 
