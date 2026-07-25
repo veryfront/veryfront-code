@@ -4,6 +4,8 @@
 **Scope:** Veryfront Code apps consuming shadcn/ui components
 **TL;DR:** shadcn/ui already *runs* on Veryfront today — same React 19, same Tailwind v4, and the import pipeline auto-resolves every dependency shadcn emits. What's missing for **seamless** is tooling + a few sharp edges: no `shadcn` CLI target, unversioned-import warnings, a `cn`/tailwind-merge correctness question, and registry/docs. This RFC verifies what works and proposes the gap-closers.
 
+> **Update — end-to-end proof (was "needs a render pass"):** built a 19-component test app rendering the **real** npm packages (Radix dialog/select/popover/dropdown/tooltip, cmdk, react-hook-form+zod, @tanstack/react-table, input-otp, sonner, recharts, embla, vaul, react-resizable-panels, next-themes, react-day-picker) and ran an SSR + Playwright hydration/interaction suite → **19/19 pass** (portals mount to `document.body`, forms validate, charts paint, toasts fire, theme toggles). Repro suite: [veryfront-router-testing#4]. Two issues surfaced: (1) sonner **500'd SSR** — genuine framework bug, **fixed** in [veryfront-code#3098] (SSR DOM stub missing `documentElement.getAttribute`); (2) react-resizable-panels needed version pinning — **not** a framework bug, it's the version-floating caveat (P2) in practice. Tier A/B in §3B are now **proven**, not just expected.
+
 ---
 
 ## 1. Summary
@@ -146,9 +148,12 @@ The button is the easy case. This section covers shadcn's hard components — th
 1. **Portals** — mechanism verified in-framework; real npm-Radix under SSR not yet rendered end-to-end. First thing to smoke-test.
 2. **Package CSS imports** (`import "pkg/x.css"`) — the SSR CSS-import collector (`src/modules/react-loader/css-import-collector.ts`) tracks **local** project CSS; resolving/injecting a *package's* CSS from esm.sh is unverified. Libs that ship required CSS (some carousels, sonner variants, old react-day-picker) may render unstyled. Related to P2b (only `@import "tailwindcss"` is resolved). Most shadcn components sidestep this by restyling with Tailwind.
 3. **Version floating** (P2) — unpinned esm.sh imports can pull **two** copies of the same lib → duplicate React context (e.g. two `react-hook-form`/`cmdk` instances), which silently breaks. Pinning (P2 fix) also *dedupes*. Higher stakes for context-heavy Tier-A libs than for the button.
-4. **SSR module-eval** — SSR imports the package natively in Deno; a lib touching `window`/`document` at **module top-level** (not in an effect) throws during server render. Modern versions of every lib above are guarded, but this is the per-lib failure mode to confirm in the testbed.
+4. **SSR module-eval / DOM-read during render** — SSR imports the package natively in Deno and renders it against Veryfront's DOM stub; a lib reading `window`/`document` at module top-level *or during render* can throw. **Confirmed real:** sonner reads `document.documentElement.getAttribute` during render → 500, because the SSR stub gave `documentElement`/`body` no `getAttribute`. **Fixed** in [veryfront-code#3098] (full element stub). This is the class of bug to watch; the fix covers the common `getAttribute`/`setAttribute` case.
 
-**Recommended verification (next step):** render one representative per hazard through `veryfront-examples/veryfront-router-testing` (Method 1, local source): a real `@radix-ui/react-dialog` (portal), `recharts` chart (Tier B), and a `react-hook-form` + `zod` form (context + validation) — SSR + client hydration, asserting no console errors and correct portal/paint. That promotes Tier A/B from "expected" to "proven."
+**Verification — DONE (was "next step"):** a 19-component suite renders the real packages through `veryfront-examples/veryfront-router-testing` (Method 1) with SSR + Playwright hydration/interaction → **19/19 pass** ([veryfront-router-testing#4]). Tier A/B are proven, not assumed. Only caveat: version-floating (P2) bit react-resizable-panels (v4 renamed exports) — pin third-party deps.
+
+[veryfront-code#3098]: https://github.com/veryfront/veryfront-code/pull/3098
+[veryfront-router-testing#4]: https://github.com/mattboon/veryfront-router-testing/pull/4
 
 ---
 
