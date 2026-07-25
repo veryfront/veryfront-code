@@ -108,6 +108,13 @@ type OrderedSourceDocumentPart =
   >
   & { order: number };
 
+type OrderedSourceUrlPart =
+  & Extract<
+    ChatUiMessage["parts"][number],
+    { type: "source-url" }
+  >
+  & { order: number };
+
 type PendingToolDelta = {
   inputText: string;
   chunks: string[];
@@ -118,6 +125,7 @@ type FrameworkUiMessageState = {
   reasoningBlocks: Map<string, OrderedTextBlock>;
   toolParts: Map<string, ToolPart>;
   sourceDocumentParts: Map<string, OrderedSourceDocumentPart>;
+  sourceUrlParts: Map<string, OrderedSourceUrlPart>;
   dataParts: DataPart[];
   pendingToolDeltas: Map<string, PendingToolDelta>;
   nextOrder: number;
@@ -129,6 +137,7 @@ function createFrameworkUiMessageState(): FrameworkUiMessageState {
     reasoningBlocks: new Map(),
     toolParts: new Map(),
     sourceDocumentParts: new Map(),
+    sourceUrlParts: new Map(),
     dataParts: [],
     pendingToolDeltas: new Map(),
     nextOrder: 0,
@@ -386,6 +395,20 @@ function observeChatStreamEvent(input: {
       state.nextOrder += 1;
       return;
     }
+    case "source-url": {
+      if (state.sourceUrlParts.has(event.sourceId)) {
+        return;
+      }
+      state.sourceUrlParts.set(event.sourceId, {
+        type: "source-url",
+        sourceId: event.sourceId,
+        url: event.url,
+        ...(event.title ? { title: event.title } : {}),
+        order: state.nextOrder,
+      });
+      state.nextOrder += 1;
+      return;
+    }
     default: {
       if (!event.type.startsWith("data-")) {
         return;
@@ -506,6 +529,11 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
     orderedParts.push({ order, part });
   }
 
+  for (const sourceUrlPart of state.sourceUrlParts.values()) {
+    const { order, ...part } = sourceUrlPart;
+    orderedParts.push({ order, part });
+  }
+
   for (const dataPart of state.dataParts) {
     orderedParts.push({
       order: dataPart.order,
@@ -611,13 +639,15 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         for (const chatEvent of chatEvents) {
           const isDuplicateSourceDocument = chatEvent.type === "source-document" &&
             state.sourceDocumentParts.has(chatEvent.sourceId);
+          const isDuplicateSourceUrl = chatEvent.type === "source-url" &&
+            state.sourceUrlParts.has(chatEvent.sourceId);
           observeChatStreamEvent({
             event: chatEvent,
             responseMessageId,
             state,
           });
           const chunk = toUiChunk(chatEvent);
-          if (chunk && !isDuplicateSourceDocument) {
+          if (chunk && !isDuplicateSourceDocument && !isDuplicateSourceUrl) {
             yield chunk;
           }
 

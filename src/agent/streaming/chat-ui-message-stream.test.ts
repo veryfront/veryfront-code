@@ -183,6 +183,88 @@ describe("createChatUiMessageStreamFromDataStream", () => {
     );
   });
 
+  it("persists ordered source urls once by source id in the final response message", async () => {
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const stream = createSseStream([
+      { type: "message-start", messageId: "framework-message" },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Before source" },
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/first",
+            title: "First reference",
+          },
+        },
+      },
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-1",
+            url: "https://example.com/duplicate",
+            title: "Duplicate reference",
+          },
+        },
+      },
+      { type: "text-start", id: "text-2" },
+      { type: "text-delta", id: "text-2", delta: "After source" },
+      {
+        type: "data",
+        data: {
+          name: "source-url",
+          value: {
+            type: "source-url",
+            sourceId: "web-2",
+            url: "https://example.com/second",
+            title: "Second reference",
+          },
+        },
+      },
+      { type: "message-finish" },
+    ]);
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        { stream },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+    const firstSource = {
+      type: "source-url" as const,
+      sourceId: "web-1",
+      url: "https://example.com/first",
+      title: "First reference",
+    };
+    const secondSource = {
+      type: "source-url" as const,
+      sourceId: "web-2",
+      url: "https://example.com/second",
+      title: "Second reference",
+    };
+
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-url"),
+      [firstSource, secondSource],
+    );
+    assertEquals(finish?.responseMessage.parts, [
+      { type: "text", text: "Before sourceAfter source" },
+      firstSource,
+      secondSource,
+    ]);
+  });
+
   it("preserves providerExecuted from data stream tool events into final dynamic tool parts", async () => {
     let finish: ChatUiMessageStreamFinish | undefined;
     const chunks = await collectChunks(
