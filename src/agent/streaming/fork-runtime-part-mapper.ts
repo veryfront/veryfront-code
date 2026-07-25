@@ -161,30 +161,56 @@ function buildToolCallPartIfNeeded(
   ];
 }
 
-function mapRenderableSourceToForkParts(value: unknown): ForkSourcePart[] {
-  const source = toRenderableCustomChunk(value);
-  if (source?.type === "source-document") {
-    return [{
-      type: "source",
-      id: source.sourceId,
-      sourceType: "document",
-      mediaType: source.mediaType,
-      title: source.title,
-      ...(source.filename ? { filename: source.filename } : {}),
-    }];
+function mapRenderableSourceToForkPart(value: unknown): ForkSourcePart | null {
+  const chunk = toRenderableCustomChunk(value);
+  if (!chunk) {
+    return null;
   }
 
-  if (source?.type === "source-url") {
-    return [{
+  if (chunk.type === "source-url") {
+    return {
       type: "source",
-      id: source.sourceId,
+      id: chunk.sourceId,
       sourceType: "url",
-      url: source.url,
-      ...(source.title ? { title: source.title } : {}),
-    }];
+      url: chunk.url,
+      ...(chunk.title ? { title: chunk.title } : {}),
+    };
   }
 
-  return [];
+  if (chunk.type === "source-document") {
+    return {
+      type: "source",
+      id: chunk.sourceId,
+      sourceType: "document",
+      mediaType: chunk.mediaType,
+      title: chunk.title,
+      ...(chunk.filename ? { filename: chunk.filename } : {}),
+    };
+  }
+
+  return null;
+}
+
+function mapWrappedSourceDataToForkPart(event: AgUiRuntimeStreamEvent): ForkSourcePart | null {
+  if (!isRecord(event.data)) {
+    return null;
+  }
+
+  const name = event.data.name;
+  if (name !== "source-document" && name !== "source-url") {
+    return null;
+  }
+
+  const sourcePart = mapRenderableSourceToForkPart(event.data.value);
+  if (
+    !sourcePart ||
+    (name === "source-document" && sourcePart.sourceType !== "document") ||
+    (name === "source-url" && sourcePart.sourceType !== "url")
+  ) {
+    return null;
+  }
+
+  return sourcePart;
 }
 
 /** State for create fork runtime stream mapping. */
@@ -214,21 +240,14 @@ export function mapAgUiRuntimeEventToForkParts(
       return typeof event.delta === "string" ? [{ type: "text-delta", text: event.delta }] : [];
 
     case "source-document":
-    case "source-url":
-      return mapRenderableSourceToForkParts(event);
+    case "source-url": {
+      const sourcePart = mapRenderableSourceToForkPart(event);
+      return sourcePart ? [sourcePart] : [];
+    }
 
     case "data": {
-      if (!isRecord(event.data)) {
-        return [];
-      }
-      const name = event.data.name;
-      if (name !== "source-document" && name !== "source-url") {
-        return [];
-      }
-      const parts = mapRenderableSourceToForkParts(event.data.value);
-      return parts.filter((part) =>
-        name === "source-document" ? part.sourceType === "document" : part.sourceType === "url"
-      );
+      const sourcePart = mapWrappedSourceDataToForkPart(event);
+      return sourcePart ? [sourcePart] : [];
     }
 
     case "tool-input-start": {

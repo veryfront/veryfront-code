@@ -1,7 +1,11 @@
+import type { HostedStreamSourcePart } from "#veryfront/chat/hosted-ui-chunk-mapping.ts";
+
 interface ForkStreamPart {
   type: "reasoning-delta" | "text-delta";
   text: string;
 }
+
+export type ForkSourcePart = HostedStreamSourcePart;
 
 interface ForkToolInputStartPart {
   type: "tool-input-start";
@@ -43,23 +47,6 @@ interface ForkErrorPart {
   error: Error;
 }
 
-interface ForkSourceDocumentPart {
-  type: "source";
-  id: string;
-  sourceType: "document";
-  mediaType: string;
-  title?: string;
-  filename?: string;
-}
-
-interface ForkSourceUrlPart {
-  type: "source";
-  id: string;
-  sourceType: "url";
-  url: string;
-  title?: string;
-}
-
 /** Public API contract for fork runtime step. */
 export interface ForkRuntimeStep {
   text: string;
@@ -81,8 +68,7 @@ export interface ForkRuntimeStep {
 /** Public API contract for fork part. */
 export type ForkPart =
   | ForkStreamPart
-  | ForkSourceDocumentPart
-  | ForkSourceUrlPart
+  | ForkSourcePart
   | ForkToolInputStartPart
   | ForkToolInputDeltaPart
   | ForkToolCallPart

@@ -111,6 +111,28 @@ describe("agent/fork-runtime-part-mapper", () => {
     }]);
   });
 
+  it("rejects wrapped sources whose custom event name disagrees with the payload", () => {
+    const state = createForkRuntimeStreamMappingState();
+
+    assertEquals(
+      mapAgUiRuntimeEventToForkParts(
+        {
+          type: "data",
+          data: {
+            name: "source-document",
+            value: {
+              type: "source-url",
+              sourceId: "docs-1",
+              url: "https://example.com/docs",
+            },
+          },
+        },
+        state,
+      ),
+      [],
+    );
+  });
+
   it("emits a missing tool-call before a final tool-result", () => {
     const state = createForkRuntimeStreamMappingState();
 
