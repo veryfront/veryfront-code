@@ -531,10 +531,260 @@ describe("release source verification", () => {
           releaseId: "release-1",
           commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
           sourceDigest: expectedDigest,
-        }),
+        }, { attempts: 1, delayMs: 0 }),
       Error,
       "does not match pushed commit",
     );
+  });
+
+  it("waits for a well-formed release source digest to match the pushed commit", async () => {
+    const expectedDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit B\n" },
+    ]);
+    let sourceReads = 0;
+    const mockClient = createMockClient({
+      get: (path) => {
+        if (path.endsWith("/versions")) {
+          sourceReads++;
+          return Promise.resolve({
+            data: [{
+              path: "app.ts",
+              data: JSON.stringify({
+                body: sourceReads === 1 ? "commit A\n" : "commit B\n",
+                path: "app.ts",
+              }),
+            }],
+            page_info: {},
+          });
+        }
+        return Promise.resolve({
+          id: "release-1",
+          name: "github-main-90719c01",
+          version: "0.0.41",
+          project_id: "project-1",
+        });
+      },
+    });
+
+    const result = await verifyReleaseSource(mockClient, "project-1", {
+      projectId: "project-1",
+      releaseId: "release-1",
+      commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+      sourceDigest: expectedDigest,
+    }, { attempts: 2, delayMs: 0 });
+
+    assertEquals(result.sourceDigest, expectedDigest);
+    assertEquals(sourceReads, 2);
+  });
+
+  it("fails closed after exhausting well-formed release source digest mismatches", async () => {
+    const expectedDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit A\n" },
+    ]);
+    const staleDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit B\n" },
+    ]);
+    let sourceReads = 0;
+    const mockClient = createMockClient({
+      get: (path) => {
+        if (path.endsWith("/versions")) {
+          sourceReads++;
+          return Promise.resolve({
+            data: [{
+              path: "app.ts",
+              data: JSON.stringify({ body: "commit B\n", path: "app.ts" }),
+            }],
+            page_info: {},
+          });
+        }
+        return Promise.resolve({
+          id: "release-1",
+          name: "github-main-90719c01",
+          version: "0.0.41",
+          project_id: "project-1",
+        });
+      },
+    });
+
+    await assertRejects(
+      () =>
+        verifyReleaseSource(mockClient, "project-1", {
+          projectId: "project-1",
+          releaseId: "release-1",
+          commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+          sourceDigest: expectedDigest,
+        }, { attempts: 2, delayMs: 0 }),
+      Error,
+      `expected source digest ${expectedDigest}; last observed ${staleDigest}`,
+    );
+    assertEquals(sourceReads, 2);
+  });
+
+  it("caps release source verification at the fixed polling budget", async () => {
+    const expectedDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit A\n" },
+    ]);
+    let sourceReads = 0;
+    const mockClient = createMockClient({
+      get: (path) => {
+        if (path.endsWith("/versions")) {
+          sourceReads++;
+          return Promise.resolve({
+            data: [{
+              path: "app.ts",
+              data: JSON.stringify({ body: "commit B\n", path: "app.ts" }),
+            }],
+            page_info: {},
+          });
+        }
+        return Promise.resolve({
+          id: "release-1",
+          name: "github-main-90719c01",
+          version: "0.0.41",
+          project_id: "project-1",
+        });
+      },
+    });
+
+    await assertRejects(
+      () =>
+        verifyReleaseSource(mockClient, "project-1", {
+          projectId: "project-1",
+          releaseId: "release-1",
+          commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+          sourceDigest: expectedDigest,
+        }, { attempts: 21, delayMs: 0 }),
+      Error,
+      "does not match pushed commit",
+    );
+    assertEquals(sourceReads, 20);
+  });
+
+  it("does not retry malformed source data or API failures", async () => {
+    const expectedDigest = await computeSourceDigest([]);
+
+    for (
+      const testCase of [
+        {
+          name: "malformed source data",
+          error: "has invalid version data",
+          versions: () =>
+            Promise.resolve({
+              data: [{ path: "app.ts", data: "not-json" }],
+              page_info: {},
+            }),
+        },
+        {
+          name: "source API failure",
+          error: "release source unavailable",
+          versions: () => Promise.reject(new Error("release source unavailable")),
+        },
+      ]
+    ) {
+      let sourceReads = 0;
+      const mockClient = createMockClient({
+        get: (path) => {
+          if (path.endsWith("/versions")) {
+            sourceReads++;
+            return testCase.versions();
+          }
+          return Promise.resolve({
+            id: "release-1",
+            name: "github-main-90719c01",
+            version: "0.0.41",
+            project_id: "project-1",
+          });
+        },
+      });
+
+      await assertRejects(
+        () =>
+          verifyReleaseSource(mockClient, "project-1", {
+            projectId: "project-1",
+            releaseId: "release-1",
+            commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+            sourceDigest: expectedDigest,
+          }, { attempts: 20, delayMs: 0 }),
+        Error,
+        testCase.error,
+        testCase.name,
+      );
+      assertEquals(sourceReads, 1, testCase.name);
+    }
+  });
+
+  it("rejects invalid release metadata before reading source versions", async () => {
+    const expectedDigest = await computeSourceDigest([]);
+
+    for (
+      const testCase of [
+        {
+          name: "release identity",
+          release: {
+            id: "other-release",
+            name: "github-main-90719c01",
+            version: "0.0.41",
+            project_id: "project-1",
+          },
+          error: "expected release-1",
+        },
+        {
+          name: "project ownership",
+          release: {
+            id: "release-1",
+            name: "github-main-90719c01",
+            version: "0.0.41",
+            project_id: "other-project",
+          },
+          error: "does not belong to resolved project",
+        },
+        {
+          name: "release name",
+          release: {
+            id: "release-1",
+            name: "other-release-name",
+            version: "0.0.41",
+            project_id: "project-1",
+          },
+          error: "no longer matches the created release name",
+        },
+        {
+          name: "release version",
+          release: {
+            id: "release-1",
+            name: "github-main-90719c01",
+            project_id: "project-1",
+          },
+          error: "has no version",
+        },
+      ]
+    ) {
+      let sourceReads = 0;
+      const mockClient = createMockClient({
+        get: (path) => {
+          if (path.endsWith("/versions")) {
+            sourceReads++;
+            return Promise.resolve({ data: [], page_info: {} });
+          }
+          return Promise.resolve(testCase.release);
+        },
+      });
+
+      await assertRejects(
+        () =>
+          verifyReleaseSource(mockClient, "project-1", {
+            projectId: "project-1",
+            releaseId: "release-1",
+            releaseName: "github-main-90719c01",
+            commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+            sourceDigest: expectedDigest,
+          }, { attempts: 20, delayMs: 0 }),
+        Error,
+        testCase.error,
+        testCase.name,
+      );
+      assertEquals(sourceReads, 0, testCase.name);
+    }
   });
 });
 
@@ -755,9 +1005,82 @@ describe("deployment verification", () => {
           deploymentId,
           commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
           sourceDigest,
-        }, { attempts: 1, delayMs: 0 }),
+        }, {
+          attempts: 1,
+          delayMs: 0,
+          releaseSource: { attempts: 1, delayMs: 0 },
+        }),
       Error,
       "does not match pushed commit",
     );
+  });
+
+  it("keeps release-source convergence independent from environment convergence", async () => {
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit B\n" },
+    ]);
+    let sourceReads = 0;
+    const mockClient = createMockClient({
+      get: (path) => {
+        if (path.endsWith(`/deployments/${deploymentId}`)) {
+          return Promise.resolve({
+            id: deploymentId,
+            release: { id: releaseId },
+            environment: { id: environmentId },
+          });
+        }
+        if (path.endsWith(`/releases/${releaseId}`)) {
+          return Promise.resolve({
+            id: releaseId,
+            name: "github-main-90719c01",
+            version: "0.0.41",
+            project: projectId,
+          });
+        }
+        if (path.endsWith(`/releases/${releaseId}/versions`)) {
+          sourceReads++;
+          return Promise.resolve({
+            data: [{
+              path: "app.ts",
+              data: JSON.stringify({
+                body: sourceReads === 1 ? "commit A\n" : "commit B\n",
+                path: "app.ts",
+              }),
+            }],
+            page_info: {},
+          });
+        }
+        return Promise.resolve({
+          data: [{
+            id: environmentId,
+            name: "production",
+            project_id: projectId,
+            protected: true,
+            deployment: {
+              id: deploymentId,
+              release: { id: releaseId, name: "github-main-90719c01" },
+            },
+          }],
+        });
+      },
+    });
+
+    const result = await verifyDeployment(mockClient, "my-project", {
+      projectId,
+      projectSlug: "my-project",
+      environmentId,
+      environmentName: "production",
+      releaseId,
+      deploymentId,
+      commitSha: "90719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+      sourceDigest,
+    }, {
+      attempts: 1,
+      delayMs: 0,
+      releaseSource: { attempts: 2, delayMs: 0 },
+    });
+
+    assertEquals(result.sourceDigest, sourceDigest);
+    assertEquals(sourceReads, 2);
   });
 });
