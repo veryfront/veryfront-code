@@ -267,7 +267,10 @@ counters from own data properties participate. Invalid counters and inherited
 fields are omitted; a known accessor or failed reflection causes the untrusted
 usage record to be discarded. Normalized usage is a data-only record and may
 have a null prototype, so use `Object.hasOwn(usage, field)` instead of calling
-Object instance methods on it.
+Object instance methods on it. `cacheReadInputTokens` is the canonical
+cache-read counter; `cachedInputTokens` remains a compatibility alias.
+Normalization accepts either spelling and emits both with the same value. When
+both are present in one snapshot, the canonical field wins.
 
 Register application-wide defaults during bootstrap, outside a project request
 or source context. The default is then visible in every project, while a

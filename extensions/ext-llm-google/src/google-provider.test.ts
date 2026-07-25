@@ -1362,6 +1362,7 @@ describe("ext-llm-google/google-provider", () => {
         outputTokens: 45,
         totalTokens: 168,
         cacheReadInputTokens: 100,
+        cachedInputTokens: 100,
       });
     });
 

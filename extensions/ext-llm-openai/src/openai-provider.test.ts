@@ -1571,6 +1571,7 @@ describe("openai-provider", () => {
         outputTokens: 40,
         totalTokens: 140,
         cacheReadInputTokens: 80,
+        cachedInputTokens: 80,
       });
     });
 

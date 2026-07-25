@@ -89,6 +89,12 @@ assistant-message provider metadata between turns. Raw replay is limited to
 their IDs, names, semantic values, multiplicity, and order must match the raw
 output before transport.
 
+Provider-executed Responses calls and results cannot be converted into Chat
+Completions history. Switching a conversation containing those parts to a
+Chat Completions-only route fails as a configuration error before transport;
+keep that conversation on a Responses-capable route or begin a new compacted
+history that no longer contains the provider-executed parts.
+
 See [Providers: Enable OpenAI-hosted web search](../../docs/guides/providers.md#enable-openai-hosted-web-search)
 for the agent setup.
 

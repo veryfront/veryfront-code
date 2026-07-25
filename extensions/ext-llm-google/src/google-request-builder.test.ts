@@ -558,6 +558,69 @@ describe("ext-llm-google/google-request-builder", () => {
     }
   });
 
+  it("restarts legacy anonymous occurrence ids for each persisted assistant turn", () => {
+    const firstRawParts = [{
+      text: "First private thought.",
+      thought: true,
+      thoughtSignature: "first-signature",
+    }, {
+      functionCall: {
+        name: "weather",
+        args: { city: "Paris" },
+      },
+    }];
+    const secondRawParts = [{
+      text: "Second private thought.",
+      thought: true,
+      thoughtSignature: "second-signature",
+    }, {
+      functionCall: {
+        name: "weather",
+        args: { city: "London" },
+      },
+    }];
+    const legacyCall = (city: string): RuntimeAssistantContentPart => ({
+      type: "tool-call",
+      toolCallId: "tool-0",
+      toolName: "weather",
+      input: { city },
+    });
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [legacyCall("Paris")],
+          providerMetadata: {
+            google: { rawAssistantParts: firstRawParts },
+          },
+        }, {
+          role: "user",
+          content: [{ type: "text", text: "Check another city." }],
+        }, {
+          role: "assistant",
+          content: [legacyCall("London")],
+          providerMetadata: {
+            google: { rawAssistantParts: secondRawParts },
+          },
+        }],
+      },
+      createWarningCollector(),
+    );
+
+    assertJsonEquals(body.contents, [{
+      role: "model",
+      parts: firstRawParts,
+    }, {
+      role: "user",
+      parts: [{ text: "Check another city." }],
+    }, {
+      role: "model",
+      parts: secondRawParts,
+    }]);
+  });
+
   it("allows raw-only client function replay only when its canonical projection is absent", () => {
     const rawAssistantParts = [{
       functionCall: {

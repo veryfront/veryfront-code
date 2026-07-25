@@ -3658,6 +3658,7 @@ describe("anthropic-provider", () => {
         totalTokens: 110,
         cacheCreationInputTokens: 50,
         cacheReadInputTokens: 30,
+        cachedInputTokens: 30,
       });
     });
 

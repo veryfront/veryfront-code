@@ -306,6 +306,15 @@ type AnthropicServerToolResultErrorFields = {
   detail?: string;
 };
 
+const ANTHROPIC_SERVER_TOOL_RESULT_ERROR_FIELDS = new Set([
+  "name",
+  "provider",
+  "code",
+  "toolCallId",
+  "toolName",
+  "detail",
+]);
+
 function readOwnEnumerableDataProperty(
   value: object,
   key: string,
@@ -326,6 +335,15 @@ function readAnthropicServerToolResultErrorFields(
   value: unknown,
 ): AnthropicServerToolResultErrorFields | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  try {
+    if (
+      Object.keys(value).some((key) => !ANTHROPIC_SERVER_TOOL_RESULT_ERROR_FIELDS.has(key))
+    ) {
+      return undefined;
+    }
+  } catch {
     return undefined;
   }
   const name = readOwnEnumerableDataProperty(value, "name");

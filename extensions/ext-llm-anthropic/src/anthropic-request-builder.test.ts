@@ -1142,6 +1142,68 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }]);
   });
 
+  it("rejects extra fields on a serialized provider error", () => {
+    const toolCallId = "server_search_extra_field";
+    const result = {
+      ...JSON.parse(JSON.stringify(
+        new AnthropicServerToolResultError({
+          code: "unavailable",
+          toolCallId,
+          toolName: "web_search",
+        }),
+      )),
+      extra: "must not be ignored",
+    };
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId,
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }, {
+                type: "tool-result",
+                toolCallId,
+                toolName: "web_search",
+                result,
+                isError: true,
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "server_tool_use",
+                    id: toolCallId,
+                    name: "web_search",
+                    input: { query: "Veryfront" },
+                  }, {
+                    type: "web_search_tool_result",
+                    tool_use_id: toolCallId,
+                    content: {
+                      type: "web_search_tool_result_error",
+                      error_code: "unavailable",
+                    },
+                  }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+  });
+
   it("rejects provider error accessors without invoking them", () => {
     let codeReads = 0;
     const result = Object.defineProperty(

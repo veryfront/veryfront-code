@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     7 |      12.1% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     2 |       3.4% | Review findings exist; remediation is not complete  |
+| Closed                         |     9 |      15.5% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation remains incomplete          |
 | Touched, revalidation required |    35 |      60.3% | Substantive recovered or current work exists        |
 | Pending current review         |    14 |      24.1% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -43,13 +43,14 @@ stricter closure count.
 - `eval`
 - `extensions`
 - `metrics`
+- `provider`
+- `runtime`
 - `schemas`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
 
-- `provider`
-- `runtime`
+- None.
 
 ### Touched, revalidation required
 
@@ -120,16 +121,16 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `config`, `embedding`, `metrics`, `eval`,
-and `extensions`. `provider` and `runtime` are deeply reviewed but reopened
-while the latest independent adversarial findings are remediated and
-revalidated. Each closure requires a complete consumer map, deep module-level
-review, adversarial boundary tests, public-contract documentation, and
-repository-wide static verification. Cross-module consumers changed by a fix
-remain in revalidation; focused evidence for one boundary does not by itself
-close the consumer's top-level unit. The next target will be selected from the
-remaining dependency-adjacent units after this checkpoint is committed,
-pushed, and rebased.
+The current closed review chain covers `config`, `embedding`, `eval`,
+`extensions`, `metrics`, `provider`, `runtime`, `schemas`, and `version.ts`.
+The latest independent adversarial provider and runtime findings are remediated
+and revalidated. Each closure requires a complete consumer map, deep
+module-level review, adversarial boundary tests, public-contract documentation,
+and repository-wide static verification. Cross-module consumers changed by a
+fix remain in revalidation; focused evidence for one boundary does not by
+itself close the consumer's top-level unit. The next target will be selected
+from the remaining dependency-adjacent units after this checkpoint is
+committed, pushed, and rebased.
 
 ### Rebase integration checkpoint
 
@@ -385,10 +386,17 @@ The provider findings are remediated on the current branch:
 - Anthropic, Google, and OpenAI runtimes retain provider-native reasoning,
   citations, grounding, tool calls, usage, and ordered stream state without
   flattening protocol data that a later turn needs.
+- Usage normalization emits both the canonical `cacheReadInputTokens` field
+  and the compatibility `cachedInputTokens` alias with one value. Canonical
+  input wins when both are present, and descriptor-based reads prevent alias
+  accessors or prototype pollution from participating.
 - OpenAI Responses calls are stateless and retain the complete ordered output
   history in provider metadata. Reasoning calls request encrypted content, and
   hosted web-search calls retain their source list so exact replay remains
   possible without server-side storage.
+- Provider-executed OpenAI Responses history cannot be replayed through Chat
+  Completions. That mismatch now fails before transport as a structured config
+  error while preserving the public `TypeError` compatibility contract.
 - OpenAI-hosted web search is available through the public agent tool
   inventory. Requests that configure it route through Responses even for
   otherwise chat-completions models; ordinary calls keep their existing
@@ -400,13 +408,13 @@ The provider findings are remediated on the current branch:
 
 Reproducible checkpoint evidence:
 
-- The complete `src/provider` surface passed 27 tests and 218 steps with zero
+- The complete `src/provider` surface passed 27 tests and 223 steps with zero
   failures; five model-download steps remain intentionally ignored.
-- The Anthropic, Google, and OpenAI extension surfaces passed 19 tests and 406
-  steps with zero failures.
+- The Anthropic, Google, and OpenAI extension surfaces passed 19 test modules
+  and 412 steps with zero failures.
 - The affected agent, hosted-runtime, fork, and internal-agent consumer surface
   passed 73 suites and 95 steps with zero failures.
-- `deno task docs:validate` passed 45 groups and 87 steps plus all 720 link
+- `deno task docs:validate` passed 45 groups and 87 steps plus all 723 link
   checks. The API-reference generator regression also passes in isolation.
 - `deno task verify:quick` passed manifests, formatting, lint and architecture
   ratchets, documentation validation, and every configured entrypoint
@@ -469,8 +477,16 @@ The runtime findings are remediated on the current branch:
 - OpenAI, Anthropic, and Google replay metadata is deeply owned, bounded JSON.
   Surviving canonical calls and results must match raw provider history
   occurrence-for-occurrence and in order; duplicated, reordered, mutated, or
-  semantically mismatched history fails before transport. Google streaming and
-  replay use the same deterministic tool-call correlation registry.
+  semantically mismatched history fails before transport. Google replay accepts
+  either the current raw-position ID scheme or the complete historical
+  anonymous-occurrence scheme, resets historical IDs for each assistant turn,
+  and rejects duplicates or mixed schemes.
+- Anthropic replay accepts structurally exact serialized provider errors after
+  a JSON round trip, rejects extra fields and unsafe accessors, and treats a
+  complete empty stream as valid rather than inventing malformed metadata.
+- Non-finite JSON tool arguments retain their correlated parse failure instead
+  of collapsing into a misleading missing-result error. Diagnostic extraction
+  remains brand-safe for native `DOMException` getters.
 - Public reference, architecture explanation, provider how-to guidance, and
   vendor extension references document the runtime boundary, raw-event
   ownership, replay correlation, compaction, cancellation, and resource
@@ -478,22 +494,20 @@ The runtime findings are remediated on the current branch:
 
 Reproducible checkpoint evidence:
 
-- The complete `src/runtime` surface passed 45 tests and 185 steps with zero
-  failures.
-- The revalidated `src/provider` surface passed 27 tests and 218 steps with
+- The complete `src/runtime` and `src/agent/runtime` regression surface passed
+  287 test modules and 741 steps with zero failures.
+- The revalidated `src/provider` surface passed 27 tests and 223 steps with
   zero failures; five model-download steps remain intentionally ignored.
 - The revalidated Anthropic, Google, and OpenAI extension surfaces passed 19
-  tests and 406 steps with zero failures.
+  test modules and 412 steps with zero failures.
+- The affected `src/errors` regression surface passed 30 test modules and 501
+  steps with zero failures. This boundary evidence does not itself close the
+  top-level `errors` audit unit.
 - The revalidated `src/embedding` surface passed eight tests and 157 steps with
   zero failures.
 - The `src/extensions` orchestration surface passed 24 tests and 275 steps with
   zero failures.
-- The complete `src/agent/runtime` consumer surface passed 242 tests and 553
-  steps with zero failures.
-- The combined hardened runtime, provider, embedding, extension-orchestration,
-  Anthropic, Google, and OpenAI surface passed 123 tests and 1,241 steps with
-  zero failures; five model-download steps remained intentionally ignored.
-- The repository unit suite passed 3,066 tests and 24,169 steps with zero
+- The repository unit suite passed 3,066 tests and 24,178 steps with zero
   failures; one intentional test remained ignored with five steps.
 - `deno task docs:validate` passed every public-doc contract and all 723 link
   checks.
@@ -504,6 +518,7 @@ Reproducible checkpoint evidence:
   first-party extension packages, verified root import lifecycle behavior, and
   passed the documented consumer-composition typecheck against generated
   declarations.
+- `deno task test:scripts` passed 71 tests and 155 steps with zero failures.
 - The built package passed all 68 documented export-path checks and 86 Node
   runtime checks across 19 public modules.
 - The Node 18.18.0/npm 9.8.1 install smoke passed all six CLI,

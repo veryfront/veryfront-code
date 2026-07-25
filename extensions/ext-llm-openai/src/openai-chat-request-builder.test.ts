@@ -1,3 +1,4 @@
+import { fromError } from "#veryfront/errors";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimePromptMessage } from "veryfront/provider/shared";
@@ -329,7 +330,9 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
   });
 
   it("rejects hosted-tool results that Chat Completions cannot replay", () => {
-    assertThrows(
+    const callMessage =
+      "OpenAI-compatible provider-executed assistant tool calls cannot be replayed through Chat Completions";
+    const callError = assertThrows(
       () =>
         buildOpenAIChatRequest(
           "gpt-4o-mini",
@@ -350,9 +353,14 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
           createWarningCollector(),
         ),
       TypeError,
-      "OpenAI-compatible provider-executed assistant tool calls cannot be replayed through Chat Completions",
+      callMessage,
     );
-    assertThrows(
+    assertEquals(callError.name, "VeryfrontError[config]");
+    assertEquals(fromError(callError), { type: "config", message: callMessage });
+
+    const resultMessage =
+      "OpenAI-compatible provider-executed assistant tool results cannot be replayed through Chat Completions";
+    const resultError = assertThrows(
       () =>
         buildOpenAIChatRequest(
           "gpt-4o-mini",
@@ -373,7 +381,9 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
           createWarningCollector(),
         ),
       TypeError,
-      "OpenAI-compatible provider-executed assistant tool results cannot be replayed through Chat Completions",
+      resultMessage,
     );
+    assertEquals(resultError.name, "VeryfrontError[config]");
+    assertEquals(fromError(resultError), { type: "config", message: resultMessage });
   });
 });

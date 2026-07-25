@@ -332,6 +332,7 @@ const usageContractCases: readonly UsageContractCase[] = [
       cachedInputTokens: 7,
     },
     expected: {
+      cacheReadInputTokens: 7,
       cachedInputTokens: 7,
     },
   },

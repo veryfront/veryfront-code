@@ -576,11 +576,21 @@ function normalizeErrorData(
  *
  * Uses Error.captureStackTrace when available (V8 engines) to exclude toError()
  * from the stack trace, making the stack point to the actual call site.
+ * An optional native error constructor preserves categories such as
+ * `TypeError` while retaining the structured Veryfront error context.
  *
  * @see plans/architecture-audit/010.3-dual-veryfront-error-definitions.md
  */
-export function toError(veryfrontError: VeryfrontErrorData): Error {
-  const error = new Error(veryfrontError.message);
+export function toError(veryfrontError: VeryfrontErrorData): Error;
+export function toError<T extends Error>(
+  veryfrontError: VeryfrontErrorData,
+  ErrorType: new (message?: string) => T,
+): T;
+export function toError(
+  veryfrontError: VeryfrontErrorData,
+  ErrorType: new (message?: string) => Error = Error,
+): Error {
+  const error = new ErrorType(veryfrontError.message);
   error.name = `VeryfrontError[${veryfrontError.type}]`;
 
   // Capture stack at call site, excluding toError from the trace

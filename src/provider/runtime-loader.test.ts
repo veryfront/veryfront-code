@@ -118,6 +118,7 @@ describe("provider/runtime-loader", () => {
         Error,
       );
 
+      assertEquals(error instanceof TypeError, true);
       assertEquals(error.name, "VeryfrontError[config]");
       assertEquals(fromError(error), { type: "config", message });
       assertEquals(error.message, message);

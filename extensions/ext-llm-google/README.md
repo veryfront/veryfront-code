@@ -120,7 +120,10 @@ const response = await ai.chat("google/gemini-2.5-pro", {
 });
 ```
 
-When a cached content resource is attached, the response `usageMetadata.cachedContentTokenCount` is surfaced as `cacheReadInputTokens` on the result.
+When a cached content resource is attached, the response
+`usageMetadata.cachedContentTokenCount` is surfaced as the canonical
+`cacheReadInputTokens` field and the compatible `cachedInputTokens` alias on
+the result.
 
 ## Provider Tools
 

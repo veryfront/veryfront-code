@@ -114,6 +114,7 @@ describe("ext-llm-openai/openai-chat-stream", () => {
           outputTokens: 4,
           totalTokens: 7,
           cacheReadInputTokens: 2,
+          cachedInputTokens: 2,
           reasoningTokens: 1,
           billableInputTokens: 3,
           billableOutputTokens: 4,

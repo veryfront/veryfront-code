@@ -120,6 +120,18 @@ describe("veryfront-error", () => {
 
       assertEquals((error as unknown as { context: VeryfrontErrorData }).context, veryfrontError);
     });
+
+    it("should preserve an explicitly requested native error category", () => {
+      const veryfrontError: VeryfrontErrorData = {
+        type: "config",
+        message: "Configuration is incompatible",
+      };
+      const error = toError(veryfrontError, TypeError);
+
+      assertEquals(error instanceof TypeError, true);
+      assertEquals(error.name, "VeryfrontError[config]");
+      assertEquals(fromError(error), veryfrontError);
+    });
   });
 
   describe("fromError", () => {

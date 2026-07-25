@@ -195,12 +195,15 @@ function toOpenAICompatibleUserContent(
   return content.length > 0 ? content : readTextParts(parts);
 }
 
-function incompatibleProviderReplayError(subject: "calls" | "results"): Error {
-  return toError(createError({
-    type: "config",
-    message:
-      `OpenAI-compatible provider-executed assistant tool ${subject} cannot be replayed through Chat Completions`,
-  }));
+function incompatibleProviderReplayError(subject: "calls" | "results"): TypeError {
+  return toError(
+    createError({
+      type: "config",
+      message:
+        `OpenAI-compatible provider-executed assistant tool ${subject} cannot be replayed through Chat Completions`,
+    }),
+    TypeError,
+  );
 }
 
 /** Convert runtime prompt messages into OpenAI-compatible chat messages. */

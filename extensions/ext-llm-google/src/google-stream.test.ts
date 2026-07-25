@@ -129,6 +129,7 @@ describe("ext-llm-google/google-stream", () => {
           outputTokens: 7,
           totalTokens: 12,
           cacheReadInputTokens: 3,
+          cachedInputTokens: 3,
           reasoningTokens: 2,
         },
       },

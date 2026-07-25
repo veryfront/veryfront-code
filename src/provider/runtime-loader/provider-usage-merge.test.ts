@@ -104,6 +104,27 @@ describe("provider/runtime-loader/provider-usage mergeUsage", () => {
     );
   });
 
+  it("does not invoke cached-input alias accessors", () => {
+    let getterCalls = 0;
+    const usage = Object.defineProperty(
+      { cacheReadInputTokens: 2 },
+      "cachedInputTokens",
+      {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return 99;
+        },
+      },
+    ) as RuntimeUsage;
+
+    assertEquals(sanitizeRuntimeUsage(usage), {
+      cacheReadInputTokens: 2,
+      cachedInputTokens: 2,
+    });
+    assertEquals(getterCalls, 0);
+  });
+
   it("preserves gateway billing metadata from a final usage event", () => {
     const merged = mergeUsage(
       { inputTokens: 10, cacheReadInputTokens: 4 },

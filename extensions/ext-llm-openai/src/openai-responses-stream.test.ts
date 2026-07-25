@@ -167,6 +167,7 @@ describe("ext-llm-openai/openai-responses-stream", () => {
           outputTokens: 7,
           totalTokens: 12,
           cacheReadInputTokens: 3,
+          cachedInputTokens: 3,
           reasoningTokens: 2,
         },
         providerMetadata: {
