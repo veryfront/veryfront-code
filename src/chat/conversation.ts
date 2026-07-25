@@ -802,10 +802,16 @@ function getRawToolResultPart(part: unknown): {
   };
 }
 
-function buildRawToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string> {
+function buildToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string> {
   const toolNames = new Map<string, string>();
 
   for (const part of parts) {
+    const toolPart = getToolPart(part);
+    if (toolPart) {
+      toolNames.set(toolPart.toolCallId, toolPart.toolName);
+      continue;
+    }
+
     const rawToolCall = getRawToolCallPart(part);
     if (!rawToolCall) {
       continue;
@@ -819,11 +825,11 @@ function buildRawToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string>
 
 function resolveRawToolResultPart(
   rawResult: NonNullable<ReturnType<typeof getRawToolResultPart>>,
-  rawToolNamesById: ReadonlyMap<string, string>,
-  knownRawToolNamesById: ReadonlyMap<string, string>,
+  toolNamesById: ReadonlyMap<string, string>,
+  knownToolNamesById: ReadonlyMap<string, string>,
 ): ProviderToolResultContent | null {
-  const toolName = rawResult.toolName ?? rawToolNamesById.get(rawResult.toolCallId) ??
-    knownRawToolNamesById.get(rawResult.toolCallId);
+  const toolName = rawResult.toolName ?? toolNamesById.get(rawResult.toolCallId) ??
+    knownToolNamesById.get(rawResult.toolCallId);
   if (!toolName) {
     return null;
   }
@@ -919,9 +925,9 @@ function convertUserMessage(message: ChatProviderModelInputMessage): ProviderMod
 
 function convertAssistantMessage(
   message: ChatProviderModelInputMessage,
-  knownRawToolNamesById: ReadonlyMap<string, string>,
+  knownToolNamesById: ReadonlyMap<string, string>,
 ): ProviderModelMessage[] {
-  const rawToolNamesById = buildRawToolNameMap(message.parts);
+  const toolNamesById = buildToolNameMap(message.parts);
   const assistantContent: Array<
     | { type: "text"; text: string }
     | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
@@ -1053,8 +1059,8 @@ function convertAssistantMessage(
     if (rawToolResult) {
       const toolResult = resolveRawToolResultPart(
         rawToolResult,
-        rawToolNamesById,
-        knownRawToolNamesById,
+        toolNamesById,
+        knownToolNamesById,
       );
       if (toolResult) {
         pushToolResult(toolResult);
@@ -1071,9 +1077,9 @@ function convertAssistantMessage(
 
 function convertToolMessage(
   message: ChatProviderModelInputMessage,
-  knownRawToolNamesById: ReadonlyMap<string, string>,
+  knownToolNamesById: ReadonlyMap<string, string>,
 ): ProviderModelMessage[] {
-  const rawToolNameMap = buildRawToolNameMap(message.parts);
+  const toolNamesById = buildToolNameMap(message.parts);
   const toolResults: ChatToolResultPart[] = [];
 
   for (const part of message.parts) {
@@ -1098,8 +1104,8 @@ function convertToolMessage(
 
     const toolResult = resolveRawToolResultPart(
       rawResult,
-      rawToolNameMap,
-      knownRawToolNamesById,
+      toolNamesById,
+      knownToolNamesById,
     );
     if (toolResult) {
       toolResults.push(toolResult);
@@ -1118,11 +1124,13 @@ export function convertUiMessagesToProviderModelMessages(
   messages: readonly ChatProviderModelInputMessage[],
 ): ProviderModelMessage[] {
   const providerMessages: ProviderModelMessage[] = [];
-  const knownRawToolNamesById = new Map<string, string>();
+  const knownToolNamesById = new Map<string, string>();
 
   for (const message of messages) {
-    for (const [toolCallId, toolName] of buildRawToolNameMap(message.parts)) {
-      knownRawToolNamesById.set(toolCallId, toolName);
+    if (message.role === "assistant") {
+      for (const [toolCallId, toolName] of buildToolNameMap(message.parts)) {
+        knownToolNamesById.set(toolCallId, toolName);
+      }
     }
 
     const converted = (() => {
@@ -1132,9 +1140,9 @@ export function convertUiMessagesToProviderModelMessages(
         case "user":
           return convertUserMessage(message);
         case "assistant":
-          return convertAssistantMessage(message, knownRawToolNamesById);
+          return convertAssistantMessage(message, knownToolNamesById);
         case "tool":
-          return convertToolMessage(message, knownRawToolNamesById);
+          return convertToolMessage(message, knownToolNamesById);
         default:
           return [];
       }

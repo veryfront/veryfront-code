@@ -191,7 +191,16 @@ const getHostedChatRequestMessagesSchema = defineSchema((v) =>
           const hasUiToolResult = "state" in part &&
             (part.state === "output-available" || part.state === "output-error" ||
               part.state === "output-denied" || part.state === "error");
-          if (message.role === "tool" || hasUiToolResult) {
+          if (message.role === "tool" && !hasUiToolResult) {
+            ctx.addIssue({
+              code: "custom",
+              message: "tool message UI parts require a result-bearing state",
+              path: [messageIndex, "parts", partIndex, "state"],
+            });
+            continue;
+          }
+
+          if (hasUiToolResult) {
             validateToolResult(
               uiToolIdentity.toolCallId,
               uiToolIdentity.toolName,

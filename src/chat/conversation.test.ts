@@ -583,6 +583,83 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     ]);
   });
 
+  it("resolves raw role:tool results from matching normalized UI tool calls", () => {
+    const messages: ChatProviderModelInputMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "github__get_pr_diff",
+            toolCallId: "tool-1",
+            input: { repo: "api", owner: "veryfront", pull_number: 1 },
+            state: "input-available",
+          },
+          {
+            type: "tool-github__list_prs",
+            toolCallId: "tool-2",
+            input: { repo: "api", owner: "veryfront" },
+            state: "input-available",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            output: { files: ["src/chat/conversation.ts"] },
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-2",
+            output: { data: [{ number: 3092 }] },
+          },
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "github__get_pr_diff",
+            input: { repo: "api", owner: "veryfront", pull_number: 1 },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "tool-2",
+            toolName: "github__list_prs",
+            input: { repo: "api", owner: "veryfront" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "github__get_pr_diff",
+            output: { type: "json", value: { files: ["src/chat/conversation.ts"] } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-2",
+            toolName: "github__list_prs",
+            output: { type: "json", value: { data: [{ number: 3092 }] } },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("drops orphan raw tool results without a resolvable tool name", () => {
     const messages: ChatProviderModelInputMessage[] = [
       {

@@ -279,6 +279,37 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[1]?.parts, [parsedHostedChatRequestReplayToolCallPart]);
   });
 
+  it("rejects normalized UI tool parts without results in tool messages", () => {
+    for (
+      const state of [
+        "pending",
+        "input-streaming",
+        "input-available",
+        "completed",
+      ] as const
+    ) {
+      assertHostedChatRequestError(
+        [
+          {
+            id: "assistant-message-1",
+            role: "assistant",
+            parts: [rawReplayToolCallPart],
+          },
+          {
+            id: "tool-message-1",
+            role: "tool",
+            parts: [{
+              ...parsedHostedChatRequestReplayToolCallPart,
+              state,
+              output: undefined,
+            }],
+          },
+        ],
+        "tool message UI parts require a result-bearing state",
+      );
+    }
+  });
+
   it("rejects orphaned or mismatched normalized UI tool results", () => {
     assertHostedChatRequestError(
       [
