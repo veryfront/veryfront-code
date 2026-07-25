@@ -408,7 +408,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
           `Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: ${
-            loadedIds.join(", ")
+            loadedEnumValues.join(", ")
           }`,
         ),
       }).strict()
@@ -425,7 +425,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
       v.object({
         skillId: v.enum(loadedEnumValues).describe(
           `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
-            referenceableLoadedIds.join(", ")
+            loadedEnumValues.join(", ")
           }`,
         ),
         file: v.string().describe(
@@ -450,7 +450,9 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
       v.union([
         v.object({
           skillId: v.enum(unloadedEnumValues).describe(
-            `Unloaded skill ID to load. Available unloaded skill IDs: ${unloadedIds.join(", ")}`,
+            `Unloaded skill ID to load. Available unloaded skill IDs: ${
+              unloadedEnumValues.join(", ")
+            }`,
           ),
           file: v.string().optional().describe(
             "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",
@@ -459,7 +461,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
         v.object({
           skillId: v.enum(loadedEnumValues).describe(
             `Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: ${
-              referenceableLoadedIds.join(", ")
+              loadedEnumValues.join(", ")
             }`,
           ),
           file: v.string().describe(
@@ -475,7 +477,7 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
   return defineSchema((v) =>
     v.object({
       skillId: v.enum(enumValues).describe(
-        `Unloaded skill ID to load. Available unloaded skill IDs: ${unloadedIds.join(", ")}`,
+        `Unloaded skill ID to load. Available unloaded skill IDs: ${enumValues.join(", ")}`,
       ),
       file: v.string().optional().describe(
         "Optional reference file to load. First load the skill with only skillId, then use file only for a reference path listed by that loaded skill.",

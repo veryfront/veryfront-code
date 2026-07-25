@@ -394,7 +394,7 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
           skillId: {
             type: "string",
             enum: ["plan", "plan.md"],
-            description: "Unloaded skill ID to load. Available unloaded skill IDs: plan",
+            description: "Unloaded skill ID to load. Available unloaded skill IDs: plan, plan.md",
           },
           file: {
             type: "string",
@@ -411,7 +411,7 @@ Deno.test("createRuntimeLoadSkillTool schema disallows body reloads for already-
             type: "string",
             enum: ["veryfront", "veryfront.md"],
             description:
-              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
+              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront, veryfront.md",
           },
           file: {
             type: "string",
@@ -451,7 +451,8 @@ Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skil
       skillId: {
         type: "string",
         enum: ["veryfront", "veryfront.md"],
-        description: "Unloaded skill ID to load. Available unloaded skill IDs: veryfront",
+        description:
+          "Unloaded skill ID to load. Available unloaded skill IDs: veryfront, veryfront.md",
       },
       file: {
         type: "string",
@@ -472,7 +473,7 @@ Deno.test("createRuntimeLoadSkillTool refreshes its provider schema after a skil
         type: "string",
         enum: ["veryfront", "veryfront.md"],
         description:
-          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
+          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront, veryfront.md",
       },
       file: {
         type: "string",
@@ -511,7 +512,7 @@ Deno.test("createRuntimeLoadSkillTool schema only permits reference loads when a
         type: "string",
         enum: ["veryfront", "veryfront.md"],
         description:
-          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront",
+          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: veryfront, veryfront.md",
       },
       file: {
         type: "string",
@@ -556,7 +557,7 @@ Deno.test("createRuntimeLoadSkillTool exposes a no-file no-op schema after loadi
         type: "string",
         enum: ["veryfront", "veryfront.md"],
         description:
-          "Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: veryfront",
+          "Already-loaded skill ID with no advertised reference files. Calling load_skill again is a no-op. Loaded skill IDs: veryfront, veryfront.md",
       },
     },
     required: ["skillId"],
@@ -603,7 +604,7 @@ Deno.test("createRuntimeLoadSkillTool exposes only referenceable skills when eve
         type: "string",
         enum: ["with-reference", "with-reference.md"],
         description:
-          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference",
+          "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference, with-reference.md",
       },
       file: {
         type: "string",
@@ -649,7 +650,8 @@ Deno.test("createRuntimeLoadSkillTool omits loaded skills without references fro
           skillId: {
             type: "string",
             enum: ["create", "create.md"],
-            description: "Unloaded skill ID to load. Available unloaded skill IDs: create",
+            description:
+              "Unloaded skill ID to load. Available unloaded skill IDs: create, create.md",
           },
           file: {
             type: "string",
@@ -666,7 +668,7 @@ Deno.test("createRuntimeLoadSkillTool omits loaded skills without references fro
             type: "string",
             enum: ["with-reference", "with-reference.md"],
             description:
-              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference",
+              "Already-loaded skill ID. Body reloads are not allowed; use this only with file for listed references. Loaded skill IDs: with-reference, with-reference.md",
           },
           file: {
             type: "string",
@@ -717,7 +719,8 @@ Deno.test("createRuntimeLoadSkillTool schema ignores stale loaded skills outside
       skillId: {
         type: "string",
         enum: ["veryfront", "veryfront.md"],
-        description: "Unloaded skill ID to load. Available unloaded skill IDs: veryfront",
+        description:
+          "Unloaded skill ID to load. Available unloaded skill IDs: veryfront, veryfront.md",
       },
       file: {
         type: "string",
