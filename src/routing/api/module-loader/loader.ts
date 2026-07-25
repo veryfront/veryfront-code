@@ -259,6 +259,40 @@ function createNamespaceOnLoadHandler(options: {
   });
 }
 
+/** Resolves the framework's built-in @/ project alias through the runtime adapter. */
+function createProjectAliasPlugin(
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): Plugin {
+  const projectRoot = pathHelper.resolve(projectDir);
+
+  return {
+    name: "vf-project-alias",
+    setup(build) {
+      build.onResolve({ filter: /^@\// }, (args) => {
+        const absolutePath = pathHelper.resolve(projectRoot, args.path.slice(2));
+        if (!isWithinDirectory(projectRoot, absolutePath)) {
+          logger.error(
+            `[API] Project alias escapes project: ${args.path} -> ${absolutePath}`,
+          );
+          return { errors: [{ text: `Project alias escapes project: ${args.path}` }] };
+        }
+
+        return { path: absolutePath, namespace: "vf-project-alias" };
+      });
+
+      build.onLoad(
+        { filter: /.*/, namespace: "vf-project-alias" },
+        createNamespaceOnLoadHandler({
+          adapter,
+          projectDir,
+          errorLabel: "via project alias",
+        }),
+      );
+    },
+  };
+}
+
 /** Resolves relative imports through the adapter's virtual FS for remote projects. */
 function createAdapterResolvePlugin(
   adapter: RuntimeAdapter,
@@ -463,6 +497,7 @@ function loadAndTranspileModule(
         },
         plugins: [
           createImportMapPlugin(projectDir, adapter, config),
+          createProjectAliasPlugin(adapter, projectDir),
           createAdapterResolvePlugin(adapter, projectDir),
           createHTTPPlugin({ allowedHosts, projectDir }),
           createProjectBoundaryPlugin(await resolveProjectRoots(projectDir)),

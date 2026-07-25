@@ -54,6 +54,7 @@ export function createVeryfrontAliases(): AliasOptions {
       find: /^veryfront\/fonts$/,
       replacement: sourcePath("src/react/fonts/index.ts"),
     },
+    { find: /^#deno-config$/, replacement: sourcePath("deno.json") },
     {
       find: /^#veryfront\/agent\/react$/,
       replacement: sourcePath("src/agent/react/index.ts"),

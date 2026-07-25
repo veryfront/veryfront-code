@@ -133,6 +133,13 @@ describe("rewriteImports with the default strategies", () => {
     assertStringIncludes(result, "../components/Button.js");
   });
 
+  it("preserves versioned cross-project imports for SSR loader replacement", async () => {
+    const code = `import Button from "demo@1.0.0/@/components/Button";\n`;
+    const result = await rewriteImports(code, defaultCtx({ target: "ssr" }));
+
+    assertEquals(result, code);
+  });
+
   it("leaves an asset inside a dependency to the bare strategy", async () => {
     // The extension alone must not claim the specifier: "move the file to
     // public/" is not something you can do to a file inside node_modules.
