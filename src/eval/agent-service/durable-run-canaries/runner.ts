@@ -1,10 +1,20 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { API_CLIENT_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { sleep } from "#veryfront/utils";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import {
+  assertCanonicalEvalString,
+  assertEvalTimerDuration,
+  createEvalValidationError,
+  normalizeEvalString,
+  stringifyEvalError,
+} from "../../validation.ts";
 
 ensureBuiltinSchemaValidator();
+
+const MAX_DURABLE_CANARY_API_ERROR_BODY_BYTES = 4_096;
 
 /** Configuration used by durable run canary API. */
 export interface DurableRunCanaryApiConfig {
@@ -154,7 +164,10 @@ function createJsonHeaders(config: DurableRunCanaryApiConfig, headers?: HeadersI
   if (!result.has("Content-Type")) {
     result.set("Content-Type", "application/json");
   }
-  result.set("Authorization", `Bearer ${config.authToken}`);
+  result.set(
+    "Authorization",
+    `Bearer ${normalizeEvalString(config.authToken, "Durable canary auth token")}`,
+  );
   return result;
 }
 
@@ -163,9 +176,41 @@ function createFetch(config: DurableRunCanaryApiConfig) {
 }
 
 function createApiUrl(config: DurableRunCanaryApiConfig, path: string): URL {
-  const baseHref = config.apiUrl.endsWith("/") ? config.apiUrl : `${config.apiUrl}/`;
+  const apiUrl = normalizeEvalString(config.apiUrl, "Durable canary API URL");
+  const baseHref = apiUrl.endsWith("/") ? apiUrl : `${apiUrl}/`;
   const relativePath = path.startsWith("/") ? path.slice(1) : path;
   return new URL(relativePath, baseHref);
+}
+
+function encodePathSegment(value: string, label: string): string {
+  return encodeURIComponent(normalizeEvalString(value, label));
+}
+
+function assertDurableRunCanaryApiConfig(config: DurableRunCanaryApiConfig): void {
+  assertCanonicalEvalString(config.apiUrl, "Durable canary API URL");
+  new URL(config.apiUrl);
+  assertCanonicalEvalString(config.authToken, "Durable canary auth token");
+  assertCanonicalEvalString(config.agentId, "Durable canary agent id");
+  if (config.projectId !== null) {
+    assertCanonicalEvalString(config.projectId, "Durable canary project id");
+  }
+  if (config.branchId !== undefined && config.branchId !== null) {
+    assertCanonicalEvalString(config.branchId, "Durable canary branch id");
+  }
+  if (config.fetch !== undefined && typeof config.fetch !== "function") {
+    throw new TypeError("Durable canary fetch must be a function");
+  }
+  assertEvalTimerDuration(config.requestTimeoutMs, "Durable canary requestTimeoutMs", {
+    min: 1,
+  });
+}
+
+async function getBoundedApiErrorBody(response: Response): Promise<string> {
+  const { text, truncated } = await readResponseTextPrefix(
+    response,
+    MAX_DURABLE_CANARY_API_ERROR_BODY_BYTES,
+  );
+  return truncated ? `${text}…[truncated]` : text;
 }
 
 function buildCreateRootRunTargetFields(config: DurableRunCanaryApiConfig) {
@@ -193,13 +238,18 @@ function buildCreateRootRunBody(
   config: DurableRunCanaryApiConfig,
   input: DurableRunCanaryCreateRootRunInput,
 ) {
+  const conversationId = normalizeEvalString(
+    input.conversationId,
+    "Durable canary conversation id",
+  );
+  const runId = normalizeEvalString(input.runId, "Durable canary run id");
   return {
     kind: "agent",
     owner: {
       kind: "conversation",
-      id: input.conversationId,
+      id: conversationId,
     },
-    public_id: input.runId,
+    public_id: runId,
     request: {
       mode: "agent",
       agent_id: config.agentId,
@@ -213,32 +263,43 @@ function buildStartRunBody(
   config: DurableRunCanaryApiConfig,
   input: DurableRunCanaryStartRunInput,
 ) {
+  const conversationId = normalizeEvalString(
+    input.conversationId,
+    "Durable canary conversation id",
+  );
+  const runId = normalizeEvalString(input.runId, "Durable canary run id");
+  const messageId = normalizeEvalString(input.messageId, "Durable canary message id");
+  const userMessageId = normalizeEvalString(
+    input.userMessageId,
+    "Durable canary user message id",
+  );
+  const prompt = normalizeEvalString(input.prompt, "Durable canary prompt");
   return {
     kind: "agent",
     owner: {
       kind: "conversation",
-      id: input.conversationId,
+      id: conversationId,
     },
-    public_id: input.runId,
+    public_id: runId,
     request: {
       mode: "agent",
       agent_id: config.agentId,
       input: {
         messages: [
           {
-            id: input.userMessageId,
+            id: userMessageId,
             role: "user",
-            parts: [{ type: "text", text: input.prompt }],
+            parts: [{ type: "text", text: prompt }],
           },
         ],
         context: {
-          conversation_id: input.conversationId,
+          conversation_id: conversationId,
           project_id: config.projectId,
           branch_id: config.branchId ?? null,
         },
         durable_root_run: {
-          run_id: input.runId,
-          message_id: input.messageId,
+          run_id: runId,
+          message_id: messageId,
         },
       },
     },
@@ -260,7 +321,26 @@ export interface DurableRunCanaryApiClient {
 export function createDurableRunCanaryApiClient(
   config: DurableRunCanaryApiConfig,
 ): DurableRunCanaryApiClient {
+  assertDurableRunCanaryApiConfig(config);
   const request = createFetch(config);
+
+  async function requestApi(path: string, init?: RequestInit): Promise<Response> {
+    const response = await request(createApiUrl(config, path), {
+      ...init,
+      headers: createJsonHeaders(config, init?.headers),
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+
+    if (!response.ok) {
+      throw API_CLIENT_ERROR.create({
+        detail: `API ${
+          init?.method ?? "GET"
+        } ${path} failed: ${response.status} ${await getBoundedApiErrorBody(response)}`,
+        status: response.status,
+      });
+    }
+    return response;
+  }
 
   async function apiFetch<T>(
     path: string,
@@ -273,31 +353,26 @@ export function createDurableRunCanaryApiClient(
     init?: RequestInit,
     parse?: (value: unknown) => T,
   ): Promise<T | unknown> {
-    const response = await request(createApiUrl(config, path), {
-      ...init,
-      headers: createJsonHeaders(config, init?.headers),
-      signal: AbortSignal.timeout(config.requestTimeoutMs),
-    });
-
-    if (!response.ok) {
-      throw API_CLIENT_ERROR.create({
-        detail: `API ${init?.method ?? "GET"} ${path} failed: ${response.status} ${await response
-          .text()}`,
-      });
-    }
-
+    const response = await requestApi(path, init);
     const payload: unknown = await response.json();
     return parse ? parse(payload) : payload;
   }
 
   async function sendUserMessageForCanary(input: DurableRunCanarySendUserMessageInput) {
+    const conversationId = encodePathSegment(
+      input.conversationId,
+      "Durable canary conversation id",
+    );
     return apiFetch(
-      `/conversations/${input.conversationId}/messages`,
+      `/conversations/${conversationId}/messages`,
       {
         method: "POST",
         body: JSON.stringify({
           role: "user",
-          parts: [{ type: "text", text: input.prompt }],
+          parts: [{
+            type: "text",
+            text: normalizeEvalString(input.prompt, "Durable canary prompt"),
+          }],
         }),
       },
       (value) => getDurableRunCanaryMessageSchema().parse(value),
@@ -305,27 +380,36 @@ export function createDurableRunCanaryApiClient(
   }
 
   async function createDurableRootRun(input: DurableRunCanaryCreateRootRunInput): Promise<void> {
-    await apiFetch("/runs", {
+    await requestApi("/runs", {
       method: "POST",
       body: JSON.stringify(buildCreateRootRunBody(config, input)),
     });
   }
 
   async function startDurableRun(input: DurableRunCanaryStartRunInput): Promise<void> {
-    await apiFetch("/runs", {
+    await requestApi("/runs", {
       method: "POST",
       body: JSON.stringify(buildStartRunBody(config, input)),
     });
   }
 
   async function getRunSummary(input: DurableRunCanaryCreateRootRunInput) {
-    const response = await apiFetch(`/conversations/${input.conversationId}/runs/${input.runId}`);
+    const conversationId = encodePathSegment(
+      input.conversationId,
+      "Durable canary conversation id",
+    );
+    const runId = encodePathSegment(input.runId, "Durable canary run id");
+    const response = await apiFetch(`/conversations/${conversationId}/runs/${runId}`);
     return parseDurableRunCanaryRunSummary(response);
   }
 
   async function listMessagesForCanary(input: { conversationId: string }) {
+    const conversationId = encodePathSegment(
+      input.conversationId,
+      "Durable canary conversation id",
+    );
     const payload = await apiFetch(
-      `/conversations/${input.conversationId}/messages?limit=100`,
+      `/conversations/${conversationId}/messages?limit=100`,
       undefined,
       (value) => getDurableRunCanaryMessageListSchema().parse(value),
     );
@@ -388,10 +472,12 @@ interface RunSummaryLocator {
 
 interface WaitForRunInput extends RunSummaryLocator {
   getRunSummary: (input: RunSummaryLocator) => Promise<DurableRunCanaryRunSummary>;
+  requestTimeoutMs: number;
 }
 
 interface ExecuteDurableRunPromptInput {
   conversationId: string;
+  onRunId: (runId: string) => void;
   prompt: string;
 }
 
@@ -482,57 +568,81 @@ function createDurableRunCanaryRunId(): string {
   return `run_${crypto.randomUUID()}`;
 }
 
-/**
- * Returns true when an error represents an HTTP 404 Not Found response.
- * Prefers a structured `.status` property (future-proofs against typed API
- * errors) and falls back to a word-boundary match on the message so format
- * variations like "HTTP 404:" or "failed: 404 Not Found" still match while
- * embedded ids like "runs/404ab3" do not.
- */
 function isNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const typed = error as { status?: unknown; statusCode?: unknown };
-  if (typed.status === 404 || typed.statusCode === 404) return true;
-  return /\b404\b/.test(error.message);
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  try {
+    return ("status" in error && error.status === 404) ||
+      ("statusCode" in error && error.statusCode === 404);
+  } catch {
+    return false;
+  }
+}
+
+async function getRunSummaryBeforeDeadline(
+  input: WaitForRunInput,
+  deadline: number,
+  timeoutDetail: string,
+): Promise<DurableRunCanaryRunSummary> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) {
+    throw TIMEOUT_ERROR.create({ detail: timeoutDetail });
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(TIMEOUT_ERROR.create({ detail: timeoutDetail }));
+    }, remainingMs);
+  });
+  try {
+    return await Promise.race([input.getRunSummary(input), timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function waitForRunSummaryVisibility(
   input: WaitForRunInput,
 ): Promise<DurableRunCanaryRunSummary> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + input.requestTimeoutMs;
+  const timeoutDetail = `Run ${input.runId} did not become visible in time`;
 
   while (Date.now() < deadline) {
     try {
-      return await input.getRunSummary(input);
+      return await getRunSummaryBeforeDeadline(input, deadline, timeoutDetail);
     } catch (error) {
       if (!isNotFoundError(error)) {
         throw error;
       }
     }
 
-    await sleep(500);
+    await sleep(Math.min(500, Math.max(0, deadline - Date.now())));
   }
 
-  throw TIMEOUT_ERROR.create({ detail: `Run ${input.runId} did not become visible in time` });
+  throw TIMEOUT_ERROR.create({ detail: timeoutDetail });
 }
 
 async function waitForTerminalRun(
-  input: WaitForRunInput & { requestTimeoutMs: number },
+  input: WaitForRunInput,
 ): Promise<DurableRunCanaryRunSummary> {
   const deadline = Date.now() + input.requestTimeoutMs;
+  const timeoutDetail = `Timed out waiting for run ${input.runId} to reach a terminal state`;
 
   while (Date.now() < deadline) {
-    const run = await input.getRunSummary(input);
+    const run = await getRunSummaryBeforeDeadline(input, deadline, timeoutDetail);
     if (isTerminalRunStatus(run.status)) {
       return run;
     }
 
-    await sleep(1_500);
+    await sleep(Math.min(1_500, Math.max(0, deadline - Date.now())));
   }
 
-  throw TIMEOUT_ERROR.create({
-    detail: `Timed out waiting for run ${input.runId} to reach a terminal state`,
-  });
+  throw TIMEOUT_ERROR.create({ detail: timeoutDetail });
 }
 
 /** Create durable run canary runner. */
@@ -540,6 +650,7 @@ export function createDurableRunCanaryRunner(
   config: DurableRunCanaryRunnerConfig,
   apiClient: DurableRunCanaryApiClient = createDurableRunCanaryApiClient(config),
 ) {
+  assertDurableRunCanaryApiConfig(config);
   const getRunSummary = apiClient.getRunSummary;
 
   async function listMessagesWithReferencedChildren(
@@ -564,6 +675,7 @@ export function createDurableRunCanaryRunner(
       prompt: input.prompt,
     });
     const currentRunId = createDurableRunCanaryRunId();
+    input.onRunId(currentRunId);
 
     await apiClient.createDurableRootRun({
       conversationId: input.conversationId,
@@ -572,6 +684,7 @@ export function createDurableRunCanaryRunner(
     const visibleRun = await waitForRunSummaryVisibility({
       conversationId: input.conversationId,
       getRunSummary,
+      requestTimeoutMs: config.requestTimeoutMs,
       runId: currentRunId,
     });
 
@@ -598,26 +711,40 @@ export function createDurableRunCanaryRunner(
 
   async function runCase(testCase: DurableRunCanaryCase): Promise<DurableRunCanaryResult> {
     const startedAt = Date.now();
-    const prepared = await testCase.prepare();
+    let prepared: DurableRunCanaryPreparedCase | null = null;
     let runId = "unknown";
-    const stopSidecar = await prepared.startSidecar?.();
-    const resolveArtifactPaths = (currentRunId: string): string[] | undefined =>
-      typeof prepared.artifactPaths === "function"
-        ? prepared.artifactPaths(currentRunId)
-        : prepared.artifactPaths;
+    let stopSidecar: (() => Promise<void>) | undefined;
+    let completedSuccessfully = false;
+    let result: DurableRunCanaryResult;
 
     try {
+      prepared = await testCase.prepare();
+      const startedSidecarCleanup = await prepared.startSidecar?.();
+      if (
+        startedSidecarCleanup !== undefined &&
+        typeof startedSidecarCleanup !== "function"
+      ) {
+        throw createEvalValidationError(
+          `Durable canary sidecar for "${testCase.id}" must return a cleanup function or undefined`,
+        );
+      }
+      stopSidecar = typeof startedSidecarCleanup === "function" ? startedSidecarCleanup : undefined;
       const initialRun = await executeDurableRunPrompt({
         conversationId: prepared.conversationId,
+        onRunId: (currentRunId) => {
+          runId = currentRunId;
+        },
         prompt: prepared.prompt,
       });
-      runId = initialRun.runId;
       if (prepared.followUpPrompt) {
         assertCompletedSetupRunBeforeFollowUp(initialRun.run);
       }
       const terminalRun = prepared.followUpPrompt
         ? await executeDurableRunPrompt({
           conversationId: prepared.conversationId,
+          onRunId: (currentRunId) => {
+            runId = currentRunId;
+          },
           prompt: prepared.followUpPrompt,
         })
         : initialRun;
@@ -629,13 +756,12 @@ export function createDurableRunCanaryRunner(
         run: terminalRun.run,
       });
 
-      const artifactPaths = resolveArtifactPaths(runId);
+      const artifactPaths = typeof prepared.artifactPaths === "function"
+        ? prepared.artifactPaths(runId)
+        : prepared.artifactPaths;
 
-      if (!config.keepSuccessfulEvidence) {
-        await prepared.cleanup({ runId });
-      }
-
-      return {
+      completedSuccessfully = true;
+      result = {
         id: testCase.id,
         label: testCase.label,
         status: "pass",
@@ -646,21 +772,54 @@ export function createDurableRunCanaryRunner(
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     } catch (error) {
-      const artifactPaths = resolveArtifactPaths(runId);
+      let artifactPaths: string[] | undefined;
+      try {
+        artifactPaths = typeof prepared?.artifactPaths === "function"
+          ? prepared.artifactPaths(runId)
+          : prepared?.artifactPaths;
+      } catch {
+        artifactPaths = undefined;
+      }
 
-      return {
+      result = {
         id: testCase.id,
         label: testCase.label,
         status: "fail",
-        details: error instanceof Error ? error.message : String(error),
+        details: stringifyEvalError(error),
         durationMs: Date.now() - startedAt,
-        conversationId: prepared.conversationId,
+        conversationId: prepared?.conversationId ?? "unknown",
         runId,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
-    } finally {
-      await stopSidecar?.();
     }
+
+    if (stopSidecar) {
+      try {
+        await stopSidecar();
+      } catch (error) {
+        result = {
+          ...result,
+          status: "fail",
+          details: `${result.details} Sidecar cleanup failed: ${stringifyEvalError(error)}`,
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    }
+
+    if (completedSuccessfully && !config.keepSuccessfulEvidence && prepared) {
+      try {
+        await prepared.cleanup({ runId });
+      } catch (error) {
+        result = {
+          ...result,
+          status: "fail",
+          details: `${result.details} Prepared input cleanup failed: ${stringifyEvalError(error)}`,
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    }
+
+    return result;
   }
 
   return {

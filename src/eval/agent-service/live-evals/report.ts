@@ -73,7 +73,7 @@ export function selectLiveEvalCases<
     : input.readOnlyCases;
 
   const selectedCases = input.requestedCaseIds.size > 0
-    ? input.allCases.filter((testCase) => input.requestedCaseIds.has(testCase.id))
+    ? configuredCases.filter((testCase) => input.requestedCaseIds.has(testCase.id))
     : configuredCases;
 
   const requestedCaseTags = input.requestedCaseTags ?? new Set<string>();
@@ -98,17 +98,27 @@ export function resolveLiveEvalRequestedCaseIds(input: {
     return resolved;
   }
 
-  const caseIds = input.caseSets[requestedCaseSetId];
-  if (!caseIds) {
+  if (!Object.hasOwn(input.caseSets, requestedCaseSetId)) {
     throw INVALID_ARGUMENT.create({
       detail: `Unknown AG_UI_EVAL_CASE_SET "${requestedCaseSetId}". Known sets: ${
         Object.keys(input.caseSets).join(", ")
       }`,
     });
   }
+  const caseIds = input.caseSets[requestedCaseSetId];
+  if (!Array.isArray(caseIds)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `AG_UI_EVAL_CASE_SET "${requestedCaseSetId}" must contain an array of case ids`,
+    });
+  }
 
   for (const caseId of caseIds) {
-    resolved.add(caseId);
+    if (typeof caseId !== "string" || caseId.trim().length === 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: `AG_UI_EVAL_CASE_SET "${requestedCaseSetId}" contains an invalid case id`,
+      });
+    }
+    resolved.add(caseId.trim());
   }
 
   return resolved;

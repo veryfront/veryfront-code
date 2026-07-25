@@ -1,8 +1,31 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import type { EvalExample, EvalExampleInput } from "./types.ts";
 
 export function createEvalValidationError(message: string): Error {
   return INVALID_ARGUMENT.create({ message });
+}
+
+export function stringifyEvalError(value: unknown): string {
+  try {
+    if (value instanceof Error && typeof value.message === "string" && value.message.length > 0) {
+      return value.message;
+    }
+  } catch {
+    // Continue through the total fallbacks for hostile thrown values.
+  }
+  if (typeof value === "string") return value;
+  try {
+    const json = JSON.stringify(value);
+    if (json !== undefined) return json;
+  } catch {
+    // Continue to String, which handles symbols and most non-JSON values.
+  }
+  try {
+    return String(value);
+  } catch {
+    return "[unprintable thrown value]";
+  }
 }
 
 export function isEvalRecord(value: unknown): value is Record<string, unknown> {
@@ -19,6 +42,16 @@ export function normalizeEvalString(value: unknown, label: string): string {
     throw createEvalValidationError(`${label} must be a non-empty string`);
   }
   return value.trim();
+}
+
+export function assertCanonicalEvalString(
+  value: unknown,
+  label: string,
+): asserts value is string {
+  const normalized = normalizeEvalString(value, label);
+  if (normalized !== value) {
+    throw createEvalValidationError(`${label} must not have surrounding whitespace`);
+  }
 }
 
 export function normalizeEvalStringList(value: unknown, label: string): string[] {
@@ -49,6 +82,18 @@ export function assertFiniteEvalNumber(
     ].filter(Boolean).join(" and ");
     throw createEvalValidationError(`${label} must be ${constraints}`);
   }
+}
+
+export function assertEvalTimerDuration(
+  value: unknown,
+  label: string,
+  options: { min?: number } = {},
+): asserts value is number {
+  assertFiniteEvalNumber(value, label, {
+    integer: true,
+    min: options.min ?? 0,
+    max: MAX_TIMER_DELAY_MS,
+  });
 }
 
 export function normalizeEvalExamples(

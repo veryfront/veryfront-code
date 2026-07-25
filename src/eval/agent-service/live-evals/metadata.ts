@@ -1,5 +1,11 @@
 import type { LiveEvalCaseMetadata } from "./report.ts";
 import type { LiveEvalCase } from "./runner.ts";
+import {
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+  normalizeEvalStringList,
+} from "../../validation.ts";
 
 /** Public API contract for live eval case surface. */
 export type LiveEvalCaseSurface = "read-only" | "write" | "experimental";
@@ -65,6 +71,70 @@ function toStringArray(value: string | readonly string[] | undefined): readonly 
   return typeof value === "string" ? [value] : value;
 }
 
+function normalizeTagRuleValues(
+  value: unknown,
+  label: string,
+): string | readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return normalizeEvalString(value, label);
+  const normalized = normalizeEvalStringList(value, label);
+  if (normalized.length === 0) {
+    throw createEvalValidationError(`${label} must not be empty`);
+  }
+  return normalized;
+}
+
+function normalizeLiveEvalTagRules(
+  rules: readonly LiveEvalCaseTagRule[],
+): LiveEvalCaseTagRule[] {
+  if (!Array.isArray(rules)) {
+    throw createEvalValidationError("Live eval areaTagRules must be an array");
+  }
+
+  return rules.map((rule, index) => {
+    if (!isEvalRecord(rule)) {
+      throw createEvalValidationError(`Live eval areaTagRules[${index}] must be an object`);
+    }
+    const normalized: LiveEvalCaseTagRule = {
+      tag: normalizeEvalString(rule.tag, `Live eval areaTagRules[${index}] tag`),
+      ...(rule.equals !== undefined
+        ? {
+          equals: normalizeTagRuleValues(
+            rule.equals,
+            `Live eval areaTagRules[${index}] equals`,
+          ),
+        }
+        : {}),
+      ...(rule.startsWith !== undefined
+        ? {
+          startsWith: normalizeTagRuleValues(
+            rule.startsWith,
+            `Live eval areaTagRules[${index}] startsWith`,
+          ),
+        }
+        : {}),
+      ...(rule.includes !== undefined
+        ? {
+          includes: normalizeTagRuleValues(
+            rule.includes,
+            `Live eval areaTagRules[${index}] includes`,
+          ),
+        }
+        : {}),
+    };
+    if (
+      normalized.equals === undefined &&
+      normalized.startsWith === undefined &&
+      normalized.includes === undefined
+    ) {
+      throw createEvalValidationError(
+        `Live eval areaTagRules[${index}] must define a matcher`,
+      );
+    }
+    return normalized;
+  });
+}
+
 function caseIdCollectionHas(
   collection: readonly string[] | ReadonlySet<string> | undefined,
   caseId: string,
@@ -122,10 +192,31 @@ function buildAreaTags(caseId: string, rules: readonly LiveEvalCaseTagRule[]): s
 export function buildLiveEvalCaseMetadata(
   input: BuildLiveEvalCaseMetadataInput,
 ): LiveEvalCaseMetadata {
-  const optionalJudgeCasePrefixes = input.optionalJudgeCasePrefixes ??
-    DEFAULT_LIVE_EVAL_OPTIONAL_JUDGE_CASE_PREFIXES;
-  const areaTagRules = input.areaTagRules ?? DEFAULT_LIVE_EVAL_AREA_TAG_RULES;
-  const gradingTag = isOptionalJudgeCase(input.caseId, optionalJudgeCasePrefixes)
+  const caseId = normalizeEvalString(input.caseId, "Live eval case id");
+  if (
+    input.surface !== "read-only" &&
+    input.surface !== "write" &&
+    input.surface !== "experimental"
+  ) {
+    throw createEvalValidationError(`Unknown live eval case surface "${String(input.surface)}"`);
+  }
+  if (typeof input.requireProject !== "boolean") {
+    throw createEvalValidationError("Live eval requireProject must be a boolean");
+  }
+  const optionalJudgeCasePrefixes = normalizeEvalStringList(
+    input.optionalJudgeCasePrefixes ?? DEFAULT_LIVE_EVAL_OPTIONAL_JUDGE_CASE_PREFIXES,
+    "Live eval optionalJudgeCasePrefixes",
+  );
+  const areaTagRules = normalizeLiveEvalTagRules(
+    input.areaTagRules ?? DEFAULT_LIVE_EVAL_AREA_TAG_RULES,
+  );
+  const releaseGateCaseIds = new Set(
+    normalizeEvalStringList(
+      input.releaseGateCaseIds ? [...input.releaseGateCaseIds] : [],
+      "Live eval releaseGateCaseIds",
+    ),
+  );
+  const gradingTag = isOptionalJudgeCase(caseId, optionalJudgeCasePrefixes)
     ? "grading:deterministic-plus-optional-llm"
     : "grading:deterministic-only";
 
@@ -144,11 +235,11 @@ export function buildLiveEvalCaseMetadata(
     tags.add("gate:ci");
   }
 
-  if (caseIdCollectionHas(input.releaseGateCaseIds, input.caseId)) {
+  if (caseIdCollectionHas(releaseGateCaseIds, caseId)) {
     tags.add("gate:release");
   }
 
-  for (const tag of buildAreaTags(input.caseId, areaTagRules)) {
+  for (const tag of buildAreaTags(caseId, areaTagRules)) {
     tags.add(tag);
   }
 

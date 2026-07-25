@@ -26,20 +26,21 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     5 |       8.6% | Current formal closure evidence remains valid       |
+| Closed                         |     6 |      10.3% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | Review findings exist; remediation is not complete  |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |    15 |      25.9% | No current authoritative-branch review delta exists |
+| Pending current review         |    14 |      24.1% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 43/58 (74.1%). This is progress coverage, not a substitute for the
+coverage of 44/58 (75.9%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
 
 - `config`
 - `embedding`
+- `eval`
 - `metrics`
 - `schemas`
 - `version.ts`
@@ -92,7 +93,6 @@ None.
 ### Pending current review
 
 - `chat`
-- `eval`
 - `issues`
 - `knowledge`
 - `markdown`
@@ -121,14 +121,14 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `config`, `embedding`, and `metrics`.
-Each closure includes a complete consumer map, deep module-level review,
-adversarial boundary tests, public-contract documentation, and repository-wide
-verification. Cross-module consumers changed by a fix remain in revalidation;
-focused evidence for one boundary does not by itself close the consumer's
-top-level unit. `eval` is the next pending review target because it is the
-closest project-metrics consumer and has not yet received current-branch formal
-closure.
+The current closed review chain covers `config`, `embedding`, `metrics`, and
+`eval`. Each closure includes a complete consumer map, deep module-level
+review, adversarial boundary tests, public-contract documentation, and
+repository-wide verification. Cross-module consumers changed by a fix remain
+in revalidation; focused evidence for one boundary does not by itself close
+the consumer's top-level unit. `extensions` is the next dependency-adjacent
+revalidation target because eval construction and parsing use its built-in
+schema-validator boundary.
 
 ### Metrics remediation checkpoint
 
@@ -237,6 +237,54 @@ runtime results, custom `Response` denials, successful authorization, and the
 explicit public opt-in. No unresolved critical or high-confidence embedding
 production risk remains.
 
+### Eval remediation checkpoint
+
+The eval findings are remediated on the current branch:
+
+- Definitions, datasets, targets, repetitions, metric thresholds, judge
+  limits, custom evaluators, and check callbacks validate their runtime
+  contracts. Adapter, evaluator, metric, and check failures are contained in
+  the affected record instead of aborting the remaining eval.
+- Operational token and cost budgets fail closed when their required evidence
+  is absent. Cost selection follows the documented billed-charge, metered
+  charge, legacy cost, and provider-cost order.
+- Baselines must match definition, target, and dataset identity. Model
+  comparisons validate policies and report identity, reject colliding artifact
+  paths, preserve unmeasured values, and avoid insertion-order promotion.
+- Discovery rejects duplicate eval IDs. Provenance handles dirty and untracked
+  state without making git availability a run requirement. JUnit output marks
+  record execution errors as testcase failures.
+- Live-eval case IDs cannot bypass write or experimental authorization gates.
+  Unknown, duplicate, disabled, malformed, and empty selections fail before
+  execution, and an all-skipped run exits unsuccessfully.
+- Agent-service and canary clients validate identifiers, payloads, portable
+  timer ranges, upload sizes, finite response values, and canonical metadata.
+  URL path segments are encoded, API errors retain structured status and
+  bounded bodies, caller cancellation reaches polling, and streamed uploads
+  set Node-compatible duplex mode.
+- Live and durable runners contain preparation, streaming, verifier, judge,
+  sidecar, and cleanup failures. Cleanup remains ordered and observable even
+  for hostile thrown values. Durable polling honors its configured deadline
+  and retains the generated run ID when a later operation fails.
+- The eval how-to guide documents baseline identity, fail-closed budgets,
+  billing selection, live mutation gates, lifecycle failure behavior, and
+  all-skipped exit semantics. Generated API references were refreshed
+  deterministically.
+
+Reproducible checkpoint evidence:
+
+- The complete eval surface passed 17 test suites and 142 steps with zero
+  failures, including adversarial agent-service, live-eval, API, and durable
+  canary coverage.
+- `deno task docs:validate` passed 45 groups and 87 steps plus all 720 link
+  checks.
+- Formatting, lint, focused typechecking, and diff-integrity checks passed for
+  the complete eval surface.
+- Repository quick verification and generated-consumer typechecking passed at
+  the closure checkpoint.
+
+No unresolved critical or high-confidence eval production risk remains.
+
 ### Config closure checkpoint verification
 
 The current config closure checkpoint has the following reproducible evidence:
@@ -259,10 +307,10 @@ The current config closure checkpoint has the following reproducible evidence:
 - `deno task docs:validate` passed all documentation contracts and 716 link
   checks.
 
-These gates certify this integration checkpoint, not the 15 pending module
-reviews or the reviewed `metrics` unit whose fixes are still pending. The broader
-unit and integration portfolio remains part of the final repository production
-gate.
+These gates certify this integration checkpoint, not the 14 pending module
+reviews or the 38 touched units that still require current-branch
+revalidation. The broader unit and integration portfolio remains part of the
+final repository production gate.
 
 ### Config residual debt
 

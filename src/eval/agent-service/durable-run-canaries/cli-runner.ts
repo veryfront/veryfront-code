@@ -1,5 +1,5 @@
 import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { ENV_VAR_MISSING } from "#veryfront/errors";
+import { ENV_VAR_MISSING, INVALID_ARGUMENT } from "#veryfront/errors";
 import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd as getProcessCwd } from "#veryfront/platform/compat/process.ts";
 import { type LiveEvalApiContext } from "../live-evals/api-client.ts";
@@ -10,6 +10,7 @@ import {
   type DurableRunCanaryResult,
   type DurableRunCanaryRunnerConfig,
 } from "./runner.ts";
+import { assertCanonicalEvalString, stringifyEvalError } from "../../validation.ts";
 
 type EnvRecord = Record<string, string | undefined>;
 
@@ -41,6 +42,31 @@ function createTimestampedReportPath(input: {
     input.directory,
     `${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}.json`,
   );
+}
+
+function validateDurableRunCanaryCases(testCases: DurableRunCanaryCase[]): void {
+  if (!Array.isArray(testCases)) {
+    throw INVALID_ARGUMENT.create({ detail: "Durable run canary cases must be an array" });
+  }
+  if (testCases.length === 0) {
+    throw INVALID_ARGUMENT.create({ detail: "No durable run canary cases were selected" });
+  }
+
+  const seenIds = new Set<string>();
+  for (const [index, testCase] of testCases.entries()) {
+    if (typeof testCase !== "object" || testCase === null) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Durable canary case[${index}] must be an object`,
+      });
+    }
+    assertCanonicalEvalString(testCase.id, `Durable canary case[${index}] id`);
+    assertCanonicalEvalString(testCase.label, `Durable canary case[${index}] label`);
+    const id = testCase.id;
+    if (seenIds.has(id)) {
+      throw INVALID_ARGUMENT.create({ detail: `Duplicate durable canary case id "${id}"` });
+    }
+    seenIds.add(id);
+  }
 }
 
 /** Run durable run canary cli. */
@@ -79,6 +105,7 @@ export async function runDurableRunCanaryCli(
     context,
     requestTimeoutMs,
   });
+  validateDurableRunCanaryCases(testCases);
 
   log(`Durable run canaries -> ${apiUrl}`);
   log(`Project scope -> ${projectId}`);
@@ -86,7 +113,21 @@ export async function runDurableRunCanaryCli(
   const results: DurableRunCanaryResult[] = [];
   for (const testCase of testCases) {
     log(`\n[run] ${testCase.label}`);
-    const result = await runCase(testCase);
+    const startedAt = Date.now();
+    let result: DurableRunCanaryResult;
+    try {
+      result = await runCase(testCase);
+    } catch (error) {
+      result = {
+        id: testCase.id,
+        label: testCase.label,
+        status: "fail",
+        details: stringifyEvalError(error),
+        durationMs: Date.now() - startedAt,
+        conversationId: "unknown",
+        runId: "unknown",
+      };
+    }
     results.push(result);
     log(`[${result.status}] ${result.id}: ${result.details}`);
   }

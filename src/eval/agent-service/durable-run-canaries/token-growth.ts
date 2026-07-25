@@ -10,6 +10,9 @@ import {
 /** Marker used by the durable run token-growth canary prompt. */
 export const DURABLE_RUN_TOKEN_GROWTH_CANARY_MARKER = "VF_DURABLE_TOKEN_GROWTH_CANARY";
 
+const SAFE_CANARY_MARKER_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /** Input payload for create durable run token-growth canary case. */
 export type DurableRunTokenGrowthCanaryCaseInput = {
   conversationId?: string;
@@ -40,6 +43,16 @@ export function createDurableRunTokenGrowthCanaryCase(
   input: DurableRunTokenGrowthCanaryCaseInput = {},
 ): DurableRunCanaryCase {
   const marker = input.marker ?? `${DURABLE_RUN_TOKEN_GROWTH_CANARY_MARKER}_${crypto.randomUUID()}`;
+  if (!SAFE_CANARY_MARKER_PATTERN.test(marker)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Durable token-growth canary marker must be 1-128 safe identifier characters",
+    });
+  }
+  if (input.conversationId !== undefined && !UUID_PATTERN.test(input.conversationId)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Durable token-growth canary conversationId must be a UUID",
+    });
+  }
 
   return {
     id: "durable-token-growth-follow-up",
