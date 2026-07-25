@@ -274,6 +274,7 @@ export function ClientApp({ initialData }: ClientAppProps): ReactElement {
     params: normalizedParams,
     query,
     frontmatter: state.frontmatter,
+    data: state.pageProps,
     headings: [],
     mdxHeadings: [],
   };
