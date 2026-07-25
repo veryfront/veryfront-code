@@ -793,6 +793,8 @@ export class RenderPipeline {
                             pageBundle,
                             layoutBundle: layoutResult.layoutBundle,
                             nestedLayouts: layoutResult.nestedLayouts,
+                            layoutRequestIdentity,
+                            layoutDataMap,
                             collectedMetadata: pageBundleResult.collectedMetadata,
                             slug,
                             cssImports: collectedCSSImports,

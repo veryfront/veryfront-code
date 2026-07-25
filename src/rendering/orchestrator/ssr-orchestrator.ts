@@ -295,22 +295,30 @@ export class SSROrchestrator {
       ...generationContext.pageInfo?.entity?.frontmatter,
       ...generationContext.pageBundle?.frontmatter,
     };
-    const fallbackElement = this.config.layoutOrchestrator
-      ? await this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+    let fallbackElement = errorInfo.element;
+    if (this.config.layoutOrchestrator) {
+      const requestIdentity = generationContext.layoutRequestIdentity;
+      if (!requestIdentity) {
+        throw new Error(
+          "Cannot render an app-router error boundary without the preloaded layout request identity",
+          { cause: renderError },
+        );
+      }
+      fallbackElement = await this.config.layoutOrchestrator.applyLayoutsAndWrappers(
         errorInfo.element as React.ReactElement,
         generationContext.pageInfo,
         generationContext.layoutBundle,
         generationContext.nestedLayouts,
-        undefined,
+        requestIdentity,
+        generationContext.layoutDataMap,
         renderOptions?.url,
         renderOptions?.params,
         mergedFrontmatter,
         generationContext.pageBundle?.headings,
-        renderOptions?.projectSlug,
         renderOptions?.clientPageIsland,
         renderOptions?.props,
-      )
-      : errorInfo.element;
+      );
+    }
 
     const rendered = await runWithHeadCollector(() =>
       this.config.ssrRenderer.renderToHTML(fallbackElement as React.ReactElement, {

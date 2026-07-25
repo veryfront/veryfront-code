@@ -130,6 +130,22 @@ the consumer's top-level unit. `extensions` is the next dependency-adjacent
 revalidation target because eval construction and parsing use its built-in
 schema-validator boundary.
 
+### Rebase integration checkpoint
+
+The reviewed history was rebased onto the then-current `origin/main`. The
+regenerated root lockfile passes frozen resolution, generated manifests are
+current, and the repository and consumer-package typecheck gates pass.
+
+- `src/version.ts` remains intentionally absent. Its only content was a stale
+  single-image build test comment, so removing the non-production marker closed
+  that audit unit; its absence is not recovery loss.
+- App-router SSR error rendering now reuses the exact project, content-source,
+  and import-map identity captured during layout preloading, along with the
+  request's layout data. A missing identity fails closed instead of resolving
+  mutable project state or shifting positional arguments.
+- `rendering` remains in touched/revalidation-required status. This focused
+  integration repair and its passing tests are not a full module closure.
+
 ### Metrics remediation checkpoint
 
 The metrics findings are remediated on the current branch:

@@ -3,6 +3,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { EntityInfo, LayoutItem, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RenderOptions } from "./types.ts";
+import type { LayoutRequestIdentity } from "./layout.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -19,6 +20,14 @@ export interface HTMLGenerationContext {
   pageBundle: PageBundle;
   layoutBundle: MdxBundle | undefined;
   nestedLayouts: LayoutItem[];
+  /**
+   * Exact project/import-map identity captured while the route layouts were
+   * preloaded. SSR error-boundary rendering must reuse this identity rather
+   * than resolving mutable project state a second time.
+   */
+  layoutRequestIdentity?: LayoutRequestIdentity;
+  /** Per-layout request data reused when an SSR error boundary replaces the page. */
+  layoutDataMap?: Map<string, Record<string, unknown>>;
   collectedMetadata: Record<string, unknown>;
   slug: string;
   ssrHash: string;

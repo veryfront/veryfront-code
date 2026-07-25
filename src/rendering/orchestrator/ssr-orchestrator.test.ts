@@ -16,6 +16,7 @@ import {
   recordModuleToSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
+import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
 
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 
@@ -384,9 +385,19 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       let wrappedProps: unknown;
       let wrappedUrl: URL | undefined;
       let wrappedParams: Record<string, string | string[]> | undefined;
-      let wrappedProjectSlug: string | undefined;
+      let wrappedRequestIdentity: unknown;
+      let wrappedLayoutDataMap: unknown;
       let wrappedClientPageIsland: unknown;
       let wrappedFrontmatter: Record<string, unknown> | undefined;
+      const layoutRequestIdentity = {
+        projectId: "project-id",
+        projectSlug: "docs",
+        contentSourceId: "content-source",
+        importMapIdentity: await createImportMapIdentity({ imports: {} }),
+      };
+      const layoutDataMap = new Map([
+        ["/project/app/layout.tsx", { navigation: ["Docs"] }],
+      ]);
 
       const config = createMockConfig({
         ssrRenderer: {
@@ -415,18 +426,19 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             _pageInfo: unknown,
             _layoutBundle: unknown,
             _nestedLayouts: unknown,
-            _layoutDataMap: unknown,
+            requestIdentity: unknown,
+            receivedLayoutDataMap: unknown,
             url: URL | undefined,
             params: Record<string, string | string[]> | undefined,
             frontmatter: Record<string, unknown> | undefined,
             _headings: unknown,
-            projectSlug: string | undefined,
             clientPageIsland: unknown,
             props: Record<string, unknown> | undefined,
           ) => {
             wrappedUrl = url;
             wrappedParams = params;
-            wrappedProjectSlug = projectSlug;
+            wrappedRequestIdentity = requestIdentity;
+            wrappedLayoutDataMap = receivedLayoutDataMap;
             wrappedClientPageIsland = clientPageIsland;
             wrappedProps = props;
             wrappedFrontmatter = frontmatter;
@@ -460,6 +472,8 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             },
             layoutBundle: undefined,
             nestedLayouts: [{ kind: "tsx", componentPath: "/project/app/layout.tsx" }],
+            layoutRequestIdentity,
+            layoutDataMap,
             collectedMetadata: {},
             slug: "/blog/hello",
             cssImports: [],
@@ -482,10 +496,58 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(renderCount, 2);
       assertEquals(wrappedUrl, url);
       assertEquals(wrappedParams, { slug: "hello" });
-      assertEquals(wrappedProjectSlug, "docs");
+      assertEquals(wrappedRequestIdentity, layoutRequestIdentity);
+      assertEquals(wrappedLayoutDataMap, layoutDataMap);
       assertEquals(wrappedClientPageIsland, clientPageIsland);
       assertEquals(wrappedProps, { preview: true });
       assertEquals(wrappedFrontmatter, { section: "blog", title: "Hello" });
+    });
+
+    it("fails closed when an error-boundary layout identity is unavailable", async () => {
+      const pageError = new Error("page failed");
+      let layoutApplied = false;
+      const config = createMockConfig({
+        ssrRenderer: {
+          renderToHTML: () => Promise.reject(pageError),
+        } as unknown as SSROrchestratorConfig["ssrRenderer"],
+        htmlGenerator: {
+          resolveErrorComponent: async () => ({
+            element: React.createElement("div", { id: "error-boundary" }),
+            path: "/project/app/error.tsx",
+          }),
+        } as unknown as SSROrchestratorConfig["htmlGenerator"],
+        layoutOrchestrator: {
+          applyLayoutsAndWrappers: async (element: React.ReactElement) => {
+            layoutApplied = true;
+            return element;
+          },
+        } as unknown as SSROrchestratorConfig["layoutOrchestrator"],
+      });
+
+      let failure: unknown;
+      try {
+        await new SSROrchestrator(config).performSSRRendering(
+          React.createElement("main"),
+          {
+            pageInfo: { entity: { path: "/project/app/page.tsx" } },
+            pageBundle: { frontmatter: {}, headings: [] },
+            layoutBundle: undefined,
+            nestedLayouts: [],
+            collectedMetadata: {},
+            slug: "/",
+          } as any,
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      assert(failure instanceof Error);
+      assertEquals(
+        failure.message,
+        "Cannot render an app-router error boundary without the preloaded layout request identity",
+      );
+      assertEquals(failure.cause, pageError);
+      assertEquals(layoutApplied, false);
     });
   });
 });
