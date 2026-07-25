@@ -21,6 +21,7 @@ import {
   createMdxModuleRecoveryPayload,
   serializeMdxModuleRecoveryPayload,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/recovery-payload.ts";
+import { createSSRImportMapIdentity } from "./import-map-identity.ts";
 
 class FakeDistributedCache implements CacheBackend {
   readonly type = "redis" as const;
@@ -56,6 +57,41 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(await manager.hashContentAsync(small), await computeHash(small));
     assertEquals(await manager.hashContentAsync(large), await computeHash(large));
     assertEquals((await manager.hashContentAsync(small)).length, 64);
+  });
+
+  it("isolates SSR module cache identities by import-map fingerprint", async () => {
+    const mapAIdentity = await createSSRImportMapIdentity({
+      imports: { package: "https://modules.example/map-a.ts" },
+      scopes: {},
+    });
+    const mapBIdentity = await createSSRImportMapIdentity({
+      imports: { package: "https://modules.example/map-b.ts" },
+      scopes: {},
+    });
+    const createManager = (importMapIdentity = mapAIdentity) =>
+      new SSRCacheManager({
+        projectDir: "/project",
+        projectId: "project",
+        contentSourceId: "release-1",
+        adapter: denoAdapter,
+        dev: false,
+        importMapIdentity,
+      });
+
+    const mapAKey = createManager(mapAIdentity).getCacheKey("/project/pages/index.tsx");
+    const mapARepeatKey = createManager(mapAIdentity).getCacheKey("/project/pages/index.tsx");
+    const mapBKey = createManager(mapBIdentity).getCacheKey("/project/pages/index.tsx");
+    const standaloneKey = new SSRCacheManager({
+      projectDir: "/project",
+      projectId: "project",
+      contentSourceId: "release-1",
+      adapter: denoAdapter,
+      dev: false,
+    }).getCacheKey("/project/pages/index.tsx");
+
+    assertEquals(mapAKey, mapARepeatKey);
+    assertEquals(mapAKey === mapBKey, false);
+    assertEquals(mapAKey === standaloneKey, false);
   });
 
   it("recovers missing vfmod dependencies for redis cache entries", async () => {

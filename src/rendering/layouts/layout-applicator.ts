@@ -281,6 +281,7 @@ export class LayoutApplicator {
           this.projectSlug,
           this.contentSourceId,
           reactVersion,
+          this.preloadedImportMap ?? undefined,
         );
       },
       {
@@ -329,6 +330,7 @@ export class LayoutApplicator {
       dev: this.mode === "development",
       mode: this.mode,
       reactVersion: await this.getReactVersion(),
+      importMap: this.preloadedImportMap ?? undefined,
     } as const;
 
     const [contextModule, routerModule] = await Promise.all([
@@ -397,6 +399,7 @@ export class LayoutApplicator {
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
                 contentSourceId: this.contentSourceId,
                 reactVersion: await this.getReactVersion(),
+                importMap: this.preloadedImportMap ?? undefined,
               },
             );
           }
@@ -449,6 +452,7 @@ export class LayoutApplicator {
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
           contentSourceId: this.contentSourceId,
           reactVersion: await this.getReactVersion(),
+          importMap: this.preloadedImportMap ?? undefined,
         },
       );
     } catch (error) {
@@ -485,6 +489,7 @@ export class LayoutApplicator {
               this.projectId,
               this.contentSourceId,
               reactVersion,
+              this.preloadedImportMap ?? undefined,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -495,6 +500,7 @@ export class LayoutApplicator {
               this.projectId,
               this.contentSourceId,
               reactVersion,
+              this.preloadedImportMap ?? undefined,
             ),
           ]);
 

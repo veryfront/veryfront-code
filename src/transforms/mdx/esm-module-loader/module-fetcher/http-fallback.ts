@@ -25,6 +25,7 @@ export interface ResolveUnresolvedModuleViaHttpFallbackInput {
   esmCacheDir: string;
   pathCache: Map<string, string>;
   reactVersion?: string;
+  importMapFingerprint?: string;
   fetchViaHttp?: FetchModuleViaHttpFn;
   cacheLocalModule?: CacheLocalModuleFn;
 }
@@ -55,6 +56,8 @@ export async function resolveUnresolvedModuleViaHttpFallback(
       input.pathCache,
       input.log,
       input.reactVersion,
+      undefined,
+      input.importMapFingerprint,
     );
   }
 

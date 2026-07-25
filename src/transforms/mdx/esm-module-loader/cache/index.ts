@@ -611,6 +611,7 @@ interface ParsedMdxEsmPathCacheKey {
   reactVersion: string;
   normalizedPath: string;
   sourceContentHash: string | null;
+  importMapFingerprint: string | null;
 }
 
 function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | null {
@@ -620,17 +621,20 @@ function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | n
     const parsed = JSON.parse(cacheKey.slice(prefix.length));
     if (
       !Array.isArray(parsed) ||
-      parsed.length !== 3 ||
+      (parsed.length !== 3 && parsed.length !== 4) ||
       typeof parsed[0] !== "string" ||
       typeof parsed[1] !== "string" ||
       (parsed[2] !== null && typeof parsed[2] !== "string") ||
+      (parsed[3] !== undefined && parsed[3] !== null && typeof parsed[3] !== "string") ||
       parsed[0].length === 0 ||
       parsed[0].length > 64 ||
       parsed[1].length === 0 ||
       parsed[1].length > 4096 ||
       parsed[1].includes("\0") ||
       parsed[1].split("/").some((segment: string) => segment === "." || segment === "..") ||
-      (parsed[2] !== null && !/^[a-f0-9]{64}$/.test(parsed[2]))
+      (parsed[2] !== null && !/^[a-f0-9]{64}$/.test(parsed[2])) ||
+      (typeof parsed[3] === "string" &&
+        (parsed[3].length === 0 || parsed[3].length > 256 || parsed[3].includes("\0")))
     ) {
       return null;
     }
@@ -638,6 +642,7 @@ function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | n
       reactVersion: parsed[0],
       normalizedPath: parsed[1],
       sourceContentHash: parsed[2],
+      importMapFingerprint: parsed[3] ?? null,
     };
   } catch (_) {
     return null;
@@ -820,6 +825,7 @@ function toMdxEsmCacheKey(
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
   sourceContentHash?: string,
+  importMapFingerprint?: string,
 ): string {
   let relativePath = filePath;
 
@@ -830,7 +836,12 @@ function toMdxEsmCacheKey(
   relativePath = relativePath.replace(/^\/+/, "");
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
-  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`, reactVersion, sourceContentHash);
+  return buildMdxEsmPathCacheKey(
+    `_vf_modules/${jsPath}`,
+    reactVersion,
+    sourceContentHash,
+    importMapFingerprint,
+  );
 }
 
 export async function lookupMdxEsmCache(
@@ -840,9 +851,16 @@ export async function lookupMdxEsmCache(
   contentHash?: string,
   recoveryOptions?: { projectId: string; contentSourceId: string },
   reactVersion = REACT_DEFAULT_VERSION,
+  importMapFingerprint?: string,
 ): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
-  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion, contentHash);
+  const cacheKey = toMdxEsmCacheKey(
+    filePath,
+    projectDir,
+    reactVersion,
+    contentHash,
+    importMapFingerprint,
+  );
 
   const cachedPath = cache.get(cacheKey);
   if (!cachedPath) return { status: "miss" };

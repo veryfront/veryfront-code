@@ -1,8 +1,14 @@
 /****
  * Runtime Configuration
  *
- * Combines file-based config (veryfront.config.ts) with runtime environment.
- * This is the primary config type that should be used throughout the application.
+ * Opt-in helpers for combining a caller-supplied `VeryfrontConfig` with a
+ * process environment snapshot.
+ *
+ * The server bootstrap and hosted project loader do not publish project
+ * configuration to this process-wide singleton. Hosted request code must keep
+ * tenant configuration request-scoped; placing it here would leak state across
+ * tenants. Without an explicit caller-supplied config, the singleton contains
+ * only framework defaults and host environment values.
  *
  * @module
  */
@@ -39,8 +45,8 @@ export interface RuntimeInfo {
 }
 
 /**
- * Full runtime configuration.
- * Combines user config file with runtime environment.
+ * A caller-supplied project configuration combined with one environment
+ * snapshot. Creating this value does not initialize the process singleton.
  */
 export interface RuntimeConfig extends VeryfrontConfig {
   /**
@@ -236,6 +242,12 @@ export function createRuntimeConfig(
 
 let runtimeConfig: RuntimeConfig | null = null;
 
+/**
+ * Explicitly initialize the process-local singleton.
+ *
+ * This utility is intended for trusted single-tenant startup and tooling. The
+ * hosted server does not call it with tenant configuration.
+ */
 export function initRuntimeConfig(fileConfig: VeryfrontConfig = {}): RuntimeConfig {
   if (runtimeConfig) return runtimeConfig;
 
@@ -243,6 +255,12 @@ export function initRuntimeConfig(fileConfig: VeryfrontConfig = {}): RuntimeConf
   return runtimeConfig;
 }
 
+/**
+ * Read the opt-in process singleton, lazily creating defaults plus host
+ * environment values when no caller initialized it.
+ *
+ * This does not discover or load `veryfront.config.*`.
+ */
 export function getRuntimeConfig(): RuntimeConfig {
   return runtimeConfig ?? initRuntimeConfig();
 }
@@ -251,6 +269,11 @@ export function isRuntimeConfigInitialized(): boolean {
   return runtimeConfig !== null;
 }
 
+/**
+ * Replace the trusted process-local singleton.
+ *
+ * Never pass hosted request or tenant configuration to this function.
+ */
 export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig {
   runtimeConfig = createRuntimeConfig(fileConfig);
   return runtimeConfig;
@@ -260,7 +283,10 @@ export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig 
 // GlobalThis Bridge
 // ============================================================================
 // Register accessors on globalThis so bottom-layer code (platform/) can reach
-// runtime config without importing from config/ (which would violate layer rules).
+// an explicitly initialized process config without importing from config/
+// (which would violate layer rules). The platform resolver checks
+// `isRuntimeConfigInitialized` first, so importing this module alone does not
+// make the singleton authoritative.
 (globalThis as Record<string, unknown>).__vfGetRuntimeConfig = getRuntimeConfig;
 (globalThis as Record<string, unknown>).__vfIsRuntimeConfigInitialized = isRuntimeConfigInitialized;
 

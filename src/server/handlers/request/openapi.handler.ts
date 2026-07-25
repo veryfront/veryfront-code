@@ -3,28 +3,26 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, HTTP_SERVER_ERROR, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/api-route-matcher.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "#veryfront/routing/api/route-discovery.ts";
-import { generateOpenAPISpec, specToYaml } from "#veryfront/routing/api/openapi/spec-generator.ts";
+import {
+  generateOpenAPISpec,
+  specToJson,
+  specToYaml,
+} from "#veryfront/routing/api/openapi/spec-generator.ts";
 import type { OpenAPISpec } from "#veryfront/routing/api/openapi/types.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import {
-  type ExtendedFileSystemAdapter,
-  isExtendedFSAdapter,
-} from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getRequestTokenProvenance } from "../../context/request-context.ts";
+  createOpenAPIResponseBuilder,
+  createOpenAPIUnavailableResponse,
+  snapshotOpenAPIRequestLocality,
+} from "./openapi-policy.ts";
 
 const logger = baseLogger.component("open-api");
 
 const DEFAULT_JSON_PATH = "/_openapi.json";
 const DEFAULT_YAML_PATH = "/_openapi.yaml";
 
-/** Cache duration for production OpenAPI spec (1 hour) */
-const SPEC_CACHE_MAX_AGE_SECONDS = 3_600;
-
 export class OpenAPIHandler extends BaseHandler {
-  private cachedSpec: OpenAPISpec | null = null;
-  private cacheKey: string | null = null;
-
   metadata: HandlerMetadata = {
     name: "OpenAPIHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
@@ -48,14 +46,21 @@ export class OpenAPIHandler extends BaseHandler {
     const url = new URL(req.url);
     const { yamlPath } = this.getPaths(ctx);
     const isYaml = url.pathname === yamlPath;
+    const isLocalProject = snapshotOpenAPIRequestLocality(ctx);
+
+    // Route metadata currently lives on executable exports. Until metadata
+    // inspection is worker-owned, remote and unknown projects must not cause
+    // their route modules to be imported into the server process.
+    if (!isLocalProject) {
+      return this.respond(createOpenAPIUnavailableResponse(req, ctx));
+    }
 
     try {
-      const spec = await this.getOrGenerateSpec(ctx, url);
-      const content = isYaml ? specToYaml(spec) : JSON.stringify(spec, null, 2);
-      const isDev = !!ctx.isLocalProject;
+      const spec = await this.getOrGenerateSpec(ctx, url, isLocalProject);
+      const content = isYaml ? specToYaml(spec) : specToJson(spec);
 
-      const response = this.createResponseBuilder(ctx)
-        .withCache(isDev ? "no-cache" : { maxAge: SPEC_CACHE_MAX_AGE_SECONDS, public: true })
+      const response = createOpenAPIResponseBuilder(ctx, isLocalProject)
+        .withCache("no-cache")
         .withCORS(req, ctx.securityConfig?.cors)
         .withContentType(
           isYaml ? "text/yaml; charset=utf-8" : "application/json; charset=utf-8",
@@ -67,12 +72,14 @@ export class OpenAPIHandler extends BaseHandler {
     } catch (error) {
       logger.error("Failed to generate spec:", { error: String(error) });
 
-      const errorResponse = this.createResponseBuilder(ctx)
-        .withCache("no-cache")
+      const errorResponse = createOpenAPIResponseBuilder(ctx, isLocalProject)
+        .withCache("no-store")
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
         .json(
           {
             error: "Failed to generate OpenAPI specification",
-            message: ctx.isLocalProject ? String(error) : undefined,
+            message: isLocalProject ? String(error) : undefined,
           },
           HTTP_SERVER_ERROR,
         );
@@ -88,84 +95,49 @@ export class OpenAPIHandler extends BaseHandler {
     return { jsonPath, yamlPath };
   }
 
-  private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
-    const isDev = !!ctx.isLocalProject;
-    const branch = ctx.parsedDomain?.branch ?? "";
-    const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}:${branch}:${
-      ctx.releaseId ?? ""
-    }`;
-
-    if (!isDev && this.cachedSpec && this.cacheKey === currentKey) return this.cachedSpec;
-
+  private async getOrGenerateSpec(
+    ctx: HandlerContext,
+    url: URL,
+    isLocalProject: boolean,
+  ): Promise<OpenAPISpec> {
     const discover = async (): Promise<OpenAPISpec> => {
       const router = new ApiRouteMatcher();
-      const pagesDir = ctx.config?.directories?.pages ?? "pages";
-      const appDirName = ctx.config?.directories?.app ?? "app";
+      try {
+        const pagesDir = ctx.config?.directories?.pages ?? "pages";
+        const appDirName = ctx.config?.directories?.app ?? "app";
 
-      await this.tryDiscover(async () => {
         const apiDir = join(ctx.projectDir, pagesDir, "api");
-        if (!(await ctx.adapter.fs.exists(apiDir))) return;
-        await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
-      });
+        if (await ctx.adapter.fs.exists(apiDir)) {
+          await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
+        }
 
-      await this.tryDiscover(async () => {
         const appApiDir = join(ctx.projectDir, appDirName, "api");
-        if (!(await ctx.adapter.fs.exists(appApiDir))) return;
-        await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
-      });
+        if (await ctx.adapter.fs.exists(appApiDir)) {
+          await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
+        }
 
-      await this.tryDiscover(async () => {
         const appDir = join(ctx.projectDir, appDirName);
-        if (!(await ctx.adapter.fs.exists(appDir))) return;
-        await discoverAppRoutes(router, appDir, "", ctx.adapter);
-      });
+        if (await ctx.adapter.fs.exists(appDir)) {
+          await discoverAppRoutes(router, appDir, "", ctx.adapter);
+        }
 
-      const serverUrl = `${url.protocol}//${url.host}`;
-      return await generateOpenAPISpec(router, ctx.projectDir, ctx.adapter, ctx.config, {
-        servers: [{ url: serverUrl, description: "Current server" }],
-      });
+        const serverUrl = `${url.protocol}//${url.host}`;
+        return await generateOpenAPISpec(router, ctx.projectDir, ctx.adapter, ctx.config, {
+          isLocalProject,
+          servers: [{ url: serverUrl, description: "Current server" }],
+        });
+      } finally {
+        router.destroy();
+      }
     };
 
-    // In proxy mode, wrap discovery in runWithContext so VFS can resolve files.
-    // Requires both extended FS adapter AND multi-project mode support.
-    const extFs = isExtendedFSAdapter(ctx.adapter.fs) ? ctx.adapter.fs : null;
-    const needsContext = !isDev && ctx.projectSlug && ctx.proxyToken &&
-      extFs?.isMultiProjectMode();
-
-    const spec = needsContext
-      ? await (extFs as ExtendedFileSystemAdapter).runWithContext(
-        ctx.projectSlug!,
-        ctx.proxyToken!,
-        discover,
-        ctx.projectId,
-        {
-          productionMode: ctx.resolvedEnvironment === "production",
-          releaseId: ctx.releaseId,
-          branch: ctx.parsedDomain?.branch ?? null,
-          environmentName: ctx.environmentName,
-          tokenProvenance: getRequestTokenProvenance(ctx.requestContext, ctx.proxyToken!),
-        },
-      )
-      : await discover();
-
-    if (!isDev) {
-      this.cachedSpec = spec;
-      this.cacheKey = currentKey;
-    }
+    const spec = await discover();
 
     logger.debug("Generated spec", {
       pathCount: Object.keys(spec.paths).length,
-      isDev,
+      isLocalProject,
     });
 
     return spec;
-  }
-
-  private async tryDiscover(fn: () => Promise<void>): Promise<void> {
-    try {
-      await fn();
-    } catch (_) {
-      /* expected: directory may not exist */
-    }
   }
 }

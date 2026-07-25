@@ -117,7 +117,10 @@ describe("config/loader", () => {
       );
 
       clearConfigCache();
-      await expectConfigError(context.projectDir, ["security.cors.origin", "must be a string"]);
+      await expectConfigError(context.projectDir, [
+        "Invalid veryfront.config at security.cors:",
+        "Expected boolean or a CORS object",
+      ]);
     });
   });
 

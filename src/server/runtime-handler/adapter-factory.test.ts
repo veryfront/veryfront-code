@@ -1,8 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { verifyDispatchJwsSignature } from "#veryfront/channels/control-plane.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import type { ContextualFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -11,6 +16,50 @@ const localAdapterCache = defaultDiscoveryCache.adapters;
 
 const encoder = new TextEncoder();
 
+async function prepareEmptyHostedConfigContext() {
+  return {
+    sourceContext: {
+      productionMode: false,
+      branch: null,
+    } as const,
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: "preview",
+      environment: {},
+    }),
+  };
+}
+
+async function preparePreviewHostedConfigContext(
+  environment: Record<string, string> = {},
+) {
+  return {
+    sourceContext: {
+      productionMode: false,
+      branch: "feature",
+    } as const,
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: "preview",
+      environment,
+    }),
+  };
+}
+
+async function prepareProductionHostedConfigContext(
+  environment: Record<string, string> = {},
+) {
+  return {
+    sourceContext: {
+      productionMode: true,
+      releaseId: "rel-1",
+      environmentName: "staging",
+    } as const,
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: "staging",
+      environment,
+    }),
+  };
+}
+
 function encodePem(label: string, der: ArrayBuffer): string {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
   const lines = base64.match(/.{1,64}/g) ?? [base64];
@@ -18,7 +67,7 @@ function encodePem(label: string, der: ArrayBuffer): string {
 }
 
 // Shared Ed25519 key pair and PEM-encoded public half. Lazily generated on the
-// first makeReq({ trusted: true }) call so tests that don't need a valid JWS
+// first makeReq({ dispatchJws: "valid" }) call so tests that don't need a valid JWS
 // pay nothing for the key material.
 let signingKeyPair: CryptoKeyPair | undefined;
 let trustedPublicKeyPem: string | undefined;
@@ -59,22 +108,20 @@ async function mintTrustedDispatchJws(): Promise<string> {
  * Build a Request suitable for resolveAdapter tests.
  *
  * @param options.projectPath Value for the `x-project-path` header (if provided)
- * @param options.trusted     When true, attaches a valid freshly-signed dispatch
- *                            JWS so isProxyTrusted() verifies. When "bogus",
- *                            attaches an unverifiable header value to simulate
- *                            the direct-access spoofing attack. Omit/false for
- *                            an untrusted client.
+ * @param options.dispatchJws Attach a valid or deliberately bogus dispatch JWS.
+ *                            Signature authenticity must not grant routing
+ *                            authority to `x-project-path`.
  */
 async function makeReq(
-  options: { projectPath?: string; trusted?: boolean | "bogus" } = {},
+  options: { projectPath?: string; dispatchJws?: "valid" | "bogus" } = {},
 ): Promise<Request> {
   const headers = new Headers();
   if (options.projectPath !== undefined) {
     headers.set("x-project-path", options.projectPath);
   }
-  if (options.trusted === true) {
+  if (options.dispatchJws === "valid") {
     headers.set("x-veryfront-dispatch-jws", await mintTrustedDispatchJws());
-  } else if (options.trusted === "bogus") {
+  } else if (options.dispatchJws === "bogus") {
     headers.set("x-veryfront-dispatch-jws", "eyJhbGciOi.fake.value");
   }
   return new Request("http://example.com/", { headers });
@@ -98,7 +145,13 @@ function createMockAdapter(
       writableFs: true,
     },
     fs: {
-      readFile: async () => "",
+      readFile: async (path: string) => {
+        const entry = files[path];
+        if (entry?.isFile ?? (entry !== undefined && !entry.isDirectory)) {
+          return "";
+        }
+        throw new Deno.errors.NotFound(`Not found: ${path}`);
+      },
       writeFile: async () => {},
       exists: async (path: string) => path in files,
       readDir: async function* () {},
@@ -119,8 +172,7 @@ function createMockAdapter(
       watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
     },
     env: {
-      get: (key: string) =>
-        key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? trustedPublicKeyPem : undefined,
+      get: () => undefined,
       set: () => {},
       toObject: () => ({}),
     },
@@ -149,7 +201,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project", dispatchJws: "valid" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -176,7 +228,7 @@ describe("adapter-factory", () => {
     assertEquals(localProjectCache.has("myproject"), false);
   });
 
-  it("accepts validated x-project-path override in proxy mode when proxy trusted", async () => {
+  it("accepts x-project-path when the operator trusts the private-edge topology", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
@@ -186,7 +238,7 @@ describe("adapter-factory", () => {
     localAdapterCache.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -206,6 +258,8 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      proxyTopologyTrusted: true,
+      prepareHostedConfigContext: prepareEmptyHostedConfigContext,
     });
 
     assertEquals(result.isLocalProject, true);
@@ -213,7 +267,7 @@ describe("adapter-factory", () => {
     assertEquals(localProjectCache.get("myproject"), "/trusted/project");
   });
 
-  it("ignores x-project-path in proxy mode when request is NOT proxy-trusted (VULN-SRV-3)", async () => {
+  it("ignores x-project-path when private-edge topology is untrusted (VULN-SRV-3)", async () => {
     // An attacker reaching the runtime directly (no dispatch-JWS, env not set)
     // must not be able to steer project discovery at arbitrary filesystem paths.
     const adapter = createMockAdapter({
@@ -222,7 +276,7 @@ describe("adapter-factory", () => {
     });
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/attacker/chosen/path", trusted: false }),
+      req: await makeReq({ projectPath: "/attacker/chosen/path" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -242,6 +296,7 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      proxyTopologyTrusted: false,
     });
 
     // The attacker-supplied path must not be adopted as the project root.
@@ -251,22 +306,24 @@ describe("adapter-factory", () => {
   });
 
   it(
-    "ignores x-project-path in proxy mode when dispatch-JWS is present but unverifiable (Codex P1 regression)",
+    "does not let an unverifiable dispatch JWS grant x-project-path authority",
     async () => {
-      // Historically `isProxyTrusted` trusted any request that merely carried an
+      // Historically a composite proxy-trust signal trusted a request that carried an
       // `x-veryfront-dispatch-jws` header. The proxy does not strip that header
       // on ingress (it has to pass through to channel handlers), so a direct-
       // access attacker could attach any value — including gibberish — and
       // re-enable `x-project-path` spoofing. This test pins the fix: a bogus
-      // (unsigned / unverifiable) dispatch JWS must NOT promote the request
-      // into proxy-trusted territory.
+      // (unsigned / unverifiable) dispatch JWS must not grant topology authority.
       const adapter = createMockAdapter({
         "/attacker/chosen/path": { isDirectory: true },
         "/attacker/chosen/path/app": { isDirectory: true },
       });
 
       const result = await resolveAdapter({
-        req: await makeReq({ projectPath: "/attacker/chosen/path", trusted: "bogus" }),
+        req: await makeReq({
+          projectPath: "/attacker/chosen/path",
+          dispatchJws: "bogus",
+        }),
         projectDir: "/base/project",
         adapter,
         config: undefined,
@@ -286,6 +343,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         isProxyMode: true,
+        proxyTopologyTrusted: false,
       });
 
       assertEquals(result.isLocalProject, false);
@@ -294,15 +352,29 @@ describe("adapter-factory", () => {
     },
   );
 
-  it("honours x-project-path in proxy mode when dispatch-JWS header is present", async () => {
+  it("ignores x-project-path even when an unrelated dispatch JWS is valid", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },
       "/trusted/project/app": { isDirectory: true },
     });
     localAdapterCache.set("/trusted/project", adapter);
+    const req = await makeReq({
+      projectPath: "/trusted/project",
+      dispatchJws: "valid",
+    });
+    const dispatchJws = req.headers.get("x-veryfront-dispatch-jws");
+    assertExists(dispatchJws);
+    assertExists(trustedPublicKeyPem);
+    assertEquals(
+      await verifyDispatchJwsSignature(dispatchJws, {
+        publicKeyPem: trustedPublicKeyPem,
+        maxAgeSeconds: 60,
+      }),
+      true,
+    );
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req,
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -322,10 +394,12 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      proxyTopologyTrusted: false,
     });
 
-    assertEquals(result.isLocalProject, true);
-    assertEquals(result.projectDir, "/trusted/project");
+    assertEquals(result.isLocalProject, false);
+    assertEquals(result.projectDir, "/base/project");
+    assertEquals(localProjectCache.has("myproject"), false);
   });
 
   it("returns original adapter when no local project found and not proxy mode", async () => {
@@ -498,7 +572,7 @@ describe("adapter-factory", () => {
     cache.adapters.set("/trusted/project", adapter);
 
     const result = await resolveAdapter({
-      req: await makeReq({ projectPath: "/trusted/project", trusted: true }),
+      req: await makeReq({ projectPath: "/trusted/project" }),
       projectDir: "/base/project",
       adapter,
       config: undefined,
@@ -518,7 +592,9 @@ describe("adapter-factory", () => {
         allowIframeEmbed: false,
       },
       isProxyMode: true,
+      proxyTopologyTrusted: true,
       cache,
+      prepareHostedConfigContext: prepareEmptyHostedConfigContext,
     });
 
     assertEquals(result.isLocalProject, true);
@@ -614,67 +690,548 @@ describe("adapter-factory", () => {
   });
 
   describe("proxy mode config loading", () => {
-    function createExtendedMockAdapter() {
+    function createExtendedMockAdapter(
+      options: {
+        files?: Record<string, { isDirectory: boolean; isFile?: boolean }>;
+        configSource?: string;
+      } = {},
+    ) {
       const calls: Record<string, unknown[]> = {};
-      const base = createMockAdapter({});
-      // Add extended FS adapter properties to pass isExtendedFSAdapter type guard
-      const extendedFs = {
-        ...base.fs,
-        isVeryfrontAdapter: () => true,
-        getUnderlyingAdapter: () => ({}),
-        isMultiProjectMode: () => false,
-        runWithContext: (
+      const base = createMockAdapter(options.files ?? {});
+      if (options.configSource !== undefined) {
+        base.fs.readFile = async () => options.configSource!;
+      }
+      const styleConfigBinding = Object.freeze({
+        projectSlug: "proxy-slug",
+        sourceKey: "test-source",
+        sourceRevision: 1,
+      });
+      const contextualFs: ContextualFSAdapter = {
+        readFile: (path) => base.fs.readFile(path),
+        exists: (path) => base.fs.exists(path),
+        stat: (path) => base.fs.stat(path),
+        createStyleConfigBinding: () => {
+          calls.createStyleConfigBinding = [];
+          return Promise.resolve(styleConfigBinding);
+        },
+        installStyleConfig: (binding: unknown, config: unknown) => {
+          calls.installStyleConfig = [binding, config];
+          return Promise.resolve(binding === styleConfigBinding);
+        },
+        runWithContext: <T>(
           slug: string,
           token: string,
-          fn: () => Promise<unknown>,
+          fn: () => Promise<T>,
           projectId?: string,
-          opts?: unknown,
-        ) => {
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+            tokenProvenance?: "project-bound" | "untrusted";
+          },
+        ): Promise<T> => {
           calls.runWithContext = [slug, token, projectId, opts];
-          return fn();
+          return runWithRequestContext({
+            projectSlug: slug,
+            token,
+            projectId,
+            ...opts,
+          }, fn);
         },
       };
       return {
-        adapter: { ...base, fs: extendedFs } as unknown as RuntimeAdapter,
+        adapter: { ...base, fs: new FSAdapterWrapper(contextualFs) } as RuntimeAdapter,
         calls,
+        styleConfigBinding,
       };
     }
 
-    it("enters proxy mode config path when isProxyMode + slug + token", async () => {
-      const { adapter, calls } = createExtendedMockAdapter();
+    it("evaluates remote proxy config with a supported custom hosted adapter", async () => {
+      const { adapter, calls, styleConfigBinding } = createExtendedMockAdapter({
+        files: {
+          "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        },
+        configSource: `
+          import { getEnv } from "veryfront";
+          export default {
+            title: getEnv("TENANT_NAME") ?? "missing",
+            description: getEnv("HOST_ONLY_FOR_ADAPTER_FACTORY_TEST") ?? "not-visible",
+          };
+        `,
+      });
+      const preparedFor: boolean[] = [];
 
-      // Proxy mode with slug + token enters the config loading path.
-      // getConfig will either succeed (returning config) or throw (re-thrown in proxy mode).
-      let threw = false;
-      try {
-        await resolveAdapter({
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        tokenProvenance: "project-bound",
+        releaseId: "unbound-header-release",
+        proxyEnv: "production",
+        branch: "ignored-production-branch",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "proxy-slug",
+          branch: null,
+          environment: "staging",
+          isVeryfrontDomain: true,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: async (isLocalProject) => {
+          preparedFor.push(isLocalProject);
+          return await prepareProductionHostedConfigContext({
+            TENANT_NAME: "remote-tenant",
+          });
+        },
+      });
+
+      assertEquals(preparedFor, [false]);
+      assertEquals(result.config?.title, "remote-tenant");
+      assertEquals(result.config?.description, "not-visible");
+      assertEquals(calls.createStyleConfigBinding, []);
+      assertEquals(calls.installStyleConfig, [styleConfigBinding, result.config]);
+      assertEquals(calls.runWithContext, [
+        "proxy-slug",
+        "tok-123",
+        "proj_proxy",
+        {
+          productionMode: true,
+          releaseId: "rel-1",
+          branch: undefined,
+          environmentName: "staging",
+          tokenProvenance: "project-bound",
+        },
+      ]);
+    });
+
+    it("reloads once when the content source revision changes during hosted config loading", async () => {
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      let sourceRevision = 1;
+      let configReads = 0;
+      const issuedRevisions: number[] = [];
+      const installationResults: boolean[] = [];
+
+      base.fs.readFile = async () => {
+        configReads++;
+        const revisionRead = sourceRevision;
+        if (configReads === 1) sourceRevision++;
+        const title = revisionRead === 1 ? "stale-config" : "fresh-config";
+        return `export default { title: ${JSON.stringify(title)} };`;
+      };
+
+      const contextualFs: ContextualFSAdapter = {
+        readFile: (path) => base.fs.readFile(path),
+        exists: (path) => base.fs.exists(path),
+        stat: (path) => base.fs.stat(path),
+        createStyleConfigBinding: () => {
+          issuedRevisions.push(sourceRevision);
+          return {
+            projectSlug: "proxy-slug",
+            sourceKey: "preview:feature",
+            sourceRevision,
+          };
+        },
+        installStyleConfig: (binding) => {
+          const installed = binding.sourceRevision === sourceRevision;
+          installationResults.push(installed);
+          return installed;
+        },
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+            tokenProvenance?: "project-bound" | "untrusted";
+          },
+        ): Promise<T> =>
+          runWithRequestContext({
+            projectSlug: slug,
+            token,
+            projectId,
+            ...options,
+          }, fn),
+      };
+      const adapter = {
+        ...base,
+        fs: new FSAdapterWrapper(contextualFs),
+      } as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        tokenProvenance: "project-bound",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "feature",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "proxy-slug",
+          branch: "feature",
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: () =>
+          preparePreviewHostedConfigContext({
+            TENANT_NAME: "remote-tenant",
+          }),
+      });
+
+      assertEquals(result.config?.title, "fresh-config");
+      assertEquals(configReads, 2);
+      assertEquals(issuedRevisions, [1, 2]);
+      assertEquals(installationResults, [false, true]);
+    });
+
+    it("fails retryably when the hosted source changes on both bounded attempts", async () => {
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      let configReads = 0;
+      let sourceRevision = 0;
+
+      base.fs.readFile = async () => {
+        configReads++;
+        return `export default { title: "revision-${configReads}" };`;
+      };
+
+      const contextualFs: ContextualFSAdapter = {
+        readFile: (path) => base.fs.readFile(path),
+        exists: (path) => base.fs.exists(path),
+        stat: (path) => base.fs.stat(path),
+        createStyleConfigBinding: () => ({
+          projectSlug: "proxy-slug",
+          sourceKey: "preview:feature",
+          sourceRevision: sourceRevision++,
+        }),
+        installStyleConfig: () => false,
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+            tokenProvenance?: "project-bound" | "untrusted";
+          },
+        ): Promise<T> =>
+          runWithRequestContext({
+            projectSlug: slug,
+            token,
+            projectId,
+            ...options,
+          }, fn),
+      };
+      const adapter = {
+        ...base,
+        fs: new FSAdapterWrapper(contextualFs),
+      } as RuntimeAdapter;
+      const req = await makeReq();
+
+      const error = await assertRejects(() =>
+        resolveAdapter({
           projectDir: "/base/project",
           adapter,
           config: undefined,
           projectSlug: "proxy-slug",
           projectId: "proj_proxy",
           proxyToken: "tok-123",
-          releaseId: "rel-1",
-          proxyEnv: "production",
-          branch: "main",
-          environmentName: "staging",
+          tokenProvenance: "project-bound",
+          releaseId: undefined,
+          proxyEnv: "preview",
+          branch: "feature",
+          environmentName: undefined,
           parsedDomain: {
-            slug: null,
-            branch: null,
-            environment: null,
-            isVeryfrontDomain: false,
-            isDraft: false,
+            slug: "proxy-slug",
+            branch: "feature",
+            environment: "preview",
+            isVeryfrontDomain: true,
+            isDraft: true,
             allowIframeEmbed: false,
           },
-          req: await makeReq(),
+          req,
           isProxyMode: true,
-        });
-      } catch {
-        threw = true;
-      }
+          prepareHostedConfigContext: () => preparePreviewHostedConfigContext(),
+        })
+      );
 
-      // Verify the proxy config path was entered: runWithContext should have been called
-      assertEquals(calls.runWithContext !== undefined || threw, true);
+      assertEquals((error as { status?: number }).status, 503);
+      assertEquals(
+        (error as Error).message,
+        "Hosted project source changed repeatedly while loading configuration; retry the request",
+      );
+      assertEquals(configReads, 2);
+    });
+
+    it("rejects a custom hosted adapter whose underlying adapter lacks style binding", async () => {
+      const base = createMockAdapter({});
+      let contextCalls = 0;
+      const contextualFs: ContextualFSAdapter = {
+        readFile: (path) => base.fs.readFile(path),
+        exists: (path) => base.fs.exists(path),
+        stat: (path) => base.fs.stat(path),
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+            tokenProvenance?: "project-bound" | "untrusted";
+          },
+        ): Promise<T> => {
+          contextCalls++;
+          return runWithRequestContext({
+            projectSlug: slug,
+            token,
+            projectId,
+            ...options,
+          }, fn);
+        },
+      };
+      const adapter = {
+        ...base,
+        fs: new FSAdapterWrapper(contextualFs),
+      } as RuntimeAdapter;
+      const req = await makeReq();
+
+      const error = await assertRejects(
+        () =>
+          resolveAdapter({
+            projectDir: "/base/project",
+            adapter,
+            config: undefined,
+            projectSlug: "proxy-slug",
+            projectId: "proj_proxy",
+            proxyToken: "tok-123",
+            releaseId: undefined,
+            proxyEnv: "preview",
+            branch: "feature",
+            environmentName: undefined,
+            parsedDomain: {
+              slug: "proxy-slug",
+              branch: "feature",
+              environment: "preview",
+              isVeryfrontDomain: true,
+              isDraft: true,
+              allowIframeEmbed: true,
+            },
+            req,
+            isProxyMode: true,
+            prepareHostedConfigContext: prepareEmptyHostedConfigContext,
+          }),
+        Error,
+        "Multi-project hosted config requires source-qualified style config support",
+      );
+
+      assertEquals(
+        (error as Error & { slug?: string }).slug,
+        "cache-invariant-violation",
+      );
+      assertEquals(contextCalls, 0);
+    });
+
+    it("preserves non-hosted custom adapters without style-binding methods", async () => {
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      base.fs.readFile = async () => `export default { title: "legacy-custom-adapter" };`;
+      const underlying: ContextualFSAdapter = {
+        readFile: (path) => base.fs.readFile(path),
+        exists: (path) => base.fs.exists(path),
+        stat: (path) => base.fs.stat(path),
+      };
+      let contextCalls = 0;
+      const extendedFs = {
+        ...base.fs,
+        getUnderlyingAdapter: () => underlying,
+        isVeryfrontAdapter: () => false,
+        isMultiProjectMode: () => false,
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+            tokenProvenance?: "project-bound" | "untrusted";
+          },
+        ): Promise<T> => {
+          contextCalls++;
+          return runWithRequestContext({
+            projectSlug: slug,
+            token,
+            projectId,
+            ...options,
+          }, fn);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "proxy-slug",
+        projectId: "proj_proxy",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "feature",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "proxy-slug",
+          branch: "feature",
+          environment: "preview",
+          isVeryfrontDomain: true,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: prepareEmptyHostedConfigContext,
+      });
+
+      assertEquals(result.config?.title, "legacy-custom-adapter");
+      assertEquals(contextCalls, 1);
+    });
+
+    it("never executes remote proxy config in the host isolate", async () => {
+      const executionKey = "__vf_remote_adapter_factory_config_executed";
+      const hostGlobal = globalThis as unknown as Record<string, unknown>;
+      delete hostGlobal[executionKey];
+      const { adapter } = createExtendedMockAdapter({
+        files: {
+          "/veryfront.config.js": { isDirectory: false, isFile: true },
+        },
+        configSource: `
+          globalThis.${executionKey} = true;
+          export default { title: "must-not-load" };
+        `,
+      });
+      const preparedFor: boolean[] = [];
+      const req = await makeReq();
+
+      try {
+        await assertRejects(() =>
+          resolveAdapter({
+            projectDir: "/base/project",
+            adapter,
+            config: undefined,
+            projectSlug: "proxy-slug",
+            projectId: "proj_proxy",
+            proxyToken: "tok-123",
+            releaseId: undefined,
+            proxyEnv: "preview",
+            branch: "feature",
+            environmentName: undefined,
+            parsedDomain: {
+              slug: "proxy-slug",
+              branch: "domain-branch",
+              environment: "preview",
+              isVeryfrontDomain: true,
+              isDraft: true,
+              allowIframeEmbed: true,
+            },
+            req,
+            isProxyMode: true,
+            prepareHostedConfigContext: async (isLocalProject) => {
+              preparedFor.push(isLocalProject);
+              return await preparePreviewHostedConfigContext();
+            },
+          })
+        );
+
+        assertEquals(preparedFor, [false]);
+        assertEquals(hostGlobal[executionKey], undefined);
+      } finally {
+        delete hostGlobal[executionKey];
+      }
+    });
+
+    it("never imports proxy-local config into the host isolate", async () => {
+      const executionKey = "__vf_local_adapter_factory_config_executed";
+      const hostGlobal = globalThis as unknown as Record<string, unknown>;
+      delete hostGlobal[executionKey];
+      const adapter = createMockAdapter({
+        "/trusted/project": { isDirectory: true },
+        "/trusted/project/app": { isDirectory: true },
+        "/trusted/project/veryfront.config.js": { isDirectory: false, isFile: true },
+      });
+      adapter.fs.readFile = async () => `
+        globalThis.${executionKey} = true;
+        export default { title: "must-not-load" };
+      `;
+      localAdapterCache.set("/trusted/project", adapter);
+      const preparedFor: boolean[] = [];
+      const req = await makeReq({ projectPath: "/trusted/project" });
+
+      try {
+        await assertRejects(() =>
+          resolveAdapter({
+            req,
+            projectDir: "/base/project",
+            adapter,
+            config: undefined,
+            projectSlug: "proxy-slug",
+            projectId: "proj_proxy",
+            proxyToken: "tok-123",
+            releaseId: undefined,
+            proxyEnv: "preview",
+            branch: "feature",
+            environmentName: undefined,
+            parsedDomain: {
+              slug: "proxy-slug",
+              branch: "domain-branch",
+              environment: "preview",
+              isVeryfrontDomain: true,
+              isDraft: true,
+              allowIframeEmbed: true,
+            },
+            isProxyMode: true,
+            proxyTopologyTrusted: true,
+            prepareHostedConfigContext: async (isLocalProject) => {
+              preparedFor.push(isLocalProject);
+              return await preparePreviewHostedConfigContext();
+            },
+          })
+        );
+
+        assertEquals(preparedFor, [true]);
+        assertEquals(hostGlobal[executionKey], undefined);
+      } finally {
+        delete hostGlobal[executionKey];
+      }
     });
 
     it("re-throws config loading errors in proxy mode", async () => {
@@ -715,6 +1272,7 @@ describe("adapter-factory", () => {
             },
             req,
             isProxyMode: true,
+            prepareHostedConfigContext: prepareEmptyHostedConfigContext,
           }),
         Error,
         "proxy config fail",
@@ -814,6 +1372,7 @@ describe("adapter-factory", () => {
             req,
             pathname: "/api/control-plane/runs/run_1/execute",
             isProxyMode: true,
+            prepareHostedConfigContext: prepareEmptyHostedConfigContext,
           }),
         Error,
         "execute config fail",
@@ -851,46 +1410,37 @@ describe("adapter-factory", () => {
       assertEquals(result.config, undefined);
     });
 
-    it("uses non-extended path for adapter without runWithContext", async () => {
+    it("fails closed when proxy config context preparation is unavailable", async () => {
       const base = createMockAdapter({});
+      const req = await makeReq();
 
-      // Non-extended adapter (no runWithContext) takes the direct getConfig path.
-      // Config loading may succeed or throw — either outcome is valid.
-      let succeeded = false;
-      let threw = false;
-      try {
-        const result = await resolveAdapter({
-          projectDir: "/base/project",
-          adapter: base,
-          config: undefined,
-          projectSlug: "proxy-slug",
-          projectId: "proj_proxy",
-          proxyToken: "tok-123",
-          releaseId: undefined,
-          proxyEnv: "preview",
-          branch: null,
-          environmentName: undefined,
-          parsedDomain: {
-            slug: null,
+      await assertRejects(
+        () =>
+          resolveAdapter({
+            projectDir: "/base/project",
+            adapter: base,
+            config: undefined,
+            projectSlug: "proxy-slug",
+            projectId: "proj_proxy",
+            proxyToken: "tok-123",
+            releaseId: undefined,
+            proxyEnv: "preview",
             branch: null,
-            environment: null,
-            isVeryfrontDomain: false,
-            isDraft: false,
-            allowIframeEmbed: false,
-          },
-          req: await makeReq(),
-          isProxyMode: true,
-        });
-        succeeded = true;
-        // If it succeeds, verify the result has the expected shape
-        assertEquals("projectDir" in result, true);
-        assertEquals("adapter" in result, true);
-      } catch {
-        threw = true;
-      }
-
-      // One of the two paths must have been taken
-      assertEquals(succeeded || threw, true);
+            environmentName: undefined,
+            parsedDomain: {
+              slug: null,
+              branch: null,
+              environment: null,
+              isVeryfrontDomain: false,
+              isDraft: false,
+              allowIframeEmbed: false,
+            },
+            req,
+            isProxyMode: true,
+          }),
+        Error,
+        "Proxy project config requires an authenticated declarative evaluation context",
+      );
     });
   });
 });

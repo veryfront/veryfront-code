@@ -60,7 +60,11 @@ export function createComponentRegistry(
 }
 
 export function createVirtualModuleSystem(ctx: RenderContext): VirtualModuleSystem {
-  return new VirtualModuleSystem("/_veryfront/modules", ctx.adapter);
+  return new VirtualModuleSystem("/_veryfront/modules", ctx.adapter, {
+    projectId: ctx.projectId,
+    contentSourceId: ctx.contentSourceId,
+    config: ctx.config,
+  });
 }
 
 export interface CreatePageRendererOptions {

@@ -5,6 +5,7 @@ import { CorsHandler } from "./cors.ts";
 import type { HandlerContext } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter as createVfsAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { resetApiHandler } from "../request/api/pages-api-handler.ts";
 import { createHandlerRegistry } from "../../runtime-handler/index.ts";
 
@@ -143,7 +144,7 @@ describe("server/handlers/response/cors", () => {
       try {
         const result = await handler.handle(
           req,
-          makeCorsCtx({ projectDir, adapter, config: {} }),
+          makeCorsCtx({ projectDir, adapter, config: {}, isLocalProject: true }),
         );
 
         assertEquals(
@@ -152,6 +153,57 @@ describe("server/handlers/response/cors", () => {
         );
       } finally {
         await resetApiHandler(projectDir);
+      }
+    });
+
+    it("does not inspect remote VFS route exports on the host when isolation is unavailable", async () => {
+      const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
+      const previousApi = Deno.env.get("WORKER_ISOLATION_API");
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+
+      const projectDir = "/virtual/cors-remote-vfs";
+      const adapter = createVfsAdapter();
+      adapter.fs.files.set(
+        `${projectDir}/app/api/items/route.ts`,
+        `export function POST() { return new Response("post"); }`,
+      );
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+      });
+      const handler = new CorsHandler();
+
+      try {
+        const result = await handler.handle(
+          new Request("http://localhost/api/items", {
+            method: "OPTIONS",
+            headers: {
+              origin: "https://app.example.com",
+              "access-control-request-method": "POST",
+            },
+          }),
+          makeCorsCtx({
+            projectDir,
+            adapter,
+            config: {},
+            isLocalProject: false,
+          }),
+        );
+
+        assertEquals(
+          result.response?.headers.get("access-control-allow-methods"),
+          "OPTIONS",
+        );
+      } finally {
+        await resetApiHandler(projectDir);
+        __resetPoolForTests();
+        if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
+        else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
+        if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
+        else Deno.env.set("WORKER_ISOLATION_API", previousApi);
       }
     });
 
@@ -174,7 +226,7 @@ describe("server/handlers/response/cors", () => {
       try {
         const result = await handler.handle(
           req,
-          makeCorsCtx({ projectDir, adapter, config: {} }),
+          makeCorsCtx({ projectDir, adapter, config: {}, isLocalProject: true }),
         );
 
         assertEquals(
@@ -616,6 +668,69 @@ describe("server/handlers/response/cors", () => {
       assertEquals(headers?.get("strict-transport-security"), null);
       assertEquals(headers?.get("x-frame-options"), null);
       assertEquals(headers?.get("cross-origin-opener-policy"), null);
+    });
+
+    it("trusts only own locality data when selecting preflight security policy", async () => {
+      const previous = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "isLocalProject",
+      );
+      let accessorCalls = 0;
+      let throwingDescriptorCalls = 0;
+      const inherited = makeCorsCtx();
+      Object.setPrototypeOf(inherited, { isLocalProject: true });
+      const accessor = Object.defineProperty(makeCorsCtx(), "isLocalProject", {
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      });
+      const throwingProxy = new Proxy(makeCorsCtx(), {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "isLocalProject") {
+            throwingDescriptorCalls++;
+            throw new Error("locality descriptor unavailable");
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      const request = () =>
+        new Request("https://project.example/about", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://app.example.com",
+            "access-control-request-method": "GET",
+          },
+        });
+      const assertProductionPolicy = async (ctx: HandlerContext): Promise<void> => {
+        const result = await new CorsHandler().handle(request(), ctx);
+        assertEquals(result.response?.headers.get("x-frame-options"), "DENY");
+        assertEquals(
+          result.response?.headers.get("strict-transport-security")?.startsWith("max-age="),
+          true,
+        );
+      };
+
+      try {
+        await assertProductionPolicy(inherited);
+        await assertProductionPolicy(accessor);
+        await assertProductionPolicy(throwingProxy);
+
+        Object.defineProperty(Object.prototype, "isLocalProject", {
+          configurable: true,
+          value: true,
+        });
+        await assertProductionPolicy(makeCorsCtx());
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "isLocalProject", previous);
+        } else {
+          delete (Object.prototype as { isLocalProject?: boolean }).isLocalProject;
+        }
+      }
+
+      assertEquals(accessorCalls, 0);
+      assertEquals(throwingDescriptorCalls > 0, true);
     });
 
     it("preserves hosted-domain iframe policy for preflights", async () => {

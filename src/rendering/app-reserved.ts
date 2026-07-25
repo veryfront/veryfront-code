@@ -2,6 +2,7 @@ import * as BundledReact from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -87,6 +88,7 @@ export async function loadReservedWithPath(
   projectId?: string,
   contentSourceId?: string,
   reactVersion?: string,
+  importMap?: ImportMapConfig,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
@@ -104,6 +106,7 @@ export async function loadReservedWithPath(
           dev: true,
           contentSourceId,
           reactVersion,
+          importMap,
         });
         if (typeof Cmp === "function") {
           return { component: Cmp as ReservedComponent, filePath: file };
@@ -126,6 +129,7 @@ export async function tryLoadReservedInDirs(
   projectId?: string,
   contentSourceId?: string,
   reactVersion?: string,
+  importMap?: ImportMapConfig,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -136,6 +140,7 @@ export async function tryLoadReservedInDirs(
     projectId,
     contentSourceId,
     reactVersion,
+    importMap,
   );
   return loaded?.component ?? null;
 }

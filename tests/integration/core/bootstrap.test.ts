@@ -323,7 +323,7 @@ describe("bootstrap - FSAdapter Initialization", {
     });
   });
 
-  it("should handle fs config with missing credentials gracefully", async () => {
+  it("rejects veryfront-api config with missing project credentials", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("missing_creds", async (projectDir) => {
@@ -336,14 +336,15 @@ describe("bootstrap - FSAdapter Initialization", {
         };`,
       );
 
-      await withBootstrapResult(
-        () => bootstrap(projectDir, adapter),
-        (result) => assertExists(result),
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        "No project slug available for initialization",
       );
     });
   });
 
-  it("should handle FSAdapter initialization errors gracefully", async () => {
+  it("rejects unsupported FSAdapter types instead of falling back", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("fs_error", async (projectDir) => {
@@ -356,13 +357,10 @@ describe("bootstrap - FSAdapter Initialization", {
         };`,
       );
 
-      await withBootstrapResult(
-        () => bootstrap(projectDir, adapter),
-        (result) => {
-          assertExists(result);
-          assertExists(result.config);
-          assertEquals(result.usingFSAdapter, false);
-        },
+      await assertRejects(
+        () => withBootstrapResult(() => bootstrap(projectDir, adapter), () => undefined),
+        Error,
+        'FSAdapter type "memory" is not implemented',
       );
     });
   });

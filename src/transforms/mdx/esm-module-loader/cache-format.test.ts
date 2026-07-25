@@ -59,13 +59,19 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       const b = buildMdxEsmTransformCacheKey("p2", "s", "19", "/a.js", "h");
       assertEquals(a !== b, true);
     });
+
+    it("changes when the import map changes", () => {
+      const a = buildMdxEsmTransformCacheKey("p", "s", "19", "/a.js", "h", "map-a");
+      const b = buildMdxEsmTransformCacheKey("p", "s", "19", "/a.js", "h", "map-b");
+      assertEquals(a !== b, true);
+    });
   });
 
   describe("buildMdxEsmPathCacheKey", () => {
     it("uses a framed namespace, react version, path, and source digest", () => {
       assertEquals(
         buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash"),
-        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","/a.js","source-hash"]`,
+        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","/a.js","source-hash",null]`,
       );
     });
 
@@ -73,7 +79,13 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       const key = buildMdxEsmPathCacheKey("/a.js");
       assertEquals(key.startsWith(`${MDX_ESM_CACHE_NAMESPACE}:`), true);
       assertEquals(key.includes('"/a.js"'), true);
-      assertEquals(key.endsWith(",null]"), true);
+      assertEquals(key.endsWith(",null,null]"), true);
+    });
+
+    it("changes when the import map changes", () => {
+      const a = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash", "map-a");
+      const b = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash", "map-b");
+      assertEquals(a !== b, true);
     });
   });
 

@@ -11,13 +11,15 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { buildNonceAttribute, escapeHtml } from "#veryfront/html/html-escape.ts";
+import {
+  createOpenAPIResponseBuilder,
+  createOpenAPIUnavailableResponse,
+  snapshotOpenAPIRequestLocality,
+} from "./openapi-policy.ts";
 
 /** Default paths */
 const DEFAULT_DOCS_PATH = "/_docs";
 const DEFAULT_JSON_PATH = "/_openapi.json";
-
-/** Cache duration for production docs pages (1 hour) */
-const DOCS_CACHE_MAX_AGE_SECONDS = 3_600;
 
 export class OpenAPIDocsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -33,23 +35,27 @@ export class OpenAPIDocsHandler extends BaseHandler {
     return url.pathname === docsPath;
   }
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) return Promise.resolve(this.continue());
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+    if (!this.shouldHandle(req, ctx)) return this.continue();
 
-    const isDev = !!ctx.isLocalProject;
-    const builder = this.createResponseBuilder(ctx);
+    const isLocalProject = snapshotOpenAPIRequestLocality(ctx);
+    if (!isLocalProject) {
+      return this.respond(createOpenAPIUnavailableResponse(req, ctx));
+    }
+
+    const builder = createOpenAPIResponseBuilder(ctx, isLocalProject);
     const html = this.generateDocsPage(ctx, builder.nonce);
 
     const response = builder
-      .withCache(isDev ? "no-cache" : { maxAge: DOCS_CACHE_MAX_AGE_SECONDS, public: true })
+      .withCache("no-cache")
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
-    return Promise.resolve(this.respond(response));
+    return this.respond(response);
   }
 
   private generateDocsPage(ctx: HandlerContext, nonce?: string): string {
-    const specUrl = ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH;
+    const specUrl = escapeHtml(ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH);
     const title = escapeHtml(ctx.config?.openapi?.title ?? "API Documentation");
     const description = escapeHtml(ctx.config?.openapi?.description ?? "");
     const nonceAttr = buildNonceAttribute(nonce);

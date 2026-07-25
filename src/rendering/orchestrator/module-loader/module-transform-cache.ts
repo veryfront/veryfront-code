@@ -30,6 +30,37 @@ import {
 } from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 const logger = rendererLogger.component("module-loader");
+const JSONStringify = JSON.stringify;
+
+function serializeTransformConfigIdentity(
+  projectDir: string,
+  mode: "development" | "production",
+  reactVersion: string,
+  importMapFingerprint: string,
+): string {
+  return `[${JSONStringify(projectDir)},${JSONStringify(mode)},${JSONStringify(reactVersion)},${
+    JSONStringify(importMapFingerprint)
+  }]`;
+}
+
+type IdentityComputation<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: unknown };
+
+async function observeIdentityComputation<T>(
+  pending: Promise<T>,
+): Promise<IdentityComputation<T>> {
+  try {
+    return { ok: true, value: await pending };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+function unwrapIdentityComputation<T>(result: IdentityComputation<T>): T {
+  if (result.ok) return result.value;
+  throw result.error;
+}
 
 /** Pattern to detect unresolved /_vf_modules/ imports that will fail at runtime. */
 export const UNRESOLVED_VF_MODULES_RE = /from\s*["']((?:file:\/\/)?\/?\/?_vf_modules\/[^"']+)["']/;
@@ -130,6 +161,8 @@ export interface TransformModuleCodeWithCacheInput {
   effectiveProjectId: string;
   mode: "development" | "production";
   adapter: RuntimeAdapter;
+  /** Import map snapshot already resolved for this project/source render. */
+  importMap?: ImportMapConfig;
   reactVersion?: string;
   ttlSeconds?: number;
   onProgress?: TransformProgressListener;
@@ -175,20 +208,26 @@ export async function transformModuleCodeWithCache(
   const deps = input.deps ?? defaultDeps;
   const ttlSeconds = input.ttlSeconds ?? TRANSFORM_DISTRIBUTED_TTL_SEC;
   const importMap = snapshotImportMap(
-    await deps.loadImportMap(input.projectDir, input.adapter),
+    input.importMap ?? await deps.loadImportMap(input.projectDir, input.adapter),
   );
-  const [contentHash, importMapFingerprint] = await Promise.all([
-    computeHash(input.fileContent),
+  const contentHashResult = observeIdentityComputation(computeHash(input.fileContent));
+  const importMapFingerprintResult = observeIdentityComputation(
     fingerprintPipelineImportMap(importMap),
-  ]);
+  );
+  const contentHash = unwrapIdentityComputation(await contentHashResult);
+  const importMapFingerprint = unwrapIdentityComputation(
+    await importMapFingerprintResult,
+  );
   const scopedPath = `${input.effectiveProjectId}:${input.filePath}`;
   const reactVersion = input.reactVersion ?? REACT_DEFAULT_VERSION;
-  const configHash = await computeHash(JSON.stringify([
-    input.projectDir,
-    input.mode,
-    reactVersion,
-    importMapFingerprint,
-  ]));
+  const configHash = await computeHash(
+    serializeTransformConfigIdentity(
+      input.projectDir,
+      input.mode,
+      reactVersion,
+      importMapFingerprint,
+    ),
+  );
   const cacheKey = generateTransformCacheKey(
     scopedPath,
     contentHash,
@@ -202,7 +241,7 @@ export async function transformModuleCodeWithCache(
     ssr: true,
     reactVersion,
     onProgress: input.onProgress,
-    loadImportMap: () => Promise.resolve(importMap),
+    loadImportMap: async () => importMap,
   };
 
   await deps.initializeTransformCache();

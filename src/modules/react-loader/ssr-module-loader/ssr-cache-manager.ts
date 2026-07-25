@@ -46,10 +46,14 @@ export class SSRCacheManager {
   /** Lazily compute config hash once per manager instance. */
   getConfigHash(): string {
     if (!this.cachedConfigHash) {
-      this.cachedConfigHash = computeConfigHashSync({
+      const transformConfigHash = computeConfigHashSync({
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
       });
+      const importMapFingerprint = this.options.importMapIdentity?.fingerprint;
+      this.cachedConfigHash = importMapFingerprint
+        ? `${transformConfigHash}:map-${importMapFingerprint}`
+        : transformConfigHash;
     }
     return this.cachedConfigHash;
   }

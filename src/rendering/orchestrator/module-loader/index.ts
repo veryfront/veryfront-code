@@ -24,6 +24,12 @@ import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
 import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
 import { markBuildFailure } from "./build-failure.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import {
+  fingerprintPipelineImportMap,
+  snapshotImportMap,
+} from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -79,6 +85,8 @@ export async function transformModuleWithDeps(
   cycleTargets: Set<string> = new Set(),
 ): Promise<string> {
   throwIfModuleLoadAborted(config);
+  await bindModuleLoaderImportMap(config);
+  throwIfModuleLoadAborted(config);
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(
     filePath,
@@ -87,6 +95,7 @@ export async function transformModuleWithDeps(
     contentSourceId,
     config.reactVersion,
     mode,
+    config.importMapFingerprint,
   );
 
   const cachedPath = await resolveCachedModulePath({
@@ -97,6 +106,7 @@ export async function transformModuleWithDeps(
     contentSourceId,
     moduleCache,
     reactVersion: config.reactVersion,
+    importMapFingerprint: config.importMapFingerprint,
   });
   if (cachedPath) {
     markModuleLoadProgress(config, "module:cache-hit", filePath);
@@ -204,6 +214,7 @@ export async function transformModuleWithDeps(
     effectiveProjectId,
     mode,
     adapter,
+    importMap: config.importMap,
     reactVersion: config.reactVersion,
     onProgress: config.onProgress,
     signal: config.signal,
@@ -220,6 +231,7 @@ export async function transformModuleWithDeps(
     cacheKey,
     contentSourceId,
     reactVersion: config.reactVersion,
+    importMapFingerprint: config.importMapFingerprint,
     isCycleTarget: cycleTargets.has(filePath),
   });
   markModuleLoadProgress(config, "module:persisted", filePath);
@@ -234,12 +246,52 @@ export interface ModuleLoaderConfig {
   mode: "development" | "production";
   moduleCache: Map<string, string>;
   esmCache: Map<string, string>;
+  /** Import map snapshot resolved for this exact project/content source. */
+  importMap?: ImportMapConfig;
+  /** Canonical fingerprint of importMap, derived before any cache lookup. */
+  importMapFingerprint?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /** Cooperative cancellation for one module-load stage. */
   signal?: AbortSignal;
   /** Meaningful module/transform milestones for the stage idle timeout. */
   onProgress?: TransformProgressListener;
+}
+
+interface BoundModuleLoaderImportMap {
+  importMap: ImportMapConfig;
+  fingerprint: string;
+}
+
+const boundModuleLoaderImportMaps = new WeakMap<
+  ModuleLoaderConfig,
+  BoundModuleLoaderImportMap
+>();
+
+async function bindModuleLoaderImportMap(config: ModuleLoaderConfig): Promise<void> {
+  const existing = boundModuleLoaderImportMaps.get(config);
+  if (
+    existing &&
+    config.importMap === existing.importMap &&
+    config.importMapFingerprint === existing.fingerprint
+  ) {
+    return;
+  }
+
+  const importMap = snapshotImportMap(
+    config.importMap ?? await loadImportMap(config.projectDir, config.adapter),
+  );
+  const importMapFingerprint = await fingerprintPipelineImportMap(importMap);
+
+  // ModuleLoaderConfig is request-scoped and already carries mutable timeout
+  // observers. Store the bound pair once so a recursive dependency graph and
+  // parallel recovery path cannot compute or use different identities.
+  config.importMap = importMap;
+  config.importMapFingerprint = importMapFingerprint;
+  boundModuleLoaderImportMaps.set(config, {
+    importMap,
+    fingerprint: importMapFingerprint,
+  });
 }
 
 /**
@@ -355,6 +407,7 @@ export async function loadModule(
           config.contentSourceId,
           config.reactVersion,
           config.mode,
+          config.importMapFingerprint,
         ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the

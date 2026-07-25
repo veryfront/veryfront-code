@@ -9,10 +9,11 @@ import type {
   InvalidationCallbacks,
   ResolvedContentContext,
   StyleCallbacks,
+  StyleConfigBinding,
   StylePregenerationFile,
 } from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
-import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import { API_CLIENT_ERROR, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
@@ -40,6 +41,7 @@ import {
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
 import { isNotFoundLikeError } from "./read-operations-helpers.ts";
+import { getCurrentRequestContext } from "./request-context.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -50,10 +52,67 @@ import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
+const IntrinsicWeakSet = WeakSet;
+const ObjectFreeze = Object.freeze;
+const ReflectApply = Reflect.apply;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeDelete = WeakSet.prototype.delete;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+
+function freezeObject<T extends object>(value: T): Readonly<T> {
+  return ReflectApply(ObjectFreeze, undefined, [value]) as Readonly<T>;
+}
+
+function weakSetAdd<T extends object>(set: WeakSet<T>, value: T): void {
+  ReflectApply(WeakSetPrototypeAdd, set, [value]);
+}
+
+function weakSetDelete<T extends object>(set: WeakSet<T>, value: T): void {
+  ReflectApply(WeakSetPrototypeDelete, set, [value]);
+}
+
+function weakSetHas<T extends object>(set: WeakSet<T>, value: T): boolean {
+  return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
+}
 
 interface BranchSnapshotRecoveryOptions<T> {
   isRecoverableMissResult?: (result: T) => boolean;
   requirePendingSourceInvalidation?: boolean;
+}
+
+interface InstalledStyleConfig {
+  readonly config: Readonly<object>;
+  readonly sourceKey: string;
+  readonly sourceRevision: number;
+}
+
+interface PendingStylePregeneration {
+  readonly files: StylePregenerationFile[];
+  readonly sourceKey: string;
+  readonly sourceRevision: number;
+}
+
+function buildStyleSourceSegment(value: string | null | undefined): string {
+  return value == null ? "n;" : `s${value.length}:${value};`;
+}
+
+function buildStyleSourceKey(context: ResolvedContentContext): string {
+  return buildStyleSourceSegment(context.projectSlug) +
+    buildStyleSourceSegment(context.sourceType) +
+    buildStyleSourceSegment(context.branch) +
+    buildStyleSourceSegment(context.environmentName) +
+    buildStyleSourceSegment(context.releaseId);
+}
+
+function copyStylePregenerationFiles(
+  files: StylePregenerationFile[],
+): StylePregenerationFile[] {
+  const copies: StylePregenerationFile[] = [];
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
+    if (file !== undefined) copies[index] = { ...file };
+  }
+  return copies;
 }
 
 /**
@@ -100,9 +159,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private apiBaseUrl: string;
   private apiToken: string;
   private projectSlug: string;
+  private projectId?: string;
   private invalidationCallbacks: InvalidationCallbacks;
   private styleCallbacks: StyleCallbacks;
   private wsManager: WebSocketManager;
+  private installedStyleConfig: InstalledStyleConfig | null = null;
+  private pendingStylePregeneration: PendingStylePregeneration | null = null;
+  private styleSourceRevision = 0;
+  private readonly styleConfigBindings = new IntrinsicWeakSet<object>();
 
   /** Per-request branch override (for branch preview URLs) */
   private requestBranch: string | null = null;
@@ -113,6 +177,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private contentContext: ResolvedContentContext | null = null;
   /** Whether running in proxy mode (shared adapter with per-request OAuth tokens) */
   private proxyMode: boolean;
+
+  private requireProxyRequestToken(): string {
+    const credential = getCurrentRequestContext()?.requestApiCredential;
+    if (!credential?.token) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          "No immutable request API credential is available for this proxy filesystem operation",
+        status: 401,
+      });
+    }
+
+    const projectIdMismatch = this.projectId !== undefined &&
+      credential.projectId !== this.projectId;
+    if (credential.projectSlug !== this.projectSlug || projectIdMismatch) {
+      throw API_CLIENT_ERROR.create({
+        detail: "The request API credential does not match the proxy filesystem adapter project",
+        status: 403,
+      });
+    }
+
+    return credential.token;
+  }
 
   private getCurrentFileListCacheKey(): string | undefined {
     return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
@@ -182,6 +268,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.apiBaseUrl = vf.apiBaseUrl ?? "";
     this.apiToken = vf.apiToken ?? "";
     this.projectSlug = vf.projectSlug ?? "";
+    this.projectId = vf.projectId;
     this.contentSource = vf.contentSource ?? { type: "branch", branch: "main" };
     this.proxyMode = vf.proxyMode ?? false;
 
@@ -194,7 +281,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       projectId: vf.projectId,
       proxyMode: vf.proxyMode,
       retry: retryConfig,
-    });
+    }, this.proxyMode ? () => this.requireProxyRequestToken() : undefined);
 
     const cacheConfig = buildFileCacheOptions(vf.cache);
 
@@ -285,7 +372,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       },
       clearFileListIndex: () => this.readOps.clearFileListIndex(),
       setFileListCache: (cacheKey, files) => this.cache.setAsync(cacheKey, files),
-      pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
+      pregenerateStyles: (files) => {
+        this.advanceStyleSourceRevision("websocket-snapshot");
+        return this.triggerCSSPregeneration(files);
+      },
     });
 
     logger.debug("Created", {
@@ -425,7 +515,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           branch: contentContext.branch,
           proxyMode: this.proxyMode,
         });
-        this.wsManager.connect(projectId);
+        this.wsManager.connect(projectId, this.client.getToken());
         return;
       }
 
@@ -440,7 +530,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Keep a WebSocket connection in environment mode to receive deployment pokes.
       // Release mode is immutable, so no need to keep a live connection.
       if (contentContext.sourceType === "environment") {
-        this.wsManager.connect(projectId);
+        this.wsManager.connect(projectId, this.client.getToken());
       }
     } catch (error) {
       // Resolve (not reject) to avoid an unhandled-rejection crash in Deno when no lookup() is awaiting.
@@ -620,11 +710,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
           releaseId: warmupContext.releaseId,
         });
 
+        const currentContext = this.contentContext;
+        const warmupSourceKey = buildStyleSourceKey(warmupContext);
+        if (
+          !currentContext ||
+          buildStyleSourceKey(currentContext) !== warmupSourceKey
+        ) {
+          return;
+        }
+        const warmupStyleRevision = this.advanceStyleSourceRevision(
+          "file-list-warmup",
+        );
         const files = await fetchFileListForContext(this.client, warmupContext);
         await this.cache.setAsync(effectiveCacheKey, files);
         const fileSummary = summarizeFileList(files);
 
-        if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
+        if (
+          fileSummary.sourceFilesWithContent > 0 &&
+          this.styleSourceRevision === warmupStyleRevision &&
+          this.contentContext !== null &&
+          buildStyleSourceKey(this.contentContext) === warmupSourceKey &&
+          this.shouldBackgroundPregenerateStyles()
+        ) {
           this.triggerCSSPregeneration(files).catch(() => {
             // Error already logged in triggerCSSPregeneration
           });
@@ -669,6 +776,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const cacheKey = buildFileListCacheKey(this.contentContext);
     const refreshContext = this.contentContext;
 
+    const refreshSourceKey = buildStyleSourceKey(refreshContext);
+    const refreshStyleRevision = this.advanceStyleSourceRevision(reason);
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.readOps.clearFileListIndex();
@@ -687,7 +796,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const fileSummary = summarizeFileList(files);
     this.branchMissRecoveryFailures.clear();
 
-    if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
+    if (
+      fileSummary.sourceFilesWithContent > 0 &&
+      this.styleSourceRevision === refreshStyleRevision &&
+      this.contentContext !== null &&
+      buildStyleSourceKey(this.contentContext) === refreshSourceKey &&
+      this.shouldBackgroundPregenerateStyles()
+    ) {
       this.triggerCSSPregeneration(files).catch(() => {
         // Error already logged in triggerCSSPregeneration
       });
@@ -754,12 +869,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async exists(path: string): Promise<boolean> {
     await this.ensureInitialized();
-    try {
-      await this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return this.withBranchSnapshotRecovery(
+      path,
+      () => this.statOps.exists(path),
+      {
+        isRecoverableMissResult: (exists) => !exists,
+        requirePendingSourceInvalidation: true,
+      },
+    );
   }
 
   async resolveFile(
@@ -778,6 +895,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
+    this.advanceStyleSourceRevision("dispose");
     this.wsManager.dispose();
     this.cache.clear();
     this.statOps.clearIndex();
@@ -881,12 +999,100 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
+  private advanceStyleSourceRevision(reason: string): number {
+    this.styleSourceRevision += 1;
+    this.installedStyleConfig = null;
+    this.pendingStylePregeneration = null;
+    logger.debug("Cleared source-qualified style configuration", {
+      projectSlug: this.projectSlug,
+      sourceRevision: this.styleSourceRevision,
+      reason,
+    });
+    return this.styleSourceRevision;
+  }
+
+  createStyleConfigBinding(): StyleConfigBinding {
+    const contentContext = this.contentContext;
+    if (!contentContext) {
+      throw toError(
+        createError({
+          type: "config",
+          message: "Cannot bind style configuration without a resolved content source",
+        }),
+      );
+    }
+
+    const binding = freezeObject({
+      projectSlug: this.projectSlug,
+      sourceKey: buildStyleSourceKey(contentContext),
+      sourceRevision: this.styleSourceRevision,
+    });
+    weakSetAdd(this.styleConfigBindings, binding);
+    return binding;
+  }
+
+  installStyleConfig(
+    binding: StyleConfigBinding,
+    config: Readonly<object>,
+  ): boolean {
+    if (
+      typeof binding !== "object" ||
+      binding === null ||
+      !weakSetHas(this.styleConfigBindings, binding) ||
+      typeof config !== "object" ||
+      config === null
+    ) {
+      return false;
+    }
+    weakSetDelete(this.styleConfigBindings, binding);
+
+    const contentContext = this.contentContext;
+    if (
+      !contentContext ||
+      binding.projectSlug !== this.projectSlug ||
+      binding.sourceRevision !== this.styleSourceRevision ||
+      binding.sourceKey !== buildStyleSourceKey(contentContext)
+    ) {
+      return false;
+    }
+
+    this.installedStyleConfig = {
+      config,
+      sourceKey: binding.sourceKey,
+      sourceRevision: binding.sourceRevision,
+    };
+
+    const pending = this.pendingStylePregeneration;
+    if (
+      pending &&
+      pending.sourceKey === binding.sourceKey &&
+      pending.sourceRevision === binding.sourceRevision
+    ) {
+      this.pendingStylePregeneration = null;
+      void this.triggerCSSPregeneration(pending.files);
+    }
+    return true;
+  }
+
   setRequestToken(token: string): void {
+    if (this.proxyMode) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          "Proxy filesystem credentials are immutable and must be provided through runWithContext()",
+        status: 409,
+      });
+    }
     this.client.setRequestToken(token);
     this.wsManager.setApiToken(token);
   }
 
   clearRequestToken(): void {
+    if (this.proxyMode) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Proxy filesystem credentials are immutable and scoped to runWithContext()",
+        status: 409,
+      });
+    }
     this.client.clearRequestToken();
     this.wsManager.setApiToken(this.apiToken);
   }
@@ -942,6 +1148,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.syncClientContext();
 
     if (contextChanged) {
+      this.advanceStyleSourceRevision("content-context-change");
       this.statOps.clearIndex();
       this.dirOps.clearTree();
       this.fileListWarmupPromise = null;
@@ -998,12 +1205,42 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return undefined;
     }
 
+    const contentContext = this.contentContext ? { ...this.contentContext } : null;
+    const sourceKey = contentContext ? buildStyleSourceKey(contentContext) : null;
+    const sourceRevision = this.styleSourceRevision;
+    const installedStyleConfig = this.installedStyleConfig;
+
+    if (
+      this.proxyMode &&
+      (
+        sourceKey === null ||
+        installedStyleConfig === null ||
+        installedStyleConfig.sourceKey !== sourceKey ||
+        installedStyleConfig.sourceRevision !== sourceRevision
+      )
+    ) {
+      if (sourceKey !== null) {
+        this.pendingStylePregeneration = {
+          files: copyStylePregenerationFiles(files),
+          sourceKey,
+          sourceRevision,
+        };
+      }
+      logger.debug("Deferred CSS pre-generation pending hosted config", {
+        projectSlug: this.projectSlug,
+        sourceKey,
+        sourceRevision,
+      });
+      return undefined;
+    }
+
     try {
       const projectDir = this.normalizer.getProjectDir();
       const result = await pregenerateStyles(files, {
         projectSlug: this.projectSlug,
         projectDir,
-        contentContext: this.contentContext,
+        contentContext,
+        config: installedStyleConfig?.config,
       });
 
       if (!result) return undefined;

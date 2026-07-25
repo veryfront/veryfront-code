@@ -161,6 +161,19 @@ describe("CacheManager", () => {
       assertEquals(cache.get("/api/posts"), null);
       assertExists(cache.get("/dashboard"));
     });
+
+    it("clears transport-safe framed keys by their raw route pattern", () => {
+      const cache = new CacheManager();
+      const context = createContext("http://localhost/blog/%25draft");
+      const key = withProductionContext(() => cache.createCacheKey(context));
+      assertExists(key);
+      assertEquals(key.includes("/blog/%2525draft"), true);
+      cache.set(key, createEntry({}));
+
+      cache.clearPattern("/blog/%25");
+
+      assertEquals(cache.get(key), null);
+    });
   });
 
   describe("shouldRevalidate", () => {
@@ -238,9 +251,10 @@ describe("CacheManager", () => {
 
       const key = withProductionContext(() => cache.createCacheKey(context));
 
-      assertExists(key);
-      assertEquals(key.includes('/posts/123::{"id":"123"}'), true);
-      assertEquals(key.includes("test-project"), true);
+      assertEquals(
+        key,
+        'project-scoped:v2:14:veryfront:data|12:test-project|10:production|7:rel_123|30:page::/posts/123::{"id":"123"}',
+      );
     });
 
     it("should create key with empty params in production mode", () => {
@@ -249,8 +263,10 @@ describe("CacheManager", () => {
 
       const key = withProductionContext(() => cache.createCacheKey(context));
 
-      assertExists(key);
-      assertEquals(key.includes("/about::{}"), true);
+      assertEquals(
+        key,
+        "project-scoped:v2:14:veryfront:data|12:test-project|10:production|7:rel_123|16:page::/about::{}",
+      );
     });
 
     it("should create unique keys for different params", () => {

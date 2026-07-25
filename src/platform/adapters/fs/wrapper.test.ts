@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FSAdapterWrapper,
+  hasHostedStyleConfigCapability,
   isExtendedFSAdapter,
   isVirtualFilesystem,
   NotSupportedError,
@@ -111,6 +112,52 @@ describe("isExtendedFSAdapter", () => {
     };
 
     assertEquals(isExtendedFSAdapter(partialFs as any), false);
+  });
+});
+
+describe("hasHostedStyleConfigCapability", () => {
+  it("recognizes a wrapper only when its underlying contextual adapter supports the full contract", () => {
+    const underlying = createMockContextualAdapter({
+      runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+      createStyleConfigBinding: () =>
+        Promise.resolve({
+          projectSlug: "project-a",
+          sourceKey: "branch:main",
+          sourceRevision: 1,
+        }),
+      installStyleConfig: () => Promise.resolve(true),
+    });
+
+    assertEquals(hasHostedStyleConfigCapability(new FSAdapterWrapper(underlying)), true);
+  });
+
+  it("does not mistake unconditional wrapper forwarding methods for underlying support", () => {
+    const underlying = createMockContextualAdapter({
+      runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+    });
+
+    assertEquals(hasHostedStyleConfigCapability(new FSAdapterWrapper(underlying)), false);
+  });
+
+  it("rejects malformed extended adapters without invoking facade capabilities", () => {
+    const facade = Object.assign(Object.create(denoAdapter.fs) as typeof denoAdapter.fs, {
+      getUnderlyingAdapter: () => {
+        throw new Error("invalid adapter provenance");
+      },
+      isVeryfrontAdapter: () => true,
+      isMultiProjectMode: () => true,
+      runWithContext: () => {
+        throw new Error("capability guard must not enter request context");
+      },
+      createStyleConfigBinding: () => {
+        throw new Error("capability guard must not create a binding");
+      },
+      installStyleConfig: () => {
+        throw new Error("capability guard must not install config");
+      },
+    });
+
+    assertEquals(hasHostedStyleConfigCapability(facade), false);
   });
 });
 
@@ -602,6 +649,44 @@ describe("FSAdapterWrapper", () => {
         () => wrapper.runWithContext("slug", "token", () => Promise.resolve("result")),
         NotSupportedError,
       );
+    });
+
+    it("style config binding should throw when not supported", async () => {
+      const wrapper = new FSAdapterWrapper(createMockContextualAdapter({
+        setRequestToken: () => {},
+      }));
+
+      await assertRejects(
+        () => wrapper.createStyleConfigBinding(),
+        NotSupportedError,
+        "createStyleConfigBinding",
+      );
+    });
+
+    it("should delegate source-qualified style config installation", async () => {
+      const binding = Object.freeze({
+        projectSlug: "project-a",
+        sourceKey: "source-a",
+        sourceRevision: 3,
+      });
+      const config = Object.freeze({ tailwind: { stylesheet: "styles/project-a.css" } });
+      const calls: unknown[][] = [];
+      const fsAdapter = createMockContextualAdapter({
+        runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+        createStyleConfigBinding: () => Promise.resolve(binding),
+        installStyleConfig: (receivedBinding, receivedConfig) => {
+          calls.push([receivedBinding, receivedConfig]);
+          return Promise.resolve(true);
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      const issuedBinding = await wrapper.createStyleConfigBinding();
+      const installed = await wrapper.installStyleConfig(issuedBinding, config);
+
+      assertEquals(issuedBinding, binding);
+      assertEquals(installed, true);
+      assertEquals(calls, [[binding, config]]);
     });
 
     it("setRequestToken should delegate when supported", () => {

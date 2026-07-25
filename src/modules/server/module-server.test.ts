@@ -35,6 +35,7 @@ import {
   configureReleaseAssetManifestFetcher,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
 
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
@@ -137,6 +138,72 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       fallback: { mode: "jit", gaps: [] },
     };
   }
+
+  it("isolates hosted SSR transforms by bound import map without ambient config probes", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(
+      "/test-project/page.ts",
+      `import mapped from "package"; export default mapped;`,
+    );
+    let ambientConfigProbes = 0;
+    const isConfigPath = (path: string) =>
+      /(?:^|\/)(?:deno\.json|veryfront\.config(?:\.[cm]?[jt]s)?)$/.test(path);
+    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+    const originalExists = adapter.fs.exists.bind(adapter.fs);
+    const originalStat = adapter.fs.stat.bind(adapter.fs);
+    adapter.fs.readFile = (path) => {
+      if (isConfigPath(path)) ambientConfigProbes++;
+      return originalReadFile(path);
+    };
+    adapter.fs.exists = (path) => {
+      if (isConfigPath(path)) ambientConfigProbes++;
+      return originalExists(path);
+    };
+    adapter.fs.stat = (path) => {
+      if (isConfigPath(path)) ambientConfigProbes++;
+      return originalStat(path);
+    };
+
+    const mapA = await createImportMapIdentity({
+      imports: { package: "node:fs" },
+      scopes: {},
+    });
+    const mapB = await createImportMapIdentity({
+      imports: { package: "node:path" },
+      scopes: {},
+    });
+    const request = new Request("http://localhost:3000/_vf_modules/page.js?ssr=true");
+    const baseOptions = {
+      projectId: "project-1",
+      projectDir: "/test-project",
+      adapter,
+      projectUUID: "project-1",
+      projectSlug: "test",
+      branch: "main",
+      releaseId: "release-1",
+      reactVersion: "19.1.1",
+      dev: false,
+    } as const;
+
+    const responseA = await serveModule(request, {
+      ...baseOptions,
+      importMapIdentity: mapA,
+    });
+    const responseB = await serveModule(request, {
+      ...baseOptions,
+      importMapIdentity: mapB,
+    });
+    const [codeA, codeB] = await Promise.all([responseA.text(), responseB.text()]);
+
+    assertEquals(responseA.status, 200);
+    assertEquals(responseB.status, 200);
+    assertStringIncludes(codeA, "node:fs");
+    assertEquals(codeA.includes("node:path"), false);
+    assertStringIncludes(codeB, "node:path");
+    assertEquals(codeB.includes("node:fs"), false);
+    assertEquals(ambientConfigProbes, 0);
+  });
 
   async function serveProductionModuleWithProfile(
     request: Request,

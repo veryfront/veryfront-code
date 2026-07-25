@@ -29,7 +29,7 @@ describe("Config validation", () => {
       await assertRejects(
         () => getConfig(context.projectDir, adapter),
         Error,
-        "security.cors.origin must be a string",
+        "Invalid veryfront.config at security.cors:",
       );
 
       clearConfigCache();

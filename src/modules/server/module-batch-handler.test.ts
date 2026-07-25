@@ -1,37 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type BatchHandlerOptions,
   clearBatchCache,
-  getBatchCacheStats,
   handleModuleBatch,
 } from "./module-batch-handler.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
 
 describe(
   "modules/server/module-batch-handler",
   { sanitizeResources: false, sanitizeOps: false },
   () => {
-    describe("clearBatchCache / getBatchCacheStats", () => {
-      it("should start with empty cache stats", () => {
-        clearBatchCache();
-        const stats = getBatchCacheStats();
-        assertEquals(stats.size, 0);
-        assertEquals(stats.keys.length, 0);
-      });
-
-      it("should clear all cache entries", () => {
-        clearBatchCache();
-        assertEquals(getBatchCacheStats().size, 0);
-      });
-
-      it("should clear cache for specific project slug", () => {
-        clearBatchCache("my-project");
-        assertEquals(getBatchCacheStats().size, 0);
-      });
-    });
-
     describe("handleModuleBatch", () => {
       function createBatchRequest(paths?: string, extraParams?: string): Request {
         const url = new URL("http://localhost:8080/_vf_modules/_batch");
@@ -184,7 +165,72 @@ describe(
         assertEquals(code.includes("getModule"), true);
       });
 
-      it("streams cached batch bundles without joining the full response", async () => {
+      it("isolates hosted SSR transforms by bound import map without ambient config probes", async () => {
+        clearBatchCache();
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test-project/page.ts",
+          `import mapped from "package"; export default mapped;`,
+        );
+        let ambientConfigProbes = 0;
+        const isConfigPath = (path: string) =>
+          /(?:^|\/)(?:deno\.json|veryfront\.config(?:\.[cm]?[jt]s)?)$/.test(path);
+        const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+        const originalExists = adapter.fs.exists.bind(adapter.fs);
+        const originalStat = adapter.fs.stat.bind(adapter.fs);
+        adapter.fs.readFile = (path) => {
+          if (isConfigPath(path)) ambientConfigProbes++;
+          return originalReadFile(path);
+        };
+        adapter.fs.exists = (path) => {
+          if (isConfigPath(path)) ambientConfigProbes++;
+          return originalExists(path);
+        };
+        adapter.fs.stat = (path) => {
+          if (isConfigPath(path)) ambientConfigProbes++;
+          return originalStat(path);
+        };
+
+        const mapA = await createImportMapIdentity({
+          imports: { package: "node:fs" },
+          scopes: {},
+        });
+        const mapB = await createImportMapIdentity({
+          imports: { package: "node:path" },
+          scopes: {},
+        });
+        const request = createBatchRequest("page.js", "ssr=true");
+        const baseOptions = {
+          projectDir: "/test-project",
+          adapter,
+          projectId: "project-1",
+          projectSlug: "test",
+          branch: "main",
+          releaseId: "release-1",
+          reactVersion: "19.1.1",
+          dev: false,
+        } as const;
+
+        const responseA = await handleModuleBatch(request, {
+          ...baseOptions,
+          importMapIdentity: mapA,
+        });
+        const responseB = await handleModuleBatch(request, {
+          ...baseOptions,
+          importMapIdentity: mapB,
+        });
+        const [codeA, codeB] = await Promise.all([responseA.text(), responseB.text()]);
+
+        assertEquals(responseA.status, 200);
+        assertEquals(responseB.status, 200);
+        assertStringIncludes(codeA, "node:fs");
+        assertEquals(codeA.includes("node:path"), false);
+        assertStringIncludes(codeB, "node:path");
+        assertEquals(codeB.includes("node:fs"), false);
+        assertEquals(ambientConfigProbes, 0);
+      });
+
+      it("streams batch bundles without joining the full response", async () => {
         clearBatchCache();
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/streamed.tsx", "export const streamed = true;");
@@ -257,7 +303,7 @@ describe(
         assertEquals(code.includes("Failed: missing.js"), true);
       });
 
-      it("should set immutable cache headers for non-dev mode", async () => {
+      it("does not mark identity-free batch URLs immutable", async () => {
         const adapter = createMockAdapter();
         adapter.fs.files.set("/test-project/comp.tsx", "export const y = 2;");
 
@@ -269,7 +315,7 @@ describe(
         });
 
         assertEquals(response.status, 200);
-        assertEquals(response.headers.get("Cache-Control")?.includes("immutable"), true);
+        assertEquals(response.headers.get("Cache-Control"), "no-cache");
       });
 
       it("uses child source content for SSR import cache busters", async () => {

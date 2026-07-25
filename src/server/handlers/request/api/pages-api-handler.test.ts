@@ -67,6 +67,7 @@ function createHandlerContext(
     releaseId?: string;
     environmentId?: string;
     environmentName?: string;
+    isLocalProject?: boolean;
   },
 ): HandlerContext {
   return {
@@ -80,6 +81,7 @@ function createHandlerContext(
     releaseId: input.releaseId,
     environmentId: input.environmentId,
     environmentName: input.environmentName,
+    isLocalProject: input.isLocalProject,
     requestContext: {
       token: "test-token",
       slug: input.projectSlug ?? "test-project",
@@ -213,6 +215,7 @@ describe("server/handlers/request/api/pages-api-handler", () => {
         projectSlug: "my-project",
         mode: "production",
         releaseId: "release-1",
+        isLocalProject: true,
       });
       const acquired = Promise.withResolvers<void>();
       const continueToHandle = Promise.withResolvers<void>();
@@ -253,6 +256,7 @@ describe("server/handlers/request/api/pages-api-handler", () => {
         adapter,
         projectSlug: "my-project",
         mode: "preview",
+        isLocalProject: true,
       });
 
       __injectApiRouteDepsForTests({

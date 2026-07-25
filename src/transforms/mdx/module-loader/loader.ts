@@ -2,11 +2,13 @@ import { createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { isESMModule, loadESMModule } from "./esm-loader.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { MDXModule } from "./types.ts";
 
 export function loadMDXModule(
   modulePath: string,
   projectDir: string,
+  importMap?: ImportMapConfig,
 ): Promise<MDXModule | null> {
   return withSpan(
     "transforms.mdx.loadMDXModule",
@@ -26,7 +28,7 @@ export function loadMDXModule(
           );
         }
 
-        return await loadESMModule(moduleCode, modulePath, projectDir, adapter);
+        return await loadESMModule(moduleCode, modulePath, projectDir, adapter, importMap);
       } catch (error) {
         logger.error(`Failed to load MDX module from ${modulePath}:`, error);
         return null;

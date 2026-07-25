@@ -6,7 +6,12 @@ import type {
   ResolveFileOptions,
   WatchOptions,
 } from "../base.ts";
-import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
+import type {
+  ContextualFSAdapter,
+  DirectoryEntry,
+  FSAdapter,
+  StyleConfigBinding,
+} from "./veryfront/types.ts";
 import type { RequestTokenProvenance } from "./veryfront/request-context.ts";
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
@@ -21,6 +26,11 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getRequestBranch(): string | null;
   clearRequestBranch(): void;
   setProductionMode(enabled: boolean, releaseId?: string | null): void;
+  createStyleConfigBinding?(): Promise<StyleConfigBinding>;
+  installStyleConfig?(
+    binding: StyleConfigBinding,
+    config: Readonly<object>,
+  ): Promise<boolean>;
   runWithContext<T>(
     projectSlug: string,
     token: string,
@@ -40,8 +50,48 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   shutdown(): Promise<void>;
 }
 
+export type HostedStyleConfigFileSystemAdapter =
+  & ExtendedFileSystemAdapter
+  & Required<
+    Pick<ExtendedFileSystemAdapter, "createStyleConfigBinding" | "installStyleConfig">
+  >;
+
 export function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSystemAdapter {
   return "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs && "isMultiProjectMode" in fs;
+}
+
+/**
+ * Verify that an extended filesystem can atomically bind hosted style config to
+ * the same request-scoped source used for config loading.
+ *
+ * `FSAdapterWrapper` exposes forwarding methods on every instance, including
+ * wrappers whose underlying adapter cannot perform these operations. Inspect
+ * both sides of the wrapper boundary so method presence on the facade cannot be
+ * mistaken for an actual hosted capability.
+ */
+export function hasHostedStyleConfigCapability(
+  fs: FileSystemAdapter,
+): fs is HostedStyleConfigFileSystemAdapter {
+  try {
+    if (
+      !isExtendedFSAdapter(fs) ||
+      typeof fs.runWithContext !== "function" ||
+      typeof fs.createStyleConfigBinding !== "function" ||
+      typeof fs.installStyleConfig !== "function" ||
+      typeof fs.getUnderlyingAdapter !== "function"
+    ) {
+      return false;
+    }
+
+    const underlying: unknown = fs.getUnderlyingAdapter();
+    if (!underlying || typeof underlying !== "object") return false;
+    const contextual = underlying as ContextualFSAdapter;
+    return typeof contextual.runWithContext === "function" &&
+      typeof contextual.createStyleConfigBinding === "function" &&
+      typeof contextual.installStyleConfig === "function";
+  } catch (_) {
+    return false;
+  }
 }
 
 /**
@@ -144,6 +194,23 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
 
   setProductionMode(enabled: boolean, releaseId?: string | null): void {
     this.requireContextualMethod("setProductionMode", "setProductionMode")(enabled, releaseId);
+  }
+
+  async createStyleConfigBinding(): Promise<StyleConfigBinding> {
+    return await this.requireContextualMethod(
+      "createStyleConfigBinding",
+      "createStyleConfigBinding",
+    )();
+  }
+
+  async installStyleConfig(
+    binding: StyleConfigBinding,
+    config: Readonly<object>,
+  ): Promise<boolean> {
+    return await this.requireContextualMethod("installStyleConfig", "installStyleConfig")(
+      binding,
+      config,
+    );
   }
 
   runWithContext<T>(

@@ -60,6 +60,10 @@ import {
   PROJECT_ENV_SNAPSHOT_LIMITS,
   type ProjectEnvSnapshot,
 } from "#veryfront/platform/compat/process/project-env-contract.ts";
+import {
+  isExplicitlyLocalProject,
+  readOwnDataProperty,
+} from "#veryfront/security/project-locality.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -73,6 +77,8 @@ const objectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ownKeys = Reflect.ownKeys;
 const objectPrototype = Object.prototype;
 const numberIsSafeInteger = Number.isSafeInteger;
+const NativePromise = Promise;
+const promiseResolve = NativePromise.resolve;
 const NativeRequest = Request;
 const NativeUint8Array = Uint8Array;
 const NativeTextEncoder = TextEncoder;
@@ -118,6 +124,10 @@ const CONTENT_LENGTH_PATTERN = /^\d+$/;
 const PROJECT_ENV_KEY_PATTERN = /^[^=\0]+$/;
 const PROJECT_ENV_VALUE_PATTERN = /^[^\0]*$/;
 const MAX_WORKER_BODY_BYTES_DECIMAL = `${MAX_WORKER_BODY_BYTES}`;
+
+function resolvePromise<T>(value: T): Promise<Awaited<T>> {
+  return apply(promiseResolve, NativePromise, [value]) as Promise<Awaited<T>>;
+}
 
 function getRequestUrl(request: Request): string {
   return apply(requestUrlGetter, request, []) as string;
@@ -360,59 +370,67 @@ function handleAPIError(
 interface ExecuteRouteOptionsSnapshot {
   readonly modulePath?: string;
   readonly projectDir?: string;
-  readonly isLocalProject?: boolean;
+  readonly isLocalProject: boolean;
   readonly preparedModule?: PreparedWorkerModule;
   readonly executionScopeId?: string;
+}
+
+function defineExecuteRouteOption(
+  snapshot: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  apply(objectDefineProperty, undefined, [
+    snapshot,
+    key,
+    {
+      configurable: false,
+      enumerable: true,
+      value,
+      writable: false,
+    },
+  ]);
 }
 
 function snapshotExecuteRouteOptions(
   options?: ExecuteRouteOptions,
 ): ExecuteRouteOptionsSnapshot {
-  if (!options) return {};
+  const rawModulePath = readOwnDataProperty(options, "modulePath");
+  const rawProjectDir = readOwnDataProperty(options, "projectDir");
+  const rawPreparedModule = readOwnDataProperty(options, "preparedModule");
+  const rawExecutionScopeId = readOwnDataProperty(options, "executionScopeId");
+  const snapshot = objectCreate(null) as Record<string, unknown>;
+  defineExecuteRouteOption(
+    snapshot,
+    "modulePath",
+    typeof rawModulePath === "string" ? rawModulePath : undefined,
+  );
+  defineExecuteRouteOption(
+    snapshot,
+    "projectDir",
+    typeof rawProjectDir === "string" ? rawProjectDir : undefined,
+  );
+  defineExecuteRouteOption(
+    snapshot,
+    "isLocalProject",
+    isExplicitlyLocalProject(options),
+  );
+  defineExecuteRouteOption(
+    snapshot,
+    "preparedModule",
+    typeof rawPreparedModule === "object" && rawPreparedModule !== null
+      ? rawPreparedModule
+      : undefined,
+  );
+  defineExecuteRouteOption(
+    snapshot,
+    "executionScopeId",
+    typeof rawExecutionScopeId === "string" && rawExecutionScopeId.length > 0
+      ? rawExecutionScopeId
+      : undefined,
+  );
 
-  let modulePath: string | undefined;
-  let projectDir: string | undefined;
-  let isLocalProject: boolean | undefined;
-  let preparedModule: PreparedWorkerModule | undefined;
-  let executionScopeId: string | undefined;
-
-  try {
-    const value = options.isLocalProject;
-    if (value === true || value === false) isLocalProject = value;
-  } catch {
-    // Local diagnostics are privileged. Unreadable ownership fails closed.
-    isLocalProject = false;
-  }
-  try {
-    if (typeof options.modulePath === "string") modulePath = options.modulePath;
-  } catch {
-    // An unreadable optional isolation path disables the isolated path.
-  }
-  try {
-    if (typeof options.projectDir === "string") projectDir = options.projectDir;
-  } catch {
-    // An unreadable optional project path disables the isolated path.
-  }
-  try {
-    const value = options.preparedModule;
-    if (typeof value === "object" && value !== null) preparedModule = value;
-  } catch {
-    // Unreadable prepared source fails the isolation admission check.
-  }
-  try {
-    const value = options.executionScopeId;
-    if (typeof value === "string" && value.length > 0) executionScopeId = value;
-  } catch {
-    // Unreadable execution identity fails the isolation admission check.
-  }
-
-  return Object.freeze({
-    modulePath,
-    projectDir,
-    isLocalProject,
-    preparedModule,
-    executionScopeId,
-  });
+  return apply(objectFreeze, undefined, [snapshot]) as ExecuteRouteOptionsSnapshot;
 }
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {
@@ -464,39 +482,6 @@ function checkContentLengthLimit(contentLength: string | null): void {
   const exceedsLimit = normalized.length > limit.length ||
     (normalized.length === limit.length && normalized > limit);
   if (exceedsLimit) throw createRequestBodyTooLargeError();
-}
-
-let warnedUntrustedInProcessExecution = false;
-
-export function __resetInProcessIsolationWarningForTests(): void {
-  warnedUntrustedInProcessExecution = false;
-}
-
-function warnIfUntrustedInProcessExecution(
-  routeKind: "app" | "pages",
-  pathname: string,
-  options: ExecuteRouteOptionsSnapshot,
-): void {
-  if (options.isLocalProject !== false) return;
-  if (isWorkerIsolationEnabled()) return;
-  if (warnedUntrustedInProcessExecution) return;
-
-  warnedUntrustedInProcessExecution = true;
-  try {
-    logger.warn(
-      "Untrusted project code is executing in-process with worker isolation disabled. Enable WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_API=1 to run project routes in a permission-restricted worker.",
-      {
-        modulePath: options.modulePath,
-        pathname,
-        projectDir: options.projectDir,
-        requiredEnv: ["WORKER_ISOLATION_ENABLED", "WORKER_ISOLATION_API"],
-        routeKind,
-        workerIsolationEnabled: false,
-      },
-    );
-  } catch {
-    // A diagnostic warning must not prevent the API route from running.
-  }
 }
 
 function createRequestBodyTooLargeError(bytesRead?: number): Error {
@@ -666,11 +651,15 @@ function workerResponseToResponse(
 function applySerializedStack(error: Error, stack: unknown): void {
   if (typeof stack !== "string") return;
   try {
-    Object.defineProperty(error, "stack", {
-      configurable: true,
-      value: stack,
-      writable: true,
-    });
+    apply(objectDefineProperty, Object, [
+      error,
+      "stack",
+      {
+        configurable: true,
+        value: stack,
+        writable: true,
+      },
+    ]);
   } catch {
     // The shared boundary still returns a safe response without a stack.
   }
@@ -819,7 +808,10 @@ function snapshotSerializedWorkerError(serialized: unknown): WorkerErrorSnapshot
   if (!problemDescriptors) return { message, name, stack };
 
   const slug = dataField(problemDescriptors, "slug");
-  if (typeof slug !== "string" || !Object.hasOwn(ERROR_REGISTRY, slug)) {
+  if (
+    typeof slug !== "string" ||
+    !apply(objectPrototypeHasOwnProperty, ERROR_REGISTRY, [slug])
+  ) {
     return { message, name, stack };
   }
 
@@ -833,7 +825,7 @@ function snapshotSerializedWorkerError(serialized: unknown): WorkerErrorSnapshot
     title !== definition.title ||
     suggestion !== definition.suggestion ||
     typeof status !== "number" ||
-    !Number.isInteger(status) ||
+    !numberIsSafeInteger(status) ||
     status < 400 ||
     status >= 600
   ) {
@@ -1118,10 +1110,11 @@ export function executeAppRoute(
 ): Promise<Response> {
   const routeOptions = snapshotExecuteRouteOptions(options);
   const isLocalProject = routeOptions.isLocalProject === true;
-  const workerIsolationEnabled = isWorkerIsolationEnabled();
+  const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
 
-  // Isolated path: execute in a per-project Worker and contain failures there.
-  if (workerIsolationEnabled) {
+  // Remote or unknown-locality routes always require prepared worker
+  // execution. Explicitly local projects retain the opt-in isolation flag.
+  if (isolationRequired) {
     if (
       routeOptions.modulePath &&
       routeOptions.projectDir &&
@@ -1139,10 +1132,10 @@ export function executeAppRoute(
         isLocalProject,
       );
     }
-    return Promise.resolve(
+    return resolvePromise(
       handleAPIError(
         createRequestBodyReadError(
-          "Worker-isolated API execution requires prepared route source and an execution scope",
+          "Isolated API execution requires prepared route source and an execution scope",
         ),
         pathname,
         isLocalProject,
@@ -1150,8 +1143,7 @@ export function executeAppRoute(
     );
   }
 
-  // Default path: execute in main process (existing behavior)
-  warnIfUntrustedInProcessExecution("app", pathname, routeOptions);
+  // Trusted local-development compatibility path.
   const method = uppercaseMethod(getRequestMethod(request));
 
   return withSpan(
@@ -1192,11 +1184,12 @@ export function executePagesRoute(
 ): Promise<Response> {
   const routeOptions = snapshotExecuteRouteOptions(options);
   const isLocalProject = routeOptions.isLocalProject === true;
-  const workerIsolationEnabled = isWorkerIsolationEnabled();
+  const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
   const isolatedProjectDir = routeOptions.projectDir ?? projectDir;
 
-  // Isolated path: execute in a per-project Worker and contain failures there.
-  if (workerIsolationEnabled) {
+  // Remote or unknown-locality routes always require prepared worker
+  // execution. Explicitly local projects retain the opt-in isolation flag.
+  if (isolationRequired) {
     if (
       routeOptions.modulePath &&
       isolatedProjectDir &&
@@ -1214,10 +1207,10 @@ export function executePagesRoute(
         isLocalProject,
       );
     }
-    return Promise.resolve(
+    return resolvePromise(
       handleAPIError(
         createRequestBodyReadError(
-          "Worker-isolated API execution requires prepared route source and an execution scope",
+          "Isolated API execution requires prepared route source and an execution scope",
         ),
         pathname,
         isLocalProject,
@@ -1225,8 +1218,7 @@ export function executePagesRoute(
     );
   }
 
-  // Default path: execute in main process (existing behavior)
-  warnIfUntrustedInProcessExecution("pages", pathname, routeOptions);
+  // Trusted local-development compatibility path.
   const method = uppercaseMethod(getRequestMethod(request));
 
   return withSpan(

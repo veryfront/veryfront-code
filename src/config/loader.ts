@@ -2,18 +2,24 @@ import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
 import { extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  isExtendedFSAdapter,
+  isVirtualFilesystem,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
+import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
   CONFIG_VALIDATION_FAILED,
+  INITIALIZATION_ERROR,
+  SERVICE_OVERLOADED,
 } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -26,7 +32,154 @@ import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfr
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { VERYFRONT_CONFIG_SHIM_URL } from "./config-shim.ts";
+import {
+  createPreparedDeclarativeConfigWorkerPayload,
+  DeclarativeConfigEvaluationError,
+  type DeclarativeConfigFileName,
+  type PreparedDeclarativeConfigContext,
+  type PreparedDeclarativeConfigWorkerPayload,
+} from "./declarative-evaluator.ts";
+import {
+  DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS,
+  evaluatePreparedDeclarativeConfigInWorker,
+} from "./declarative-evaluator-worker-runner.ts";
+import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
+
+// Capture the collection and reflection intrinsics before trusted executable
+// project configuration can mutate the shared host realm. Hosted configuration
+// crosses a tenant boundary later in the same process, so its cache identity,
+// singleflight state, and immutable result must not depend on ambient methods.
+const IntrinsicMap = Map;
+const IntrinsicPromise = Promise;
+const IntrinsicWeakMap = WeakMap;
+const IntrinsicWeakSet = WeakSet;
+const JSONStringify = JSON.stringify;
+const MapPrototypeClear = Map.prototype.clear;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const ObjectFreeze = Object.freeze;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectIsFrozen = Object.isFrozen;
+const PromisePrototypeThen = Promise.prototype.then;
+const PromiseReject = Promise.reject;
+const PromiseResolve = Promise.resolve;
+const PromiseWithResolvers = Promise.withResolvers;
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+const mapSizeGetter = ObjectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
+
+if (typeof mapSizeGetter !== "function") {
+  throw new TypeError("Map size intrinsic is unavailable");
+}
+const intrinsicMapSizeGetter = mapSizeGetter as () => number;
+
+function freezeObject<T>(value: T): T {
+  return ReflectApply(ObjectFreeze, Object, [value]) as T;
+}
+
+function getOwnPropertyDescriptor(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  return ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+}
+
+function getPrototypeOf(value: object): object | null {
+  return ReflectApply(ObjectGetPrototypeOf, Object, [value]) as object | null;
+}
+
+function isFrozen(value: object): boolean {
+  return ReflectApply(ObjectIsFrozen, Object, [value]) as boolean;
+}
+
+function ownKeys(value: object): PropertyKey[] {
+  return ReflectApply(ReflectOwnKeys, Reflect, [value]) as PropertyKey[];
+}
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return ReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  ReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return ReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function mapClear<K, V>(map: Map<K, V>): void {
+  ReflectApply(MapPrototypeClear, map, []);
+}
+
+function mapSize<K, V>(map: Map<K, V>): number {
+  return ReflectApply(intrinsicMapSizeGetter, map, []) as number;
+}
+
+function mapForEach<K, V>(
+  map: Map<K, V>,
+  callback: (value: V, key: K) => void,
+): void {
+  ReflectApply(MapPrototypeForEach, map, [callback]);
+}
+
+function weakMapGet<K extends object, V>(
+  map: WeakMap<K, V>,
+  key: K,
+): V | undefined {
+  return ReflectApply(WeakMapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function weakMapSet<K extends object, V>(
+  map: WeakMap<K, V>,
+  key: K,
+  value: V,
+): void {
+  ReflectApply(WeakMapPrototypeSet, map, [key, value]);
+}
+
+function weakSetHas<T extends object>(set: WeakSet<T>, value: T): boolean {
+  return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
+}
+
+function weakSetAdd<T extends object>(set: WeakSet<T>, value: T): void {
+  ReflectApply(WeakSetPrototypeAdd, set, [value]);
+}
+
+function deferPromise<T>(operation: () => T | PromiseLike<T>): Promise<Awaited<T>> {
+  const ready = ReflectApply(PromiseResolve, IntrinsicPromise, []) as Promise<void>;
+  return ReflectApply(PromisePrototypeThen, ready, [operation]) as Promise<Awaited<T>>;
+}
+
+function rejectPromise<T = never>(error: unknown): Promise<T> {
+  return ReflectApply(PromiseReject, IntrinsicPromise, [error]) as Promise<T>;
+}
+
+function promiseWithResolvers<T>(): PromiseWithResolvers<T> {
+  return ReflectApply(PromiseWithResolvers, IntrinsicPromise, []) as PromiseWithResolvers<T>;
+}
+
+function thenPromise<T, TResult1 = T, TResult2 = never>(
+  promise: Promise<T>,
+  onFulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
+  onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+): Promise<TResult1 | TResult2> {
+  return ReflectApply(PromisePrototypeThen, promise, [
+    onFulfilled,
+    onRejected,
+  ]) as Promise<TResult1 | TResult2>;
+}
 
 const logger = serverLogger.component("config");
 
@@ -150,7 +303,7 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
       outDir: "dist",
       trailingSlash: false,
       esbuild: {
-        wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
+        wasmURL: ESBUILD_WASM_URL,
         worker: false,
       },
     },
@@ -184,14 +337,276 @@ function createFreshDefaults(): Partial<VeryfrontConfig> {
   };
 }
 
-const configCacheByProject = new LRUCache<string, { revision: number; config: VeryfrontConfig }>({
+export type ConfigLoadProvenance =
+  | Readonly<{ kind: "file"; configFile: DeclarativeConfigFileName }>
+  | Readonly<{ kind: "defaults" }>;
+
+export interface ConfigLoadResult {
+  readonly config: VeryfrontConfig;
+  readonly provenance: ConfigLoadProvenance;
+}
+
+interface ConfigCacheEntry {
+  readonly revision: number;
+  readonly config: VeryfrontConfig;
+  readonly provenance: ConfigLoadProvenance;
+}
+
+const configCacheByProject = new LRUCache<string, ConfigCacheEntry>({
   maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
 });
+
+type HostedConfigEvaluator = typeof evaluatePreparedDeclarativeConfigInWorker;
+
+interface HostedConfigFlight {
+  readonly controller: AbortController;
+  readonly promise: Promise<VeryfrontConfig>;
+  waiterCount: number;
+  settled: boolean;
+}
+
+const MAX_HOSTED_CONFIG_FLIGHTS = DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS.maxActive +
+  DECLARATIVE_CONFIG_WORKER_ADMISSION_LIMITS.maxQueued;
+const hostedConfigFlights = new IntrinsicMap<string, HostedConfigFlight>();
+let hostedConfigEvaluator: HostedConfigEvaluator = evaluatePreparedDeclarativeConfigInWorker;
+
+interface TrustedConfigFlight {
+  readonly promise: Promise<ConfigLoadResult>;
+}
+
+const MAX_TRUSTED_CONFIG_FLIGHTS = 64;
+const trustedConfigFlights = new IntrinsicMap<string, TrustedConfigFlight>();
+const trustedVirtualFilesystemIds = new IntrinsicWeakMap<object, number>();
+let nextTrustedVirtualFilesystemId = 1;
 
 // Register cache for monitoring
 registerLRUCache("config-cache", configCacheByProject);
 
 let cacheRevision = 0;
+
+function configFileProvenance(
+  configFile: DeclarativeConfigFileName,
+): ConfigLoadProvenance {
+  return freezeObject({ kind: "file", configFile });
+}
+
+function defaultConfigProvenance(): ConfigLoadProvenance {
+  return freezeObject({ kind: "defaults" });
+}
+
+function createConfigLoadResult(
+  config: VeryfrontConfig,
+  provenance: ConfigLoadProvenance,
+): ConfigLoadResult {
+  return freezeObject({ config, provenance });
+}
+
+function buildTrustedConfigFlightKey(
+  effectiveCacheKey: string,
+  revision: number,
+): string {
+  return `${revision}:${effectiveCacheKey}`;
+}
+
+function getOrCreateTrustedConfigFlight(
+  effectiveCacheKey: string,
+  revision: number,
+  operation: () => Promise<ConfigLoadResult>,
+): Promise<ConfigLoadResult> {
+  const flightKey = buildTrustedConfigFlightKey(effectiveCacheKey, revision);
+  const existing = mapGet(trustedConfigFlights, flightKey);
+  if (existing) return existing.promise;
+
+  if (mapSize(trustedConfigFlights) >= MAX_TRUSTED_CONFIG_FLIGHTS) {
+    throw SERVICE_OVERLOADED.create({
+      detail: `Too many concurrent trusted configuration loads (${MAX_TRUSTED_CONFIG_FLIGHTS})`,
+    });
+  }
+
+  const flight: TrustedConfigFlight = {
+    promise: deferPromise(operation),
+  };
+  mapSet(trustedConfigFlights, flightKey, flight);
+
+  const finish = (): void => {
+    if (mapGet(trustedConfigFlights, flightKey) === flight) {
+      mapDelete(trustedConfigFlights, flightKey);
+    }
+  };
+  void thenPromise(flight.promise, finish, finish);
+  return flight.promise;
+}
+
+function isHostedMultiProjectFilesystem(adapter: RuntimeAdapter): boolean {
+  return isExtendedFSAdapter(adapter.fs) && adapter.fs.isMultiProjectMode();
+}
+
+function throwIfHostedConfigAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw createDeclarativeConfigWorkerInfrastructureError("worker-aborted");
+  }
+}
+
+function decodeConfigSource(content: string | Uint8Array): string {
+  if (typeof content === "string") return content;
+  return new TextDecoder("utf-8", { fatal: true }).decode(content);
+}
+
+function deepFreezeHostedConfig(config: VeryfrontConfig): VeryfrontConfig {
+  const seen = new IntrinsicWeakSet<object>();
+  const visit = (value: unknown): void => {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) return;
+    if (weakSetHas(seen, value)) return;
+    weakSetAdd(seen, value);
+    for (const key of ownKeys(value)) {
+      const descriptor = getOwnPropertyDescriptor(value, key);
+      if (descriptor && "value" in descriptor) visit(descriptor.value);
+    }
+    freezeObject(value);
+  };
+  visit(config);
+  return config;
+}
+
+async function buildHostedConfigCacheKey(
+  baseCacheKey: string,
+  configPath: string,
+  source: string,
+  payload: PreparedDeclarativeConfigWorkerPayload,
+): Promise<string> {
+  const sourceDigest = await computeHash(source);
+  const identityDigest = await computeHash(JSONStringify([
+    "veryfront-hosted-config-cache-v1",
+    configPath,
+    sourceDigest,
+    payload.policyVersion,
+    payload.cacheFingerprint,
+  ]));
+  return `${baseCacheKey}:hosted:${identityDigest}`;
+}
+
+function buildHostedConfigFlightKey(hostedCacheKey: string, revision: number): string {
+  return `${revision}:${hostedCacheKey}`;
+}
+
+function createHostedConfigFlight(
+  flightKey: string,
+  hostedCacheKey: string,
+  payload: PreparedDeclarativeConfigWorkerPayload,
+  usePersistentCache: boolean,
+  revisionAtStart: number,
+): HostedConfigFlight {
+  const controller = new AbortController();
+  const result = promiseWithResolvers<VeryfrontConfig>();
+  const flight: HostedConfigFlight = {
+    controller,
+    promise: result.promise,
+    waiterCount: 0,
+    settled: false,
+  };
+  const operation = deferPromise(async () => {
+    throwIfHostedConfigAborted(controller.signal);
+    const snapshot = await hostedConfigEvaluator(payload, {
+      signal: controller.signal,
+    });
+    throwIfHostedConfigAborted(controller.signal);
+    const merged = deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
+    throwIfHostedConfigAborted(controller.signal);
+    if (usePersistentCache && cacheRevision === revisionAtStart) {
+      configCacheByProject.set(hostedCacheKey, {
+        revision: revisionAtStart,
+        config: merged,
+        provenance: configFileProvenance(payload.evaluationOptions.fileName),
+      });
+    }
+    return merged;
+  });
+
+  const finish = (): void => {
+    flight.settled = true;
+    if (mapGet(hostedConfigFlights, flightKey) === flight) {
+      mapDelete(hostedConfigFlights, flightKey);
+    }
+  };
+  void thenPromise(
+    operation,
+    (config) => {
+      finish();
+      result.resolve(config);
+    },
+    (error: unknown) => {
+      finish();
+      result.reject(error);
+    },
+  );
+  mapSet(hostedConfigFlights, flightKey, flight);
+  return flight;
+}
+
+function getOrCreateHostedConfigFlight(
+  hostedCacheKey: string,
+  payload: PreparedDeclarativeConfigWorkerPayload,
+  usePersistentCache: boolean,
+  revisionAtStart: number,
+): HostedConfigFlight {
+  const flightKey = buildHostedConfigFlightKey(hostedCacheKey, revisionAtStart);
+  const existing = mapGet(hostedConfigFlights, flightKey);
+  if (existing && !existing.controller.signal.aborted) return existing;
+  if (existing) mapDelete(hostedConfigFlights, flightKey);
+
+  if (mapSize(hostedConfigFlights) >= MAX_HOSTED_CONFIG_FLIGHTS) {
+    throw createDeclarativeConfigWorkerInfrastructureError("worker-overloaded");
+  }
+
+  return createHostedConfigFlight(
+    flightKey,
+    hostedCacheKey,
+    payload,
+    usePersistentCache,
+    revisionAtStart,
+  );
+}
+
+function waitForHostedConfigFlight(
+  flight: HostedConfigFlight,
+  signal: AbortSignal | undefined,
+): Promise<VeryfrontConfig> {
+  if (signal?.aborted) {
+    return rejectPromise(
+      createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+    );
+  }
+
+  flight.waiterCount += 1;
+  return new IntrinsicPromise<VeryfrontConfig>((resolve, reject) => {
+    let settled = false;
+    const finish = (settleWaiter: () => void): void => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      flight.waiterCount -= 1;
+      settleWaiter();
+      if (flight.waiterCount === 0 && !flight.settled) {
+        flight.controller.abort();
+      }
+    };
+    const onAbort = (): void => {
+      finish(() =>
+        reject(
+          createDeclarativeConfigWorkerInfrastructureError("worker-aborted"),
+        )
+      );
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    thenPromise(
+      flight.promise,
+      (config) => finish(() => resolve(config)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+    if (signal?.aborted) onAbort();
+  });
+}
 
 function validateConfigShape(userConfig: unknown): VeryfrontConfig {
   return validateVeryfrontConfig(userConfig) as VeryfrontConfig;
@@ -393,9 +808,46 @@ function validateAndMergeConfig(userConfig: unknown): VeryfrontConfig {
   return merged;
 }
 
-function isConfigError(error: unknown): boolean {
-  return error instanceof VeryfrontError &&
-    (error.slug === "config-validation-failed" || error.slug === "config-parse-error");
+function translateHostedConfigEvaluationError(
+  error: DeclarativeConfigEvaluationError,
+  configFile: string,
+): Error {
+  if (error.reason === "worker-aborted") return error;
+
+  const context = {
+    configFile,
+    code: error.code,
+    phase: error.phase,
+    reason: error.reason,
+    retryable: error.retryable,
+    location: error.location,
+  };
+
+  if (error.reason === "worker-protocol") {
+    return INITIALIZATION_ERROR.create({
+      detail: "Hosted configuration evaluator returned an invalid response",
+      cause: error,
+      context,
+    });
+  }
+
+  if (error.code === "evaluator-unavailable" || error.code === "parser-unavailable") {
+    return SERVICE_OVERLOADED.create({
+      detail: "Hosted configuration evaluation is temporarily unavailable",
+      cause: error,
+      context,
+    });
+  }
+
+  return CONFIG_PARSE_ERROR.create({
+    detail: `Hosted configuration rejected (${error.code}: ${error.reason})`,
+    cause: error,
+    context,
+  });
+}
+
+function isPreservedConfigLoadError(error: unknown): boolean {
+  return error instanceof VeryfrontError;
 }
 
 async function loadConfigFromTempFile(
@@ -449,10 +901,13 @@ async function getConfigModuleLexer(): Promise<ModuleLexer> {
   const registered = tryResolveContract<ModuleLexer>("ModuleLexer");
   if (registered) return registered;
 
-  fallbackModuleLexerPromise ??= importFirstPartyExtensionModule<DefaultModuleLexerModule>(
-    "ext-bundler-esbuild",
-    "@veryfront/ext-bundler-esbuild",
-  ).then(({ EsModuleLexer }) => new EsModuleLexer());
+  fallbackModuleLexerPromise ??= thenPromise(
+    importFirstPartyExtensionModule<DefaultModuleLexerModule>(
+      "ext-bundler-esbuild",
+      "@veryfront/ext-bundler-esbuild",
+    ),
+    ({ EsModuleLexer }) => new EsModuleLexer(),
+  );
   return await fallbackModuleLexerPromise;
 }
 
@@ -498,19 +953,21 @@ export async function transpileConfigSourceForImport(
 }
 
 /**
- * Load config from virtual filesystem.
- * Uses esbuild to transpile TypeScript to JavaScript before importing.
+ * Load trusted executable config from a single-project virtual filesystem.
+ *
+ * Multi-tenant hosted callers never enter this path.
  */
-function loadConfigFromVirtualFS(
+function loadTrustedConfigFromVirtualFS(
   configPath: string,
   cacheKey: string,
   adapter: RuntimeAdapter,
+  selectedContent?: string | Uint8Array,
 ): Promise<VeryfrontConfig> {
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
       logger.debug("Loading config from virtual filesystem (API)", { configPath });
-      const content = await adapter.fs.readFile(configPath);
+      const content = selectedContent ?? await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
       logger.debug("Got config source from API", {
         configPath,
@@ -541,10 +998,61 @@ function loadConfigFromVirtualFS(
   );
 }
 
+function loadHostedConfigFromSource(
+  configPath: string,
+  configFile: DeclarativeConfigFileName,
+  baseCacheKey: string,
+  content: string | Uint8Array,
+  preparedContext: PreparedDeclarativeConfigContext,
+  signal: AbortSignal | undefined,
+  usePersistentCache: boolean,
+  revisionAtStart: number,
+): Promise<VeryfrontConfig> {
+  return withSpan(
+    SpanNames.CONFIG_LOAD_PROJECT,
+    async () => {
+      throwIfHostedConfigAborted(signal);
+      logger.debug("Loading hosted config through declarative worker", { configPath });
+      const source = decodeConfigSource(content);
+      const payload = createPreparedDeclarativeConfigWorkerPayload(
+        source,
+        preparedContext,
+        configFile,
+      );
+      const hostedCacheKey = await buildHostedConfigCacheKey(
+        baseCacheKey,
+        configPath,
+        source,
+        payload,
+      );
+      throwIfHostedConfigAborted(signal);
+
+      const cached = usePersistentCache ? configCacheByProject.get(hostedCacheKey) : undefined;
+      if (cached?.revision === revisionAtStart) {
+        return cached.config;
+      }
+
+      const flight = getOrCreateHostedConfigFlight(
+        hostedCacheKey,
+        payload,
+        usePersistentCache,
+        revisionAtStart,
+      );
+      return await waitForHostedConfigFlight(flight, signal);
+    },
+    {
+      "config.path": configPath,
+      "config.project_dir": baseCacheKey,
+      "config.source": "hosted_declarative",
+    },
+  );
+}
+
 async function loadAndMergeConfig(
   configPath: string,
   cacheKey: string,
   adapter: RuntimeAdapter,
+  selectedVirtualContent?: string | Uint8Array,
 ): Promise<VeryfrontConfig> {
   const isVirtualFS = isVirtualFilesystem(adapter.fs);
   logger.debug("loadAndMergeConfig called", {
@@ -556,8 +1064,13 @@ async function loadAndMergeConfig(
   });
 
   if (isVirtualFS) {
-    logger.debug("Using virtual filesystem (API) for config", { configPath });
-    return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
+    logger.debug("Using trusted single-project virtual filesystem for config", { configPath });
+    return loadTrustedConfigFromVirtualFS(
+      configPath,
+      cacheKey,
+      adapter,
+      selectedVirtualContent,
+    );
   }
 
   // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
@@ -608,6 +1121,27 @@ export interface GetConfigOptions {
    * are never stored in the process-wide config cache.
    */
   sourceContext?: VirtualConfigSourceContext;
+}
+
+/**
+ * Internal server contract for untrusted hosted project configuration.
+ *
+ * This type is intentionally not re-exported from the public configuration
+ * barrels. Hosted callers must establish project, source, and environment
+ * identity before invoking the loader.
+ */
+export interface HostedConfigOptions {
+  readonly cacheKey: string;
+  readonly sourceContext: VirtualConfigSourceContext;
+  readonly preparedContext: PreparedDeclarativeConfigContext;
+  readonly signal?: AbortSignal;
+}
+
+interface InternalGetConfigOptions extends GetConfigOptions {
+  readonly hosted?: Readonly<{
+    preparedContext: PreparedDeclarativeConfigContext;
+    signal?: AbortSignal;
+  }>;
 }
 
 function getVirtualConfigSourceContext(): VirtualConfigSourceContext | undefined {
@@ -688,11 +1222,79 @@ function assertMatchingVirtualConfigSource(
   });
 }
 
-export function getConfig(
+function assertMatchingHostedProjectIdentity(
+  cacheKey: string,
+  actual: ReturnType<typeof getCurrentRequestContext>,
+): void {
+  if (!actual) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Hosted multi-project config requires an active request context",
+    });
+  }
+
+  const canonicalProjectIdentity = actual.projectId ?? actual.projectSlug;
+  if (cacheKey === canonicalProjectIdentity) return;
+
+  throw CACHE_INVARIANT_VIOLATION.create({
+    detail: "Hosted config cache identity does not match the active project context",
+  });
+}
+
+function assertMatchingHostedEnvironmentIdentity(
+  sourceContext: VirtualConfigSourceContext,
+  payload: PreparedDeclarativeConfigWorkerPayload,
+): void {
+  const actualEnvironmentName = payload.evaluationOptions.environmentName;
+  if (!sourceContext.productionMode) {
+    if (actualEnvironmentName === "preview") return;
+  } else if (sourceContext.environmentName) {
+    if (actualEnvironmentName === sourceContext.environmentName) return;
+  } else {
+    const environment = payload.evaluationOptions.environment;
+    if (
+      actualEnvironmentName === "release" &&
+      typeof environment === "object" &&
+      environment !== null &&
+      getPrototypeOf(environment) === null &&
+      isFrozen(environment) &&
+      ownKeys(environment).length === 0
+    ) {
+      return;
+    }
+  }
+
+  throw CACHE_INVARIANT_VIOLATION.create({
+    detail: "Hosted config environment identity does not match its selected source",
+  });
+}
+
+function buildTrustedConfigIdentity(
+  effectiveCacheKey: string,
+  adapter: RuntimeAdapter,
+  isVirtualFS: boolean,
+  hasStableVirtualSourceIdentity: boolean,
+  ambientSourceContext: VirtualConfigSourceContext | undefined,
+): string {
+  if (!isVirtualFS || hasStableVirtualSourceIdentity) return effectiveCacheKey;
+
+  const filesystem = adapter.fs as object;
+  let filesystemId = weakMapGet(trustedVirtualFilesystemIds, filesystem);
+  if (filesystemId === undefined) {
+    filesystemId = nextTrustedVirtualFilesystemId;
+    nextTrustedVirtualFilesystemId += 1;
+    weakMapSet(trustedVirtualFilesystemIds, filesystem, filesystemId);
+  }
+  const sourceIdentity = ambientSourceContext
+    ? JSONStringify(normalizeVirtualConfigSource(ambientSourceContext))
+    : "contextless";
+  return `unqualified-vfs:${filesystemId}:${sourceIdentity}:${effectiveCacheKey}`;
+}
+
+function getConfigInternal(
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: GetConfigOptions,
-): Promise<VeryfrontConfig> {
+  options?: InternalGetConfigOptions,
+): Promise<ConfigLoadResult> {
   const getConfigStartTime = performance.now();
   const cacheKeyForLog = options?.cacheKey || "unknown";
 
@@ -703,24 +1305,61 @@ export function getConfig(
     async () => {
       const revisionAtStart = cacheRevision;
       const isVirtualFS = isVirtualFilesystem(adapter.fs);
-      if (options?.sourceContext && (!isVirtualFS || !options.cacheKey)) {
+      const hosted = options?.hosted;
+      const hostedMultiProjectFilesystem = isHostedMultiProjectFilesystem(adapter);
+      if (hostedMultiProjectFilesystem && !hosted) {
+        throw CACHE_INVARIANT_VIOLATION.create({
+          detail:
+            "Hosted multi-project config requires an authenticated declarative evaluation context",
+        });
+      }
+      if (hosted && (!options?.cacheKey || !options.sourceContext)) {
+        throw CACHE_INVARIANT_VIOLATION.create({
+          detail: "Hosted config requires canonical project and source identity",
+        });
+      }
+      if (hosted) {
+        throwIfHostedConfigAborted(hosted.signal);
+        // Validate the opaque token before any project filesystem access.
+        const validationPayload = createPreparedDeclarativeConfigWorkerPayload(
+          "",
+          hosted.preparedContext,
+        );
+        assertMatchingHostedEnvironmentIdentity(options!.sourceContext!, validationPayload);
+      }
+
+      const hasQualifiedCacheIdentity = !!options?.cacheKey && (isVirtualFS || !!hosted);
+      if (options?.sourceContext && !hasQualifiedCacheIdentity) {
         throw CACHE_INVARIANT_VIOLATION.create({
           detail: "Explicit config source requires a virtual filesystem and cacheKey",
         });
       }
 
       const ambientSourceContext = isVirtualFS ? getVirtualConfigSourceContext() : undefined;
-      if (options?.sourceContext) {
+      if (options?.sourceContext && isVirtualFS) {
         assertMatchingVirtualConfigSource(options.sourceContext, ambientSourceContext);
       }
-      const sourceContext = isVirtualFS && options?.cacheKey
+      if (hostedMultiProjectFilesystem) {
+        assertMatchingHostedProjectIdentity(options!.cacheKey!, getCurrentRequestContext());
+      }
+      const sourceContext = hasQualifiedCacheIdentity
         ? options.sourceContext ?? ambientSourceContext
         : undefined;
-      const usePersistentCache = !isVirtualFS || sourceContext?.productionMode === true;
+      const usePersistentCache = hosted
+        ? sourceContext?.productionMode === true
+        : !isVirtualFS || sourceContext?.productionMode === true;
+      const useVirtualCacheNamespace = !!hosted || (isVirtualFS && !!options?.cacheKey);
       const effectiveCacheKey = buildConfigCacheKey(
-        isVirtualFS && options?.cacheKey ? options.cacheKey : projectDir,
-        isVirtualFS && !!options?.cacheKey,
+        useVirtualCacheNamespace ? options!.cacheKey! : projectDir,
+        useVirtualCacheNamespace,
         sourceContext,
+      );
+      const trustedConfigIdentity = buildTrustedConfigIdentity(
+        effectiveCacheKey,
+        adapter,
+        isVirtualFS,
+        hasQualifiedCacheIdentity && sourceContext?.productionMode === true,
+        ambientSourceContext,
       );
 
       logger.debug("Cache key built", {
@@ -731,7 +1370,11 @@ export function getConfig(
         usePersistentCache,
       });
 
-      const cached = usePersistentCache ? configCacheByProject.get(effectiveCacheKey) : undefined;
+      // Hosted cache identity includes the exact source digest, so source must
+      // be read before the final cache lookup.
+      const cached = !hosted && usePersistentCache
+        ? configCacheByProject.get(effectiveCacheKey)
+        : undefined;
       if (cached?.revision === revisionAtStart) {
         logger.debug("Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
@@ -740,7 +1383,7 @@ export function getConfig(
           hasLayout: !!(cached.config as Record<string, unknown>).layout,
           duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
         });
-        return cached.config;
+        return createConfigLoadResult(cached.config, cached.provenance);
       }
 
       logger.debug("Cache MISS - loading config", {
@@ -748,59 +1391,215 @@ export function getConfig(
         isVirtualFS,
       });
 
-      // For virtual filesystem, config is at project root ("/"), not the local projectDir
-      const configBaseDir = isVirtualFS ? "/" : projectDir;
+      const loadUncached = async (): Promise<ConfigLoadResult> => {
+        // For virtual filesystem, config is at project root ("/"), not the local projectDir
+        const configBaseDir = isVirtualFS ? "/" : projectDir;
 
-      for (const configFile of VERYFRONT_CONFIG_FILES) {
-        const configPath = join(configBaseDir, configFile);
-        const exists = await adapter.fs.exists(configPath);
-        logger.debug("Checking config file", { configPath, exists, isVirtualFS });
-        if (!exists) continue;
+        for (const configFile of VERYFRONT_CONFIG_FILES) {
+          if (hosted) throwIfHostedConfigAborted(hosted.signal);
+          const configPath = join(configBaseDir, configFile);
+          let hostedContent: string | Uint8Array | undefined;
+          let trustedVirtualContent: string | Uint8Array | undefined;
+          if (!hosted) {
+            if (isVirtualFS) {
+              try {
+                trustedVirtualContent = await adapter.fs.readFile(configPath);
+              } catch (error) {
+                if (isNotFoundError(error)) {
+                  logger.debug("Trusted virtual config candidate not found", {
+                    configPath,
+                  });
+                  continue;
+                }
+                throw error;
+              }
+            } else {
+              const exists = await adapter.fs.exists(configPath);
+              logger.debug("Checking config file", { configPath, exists, isVirtualFS });
+              if (!exists) continue;
+            }
+          }
 
-        try {
-          const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          if (usePersistentCache && cacheRevision === revisionAtStart) {
-            configCacheByProject.set(effectiveCacheKey, {
-              revision: revisionAtStart,
-              config: merged,
+          try {
+            if (hosted) {
+              try {
+                hostedContent = await adapter.fs.readFile(configPath);
+              } catch (error) {
+                if (isNotFoundError(error)) {
+                  logger.debug("Hosted config candidate not found", { configPath });
+                  continue;
+                }
+                throw error;
+              }
+              throwIfHostedConfigAborted(hosted.signal);
+            }
+
+            const merged = hosted
+              ? await loadHostedConfigFromSource(
+                configPath,
+                configFile,
+                effectiveCacheKey,
+                hostedContent!,
+                hosted.preparedContext,
+                hosted.signal,
+                usePersistentCache,
+                revisionAtStart,
+              )
+              : await loadAndMergeConfig(
+                configPath,
+                effectiveCacheKey,
+                adapter,
+                trustedVirtualContent,
+              );
+            const provenance = configFileProvenance(configFile);
+            if (!hosted && usePersistentCache && cacheRevision === revisionAtStart) {
+              configCacheByProject.set(effectiveCacheKey, {
+                revision: revisionAtStart,
+                config: merged,
+                provenance,
+              });
+            }
+            logger.debug("Successfully loaded config", {
+              configFile,
+              hasApp: !!merged.app,
+              hasLayout: !!(merged as Record<string, unknown>).layout,
+              configKeys: Object.keys(merged),
+            });
+            return createConfigLoadResult(merged, provenance);
+          } catch (error) {
+            if (error instanceof DeclarativeConfigEvaluationError) {
+              throw translateHostedConfigEvaluationError(error, configFile);
+            }
+            if (isPreservedConfigLoadError(error)) throw error;
+            logger.warn("Failed to load config file", { configFile });
+            throw CONFIG_PARSE_ERROR.create({
+              detail: `Failed to load ${configFile}`,
+              cause: error,
+              context: { configFile },
             });
           }
-          logger.debug("Successfully loaded config", {
-            configFile,
-            hasApp: !!merged.app,
-            hasLayout: !!(merged as Record<string, unknown>).layout,
-            configKeys: Object.keys(merged),
-          });
-          return merged;
-        } catch (error) {
-          if (isConfigError(error)) throw error;
-          logger.warn("Failed to load config file", { configFile });
-          throw CONFIG_PARSE_ERROR.create({
-            detail: `Failed to load ${configFile}`,
-            cause: error,
-            context: { configFile },
+        }
+
+        logger.debug("No config file found, using defaults", {
+          effectiveCacheKey,
+          projectDir,
+          isVirtualFS,
+          duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
+        });
+
+        if (hosted) throwIfHostedConfigAborted(hosted.signal);
+        const defaultConfig = createFreshDefaults() as VeryfrontConfig;
+        const config = hosted ? deepFreezeHostedConfig(defaultConfig) : defaultConfig;
+        const provenance = defaultConfigProvenance();
+        if (!hosted && usePersistentCache && cacheRevision === revisionAtStart) {
+          configCacheByProject.set(effectiveCacheKey, {
+            revision: revisionAtStart,
+            config,
+            provenance,
           });
         }
-      }
+        return createConfigLoadResult(config, provenance);
+      };
 
-      logger.debug("No config file found, using defaults", {
-        effectiveCacheKey,
-        projectDir,
-        isVirtualFS,
-        duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
-      });
-
-      const defaultConfig = createFreshDefaults() as VeryfrontConfig;
-      if (usePersistentCache && cacheRevision === revisionAtStart) {
-        configCacheByProject.set(effectiveCacheKey, {
-          revision: revisionAtStart,
-          config: defaultConfig,
-        });
-      }
-      return defaultConfig;
+      if (hosted) return await loadUncached();
+      return await getOrCreateTrustedConfigFlight(
+        trustedConfigIdentity,
+        revisionAtStart,
+        loadUncached,
+      );
     },
     { "config.project_dir": projectDir, "config.cache_key": options?.cacheKey || "default" },
   );
+}
+
+export function getConfig(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options?: GetConfigOptions,
+): Promise<VeryfrontConfig> {
+  return thenPromise(
+    getConfigInternal(projectDir, adapter, options),
+    (result) => result.config,
+  );
+}
+
+/**
+ * Load trusted configuration together with the explicit source outcome.
+ *
+ * This is an internal composition boundary for callers that must distinguish
+ * an absent config file from a present file whose values happen to match the
+ * framework defaults.
+ *
+ * @internal
+ */
+export function getConfigWithProvenance(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options?: GetConfigOptions,
+): Promise<ConfigLoadResult> {
+  return getConfigInternal(projectDir, adapter, options);
+}
+
+/**
+ * Load an untrusted hosted project config through the bounded declarative
+ * evaluator. Server composition code must prepare the environment context
+ * from authenticated tenant data before calling this function.
+ *
+ * @internal
+ */
+export function getHostedConfig(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options: HostedConfigOptions,
+): Promise<VeryfrontConfig> {
+  return thenPromise(
+    getConfigInternal(projectDir, adapter, {
+      cacheKey: options.cacheKey,
+      sourceContext: options.sourceContext,
+      hosted: {
+        preparedContext: options.preparedContext,
+        signal: options.signal,
+      },
+    }),
+    (result) => result.config,
+  );
+}
+
+/** @internal Test-only evaluator seam. Passing `undefined` restores production behavior. */
+export function __setHostedConfigEvaluatorForTests(
+  evaluator?: HostedConfigEvaluator,
+): void {
+  mapForEach(hostedConfigFlights, (flight) => {
+    flight.controller.abort();
+  });
+  mapClear(hostedConfigFlights);
+  hostedConfigEvaluator = evaluator ?? evaluatePreparedDeclarativeConfigInWorker;
+}
+
+/** @internal Test-only aggregate state; does not expose project or source identities. */
+export function __getHostedConfigFlightStateForTests(): Readonly<{
+  flights: number;
+  waiters: number;
+}> {
+  let waiters = 0;
+  mapForEach(hostedConfigFlights, (flight) => {
+    waiters += flight.waiterCount;
+  });
+  return freezeObject({
+    flights: mapSize(hostedConfigFlights),
+    waiters,
+  });
+}
+
+/** @internal Test-only aggregate state; does not expose config identities. */
+export function __getTrustedConfigFlightStateForTests(): Readonly<{
+  flights: number;
+  maxFlights: number;
+}> {
+  return freezeObject({
+    flights: mapSize(trustedConfigFlights),
+    maxFlights: MAX_TRUSTED_CONFIG_FLIGHTS,
+  });
 }
 
 export function clearConfigCache(): void {

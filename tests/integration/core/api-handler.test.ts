@@ -9,6 +9,7 @@ import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { APIRouteHandler } from "#veryfront/routing/api/index.ts";
+import type { HandlerContext } from "#veryfront/types";
 import { withTestContext } from "../../_helpers/context.ts";
 
 // Track all handlers to clean up after tests
@@ -18,6 +19,13 @@ function createHandler(projectDir: string, adapter?: RuntimeAdapter): APIRouteHa
   const handler = new APIRouteHandler(projectDir, adapter);
   handlers.push(handler);
   return handler;
+}
+
+function handleLocal(
+  handler: APIRouteHandler,
+  request: Request,
+): Promise<Response | null> {
+  return handler.handle(request, { isLocalProject: true } as HandlerContext);
 }
 
 async function setupPagesApiDir(projectDir: string, ...segments: string[]): Promise<void> {
@@ -69,7 +77,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/hello");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -109,7 +117,7 @@ describe(
 
             for (const method of ["GET", "POST", "PUT", "DELETE"]) {
               const req = new Request("http://localhost/api/resource", { method });
-              const res = await handler.handle(req);
+              const res = await handleLocal(handler, req);
 
               assertExists(res);
               assertEquals(res.status, 200);
@@ -138,7 +146,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/limited", { method: "POST" });
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 405);
@@ -151,7 +159,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/nonexistent");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 404);
@@ -179,7 +187,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/users/123");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -210,7 +218,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/posts/456/comments/789");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -239,7 +247,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/deep/nested/path");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -272,7 +280,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/query?name=John&age=30");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -308,7 +316,7 @@ describe(
                 "content-type": "application/json",
               },
             });
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -339,7 +347,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/json-helper");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 200);
@@ -393,7 +401,7 @@ describe(
 
             for (const test of tests) {
               const req = new Request(`http://localhost/api/errors?type=${test.type}`);
-              const res = await handler.handle(req);
+              const res = await handleLocal(handler, req);
 
               assertExists(res);
               assertEquals(res.status, test.status);
@@ -425,7 +433,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/redirect");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 302);
@@ -454,7 +462,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/error");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 500);
@@ -492,7 +500,7 @@ describe(
             await handler.initialize();
 
             const req = new Request("http://localhost/api/async-error");
-            const res = await handler.handle(req);
+            const res = await handleLocal(handler, req);
 
             assertExists(res);
             assertEquals(res.status, 500);

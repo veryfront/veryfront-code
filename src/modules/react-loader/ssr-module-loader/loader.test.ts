@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
+import { clearSSRModuleCache, createSSRImportMapIdentity, SSRModuleLoader } from "./index.ts";
+import type { SSRImportMapIdentity } from "./import-map-identity.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
 import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
 import {
@@ -64,6 +65,11 @@ class FakeDistributedCache implements CacheBackend {
 
 function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapter {
   const normalize = (path: string) => path.replace(/^\/app\/+/, "");
+  const notFound = (path: string): Error & { code: string } => {
+    const error = new Error(`File not found: ${path}`) as Error & { code: string };
+    error.code = "ENOENT";
+    return error;
+  };
 
   return {
     id: "deno",
@@ -73,7 +79,7 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
       async readFile(path: string): Promise<string> {
         const normalized = normalize(path);
         const content = files[normalized];
-        if (content == null) throw new Error(`File not found: ${path}`);
+        if (content == null) throw notFound(path);
         return content;
       },
       async writeFile(): Promise<void> {
@@ -85,7 +91,7 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
       async *readDir(): AsyncIterableIterator<never> {},
       async stat(path: string) {
         const content = files[normalize(path)];
-        if (content == null) throw new Error(`File not found: ${path}`);
+        if (content == null) throw notFound(path);
         return {
           size: content.length,
           mtime: new Date(0),
@@ -111,6 +117,47 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("accepts only atomic factory-created import-map identities", async () => {
+    const baseOptions = {
+      projectDir: "/project",
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+    } as const;
+    const validIdentity = await createSSRImportMapIdentity({
+      imports: { package: "https://modules.example/map-a.ts" },
+      scopes: {},
+    });
+
+    assertThrows(
+      () =>
+        new SSRModuleLoader({
+          ...baseOptions,
+          importMapIdentity: {
+            importMap: validIdentity.importMap,
+          } as SSRImportMapIdentity,
+        }),
+      TypeError,
+      "createImportMapIdentity",
+    );
+    assertThrows(
+      () =>
+        new SSRModuleLoader({
+          ...baseOptions,
+          importMapIdentity: {
+            ...validIdentity,
+            fingerprint: "b".repeat(64),
+          },
+        }),
+      TypeError,
+      "createImportMapIdentity",
+    );
+
+    new SSRModuleLoader({ ...baseOptions, importMapIdentity: validIdentity });
+    new SSRModuleLoader(baseOptions);
+  });
+
   it("isolates cache by projectId", async () => {
     clearSSRModuleCache();
 

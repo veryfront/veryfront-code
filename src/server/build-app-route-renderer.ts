@@ -25,6 +25,8 @@ import {
   planClientPageIsland,
 } from "#veryfront/rendering/rsc/page-island.ts";
 import { LAYOUT_EXTENSIONS } from "#veryfront/rendering/layouts/types.ts";
+import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
 type ReactLayoutFunction = (
@@ -49,6 +51,7 @@ async function loadComponent(
   filePath: string,
   projectDir: string,
   contentSourceId: string,
+  importMap: ImportMapConfig,
   reactVersion?: string,
 ): Promise<unknown> {
   const src = await adapter.fs.readFile(filePath);
@@ -57,6 +60,7 @@ async function loadComponent(
     dev: false,
     moduleServerUrl: "",
     contentSourceId,
+    importMap,
     reactVersion,
   });
 }
@@ -121,8 +125,15 @@ export async function renderAppRouteToHTML(args: {
   } = args;
 
   const appRoot = join(projectDir, config?.directories?.app ?? "app");
-  const reactVersion = explicitReactVersion ??
-    await resolveProjectReactVersion({ projectDir, config });
+  const [reactVersion, importMap] = await Promise.all([
+    explicitReactVersion
+      ? Promise.resolve(explicitReactVersion)
+      : resolveProjectReactVersion({ projectDir, config }),
+    preloadImportMap(projectDir, adapter, projectDir, {
+      contentSourceId,
+      config,
+    }),
+  ]);
   const layouts: string[] = [];
   for (const directory of getLayoutDirectoriesForPage(appRoot, pageFile)) {
     for (const extension of APP_ROUTE_LAYOUT_EXTENSIONS) {
@@ -142,6 +153,7 @@ export async function renderAppRouteToHTML(args: {
     dev: false,
     moduleServerUrl: "",
     contentSourceId,
+    importMap,
     reactVersion,
   });
   if (typeof Page !== "function") {
@@ -178,6 +190,7 @@ export async function renderAppRouteToHTML(args: {
       layoutPath,
       projectDir,
       contentSourceId,
+      importMap,
       reactVersion,
     );
     if (typeof Layout !== "function") {

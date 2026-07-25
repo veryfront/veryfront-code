@@ -56,6 +56,27 @@ async function withApiWorkerIsolation<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+async function withApiWorkerIsolationDisabled<T>(run: () => Promise<T>): Promise<T> {
+  const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
+  const previousApi = Deno.env.get("WORKER_ISOLATION_API");
+  Deno.env.delete("WORKER_ISOLATION_ENABLED");
+  Deno.env.delete("WORKER_ISOLATION_API");
+  __resetPoolForTests();
+
+  try {
+    return await runWithExactSourceIntegrationPolicy(
+      normalizeSourceIntegrationPolicy(undefined),
+      run,
+    );
+  } finally {
+    __resetPoolForTests();
+    if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
+    if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
+    else Deno.env.set("WORKER_ISOLATION_API", previousApi);
+  }
+}
+
 afterEach((): void => {
   while (handlers.length) handlers.pop()?.destroy();
   __resetPoolForTests();
@@ -218,6 +239,292 @@ describe("APIRouteHandler", () => {
   });
 
   describe("worker-isolated route execution", () => {
+    it("requires prepared worker execution for remote and unknown-locality routes by default", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        const preparedSource = [
+          `export function GET() { return new Response("prepared worker"); }`,
+          `export function PATCH() { return new Response("patched"); }`,
+        ].join("\n");
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("host execution"),
+            });
+          },
+          prepareHandlerModule: async () => {
+            preparations++;
+            return {
+              source: preparedSource,
+              sha256: await computeHash(preparedSource),
+            };
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: false } as HandlerContext,
+        );
+        const capabilities = await handler.resolveRouteMethods("/api/resource");
+
+        assertEquals(response?.status, 200);
+        assertEquals(await response?.text(), "prepared worker");
+        assertEquals(capabilities, {
+          status: "resolved",
+          methods: ["GET", "HEAD", "PATCH", "OPTIONS"],
+        });
+        assertEquals(preparations, 1);
+        assertEquals(hostLoads, 0);
+      });
+    });
+
+    it("trusts only an own locality data property before host route loading", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        let hostLoads = 0;
+        let accessorCalls = 0;
+        let throwingDescriptorCalls = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("local host execution"),
+            });
+          },
+          prepareHandlerModule: () => Promise.reject(new Error("isolated preparation unavailable")),
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const inherited = Object.create({
+          isLocalProject: true,
+        }) as HandlerContext;
+        const accessor = Object.defineProperty({}, "isLocalProject", {
+          get() {
+            accessorCalls++;
+            return true;
+          },
+        }) as HandlerContext;
+        const throwingProxy = new Proxy({} as HandlerContext, {
+          getOwnPropertyDescriptor() {
+            throwingDescriptorCalls++;
+            throw new Error("locality descriptor unavailable");
+          },
+        });
+        const revoked = Proxy.revocable({ isLocalProject: true } as HandlerContext, {});
+        revoked.revoke();
+
+        for (const ctx of [inherited, accessor, throwingProxy, revoked.proxy]) {
+          const response = await handler.handle(
+            new Request("http://localhost/api/resource"),
+            ctx,
+          );
+          assertEquals(response?.status, 500);
+        }
+
+        const ownLocal = Object.defineProperty({}, "isLocalProject", {
+          value: true,
+        }) as HandlerContext;
+        const localResponse = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          ownLocal,
+        );
+
+        assertEquals(localResponse?.status, 200);
+        assertEquals(await localResponse?.text(), "local host execution");
+        assertEquals(hostLoads, 1);
+        assertEquals(accessorCalls, 0);
+        assertEquals(throwingDescriptorCalls > 0, true);
+      });
+    });
+
+    it("keeps an empty request context remote after prototype poisoning", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        let hostLoads = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("host execution"),
+            });
+          },
+          prepareHandlerModule: () => Promise.reject(new Error("isolated preparation unavailable")),
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const previous = Object.getOwnPropertyDescriptor(
+          Object.prototype,
+          "isLocalProject",
+        );
+        let response: Response | null | undefined;
+
+        try {
+          Object.defineProperty(Object.prototype, "isLocalProject", {
+            configurable: true,
+            value: true,
+          });
+          response = await handler.handle(
+            new Request("http://localhost/api/resource"),
+            {} as HandlerContext,
+          );
+        } finally {
+          if (previous) {
+            Object.defineProperty(Object.prototype, "isLocalProject", previous);
+          } else {
+            delete (Object.prototype as { isLocalProject?: boolean }).isLocalProject;
+          }
+        }
+
+        assertEquals(response?.status, 500);
+        assertEquals(hostLoads, 0);
+      });
+    });
+
+    it("trusts only an own false data option when disabling route CORS", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        __injectDepsForTests({
+          loadHandlerModule: () =>
+            Promise.resolve({
+              GET: () => new Response("local host execution"),
+            }),
+        });
+        const handler = new APIRouteHandler(
+          "/test/project",
+          adapter,
+          {
+            security: {
+              cors: { origin: "https://allowed.example" },
+            },
+          } as VeryfrontConfig,
+        );
+        handlers.push(handler);
+        await handler.initialize();
+
+        let accessorCalls = 0;
+        let throwingDescriptorCalls = 0;
+        const inherited = Object.create({
+          applyCORS: false,
+        });
+        const accessor = Object.defineProperty({}, "applyCORS", {
+          get() {
+            accessorCalls++;
+            return false;
+          },
+        });
+        const throwingProxy = new Proxy({}, {
+          getOwnPropertyDescriptor() {
+            throwingDescriptorCalls++;
+            throw new Error("CORS option descriptor unavailable");
+          },
+        });
+        const revoked = Proxy.revocable({ applyCORS: false }, {});
+        revoked.revoke();
+        const request = () =>
+          new Request("http://localhost/api/resource", {
+            headers: { origin: "https://allowed.example" },
+          });
+        const localCtx = { isLocalProject: true } as HandlerContext;
+
+        for (const options of [undefined, inherited, accessor, throwingProxy, revoked.proxy]) {
+          const response = await handler.handle(request(), localCtx, options);
+          assertEquals(
+            response?.headers.get("access-control-allow-origin"),
+            "https://allowed.example",
+          );
+        }
+
+        const disabled = await handler.handle(request(), localCtx, {
+          applyCORS: false,
+        });
+        assertEquals(disabled?.headers.get("access-control-allow-origin"), null);
+
+        const previous = Object.getOwnPropertyDescriptor(
+          Object.prototype,
+          "applyCORS",
+        );
+        let poisonedResponse: Response | null | undefined;
+        try {
+          Object.defineProperty(Object.prototype, "applyCORS", {
+            configurable: true,
+            value: false,
+          });
+          poisonedResponse = await handler.handle(request(), localCtx);
+        } finally {
+          if (previous) {
+            Object.defineProperty(Object.prototype, "applyCORS", previous);
+          } else {
+            delete (Object.prototype as { applyCORS?: boolean }).applyCORS;
+          }
+        }
+
+        assertEquals(
+          poisonedResponse?.headers.get("access-control-allow-origin"),
+          "https://allowed.example",
+        );
+        assertEquals(accessorCalls, 0);
+        assertEquals(throwingDescriptorCalls > 0, true);
+      });
+    });
+
+    it("rejects remote virtual-filesystem routes instead of loading them on the host", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("unreachable"); }`,
+        );
+        Object.assign(adapter.fs, {
+          getUnderlyingAdapter: () => adapter.fs,
+          isMultiProjectMode: () => true,
+          isVeryfrontAdapter: () => true,
+        });
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("host execution"),
+            });
+          },
+          prepareHandlerModule: () => {
+            preparations++;
+            return Promise.reject(new Error("preparation must not run"));
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: false } as HandlerContext,
+        );
+
+        assertEquals(response?.status, 503);
+        assertEquals(await response?.text(), "API route unavailable");
+        assertEquals(preparations, 0);
+        assertEquals(hostLoads, 0);
+      });
+    });
+
     it("prepares and inspects route source without loading the module on the host", async () => {
       await withApiWorkerIsolation(async () => {
         const adapter = createMockAdapter();
@@ -347,7 +654,7 @@ describe("APIRouteHandler", () => {
           assertEquals(response?.status, 503);
           assertEquals(await response?.text(), "API route unavailable");
           assertEquals(capabilities, { status: "unavailable" });
-          assertEquals(configLoads, 1);
+          assertEquals(configLoads, 3);
           assertEquals(preparations, 0);
           assertEquals(hostLoads, 0);
           assertEquals(fetches, 0);
@@ -355,6 +662,114 @@ describe("APIRouteHandler", () => {
         } finally {
           globalThis.fetch = originalFetch;
         }
+      });
+    });
+
+    it("recovers a remote route after a transient config failure without host loading", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        const preparedSource = `export function GET() { return new Response("recovered worker"); }`;
+        let configLoads = 0;
+        let hostLoads = 0;
+        let preparations = 0;
+        __injectDepsForTests({
+          getConfig: () => {
+            configLoads++;
+            if (configLoads <= 2) {
+              return Promise.reject(new Error("transient config failure"));
+            }
+            return Promise.resolve({} as VeryfrontConfig);
+          },
+          loadHandlerModule: () => {
+            hostLoads++;
+            return Promise.resolve({
+              GET: () => new Response("host execution"),
+            });
+          },
+          prepareHandlerModule: async () => {
+            preparations++;
+            return {
+              source: preparedSource,
+              sha256: await computeHash(preparedSource),
+            };
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const remoteCtx = { isLocalProject: false } as HandlerContext;
+
+        const unavailable = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          remoteCtx,
+        );
+        const recovered = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          remoteCtx,
+        );
+
+        assertEquals(unavailable?.status, 503);
+        assertEquals(await unavailable?.text(), "API route unavailable");
+        assertEquals(recovered?.status, 200);
+        assertEquals(await recovered?.text(), "recovered worker");
+        assertEquals(configLoads, 3);
+        assertEquals(preparations, 1);
+        assertEquals(hostLoads, 0);
+      });
+    });
+
+    it("retries project-discovery compatibility after a transient filesystem failure", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        const originalExists = adapter.fs.exists;
+        let discoveryChecks = 0;
+        adapter.fs.exists = (path: string) => {
+          if (path === "/test/project/tools") {
+            discoveryChecks++;
+            if (discoveryChecks === 1) {
+              return Promise.reject(new Error("transient discovery failure"));
+            }
+          }
+          return originalExists(path);
+        };
+
+        const preparedSource =
+          `export function GET() { return new Response("recovered discovery"); }`;
+        let preparations = 0;
+        __injectDepsForTests({
+          getConfig: () => Promise.resolve({} as VeryfrontConfig),
+          prepareHandlerModule: async () => {
+            preparations++;
+            return {
+              source: preparedSource,
+              sha256: await computeHash(preparedSource),
+            };
+          },
+        });
+        const handler = await createInitializedHandler("/test/project", adapter);
+        const remoteCtx = { isLocalProject: false } as HandlerContext;
+
+        const unavailable = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          remoteCtx,
+        );
+        const recovered = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          remoteCtx,
+        );
+
+        assertEquals(unavailable?.status, 503);
+        assertEquals(await unavailable?.text(), "API route unavailable");
+        assertEquals(recovered?.status, 200);
+        assertEquals(await recovered?.text(), "recovered discovery");
+        assertEquals(discoveryChecks, 2);
+        assertEquals(preparations, 1);
       });
     });
 
@@ -537,6 +952,136 @@ describe("APIRouteHandler", () => {
         );
       });
     });
+
+    it("keeps policy snapshots and discovery checks authoritative after shared-realm poisoning", async () => {
+      await withApiWorkerIsolationDisabled(async () => {
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          "/test/project/app/api/resource/route.ts",
+          `export function GET() { return new Response("source placeholder"); }`,
+        );
+        const config = {
+          security: { remoteHosts: [] },
+          resolve: {
+            importMap: {
+              imports: { alias: "./target.ts" },
+              scopes: { "/scope/": { package: "./target.ts" } },
+            },
+          },
+          ai: {
+            tools: {
+              discovery: { paths: ["__poisoned_tools__"] },
+            },
+          },
+        } as VeryfrontConfig;
+        const preparedSource = `export function GET() { return new Response("prepared worker"); }`;
+        let preparedConfig: VeryfrontConfig | undefined;
+        let preparations = 0;
+        __injectDepsForTests({
+          prepareHandlerModule: async (options) => {
+            preparations++;
+            preparedConfig = options.config;
+            return {
+              source: preparedSource,
+              sha256: await computeHash(preparedSource),
+            };
+          },
+        });
+
+        const arrayIteratorDescriptor = Object.getOwnPropertyDescriptor(
+          Array.prototype,
+          Symbol.iterator,
+        )!;
+        const nativeArrayIterator = arrayIteratorDescriptor.value as (
+          this: unknown[],
+        ) => IterableIterator<unknown>;
+        const promiseResolveDescriptor = Object.getOwnPropertyDescriptor(
+          Promise,
+          "resolve",
+        )!;
+        let forgedPromiseResolveCalls = 0;
+        const emptyIterator = (): IterableIterator<unknown> => ({
+          next: () => ({ done: true, value: undefined }),
+          [Symbol.iterator]() {
+            return this;
+          },
+        });
+
+        let handler: APIRouteHandler;
+        try {
+          Object.defineProperty(Array.prototype, Symbol.iterator, {
+            ...arrayIteratorDescriptor,
+            value: function (this: unknown[]): IterableIterator<unknown> {
+              const first = this[0];
+              if (
+                this.length === 1 &&
+                (first === "alias" || first === "/scope/" || first === "package")
+              ) {
+                return emptyIterator();
+              }
+              return Reflect.apply(nativeArrayIterator, this, []) as IterableIterator<unknown>;
+            },
+          });
+          Object.defineProperty(Promise, "resolve", {
+            ...promiseResolveDescriptor,
+            value: () => {
+              forgedPromiseResolveCalls++;
+              throw new Error("live Promise.resolve must not run");
+            },
+          });
+
+          handler = new APIRouteHandler("/test/project", adapter, config);
+          handlers.push(handler);
+        } finally {
+          Object.defineProperty(Array.prototype, Symbol.iterator, arrayIteratorDescriptor);
+          Object.defineProperty(Promise, "resolve", promiseResolveDescriptor);
+        }
+
+        assertEquals(forgedPromiseResolveCalls, 0);
+        await handler.initialize();
+        const response = await handler.handle(
+          new Request("http://localhost/api/resource"),
+          { isLocalProject: false } as HandlerContext,
+        );
+
+        assertEquals(response?.status, 200);
+        assertEquals(preparedConfig?.resolve?.importMap?.imports?.alias, "./target.ts");
+        assertEquals(
+          preparedConfig?.resolve?.importMap?.scopes?.["/scope/"]?.package,
+          "./target.ts",
+        );
+
+        adapter.fs.files.set(
+          "/test/project/__poisoned_tools__/project-tool.ts",
+          `export default {};`,
+        );
+        const discoveryHandler = new APIRouteHandler("/test/project", adapter, config);
+        handlers.push(discoveryHandler);
+        await discoveryHandler.initialize();
+
+        let discoveryResponse: Response | null | undefined;
+        try {
+          Object.defineProperty(Array.prototype, Symbol.iterator, {
+            ...arrayIteratorDescriptor,
+            value: function (this: unknown[]): IterableIterator<unknown> {
+              if (this.length === 10 && this[0] === "__poisoned_tools__") {
+                return emptyIterator();
+              }
+              return Reflect.apply(nativeArrayIterator, this, []) as IterableIterator<unknown>;
+            },
+          });
+          discoveryResponse = await discoveryHandler.handle(
+            new Request("http://localhost/api/resource"),
+            { isLocalProject: false } as HandlerContext,
+          );
+        } finally {
+          Object.defineProperty(Array.prototype, Symbol.iterator, arrayIteratorDescriptor);
+        }
+
+        assertEquals(discoveryResponse?.status, 503);
+        assertEquals(preparations, 1);
+      });
+    });
   });
 
   describe("route discovery", () => {
@@ -654,7 +1199,10 @@ describe("APIRouteHandler", () => {
       });
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const responsePromise = handler.handle(new Request("http://localhost/api/status"));
+      const responsePromise = handler.handle(
+        new Request("http://localhost/api/status"),
+        { isLocalProject: true } as HandlerContext,
+      );
       handler.destroy();
 
       const response = await responsePromise;
@@ -663,6 +1211,7 @@ describe("APIRouteHandler", () => {
 
       const responseAfterDestroy = await handler.handle(
         new Request("http://localhost/api/status"),
+        { isLocalProject: true } as HandlerContext,
       );
       assertEquals(responseAfterDestroy?.status, 404);
     });
@@ -764,7 +1313,11 @@ describe("APIRouteHandler", () => {
       );
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const capabilities = await handler.resolveRouteMethods("/api/resource");
+      const capabilities = await handler.resolveRouteMethods(
+        "/api/resource",
+        undefined,
+        { isLocalProject: true } as HandlerContext,
+      );
 
       assertEquals(capabilities, {
         status: "resolved",
@@ -783,7 +1336,11 @@ describe("APIRouteHandler", () => {
       });
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const capabilities = await handler.resolveRouteMethods("/api/broken");
+      const capabilities = await handler.resolveRouteMethods(
+        "/api/broken",
+        undefined,
+        { isLocalProject: true } as HandlerContext,
+      );
 
       assertEquals(capabilities, { status: "unavailable" });
     });
@@ -792,7 +1349,11 @@ describe("APIRouteHandler", () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const capabilities = await handler.resolveRouteMethods("/api/missing");
+      const capabilities = await handler.resolveRouteMethods(
+        "/api/missing",
+        undefined,
+        { isLocalProject: true } as HandlerContext,
+      );
 
       assertEquals(capabilities, { status: "not-found" });
     });
@@ -805,7 +1366,11 @@ describe("APIRouteHandler", () => {
       );
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const capabilities = await handler.resolveRouteMethods("/api/default");
+      const capabilities = await handler.resolveRouteMethods(
+        "/api/default",
+        undefined,
+        { isLocalProject: true } as HandlerContext,
+      );
 
       assertEquals(capabilities, {
         status: "resolved",
@@ -821,7 +1386,11 @@ describe("APIRouteHandler", () => {
       );
       const handler = await createInitializedHandler("/test/project", adapter);
 
-      const capabilities = await handler.resolveRouteMethods("/api/default");
+      const capabilities = await handler.resolveRouteMethods(
+        "/api/default",
+        undefined,
+        { isLocalProject: true } as HandlerContext,
+      );
 
       assertEquals(capabilities, {
         status: "resolved",
@@ -840,6 +1409,7 @@ describe("APIRouteHandler", () => {
       const capabilities = await handler.resolveRouteMethods(
         "/api/default",
         "PROPFIND",
+        { isLocalProject: true } as HandlerContext,
       );
       const response = await handler.handle(
         new Request("http://localhost/api/default", { method: "PROPFIND" }),
@@ -976,6 +1546,7 @@ describe("APIRouteHandler", () => {
   describe("load failure scoping", () => {
     async function handlerWithTwoRoutes(
       onLoad: (modulePath: string) => Promise<APIRoute | null>,
+      preparationFailure?: Error,
     ): Promise<{ handler: APIRouteHandler; localCtx: HandlerContext }> {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
@@ -987,7 +1558,14 @@ describe("APIRouteHandler", () => {
         "export const notAMethod = 1;",
       );
 
-      __injectDepsForTests({ loadHandlerModule: ({ modulePath }) => onLoad(modulePath) });
+      __injectDepsForTests({
+        loadHandlerModule: ({ modulePath }) => onLoad(modulePath),
+        ...(preparationFailure
+          ? {
+            prepareHandlerModule: () => Promise.reject(preparationFailure),
+          }
+          : {}),
+      });
 
       return {
         handler: await createInitializedHandler("/test/project", adapter),
@@ -1056,12 +1634,14 @@ describe("APIRouteHandler", () => {
     // development aid, and the only thing keeping it out of a deployed response
     // body is this flag.
     it("withholds the load error from a response when the project is not local", async () => {
+      let hostLoads = 0;
       const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        hostLoads++;
         if (modulePath.includes("broken")) {
           throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
         }
         return Promise.resolve({});
-      });
+      }, new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts"));
 
       const hosted = await handler.handle(
         new Request("http://localhost/api/broken"),
@@ -1070,15 +1650,18 @@ describe("APIRouteHandler", () => {
 
       assertEquals(hosted?.status, 500);
       assertEquals(await hosted?.text(), "Handler not found");
+      assertEquals(hostLoads, 0);
     });
 
     it("fails closed when request locality cannot be read", async () => {
+      let hostLoads = 0;
       const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
+        hostLoads++;
         if (modulePath.includes("broken")) {
           throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
         }
         return Promise.resolve({});
-      });
+      }, new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts"));
       const unreadableCtx = Object.defineProperty(
         { ...localCtx },
         "isLocalProject",
@@ -1097,34 +1680,44 @@ describe("APIRouteHandler", () => {
 
       assertEquals(hosted?.status, 500);
       assertEquals(await hosted?.text(), "Handler not found");
+      assertEquals(hostLoads, 0);
     });
 
     it("withholds the load error from a response when there is no context", async () => {
+      let hostLoads = 0;
       const { handler } = await handlerWithTwoRoutes((modulePath) => {
+        hostLoads++;
         if (modulePath.includes("broken")) {
           throw new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts");
         }
         return Promise.resolve({});
-      });
+      }, new Error("Unexpected token in /srv/releases/17/pages/api/broken.ts"));
 
       const anonymous = await handler.handle(new Request("http://localhost/api/broken"));
 
       assertEquals(anonymous?.status, 500);
       assertEquals(await anonymous?.text(), "Handler not found");
+      assertEquals(hostLoads, 0);
     });
 
     it("classifies the allow-list block against the current attempt only", async () => {
-      const { handler } = await handlerWithTwoRoutes((modulePath) => {
+      const { handler, localCtx } = await handlerWithTwoRoutes((modulePath) => {
         if (modulePath.includes("broken")) {
           throw new Error("Remote import blocked by allow-list: evil.example.com");
         }
         return Promise.resolve({});
       });
 
-      const blocked = await handler.handle(new Request("http://localhost/api/broken"));
+      const blocked = await handler.handle(
+        new Request("http://localhost/api/broken"),
+        localCtx,
+      );
       assertEquals(blocked?.status, 502);
 
-      const empty = await handler.handle(new Request("http://localhost/api/empty"));
+      const empty = await handler.handle(
+        new Request("http://localhost/api/empty"),
+        localCtx,
+      );
       assertEquals(empty?.status, 500, "a later route inherited the allow-list classification");
     });
   });

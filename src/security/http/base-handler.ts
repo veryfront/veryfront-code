@@ -12,6 +12,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { getErrorMessage as formatErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { serverLogger } from "#veryfront/utils";
+import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
 import { ResponseBuilder } from "./response/index.ts";
 
 export interface HandlerHelpers {
@@ -83,7 +84,7 @@ export abstract class BaseHandler implements Handler {
   ): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
-      isDev: !!ctx.isLocalProject,
+      isDev: isExplicitlyLocalProject(ctx),
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce,

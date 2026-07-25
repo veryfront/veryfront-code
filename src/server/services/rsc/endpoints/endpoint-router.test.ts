@@ -18,6 +18,12 @@ import {
   rscDisabledConfig,
   rscEnabledConfig,
 } from "./endpoint-router.test-helpers.ts";
+import {
+  __destroyRSCHandlerForTests,
+  __injectCacheForTests,
+  type HandlerCache,
+} from "./handler-registry.ts";
+import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
@@ -148,6 +154,50 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
+  it("does not reuse a handler across two exact request import maps", async () => {
+    const entries = new Map<string, RSCDevServerHandler>();
+    const cache: HandlerCache<RSCDevServerHandler> = {
+      get: (key) => entries.get(key),
+      set: (key, value) => {
+        entries.set(key, value);
+      },
+      delete: (key) => entries.delete(key),
+      clear: () => entries.clear(),
+      keys: () => entries.keys(),
+      get size() {
+        return entries.size;
+      },
+    };
+    __injectCacheForTests(cache);
+
+    try {
+      const common = {
+        pathname: "/_veryfront/rsc/page",
+        projectId: "shared-project",
+        contentSourceId: "preview-main",
+        mode: "development" as const,
+      };
+      await handleRSCEndpoint(makeParams({
+        ...common,
+        config: {
+          ...rscEnabledConfig,
+          resolve: { importMap: { imports: { package: "node:fs" } } },
+        },
+      }));
+      await handleRSCEndpoint(makeParams({
+        ...common,
+        config: {
+          ...rscEnabledConfig,
+          resolve: { importMap: { imports: { package: "node:path" } } },
+        },
+      }));
+
+      assertEquals(cache.size, 2);
+    } finally {
+      __destroyRSCHandlerForTests();
+    }
+  });
+
   describe("render endpoint", () => {
     it("renders components from the request filesystem adapter", async () => {
       const pagePath = "/virtual/project/app/page.tsx";
@@ -164,7 +214,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         readFile: (path) =>
           path === pagePath
             ? Promise.resolve("export default function Page() { return null; }")
-            : Promise.reject(new Error("not found")),
+            : Promise.reject(new Deno.errors.NotFound("not found")),
       });
 
       const result = await handleRSCEndpoint(

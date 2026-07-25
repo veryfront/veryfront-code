@@ -190,7 +190,14 @@ async function doFetchAndCacheModule(
   parentModulePath?: string,
 ): Promise<string | null> {
   const log = getLog(context);
-  const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
+  const {
+    esmCacheDir,
+    adapter,
+    projectDir,
+    projectId,
+    contentSourceId,
+    importMapFingerprint,
+  } = context;
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
 
   const pathCache = await getModulePathCache(esmCacheDir);
@@ -199,7 +206,12 @@ async function doFetchAndCacheModule(
     const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
 
     if (!resolved) {
-      const versionedKey = getVersionedPathCacheKey(normalizedPath, effectiveReactVersion);
+      const versionedKey = getVersionedPathCacheKey(
+        normalizedPath,
+        effectiveReactVersion,
+        undefined,
+        importMapFingerprint,
+      );
       const cachedPath = await readValidCachedModulePath({
         normalizedPath,
         cacheDir: esmCacheDir,
@@ -223,6 +235,7 @@ async function doFetchAndCacheModule(
         esmCacheDir,
         pathCache,
         reactVersion: effectiveReactVersion,
+        importMapFingerprint,
         parentModulePath,
       });
     }
@@ -234,6 +247,7 @@ async function doFetchAndCacheModule(
       normalizedPath,
       effectiveReactVersion,
       contentHash,
+      importMapFingerprint,
     );
     const cachedPath = await readValidCachedModulePath({
       normalizedPath,
@@ -254,6 +268,7 @@ async function doFetchAndCacheModule(
         effectiveReactVersion,
         normalizedPath,
         contentHash,
+        importMapFingerprint,
       )
       : null;
 
@@ -289,6 +304,7 @@ async function doFetchAndCacheModule(
         projectSlug,
         reactVersion: context.reactVersion,
         adapter,
+        importMap: context.importMap,
         log,
       });
 
@@ -317,6 +333,7 @@ async function doFetchAndCacheModule(
       projectSlug,
       reactVersion: effectiveReactVersion,
       sourceContentHash: contentHash,
+      importMapFingerprint,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -347,6 +364,8 @@ export function createModuleFetcherContext(
   projectId: string,
   options?: {
     contentSourceId?: string;
+    importMap?: ModuleFetcherContext["importMap"];
+    importMapFingerprint?: string;
     isLocalProject?: boolean;
     projectSlug?: string;
     reactVersion?: string;

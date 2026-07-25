@@ -1,6 +1,7 @@
 import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Logger } from "#veryfront/utils";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { MDXModule } from "../types.ts";
 
 export interface ESMLoaderContext {
@@ -11,6 +12,10 @@ export interface ESMLoaderContext {
   projectDir?: string;
   projectSlug?: string;
   contentSourceId?: string;
+  /** Import map already resolved for this authenticated project/source context. */
+  importMap?: ImportMapConfig;
+  /** Order-independent identity for import-map-sensitive cache entries. */
+  importMapFingerprint?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /**
@@ -56,6 +61,10 @@ export interface ModuleFetcherContext {
   projectDir: string;
   projectId: string;
   contentSourceId?: string;
+  /** Import map snapshot shared by the complete recursive module graph. */
+  importMap?: ImportMapConfig;
+  /** Order-independent identity for import-map-sensitive cache entries. */
+  importMapFingerprint?: string;
   projectSlug?: string;
   isLocalProject?: boolean;
   /**

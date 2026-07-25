@@ -53,7 +53,7 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { errorToResponse, INVALID_ARGUMENT, isVeryfrontError } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -63,14 +63,18 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRequestTokenProvenance } from "../../context/request-context.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
-import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
   filterRuntimeProjectEnv,
+  ProjectEnvironmentIdentityCache,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
-import { getConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
+import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
+import {
+  type PreparedDeclarativeConfigContext,
+  prepareDeclarativeConfigContext,
+} from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
@@ -93,6 +97,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
 };
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
+const EMPTY_AGENT_SOURCE_ENVIRONMENT: Readonly<Record<string, string>> = Object.freeze({});
 const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
   [
     "studio_suggestions",
@@ -103,50 +108,6 @@ const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
     "studio_capture_screenshot",
   ] as const,
 );
-
-async function resolveProductionEnvironmentId(
-  projectSlug: string,
-  token: string,
-  cache: LRUCacheAdapter,
-  fetchImpl: typeof globalThis.fetch,
-): Promise<string | null> {
-  const cached = cache.get<string>(projectSlug);
-  if (cached) return cached;
-  const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-  try {
-    const res = await fetchImpl(
-      `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
-    );
-    if (!res.ok) {
-      await res.body?.cancel();
-      logger.warn("Unable to resolve production environment for agent stream", {
-        projectSlug,
-        apiBaseUrl,
-        status: res.status,
-      });
-      return null;
-    }
-    const body = await res.json() as { data?: Array<{ id: string; name?: string }> };
-    const env = body.data?.find((e) => e.name === "production") ?? body.data?.[0];
-    if (!env?.id) {
-      logger.warn("Production environment missing for agent stream", {
-        projectSlug,
-        apiBaseUrl,
-      });
-      return null;
-    }
-    cache.set(projectSlug, env.id);
-    return env.id;
-  } catch (error) {
-    logger.warn("Unable to resolve production environment for agent stream", {
-      projectSlug,
-      apiBaseUrl,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
 
 function mergeAllowedRemoteTools(
   current: RuntimeRemoteToolConfig["__vfAllowedRemoteTools"],
@@ -347,14 +308,18 @@ function createStaticRemoteToolSource(
 async function resolveAgentSourceConfig(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
+  preparedContext: PreparedDeclarativeConfigContext,
+  signal: AbortSignal,
 ): Promise<VeryfrontConfig> {
   const cacheKey = ctx.projectId ?? ctx.projectSlug;
   if (!cacheKey) {
     throw new Error("Explicit agent source requires a project identity");
   }
-  return await getConfig(ctx.projectDir, ctx.adapter, {
+  return await getHostedConfig(ctx.projectDir, ctx.adapter, {
     cacheKey,
     sourceContext: buildAgentSourceRunOptions(sourceContext),
+    preparedContext,
+    signal,
   });
 }
 
@@ -493,7 +458,7 @@ function withVeryfrontStudioRemoteTools(input: {
 }
 
 function buildAgentStreamEnv(input: {
-  envVars: Record<string, string>;
+  envVars: Readonly<Record<string, string>>;
   proxyToken?: string | null;
   projectSlug?: string | null;
 }): Record<string, string> {
@@ -547,7 +512,21 @@ function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
       return {
         productionMode: true,
         releaseId: sourceContext.releaseId,
+        environmentName: null,
       };
+  }
+}
+
+function getAgentSourceEnvironmentName(
+  sourceContext: RuntimeAgentSourceContext,
+): string {
+  switch (sourceContext.type) {
+    case "environment":
+      return sourceContext.environmentName;
+    case "release":
+      return "release";
+    case "branch":
+      return "preview";
   }
 }
 
@@ -601,7 +580,10 @@ export class AgentStreamHandler extends BaseHandler {
   private readonly deps: AgentStreamHandlerDeps;
   private readonly projectEnvFetch: typeof globalThis.fetch;
   private readonly agentEnvVarCache: EnvironmentVariableCache;
-  private readonly productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
+  private readonly sourceEnvironmentIdentityCache = new ProjectEnvironmentIdentityCache({
+    maxEntries: 1000,
+    ttlMs: 60_000,
+  });
 
   constructor(deps: AgentStreamHandlerDeps = defaultDeps) {
     super();
@@ -706,9 +688,59 @@ export class AgentStreamHandler extends BaseHandler {
           requestScopedContext,
           payload.agentSource,
           async () => {
+            const sourceEnvironmentName = getAgentSourceEnvironmentName(
+              payload.agentSource,
+            );
+
+            // Resolve the environment implied by the signed source identity
+            // before evaluating untrusted hosted config. Runtime target and
+            // outer handler environment IDs belong to a separate identity and
+            // must not influence source-config evaluation.
+            let envVarsForAgent = EMPTY_AGENT_SOURCE_ENVIRONMENT;
+            if (
+              payload.agentSource.type !== "release" &&
+              requestScopedContext.projectSlug &&
+              apiAuthToken
+            ) {
+              const environmentIdentity = await this.sourceEnvironmentIdentityCache.get({
+                apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+                projectSlug: requestScopedContext.projectSlug,
+                token: apiAuthToken,
+                lookup: { kind: "name", name: sourceEnvironmentName },
+                signal: req.signal,
+                fetch: this.projectEnvFetch,
+              });
+              const environmentId = environmentIdentity.id;
+              envVarsForAgent = await this.agentEnvVarCache.get(
+                environmentId,
+                apiAuthToken,
+                requestScopedContext.projectSlug,
+                req.signal,
+              );
+              logger.debug("Agent stream env vars loaded", {
+                runId: payload.runId,
+                projectSlug: requestScopedContext.projectSlug,
+                sourceEnvironmentName,
+                environmentId,
+                count: Object.keys(envVarsForAgent).length,
+              });
+            }
+
+            // Only authenticated tenant values enter hosted config evaluation.
+            // Framework API credentials and endpoint values are added later,
+            // exclusively to the request-scoped agent execution environment.
+            const hostedConfigEnvironment = filterRuntimeProjectEnv(
+              envVarsForAgent,
+            );
+            const preparedConfigContext = await prepareDeclarativeConfigContext({
+              environmentName: sourceEnvironmentName,
+              environment: hostedConfigEnvironment,
+            });
             const sourceConfig = await resolveAgentSourceConfig(
               requestScopedContext,
               payload.agentSource,
+              preparedConfigContext,
+              req.signal,
             );
             const sourceScopedContext: HandlerContext = {
               ...requestScopedContext,
@@ -757,34 +789,6 @@ export class AgentStreamHandler extends BaseHandler {
                   availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                   conversationId: runtimeInput.threadId,
                 });
-
-                // Load project env vars so source-defined MCP tool headers resolve
-                // via _getProjectEnv(). Control-plane requests don't go through the proxy and
-                // therefore don't carry x-environment-id, so we discover the production env ID
-                // from the API (one fetch per project per server lifetime, then cached).
-                let envVarsForAgent: Record<string, string> = {};
-                if (sourceScopedContext.projectSlug && apiAuthToken) {
-                  const environmentId = sourceScopedContext.environmentId ??
-                    await resolveProductionEnvironmentId(
-                      sourceScopedContext.projectSlug,
-                      apiAuthToken,
-                      this.productionEnvIdCache,
-                      this.projectEnvFetch,
-                    );
-                  if (environmentId) {
-                    envVarsForAgent = await this.agentEnvVarCache.get(
-                      environmentId,
-                      apiAuthToken,
-                      sourceScopedContext.projectSlug,
-                    );
-                    logger.debug("Agent stream env vars loaded", {
-                      runId: payload.runId,
-                      projectSlug: sourceScopedContext.projectSlug,
-                      environmentId,
-                      count: Object.keys(envVarsForAgent).length,
-                    });
-                  }
-                }
 
                 const runAgentStream = () =>
                   createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
@@ -840,6 +844,15 @@ export class AgentStreamHandler extends BaseHandler {
 
       if (error instanceof ControlPlaneRequestError) {
         return this.respond(builder.json({ error: error.message }, error.status));
+      }
+
+      if (isVeryfrontError(error)) {
+        return this.respond(
+          applyBuilderHeaders(
+            errorToResponse(error, new URL(req.url).pathname),
+            builder.headers,
+          ),
+        );
       }
 
       if (error instanceof SyntaxError) {

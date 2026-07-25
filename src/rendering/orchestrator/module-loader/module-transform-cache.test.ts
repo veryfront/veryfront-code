@@ -72,6 +72,110 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(new Set(cacheKeys).size, 3);
   });
 
+  it("does not alias distinct config identities after post-import JSON.stringify replacement", async () => {
+    const cacheKeys: string[] = [];
+    const stringifyDescriptor = Object.getOwnPropertyDescriptor(JSON, "stringify");
+    if (stringifyDescriptor === undefined) {
+      throw new Error("JSON.stringify descriptor is unavailable");
+    }
+    const trustedStringify = stringifyDescriptor.value as (
+      value: unknown,
+    ) => string | undefined;
+    const deps = createDeps({
+      getOrComputeTransform: async (key, compute) => {
+        cacheKeys.push(key);
+        return { code: await compute(), cacheHit: false };
+      },
+      transformToESM: async () => "export default 1;",
+    });
+    const baseInput = {
+      fileContent: "export default 1;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production" as const,
+      adapter: {} as RuntimeAdapter,
+      importMap: { imports: {}, scopes: {} },
+      deps,
+    };
+
+    Object.defineProperty(JSON, "stringify", {
+      ...stringifyDescriptor,
+      value: (value: unknown) =>
+        Array.isArray(value) ? '"forced-config-identity-collision"' : trustedStringify(value),
+    });
+    try {
+      await transformModuleCodeWithCache({
+        ...baseInput,
+        reactVersion: "18.3.1",
+      });
+      await transformModuleCodeWithCache({
+        ...baseInput,
+        reactVersion: "19.1.1",
+      });
+    } finally {
+      Object.defineProperty(JSON, "stringify", stringifyDescriptor);
+    }
+
+    assertEquals(
+      new Set(cacheKeys).size,
+      2,
+      `Expected distinct cache keys, received ${cacheKeys.join(" | ")}`,
+    );
+  });
+
+  it("does not collapse hash identities after post-import Promise.all replacement", async () => {
+    const cacheKeys: string[] = [];
+    const allDescriptor = Object.getOwnPropertyDescriptor(Promise, "all");
+    if (allDescriptor === undefined) {
+      throw new Error("Promise.all descriptor is unavailable");
+    }
+    const substitutedPair = Promise.resolve([
+      "forced-content-hash",
+      "forced-import-map-fingerprint",
+    ]);
+    let replacementCalls = 0;
+    const deps = createDeps({
+      getOrComputeTransform: async (key, compute) => {
+        cacheKeys.push(key);
+        return { code: await compute(), cacheHit: false };
+      },
+      transformToESM: async () => "export default 1;",
+    });
+    const baseInput = {
+      fileContent: "export default 1;",
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production" as const,
+      adapter: {} as RuntimeAdapter,
+      deps,
+    };
+
+    Object.defineProperty(Promise, "all", {
+      ...allDescriptor,
+      value: () => {
+        replacementCalls++;
+        return substitutedPair;
+      },
+    });
+    try {
+      await transformModuleCodeWithCache({
+        ...baseInput,
+        importMap: { imports: { package: "/map-a.ts" }, scopes: {} },
+      });
+      await transformModuleCodeWithCache({
+        ...baseInput,
+        importMap: { imports: { package: "/map-b.ts" }, scopes: {} },
+      });
+    } finally {
+      Object.defineProperty(Promise, "all", allDescriptor);
+    }
+
+    assertEquals(replacementCalls, 0);
+    assertEquals(new Set(cacheKeys).size, 2);
+  });
+
   it("isolates outer transform cache keys by adapter-bound import-map content", async () => {
     const cacheKeys: string[] = [];
     let importTarget = "/vendor/one.ts";
@@ -101,6 +205,37 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(first.cacheKey === second.cacheKey, false);
     assertEquals(new Set(cacheKeys).size, 2);
     assertEquals(first.contentHash, await computeHash(input.fileContent));
+  });
+
+  it("uses a preloaded hosted import map without reloading ambient config", async () => {
+    let loadCalls = 0;
+    const importMap = { imports: { vendor: "/vendor/hosted.ts" }, scopes: {} };
+    const result = await transformModuleCodeWithCache({
+      fileContent: 'import value from "vendor";',
+      filePath: "/project/app/page.tsx",
+      projectDir: "/project",
+      effectiveProjectId: "project-1",
+      mode: "production",
+      adapter: {} as RuntimeAdapter,
+      importMap,
+      deps: createDeps({
+        loadImportMap: () => {
+          loadCalls += 1;
+          return Promise.reject(new Error("ambient import-map load must not run"));
+        },
+        getOrComputeTransform: async (_key, compute) => ({
+          code: await compute(),
+          cacheHit: false,
+        }),
+        transformToESM: async (_code, _filePath, _projectDir, _adapter, options) => {
+          assertEquals(await options.loadImportMap?.(), importMap);
+          return "export default 1;";
+        },
+      }),
+    });
+
+    assertEquals(result.code, "export default 1;");
+    assertEquals(loadCalls, 0);
   });
 
   it("re-transforms cached code when HTTP bundle validation fails", async () => {

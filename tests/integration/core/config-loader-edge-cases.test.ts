@@ -107,7 +107,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
     });
   });
 
-  describe("Invalid CORS configuration", () => {
+  describe("CORS configuration", () => {
     it("should reject invalid cors.origin type", async () => {
       await withConfigTest(
         `
@@ -120,12 +120,16 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+          await assertRejects(
+            () => getConfig(projectDir, adapter),
+            Error,
+            "Invalid veryfront.config at security.cors",
+          );
         },
       );
     });
 
-    it("should reject array as cors.origin", async () => {
+    it("should accept an origin allowlist", async () => {
       await withConfigTest(
         `
         export default {
@@ -137,7 +141,10 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+          const config = await getConfig(projectDir, adapter);
+          assertEquals(config.security?.cors, {
+            origin: ["http://localhost:3000"],
+          });
         },
       );
     });
@@ -154,7 +161,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
+          await assertRejects(
+            () => getConfig(projectDir, adapter),
+            Error,
+            "Invalid veryfront.config at security.cors",
+          );
         },
       );
     });
@@ -177,7 +188,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       );
     });
 
-    it("should handle cors as array (invalid)", async () => {
+    it("should reject a top-level cors array", async () => {
       await withConfigTest(
         `
         export default {
@@ -187,7 +198,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         };
       `,
         async ({ projectDir, adapter }) => {
-          await assertRejects(() => getConfig(projectDir, adapter), Error, "Invalid input");
+          await assertRejects(
+            () => getConfig(projectDir, adapter),
+            Error,
+            "Invalid veryfront.config at security.cors",
+          );
         },
       );
     });

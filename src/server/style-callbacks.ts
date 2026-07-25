@@ -1,4 +1,4 @@
-import { getConfig } from "#veryfront/config";
+import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import {
   invalidateProjectCandidateManifests,
 } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
@@ -23,9 +23,28 @@ import { invalidateProjectCSSAsync } from "#veryfront/html/styles-builder/tailwi
 
 const styleCallbackLog = logger.component("server-style-callbacks");
 
+/** @internal Dependency contract for focused callback tests. */
+export interface ServerStyleCallbackDependencies {
+  readonly buildPreparedCSSArtifactFromFiles: typeof buildPreparedCSSArtifactFromFiles;
+  readonly loadConfig: (
+    projectDir: string,
+    context: StylePregenerationContext,
+  ) => Promise<VeryfrontConfig>;
+}
+
+const defaultStyleCallbackDependencies: ServerStyleCallbackDependencies = {
+  buildPreparedCSSArtifactFromFiles,
+  async loadConfig(projectDir, context) {
+    const adapter = await runtime.get();
+    const cacheKey = context.contentContext?.releaseId || context.projectSlug;
+    return await getConfig(projectDir, adapter, { cacheKey });
+  },
+};
+
 async function pregenerateProjectStyles(
   files: StylePregenerationFile[],
   context: StylePregenerationContext,
+  dependencies: ServerStyleCallbackDependencies,
 ): Promise<{ hash: string; assetPath: string } | undefined> {
   const { projectDir, projectSlug, contentContext } = context;
 
@@ -36,21 +55,11 @@ async function pregenerateProjectStyles(
     return undefined;
   }
 
-  let stylesheetPath: string | undefined;
-  let styleProfile = createStyleScopeProfile();
-
-  try {
-    const adapter = await runtime.get();
-    const cacheKey = contentContext?.releaseId || projectSlug;
-    const config = await getConfig(projectDir, adapter, { cacheKey });
-    stylesheetPath = config?.tailwind?.stylesheet;
-    styleProfile = createStyleScopeProfile(config);
-  } catch (error) {
-    styleCallbackLog.debug("Failed to load config for CSS pre-generation", {
-      projectSlug,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  const config = context.config
+    ? context.config as VeryfrontConfig
+    : await dependencies.loadConfig(projectDir, context);
+  const stylesheetPath = config.tailwind?.stylesheet;
+  const styleProfile = createStyleScopeProfile(config);
 
   const stylesheet = findStylesheetFromFiles(files, stylesheetPath);
   const projectVersion = resolveStyleContentVersion(contentContext, {
@@ -59,7 +68,7 @@ async function pregenerateProjectStyles(
     environmentName: contentContext?.environmentName ?? null,
   });
 
-  const result = await buildPreparedCSSArtifactFromFiles({
+  const result = await dependencies.buildPreparedCSSArtifactFromFiles({
     projectSlug,
     projectVersion,
     projectDir,
@@ -84,8 +93,21 @@ async function pregenerateProjectStyles(
 }
 
 export function createServerStyleCallbacks(): StyleCallbacks {
-  return { pregenerateStyles: pregenerateProjectStyles };
+  return createStyleCallbacks(defaultStyleCallbackDependencies);
 }
+
+function createStyleCallbacks(
+  dependencies: ServerStyleCallbackDependencies,
+): StyleCallbacks {
+  return {
+    pregenerateStyles: (files, context) => pregenerateProjectStyles(files, context, dependencies),
+  };
+}
+
+/** @internal Focused dependency seam for style callback contract tests. */
+export const serverStyleCallbackInternals = Object.freeze({
+  createStyleCallbacks,
+});
 
 export function createServerStyleInvalidationCallbacks(): Pick<
   InvalidationCallbacks,

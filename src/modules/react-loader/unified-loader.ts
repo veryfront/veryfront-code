@@ -10,6 +10,7 @@ import {
   DEFAULT_REACT_VERSION,
   getReactImportMap,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 type TransformedComponent = { name: string; code: string };
 
@@ -26,12 +27,19 @@ export function loadComponentsUnified(
       const dev = options?.dev ?? true;
       const moduleServerUrl = options?.moduleServerUrl;
       const reactVersion = options?.reactVersion;
+      const ssr = options?.ssr ?? false;
+      const explicitImportMap = options?.importMap
+        ? snapshotImportMap(options.importMap)
+        : undefined;
 
       const transformOpts: TransformOptions = {
         projectId,
         dev,
         moduleServerUrl,
         reactVersion,
+        ssr,
+        vendorBundleHash: options?.vendorBundleHash,
+        ...(explicitImportMap ? { loadImportMap: async () => explicitImportMap } : {}),
       };
 
       const transformedComponents = await transformAllComponents(

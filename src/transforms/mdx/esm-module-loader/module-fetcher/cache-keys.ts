@@ -19,6 +19,7 @@ export function getTransformCacheKey(
   reactVersion: string,
   normalizedPath: string,
   contentHash: string,
+  importMapFingerprint?: string,
 ): string {
   return buildMdxEsmTransformCacheKey(
     projectId,
@@ -26,6 +27,7 @@ export function getTransformCacheKey(
     reactVersion,
     normalizedPath,
     contentHash,
+    importMapFingerprint,
   );
 }
 
@@ -33,6 +35,12 @@ export function getVersionedPathCacheKey(
   normalizedPath: string,
   reactVersion: string,
   sourceContentHash?: string,
+  importMapFingerprint?: string,
 ): string {
-  return buildMdxEsmPathCacheKey(normalizedPath, reactVersion, sourceContentHash);
+  return buildMdxEsmPathCacheKey(
+    normalizedPath,
+    reactVersion,
+    sourceContentHash,
+    importMapFingerprint,
+  );
 }

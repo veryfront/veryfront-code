@@ -10,6 +10,7 @@ import {
   getReconnectDelay,
   parsePokeWebSocketMessage,
 } from "./websocket-manager-helpers.ts";
+import { getCurrentRequestContext } from "./request-context.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 
 interface TimerEntry {
@@ -396,24 +397,71 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("should handle WebSocket constructor throwing", () => {
+  it("retains the connection credential after a constructor failure", () => {
     const OriginalMockWebSocket = (globalThis as any).WebSocket;
-    (globalThis as any).WebSocket = function () {
-      throw new Error("Connection failed");
+    let attempts = 0;
+    (globalThis as any).WebSocket = function (
+      url: string,
+      protocols?: string | string[],
+    ) {
+      attempts++;
+      if (attempts === 1) throw new Error("Connection failed");
+      return new MockWebSocket(url, protocols);
     };
 
     try {
       const manager = createWebSocketManager();
-      manager.connect("project-1");
+      manager.connect("project-1", "connection-token");
 
-      // Should have scheduled a reconnect timer
       assertEquals(scheduledTimers.size, 1);
       const [, timer] = Array.from(scheduledTimers.entries())[0]!;
       assertEquals(timer.delay, 5000);
 
+      manager.setApiToken("replacement-token");
+      runOnlyScheduledTimer();
+      const socket = MockWebSocket.instances.at(-1);
+      assertExists(socket);
+      assertEquals(socket.protocols, ["bearer-connection-token"]);
+
       manager.dispose();
     } finally {
       (globalThis as any).WebSocket = OriginalMockWebSocket;
+    }
+  });
+
+  it("retains the connection credential after a heartbeat timeout", () => {
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    let heartbeat: (() => void) | undefined;
+
+    globalThis.setInterval = ((handler: TimerHandler) => {
+      heartbeat = typeof handler === "function"
+        ? () => (handler as (...args: unknown[]) => unknown)()
+        : () => {};
+      return 1 as ReturnType<typeof setInterval>;
+    }) as typeof setInterval;
+    globalThis.clearInterval = (() => {}) as typeof clearInterval;
+
+    try {
+      const manager = createWebSocketManager();
+      manager.connect("project-1", "connection-token");
+      const socket = MockWebSocket.instances.at(-1);
+      assertExists(socket);
+      socket.onopen?.call(socket as unknown as WebSocket, new Event("open"));
+      assertExists(heartbeat);
+
+      manager.setApiToken("replacement-token");
+      const internals = manager as unknown as { wsLastPong: number };
+      internals.wsLastPong = 0;
+      heartbeat();
+
+      const reconnected = MockWebSocket.instances.at(-1);
+      assertExists(reconnected);
+      assertEquals(reconnected.protocols, ["bearer-connection-token"]);
+      manager.dispose();
+    } finally {
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
     }
   });
 
@@ -606,13 +654,13 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("uses the latest API token when opening a WebSocket", () => {
+  it("retains the connection credential across reconnects", () => {
     const manager = createWebSocketManager();
 
-    manager.connect("project-1");
+    manager.connect("project-1", "connection-token");
     let socket = MockWebSocket.instances.at(-1);
     assertExists(socket);
-    assertEquals(socket.protocols, ["bearer-test-token"]);
+    assertEquals(socket.protocols, ["bearer-connection-token"]);
 
     manager.setApiToken("fresh-request-token");
     socket.emitClose();
@@ -621,7 +669,7 @@ describe("WebSocketManager", () => {
 
     socket = MockWebSocket.instances.at(-1);
     assertExists(socket);
-    assertEquals(socket.protocols, ["bearer-fresh-request-token"]);
+    assertEquals(socket.protocols, ["bearer-connection-token"]);
 
     manager.dispose();
   });
@@ -792,16 +840,20 @@ describe("WebSocketManager", () => {
     } ? T | undefined
       : never;
     let capturedChangedPaths: string[] | undefined;
+    let apiRequestContext = getCurrentRequestContext();
 
     const manager = createWebSocketManager({
       client: {
-        listAllFiles: async () => [{
-          path: "app/page.tsx",
-          type: "page",
-          size: 32,
-          updated_at: "2026-03-22T00:00:00.000Z",
-          content: "<div class='text-red-500'/>",
-        }],
+        listAllFiles: async () => {
+          apiRequestContext = getCurrentRequestContext();
+          return [{
+            path: "app/page.tsx",
+            type: "page",
+            size: 32,
+            updated_at: "2026-03-22T00:00:00.000Z",
+            content: "<div class='text-red-500'/>",
+          }];
+        },
       },
       invalidationCallbacks: {
         triggerReload: (changedPaths, project) => {
@@ -815,7 +867,7 @@ describe("WebSocketManager", () => {
       }),
     });
 
-    manager.connect("project-1");
+    manager.connect("project-1", "connection-token");
     const socket = MockWebSocket.instances[0];
     assertExists(socket);
 
@@ -838,6 +890,12 @@ describe("WebSocketManager", () => {
     assertEquals(capturedChangedPaths, ["app/page.tsx"]);
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
+    assertEquals(apiRequestContext?.requestApiCredential, {
+      projectSlug: "test-project",
+      projectId: "project-1",
+      token: "connection-token",
+    });
+    assertEquals(apiRequestContext?.cacheApiCredential, undefined);
 
     manager.dispose();
   });

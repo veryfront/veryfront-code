@@ -6,6 +6,7 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import React from "react";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
@@ -37,6 +38,7 @@ export class MDXRenderer {
     projectSlug?: string,
     contentSourceId?: string,
     reactVersion?: string,
+    importMap?: ImportMapConfig,
   ): Promise<MDXModule> {
     const context: ESMLoaderContext = {
       esmCacheDir: undefined,
@@ -47,6 +49,7 @@ export class MDXRenderer {
       projectSlug,
       contentSourceId,
       reactVersion,
+      importMap,
     };
 
     return loadModuleESM(compiledProgramCode, context);

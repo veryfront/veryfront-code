@@ -2,6 +2,10 @@
 
 import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  assertImportMapIdentity,
+  type ImportMapIdentity,
+} from "#veryfront/modules/import-map/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
@@ -220,10 +224,20 @@ export interface ModuleServerOptions {
   reactVersion?: string;
   /** Request mode ("preview" | "production") for studio features like node positions */
   mode?: string;
+  /**
+   * Request-bound import map and canonical cache identity. Hosted handlers
+   * always provide this; standalone callers may omit it to retain local
+   * ambient-resolution compatibility.
+   */
+  importMapIdentity?: ImportMapIdentity;
 }
 
 /** Serve transformed module at /_vf_modules/* path */
 export function serveModule(req: Request, options: ModuleServerOptions): Promise<Response> {
+  const importMapIdentity = options.importMapIdentity;
+  if (importMapIdentity !== undefined) {
+    assertImportMapIdentity(importMapIdentity);
+  }
   const url = new URL(req.url);
 
   return withSpan(
@@ -242,6 +256,9 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       } = options;
 
       const effectiveProjectId = projectUUID ?? projectId;
+      const loadBoundImportMap = importMapIdentity
+        ? async () => importMapIdentity.importMap
+        : undefined;
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
 
@@ -319,7 +336,13 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             sourceFile: `_snippets/${hash}.tsx`,
             projectDir,
             adapter,
-            transformOpts: { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
+            transformOpts: {
+              projectId: effectiveProjectId,
+              dev,
+              ssr: isSSR,
+              reactVersion,
+              loadImportMap: loadBoundImportMap,
+            },
             isSSR,
             ssrRewriteOptions: {
               projectSlug: snippetProjectSlug,
@@ -416,6 +439,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               ssr: isSSR,
               moduleServerUrl: `http://${url.host}`,
               reactVersion,
+              loadImportMap: loadBoundImportMap,
             },
             isSSR,
             ssrRewriteOptions: {
@@ -596,6 +620,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             ssr: isSSR,
             studioEmbed,
             reactVersion,
+            loadImportMap: loadBoundImportMap,
           };
 
           // The dev-module path has two post-steps that stay outside

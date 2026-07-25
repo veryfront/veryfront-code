@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 export interface TransformOptions {
   dev?: boolean;
@@ -17,6 +18,8 @@ export interface TransformOptions {
   dependencyHashCache?: DependencyHashCache;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
+  /** Internal request-scoped import-map provider for SSR transforms. */
+  loadImportMap?: () => Promise<ImportMapConfig>;
 }
 
 export interface TransformContext {

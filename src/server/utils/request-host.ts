@@ -15,7 +15,7 @@ export function parseForwardedHost(raw: string | null): string | undefined {
  * header (which the edge proxy also sets) and finally the URL host.
  *
  * Defaults to untrusted so callers fail closed unless they explicitly establish
- * proxy trust (see {@link isProxyTrusted}).
+ * operator-controlled topology trust (see `isProxyTopologyTrusted`).
  */
 export function getEffectiveRequestHost(
   req: Request,

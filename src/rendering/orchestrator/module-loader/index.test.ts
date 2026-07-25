@@ -19,6 +19,10 @@ import {
 } from "./index.ts";
 import { getModuleCacheKey } from "./module-cache-lookup.ts";
 import { isBuildFailure } from "./build-failure.ts";
+import {
+  fingerprintPipelineImportMap,
+  snapshotImportMap,
+} from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -58,6 +62,17 @@ function assertTransformedImportPath(code: string, expectedPathPart: string): st
   const importPath = match[1]!;
   assertStringIncludes(importPath, expectedPathPart);
   return importPath;
+}
+
+async function withCanonicalImportMap(
+  config: ModuleLoaderConfig,
+): Promise<ModuleLoaderConfig> {
+  const importMap = snapshotImportMap({ imports: {}, scopes: {} });
+  return {
+    ...config,
+    importMap,
+    importMapFingerprint: await fingerprintPipelineImportMap(importMap),
+  };
 }
 
 describe("module-loader/transformModuleWithDeps", () => {
@@ -280,6 +295,72 @@ describe("module-loader/transformModuleWithDeps", () => {
       },
     );
   });
+
+  it("derives the canonical import-map fingerprint before consulting caches", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.json": `export const value = "fresh";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.json");
+        const suppliedImportMap = {
+          imports: { package: "https://cdn.example.test/package-v2.mjs" },
+        };
+        const differentImportMap = snapshotImportMap({
+          imports: { package: "https://cdn.example.test/package-v1.mjs" },
+        });
+        const forgedFingerprint = await fingerprintPipelineImportMap(differentImportMap);
+        const expectedSnapshot = snapshotImportMap(suppliedImportMap);
+        const expectedFingerprint = await fingerprintPipelineImportMap(expectedSnapshot);
+        assertNotStrictEquals(expectedFingerprint, forgedFingerprint);
+
+        const stalePath = join(tmpDir, "stale-map-a.mjs");
+        await Deno.writeTextFile(stalePath, `export const value = "stale";`);
+        const forgedConfig: ModuleLoaderConfig = {
+          ...config,
+          importMap: suppliedImportMap,
+          importMapFingerprint: forgedFingerprint,
+        };
+        forgedConfig.moduleCache.set(
+          getModuleCacheKey(
+            filePath,
+            undefined,
+            projectDir,
+            undefined,
+            undefined,
+            "development",
+            forgedFingerprint,
+          ),
+          stalePath,
+        );
+
+        const transformedPath = await transformModuleWithDeps(
+          filePath,
+          tmpDir,
+          config.adapter,
+          forgedConfig,
+        );
+
+        assertNotStrictEquals(transformedPath, stalePath);
+        assertEquals(forgedConfig.importMap, expectedSnapshot);
+        assertEquals(forgedConfig.importMapFingerprint, expectedFingerprint);
+        assertEquals(
+          forgedConfig.moduleCache.get(
+            getModuleCacheKey(
+              filePath,
+              undefined,
+              projectDir,
+              undefined,
+              undefined,
+              "development",
+              expectedFingerprint,
+            ),
+          ),
+          transformedPath,
+        );
+      },
+    );
+  });
 });
 
 describe("module-loader/loadModule build-failure tagging", () => {
@@ -343,11 +424,22 @@ describe("module-loader/loadModule", () => {
       { "app/page.ts": `export const value = "stable";` },
       async ({ projectDir, tmpDir, config }) => {
         const filePath = join(projectDir, "app/page.ts");
-        const productionConfig = { ...config, mode: "production" as const };
+        const productionConfig = await withCanonicalImportMap({
+          ...config,
+          mode: "production",
+        });
         const artifactPath = join(tmpDir, "page.stable.mjs");
         await Deno.writeTextFile(artifactPath, `export const value = "stable";`);
         productionConfig.moduleCache.set(
-          getModuleCacheKey(filePath, undefined, projectDir, undefined, undefined, "production"),
+          getModuleCacheKey(
+            filePath,
+            undefined,
+            projectDir,
+            undefined,
+            undefined,
+            "production",
+            productionConfig.importMapFingerprint,
+          ),
           artifactPath,
         );
 
@@ -370,7 +462,10 @@ describe("module-loader/loadModule", () => {
       { "app/page.ts": `export const value = "stable";` },
       async ({ projectDir, tmpDir, config }) => {
         const filePath = join(projectDir, "app/page.ts");
-        const productionConfig = { ...config, mode: "production" as const };
+        const productionConfig = await withCanonicalImportMap({
+          ...config,
+          mode: "production",
+        });
         const cacheKey = getModuleCacheKey(
           filePath,
           undefined,
@@ -378,6 +473,7 @@ describe("module-loader/loadModule", () => {
           undefined,
           undefined,
           "production",
+          productionConfig.importMapFingerprint,
         );
         const stablePath = join(tmpDir, "page.stable.mjs");
         await Deno.writeTextFile(stablePath, `export const value = "stable";`);

@@ -39,6 +39,7 @@ describe("module-fetcher/http-fallback", () => {
       esmCacheDir: "/cache",
       pathCache,
       reactVersion: "19.1.1",
+      importMapFingerprint: "a".repeat(64),
       fetchViaHttp: (
         normalizedPath,
         receivedAdapter,
@@ -63,12 +64,16 @@ describe("module-fetcher/http-fallback", () => {
         receivedPathCache,
         _log,
         reactVersion,
+        sourceContentHash,
+        importMapFingerprint,
       ) => {
         assertEquals(normalizedPath, "_vf_modules/app/page.js");
         assertEquals(moduleCode, "export default 1;");
         assertEquals(esmCacheDir, "/cache");
         assertEquals(receivedPathCache, pathCache);
         assertEquals(reactVersion, "19.1.1");
+        assertEquals(sourceContentHash, undefined);
+        assertEquals(importMapFingerprint, "a".repeat(64));
         return Promise.resolve("/cache/app-page.mjs");
       },
     });

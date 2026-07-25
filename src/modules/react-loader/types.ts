@@ -1,4 +1,5 @@
 import type * as React from "react";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 export interface LoadComponentOptions {
   projectId?: string;
@@ -15,6 +16,8 @@ export interface LoadComponentOptions {
   reactVersion?: string;
   /** Request mode ("preview" | "production") for studio features */
   mode?: string;
+  /** Import map snapshot resolved for this exact project/content source during SSR transforms. */
+  importMap?: ImportMapConfig;
 }
 
 export interface ComponentSource {

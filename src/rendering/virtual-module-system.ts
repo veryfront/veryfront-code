@@ -1,6 +1,12 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors";
-import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import {
+  loadImportMap,
+  preloadImportMap,
+  transformImportsWithMap,
+} from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { transformJsx } from "#veryfront/platform/compat/transform.ts";
 
 interface VirtualModule {
@@ -8,6 +14,13 @@ interface VirtualModule {
   source: string;
   transformed?: string;
   contentType: string;
+}
+
+export interface VirtualModuleSystemContext {
+  projectId?: string;
+  contentSourceId?: string;
+  config?: VeryfrontConfig;
+  importMap?: ImportMapConfig;
 }
 
 /**
@@ -30,8 +43,13 @@ export class VirtualModuleSystem {
   private modules = new Map<string, VirtualModule>();
   private baseUrl: string;
   private adapter: RuntimeAdapter;
+  private context?: VirtualModuleSystemContext;
 
-  constructor(baseUrl: string = "/_veryfront/modules", adapter?: RuntimeAdapter) {
+  constructor(
+    baseUrl: string = "/_veryfront/modules",
+    adapter?: RuntimeAdapter,
+    context?: VirtualModuleSystemContext,
+  ) {
     this.baseUrl = baseUrl;
 
     if (!adapter) {
@@ -44,6 +62,27 @@ export class VirtualModuleSystem {
     }
 
     this.adapter = adapter;
+    this.context = context;
+  }
+
+  private async resolveImportMap(projectDir: string): Promise<ImportMapConfig> {
+    if (this.context?.importMap) return this.context.importMap;
+    if (!this.context?.config) return await loadImportMap(projectDir, this.adapter);
+
+    return await preloadImportMap(
+      projectDir,
+      this.adapter,
+      this.context.projectId,
+      {
+        contentSourceId: this.context.contentSourceId,
+        config: this.context.config,
+      },
+    );
+  }
+
+  /** Resolve the import-map snapshot bound to this virtual-module context. */
+  getImportMap(projectDir: string): Promise<ImportMapConfig> {
+    return this.resolveImportMap(projectDir);
   }
 
   register(
@@ -61,7 +100,7 @@ export class VirtualModuleSystem {
     projectDir: string,
     fileType?: "tsx" | "jsx" | "ts" | "js",
   ): Promise<string> {
-    const importMap = await loadImportMap(projectDir, this.adapter);
+    const importMap = await this.resolveImportMap(projectDir);
 
     // Prefer the explicit file type supplied by the caller (it knows the extension).
     // Fall back to heuristic detection only when no type is provided.

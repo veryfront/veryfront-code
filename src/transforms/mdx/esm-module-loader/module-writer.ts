@@ -110,8 +110,12 @@ export async function doLoadModuleESM(
 
     const projectDir = resolveProjectDir(context);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap START`, { projectSlug });
-    const importMap = snapshotImportMap(await loadImportMap(projectDir, adapter));
+    const importMap = snapshotImportMap(
+      context.importMap ?? await loadImportMap(projectDir, adapter),
+    );
     const importMapFingerprint = await fingerprintPipelineImportMap(importMap);
+    context.importMap = importMap;
+    context.importMapFingerprint = importMapFingerprint;
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap DONE`, { projectSlug });
 
     rewritten = transformImports(rewritten, importMap);

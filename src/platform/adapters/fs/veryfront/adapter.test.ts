@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
@@ -108,6 +108,8 @@ describe("VeryfrontFSAdapter", () => {
       "getPokeMetrics",
       "getClient",
       "refreshSourceSnapshot",
+      "createStyleConfigBinding",
+      "installStyleConfig",
     ] as const;
 
     for (const method of methods) {
@@ -115,6 +117,29 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(typeof (createAdapter() as any)[method], "function");
       });
     }
+  });
+
+  describe("exists", () => {
+    it("propagates operational stat failures instead of reporting absence", async () => {
+      const adapter = createAdapter();
+      const backendError = new Error("stat backend unavailable");
+      const internals = adapter as unknown as {
+        initialized: boolean;
+        statOps: {
+          exists(path: string): Promise<boolean>;
+          stat(path: string): Promise<never>;
+        };
+      };
+      internals.initialized = true;
+      internals.statOps = {
+        exists: () => Promise.reject(backendError),
+        stat: () => Promise.reject(backendError),
+      };
+
+      const error = await assertRejects(() => adapter.exists("/veryfront.config.ts"));
+
+      assertEquals(error, backendError);
+    });
   });
 
   describe("request tokens", () => {
@@ -140,6 +165,247 @@ describe("VeryfrontFSAdapter", () => {
 
       adapter.clearRequestToken();
       assertEquals(websocketToken, "static-token");
+    });
+  });
+
+  describe("hosted style configuration bindings", () => {
+    function createProxyStyleAdapter(
+      calls: Array<{
+        files: Array<{ path: string; content?: string }>;
+        config: Readonly<object> | undefined;
+        releaseId: string | undefined;
+      }>,
+    ): VeryfrontFSAdapter {
+      return createAdapter({
+        projectDir: "/tmp/test-project",
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+        styleCallbacks: {
+          pregenerateStyles: (files, context) => {
+            calls.push({
+              files,
+              config: context.config,
+              releaseId: context.contentContext?.releaseId,
+            });
+            return Promise.resolve({
+              hash: "style-hash",
+              assetPath: "/_vf/css/style-hash.css",
+            });
+          },
+        },
+      });
+    }
+
+    function getStyleInternals(adapter: VeryfrontFSAdapter) {
+      return adapter as unknown as {
+        triggerCSSPregeneration(
+          files: Array<{ path: string; content?: string }>,
+        ): Promise<{ hash: string; assetPath: string } | undefined>;
+        wsManager: {
+          deps: {
+            pregenerateStyles(
+              files: Array<{ path: string; content?: string }>,
+            ): Promise<{ hash: string; assetPath: string } | undefined>;
+          };
+        };
+      };
+    }
+
+    it("uses captured style primordials after ambient prototypes are poisoned", async () => {
+      const calls: Array<{
+        files: Array<{ path: string; content?: string }>;
+        config: Readonly<object> | undefined;
+        releaseId: string | undefined;
+      }> = [];
+      const adapter = createProxyStyleAdapter(calls);
+      const internals = getStyleInternals(adapter);
+      const pendingFiles = [{ path: "globals.css", content: "pending" }];
+      const exactConfig = { exact: true };
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-a",
+      });
+
+      const originalJSONStringify = JSON.stringify;
+      const originalArrayMap = Array.prototype.map;
+      const originalFreeze = Object.freeze;
+      const originalWeakSetAdd = WeakSet.prototype.add;
+      const originalWeakSetDelete = WeakSet.prototype.delete;
+      const originalWeakSetHas = WeakSet.prototype.has;
+      let bindingWasFrozen = false;
+      let forgedAccepted = true;
+      let exactAccepted = false;
+      let replayAccepted = true;
+      let staleAccepted = true;
+
+      try {
+        JSON.stringify = (() => {
+          throw new Error("ambient JSON.stringify must not run");
+        }) as typeof JSON.stringify;
+        Array.prototype.map = (() => {
+          throw new Error("ambient Array.map must not run");
+        }) as typeof Array.prototype.map;
+        Object.freeze = ((value: object) => value) as typeof Object.freeze;
+        WeakSet.prototype.add = (() => {
+          throw new Error("ambient WeakSet.add must not run");
+        }) as typeof WeakSet.prototype.add;
+        WeakSet.prototype.has = (() => true) as typeof WeakSet.prototype.has;
+        WeakSet.prototype.delete = (() => {
+          throw new Error("ambient WeakSet.delete must not run");
+        }) as typeof WeakSet.prototype.delete;
+
+        const binding = adapter.createStyleConfigBinding();
+        bindingWasFrozen = Object.isFrozen(binding);
+        await internals.triggerCSSPregeneration(pendingFiles);
+        const pendingFile = pendingFiles[0];
+        if (!pendingFile) throw new Error("pending style file fixture is missing");
+        pendingFile.content = "mutated";
+        forgedAccepted = adapter.installStyleConfig(
+          {
+            projectSlug: binding.projectSlug,
+            sourceKey: binding.sourceKey,
+            sourceRevision: binding.sourceRevision,
+          },
+          { forged: true },
+        );
+        exactAccepted = adapter.installStyleConfig(binding, exactConfig);
+        replayAccepted = adapter.installStyleConfig(binding, { replay: true });
+
+        const staleBinding = adapter.createStyleConfigBinding();
+        adapter.setContentContext({
+          sourceType: "release",
+          projectSlug: "test-project",
+          releaseId: "release-b",
+        });
+        staleAccepted = adapter.installStyleConfig(staleBinding, { stale: true });
+      } finally {
+        JSON.stringify = originalJSONStringify;
+        Array.prototype.map = originalArrayMap;
+        Object.freeze = originalFreeze;
+        WeakSet.prototype.add = originalWeakSetAdd;
+        WeakSet.prototype.delete = originalWeakSetDelete;
+        WeakSet.prototype.has = originalWeakSetHas;
+      }
+
+      await waitFor(() => Promise.resolve(calls.length === 1));
+      assertEquals(bindingWasFrozen, true);
+      assertEquals(forgedAccepted, false);
+      assertEquals(exactAccepted, true);
+      assertEquals(replayAccepted, false);
+      assertEquals(staleAccepted, false);
+      assertEquals(calls, [{
+        files: [{ path: "globals.css", content: "pending" }],
+        config: exactConfig,
+        releaseId: "release-a",
+      }]);
+    });
+
+    it("does not let a late source config flush another source's files", async () => {
+      const calls: Array<{
+        files: Array<{ path: string; content?: string }>;
+        config: Readonly<object> | undefined;
+        releaseId: string | undefined;
+      }> = [];
+      const adapter = createProxyStyleAdapter(calls);
+      const internals = getStyleInternals(adapter);
+      const sourceAFiles = [{ path: "a.css", content: "source-a" }];
+      const sourceBFiles = [{ path: "b.css", content: "source-b" }];
+      const sourceAConfig = { tailwind: { stylesheet: "a.css" } };
+      const sourceBConfig = { tailwind: { stylesheet: "b.css" } };
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-a",
+      });
+      await internals.triggerCSSPregeneration(sourceAFiles);
+      const sourceABinding = adapter.createStyleConfigBinding();
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-b",
+      });
+      await internals.triggerCSSPregeneration(sourceBFiles);
+
+      assertEquals(adapter.installStyleConfig(sourceABinding, sourceAConfig), false);
+      assertEquals(calls, []);
+
+      const sourceBBinding = adapter.createStyleConfigBinding();
+      assertEquals(adapter.installStyleConfig(sourceBBinding, sourceBConfig), true);
+      await waitFor(() => Promise.resolve(calls.length === 1));
+
+      assertEquals(calls, [{
+        files: sourceBFiles,
+        config: sourceBConfig,
+        releaseId: "release-b",
+      }]);
+      assertEquals(adapter.installStyleConfig(sourceBBinding, sourceBConfig), false);
+    });
+
+    it("invalidates an in-flight config binding when the source snapshot advances", async () => {
+      const calls: Array<{
+        files: Array<{ path: string; content?: string }>;
+        config: Readonly<object> | undefined;
+        releaseId: string | undefined;
+      }> = [];
+      const adapter = createProxyStyleAdapter(calls);
+      const internals = getStyleInternals(adapter);
+      const oldConfig = { tailwind: { stylesheet: "old.css" } };
+      const nextConfig = { tailwind: { stylesheet: "next.css" } };
+      const nextFiles = [{ path: "next.css", content: "next" }];
+
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId: "release-1",
+      });
+      const oldBinding = adapter.createStyleConfigBinding();
+
+      await internals.wsManager.deps.pregenerateStyles(nextFiles);
+      assertEquals(adapter.installStyleConfig(oldBinding, oldConfig), false);
+
+      const nextBinding = adapter.createStyleConfigBinding();
+      assertEquals(adapter.installStyleConfig(nextBinding, nextConfig), true);
+      await waitFor(() => Promise.resolve(calls.length === 1));
+      assertEquals(calls[0], {
+        files: nextFiles,
+        config: nextConfig,
+        releaseId: "release-1",
+      });
+    });
+
+    it("clears pending files and bindings when disposed", async () => {
+      const calls: Array<{
+        files: Array<{ path: string; content?: string }>;
+        config: Readonly<object> | undefined;
+        releaseId: string | undefined;
+      }> = [];
+      const adapter = createProxyStyleAdapter(calls);
+      const internals = getStyleInternals(adapter);
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-a",
+      });
+      const binding = adapter.createStyleConfigBinding();
+      await internals.triggerCSSPregeneration([{
+        path: "globals.css",
+        content: "pending",
+      }]);
+
+      adapter.dispose();
+
+      assertEquals(adapter.installStyleConfig(binding, {}), false);
+      assertEquals(calls, []);
     });
   });
 

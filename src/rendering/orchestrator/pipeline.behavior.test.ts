@@ -25,8 +25,45 @@ import {
   globalInProgress,
   globalModuleCache,
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
+import {
+  clearImportMapCache,
+  createImportMapIdentity,
+  type ImportMapIdentity,
+} from "#veryfront/modules/import-map/index.ts";
+import type {
+  LayoutPreloadSummary,
+  LayoutRequestIdentity,
+  LayoutRequestOverrides,
+} from "./layout.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+function layoutPreloadSummary(
+  requestIdentity: LayoutRequestIdentity,
+): LayoutPreloadSummary {
+  return {
+    tsxTotal: 1,
+    tsxSuccess: 1,
+    tsxFailures: [],
+    mdxTotal: 0,
+    mdxSuccess: 0,
+    mdxFailures: [],
+    importMapSuccess: true,
+    durationMs: 0,
+    allSuccess: true,
+    requestIdentity,
+  };
+}
 
 function createPipeline(
   pagePath: string,
@@ -79,6 +116,11 @@ function createPipeline(
       env: { get: () => undefined },
       fs: {
         exists: async () => false,
+        readFile: async () => {
+          const error = new Error("not found") as Error & { code: string };
+          error.code = "ENOENT";
+          throw error;
+        },
       },
     } as any,
     mode: "production",
@@ -183,6 +225,273 @@ describe("RenderPipeline behavior", () => {
       assertEquals(config.contentSourceId, "preview-request-source");
       assertEquals(config.reactVersion, "18.3.1");
     }
+  });
+
+  it("keeps page and layout identities aligned across sequential request overrides", async () => {
+    const pagePath = "/project/pages/request-identity.tsx";
+    const layoutPath = "/project/layouts/request-identity.tsx";
+    const importMapA = await createImportMapIdentity({
+      imports: { package: "https://example.com/a.ts" },
+    });
+    const importMapB = await createImportMapIdentity({
+      imports: { package: "https://example.com/b.ts" },
+    });
+    const identitiesBySource = new Map<string, ImportMapIdentity>([
+      ["source-a", importMapA],
+      ["source-b", importMapB],
+    ]);
+    const moduleObservations: Array<{
+      path: string;
+      projectId?: string;
+      contentSourceId?: string;
+    }> = [];
+    const layoutObservations: LayoutRequestIdentity[] = [];
+    const pipeline = createPipeline(pagePath, {
+      config: {
+        react: { version: "19.2.4" },
+        resolve: {
+          importMap: {
+            imports: { package: "https://example.com/page.ts" },
+          },
+        },
+      },
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async (
+          _layouts: unknown,
+          overrides: LayoutRequestOverrides,
+        ) => {
+          const projectId = overrides.projectId!;
+          const projectSlug = overrides.projectSlug!;
+          const contentSourceId = overrides.contentSourceId!;
+          return layoutPreloadSummary({
+            projectId,
+            projectSlug,
+            contentSourceId,
+            importMapIdentity: identitiesBySource.get(contentSourceId)!,
+          });
+        },
+        applyLayoutsAndWrappers: async (
+          element: unknown,
+          _pageInfo: unknown,
+          _layoutBundle: unknown,
+          _layouts: unknown,
+          requestIdentity: LayoutRequestIdentity,
+        ) => {
+          layoutObservations.push(requestIdentity);
+          return element;
+        },
+      } as any,
+    });
+    (pipeline as any).loadModule = async (
+      path: string,
+      config: { projectId?: string; contentSourceId?: string },
+    ) => {
+      moduleObservations.push({
+        path,
+        projectId: config.projectId,
+        contentSourceId: config.contentSourceId,
+      });
+      return {};
+    };
+
+    try {
+      for (const suffix of ["a", "b"] as const) {
+        await pipeline.renderPage(`/request-identity-${suffix}`, {
+          projectId: `project-${suffix}`,
+          projectSlug: `slug-${suffix}`,
+          contentSourceId: `source-${suffix}`,
+          request: new Request(`http://localhost/request-identity-${suffix}`),
+          url: new URL(`http://localhost/request-identity-${suffix}`),
+          skipCacheCheck: true,
+          skipCachePersist: true,
+        });
+      }
+    } finally {
+      clearImportMapCache("project-a");
+      clearImportMapCache("project-b");
+    }
+
+    assertEquals(
+      moduleObservations.map(({ path, projectId, contentSourceId }) => ({
+        path,
+        projectId,
+        contentSourceId,
+      })),
+      [
+        { path: pagePath, projectId: "project-a", contentSourceId: "source-a" },
+        { path: layoutPath, projectId: "project-a", contentSourceId: "source-a" },
+        { path: pagePath, projectId: "project-b", contentSourceId: "source-b" },
+        { path: layoutPath, projectId: "project-b", contentSourceId: "source-b" },
+      ],
+    );
+    assertEquals(
+      layoutObservations.map((identity) => ({
+        projectId: identity.projectId,
+        projectSlug: identity.projectSlug,
+        contentSourceId: identity.contentSourceId,
+        package: identity.importMapIdentity.importMap.imports?.package,
+      })),
+      [
+        {
+          projectId: "project-a",
+          projectSlug: "slug-a",
+          contentSourceId: "source-a",
+          package: "https://example.com/a.ts",
+        },
+        {
+          projectId: "project-b",
+          projectSlug: "slug-b",
+          contentSourceId: "source-b",
+          package: "https://example.com/b.ts",
+        },
+      ],
+    );
+  });
+
+  it("keeps concurrent layout identities request-local when preloads settle out of order", async () => {
+    const pagePath = "/project/pages/concurrent-identity.tsx";
+    const layoutPath = "/project/layouts/concurrent-identity.tsx";
+    const importMapA = await createImportMapIdentity({
+      imports: { package: "https://example.com/concurrent-a.ts" },
+    });
+    const importMapB = await createImportMapIdentity({
+      imports: { package: "https://example.com/concurrent-b.ts" },
+    });
+    const startedA = createDeferred<void>();
+    const startedB = createDeferred<void>();
+    const releaseA = createDeferred<void>();
+    const releaseB = createDeferred<void>();
+    const layoutObservations: LayoutRequestIdentity[] = [];
+    const pageObservations: Array<{
+      projectId?: string;
+      contentSourceId?: string;
+    }> = [];
+    const pipeline = createPipeline(pagePath, {
+      config: {
+        react: { version: "19.2.4" },
+        resolve: {
+          importMap: {
+            imports: { package: "https://example.com/page.ts" },
+          },
+        },
+      },
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async (
+          _layouts: unknown,
+          overrides: LayoutRequestOverrides,
+        ) => {
+          const isA = overrides.contentSourceId === "source-concurrent-a";
+          (isA ? startedA : startedB).resolve();
+          await (isA ? releaseA : releaseB).promise;
+          return layoutPreloadSummary({
+            projectId: overrides.projectId!,
+            projectSlug: overrides.projectSlug!,
+            contentSourceId: overrides.contentSourceId!,
+            importMapIdentity: isA ? importMapA : importMapB,
+          });
+        },
+        applyLayoutsAndWrappers: async (
+          element: unknown,
+          _pageInfo: unknown,
+          _layoutBundle: unknown,
+          _layouts: unknown,
+          requestIdentity: LayoutRequestIdentity,
+        ) => {
+          layoutObservations.push(requestIdentity);
+          return element;
+        },
+      } as any,
+    });
+    (pipeline as any).loadModule = async (
+      path: string,
+      config: { projectId?: string; contentSourceId?: string },
+    ) => {
+      if (path === pagePath) {
+        pageObservations.push({
+          projectId: config.projectId,
+          contentSourceId: config.contentSourceId,
+        });
+      }
+      return {};
+    };
+
+    const renderA = pipeline.renderPage("/concurrent-a", {
+      projectId: "project-concurrent-a",
+      projectSlug: "slug-concurrent-a",
+      contentSourceId: "source-concurrent-a",
+      request: new Request("http://localhost/concurrent-a"),
+      url: new URL("http://localhost/concurrent-a"),
+      skipCacheCheck: true,
+      skipCachePersist: true,
+    });
+    await startedA.promise;
+    const renderB = pipeline.renderPage("/concurrent-b", {
+      projectId: "project-concurrent-b",
+      projectSlug: "slug-concurrent-b",
+      contentSourceId: "source-concurrent-b",
+      request: new Request("http://localhost/concurrent-b"),
+      url: new URL("http://localhost/concurrent-b"),
+      skipCacheCheck: true,
+      skipCachePersist: true,
+    });
+    await startedB.promise;
+
+    try {
+      releaseB.resolve();
+      await renderB;
+      assertEquals(layoutObservations.length, 1);
+      assertEquals(layoutObservations[0]?.projectId, "project-concurrent-b");
+      releaseA.resolve();
+      await renderA;
+    } finally {
+      releaseA.resolve();
+      releaseB.resolve();
+      clearImportMapCache("project-concurrent-a");
+      clearImportMapCache("project-concurrent-b");
+    }
+
+    assertEquals(
+      pageObservations.toSorted((left, right) =>
+        (left.projectId ?? "").localeCompare(right.projectId ?? "")
+      ),
+      [
+        {
+          projectId: "project-concurrent-a",
+          contentSourceId: "source-concurrent-a",
+        },
+        {
+          projectId: "project-concurrent-b",
+          contentSourceId: "source-concurrent-b",
+        },
+      ],
+    );
+    assertEquals(
+      layoutObservations.map((identity) => ({
+        projectId: identity.projectId,
+        contentSourceId: identity.contentSourceId,
+        package: identity.importMapIdentity.importMap.imports?.package,
+      })),
+      [
+        {
+          projectId: "project-concurrent-b",
+          contentSourceId: "source-concurrent-b",
+          package: "https://example.com/concurrent-b.ts",
+        },
+        {
+          projectId: "project-concurrent-a",
+          contentSourceId: "source-concurrent-a",
+          package: "https://example.com/concurrent-a.ts",
+        },
+      ],
+    );
   });
 
   it("keeps a cold module graph alive while distinct transforms keep completing", async () => {
@@ -949,6 +1258,11 @@ describe("RenderPipeline behavior", () => {
     (pipeline as any).loadModule = async () => ({});
     (pipeline as any).config.adapter.fs = {
       exists: async () => false,
+      readFile: async () => {
+        const error = new Error("not found") as Error & { code: string };
+        error.code = "ENOENT";
+        throw error;
+      },
       isMultiProjectMode: () => false,
       isVeryfrontAdapter: () => true,
       getAdapterType: () => "VeryfrontFSAdapter",
@@ -1115,6 +1429,7 @@ describe("RenderPipeline behavior", () => {
           _pageInfo: unknown,
           _layoutBundle: unknown,
           _nestedLayouts: unknown,
+          _requestIdentity: unknown,
           layoutProps: Map<string, Record<string, unknown>>,
         ) => {
           appliedLayoutProps = layoutProps;

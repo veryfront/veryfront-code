@@ -16,8 +16,8 @@
  *
  * This check is deliberately a *signature + freshness* trust signal only — it
  * proves the JWS was minted by a holder of the control-plane private key and is
- * still fresh, exactly like {@link verifyDispatchJwsSignature} and
- * `isProxyTrusted`. It intentionally does NOT bind the signature to the request
+ * still fresh, exactly like {@link verifyDispatchJwsSignature}. It
+ * intentionally does NOT bind the signature to the request
  * body, audience, or project id: the proxy must not consume the request body
  * (it has to stream it to the renderer). That authoritative, body-bound
  * verification still runs downstream in the renderer — `verifyDispatchJws` for

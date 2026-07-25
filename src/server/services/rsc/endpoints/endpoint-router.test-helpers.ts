@@ -35,7 +35,8 @@ export function createMockAdapter(
     },
     fs: {
       exists: fsOverrides.exists ?? (() => Promise.resolve(false)),
-      readFile: fsOverrides.readFile ?? (() => Promise.resolve("")),
+      readFile: fsOverrides.readFile ??
+        (() => Promise.reject(new Deno.errors.NotFound("not found"))),
       writeFile: () => Promise.resolve(),
       readDir: fsOverrides.readDir ?? createKnownFilesReader(fsOverrides.knownFiles ?? []),
       mkdir: () => Promise.resolve(),

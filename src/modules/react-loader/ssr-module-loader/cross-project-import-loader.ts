@@ -22,7 +22,13 @@ interface TransformCrossProjectImportFlowOptions {
   crossProjectImport: CrossProjectImport;
   options: Pick<
     SSRModuleLoaderOptions,
-    "projectId" | "projectDir" | "dev" | "apiBaseUrl" | "reactVersion" | "adapter"
+    | "projectId"
+    | "projectDir"
+    | "dev"
+    | "apiBaseUrl"
+    | "reactVersion"
+    | "adapter"
+    | "importMapIdentity"
   >;
   cache: CrossProjectImportCache;
   withTransformCapacity: <T>(
@@ -39,6 +45,19 @@ interface TransformCrossProjectImportFlowOptions {
 function getRegistryBaseUrl(apiBaseUrl?: string): string {
   const resolvedApiBaseUrl = apiBaseUrl || getApiBaseUrlEnv();
   return resolvedApiBaseUrl.replace(/\/api\/?$/, "");
+}
+
+function getCrossProjectCacheKey(
+  specifier: string,
+  projectId: string,
+  reactVersion: string,
+  importMapFingerprint?: string,
+): string {
+  // Keep existing standalone cache identities stable. Hosted callers add the
+  // request-bound map fingerprint through a framed key.
+  return importMapFingerprint
+    ? JSON.stringify([specifier, projectId, reactVersion, importMapFingerprint])
+    : `${specifier}:${projectId}:${reactVersion}`;
 }
 
 export async function transformCrossProjectImportFlow(
@@ -58,7 +77,12 @@ export async function transformCrossProjectImportFlow(
 
   const { specifier, projectSlug, version, path } = crossProjectImport;
   const reactVersion = options.reactVersion ?? "default";
-  const cacheKey = `${specifier}:${options.projectId}:${reactVersion}`;
+  const cacheKey = getCrossProjectCacheKey(
+    specifier,
+    options.projectId,
+    reactVersion,
+    options.importMapIdentity?.fingerprint,
+  );
 
   const cachedEntry = globalCrossProjectCache.get(cacheKey);
   if (cachedEntry) return cachedEntry.tempPath;
@@ -99,12 +123,14 @@ export async function transformCrossProjectImportFlow(
 
     return await withTransformCapacity(syntheticFilePath, async () => {
       const projectId = options.projectId;
+      const importMap = options.importMapIdentity?.importMap;
       const transformOpts: TransformOptions = {
         projectId,
         dev: options.dev,
         ssr: true,
         apiBaseUrl: options.apiBaseUrl,
         reactVersion: options.reactVersion,
+        loadImportMap: importMap ? async () => importMap : undefined,
       };
 
       const filePathWithExt = syntheticFilePath.endsWith(ext)

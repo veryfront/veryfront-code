@@ -3,6 +3,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { profilePhase } from "#veryfront/observability";
+import { resolveRequestModuleImportMapIdentity } from "./import-map-identity.ts";
 
 export function handleModuleServer(
   req: Request,
@@ -18,14 +19,18 @@ export function handleModuleServer(
     "module.server.handle",
     async () => {
       try {
-        const reactVersion = await profilePhase(
-          "module.resolve_react_version",
-          () =>
-            resolveProjectReactVersion({
-              projectDir: ctx.projectDir,
-              config: ctx.config,
-            }),
-        );
+        const requestConfig = ctx.enriched?.config ?? ctx.config;
+        const [reactVersion, importMapIdentity] = await Promise.all([
+          profilePhase(
+            "module.resolve_react_version",
+            () =>
+              resolveProjectReactVersion({
+                projectDir: ctx.projectDir,
+                config: requestConfig,
+              }),
+          ),
+          resolveRequestModuleImportMapIdentity(ctx),
+        ]);
 
         const moduleResponse = await profilePhase("module.serve", async () => {
           const { serveModule } = await import("#veryfront/modules/server/index.ts");
@@ -38,9 +43,10 @@ export function handleModuleServer(
             projectSlug: ctx.projectSlug,
             branch: ctx.parsedDomain?.branch ?? null,
             releaseId: ctx.releaseId ?? null,
-            allowedImportDirs: ctx.config?.security?.allowedImportDirs,
+            allowedImportDirs: requestConfig?.security?.allowedImportDirs,
             reactVersion,
             mode: ctx.requestContext?.mode,
+            importMapIdentity,
           });
         });
 

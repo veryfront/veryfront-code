@@ -669,15 +669,10 @@ Deno.test("ApiCacheBackend validates endpoint and timeout options at constructio
 
 Deno.test("ApiCacheBackend rejects malformed response values", async () => {
   const { ApiCacheBackend } = await importBackend();
-  const globals = globalThis as Record<string, unknown>;
-  const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
-  globals.__vf_multi_project_adapter = {
-    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
-  };
   globalThis.fetch = (() =>
     Promise.resolve(
       Response.json({ value: 42, deleted: "3" }),
@@ -693,11 +688,6 @@ Deno.test("ApiCacheBackend rejects malformed response values", async () => {
     assertEquals(await cache.get("key"), null);
     await assertRejects(() => cache.delByPattern("prefix:*"));
   } finally {
-    if (originalAdapter === undefined) {
-      delete globals.__vf_multi_project_adapter;
-    } else {
-      globals.__vf_multi_project_adapter = originalAdapter;
-    }
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");
@@ -758,15 +748,10 @@ Deno.test("ApiCacheBackend delByPattern rejects without auth context", async () 
 
 Deno.test("ApiCacheBackend accepts empty successful mutation responses", async () => {
   const { ApiCacheBackend } = await importBackend();
-  const globals = globalThis as Record<string, unknown>;
-  const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
-  globals.__vf_multi_project_adapter = {
-    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
-  };
   globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 204 }))) as typeof fetch;
 
   try {
@@ -780,11 +765,6 @@ Deno.test("ApiCacheBackend accepts empty successful mutation responses", async (
     await cache.setBatch([{ key: "key", value: "value" }]);
     await cache.del("key");
   } finally {
-    if (originalAdapter === undefined) {
-      delete globals.__vf_multi_project_adapter;
-    } else {
-      globals.__vf_multi_project_adapter = originalAdapter;
-    }
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");
@@ -796,16 +776,11 @@ Deno.test("ApiCacheBackend accepts empty successful mutation responses", async (
 
 Deno.test("ApiCacheBackend applies the shared TTL contract to single and batch writes", async () => {
   const { ApiCacheBackend } = await importBackend();
-  const globals = globalThis as Record<string, unknown>;
-  const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
   const requests: Array<{ path: string; body: unknown }> = [];
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
-  globals.__vf_multi_project_adapter = {
-    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
-  };
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     requests.push({
       path: new URL(String(input)).pathname,
@@ -852,11 +827,6 @@ Deno.test("ApiCacheBackend applies the shared TTL contract to single and batch w
       { key: "ttl-test:negative" },
     ]);
   } finally {
-    if (originalAdapter === undefined) {
-      delete globals.__vf_multi_project_adapter;
-    } else {
-      globals.__vf_multi_project_adapter = originalAdapter;
-    }
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");
@@ -868,15 +838,10 @@ Deno.test("ApiCacheBackend applies the shared TTL contract to single and batch w
 
 Deno.test("ApiCacheBackend propagates attempted mutation failures", async () => {
   const { ApiCacheBackend } = await importBackend();
-  const globals = globalThis as Record<string, unknown>;
-  const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
-  globals.__vf_multi_project_adapter = {
-    getCurrentRequestContext: () => ({ projectSlug: "project-slug" }),
-  };
   globalThis.fetch = (() =>
     Promise.resolve(
       new Response("database password=super-secret", { status: 503 }),
@@ -901,11 +866,6 @@ Deno.test("ApiCacheBackend propagates attempted mutation failures", async () => 
     assertEquals(deleteError.message.includes("super-secret"), false);
     assertEquals(patternError.message.includes("super-secret"), false);
   } finally {
-    if (originalAdapter === undefined) {
-      delete globals.__vf_multi_project_adapter;
-    } else {
-      globals.__vf_multi_project_adapter = originalAdapter;
-    }
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");
@@ -961,20 +921,12 @@ Deno.test("ApiCacheBackend uses custom keyPrefix", async () => {
 
 Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from span URLs", async () => {
   const { ApiCacheBackend } = await importBackend();
-  const globals = globalThis as Record<string, unknown>;
-  const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const records: RecordedSpan[] = [];
   const projectRef = "team/../../demo?token=raw";
   let capturedUrl = "";
 
   installRecordingTracer(records);
-  globals.__vf_multi_project_adapter = {
-    getCurrentRequestContext: () => ({
-      token: "request-token",
-      projectSlug: projectRef,
-    }),
-  };
   globalThis.fetch = ((input: RequestInfo | URL) => {
     capturedUrl = String(input);
     return Promise.resolve(
@@ -1018,11 +970,6 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
     assertEquals(String(span.attributes["http.url"]).includes("secret-cache-key"), false);
     assertEquals(String(span.attributes["cache.operation"]).includes("secret-cache-key"), false);
   } finally {
-    if (originalAdapter === undefined) {
-      delete globals.__vf_multi_project_adapter;
-    } else {
-      globals.__vf_multi_project_adapter = originalAdapter;
-    }
     globalThis.fetch = originalFetch;
     _resetShimForTests();
   }
@@ -1030,22 +977,12 @@ Deno.test("ApiCacheBackend URL-encodes project refs and omits cache keys from sp
 
 Deno.test("ApiCacheBackend keeps credentials bound to their trusted project context", async () => {
   const { ApiCacheBackend } = await importBackend();
-  const globals = globalThis as Record<string, unknown>;
-  const originalAdapter = globals.__vf_multi_project_adapter;
   const originalFetch = globalThis.fetch;
   const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
   const capturedAuthorizations: string[] = [];
   const capturedUrls: string[] = [];
 
   Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
-  globals.__vf_multi_project_adapter = {
-    getCurrentRequestContext: () => ({
-      token: "forged-request-token",
-      tokenTrust: "verified-control-plane",
-      projectId: "forged-project",
-      projectSlug: "forged-project-slug",
-    }),
-  };
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     capturedUrls.push(String(input));
     capturedAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
@@ -1118,20 +1055,6 @@ Deno.test("ApiCacheBackend keeps credentials bound to their trusted project cont
     );
     assertEquals(capturedUrls.length, 1);
 
-    globals.__vf_multi_project_adapter = {
-      getCurrentRequestContext: () => ({
-        token: "unverified-proxy-token",
-        projectId: "project-123",
-        projectSlug: "project-slug",
-      }),
-    };
-    await assertRejects(
-      () => cache.delByPattern("agent:*"),
-      Error,
-      "missing authentication token and project context",
-    );
-    assertEquals(capturedUrls.length, 1);
-
     const requestDeleted = await runWithRequestContext(
       {
         token: "request-project-token",
@@ -1159,11 +1082,6 @@ Deno.test("ApiCacheBackend keeps credentials bound to their trusted project cont
       "Bearer host-framework-token",
     ]);
   } finally {
-    if (originalAdapter === undefined) {
-      delete globals.__vf_multi_project_adapter;
-    } else {
-      globals.__vf_multi_project_adapter = originalAdapter;
-    }
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
       Deno.env.delete("VERYFRONT_API_TOKEN");

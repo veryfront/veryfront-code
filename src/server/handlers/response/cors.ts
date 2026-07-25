@@ -4,6 +4,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { matchesRoutePathname } from "#veryfront/security/http/base-handler.ts";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { withApiHandler } from "../request/api/pages-api-handler.ts";
+import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
 
 const ROUTE_METHOD_ORDER = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
 const PREFLIGHT_ONLY_METHODS = ["OPTIONS"];
@@ -71,7 +72,7 @@ export class CorsHandler extends BaseHandler {
       allowMethods,
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig: ctx.securityConfig?.cors,
-      isDev: !!ctx.isLocalProject,
+      isDev: isExplicitlyLocalProject(ctx),
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       isVeryfrontDomain: ctx.parsedDomain?.allowIframeEmbed ?? false,
@@ -106,7 +107,7 @@ export class CorsHandler extends BaseHandler {
         () =>
           withApiHandler(
             ctx,
-            (handler) => handler.resolveRouteMethods(pathname, requestedMethod),
+            (handler) => handler.resolveRouteMethods(pathname, requestedMethod, ctx),
           ),
         { requireToken: true },
       );

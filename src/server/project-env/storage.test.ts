@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
+  getEnv,
   getTrustedProjectEnvSnapshot,
   registerTrustedProjectEnvSnapshot,
 } from "#veryfront/platform/compat/process/env.ts";
@@ -102,17 +103,25 @@ describe("project-env/storage", () => {
     );
 
     const globals = globalThis as Record<string, unknown>;
-    const previousLegacyGetter = globals.__vfProjectEnvSnapshotGetter;
-    globals.__vfProjectEnvSnapshotGetter = () => ({ FOO: "legacy-attacker" });
+    const previousLegacyGetter = globals.__vfProjectEnvGetter;
+    const previousLegacyActiveChecker = globals.__vfProjectEnvActiveChecker;
+    globals.__vfProjectEnvGetter = () => "legacy-replacement";
+    globals.__vfProjectEnvActiveChecker = () => false;
     try {
       runWithProjectEnv({ FOO: "trusted" }, () => {
         assertEquals(getTrustedProjectEnvSnapshot(), { FOO: "trusted" });
+        assertEquals(getEnv("FOO"), "trusted");
       });
     } finally {
       if (previousLegacyGetter === undefined) {
-        delete globals.__vfProjectEnvSnapshotGetter;
+        delete globals.__vfProjectEnvGetter;
       } else {
-        globals.__vfProjectEnvSnapshotGetter = previousLegacyGetter;
+        globals.__vfProjectEnvGetter = previousLegacyGetter;
+      }
+      if (previousLegacyActiveChecker === undefined) {
+        delete globals.__vfProjectEnvActiveChecker;
+      } else {
+        globals.__vfProjectEnvActiveChecker = previousLegacyActiveChecker;
       }
     }
   });

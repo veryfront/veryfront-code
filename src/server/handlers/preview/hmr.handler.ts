@@ -22,7 +22,7 @@ import {
 import { handleHmrClientMessage } from "./hmr-client-message.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
-import { isProxyTrusted } from "../../utils/proxy-trust.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = serverLogger.component("hmr-handler");
@@ -151,9 +151,7 @@ export class HMRHandler extends BaseHandler {
     const isPreviewMode = ctx.resolvedEnvironment === "preview" ||
       ctx.requestContext?.mode === "preview";
     const isLocal = !!ctx.isLocalProject;
-    const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-      getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    const proxyTrusted = await isProxyTrusted(req, { publicKeyPem });
+    const proxyTopologyTrusted = isProxyTopologyTrusted();
     const hasCallerSuppliedProjectScope = [
       "x-project-slug",
       "x-project-id",
@@ -164,7 +162,7 @@ export class HMRHandler extends BaseHandler {
 
     if (
       (!isLocal && !isPreviewMode) ||
-      (!isLocal && hasCallerSuppliedProjectScope && !proxyTrusted)
+      (!isLocal && hasCallerSuppliedProjectScope && !proxyTopologyTrusted)
     ) {
       logger.warn("Skipping unauthorized /_ws request", {
         mode: ctx.requestContext?.mode,
@@ -172,7 +170,7 @@ export class HMRHandler extends BaseHandler {
         queryEnv,
         isLocalProject: ctx.isLocalProject,
         isPreviewMode,
-        proxyTrusted,
+        proxyTopologyTrusted,
         hasCallerSuppliedProjectScope,
       });
       return this.continue();

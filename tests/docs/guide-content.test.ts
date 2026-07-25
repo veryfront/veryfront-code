@@ -194,6 +194,40 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("documents the fail-closed shared hosted config boundary", async () => {
+    const guide = await Deno.readTextFile("docs/guides/configuration.md");
+
+    assertStringIncludes(guide, "Shared hosted runtimes");
+    assertStringIncludes(guide, "declarative configuration");
+    assertStringIncludes(guide, "only the authenticated project's filtered");
+    assertStringIncludes(guide, "cannot read variables from the host process");
+    assertStringIncludes(guide, "receives an empty `release` snapshot");
+    assertStringIncludes(guide, "does not execute it in the host process");
+    assertStringIncludes(guide, "temporarily unavailable config evaluator");
+    assertStringIncludes(
+      guide,
+      "Automatic OpenAPI specification and documentation generation",
+    );
+    assertStringIncludes(guide, "non-cacheable `503 Service Unavailable`");
+  });
+
+  it("does not promise executable extensions in declarative hosted config", async () => {
+    const extensions = await Deno.readTextFile("docs/guides/extensions.md");
+    assertStringIncludes(extensions, "Extension factories are executable configuration.");
+    assertStringIncludes(extensions, "Shared hosted and proxy runtimes use");
+    assertStringIncludes(extensions, "Provision hosted runtime capabilities through the");
+
+    const authoring = await Deno.readTextFile(
+      "docs/guides/extension-authoring.md",
+    );
+    assertStringIncludes(
+      authoring,
+      "This workflow targets local development and standalone deployments.",
+    );
+    assertStringIncludes(authoring, "do not allow project config imports or");
+    assertStringIncludes(authoring, "installed and governed by the");
+  });
+
   it("documents the MCP session header for post-init tool calls", async () => {
     const guide = await Deno.readTextFile("docs/guides/mcp-server.md");
 

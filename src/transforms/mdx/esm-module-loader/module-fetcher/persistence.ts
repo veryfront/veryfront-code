@@ -23,6 +23,7 @@ export interface PersistResolvedModuleInput {
   projectSlug: string;
   reactVersion?: string;
   sourceContentHash?: string;
+  importMapFingerprint?: string;
   distributedCacheWrite?: {
     distributedCache: DistributedCache;
     transformCacheKey: string;
@@ -68,6 +69,7 @@ export async function persistResolvedModule(
     input.log,
     input.reactVersion,
     input.sourceContentHash,
+    input.importMapFingerprint,
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
     projectSlug: input.projectSlug,

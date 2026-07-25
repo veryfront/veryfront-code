@@ -9,6 +9,7 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { cacheModule } from "./module-cache.ts";
+import { buildMdxEsmPathCacheKey } from "../cache-format.ts";
 
 const noopLog = {
   debug: () => {},
@@ -16,6 +17,64 @@ const noopLog = {
 } as never;
 
 describe("module-cache", () => {
+  it("publishes local path entries under the exact import-map fingerprint", async () => {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-module-cache-import-map-" });
+    const pathCache = new Map<string, string>();
+    const normalizedPath = "_vf_modules/components/Card.js";
+    const sourceContentHash = "c".repeat(64);
+    const firstFingerprint = "a".repeat(64);
+    const secondFingerprint = "b".repeat(64);
+
+    try {
+      const firstPath = await cacheModule(
+        normalizedPath,
+        "export default 1;",
+        esmCacheDir,
+        pathCache,
+        noopLog,
+        "19.1.1",
+        sourceContentHash,
+        firstFingerprint,
+      );
+      const secondPath = await cacheModule(
+        normalizedPath,
+        "export default 2;",
+        esmCacheDir,
+        pathCache,
+        noopLog,
+        "19.1.1",
+        sourceContentHash,
+        secondFingerprint,
+      );
+
+      assertEquals(
+        pathCache.get(
+          buildMdxEsmPathCacheKey(
+            normalizedPath,
+            "19.1.1",
+            sourceContentHash,
+            firstFingerprint,
+          ),
+        ),
+        firstPath,
+      );
+      assertEquals(
+        pathCache.get(
+          buildMdxEsmPathCacheKey(
+            normalizedPath,
+            "19.1.1",
+            sourceContentHash,
+            secondFingerprint,
+          ),
+        ),
+        secondPath,
+      );
+      assertEquals(firstPath === secondPath, false);
+    } finally {
+      await remove(esmCacheDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("adds a default export for filename-matched named component exports", async () => {
     const esmCacheDir = await makeTempDir({ prefix: "vf-module-cache-default-" });
     const projectDir = await makeTempDir({ prefix: "vf-module-cache-entry-" });

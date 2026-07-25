@@ -4,7 +4,10 @@ import type {
   FileInfo,
   FileSystemAdapter,
 } from "#veryfront/platform/adapters/base.ts";
-import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  type RequestTokenProvenance,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { HandlerContext } from "../types.ts";
 import { createCtx as createBaseInternalAgentRunContext } from "./internal-agent-run.test-helpers.ts";
 
@@ -95,6 +98,7 @@ export type SourceContextTestFsAdapter = FileSystemAdapter & {
       releaseId?: string | null;
       branch?: string | null;
       environmentName?: string | null;
+      tokenProvenance?: RequestTokenProvenance;
     },
   ): Promise<R>;
 };
@@ -106,10 +110,15 @@ export function createNoopFsAdapter(
     releaseId?: string | null;
     branch?: string | null;
     environmentName?: string | null;
+    tokenProvenance?: RequestTokenProvenance;
   }>,
 ): SourceContextTestFsAdapter {
   const adapter: SourceContextTestFsAdapter = {
-    readFile: async () => "",
+    readFile: async (path) => {
+      const error = new Error(`ENOENT: ${path}`) as Error & { code: string };
+      error.code = "ENOENT";
+      throw error;
+    },
     writeFile: async () => {},
     exists: async () => false,
     async *readDir() {},

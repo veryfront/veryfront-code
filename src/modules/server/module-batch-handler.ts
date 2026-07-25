@@ -33,11 +33,8 @@ import {
   stripSSRModuleJsExtension,
 } from "./ssr-import-rewriter.ts";
 import { transformModuleToServable } from "./module-transform.ts";
-import { buildModuleTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framework-source-resolver.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { registerLRUCache } from "#veryfront/cache";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
   buildSourceMissCacheKey,
@@ -46,6 +43,10 @@ import {
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
+import {
+  assertImportMapIdentity,
+  type ImportMapIdentity,
+} from "#veryfront/modules/import-map/index.ts";
 
 const logger = serverLogger.component("module-batch");
 
@@ -54,20 +55,6 @@ const logger = serverLogger.component("module-batch");
 const SLOW_REQUEST_THRESHOLD_MS = 500;
 /** Slow module transform threshold in milliseconds */
 const SLOW_TRANSFORM_THRESHOLD_MS = 100;
-
-/** Max entries in the per-project transform LRU cache */
-const TRANSFORM_CACHE_MAX_ENTRIES = 1_000;
-
-/** Immutable cache max-age in seconds (1 year) */
-const IMMUTABLE_CACHE_MAX_AGE_SECONDS = 31_536_000;
-
-/** Cache for transformed modules (path -> code) */
-const transformCache = new LRUCache<string, string>({
-  maxEntries: TRANSFORM_CACHE_MAX_ENTRIES,
-});
-
-// Register cache for monitoring
-registerLRUCache("module-batch-transform-cache", transformCache);
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
@@ -98,12 +85,18 @@ export interface BatchHandlerOptions {
   allowedImportDirs?: string[];
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Request-bound import map and its canonical identity. */
+  importMapIdentity?: ImportMapIdentity;
 }
 
 /**
  * Handle a batch module request
  */
 export function handleModuleBatch(req: Request, options: BatchHandlerOptions): Promise<Response> {
+  const importMapIdentity = options.importMapIdentity;
+  if (importMapIdentity !== undefined) {
+    assertImportMapIdentity(importMapIdentity);
+  }
   const url = new URL(req.url);
   const pathsParam = url.searchParams.get("paths");
 
@@ -150,8 +143,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         reactVersion,
       } = options;
 
-      const projectKey = projectId || projectSlug || "default";
-
       const userAgent = req.headers.get("user-agent") ?? "";
       const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
 
@@ -172,20 +163,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       const results = await Promise.all(
         paths.map(async (modulePath) => {
           const moduleStart = performance.now();
-          const cacheKey = buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
-
-          if (!dev) {
-            const cachedCode = transformCache.get(cacheKey);
-            if (cachedCode != null) {
-              return {
-                path: modulePath,
-                code: cachedCode,
-                cached: true,
-                transformDurationMs: 0,
-              };
-            }
-          }
-
           try {
             const code = await loadAndTransformModule(modulePath, projectDir, adapter, secureFs, {
               dev,
@@ -195,6 +172,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               projectId,
               releaseId,
               reactVersion,
+              importMapIdentity,
             });
 
             const transformDurationMs = performance.now() - moduleStart;
@@ -202,8 +180,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
             if (!code) {
               return { path: modulePath, code: null, error: "Not found", transformDurationMs };
             }
-
-            if (!dev) transformCache.set(cacheKey, code);
 
             return { path: modulePath, code, cached: false, transformDurationMs };
           } catch (error) {
@@ -264,7 +240,10 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         status: HTTP_OK,
         headers: {
           "Content-Type": "application/javascript; charset=utf-8",
-          "Cache-Control": `public, max-age=${IMMUTABLE_CACHE_MAX_AGE_SECONDS}, immutable`,
+          // The endpoint URL does not carry source, release, React, or import-map
+          // identities. Shared/client immutable caching would therefore recreate
+          // the same cross-version alias the removed outer LRU had.
+          "Cache-Control": "no-cache",
           "X-Batch-Modules": String(successes.length),
           "X-Batch-Duration": String(Math.round(duration)),
           "X-Batch-Slow": isSlow ? "true" : "false",
@@ -294,6 +273,7 @@ async function loadAndTransformModule(
     projectId?: string;
     releaseId?: string | null;
     reactVersion?: string;
+    importMapIdentity?: ImportMapIdentity;
   },
 ): Promise<string | null> {
   const basePath = modulePath.replace(/\.js$/, "");
@@ -363,8 +343,10 @@ async function transformModule(
     branch?: string | null;
     projectId?: string;
     reactVersion?: string;
+    importMapIdentity?: ImportMapIdentity;
   },
 ): Promise<string> {
+  const importMapIdentity = options.importMapIdentity;
   return transformModuleToServable({
     source,
     sourceFile,
@@ -375,6 +357,7 @@ async function transformModule(
       dev: options.dev,
       ssr: options.ssr,
       reactVersion: options.reactVersion,
+      loadImportMap: importMapIdentity ? async () => importMapIdentity.importMap : undefined,
     },
     isSSR: options.ssr,
     ssrRewriteOptions: options.ssr
@@ -551,26 +534,5 @@ function transformExportsForBundle(code: string): string {
  */
 export function clearBatchCache(projectSlug?: string): void {
   clearSourceMissCache("module-batch");
-
-  if (!projectSlug) {
-    transformCache.clear();
-    logger.debug("Cleared all cache");
-    return;
-  }
-
-  const prefix = `${projectSlug}:`;
-  for (const key of [...transformCache.keys()]) {
-    if (key.startsWith(prefix)) transformCache.delete(key);
-  }
-  logger.debug("Cleared cache for project", { projectSlug });
-}
-
-/**
- * Get cache statistics
- */
-export function getBatchCacheStats(): { size: number; keys: string[] } {
-  return {
-    size: transformCache.size,
-    keys: [...transformCache.keys()],
-  };
+  logger.debug("Cleared batch source-resolution cache", { projectSlug });
 }

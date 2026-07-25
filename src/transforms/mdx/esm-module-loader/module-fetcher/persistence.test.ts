@@ -34,6 +34,7 @@ describe("module-fetcher/persistence", () => {
       log: noopLog,
       projectSlug: "docs",
       reactVersion: "19.1.1",
+      importMapFingerprint: "a".repeat(64),
       distributedCacheWrite: {
         distributedCache,
         transformCacheKey: "transform-key",
@@ -55,6 +56,7 @@ describe("module-fetcher/persistence", () => {
         assertEquals(contentSourceId, "preview-main");
         assertEquals(moduleCode, "export default 1;");
         assertEquals(normalizedPath, "_vf_modules/app/page.js");
+        return Promise.resolve();
       },
       cacheLocalModule: (
         normalizedPath,
@@ -63,6 +65,8 @@ describe("module-fetcher/persistence", () => {
         receivedPathCache,
         _log,
         reactVersion,
+        sourceContentHash,
+        importMapFingerprint,
       ) => {
         calls.push("local");
         assertEquals(normalizedPath, "_vf_modules/app/page.js");
@@ -70,6 +74,8 @@ describe("module-fetcher/persistence", () => {
         assertEquals(esmCacheDir, "/cache");
         assertEquals(receivedPathCache, pathCache);
         assertEquals(reactVersion, "19.1.1");
+        assertEquals(sourceContentHash, undefined);
+        assertEquals(importMapFingerprint, "a".repeat(64));
         return Promise.resolve("/cache/page.mjs");
       },
     });

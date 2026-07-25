@@ -1,5 +1,6 @@
 import type { MDXModule } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export function loadESMModule(
@@ -7,6 +8,7 @@ export function loadESMModule(
   _modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<MDXModule> {
   return withSpan(
     "transforms.mdx.loadESMModule",
@@ -15,7 +17,7 @@ export function loadESMModule(
         "#veryfront/modules"
       );
 
-      const importMap = await loadImportMap(projectDir, adapter);
+      const importMap = preloadedImportMap ?? await loadImportMap(projectDir, adapter);
       const transformed = transformImportsWithMap(moduleCode, importMap, undefined, {
         resolveBare: true,
       });

@@ -68,6 +68,7 @@ import {
   createDependencyHashCache,
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
+import { assertSSRImportMapIdentity } from "./import-map-identity.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -174,16 +175,21 @@ export class SSRModuleLoader {
   private cache: SSRCacheManager;
   private circuitBreaker = new SSRCircuitBreaker();
   private depValidator: SSRDependencyValidator;
+  private readonly options: SSRModuleLoaderOptions;
 
-  constructor(private options: SSRModuleLoaderOptions) {
-    this.cache = new SSRCacheManager(options);
+  constructor(options: SSRModuleLoaderOptions) {
+    if (options.importMapIdentity !== undefined) {
+      assertSSRImportMapIdentity(options.importMapIdentity);
+    }
+    this.options = Object.freeze({ ...options });
+    this.cache = new SSRCacheManager(this.options);
     this.depValidator = new SSRDependencyValidator(
       (filePath) => this.cache.getCacheKey(filePath),
       (filePath, source, depth, dependencyHashCache) =>
         this.transformWithDependencies(filePath, source, depth, dependencyHashCache),
       (crossImport) => this.transformCrossProjectImport(crossImport),
-      options.adapter,
-      options.projectDir,
+      this.options.adapter,
+      this.options.projectDir,
     );
   }
 
@@ -613,6 +619,7 @@ export class SSRModuleLoader {
           contentSourceId: this.options.contentSourceId,
         },
         this.options.reactVersion,
+        this.options.importMapIdentity?.fingerprint,
       );
 
       if (mdxCacheResult.status === "hit") {
@@ -776,6 +783,7 @@ export class SSRModuleLoader {
       // Hold project slots only around the actual transform and file write.
       await this.withTransformCapacity(filePath, "build", async () => {
         const projectId = this.options.projectId;
+        const importMap = this.options.importMapIdentity?.importMap;
         const transformOpts: TransformOptions = {
           projectId,
           dev: this.options.dev,
@@ -783,6 +791,7 @@ export class SSRModuleLoader {
           apiBaseUrl: this.options.apiBaseUrl,
           reactVersion: this.options.reactVersion,
           dependencyHashCache,
+          loadImportMap: importMap ? async () => importMap : undefined,
         };
 
         let transformed = await withSpan(
@@ -816,6 +825,7 @@ export class SSRModuleLoader {
           adapter: this.options.adapter,
           projectDir: this.options.projectDir,
           reactVersion: this.options.reactVersion,
+          importMapIdentity: this.options.importMapIdentity,
         });
 
         // Ensure HTTP bundles exist for this transform (handles nested bundle deps)

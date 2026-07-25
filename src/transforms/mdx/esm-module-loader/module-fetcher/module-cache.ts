@@ -68,6 +68,7 @@ export async function cacheModule(
   log: Logger,
   reactVersion = REACT_DEFAULT_VERSION,
   sourceContentHash?: string,
+  importMapFingerprint?: string,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
   if (utf8ByteLength(moduleCode) > MAX_MDX_MODULE_CODE_BYTES) {
@@ -93,6 +94,7 @@ export async function cacheModule(
     normalizedPath,
     reactVersion,
     sourceContentHash,
+    importMapFingerprint,
   );
 
   const localFs = getLocalFs();

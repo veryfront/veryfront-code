@@ -16,7 +16,7 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 
-// Import storage to register globalThis hooks
+// Import storage to register the private project-environment snapshot bridge.
 import { runWithProjectEnv } from "./storage.ts";
 
 describe("framework-owned env bypass under project overlay", () => {

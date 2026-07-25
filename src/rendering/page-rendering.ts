@@ -2,6 +2,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { ensureError, getErrorMessage, RENDER_ERROR } from "#veryfront/errors";
 import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { clearMdxEsmCacheNamespace } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
@@ -156,6 +157,8 @@ export function handleMDXPage(
     contentSourceId?: string;
     /** React version resolved for this project. */
     reactVersion?: string;
+    /** Import map snapshot resolved for this project/content source. */
+    importMap?: ImportMapConfig;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -179,6 +182,7 @@ export function handleMDXPage(
           options?.projectSlug,
           options?.contentSourceId,
           options?.reactVersion,
+          options?.importMap,
         )) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;

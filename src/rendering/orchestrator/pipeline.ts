@@ -48,6 +48,7 @@ import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
 import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
+import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
@@ -238,11 +239,27 @@ export class RenderPipeline {
   private async resolveModuleLoaderConfig(
     options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
   ): Promise<ModuleLoaderConfig> {
+    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+    const contentSourceId = options?.contentSourceId ?? this.config.contentSourceId;
+    const [reactVersion, importMap] = await Promise.all([
+      this.getReactVersion(),
+      preloadImportMap(
+        this.config.projectDir,
+        this.config.adapter,
+        projectId,
+        {
+          contentSourceId,
+          config: this.config.config,
+        },
+      ),
+    ]);
+
     return {
       ...this.moduleLoaderConfig,
-      projectId: options?.projectId ?? this.config.projectId ?? this.config.projectDir,
-      contentSourceId: options?.contentSourceId ?? this.config.contentSourceId,
-      reactVersion: await this.getReactVersion(),
+      projectId,
+      contentSourceId,
+      importMap,
+      reactVersion,
     };
   }
 
@@ -524,7 +541,8 @@ export class RenderPipeline {
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
-    const projectSlug = options?.projectSlug || options?.projectId || "unknown";
+    const requestProjectSlug = options?.projectSlug ?? options?.projectId;
+    const projectSlug = requestProjectSlug ?? "unknown";
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
     const cacheKey = this.buildCacheKey(slug, options);
 
@@ -587,9 +605,19 @@ export class RenderPipeline {
               );
               timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
-              const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
-                ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
-                : Promise.resolve();
+              // Attach both branches immediately so an exact import-map failure
+              // cannot become an unhandled rejection while bundle/data work runs
+              // in parallel. The failure is rethrown before any layout applies.
+              const layoutPreloadOutcomePromise = this.config.layoutOrchestrator
+                .preloadLayoutModules(layoutResult.nestedLayouts, {
+                  projectId,
+                  projectSlug: requestProjectSlug,
+                  contentSourceId: options?.contentSourceId,
+                })
+                .then(
+                  (summary) => ({ ok: true as const, summary }),
+                  (error: unknown) => ({ ok: false as const, error }),
+                );
 
               let dataFetchingProps: Record<string, unknown> | undefined;
               let resolvedParams: Record<string, string | string[]> = options?.params
@@ -713,7 +741,9 @@ export class RenderPipeline {
 
               const headings = (pageBundle as PageBundle).headings || [];
 
-              await layoutPreloadPromise;
+              const layoutPreloadOutcome = await layoutPreloadOutcomePromise;
+              if (!layoutPreloadOutcome.ok) throw layoutPreloadOutcome.error;
+              const layoutRequestIdentity = layoutPreloadOutcome.summary.requestIdentity;
 
               const layoutApplyStart = performance.now();
               const wrappedElement = await profilePhase(
@@ -727,12 +757,12 @@ export class RenderPipeline {
                         pageInfo,
                         layoutResult.layoutBundle,
                         layoutResult.nestedLayouts,
+                        layoutRequestIdentity,
                         layoutDataMap,
                         options?.url,
                         resolvedParams,
                         mergedFrontmatter,
                         headings,
-                        options?.projectSlug,
                         clientPageIsland,
                         dataFetchingProps,
                       ),

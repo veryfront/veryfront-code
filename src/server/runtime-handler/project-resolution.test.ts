@@ -85,7 +85,7 @@ describe("server/runtime-handler/project-resolution", () => {
       }
     });
 
-    it("extracts forwarded metadata after request-scoped proxy verification", () => {
+    it("extracts forwarded metadata after explicit topology verification", () => {
       const req = new Request("http://127.0.0.1:3001/", {
         headers: {
           "x-environment": "preview",
@@ -114,6 +114,13 @@ describe("server/runtime-handler/project-resolution", () => {
         wsSlugOverride: undefined,
       });
       assertEquals(result.proxyEnv, undefined);
+    });
+
+    it("ignores WebSocket environment queries when topology is untrusted", () => {
+      const req = new Request("http://production.example/_ws?x-environment=preview");
+      const headers = extractRequestHeaders(req, new URL(req.url), false);
+
+      assertEquals(headers.environment, undefined);
     });
 
     it("extracts environment-id from header", () => {
@@ -206,14 +213,6 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.contentSourceId, "cs-1");
     });
 
-    it("extracts project-path from header", () => {
-      const req = new Request("http://localhost/", {
-        headers: { "x-project-path": "/projects/my-proj" },
-      });
-      const headers = extractRequestHeaders(req, new URL(req.url));
-      assertEquals(headers.projectPath, "/projects/my-proj");
-    });
-
     it("returns undefined for missing headers", () => {
       const req = new Request("http://localhost/");
       const headers = extractRequestHeaders(req, new URL(req.url));
@@ -226,7 +225,6 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.environmentId, undefined);
       assertEquals(headers.token, undefined);
       assertEquals(headers.contentSourceId, undefined);
-      assertEquals(headers.projectPath, undefined);
     });
   });
 
@@ -501,7 +499,7 @@ describe("server/runtime-handler/project-resolution", () => {
       }
     });
 
-    it("uses x-forwarded-host for domain resolution after request-scoped verification", async () => {
+    it("uses x-forwarded-host after explicit topology verification", async () => {
       let capturedHost = "";
       __injectDepsForTests({
         parseProjectDomain: (host: string) => {
@@ -523,7 +521,7 @@ describe("server/runtime-handler/project-resolution", () => {
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
-        proxyTrusted: true,
+        proxyTopologyTrusted: true,
       });
 
       assertEquals(capturedHost, "forwarded.example.com");

@@ -18,6 +18,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import type { ConfigLoadResult, VeryfrontConfig } from "#veryfront/config/loader.ts";
 import {
   _resetShimForTests,
   getGlobalTelemetryAPISnapshot,
@@ -38,6 +39,7 @@ import {
   ensureEnvLoaded,
   orchestrateOrDisposeFS,
   replaceLifecycleResource,
+  selectReloadedConfig,
   validateProductionEnvironment,
   wireTracingShim,
 } from "./bootstrap.ts";
@@ -49,6 +51,46 @@ const noopLogger = {
   warn: () => {},
   error: () => {},
 };
+
+describe("selectReloadedConfig()", () => {
+  it("accepts a present remote config whose values match framework defaults", () => {
+    const originalConfig = { title: "Local bootstrap config" } as VeryfrontConfig;
+    const remoteConfig = {
+      title: "Veryfront App",
+      dev: {
+        port: 3000,
+        host: "localhost",
+        hmr: false,
+      },
+    } as VeryfrontConfig;
+    const reloaded: ConfigLoadResult = {
+      config: remoteConfig,
+      provenance: {
+        kind: "file",
+        configFile: "veryfront.config.ts",
+      },
+    };
+
+    assertStrictEquals(
+      selectReloadedConfig(originalConfig, reloaded),
+      remoteConfig,
+    );
+  });
+
+  it("keeps the bootstrap config only when the remote config file is absent", () => {
+    const originalConfig = { title: "Local bootstrap config" } as VeryfrontConfig;
+    const defaults = { title: "Veryfront App" } as VeryfrontConfig;
+    const reloaded: ConfigLoadResult = {
+      config: defaults,
+      provenance: { kind: "defaults" },
+    };
+
+    assertStrictEquals(
+      selectReloadedConfig(originalConfig, reloaded),
+      originalConfig,
+    );
+  });
+});
 
 describe("validateProductionEnvironment()", () => {
   it("rejects a hosted proxy whose host NODE_ENV is not production", async () => {

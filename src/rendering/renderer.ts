@@ -1334,6 +1334,7 @@ export class Renderer {
       ctx.projectDir,
       ctx.port ?? null,
       ctx.moduleServerUrl ?? null,
+      ctx.config.resolve?.importMap ?? null,
     ]);
   }
 

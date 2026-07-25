@@ -50,6 +50,56 @@ describe("module-loader/module-cache-lookup", () => {
     assertEquals(new Set([react18, react19, development]).size, 3);
   });
 
+  it("isolates in-memory module paths by import-map fingerprint", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+      "production",
+    ] as const;
+    const mapA = getModuleCacheKey(...base, "map-a");
+    const mapB = getModuleCacheKey(...base, "map-b");
+
+    assertEquals(mapA === mapB, false);
+  });
+
+  it("does not return an in-memory path produced for another import map", async () => {
+    await withCachedFile("export const map = 'a';", async (cachedPath) => {
+      const mapAKey = getModuleCacheKey(
+        "/project/app/page.tsx",
+        "project-id",
+        "/project",
+        "source-id",
+        "19.0.0",
+        "production",
+        "map-a",
+      );
+      const mapBKey = getModuleCacheKey(
+        "/project/app/page.tsx",
+        "project-id",
+        "/project",
+        "source-id",
+        "19.0.0",
+        "production",
+        "map-b",
+      );
+      const moduleCache = new Map([[mapAKey, cachedPath]]);
+
+      assertEquals(
+        await resolveCachedModulePath({
+          cacheKey: mapBKey,
+          filePath: "/project/app/page.tsx",
+          projectDir: "/project",
+          moduleCache,
+        }),
+        undefined,
+      );
+      assertEquals(moduleCache.get(mapAKey), cachedPath);
+    });
+  });
+
   it("returns a valid in-memory cached module path", async () => {
     await withCachedFile("export const ok = true;", async (cachedPath) => {
       const moduleCache = new Map([["cache-key", cachedPath]]);
@@ -118,12 +168,22 @@ describe("module-loader/module-cache-lookup", () => {
       contentSourceId: "source-id",
       reactVersion: "19.1.0",
       moduleCache,
-      lookupMdxCache: (path, cacheDir, projectDir, _unused, options, reactVersion) => {
+      importMapFingerprint: "map-a",
+      lookupMdxCache: (
+        path,
+        cacheDir,
+        projectDir,
+        _unused,
+        options,
+        reactVersion,
+        importMapFingerprint,
+      ) => {
         assertEquals(path, "/project/app/page.tsx");
         assertEquals(cacheDir.endsWith("/project-id/source-id"), true);
         assertEquals(projectDir, "/project");
         assertEquals(options, { projectId: "project-id", contentSourceId: "source-id" });
         assertEquals(reactVersion, "19.1.0");
+        assertEquals(importMapFingerprint, "map-a");
         return Promise.resolve({ status: "hit", path: "/cache/page.js" });
       },
     });

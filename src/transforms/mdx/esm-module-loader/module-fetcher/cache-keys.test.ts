@@ -80,17 +80,40 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       );
       assertEquals(react18Key === react19Key, false);
     });
+
+    it("isolates by import-map fingerprint", () => {
+      const first = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        "map-a",
+      );
+      const second = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        "map-b",
+      );
+      assertEquals(first === second, false);
+    });
   });
 
   describe("getVersionedPathCacheKey", () => {
     it("includes cache namespace, react version, and path", () => {
       const key = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","lib/utils.ts",null]`);
+      assertEquals(
+        key,
+        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","lib/utils.ts",null,null]`,
+      );
     });
 
     it("handles empty path", () => {
       const key = getVersionedPathCacheKey("", "19.1.1");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","",null]`);
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","",null,null]`);
     });
 
     it("starts with cache namespace prefix", () => {
@@ -107,6 +130,12 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
     it("isolates by full source-content digest", () => {
       const first = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "a".repeat(64));
       const second = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "b".repeat(64));
+      assertEquals(first === second, false);
+    });
+
+    it("isolates by import-map fingerprint", () => {
+      const first = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "hash", "map-a");
+      const second = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "hash", "map-b");
       assertEquals(first === second, false);
     });
   });

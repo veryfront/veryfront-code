@@ -7,6 +7,7 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { SSRImportMapIdentity } from "./import-map-identity.ts";
 
 export interface SSRModuleLoaderOptions {
   projectDir: string;
@@ -22,6 +23,12 @@ export interface SSRModuleLoaderOptions {
   reactVersion?: string;
   /** Request mode ("preview" | "production") for studio features */
   mode?: string;
+  /**
+   * Immutable map and cache identity resolved for this exact project/content
+   * source. Omit only for standalone callers that intentionally use ambient
+   * import-map resolution.
+   */
+  importMapIdentity?: SSRImportMapIdentity;
 }
 
 export interface ModuleCacheEntry {

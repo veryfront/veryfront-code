@@ -72,6 +72,11 @@ export { getDenoRuntime, isDeno } from "./compat/runtime.ts";
 // Adapters: filesystem
 export { createFSAdapter, VeryfrontFSAdapter } from "./adapters/fs/index.ts";
 export { enhanceAdapterWithFS, isExtendedFSAdapter } from "./adapters/fs/index.ts";
+export type {
+  ContextualFSAdapter,
+  StyleConfigBinding,
+  StylePregenerationContext,
+} from "./adapters/fs/index.ts";
 
 // Adapters: API client
 export { VeryfrontApiClient } from "./adapters/veryfront-api-client/index.ts";

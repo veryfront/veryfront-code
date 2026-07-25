@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CONFIG_PARSE_ERROR, SERVICE_OVERLOADED } from "#veryfront/errors";
+import { ProjectEnvCacheError } from "../project-env/cache.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 
@@ -71,6 +72,26 @@ describe("timeout-manager", () => {
       assertEquals(body.status, 503);
       assertEquals("detail" in body, false);
       assertExists(error);
+    });
+
+    it("maps project environment cache pressure to retryable problem details", async () => {
+      const handler = async (): Promise<Response> => {
+        throw new ProjectEnvCacheError(
+          "capacity-exceeded",
+          "Project environment fetch capacity is exhausted",
+        );
+      };
+
+      const { response, error } = await withRequestTimeout(handler, "/assets", "GET");
+      const body = await response.json();
+
+      assertEquals(response.status, 503);
+      assertEquals(response.headers.get("content-type"), "application/problem+json");
+      assertEquals(body.type, "https://veryfront.com/docs/errors/service-overloaded");
+      assertEquals(body.status, 503);
+      assertEquals("detail" in body, false);
+      assertEquals(error instanceof ProjectEnvCacheError, true);
+      assertEquals((error as ProjectEnvCacheError).retryable, true);
     });
 
     it("returns error wrapper when a handler throws before returning a promise", async () => {

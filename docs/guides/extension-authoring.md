@@ -16,6 +16,13 @@ extension.
 - A concrete capability gap to fill.
 - `deno` available on your PATH.
 
+This workflow targets local development and standalone deployments. Extension
+factories are executable configuration, while shared hosted and proxy runtimes
+load project config declaratively and do not allow project config imports or
+factory execution. A hosted capability must be installed and governed by the
+platform rather than loaded from a tenant's `veryfront.config.ts`. See
+[Shared hosted runtimes](./configuration.md#shared-hosted-runtimes).
+
 ## Scaffold an extension
 
 ```bash

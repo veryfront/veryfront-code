@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import {
   type CacheKeyContext,
   getContentHashKey,
@@ -8,6 +14,7 @@ import {
   getProjectScopedKey,
   getProjectScopedKeyAlways,
   isRegistryScopeForProject,
+  registerMultiProjectRequestContextProvider,
   runWithCacheKeyContext,
   tryGetCacheKeyContext,
   tryGetRegistryScopeContext,
@@ -81,6 +88,83 @@ describe("cache-key-builder", () => {
       const result = runWithCacheKeyContext(ctx, tryGetCacheKeyContext);
 
       assertEquals(result?.projectId, "test");
+    });
+
+    it("rejects replacement of the registered ambient provider", () => {
+      assertThrows(
+        () =>
+          registerMultiProjectRequestContextProvider(() => ({
+            projectSlug: "attacker-project",
+            token: "attacker-token",
+            productionMode: false,
+          })),
+        Error,
+        "already registered",
+      );
+    });
+
+    it("uses captured context and encoding primordials for explicit and ambient scopes", async () => {
+      const originalGetStore = AsyncLocalStorage.prototype.getStore;
+      const originalRun = AsyncLocalStorage.prototype.run;
+      const originalEncodeURIComponent = globalThis.encodeURIComponent;
+      const originalStartsWith = String.prototype.startsWith;
+      let explicitScope: ReturnType<typeof tryGetRegistryScopeContext> | undefined;
+      let ambientScope: ReturnType<typeof tryGetRegistryScopeContext> | undefined;
+      let projectMatched = false;
+
+      try {
+        AsyncLocalStorage.prototype.getStore = (() => {
+          throw new Error("ambient AsyncLocalStorage.getStore must not run");
+        }) as typeof AsyncLocalStorage.prototype.getStore;
+        AsyncLocalStorage.prototype.run = (() => {
+          throw new Error("ambient AsyncLocalStorage.run must not run");
+        }) as typeof AsyncLocalStorage.prototype.run;
+        globalThis.encodeURIComponent = (() => {
+          throw new Error("ambient encodeURIComponent must not run");
+        }) as typeof globalThis.encodeURIComponent;
+
+        explicitScope = runWithCacheKeyContext(
+          {
+            projectId: "workflow:project",
+            mode: "production",
+            versionId: "release:explicit",
+          },
+          () => tryGetRegistryScopeContext(),
+        );
+        ambientScope = await runWithRequestContext(
+          {
+            projectSlug: "ambient-project",
+            projectId: "ambient:project",
+            token: "<TOKEN>",
+            productionMode: true,
+            releaseId: "release:ambient",
+          },
+          async () => tryGetRegistryScopeContext(),
+        );
+
+        String.prototype.startsWith = (() => {
+          throw new Error("ambient String.startsWith must not run");
+        }) as typeof String.prototype.startsWith;
+        projectMatched = isRegistryScopeForProject(
+          "ambient%3Aproject:production:release%3Aambient",
+          "ambient:project",
+        );
+      } finally {
+        AsyncLocalStorage.prototype.getStore = originalGetStore;
+        AsyncLocalStorage.prototype.run = originalRun;
+        globalThis.encodeURIComponent = originalEncodeURIComponent;
+        String.prototype.startsWith = originalStartsWith;
+      }
+
+      assertEquals(explicitScope, {
+        scopeId: "workflow%3Aproject:production:release%3Aexplicit",
+        immutable: true,
+      });
+      assertEquals(ambientScope, {
+        scopeId: "ambient%3Aproject:production:release%3Aambient",
+        immutable: true,
+      });
+      assertEquals(projectMatched, true);
     });
   });
 
@@ -373,7 +457,60 @@ describe("cache-key-builder", () => {
 
       const key = runWithCacheKeyContext(ctx, () => getProjectScopedKey("prefix", "resource"));
 
-      assertEquals(key, "prefix:test:production:rel_123:resource");
+      assertEquals(
+        key,
+        "project-scoped:v2:6:prefix|4:test|10:production|7:rel_123|8:resource",
+      );
+    });
+
+    it("does not alias delimiters across prefix, project, version, or resource segments", () => {
+      const prefixProjectLeft = runWithCacheKeyContext(
+        { projectId: "b", mode: "production", versionId: "release" },
+        () => getProjectScopedKey("scope:a", "resource"),
+      );
+      const prefixProjectRight = runWithCacheKeyContext(
+        { projectId: "a:b", mode: "production", versionId: "release" },
+        () => getProjectScopedKey("scope", "resource"),
+      );
+      const versionResourceLeft = runWithCacheKeyContext(
+        { projectId: "tenant", mode: "production", versionId: "release:path" },
+        () => getProjectScopedKey("scope", "entry"),
+      );
+      const versionResourceRight = runWithCacheKeyContext(
+        { projectId: "tenant", mode: "production", versionId: "release" },
+        () => getProjectScopedKey("scope", "path:entry"),
+      );
+
+      assertNotEquals(prefixProjectLeft, prefixProjectRight);
+      assertNotEquals(versionResourceLeft, versionResourceRight);
+    });
+
+    it("keeps distinct lone-surrogate identities distinct after UTF-8 serialization", () => {
+      const highSurrogate = runWithCacheKeyContext(
+        { projectId: "\uD800", mode: "production", versionId: "release" },
+        () => getProjectScopedKey("scope", "resource"),
+      );
+      const lowSurrogate = runWithCacheKeyContext(
+        { projectId: "\uDFFF", mode: "production", versionId: "release" },
+        () => getProjectScopedKey("scope", "resource"),
+      );
+      const literalEscape = runWithCacheKeyContext(
+        { projectId: "%uD800", mode: "production", versionId: "release" },
+        () => getProjectScopedKey("scope", "resource"),
+      );
+      const encoder = new TextEncoder();
+      assertExists(highSurrogate);
+      assertExists(lowSurrogate);
+      assertExists(literalEscape);
+
+      assertNotEquals(
+        encoder.encode(highSurrogate),
+        encoder.encode(lowSurrogate),
+      );
+      assertNotEquals(
+        encoder.encode(highSurrogate),
+        encoder.encode(literalEscape),
+      );
     });
   });
 
@@ -390,7 +527,23 @@ describe("cache-key-builder", () => {
         () => getProjectScopedKeyAlways("prefix", "resource"),
       );
 
-      assertEquals(key, "prefix:test:preview:main:resource");
+      assertEquals(
+        key,
+        "project-scoped:v2:6:prefix|4:test|7:preview|4:main|8:resource",
+      );
+    });
+
+    it("does not alias delimiter-bearing preview versions and resources", () => {
+      const versionLeft = runWithCacheKeyContext(
+        { projectId: "tenant", mode: "preview", versionId: "branch:path" },
+        () => getProjectScopedKeyAlways("scope", "entry"),
+      );
+      const resourceRight = runWithCacheKeyContext(
+        { projectId: "tenant", mode: "preview", versionId: "branch" },
+        () => getProjectScopedKeyAlways("scope", "path:entry"),
+      );
+
+      assertNotEquals(versionLeft, resourceRight);
     });
   });
 });

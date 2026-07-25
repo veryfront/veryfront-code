@@ -58,9 +58,22 @@ interface CapturedSubtleCrypto {
 const intrinsicSubtleCrypto = captureSubtleCrypto();
 
 const AST_SCAN_ENTRY_LIMIT = 131_072;
-/** Stable source label used in hosted evaluator diagnostics. */
-export const DECLARATIVE_CONFIG_FILE_NAME = "veryfront.config.ts";
-const CONFIG_FILE_NAME = DECLARATIVE_CONFIG_FILE_NAME;
+/** Basenames accepted at the hosted configuration trust boundary. */
+export type DeclarativeConfigFileName =
+  | "veryfront.config.js"
+  | "veryfront.config.ts"
+  | "veryfront.config.mjs";
+/** Backwards-compatible default when a direct evaluator caller omits a name. */
+export const DECLARATIVE_CONFIG_FILE_NAME: DeclarativeConfigFileName = "veryfront.config.ts";
+
+export function isDeclarativeConfigFileName(
+  value: unknown,
+): value is DeclarativeConfigFileName {
+  return value === "veryfront.config.js" ||
+    value === "veryfront.config.ts" ||
+    value === "veryfront.config.mjs";
+}
+
 const FIRST_PARTY_PARSER_DIRECTORY = "ext-parser-babel";
 const FIRST_PARTY_PARSER_PACKAGE = "@veryfront/ext-parser-babel";
 const FIRST_PARTY_PARSER_SOURCE_ENTRY = "parser-only";
@@ -170,7 +183,7 @@ export interface DeclarativeConfigSourceLocation {
   readonly column: number;
   /** Zero-based UTF-16 source offset. */
   readonly offset: number;
-  readonly fileName: typeof CONFIG_FILE_NAME;
+  readonly fileName: DeclarativeConfigFileName;
 }
 
 /** Stable details suitable for policy decisions without exposing source text. */
@@ -180,6 +193,7 @@ export type DeclarativeConfigErrorReason =
   | "ast-nodes"
   | "ast-shape"
   | "binding-count"
+  | "config-file-name"
   | "dangerous-key"
   | "duplicate-binding"
   | "duplicate-default-export"
@@ -289,22 +303,31 @@ export interface PreparedDeclarativeConfigContext {
  * Coupled cache identity and direct worker input derived from one prepared
  * snapshot. This DTO is intended only for a trusted structured-clone boundary.
  */
+export interface PreparedDeclarativeConfigWorkerEvaluationOptions
+  extends PrepareDeclarativeConfigContextOptions {
+  readonly source: string;
+  readonly fileName: DeclarativeConfigFileName;
+  readonly preparedContext?: never;
+}
+
 export interface PreparedDeclarativeConfigWorkerPayload {
   readonly cacheFingerprint: string;
   readonly policyVersion: typeof DECLARATIVE_CONFIG_POLICY_VERSION;
-  readonly evaluationOptions: DirectDeclarativeConfigEvaluationOptions;
+  readonly evaluationOptions: PreparedDeclarativeConfigWorkerEvaluationOptions;
 }
 
 /** Hosted evaluation with direct environment input. */
 export interface DirectDeclarativeConfigEvaluationOptions
   extends PrepareDeclarativeConfigContextOptions {
   readonly source: string;
+  readonly fileName?: DeclarativeConfigFileName;
   readonly preparedContext?: never;
 }
 
 /** Hosted evaluation reusing a previously prepared context. */
 export interface PreparedDeclarativeConfigEvaluationOptions {
   readonly source: string;
+  readonly fileName?: DeclarativeConfigFileName;
   readonly preparedContext: PreparedDeclarativeConfigContext;
   readonly environmentName?: never;
   readonly environment?: never;
@@ -340,6 +363,7 @@ interface LexicalEnvironment {
 
 interface EvaluationContext {
   readonly source: string;
+  readonly fileName: DeclarativeConfigFileName;
   readonly tenantEnvironment: Readonly<Record<string, string>>;
   readonly environmentName: string;
   bindingCount: number;
@@ -361,6 +385,7 @@ interface CapturedOption {
 
 interface CapturedEvaluationOptions {
   readonly source: CapturedOption;
+  readonly fileName: CapturedOption;
   readonly environmentName: CapturedOption;
   readonly environment: CapturedOption;
   readonly preparedContext: CapturedOption;
@@ -381,13 +406,14 @@ function throwEvaluationError(
     code,
     phase,
     reason,
-    location: context && node ? sourceLocation(context.source, node.start) : null,
+    location: context && node ? sourceLocation(context.source, node.start, context.fileName) : null,
   });
 }
 
 function sourceLocation(
   source: string,
   offsetValue: unknown,
+  fileName: DeclarativeConfigFileName,
 ): DeclarativeConfigSourceLocation | null {
   if (
     typeof offsetValue !== "number" ||
@@ -423,7 +449,7 @@ function sourceLocation(
     line,
     column,
     offset: offsetValue,
-    fileName: CONFIG_FILE_NAME,
+    fileName,
   });
 }
 
@@ -656,11 +682,12 @@ function countUtf8BytesBounded(source: string): number {
 function parseErrorLocation(
   source: string,
   error: unknown,
+  fileName: DeclarativeConfigFileName,
 ): DeclarativeConfigSourceLocation | null {
   const position = typeof error === "object" && error !== null
     ? (error as Record<string, unknown>).pos
     : undefined;
-  return sourceLocation(source, position);
+  return sourceLocation(source, position, fileName);
 }
 
 function parserErrorReason(error: unknown): DeclarativeConfigErrorReason {
@@ -672,7 +699,11 @@ function parserErrorReason(error: unknown): DeclarativeConfigErrorReason {
   return "syntax-error";
 }
 
-function preflightAst(ast: ASTNode, source: string): void {
+function preflightAst(
+  ast: ASTNode,
+  source: string,
+  fileName: DeclarativeConfigFileName,
+): void {
   const stack: unknown[] = [ast];
   const seen = new IntrinsicWeakSet<object>();
   let cursor = 0;
@@ -709,7 +740,7 @@ function preflightAst(ast: ASTNode, source: string): void {
           code: "resource-limit-exceeded",
           phase: "validate",
           reason: "ast-nodes",
-          location: sourceLocation(source, record.start),
+          location: sourceLocation(source, record.start, fileName),
         });
       }
     }
@@ -721,7 +752,7 @@ function preflightAst(ast: ASTNode, source: string): void {
         code: "resource-limit-exceeded",
         phase: "validate",
         reason: "ast-nodes",
-        location: sourceLocation(source, record.start),
+        location: sourceLocation(source, record.start, fileName),
       });
     }
     for (let index = 0; index < keys.length; index += 1) {
@@ -736,13 +767,14 @@ function preflightAst(ast: ASTNode, source: string): void {
 function extractProgram(
   ast: ASTNode,
   source: string,
+  fileName: DeclarativeConfigFileName,
 ): ASTNode {
   if (ast.type !== "File" || !isAstNode(ast.program) || ast.program.type !== "Program") {
     throw new DeclarativeConfigEvaluationError({
       code: "parser-contract-violation",
       phase: "validate",
       reason: "ast-shape",
-      location: sourceLocation(source, ast.start),
+      location: sourceLocation(source, ast.start, fileName),
     });
   }
   const program = ast.program;
@@ -757,7 +789,7 @@ function extractProgram(
       code: "unsupported-syntax",
       phase: "validate",
       reason: "unsupported-statement",
-      location: sourceLocation(source, program.start),
+      location: sourceLocation(source, program.start, fileName),
     });
   }
   return program;
@@ -1186,7 +1218,7 @@ function requireOptionsRecord(value: unknown): object {
 
 function captureOption(
   options: object,
-  key: "source" | "environmentName" | "environment" | "preparedContext",
+  key: "source" | "fileName" | "environmentName" | "environment" | "preparedContext",
 ): CapturedOption {
   let descriptor: PropertyDescriptor | undefined;
   try {
@@ -1209,6 +1241,7 @@ function captureEvaluationOptions(
   const options = requireOptionsRecord(value);
   return ObjectFreeze({
     source: captureOption(options, "source"),
+    fileName: captureOption(options, "fileName"),
     environmentName: captureOption(options, "environmentName"),
     environment: captureOption(options, "environment"),
     preparedContext: captureOption(options, "preparedContext"),
@@ -1269,7 +1302,15 @@ export async function prepareDeclarativeConfigContext(
 export function createPreparedDeclarativeConfigWorkerPayload(
   source: string,
   preparedContext: PreparedDeclarativeConfigContext,
+  fileName: DeclarativeConfigFileName = DECLARATIVE_CONFIG_FILE_NAME,
 ): PreparedDeclarativeConfigWorkerPayload {
+  if (!isDeclarativeConfigFileName(fileName)) {
+    throw new DeclarativeConfigEvaluationError({
+      code: "input-invalid",
+      phase: "input",
+      reason: "config-file-name",
+    });
+  }
   if (typeof source !== "string") {
     throw new DeclarativeConfigEvaluationError({
       code: "input-invalid",
@@ -1300,11 +1341,19 @@ export function createPreparedDeclarativeConfigWorkerPayload(
 
   const evaluationOptions = ObjectCreate(
     null,
-  ) as DirectDeclarativeConfigEvaluationOptions;
+  ) as PreparedDeclarativeConfigWorkerEvaluationOptions;
   defineDataProperty(
     evaluationOptions,
     "source",
     source,
+    true,
+    false,
+    false,
+  );
+  defineDataProperty(
+    evaluationOptions,
+    "fileName",
+    fileName,
     true,
     false,
     false,
@@ -3359,6 +3408,7 @@ function resolveEvaluationState(
 
 interface CapturedEvaluationInput {
   readonly source: string;
+  readonly fileName: DeclarativeConfigFileName;
   readonly preparedState: PreparedContextState;
 }
 
@@ -3381,20 +3431,30 @@ function captureEvaluationInput(
       reason: "source-bytes",
     });
   }
+  const fileName = capturedOptions.fileName.present
+    ? capturedOptions.fileName.value
+    : DECLARATIVE_CONFIG_FILE_NAME;
+  if (!isDeclarativeConfigFileName(fileName)) {
+    throw new DeclarativeConfigEvaluationError({
+      code: "input-invalid",
+      phase: "input",
+      reason: "config-file-name",
+    });
+  }
   const preparedState = resolveEvaluationState(capturedOptions);
-  return ObjectFreeze({ source, preparedState });
+  return ObjectFreeze({ source, fileName, preparedState });
 }
 
 async function evaluateCapturedInput(
   input: CapturedEvaluationInput,
   parser: TrustedCodeParser,
 ): Promise<ConfigSnapshotRecord> {
-  const { source, preparedState } = input;
+  const { source, fileName, preparedState } = input;
   let parsedAst: unknown;
   try {
     parsedAst = await parser.parse({
       code: source,
-      filePath: CONFIG_FILE_NAME,
+      filePath: fileName,
     });
   } catch (error) {
     const reason = parserErrorReason(error);
@@ -3409,7 +3469,7 @@ async function evaluateCapturedInput(
         ? "validate"
         : "parse",
       reason,
-      location: parseErrorLocation(source, error),
+      location: parseErrorLocation(source, error, fileName),
     });
   }
 
@@ -3421,10 +3481,11 @@ async function evaluateCapturedInput(
     });
   }
   const ast = parsedAst;
-  preflightAst(ast, source);
-  const program = extractProgram(ast, source);
+  preflightAst(ast, source, fileName);
+  const program = extractProgram(ast, source, fileName);
   const context: EvaluationContext = {
     source,
+    fileName,
     tenantEnvironment: preparedState.tenantEnvironment,
     environmentName: preparedState.environmentName,
     bindingCount: 0,

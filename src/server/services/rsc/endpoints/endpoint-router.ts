@@ -28,6 +28,7 @@ import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
 import { analyzeComponent } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { createImportMapIdentity, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
@@ -118,30 +119,56 @@ export async function handleRSCEndpoint(
       return null;
     }
 
-    const handler = getRSCHandler(projectDir, projectId, {
-      adapter,
-      config,
-      contentSourceId,
-      isLocalProject,
-      mode,
-      projectId,
-      projectSlug,
-      releaseId,
-    });
+    let handlerPromise: Promise<RSCDevServerHandler> | undefined;
+    const getRequestHandler = (): Promise<RSCDevServerHandler> => {
+      handlerPromise ??= (async () => {
+        const handlerContentSourceId = contentSourceId ?? releaseId ??
+          (isLocalProject ? "local-main" : mode === "development" ? "preview-main" : "production");
+        const importMapIdentity = await createImportMapIdentity(
+          await preloadImportMap(projectDir, adapter, projectId ?? projectDir, {
+            contentSourceId: handlerContentSourceId,
+            config,
+          }),
+        );
+        return getRSCHandler(projectDir, projectId, {
+          adapter,
+          config,
+          contentSourceId,
+          isLocalProject,
+          mode,
+          projectId,
+          projectSlug,
+          releaseId,
+          importMapIdentity,
+        });
+      })();
+      return handlerPromise;
+    };
 
     if (sub.startsWith("render/")) {
-      return handler.handleRender(sub.replace("render/", ""), url.searchParams, req);
+      return (await getRequestHandler()).handleRender(
+        sub.replace("render/", ""),
+        url.searchParams,
+        req,
+      );
     }
     if (sub === "render") {
-      return handler.handleRender("/", url.searchParams, req);
+      return (await getRequestHandler()).handleRender("/", url.searchParams, req);
     }
     if (sub.startsWith("page/")) {
       metrics.recordRSC("page");
-      return handler.handlePage(sub.replace("page/", ""), url.searchParams, nonce);
+      return (await getRequestHandler()).handlePage(
+        sub.replace("page/", ""),
+        url.searchParams,
+        nonce,
+      );
     }
     if (sub.startsWith("stream/")) {
       metrics.recordRSC("stream");
-      return handler.handleStream(sub.replace("stream/", ""), url.searchParams);
+      return (await getRequestHandler()).handleStream(
+        sub.replace("stream/", ""),
+        url.searchParams,
+      );
     }
 
     if (sub === "probe") {
@@ -181,17 +208,20 @@ export async function handleRSCEndpoint(
 
     if (sub === "manifest") {
       metrics.recordRSC("manifest");
-      return handler.handleManifest();
+      return (await getRequestHandler()).handleManifest();
     }
 
     if (sub === "payload") {
       metrics.recordRSC("page");
-      return handlePayloadEndpoint({ handler, searchParams: url.searchParams });
+      return handlePayloadEndpoint({
+        handler: await getRequestHandler(),
+        searchParams: url.searchParams,
+      });
     }
 
     if (sub === "page") {
       metrics.recordRSC("page");
-      return handler.handlePage("/", url.searchParams, nonce);
+      return (await getRequestHandler()).handlePage("/", url.searchParams, nonce);
     }
 
     if (sub === "stream") {

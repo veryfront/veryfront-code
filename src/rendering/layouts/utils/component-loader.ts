@@ -19,6 +19,10 @@ import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
 import { LAYOUT_EXTENSIONS } from "#veryfront/rendering/layouts/types.ts";
+import {
+  fingerprintPipelineImportMap,
+  snapshotImportMap,
+} from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
@@ -229,11 +233,23 @@ export async function loadTSXComponent(
   projectSlug: string,
   contentSourceId: string,
   reactVersion?: string,
+  importMap?: ImportMapConfig,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
-  const hash = await computeHash(source);
-  const cacheKey = buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId) +
-    ":" + (reactVersion ?? "default");
+  const resolvedImportMap = snapshotImportMap(
+    importMap ?? await preloadImportMap(projectDir, adapter, projectId),
+  );
+  const [hash, importMapFingerprint] = await Promise.all([
+    computeHash(source),
+    fingerprintPipelineImportMap(resolvedImportMap),
+  ]);
+  const cacheKey = buildLayoutComponentCacheKey(
+    projectId,
+    componentPath,
+    hash,
+    contentSourceId,
+    importMapFingerprint,
+  ) + ":" + (reactVersion ?? "default");
 
   const cached = cache.get(cacheKey);
   if (cached) return cached;
@@ -245,6 +261,7 @@ export async function loadTSXComponent(
     ssr: true,
     contentSourceId,
     reactVersion,
+    importMap: resolvedImportMap,
   });
 
   if (!loaded) {
@@ -298,6 +315,7 @@ export function loadMDXLayout(
         projectSlug,
         contentSourceId,
         reactVersion,
+        map,
       )) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
@@ -324,6 +342,7 @@ export async function preloadMDXLayoutModule(
   projectSlug: string,
   contentSourceId: string,
   reactVersion?: string,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -332,7 +351,7 @@ export async function preloadMDXLayoutModule(
     projectId,
     projectSlug,
     contentSourceId,
-    undefined,
+    preloadedImportMap,
     reactVersion,
   );
 }
@@ -348,6 +367,7 @@ export async function applyTSXLayout(
   projectSlug: string,
   contentSourceId: string,
   reactVersion?: string,
+  importMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -371,6 +391,7 @@ export async function applyTSXLayout(
       projectSlug,
       contentSourceId,
       reactVersion,
+      importMap,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {

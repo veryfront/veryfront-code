@@ -19,6 +19,7 @@ import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/pat
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 
 const logger = serverLogger.component("rsc");
 
@@ -105,14 +106,22 @@ export async function handleActionRequestWithGuardLoader(
   }
 
   const source = await adapter.fs.readFile(file);
-  const reactVersion = await resolveProjectReactVersion({ projectDir, config });
+  const resolvedContentSourceId = contentSourceId ??
+    (mode === "development" ? "preview-main" : "production");
+  const [reactVersion, importMap] = await Promise.all([
+    resolveProjectReactVersion({ projectDir, config }),
+    preloadImportMap(projectDir, adapter, projectId, {
+      contentSourceId: resolvedContentSourceId,
+      config,
+    }),
+  ]);
   const mod = await loadModuleFromSource(source, file, projectDir, adapter, {
     projectId: projectId ?? projectDir,
-    contentSourceId: contentSourceId ??
-      (mode === "development" ? "preview-main" : "production"),
+    contentSourceId: resolvedContentSourceId,
     dev: mode === "development",
     mode: mode === "development" ? "preview" : "production",
     reactVersion,
+    importMap,
   });
   const fn = mod.default ?? mod.action;
 

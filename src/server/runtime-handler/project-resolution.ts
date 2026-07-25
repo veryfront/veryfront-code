@@ -18,7 +18,7 @@ import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -69,20 +69,21 @@ interface RequestHeaders {
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
   contentSourceId: string | undefined;
-  /** Project path from x-project-path header */
-  projectPath: string | undefined;
 }
 
-function trustForwardedHeaders(): boolean {
-  return getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-}
-
-function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
+function getEffectiveHost(
+  req: Request,
+  url: URL,
+  proxyTopologyTrusted?: boolean,
+): string {
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
-  // upstream proxy. Honour it only after the operator opt-in or a verified
-  // dispatch JWS, matching createRequestContext; otherwise fall back to Host.
-  // The runtime handler performs async verification and passes the result here.
-  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
+  // upstream proxy. Signature-only dispatch authenticity is not routing
+  // authority, so only the operator's explicit topology opt-in unlocks it.
+  return getEffectiveRequestHost(
+    req,
+    url,
+    proxyTopologyTrusted ?? isProxyTopologyTrusted(),
+  );
 }
 
 /**
@@ -96,20 +97,17 @@ function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): strin
 export function extractRequestHeaders(
   req: Request,
   url: URL,
-  proxyTrusted?: boolean,
+  proxyTopologyTrusted?: boolean,
 ): RequestHeaders {
-  const host = getEffectiveHost(req, url, proxyTrusted);
+  const host = getEffectiveHost(req, url, proxyTopologyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
-  // The WebSocket endpoint uses this query parameter for its existing HMR
-  // handshake. Other routes must not let client-controlled query/header values
-  // override the host-derived environment unless a trusted proxy supplied them.
-  const websocketEnvironment = url.pathname === "/_ws"
-    ? url.searchParams.get("x-environment") ?? undefined
-    : undefined;
-  const environment = (proxyTrusted ?? trustForwardedHeaders())
+  // Environment selectors are routing authority, including on WebSocket
+  // handshakes. Browser-controlled query/header values must not promote a
+  // production request into preview mode.
+  const environment = (proxyTopologyTrusted ?? isProxyTopologyTrusted())
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
-    : websocketEnvironment;
+    : undefined;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
@@ -121,7 +119,6 @@ export function extractRequestHeaders(
     environmentId: req.headers.get("x-environment-id") ?? undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
-    projectPath: req.headers.get("x-project-path") ?? undefined,
   };
 }
 
@@ -158,8 +155,8 @@ interface ProjectResolutionOptions {
   defaultReleaseId?: string | undefined;
   /** WS slug override from query param */
   wsSlugOverride: string | undefined;
-  /** Whether the request has already passed the proxy trust check. */
-  proxyTrusted?: boolean;
+  /** Whether an explicitly configured private edge supplied topology headers. */
+  proxyTopologyTrusted?: boolean;
 }
 
 /**
@@ -178,7 +175,7 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const host = getEffectiveHost(req, url, opts.proxyTrusted);
+  const host = getEffectiveHost(req, url, opts.proxyTopologyTrusted);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);

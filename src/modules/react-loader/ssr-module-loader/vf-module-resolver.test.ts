@@ -1,7 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findVfModuleImports } from "./vf-module-resolver.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { transformResolvedModuleSource } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/source-transform.ts";
+import { findVfModuleImports, resolveVfModuleImports } from "./vf-module-resolver.ts";
+import { createSSRImportMapIdentity } from "./import-map-identity.ts";
+
+const noopLog = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+} as const;
 
 describe("modules/react-loader/ssr-module-loader/vf-module-resolver", () => {
   describe("findVfModuleImports", () => {
@@ -45,5 +55,84 @@ describe("modules/react-loader/ssr-module-loader/vf-module-resolver", () => {
       const code = `import x from "./local.js";`;
       assertEquals(await findVfModuleImports(code), []);
     });
+  });
+
+  it("propagates one hosted import-map snapshot through nested transforms without ambient reloads", async () => {
+    const adapter = {} as RuntimeAdapter;
+    const importMaps = [
+      {
+        imports: { package: "https://modules.example/map-a.ts" },
+        scopes: {},
+      },
+      {
+        imports: { package: "https://modules.example/map-b.ts" },
+        scopes: {},
+      },
+    ];
+    const observedFingerprints: Array<string | undefined> = [];
+    let ambientLoadCalls = 0;
+
+    for (let index = 0; index < importMaps.length; index++) {
+      const importMap = importMaps[index]!;
+      const importMapIdentity = await createSSRImportMapIdentity(importMap);
+      const rewritten = await resolveVfModuleImports(
+        `import nested from "/_vf_modules/components/Nested.js";`,
+        {
+          filePath: "/project/app/page.tsx",
+          projectId: "project-1",
+          contentSourceId: "preview-main",
+          adapter,
+          projectDir: "/project",
+          importMapIdentity,
+        },
+        {
+          fetchAndCacheModule: async (_path, context) => {
+            observedFingerprints.push(context.importMapFingerprint);
+            assertEquals(context.importMap, importMapIdentity.importMap);
+
+            await transformResolvedModuleSource({
+              sourceCode: `import value from "package";\nexport default value;`,
+              actualFilePath: "/project/components/Nested.tsx",
+              projectDir: "/project",
+              projectId: "project-1",
+              normalizedPath: "_vf_modules/components/Nested.js",
+              projectSlug: "project-1",
+              adapter,
+              importMap: context.importMap,
+              log: noopLog,
+              loadImportMap: () => {
+                ambientLoadCalls += 1;
+                return Promise.reject(new Error("ambient import-map load must not run"));
+              },
+              transformToEsm: async (_source, _path, _dir, _adapter, options) => {
+                assertEquals(await options.loadImportMap?.(), importMapIdentity.importMap);
+                return "export default 1;";
+              },
+              cacheHttpImportsToLocal: (code, options) => {
+                assertEquals(options.importMap, importMapIdentity.importMap);
+                return Promise.resolve({ code });
+              },
+            });
+
+            return `/cache/${context.importMapFingerprint}.mjs`;
+          },
+        },
+      );
+
+      assertEquals(
+        rewritten.includes(`file:///cache/${importMapIdentity.fingerprint}.mjs`),
+        true,
+      );
+    }
+
+    assertEquals(ambientLoadCalls, 0);
+    assertEquals(
+      observedFingerprints,
+      await Promise.all(
+        importMaps.map((importMap) =>
+          createSSRImportMapIdentity(importMap).then((identity) => identity.fingerprint)
+        ),
+      ),
+    );
   });
 });

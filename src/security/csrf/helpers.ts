@@ -9,7 +9,7 @@
 
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 
 /** Default CSRF token TTL: 24 hours (longer than session action TTL to avoid stale-form 403s). */
 const CSRF_DEFAULT_TTL_SEC = 86_400;
@@ -133,7 +133,7 @@ export function applyCsrfCookie(
   // deployment trusts the upstream proxy (VERYFRONT_TRUST_FORWARDED_HEADERS=1).
   // The forwarded header is client-spoofable otherwise, so blindly trusting it
   // could suppress the Secure flag on a genuinely-HTTPS deployment.
-  const trustProxyHeaders = getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+  const trustProxyHeaders = isProxyTopologyTrusted();
   const isSecure = cookieName.startsWith("__Host-") ||
     req.url.startsWith("https://") ||
     (trustProxyHeaders && req.headers.get("x-forwarded-proto") === "https");

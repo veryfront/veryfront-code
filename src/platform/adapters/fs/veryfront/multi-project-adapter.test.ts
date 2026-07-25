@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -12,6 +13,8 @@ import {
   setRequestScopedFile,
   wrapWithCurrentContext,
 } from "./multi-project-adapter.ts";
+import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { registerRequestContextFinalizer } from "./request-context.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
   return new MultiProjectFSAdapter({
@@ -108,6 +111,13 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "runWithContext"));
     });
 
+    it("should have source-qualified style config methods", () => {
+      withAdapter((adapter) => {
+        assertMethod(adapter, "createStyleConfigBinding");
+        assertMethod(adapter, "installStyleConfig");
+      });
+    });
+
     it("should have refreshSourceSnapshot method", () => {
       withAdapter((adapter) => assertMethod(adapter, "refreshSourceSnapshot"));
     });
@@ -127,6 +137,102 @@ describe("MultiProjectFSAdapter", () => {
 
     it("initialize should resolve immediately", async () => {
       await withAdapterAsync((adapter) => adapter.initialize());
+    });
+
+    it("keeps request and adapter diagnostics isolated from ambient timing poisoning", async () => {
+      const adapter = createAdapter();
+      const originalManager = (adapter as any).manager;
+      const performancePrototype = Object.getPrototypeOf(performance) as {
+        now: typeof performance.now;
+      };
+      const originalPerformanceNow = performancePrototype.now;
+      const originalToFixed = Number.prototype.toFixed;
+      let content: string | undefined;
+
+      (adapter as any).manager = {
+        getAdapter() {
+          return Promise.resolve({
+            readFile: () => Promise.resolve("captured diagnostics"),
+          });
+        },
+        getStats: () => ({ adapters: 0, stats: [] }),
+        dispose: () => {},
+      };
+
+      try {
+        performancePrototype.now = (() => {
+          throw new Error("ambient performance.now must not run");
+        }) as typeof performance.now;
+        Number.prototype.toFixed = (() => {
+          throw new Error("ambient Number.toFixed must not run");
+        }) as typeof Number.prototype.toFixed;
+
+        content = await adapter.runWithContext(
+          "diagnostic-project",
+          "diagnostic-token",
+          () => adapter.readFile("pages/index.tsx"),
+          "diagnostic-id",
+          { branch: "main" },
+        );
+      } finally {
+        performancePrototype.now = originalPerformanceNow;
+        Number.prototype.toFixed = originalToFixed;
+        (adapter as any).manager = originalManager;
+        adapter.dispose();
+      }
+
+      assertEquals(content, "captured diagnostics");
+    });
+
+    it("disposes manager and default adapter independently and clears retry state", () => {
+      const adapter = createAdapter();
+      const originalManager = (adapter as any).manager;
+      const managerError = new Error("manager cleanup failed");
+      const defaultAdapterError = new Error("default adapter cleanup failed");
+      let managerDisposeCalls = 0;
+      let defaultAdapterDisposeCalls = 0;
+      let firstFailure: unknown;
+      let secondFailure: unknown;
+
+      (adapter as any).manager = {
+        dispose() {
+          managerDisposeCalls++;
+          if (managerDisposeCalls === 1) throw managerError;
+        },
+      };
+      adapter.setDefaultAdapter({
+        dispose() {
+          defaultAdapterDisposeCalls++;
+          throw defaultAdapterError;
+        },
+      } as any);
+
+      try {
+        try {
+          adapter.dispose();
+        } catch (error) {
+          firstFailure = error;
+        }
+        try {
+          adapter.dispose();
+        } catch (error) {
+          secondFailure = error;
+        }
+
+        assertEquals(firstFailure instanceof AggregateError, true);
+        assertEquals((firstFailure as AggregateError).errors, [
+          managerError,
+          defaultAdapterError,
+        ]);
+        assertEquals(secondFailure, undefined);
+        assertEquals(managerDisposeCalls, 2);
+        assertEquals(defaultAdapterDisposeCalls, 1);
+        assertEquals((adapter as any).defaultAdapter, undefined);
+      } finally {
+        (adapter as any).defaultAdapter = undefined;
+        (adapter as any).manager = originalManager;
+        adapter.dispose();
+      }
     });
 
     it("refreshSourceSnapshot should delegate and clear request-scoped file cache", async () => {
@@ -224,6 +330,145 @@ describe("MultiProjectFSAdapter", () => {
           assertEquals(content, "optional stylesheet");
           assertEquals(optionalPath, "app/globals.css");
           assertEquals(normalReadCalled, false);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("does not recover finalized credentials from detached adapter work", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const releaseDetachedWork = Promise.withResolvers<void>();
+        let detachedWork: Promise<void> | undefined;
+        let detachedError: unknown;
+        let managerCalls = 0;
+
+        (adapter as any).manager = {
+          getAdapter() {
+            managerCalls++;
+            return Promise.resolve({
+              readFile: () => Promise.resolve("must not be reached"),
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "detached-project",
+            "detached-token",
+            async () => {
+              detachedWork = (async () => {
+                await releaseDetachedWork.promise;
+                try {
+                  await adapter.readFile("secret.ts");
+                } catch (error) {
+                  detachedError = error;
+                }
+              })();
+            },
+            "detached-id",
+            { branch: "main" },
+          );
+
+          releaseDetachedWork.resolve();
+          await detachedWork;
+        } finally {
+          releaseDetachedWork.resolve();
+          await detachedWork;
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(managerCalls, 0);
+        assertEquals(detachedError instanceof Error, true);
+        assertEquals(
+          (detachedError as Error).message.includes("No request context available"),
+          true,
+        );
+      });
+    });
+
+    it("routes concurrent style config bindings to their exact project adapters", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const installed: Array<{
+          projectSlug: string;
+          bindingProjectSlug: string;
+          configProjectSlug: unknown;
+        }> = [];
+        const projectAdapters = new Map(
+          ["project-a", "project-b"].map((projectSlug) => {
+            const binding = Object.freeze({
+              projectSlug,
+              sourceKey: `${projectSlug}:release-1`,
+              sourceRevision: 1,
+            });
+            return [
+              projectSlug,
+              {
+                createStyleConfigBinding: () => binding,
+                installStyleConfig: (
+                  receivedBinding: typeof binding,
+                  config: Readonly<Record<string, unknown>>,
+                ) => {
+                  installed.push({
+                    projectSlug,
+                    bindingProjectSlug: receivedBinding.projectSlug,
+                    configProjectSlug: config.projectSlug,
+                  });
+                  return receivedBinding === binding;
+                },
+              },
+            ] as const;
+          }),
+        );
+
+        (adapter as any).manager = {
+          getAdapter(projectSlug: string) {
+            return Promise.resolve(projectAdapters.get(projectSlug));
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const results = await Promise.all(
+            ["project-a", "project-b"].map((projectSlug) =>
+              adapter.runWithContext(
+                projectSlug,
+                `${projectSlug}-token`,
+                async () => {
+                  const binding = await adapter.createStyleConfigBinding();
+                  await Promise.resolve();
+                  return await adapter.installStyleConfig(
+                    binding,
+                    Object.freeze({ projectSlug }),
+                  );
+                },
+                `${projectSlug}-id`,
+                { productionMode: true, releaseId: "release-1" },
+              )
+            ),
+          );
+
+          assertEquals(results, [true, true]);
+          assertEquals(
+            installed.sort((a, b) => a.projectSlug.localeCompare(b.projectSlug)),
+            [
+              {
+                projectSlug: "project-a",
+                bindingProjectSlug: "project-a",
+                configProjectSlug: "project-a",
+              },
+              {
+                projectSlug: "project-b",
+                bindingProjectSlug: "project-b",
+                configProjectSlug: "project-b",
+              },
+            ],
+          );
         } finally {
           (adapter as any).manager = originalManager;
         }
@@ -407,6 +652,219 @@ describe("runWithRequestContext", () => {
       },
     );
   });
+
+  it("separates immutable file API authority from cache API provenance", async () => {
+    await runWithRequestContext(
+      {
+        projectSlug: "proj",
+        projectId: "project-id",
+        token: "request-token",
+      },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertEquals(ctx?.requestApiCredential, {
+          projectSlug: "proj",
+          projectId: "project-id",
+          token: "request-token",
+        });
+        assertEquals(Object.isFrozen(ctx?.requestApiCredential), true);
+        assertEquals(ctx?.cacheApiCredential, undefined);
+      },
+    );
+  });
+
+  it("uses captured request-context primordials after ambient poisoning", async () => {
+    const originalMap = globalThis.Map;
+    const originalArrayPush = Array.prototype.push;
+    const originalFreeze = Object.freeze;
+    const originalGetStore = AsyncLocalStorage.prototype.getStore;
+    const originalRun = AsyncLocalStorage.prototype.run;
+    const originalSetAdd = Set.prototype.add;
+    const originalSetForEach = Set.prototype.forEach;
+    const originalWeakMapDelete = WeakMap.prototype.delete;
+    const originalWeakMapGet = WeakMap.prototype.get;
+    const originalWeakMapSet = WeakMap.prototype.set;
+    const originalWeakSetAdd = WeakSet.prototype.add;
+    const originalWeakSetHas = WeakSet.prototype.has;
+    let credentialFrozen = false;
+    let cacheCredentialFrozen = false;
+    let fileCacheUsesCapturedMap = false;
+    let finalizerCalls = 0;
+    const cleanupError = new Error("captured cleanup error");
+    let cleanupCaught: unknown;
+
+    try {
+      globalThis.Map = class PoisonedMap {
+        constructor() {
+          throw new Error("ambient Map constructor must not run");
+        }
+      } as unknown as MapConstructor;
+      Array.prototype.push = (() => {
+        throw new Error("ambient Array.push must not run");
+      }) as typeof Array.prototype.push;
+      Object.freeze = ((value: object) => value) as typeof Object.freeze;
+      AsyncLocalStorage.prototype.getStore = (() => {
+        throw new Error("ambient AsyncLocalStorage.getStore must not run");
+      }) as typeof AsyncLocalStorage.prototype.getStore;
+      AsyncLocalStorage.prototype.run = (() => {
+        throw new Error("ambient AsyncLocalStorage.run must not run");
+      }) as typeof AsyncLocalStorage.prototype.run;
+      Set.prototype.add = (() => {
+        throw new Error("ambient Set.add must not run");
+      }) as typeof Set.prototype.add;
+      Set.prototype.forEach = (() => {
+        throw new Error("ambient Set.forEach must not run");
+      }) as typeof Set.prototype.forEach;
+      WeakMap.prototype.delete = (() => {
+        throw new Error("ambient WeakMap.delete must not run");
+      }) as typeof WeakMap.prototype.delete;
+      WeakMap.prototype.get = (() => {
+        throw new Error("ambient WeakMap.get must not run");
+      }) as typeof WeakMap.prototype.get;
+      WeakMap.prototype.set = (() => {
+        throw new Error("ambient WeakMap.set must not run");
+      }) as typeof WeakMap.prototype.set;
+      WeakSet.prototype.add = (() => {
+        throw new Error("ambient WeakSet.add must not run");
+      }) as typeof WeakSet.prototype.add;
+      WeakSet.prototype.has = (() => {
+        throw new Error("ambient WeakSet.has must not run");
+      }) as typeof WeakSet.prototype.has;
+
+      try {
+        await runWithRequestContext(
+          {
+            projectSlug: "primordial-project",
+            projectId: "primordial-id",
+            token: "primordial-token",
+            tokenProvenance: "project-bound",
+          },
+          async () => {
+            const context = getCurrentRequestContext();
+            if (!context) throw new Error("request context was not installed");
+            credentialFrozen = context.requestApiCredential !== undefined &&
+              Object.isFrozen(context.requestApiCredential);
+            cacheCredentialFrozen = context.cacheApiCredential !== undefined &&
+              Object.isFrozen(context.cacheApiCredential);
+            fileCacheUsesCapturedMap = context.fileCache instanceof originalMap;
+            setRequestScopedFile("file:test.ts", "content");
+            if (getRequestScopedFile("file:test.ts") !== "content") {
+              throw new Error("captured request file cache methods were not used");
+            }
+            registerRequestContextFinalizer(context, () => {
+              finalizerCalls++;
+              throw cleanupError;
+            });
+            registerRequestContextFinalizer(context, () => {
+              finalizerCalls++;
+            });
+          },
+        );
+      } catch (error) {
+        cleanupCaught = error;
+      }
+    } finally {
+      globalThis.Map = originalMap;
+      Array.prototype.push = originalArrayPush;
+      Object.freeze = originalFreeze;
+      AsyncLocalStorage.prototype.getStore = originalGetStore;
+      AsyncLocalStorage.prototype.run = originalRun;
+      Set.prototype.add = originalSetAdd;
+      Set.prototype.forEach = originalSetForEach;
+      WeakMap.prototype.delete = originalWeakMapDelete;
+      WeakMap.prototype.get = originalWeakMapGet;
+      WeakMap.prototype.set = originalWeakMapSet;
+      WeakSet.prototype.add = originalWeakSetAdd;
+      WeakSet.prototype.has = originalWeakSetHas;
+    }
+
+    assertEquals(credentialFrozen, true);
+    assertEquals(cacheCredentialFrozen, true);
+    assertEquals(fileCacheUsesCapturedMap, true);
+    assertEquals(finalizerCalls, 2);
+    assertEquals(cleanupCaught, cleanupError);
+  });
+
+  it("runs every finalizer without replacing the primary request failure", async () => {
+    const primaryError = new Error("primary request failure");
+    const cleanupError = new Error("cleanup failure");
+    const finalized: string[] = [];
+    let caught: unknown;
+
+    try {
+      await runWithRequestContext(
+        { projectSlug: "proj", token: "tok" },
+        async () => {
+          const context = getCurrentRequestContext();
+          if (!context) throw new Error("request context was not installed");
+          registerRequestContextFinalizer(context, () => {
+            finalized.push("first");
+            throw cleanupError;
+          });
+          registerRequestContextFinalizer(context, () => {
+            finalized.push("second");
+          });
+          throw primaryError;
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, primaryError);
+    assertEquals(finalized, ["first", "second"]);
+  });
+
+  it("surfaces cleanup failure after a successful request and still runs later finalizers", async () => {
+    const cleanupError = new Error("cleanup failure");
+    const finalized: string[] = [];
+    let caught: unknown;
+
+    try {
+      await runWithRequestContext(
+        { projectSlug: "proj", token: "tok" },
+        async () => {
+          const context = getCurrentRequestContext();
+          if (!context) throw new Error("request context was not installed");
+          registerRequestContextFinalizer(context, () => {
+            finalized.push("first");
+            throw cleanupError;
+          });
+          registerRequestContextFinalizer(context, () => {
+            finalized.push("second");
+          });
+        },
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, cleanupError);
+    assertEquals(finalized, ["first", "second"]);
+  });
+
+  it("revokes ambient credentials from detached work after request completion", async () => {
+    const releaseDetachedWork = Promise.withResolvers<void>();
+    let detachedContext: ReturnType<typeof getCurrentRequestContext> | undefined;
+    let detachedWork: Promise<void> | undefined;
+
+    await runWithRequestContext(
+      {
+        projectSlug: "detached-project",
+        token: "detached-token",
+      },
+      async () => {
+        detachedWork = (async () => {
+          await releaseDetachedWork.promise;
+          detachedContext = getCurrentRequestContext();
+        })();
+      },
+    );
+
+    releaseDetachedWork.resolve();
+    await detachedWork;
+    assertEquals(detachedContext, null);
+  });
 });
 
 describe("getRequestScopedFile / setRequestScopedFile", () => {
@@ -490,30 +948,41 @@ describe("wrapWithCurrentContext", () => {
   });
 });
 
-describe("globalThis.__vf_multi_project_adapter", () => {
-  it("should be registered on globalThis", () => {
-    assertExists(globalThis.__vf_multi_project_adapter);
-  });
+describe("cache request-context bridge", () => {
+  it("ignores post-import replacement of the legacy writable global", async () => {
+    const globals = globalThis as Record<string, unknown>;
+    const key = "__vf_multi_project_adapter";
+    const hadOwnValue = Object.hasOwn(globals, key);
+    const originalValue = globals[key];
+    globals[key] = {
+      getCurrentRequestContext: () => ({
+        projectSlug: "attacker-project",
+        projectId: "attacker-id",
+        token: "attacker-token",
+        productionMode: true,
+        releaseId: "attacker-release",
+      }),
+    };
 
-  it("should have getCurrentRequestContext function", () => {
-    assertEquals(
-      typeof globalThis.__vf_multi_project_adapter!.getCurrentRequestContext,
-      "function",
-    );
-  });
+    try {
+      const context = await runWithRequestContext(
+        {
+          projectSlug: "real-project",
+          projectId: "real-id",
+          token: "real-token",
+          branch: "real-branch",
+        },
+        async () => tryGetCacheKeyContext(),
+      );
 
-  it("should have getRequestScopedFile function", () => {
-    assertEquals(typeof globalThis.__vf_multi_project_adapter!.getRequestScopedFile, "function");
-  });
-
-  it("should have setRequestScopedFile function", () => {
-    assertEquals(typeof globalThis.__vf_multi_project_adapter!.setRequestScopedFile, "function");
-  });
-
-  it("should have clearRequestScopedFileCache function", () => {
-    assertEquals(
-      typeof globalThis.__vf_multi_project_adapter!.clearRequestScopedFileCache,
-      "function",
-    );
+      assertEquals(context, {
+        projectId: "real-id",
+        mode: "preview",
+        versionId: "real-branch",
+      });
+    } finally {
+      if (hadOwnValue) globals[key] = originalValue;
+      else delete globals[key];
+    }
   });
 });

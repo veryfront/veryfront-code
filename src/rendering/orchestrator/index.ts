@@ -11,7 +11,13 @@ export { HTMLGenerator } from "./html.ts";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html.ts";
 
 export { LayoutOrchestrator } from "./layout.ts";
-export type { LayoutCollectionResult, LayoutOrchestratorConfig } from "./layout.ts";
+export type {
+  LayoutCollectionResult,
+  LayoutOrchestratorConfig,
+  LayoutPreloadSummary,
+  LayoutRequestIdentity,
+  LayoutRequestOverrides,
+} from "./layout.ts";
 
 export { RendererLifecycle } from "./lifecycle.ts";
 export type { LifecycleOptions, RendererServices } from "./lifecycle.ts";

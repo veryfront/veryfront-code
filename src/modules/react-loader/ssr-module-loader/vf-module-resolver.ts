@@ -12,6 +12,7 @@ import {
   createModuleFetcherContext,
   fetchAndCacheModule,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
+import type { SSRImportMapIdentity } from "./import-map-identity.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -27,6 +28,12 @@ interface ResolveVfModuleImportsOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
   reactVersion?: string;
+  /** Atomic map/cache identity already bound to the authenticated render source. */
+  importMapIdentity?: SSRImportMapIdentity;
+}
+
+interface ResolveVfModuleImportsDependencies {
+  fetchAndCacheModule?: typeof fetchAndCacheModule;
 }
 
 /**
@@ -61,6 +68,7 @@ export async function findVfModuleImports(code: string): Promise<VfModuleImport[
 export async function resolveVfModuleImports(
   code: string,
   options: ResolveVfModuleImportsOptions,
+  dependencies: ResolveVfModuleImportsDependencies = {},
 ): Promise<string> {
   const imports = await findVfModuleImports(code);
   if (imports.length === 0) return code;
@@ -80,6 +88,8 @@ export async function resolveVfModuleImports(
     options.projectId,
     {
       contentSourceId: options.contentSourceId,
+      importMap: options.importMapIdentity?.importMap,
+      importMapFingerprint: options.importMapIdentity?.fingerprint,
       reactVersion: options.reactVersion,
       projectSlug: options.projectId,
       strictMissingModules: false,
@@ -89,7 +99,9 @@ export async function resolveVfModuleImports(
   const results = await Promise.all(
     imports.map(async ({ specifier, path }) => {
       try {
-        const cachedFilePath = await fetchAndCacheModule(path, fetcherContext);
+        const cachedFilePath = await (
+          dependencies.fetchAndCacheModule ?? fetchAndCacheModule
+        )(path, fetcherContext);
         return { specifier, path, cachedFilePath };
       } catch (error) {
         logger.warn("Failed to fetch _vf_modules import", {

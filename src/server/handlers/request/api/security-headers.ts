@@ -6,9 +6,10 @@ import {
   getSecurityHeader as coreGetSecurityHeader,
 } from "#veryfront/security/http/response/security-handler.ts";
 import { applyCsrfCookie } from "#veryfront/security/csrf/helpers.ts";
+import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
 
 function isDev(ctx: HandlerContext): boolean {
-  return !!ctx.isLocalProject;
+  return isExplicitlyLocalProject(ctx);
 }
 
 export function buildCSP(ctx: HandlerContext): string {

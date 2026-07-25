@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createLayoutComponentCache,
   loadMDXLayout,
+  loadTSXComponent,
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
@@ -43,6 +44,52 @@ describe("rendering/layouts/utils/component-loader", () => {
       assertEquals(cache.get("layout:proj:/b:h2:c"), C);
       assertEquals(cache.get("layout:proj:/c:h3:c"), C);
     });
+  });
+
+  it("isolates TSX layout cache entries by canonical import-map fingerprint", async () => {
+    function CachedLayout() {
+      return null;
+    }
+
+    const requestedKeys: string[] = [];
+    const cache = {
+      get(key: string) {
+        requestedKeys.push(key);
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+    const baseArgs = [
+      "/project/app/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-1",
+      "project",
+      "preview-main",
+      "19.1.1",
+    ] as const;
+
+    await loadTSXComponent(...baseArgs, {
+      imports: { package: "https://example.com/package-v1.ts" },
+    });
+    await loadTSXComponent(...baseArgs, {
+      imports: { package: "https://example.com/package-v2.ts" },
+    });
+    await loadTSXComponent(...baseArgs, {
+      imports: { package: "https://example.com/package-v1.ts" },
+    });
+
+    assertEquals(requestedKeys.length, 3);
+    assertEquals(requestedKeys[0] === requestedKeys[1], false);
+    assertEquals(requestedKeys[0], requestedKeys[2]);
   });
 
   describe("InMemoryLayoutComponentCache (via factory)", () => {
@@ -298,8 +345,10 @@ describe("rendering/layouts/utils/component-loader", () => {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
     let moduleReactVersion: unknown;
+    let moduleImportMap: unknown;
     mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
       moduleReactVersion = args[6];
+      moduleImportMap = args[7];
       return Promise.resolve({ default: () => null });
     }) as typeof mdxRenderer.loadModuleESM;
 
@@ -316,6 +365,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       );
 
       assertEquals(moduleReactVersion, "18.3.1");
+      assertEquals(moduleImportMap, { imports: {} });
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }

@@ -75,6 +75,49 @@ function createRuntimeAgentRunInvocationBody() {
   });
 }
 
+function createProjectEnvFetch(options: {
+  sourceEnvironmentId?: string;
+  sourceEnvironmentName?: string;
+  variables?: Array<{ key: string; value: string }>;
+} = {}): typeof globalThis.fetch {
+  const sourceEnvironmentId = options.sourceEnvironmentId ?? "env-preview";
+  const sourceEnvironmentName = options.sourceEnvironmentName ?? "preview";
+
+  return async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/environments")) {
+      if (url.searchParams.get("limit") !== "100") {
+        throw new Error(`environment list request omitted its page limit: ${url}`);
+      }
+      if (!init?.signal) {
+        throw new Error("environment list request omitted its abort signal");
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: "env-production-first", name: "production" },
+            { id: sourceEnvironmentId, name: sourceEnvironmentName },
+          ],
+          page_info: { next: null },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+
+    if (url.pathname.endsWith("/environment-variables")) {
+      if (url.searchParams.get("environment_id") !== sourceEnvironmentId) {
+        throw new Error(`environment variables used the wrong source identity: ${url}`);
+      }
+      return new Response(
+        JSON.stringify({ data: options.variables ?? [] }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+
+    throw new Error(`unexpected project environment fetch: ${url}`);
+  };
+}
+
 describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
@@ -86,6 +129,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: createProjectEnvFetch(),
       resolveRuntimeOwnerInvokeUrl: async () => "http://10.0.0.7:20000/channels/invoke",
       createRuntime: () => ({
         stream: async (_messages, context, callbacks) => {
@@ -642,14 +686,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url) === "https://api.veryfront.org/projects/demo-project/environments") {
-        return Promise.resolve(
-          new Response(JSON.stringify({ data: [] }), {
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }
-
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     }) as typeof fetch;
 
@@ -659,6 +695,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
+        projectEnvFetch: createProjectEnvFetch(),
         createRuntime: (runtimeAgent) => {
           const runtimeConfig = runtimeAgent.config as
             & typeof runtimeAgent.config
@@ -804,6 +841,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("loads and applies integration restrictions from the exact requested source", async () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];
+    let projectEnvFetchCalls = 0;
 
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async (ctx) => {
@@ -820,6 +858,37 @@ describe("server/handlers/request/agent-stream.handler", () => {
           : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: async (input, init) => {
+        projectEnvFetchCalls += 1;
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/environments")) {
+          assertEquals(url.searchParams.get("limit"), "100");
+          assertExists(init?.signal);
+          return new Response(
+            JSON.stringify({
+              data: [
+                { id: "env-production-first", name: "production" },
+                { id: "env-config", name: "PrEvIeW" },
+              ],
+              page_info: { next: null },
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.pathname.endsWith("/environment-variables")) {
+          assertEquals(url.searchParams.get("environment_id"), "env-config");
+          return new Response(
+            JSON.stringify({
+              data: [
+                { key: "CONFIG_TITLE", value: "configured-before-discovery" },
+                { key: "CONFIG_ALLOWED_TOOL", value: "list_emails" },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error(`unexpected project environment fetch: ${url}`);
+      },
       createRuntime: (agent) => ({
         stream: async (_messages, _context, callbacks) => {
           capturedSourcePolicy = getRuntimeSourceIntegrationPolicy(agent.config);
@@ -851,7 +920,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
         const branch = getCurrentRequestContext()?.branch ?? "main";
         configReads.push(branch);
         return branch === "restrict-gmail"
-          ? 'export default { integrations: { allow: { gmail: { allowedTools: ["list_emails"] } } } };'
+          ? `
+            import { getEnv } from "veryfront";
+            const allowedTools = getEnv("CONFIG_ALLOWED_TOOL") === "list_emails"
+              ? ["list_emails"]
+              : [];
+            export default {
+              title: getEnv("CONFIG_TITLE") ?? "missing",
+              description: \`\${getEnv("VERYFRONT_API_TOKEN") ?? "no-token"}:\${getEnv("VERYFRONT_API_URL") ?? "no-url"}\`,
+              integrations: { allow: { gmail: { allowedTools } } },
+            };
+          `
           : "export default {};";
       },
       runWithContext: (
@@ -871,12 +950,16 @@ describe("server/handlers/request/agent-stream.handler", () => {
       },
     });
 
-    const body = createAgentStreamRequestBody({
+    const invocation = JSON.parse(createAgentStreamRequestBody({
       agentSource: { type: "branch", branch: "restrict-gmail" },
       credentials: { authToken: "request-scoped-user-token" },
-    });
+    })) as { run: { project: Record<string, unknown> } };
+    invocation.run.project.runtimeTargetKind = "environment";
+    invocation.run.project.runtimeTargetEnvironmentId = "10000000-1000-4000-8000-100000000099";
+    const body = JSON.stringify(invocation);
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
+    ctx.environmentId = "env-outer-context-must-not-win";
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
@@ -899,6 +982,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
+    assertEquals(projectEnvFetchCalls, 2);
+    assertEquals(discoveryConfig?.title, "configured-before-discovery");
+    assertEquals(discoveryConfig?.description, "no-token:no-url");
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });
@@ -907,6 +993,317 @@ describe("server/handlers/request/agent-stream.handler", () => {
       mode: "allowlist",
       integrations: { gmail: { allowedToolIds: ["list_emails"] } },
     });
+  });
+
+  it("evaluates a release source with an empty release-labeled environment", async () => {
+    let projectEnvFetchCalls = 0;
+    let discoveryConfig: HandlerContext["config"];
+    const runWithContextCalls: Array<{
+      token?: string;
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+      tokenProvenance?: "project-bound" | "untrusted";
+    }> = [];
+    const fs = createNoopFsAdapter(runWithContextCalls);
+    Object.assign(fs, {
+      exists: async (path: string) => path === "/veryfront.config.ts",
+      readFile: async () => `
+        import { defineConfigWithEnv, getEnv } from "veryfront";
+        export default defineConfigWithEnv((environmentName) => ({
+          title: environmentName,
+          description: getEnv("PRODUCTION_ONLY_SECRET") ?? "empty",
+        }));
+      `,
+    });
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async (ctx) => {
+        discoveryConfig = ctx.config;
+      },
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: async () => {
+        projectEnvFetchCalls += 1;
+        throw new Error("release sources must not fetch environment metadata or variables");
+      },
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: undefined,
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const releaseId = "10000000-1000-4000-8000-100000000099";
+    const body = createAgentStreamRequestBody({
+      agentSource: { type: "release", releaseId },
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.environmentId = "env-production-must-not-win";
+    ctx.adapter = {
+      ...ctx.adapter,
+      env: createNoopEnvAdapter(publicKeyPem),
+      fs,
+    };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(projectEnvFetchCalls, 0);
+    assertEquals(discoveryConfig?.title, "release");
+    assertEquals(discoveryConfig?.description, "empty");
+    assertEquals(runWithContextCalls, [{
+      token: "request-scoped-user-token",
+      tokenProvenance: "untrusted",
+      productionMode: true,
+      releaseId,
+      environmentName: null,
+    }]);
+  });
+
+  it("does not fall back to the first environment when the exact source is missing", async () => {
+    let configSourceReads = 0;
+    let discoveryCalls = 0;
+    const fs = createNoopFsAdapter([]);
+    Object.assign(fs, {
+      exists: async () => {
+        configSourceReads += 1;
+        return false;
+      },
+      readFile: async () => {
+        configSourceReads += 1;
+        return "export default {}";
+      },
+    });
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: async (input, init) => {
+        const url = new URL(String(input));
+        assertEquals(url.pathname.endsWith("/environments"), true);
+        assertEquals(url.searchParams.get("limit"), "100");
+        assertExists(init?.signal);
+        return new Response(
+          JSON.stringify({
+            data: [{ id: "env-production-first", name: "production" }],
+            page_info: { next: null },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    const body = createAgentStreamRequestBody({
+      agentSource: { type: "branch", branch: "missing-preview-source" },
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 404);
+    assertEquals(
+      result.response.headers.get("content-type"),
+      "application/problem+json",
+    );
+    assertEquals(result.response.headers.get("x-content-type-options"), "nosniff");
+    const problem = await result.response.json() as Record<string, unknown>;
+    assertEquals(problem.status, 404);
+    assertStringIncludes(String(problem.type), "/resource-not-found");
+    assertEquals(configSourceReads, 0);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("preserves a source-environment service error and filters server detail", async () => {
+    let configSourceReads = 0;
+    let discoveryCalls = 0;
+    const fs = createNoopFsAdapter([]);
+    Object.assign(fs, {
+      exists: async () => {
+        configSourceReads += 1;
+        return false;
+      },
+      readFile: async () => {
+        configSourceReads += 1;
+        return "export default {}";
+      },
+    });
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: async (_input, init) => {
+        assertExists(init?.signal);
+        return new Response("sensitive upstream service detail", { status: 503 });
+      },
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(
+      result.response.headers.get("content-type"),
+      "application/problem+json",
+    );
+    assertEquals(result.response.headers.get("x-content-type-options"), "nosniff");
+    const problem = await result.response.json() as Record<string, unknown>;
+    assertEquals(problem.status, 503);
+    assertStringIncludes(String(problem.type), "/api-client-error");
+    assertEquals(Object.hasOwn(problem, "detail"), false);
+    assertEquals(configSourceReads, 0);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  it("stops a cancelled request without cancelling its shared environment fetch", async () => {
+    let configSourceReads = 0;
+    let discoveryCalls = 0;
+    const envFetchStarted = Promise.withResolvers<AbortSignal>();
+    const releaseEnvFetch = Promise.withResolvers<Response>();
+    const fs = createNoopFsAdapter([]);
+    Object.assign(fs, {
+      exists: async () => {
+        configSourceReads += 1;
+        return false;
+      },
+      readFile: async () => {
+        configSourceReads += 1;
+        return "export default {}";
+      },
+    });
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: async (input, init) => {
+        const url = new URL(String(input));
+        const signal = init?.signal;
+        assertExists(signal);
+        if (url.pathname.endsWith("/environments")) {
+          return new Response(
+            JSON.stringify({
+              data: [{ id: "env-preview", name: "preview" }],
+              page_info: { next: null },
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.pathname.endsWith("/environment-variables")) {
+          envFetchStarted.resolve(signal);
+          return await releaseEnvFetch.promise;
+        }
+        throw new Error(`unexpected project environment fetch: ${url}`);
+      },
+    });
+    const body = createAgentStreamRequestBody({
+      agentSource: { type: "branch", branch: "cancelled-preview" },
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = { ...ctx.adapter, fs };
+    const requestAbort = new AbortController();
+    const handlePromise = handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+        signal: requestAbort.signal,
+      }),
+      ctx,
+    );
+
+    const sharedFetchSignal = await envFetchStarted.promise;
+    requestAbort.abort(new Error("request cancelled"));
+    let timeoutId: number | undefined;
+    try {
+      const result = await Promise.race([
+        handlePromise,
+        new Promise<never>((_resolve, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("cancelled handler waiter did not settle")),
+            1_000,
+          );
+        }),
+      ]);
+      assertExists(result.response);
+      assertEquals(sharedFetchSignal.aborted, false);
+      assertEquals(configSourceReads, 0);
+      assertEquals(discoveryCalls, 0);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      releaseEnvFetch.resolve(
+        new Response(
+          JSON.stringify({ data: [] }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
   });
 
   it("fails closed before discovery when the runtime cannot select the signed source", async () => {
@@ -934,7 +1331,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       createSingleProjectCtx(publicKeyPem),
     );
 
-    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.status, 400);
+    assertEquals(
+      result.response?.headers.get("content-type"),
+      "application/problem+json",
+    );
     assertEquals(discoveryCalls, 0);
   });
 
@@ -1000,7 +1401,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       ctx,
     );
 
-    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.status, 400);
+    assertEquals(
+      result.response?.headers.get("content-type"),
+      "application/problem+json",
+    );
     assertEquals(discoveryCalls, 0);
   });
 
@@ -1112,6 +1517,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
+        projectEnvFetch: createProjectEnvFetch(),
         createRuntime: (runtimeAgent) => ({
           stream: async (_messages, _context, callbacks) => {
             const runtimeConfig = runtimeAgent.config as
@@ -1210,6 +1616,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
+        projectEnvFetch: createProjectEnvFetch(),
         createRuntime: (runtimeAgent) => {
           const runtimeConfig = runtimeAgent.config as
             & typeof runtimeAgent.config
@@ -1460,6 +1867,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
               : undefined,
           getAllAgentIds: () => ["assistant-1"],
           sessionManager: new AgentRunSessionManager(),
+          projectEnvFetch: createProjectEnvFetch(),
           createRuntime: (runtimeAgent) => {
             const runtimeConfig = runtimeAgent.config as
               & typeof runtimeAgent.config
@@ -1602,6 +2010,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             : undefined,
         getAllAgentIds: () => ["assistant-1"],
         sessionManager: new AgentRunSessionManager(),
+        projectEnvFetch: createProjectEnvFetch(),
         createRuntime: (runtimeAgent) => ({
           stream: async (_messages, _context, callbacks) => {
             const runtimeConfig = runtimeAgent.config as
@@ -1763,14 +2172,20 @@ describe("server/handlers/request/agent-stream.handler", () => {
         "Bearer request-scoped-user-token",
       );
 
-      if (String(url).endsWith("/projects/support-agent-fork/environments")) {
+      if (
+        new URL(String(url)).pathname.endsWith(
+          "/projects/support-agent-fork/environments",
+        )
+      ) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
               data: [
                 { id: "env-staging", name: "staging", protected: true },
                 { id: "env-production", name: "production", protected: false },
+                { id: "env-preview", name: "preview", protected: false },
               ],
+              page_info: { next: null },
             }),
             { headers: { "content-type": "application/json" } },
           ),
@@ -1778,7 +2193,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }
 
       if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
-        assertEquals(String(url).includes("environment_id=env-production"), true);
+        assertEquals(String(url).includes("environment_id=env-preview"), true);
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1872,9 +2287,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
     assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
     assertEquals(fetchUrls, [
+      "https://api.veryfront.org/projects/support-agent-fork/environments?limit=100",
+      "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-preview&limit=100",
       "https://api.veryfront.org/mcp",
-      "https://api.veryfront.org/projects/support-agent-fork/environments",
-      "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
     ]);
   });
 
@@ -1972,13 +2387,19 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url) === `${apiBaseUrl}/projects/base-url-agent-fork/environments`) {
+      if (
+        new URL(String(url)).pathname.endsWith(
+          "/projects/base-url-agent-fork/environments",
+        )
+      ) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
               data: [
                 { id: "env-production-base-url", name: "production", protected: false },
+                { id: "env-preview-base-url", name: "preview", protected: false },
               ],
+              page_info: { next: null },
             }),
             { headers: { "content-type": "application/json" } },
           ),
@@ -1988,7 +2409,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       if (
         String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
       ) {
-        assertEquals(String(url).includes("environment_id=env-production-base-url"), true);
+        assertEquals(String(url).includes("environment_id=env-preview-base-url"), true);
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -2033,9 +2454,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
+      `${new URL(apiBaseUrl).origin}/projects/base-url-agent-fork/environments?limit=100`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-preview-base-url&limit=100`,
       `${apiBaseUrl}/mcp`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
     ]);
   });
 
@@ -2240,6 +2661,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       branch?: string | null;
       environmentName?: string | null;
     }> = [];
+    const projectEnvUrls: string[] = [];
 
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
@@ -2248,6 +2670,39 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: async (input, init) => {
+        const url = new URL(String(input));
+        projectEnvUrls.push(url.toString());
+        if (url.pathname.endsWith("/environments")) {
+          assertEquals(url.searchParams.get("limit"), "100");
+          assertExists(init?.signal);
+          if (url.searchParams.get("cursor") === null) {
+            return new Response(
+              JSON.stringify({
+                data: [{ id: "env-production-first", name: "production" }],
+                page_info: { next: "staging-page" },
+              }),
+              { headers: { "content-type": "application/json" } },
+            );
+          }
+          assertEquals(url.searchParams.get("cursor"), "staging-page");
+          return new Response(
+            JSON.stringify({
+              data: [{ id: "env-staging", name: "StAgInG" }],
+              page_info: { next: null },
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.pathname.endsWith("/environment-variables")) {
+          assertEquals(url.searchParams.get("environment_id"), "env-staging");
+          return new Response(
+            JSON.stringify({ data: [] }),
+            { headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error(`unexpected project environment fetch: ${url}`);
+      },
       createRuntime: () => ({
         stream: async (_messages, _context, callbacks) => {
           callbacks?.onFinish?.({
@@ -2334,6 +2789,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(runWithContextCalls[0]?.environmentName, "staging");
     assertEquals(runWithContextCalls[0]?.releaseId, "10000000-1000-4000-8000-100000000099");
     assertEquals(runWithContextCalls[0]?.productionMode, true);
+    assertEquals(projectEnvUrls, [
+      "https://api.veryfront.com/projects/demo-project/environments?limit=100",
+      "https://api.veryfront.com/projects/demo-project/environments?limit=100&cursor=staging-page",
+      "https://api.veryfront.com/projects/demo-project/environment-variables?environment_id=env-staging&limit=100",
+    ]);
     assertEquals(observedCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",
@@ -2353,6 +2813,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: () => undefined,
       getAllAgentIds: () => [],
       sessionManager: new AgentRunSessionManager(),
+      projectEnvFetch: createProjectEnvFetch(),
       createRuntime: () => {
         throw new Error("runtime should not be created for an unknown agent");
       },

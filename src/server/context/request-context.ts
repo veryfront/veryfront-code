@@ -1,4 +1,5 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEffectiveRequestHost } from "../utils/request-host.ts";
 
@@ -17,24 +18,20 @@ export type RequestTokenSource = "request-header" | "host-env" | "none";
 export type RequestTokenProvenance = "project-bound" | "untrusted";
 
 export interface CreateRequestContextOptions {
-  /** Whether the request has already passed the proxy trust check. */
-  proxyTrusted?: boolean;
+  /** Whether an explicitly configured private edge supplied topology headers. */
+  proxyTopologyTrusted?: boolean;
 }
 
 export function createRequestContext(
   req: Request,
   options: CreateRequestContextOptions = {},
 ): RequestContext {
-  // x-forwarded-host is only trustworthy when the operator has explicitly opted
-  // into trusting forwarded headers. A direct-access attacker cannot set this
-  // env var, so gating on it prevents Host / preview-mode spoofing via a
-  // client-supplied x-forwarded-host (VULN-SRV-1 / VULN-SRV-2). Dispatch-JWS
-  // trust requires async verification, so the runtime handler passes that
-  // request-scoped result through options. Direct callers fail closed unless
-  // the operator explicitly trusts forwarded headers.
-  const trustProxy = options.proxyTrusted ??
-    getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
-  const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
+  // A signature-only dispatch JWS is not bound to this request's routing
+  // headers. Only an explicitly configured private edge may supply the
+  // forwarded host used for project and preview-mode resolution.
+  const proxyTopologyTrusted = options.proxyTopologyTrusted ??
+    isProxyTopologyTrusted();
+  const effectiveHost = getEffectiveRequestHost(req, undefined, proxyTopologyTrusted);
   const parsed = parseProjectDomain(effectiveHost);
   const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
   const requestToken = req.headers.get("x-token");
@@ -63,7 +60,7 @@ export function createRequestContext(
     token,
     tokenSource,
     // Project resolution happens after this function. A credential cannot be
-    // treated as project-bound until that result and proxy trust are both known.
+    // treated as project-bound until that result and topology trust are both known.
     tokenProvenance: "untrusted",
     slug: headerProjectSlug ?? parsed.slug ?? "",
     branch: parsed.branch,
@@ -79,9 +76,9 @@ export function createRequestContext(
  */
 export function bindRequestTokenToProject(
   ctx: RequestContext,
-  options: { proxyTrusted: boolean; projectSlug?: string },
+  options: { proxyTopologyTrusted: boolean; projectSlug?: string },
 ): RequestContext {
-  const projectBound = options.proxyTrusted &&
+  const projectBound = options.proxyTopologyTrusted &&
     ctx.tokenSource === "request-header" &&
     ctx.token.length > 0 &&
     Boolean(options.projectSlug?.trim());

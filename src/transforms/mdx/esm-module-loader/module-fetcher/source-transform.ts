@@ -6,6 +6,7 @@
 
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -27,6 +28,8 @@ export interface TransformResolvedModuleSourceInput {
   projectSlug: string;
   reactVersion?: string;
   adapter: RuntimeAdapter;
+  /** Import map snapshot resolved by the top-level authenticated loader. */
+  importMap?: ImportMapConfig;
   log: SourceTransformLogger;
   transformToEsm?: TransformToEsmFn;
   loadImportMap?: LoadImportMapFn;
@@ -48,6 +51,9 @@ export async function transformResolvedModuleSource(
 
   const preprocessedSource = rewriteVeryfrontImports(input.sourceCode);
   const transform = input.transformToEsm ?? transformToESM;
+  const readImportMap = input.loadImportMap ?? loadImportMap;
+  const importMap = input.importMap ??
+    await readImportMap(input.projectDir, input.adapter);
   const transformStart = performance.now();
   let moduleCode: string;
   try {
@@ -61,6 +67,7 @@ export async function transformResolvedModuleSource(
         dev: true,
         ssr: true,
         reactVersion: input.reactVersion,
+        loadImportMap: async () => importMap,
       },
     );
   } catch (transformError) {
@@ -86,9 +93,7 @@ export async function transformResolvedModuleSource(
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} Caching HTTP imports to local files`, {
     normalizedPath: input.normalizedPath,
   });
-  const readImportMap = input.loadImportMap ?? loadImportMap;
   const cacheHttpImports = input.cacheHttpImportsToLocal ?? cacheHttpImportsToLocal;
-  const importMap = await readImportMap(input.projectDir);
   const cacheResult = await cacheHttpImports(moduleCode, {
     cacheDir: getHttpBundleCacheDir(),
     importMap,

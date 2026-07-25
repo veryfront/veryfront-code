@@ -14,6 +14,7 @@ import { ComponentRegistry } from "./ssr/component-registry.ts";
 import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -145,7 +146,19 @@ export class PageRenderer {
           return { collectedMetadata: {}, scriptResult };
         }
 
-        const reactVersion = await this.getReactVersion();
+        const projectId = options?.projectId ?? this.projectDir;
+        const [reactVersion, importMap] = await Promise.all([
+          this.getReactVersion(),
+          preloadImportMap(
+            this.projectDir,
+            this.adapter,
+            projectId,
+            {
+              contentSourceId: options?.contentSourceId,
+              config: this.config,
+            },
+          ),
+        ]);
 
         if (pageType.type === "component") {
           let params = options?.params;
@@ -183,6 +196,7 @@ export class PageRenderer {
                   mode: this.mode,
                   contentSourceId: options?.contentSourceId,
                   reactVersion,
+                  importMap,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },
@@ -216,6 +230,7 @@ export class PageRenderer {
                 projectSlug: options?.projectSlug,
                 contentSourceId: options?.contentSourceId,
                 reactVersion,
+                importMap,
               },
             ),
           { "render.mdx_path": pageInfo.entity.path },

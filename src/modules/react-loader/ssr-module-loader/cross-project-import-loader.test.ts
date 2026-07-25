@@ -6,6 +6,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CrossProjectImport } from "#veryfront/transforms/esm/import-parser.ts";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
+import { createSSRImportMapIdentity } from "./import-map-identity.ts";
 
 function createMockCacheFs(overrides: Partial<FileSystem> = {}): FileSystem {
   return {
@@ -79,6 +80,59 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     assertEquals(result, "/tmp/cached-cross-project.mjs");
     assertEquals(fetchCalls, 0);
     assertEquals(capacityCalls, 0);
+  });
+
+  it("isolates cached cross-project modules by import-map fingerprint", async () => {
+    globalCrossProjectCache.clear();
+    const mapAIdentity = await createSSRImportMapIdentity({
+      imports: { package: "https://modules.example/map-a.ts" },
+      scopes: {},
+    });
+    const mapBIdentity = await createSSRImportMapIdentity({
+      imports: { package: "https://modules.example/map-b.ts" },
+      scopes: {},
+    });
+    const key = (fingerprint: string) =>
+      JSON.stringify([
+        crossProjectImport.specifier,
+        "project-a",
+        "default",
+        fingerprint,
+      ]);
+    globalCrossProjectCache.set(key(mapAIdentity.fingerprint), {
+      tempPath: "/tmp/map-a.mjs",
+      contentHash: "aaaa",
+    });
+    globalCrossProjectCache.set(key(mapBIdentity.fingerprint), {
+      tempPath: "/tmp/map-b.mjs",
+      contentHash: "bbbb",
+    });
+
+    const load = (importMapIdentity: typeof mapAIdentity) =>
+      transformCrossProjectImportFlow({
+        crossProjectImport,
+        options: {
+          projectId: "project-a",
+          projectDir: "/project",
+          dev: true,
+          adapter: denoAdapter,
+          importMapIdentity,
+        },
+        cache: {
+          hashContentAsync: async () => "unused",
+          getTempPath: async () => "/tmp/unused.mjs",
+          getFs: () => createMockCacheFs(),
+        },
+        withTransformCapacity: async () => {
+          throw new Error("unexpected transform for fingerprint cache hit");
+        },
+        fetchImpl: async () => {
+          throw new Error("unexpected fetch for fingerprint cache hit");
+        },
+      });
+
+    assertEquals(await load(mapAIdentity), "/tmp/map-a.mjs");
+    assertEquals(await load(mapBIdentity), "/tmp/map-b.mjs");
   });
 
   it("fetches, transforms, writes temp file, and caches transformed cross-project import", async () => {

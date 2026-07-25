@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
 
 interface DeferredComponentSource {
   source: string;
@@ -172,7 +173,7 @@ export class ComponentRegistry {
           info.filePath,
           info.projectRoot,
           adapter,
-          this.getLoaderOptions(info.projectRoot),
+          await this.getLoaderOptions(info.projectRoot),
         );
 
         this.components.set(componentName, Component);
@@ -223,19 +224,14 @@ export class ComponentRegistry {
     return this.failedComponents.has(name);
   }
 
-  private getLoaderOptions(projectRoot: string): {
-    projectId: string;
-    dev: true;
-    moduleServerUrl?: string;
-    vendorBundleHash?: string;
-    contentSourceId?: string;
-  } {
+  private async getLoaderOptions(projectRoot: string): Promise<LoadComponentOptions> {
     return {
       projectId: this.projectId ?? projectRoot,
       dev: true,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,
+      importMap: await this.virtualModules.getImportMap(projectRoot),
     };
   }
 
@@ -303,7 +299,7 @@ export class ComponentRegistry {
             entryPath,
             projectRoot,
             adapter,
-            this.getLoaderOptions(projectRoot),
+            await this.getLoaderOptions(projectRoot),
           );
 
           this.components.set(componentName, Component);

@@ -37,6 +37,10 @@ import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { isCompiledBinary } from "#veryfront/utils";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { resolvePreparedRemoteHosts } from "./module-loader/security-config.ts";
+import {
+  isExplicitlyLocalProject,
+  readOwnDataProperty as readBoundaryOwnDataProperty,
+} from "#veryfront/security/project-locality.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
@@ -55,6 +59,8 @@ const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectPrototype = Object.prototype;
 const apply = Reflect.apply;
 const randomUUID = crypto.randomUUID;
+const NativePromise = Promise;
+const promiseResolve = NativePromise.resolve;
 
 type ResolvedProjectConfig = Awaited<ReturnType<typeof getConfig>>;
 type PreparedPolicyConfig = Pick<ResolvedProjectConfig, "resolve" | "security">;
@@ -119,7 +125,9 @@ function ownRecordKeys(record: PlainRecord): string[] {
 
 function snapshotStringRecord(value: PlainRecord): PlainRecord {
   const snapshot = createSnapshotRecord();
-  for (const key of ownRecordKeys(value)) {
+  const keys = ownRecordKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
     const entry = readOwnDataProperty(value, key);
     if (typeof entry !== "string") throw malformedPreparedPolicy();
     defineSnapshotProperty(snapshot, key, entry);
@@ -129,7 +137,9 @@ function snapshotStringRecord(value: PlainRecord): PlainRecord {
 
 function snapshotScopes(value: PlainRecord): PlainRecord {
   const snapshot = createSnapshotRecord();
-  for (const scope of ownRecordKeys(value)) {
+  const scopes = ownRecordKeys(value);
+  for (let index = 0; index < scopes.length; index++) {
+    const scope = scopes[index]!;
     const entries = requirePlainRecord(readOwnDataProperty(value, scope));
     defineSnapshotProperty(snapshot, scope, snapshotStringRecord(entries));
   }
@@ -196,12 +206,34 @@ function isAppRouteModule(modulePath: string): boolean {
   return /\/route\.(ts|js|tsx|jsx)$/.test(modulePath);
 }
 
-function snapshotRequestLocality(ctx?: HandlerContext): boolean {
-  try {
-    return ctx?.isLocalProject === true;
-  } catch {
-    return false;
-  }
+interface RequestLocalitySnapshot {
+  readonly isLocalProject: boolean;
+}
+
+interface HandleOptionsSnapshot {
+  readonly applyCORS: boolean;
+}
+
+function snapshotRequestLocality(ctx?: HandlerContext): RequestLocalitySnapshot {
+  const snapshot = createSnapshotRecord();
+  defineSnapshotProperty(
+    snapshot,
+    "isLocalProject",
+    isExplicitlyLocalProject(ctx),
+  );
+  return freezeSnapshot(snapshot) as unknown as RequestLocalitySnapshot;
+}
+
+function snapshotHandleOptions(
+  options?: APIRouteHandleOptions,
+): HandleOptionsSnapshot {
+  const snapshot = createSnapshotRecord();
+  defineSnapshotProperty(
+    snapshot,
+    "applyCORS",
+    readBoundaryOwnDataProperty(options, "applyCORS") !== false,
+  );
+  return freezeSnapshot(snapshot) as unknown as HandleOptionsSnapshot;
 }
 
 export type { APIContext, APIRoute };
@@ -321,7 +353,7 @@ export class APIRouteHandler {
   private destroyRequested = false;
   private destroyed = false;
   private workerUsed = false;
-  private isolationUnavailableReason: string | null = null;
+  private isolationCompatibilityPromise: Promise<string | null> | null = null;
   private configUnavailable = false;
 
   private adapter: RuntimeAdapter | null;
@@ -342,7 +374,9 @@ export class APIRouteHandler {
     private readonly executionScopeId: string = `api:${apply(randomUUID, crypto, [])}`,
   ) {
     this.adapter = adapter ?? null;
-    this.adapterPromise = adapter ? Promise.resolve(adapter) : null;
+    this.adapterPromise = adapter
+      ? apply(promiseResolve, NativePromise, [adapter]) as Promise<RuntimeAdapter>
+      : null;
 
     if (initialConfig) {
       this.config = initialConfig;
@@ -362,7 +396,13 @@ export class APIRouteHandler {
       async () => {
         const adapter = await this.ensureAdapter();
         await this.ensureConfig(adapter);
-        this.isolationUnavailableReason = await this.assessIsolationCompatibility(adapter);
+        if (
+          isWorkerIsolationEnabled() &&
+          !this.configUnavailable &&
+          this.preparedConfig
+        ) {
+          await this.ensureIsolationCompatibility(adapter);
+        }
 
         logger.debug("Initializing route handler", { projectDir: this.projectDir });
 
@@ -408,16 +448,11 @@ export class APIRouteHandler {
   handle(
     request: Request,
     ctx?: HandlerContext,
-    options: APIRouteHandleOptions = {},
+    options?: APIRouteHandleOptions,
   ): Promise<Response | null> {
     const { pathname } = new URL(request.url);
-    const isLocalProject = snapshotRequestLocality(ctx);
-    let applyCORS = true;
-    try {
-      applyCORS = options.applyCORS !== false;
-    } catch {
-      // An unreadable caller option must not silently disable policy.
-    }
+    const { isLocalProject } = snapshotRequestLocality(ctx);
+    const { applyCORS } = snapshotHandleOptions(options);
     this.activeRequests++;
 
     return withSpan(
@@ -465,14 +500,16 @@ export class APIRouteHandler {
         const isAppRoute = isAppRouteModule(match.route.page);
         let response: Response;
 
-        if (isWorkerIsolationEnabled()) {
-          if (this.isolationUnavailableReason) {
+        const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
+        if (isolationRequired) {
+          const isolationUnavailableReason = await this.ensureIsolationCompatibility(adapter);
+          if (isolationUnavailableReason) {
             logger.error("Worker-isolated API route is unavailable", {
               modulePath: match.route.page,
-              reason: this.isolationUnavailableReason,
+              reason: isolationUnavailableReason,
             });
             return serviceUnavailable(
-              isLocalProject ? this.isolationUnavailableReason : "API route unavailable",
+              isLocalProject ? isolationUnavailableReason : "API route unavailable",
             );
           }
 
@@ -546,7 +583,9 @@ export class APIRouteHandler {
   resolveRouteMethods(
     pathname: string,
     requestedMethod?: string,
+    ctx?: HandlerContext,
   ): Promise<APIRouteMethodResolution> {
+    const { isLocalProject } = snapshotRequestLocality(ctx);
     this.activeRequests++;
 
     return withSpan<APIRouteMethodResolution>(
@@ -555,8 +594,11 @@ export class APIRouteHandler {
         const match = this.router.match(pathname);
         if (!match) return { status: "not-found" };
 
-        if (isWorkerIsolationEnabled()) {
-          if (this.isolationUnavailableReason) return { status: "unavailable" };
+        const isolationRequired = isWorkerIsolationEnabled() || !isLocalProject;
+        if (isolationRequired) {
+          const adapter = await this.ensureAdapter();
+          const isolationUnavailableReason = await this.ensureIsolationCompatibility(adapter);
+          if (isolationUnavailableReason) return { status: "unavailable" };
 
           const { module } = await this.prepareHandler(match);
           if (!module) return { status: "unavailable" };
@@ -768,11 +810,49 @@ export class APIRouteHandler {
    * capabilities that are not yet represented inside the worker boundary.
    * This check never imports project code.
    */
+  private async ensureIsolationCompatibility(
+    adapter: RuntimeAdapter,
+  ): Promise<string | null> {
+    if (isCompiledBinary()) {
+      return "Worker-isolated API routes are unavailable in compiled binaries";
+    }
+
+    if (isVirtualFilesystem(adapter.fs)) {
+      return "Worker-isolated API routes require a prepared virtual-filesystem capability";
+    }
+
+    // Compatibility depends on the detached preparation-policy snapshot.
+    // Establish that invariant here instead of relying on callers having
+    // completed initialize() before asking for route capabilities.
+    await this.ensureConfig(adapter);
+
+    // A config load can fail transiently. Report this attempt unavailable, but
+    // do not memoize it on a production-cached handler: the next request must
+    // be able to recover after the source becomes readable again.
+    if (this.configUnavailable || !this.preparedConfig) {
+      return "Worker-isolated API routes require a valid project configuration";
+    }
+
+    const assessment = this.isolationCompatibilityPromise ??
+      this.assessIsolationCompatibility(adapter);
+    this.isolationCompatibilityPromise = assessment;
+
+    try {
+      return await assessment;
+    } catch (error) {
+      if (this.isolationCompatibilityPromise === assessment) {
+        this.isolationCompatibilityPromise = null;
+      }
+      logger.warn("Unable to verify isolated API discovery boundary", {
+        reason: snapshotThrowableDiagnostic(error),
+      });
+      return "Worker-isolated API routes could not verify project discovery capabilities";
+    }
+  }
+
   private async assessIsolationCompatibility(
     adapter: RuntimeAdapter,
   ): Promise<string | null> {
-    if (!isWorkerIsolationEnabled()) return null;
-
     if (isCompiledBinary()) {
       return "Worker-isolated API routes are unavailable in compiled binaries";
     }
@@ -790,32 +870,29 @@ export class APIRouteHandler {
       config: this.config,
       fsAdapter: adapter.fs,
     });
-    const configuredDirectories = [
-      ...discovery.toolDirs,
-      ...discovery.agentDirs,
-      ...discovery.skillDirs,
-      ...discovery.resourceDirs,
-      ...discovery.promptDirs,
-      ...discovery.workflowDirs,
-      ...discovery.taskDirs,
-      ...discovery.scheduleDirs,
-      ...discovery.webhookDirs,
-      ...discovery.evalDirs,
+    const configuredDirectoryGroups = [
+      discovery.toolDirs,
+      discovery.agentDirs,
+      discovery.skillDirs,
+      discovery.resourceDirs,
+      discovery.promptDirs,
+      discovery.workflowDirs,
+      discovery.taskDirs,
+      discovery.scheduleDirs,
+      discovery.webhookDirs,
+      discovery.evalDirs,
     ];
 
-    try {
-      for (const directory of configuredDirectories) {
+    for (let groupIndex = 0; groupIndex < configuredDirectoryGroups.length; groupIndex++) {
+      const directories = configuredDirectoryGroups[groupIndex]!;
+      for (let directoryIndex = 0; directoryIndex < directories.length; directoryIndex++) {
+        const directory = directories[directoryIndex]!;
         const path = discovery.baseDir === "" ? directory : `${discovery.baseDir}/${directory}`;
         if (!await adapter.fs.exists(path)) continue;
         for await (const _entry of adapter.fs.readDir(path)) {
           return "Worker-isolated API routes require prepared project discovery capabilities";
         }
       }
-    } catch (error) {
-      logger.warn("Unable to verify isolated API discovery boundary", {
-        reason: snapshotThrowableDiagnostic(error),
-      });
-      return "Worker-isolated API routes could not verify project discovery capabilities";
     }
 
     return null;
@@ -830,18 +907,13 @@ export class APIRouteHandler {
 
   private async loadCorsConfig(adapter: RuntimeAdapter): Promise<void> {
     try {
-      if (this.config) {
-        this.corsConfig = this.config.security?.cors ?? null;
-        return;
+      // Reuse the authoritative full-config load. If an earlier attempt in the
+      // same lifecycle failed, do not issue a second independent read merely
+      // for CORS; a later isolated route request can retry the full load.
+      if (!this.config && !this.configUnavailable) {
+        await this.ensureConfig(adapter);
       }
-
-      if (isWorkerIsolationEnabled() && this.configUnavailable) {
-        this.corsConfig = null;
-        return;
-      }
-
-      const config = await getDeps().getConfig(this.projectDir, adapter);
-      this.corsConfig = config.security?.cors ?? null;
+      this.corsConfig = this.config?.security?.cors ?? null;
     } catch (error) {
       this.corsConfig = null;
       logger.warn("Failed to load CORS configuration", error);
@@ -866,6 +938,8 @@ export class APIRouteHandler {
       this.config = config;
       this.preparedConfig = preparedConfig;
       this.configUnavailable = false;
+      this.corsConfig = config.security?.cors ?? null;
+      this.corsConfigLoaded = true;
     } catch (error) {
       this.config = null;
       this.preparedConfig = null;

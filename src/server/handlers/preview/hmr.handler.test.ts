@@ -517,7 +517,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("accepts a cryptographically trusted proxy request in resolved preview scope", async () => {
+    it("allows resolved preview scope even when an unrelated valid JWS is present", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: {
@@ -553,8 +553,8 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("IGNORES x-forwarded-host: localhost when request is NOT proxy-trusted (VULN-SRV-4)", async () => {
-      // Without proxy trust, the forwarded host must not be allowed to unlock the
+    it("IGNORES x-forwarded-host: localhost when topology is untrusted (VULN-SRV-4)", async () => {
+      // Without topology trust, the forwarded host must not be allowed to unlock the
       // localhost short-circuit that enables HMR. Otherwise any remote client could
       // claim to be localhost and open a WebSocket against the dev runtime.
       const handler = new HMRHandler();
@@ -572,7 +572,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("IGNORES x-forwarded-host: 127.0.0.1 when request is NOT proxy-trusted", async () => {
+    it("IGNORES x-forwarded-host: 127.0.0.1 when topology is untrusted", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://evil.example.com/_ws", {
         headers: {
@@ -588,7 +588,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("accepts trusted forwarded scope only when the server context is preview", async () => {
+    it("relies on server preview context rather than x-forwarded-host", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://internal.proxy/_ws", {
         headers: {
@@ -609,13 +609,13 @@ describe("server/handlers/preview/hmr.handler", () => {
     });
 
     it(
-      "IGNORES x-forwarded-host: localhost when dispatch-JWS is present but unverifiable (Codex P1 regression)",
+      "does not let an unverifiable dispatch JWS alter server-resolved production scope",
       async () => {
         // A direct-access attacker can attach any value to x-veryfront-dispatch-jws
         // because the proxy does not strip that header on ingress. Prior to the
         // fix, mere presence unlocked forwarded-header trust and re-opened the
-        // localhost short-circuit. The handler must now cryptographically verify
-        // the JWS before promoting the request to proxy-trusted.
+        // localhost short-circuit. Dispatch authenticity is now independent of
+        // topology authority, so this header cannot alter the server context.
         const handler = new HMRHandler();
         const req = new Request("http://evil.example.com/_ws", {
           headers: {
@@ -663,6 +663,56 @@ describe("server/handlers/preview/hmr.handler", () => {
         }),
       );
       assertEquals(result.continue, true);
+    });
+
+    it("rejects project scope backed only by an unrelated valid dispatch JWS", async () => {
+      const handler = new HMRHandler();
+      const req = new Request(
+        "http://preview.example.com/_ws?x-project-slug=attacker-selected",
+        {
+          headers: {
+            "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(),
+          },
+        },
+      );
+      const result = await handler.handle(
+        req,
+        makeCtx({
+          isLocalProject: false,
+          projectSlug: "attacker-selected",
+          resolvedEnvironment: "preview",
+        }),
+      );
+
+      assertEquals(result.continue, true);
+    });
+
+    it("accepts project scope from an explicitly trusted private edge", async () => {
+      const envKey = "VERYFRONT_TRUST_FORWARDED_HEADERS";
+      const previousTrustSetting = Deno.env.get(envKey);
+      Deno.env.set(envKey, "1");
+
+      try {
+        const result = await new HMRHandler().handle(
+          new Request("http://preview.example.com/_ws", {
+            headers: { "x-project-slug": "edge-selected" },
+          }),
+          makeCtx({
+            isLocalProject: false,
+            projectSlug: "edge-selected",
+            resolvedEnvironment: "preview",
+          }),
+        );
+
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 426);
+      } finally {
+        if (previousTrustSetting === undefined) {
+          Deno.env.delete(envKey);
+        } else {
+          Deno.env.set(envKey, previousTrustSetting);
+        }
+      }
     });
 
     it("never spends a host-level API token while accepting an unauthenticated preview socket", async () => {

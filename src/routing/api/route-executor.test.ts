@@ -2,10 +2,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  __resetInProcessIsolationWarningForTests,
   __snapshotProjectEnvRecordForTests,
-  executeAppRoute,
-  executePagesRoute,
+  executeAppRoute as executeAppRouteWithBoundary,
+  executePagesRoute as executePagesRouteWithBoundary,
   executePreparedAppRoute,
   type ExecuteRouteOptions,
 } from "./route-executor.ts";
@@ -13,7 +12,6 @@ import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
 import { MAX_WORKER_BODY_BYTES } from "#veryfront/security/sandbox/worker-types.ts";
-import { __resetLoggerConfigForTests } from "../../utils/logger/index.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { deserializeRouteResponse } from "./response-normalization.ts";
@@ -32,6 +30,35 @@ const TEST_ISOLATED_MODULE = {
   source: TEST_ISOLATED_MODULE_SOURCE,
   sha256: await computeHash(TEST_ISOLATED_MODULE_SOURCE),
 };
+
+function executeAppRoute(
+  ...args: Parameters<typeof executeAppRouteWithBoundary>
+): ReturnType<typeof executeAppRouteWithBoundary> {
+  const options = args[5];
+  return executeAppRouteWithBoundary(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4],
+    options ?? { isLocalProject: true },
+  );
+}
+
+function executePagesRoute(
+  ...args: Parameters<typeof executePagesRouteWithBoundary>
+): ReturnType<typeof executePagesRouteWithBoundary> {
+  const options = args[6];
+  return executePagesRouteWithBoundary(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    args[4],
+    args[5],
+    options ?? { isLocalProject: true },
+  );
+}
 
 function isolatedTestOptions(
   modulePath: string,
@@ -107,22 +134,6 @@ function makeMatch(
   params: RouteMatch["params"] = {},
 ): RouteMatch {
   return { route: { pattern, page }, params };
-}
-
-function captureConsoleWarn(): { getOutput: () => string; restore: () => void } {
-  const originalWarn = console.warn;
-  const output: string[] = [];
-
-  console.warn = (...args: unknown[]) => {
-    output.push(args.map(String).join(" "));
-  };
-
-  return {
-    getOutput: () => output.join("\n"),
-    restore: () => {
-      console.warn = originalWarn;
-    },
-  };
 }
 
 function restoreEnv(snapshot: Map<string, string | undefined>): void {
@@ -314,7 +325,7 @@ describe("routing/api/route-executor", () => {
       assertEquals(JSON.stringify(body).includes("hosted-secret"), false);
     });
 
-    it("snapshots request locality once before every in-process error path", async () => {
+    it("does not invoke a locality accessor before in-process error paths", async () => {
       const envSnapshot = snapshotEnv([
         "WORKER_ISOLATION_ENABLED",
         "WORKER_ISOLATION_API",
@@ -350,7 +361,7 @@ describe("routing/api/route-executor", () => {
 
         const body = await response.json();
         assertEquals(response.status, 500);
-        assertEquals(localityReads, 1);
+        assertEquals(localityReads, 0);
         assertEquals(body.detail, undefined);
         assertEquals(body.stack, undefined);
         assertEquals(JSON.stringify(body).includes("hosted-resolver-secret"), false);
@@ -925,7 +936,7 @@ describe("routing/api/route-executor", () => {
       assertEquals(response.status, 500);
     });
 
-    it("uses the same fail-closed locality snapshot for Pages resolver errors", async () => {
+    it("does not invoke a locality accessor for Pages resolver errors", async () => {
       const envSnapshot = snapshotEnv([
         "WORKER_ISOLATION_ENABLED",
         "WORKER_ISOLATION_API",
@@ -962,7 +973,7 @@ describe("routing/api/route-executor", () => {
 
         const body = await response.json();
         assertEquals(response.status, 500);
-        assertEquals(localityReads, 1);
+        assertEquals(localityReads, 0);
         assertEquals(body.detail, undefined);
         assertEquals(body.stack, undefined);
         assertEquals(JSON.stringify(body).includes("hosted-pages-resolver-secret"), false);
@@ -989,22 +1000,14 @@ describe("routing/api/route-executor", () => {
       assertEquals(response.status, 500);
     });
 
-    it("continues pages API route execution when isolation warning logging fails", async () => {
+    it("keeps explicit local Pages execution independent from warning logging", async () => {
       const envSnapshot = snapshotEnv([
         "WORKER_ISOLATION_ENABLED",
         "WORKER_ISOLATION_API",
-        "LOG_FORMAT",
-        "LOG_LEVEL",
-        "NO_COLOR",
       ]);
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "WARN");
-      Deno.env.set("NO_COLOR", "1");
       __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
       const originalWarn = console.warn;
 
       try {
@@ -1027,7 +1030,7 @@ describe("routing/api/route-executor", () => {
           {
             modulePath: "/tmp/test/pages/api/hello.ts",
             projectDir: "/tmp/test",
-            isLocalProject: false,
+            isLocalProject: true,
           },
         );
 
@@ -1036,96 +1039,411 @@ describe("routing/api/route-executor", () => {
       } finally {
         console.warn = originalWarn;
         restoreEnv(envSnapshot);
-        __resetLoggerConfigForTests();
       }
     });
   });
 
-  describe("untrusted in-process execution warning", () => {
-    const envKeys = [
-      "WORKER_ISOLATION_ENABLED",
-      "WORKER_ISOLATION_API",
-      "LOG_FORMAT",
-      "LOG_LEVEL",
-      "NO_COLOR",
-    ];
-
+  describe("in-process execution boundary", () => {
     afterEach(() => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
       __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
     });
 
-    it("warns once when a remote app route falls back to in-process execution", async () => {
-      const envSnapshot = snapshotEnv(envKeys);
+    it("fails closed for remote and unknown-locality routes when worker flags are disabled", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "WARN");
-      Deno.env.set("NO_COLOR", "1");
       __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
+      let hostExecutions = 0;
+      const handler = {
+        GET: () => {
+          hostExecutions++;
+          return new Response("host execution");
+        },
+      };
 
-      const captured = captureConsoleWarn();
-      try {
-        const handler = {
-          GET: () => new Response("ok"),
-        };
-        const request = new Request("http://localhost/api/test", { method: "GET" });
-        const options = {
-          modulePath: "/tmp/test/handler.ts",
-          projectDir: "/tmp/test",
-          isLocalProject: false,
-        };
+      const unknownApp = await executeAppRouteWithBoundary(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+      const remoteApp = await executeAppRoute(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { isLocalProject: false },
+      );
+      const unknownPages = await executePagesRouteWithBoundary(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+      );
+      const remotePages = await executePagesRoute(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        { isLocalProject: false },
+      );
 
-        const first = await executeAppRoute(
+      assertEquals(
+        [unknownApp.status, remoteApp.status, unknownPages.status, remotePages.status],
+        [500, 500, 500, 500],
+      );
+      assertEquals(hostExecutions, 0);
+    });
+
+    it("trusts only an own locality data property for App and Pages host execution", async () => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+      let hostExecutions = 0;
+      const handler = {
+        GET: () => {
+          hostExecutions++;
+          return new Response("host execution");
+        },
+      };
+      const inherited = Object.create({
+        isLocalProject: true,
+      }) as ExecuteRouteOptions;
+      let accessorCalls = 0;
+      const accessor = Object.defineProperty({}, "isLocalProject", {
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      }) as ExecuteRouteOptions;
+      let throwingDescriptorCalls = 0;
+      const throwingProxy = new Proxy({} as ExecuteRouteOptions, {
+        getOwnPropertyDescriptor() {
+          throwingDescriptorCalls++;
+          throw new Error("locality descriptor unavailable");
+        },
+      });
+      const revoked = Proxy.revocable({ isLocalProject: true } as ExecuteRouteOptions, {});
+      revoked.revoke();
+
+      for (const options of [undefined, inherited, accessor, throwingProxy, revoked.proxy]) {
+        const appResponse = await executeAppRouteWithBoundary(
           handler,
-          request,
+          new Request("http://localhost/api/test"),
           makeMatch(),
           "/api/test",
           makeAdapter(),
           options,
         );
-        const second = await executeAppRoute(
+        const pagesResponse = await executePagesRouteWithBoundary(
           handler,
-          new Request("http://localhost/api/test", { method: "GET" }),
+          new Request("http://localhost/api/test"),
           makeMatch(),
           "/api/test",
           makeAdapter(),
+          undefined,
           options,
         );
 
-        assertEquals(first.status, 200);
-        assertEquals(second.status, 200);
-        assertEquals(await first.text(), "ok");
-        assertEquals(await second.text(), "ok");
-
-        const output = captured.getOutput();
-        assertEquals((output.match(/worker isolation disabled/g) ?? []).length, 1);
-        assert(output.includes("WORKER_ISOLATION_ENABLED"));
-        assert(output.includes("WORKER_ISOLATION_API"));
-      } finally {
-        captured.restore();
-        restoreEnv(envSnapshot);
-        __resetLoggerConfigForTests();
+        assertEquals(appResponse.status, 500);
+        assertEquals(pagesResponse.status, 500);
       }
+
+      const ownLocal = Object.defineProperty({}, "isLocalProject", {
+        value: true,
+      }) as ExecuteRouteOptions;
+      const localApp = await executeAppRouteWithBoundary(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        ownLocal,
+      );
+      const localPages = await executePagesRouteWithBoundary(
+        handler,
+        new Request("http://localhost/api/test"),
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        ownLocal,
+      );
+
+      assertEquals(localApp.status, 200);
+      assertEquals(localPages.status, 200);
+      assertEquals(hostExecutions, 2);
+      assertEquals(accessorCalls, 0);
+      assertEquals(throwingDescriptorCalls > 0, true);
     });
 
-    it("does not warn for local app route in-process execution", async () => {
-      const envSnapshot = snapshotEnv(envKeys);
+    it("keeps absent App and Pages locality fail-closed after prototype poisoning", async () => {
       Deno.env.delete("WORKER_ISOLATION_ENABLED");
       Deno.env.delete("WORKER_ISOLATION_API");
-      Deno.env.set("LOG_FORMAT", "text");
-      Deno.env.set("LOG_LEVEL", "WARN");
-      Deno.env.set("NO_COLOR", "1");
       __resetPoolForTests();
-      __resetInProcessIsolationWarningForTests();
-      __resetLoggerConfigForTests();
+      const previous = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "isLocalProject",
+      );
+      const arrayIteratorDescriptor = Object.getOwnPropertyDescriptor(
+        Array.prototype,
+        Symbol.iterator,
+      )!;
+      const nativeArrayIterator = arrayIteratorDescriptor.value as (
+        this: unknown[],
+      ) => IterableIterator<unknown>;
+      let forgedIteratorCalls = 0;
+      let hostExecutions = 0;
+      const handler = {
+        GET: () => {
+          hostExecutions++;
+          return new Response("host execution");
+        },
+      };
+      let appResponse: Response | undefined;
+      let pagesResponse: Response | undefined;
 
-      const captured = captureConsoleWarn();
+      try {
+        Object.defineProperty(Object.prototype, "isLocalProject", {
+          configurable: true,
+          value: true,
+        });
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          ...arrayIteratorDescriptor,
+          value: function (this: unknown[]): IterableIterator<unknown> {
+            if (
+              this.length === 2 &&
+              this[0] === "isLocalProject" &&
+              this[1] === false
+            ) {
+              forgedIteratorCalls++;
+              let index = 0;
+              return {
+                next: () => {
+                  const values = ["isLocalProject", true];
+                  return index < values.length
+                    ? { done: false, value: values[index++] }
+                    : { done: true, value: undefined };
+                },
+                [Symbol.iterator]() {
+                  return this;
+                },
+              };
+            }
+            return Reflect.apply(nativeArrayIterator, this, []) as IterableIterator<unknown>;
+          },
+        });
+        appResponse = await executeAppRouteWithBoundary(
+          handler,
+          new Request("http://localhost/api/test"),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+        );
+        pagesResponse = await executePagesRouteWithBoundary(
+          handler,
+          new Request("http://localhost/api/test"),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+        );
+      } finally {
+        Object.defineProperty(Array.prototype, Symbol.iterator, arrayIteratorDescriptor);
+        if (previous) {
+          Object.defineProperty(Object.prototype, "isLocalProject", previous);
+        } else {
+          delete (Object.prototype as { isLocalProject?: boolean }).isLocalProject;
+        }
+      }
+
+      assertEquals(appResponse?.status, 500);
+      assertEquals(pagesResponse?.status, 500);
+      assertEquals(hostExecutions, 0);
+      assertEquals(forgedIteratorCalls, 0);
+    });
+
+    it("uses captured static primordials for fail-closed route admission", async () => {
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+
+      const freezeDescriptor = Object.getOwnPropertyDescriptor(Object, "freeze")!;
+      const promiseResolveDescriptor = Object.getOwnPropertyDescriptor(Promise, "resolve")!;
+      const nativeFreeze = freezeDescriptor.value as typeof Object.freeze;
+      const nativePromiseResolve = promiseResolveDescriptor.value as typeof Promise.resolve;
+      const nativeGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+      let forgedFreezeCalls = 0;
+      let forgedPromiseResolveCalls = 0;
+      let appResponse: Response | undefined;
+      let pagesResponse: Response | undefined;
+
+      try {
+        Object.defineProperty(Object, "freeze", {
+          ...freezeDescriptor,
+          value: (value: unknown) => {
+            const locality = value && typeof value === "object"
+              ? nativeGetOwnPropertyDescriptor(value, "isLocalProject")
+              : undefined;
+            if (locality && "value" in locality && locality.value === false) {
+              forgedFreezeCalls++;
+              throw new Error("live Object.freeze must not run");
+            }
+            return Reflect.apply(nativeFreeze, Object, [value]);
+          },
+        });
+        Object.defineProperty(Promise, "resolve", {
+          ...promiseResolveDescriptor,
+          value: (value: unknown) => {
+            if (value instanceof Response) {
+              forgedPromiseResolveCalls++;
+              throw new Error("live Promise.resolve must not run");
+            }
+            return Reflect.apply(nativePromiseResolve, Promise, [value]);
+          },
+        });
+
+        appResponse = await executeAppRouteWithBoundary(
+          {},
+          new Request("http://localhost/api/test"),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          { isLocalProject: false },
+        );
+        pagesResponse = await executePagesRouteWithBoundary(
+          {},
+          new Request("http://localhost/api/test"),
+          makeMatch(),
+          "/api/test",
+          makeAdapter(),
+          undefined,
+          { isLocalProject: false },
+        );
+      } finally {
+        Object.defineProperty(Object, "freeze", freezeDescriptor);
+        Object.defineProperty(Promise, "resolve", promiseResolveDescriptor);
+      }
+
+      assertEquals(appResponse?.status, 500);
+      assertEquals(pagesResponse?.status, 500);
+      assertEquals(forgedFreezeCalls, 0);
+      assertEquals(forgedPromiseResolveCalls, 0);
+    });
+
+    it("uses captured validation primordials for serialized worker errors", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      __resetPoolForTests();
+      const pool = getWorkerPool();
+      const originalExecute = pool.execute;
+      const workerResponse: Awaited<ReturnType<typeof pool.execute>> = {
+        id: "api:test-captured-worker-validation",
+        type: "error",
+        error: {
+          message: "worker failure",
+          name: "VeryfrontError",
+          stack: "VeryfrontError: worker failure\n    at route.ts:1:1",
+          problem: {
+            slug: "api-route-error",
+            category: "ROUTE",
+            status: 500,
+            title: "API route definition error",
+            suggestion: "Review API route configuration",
+            detail: "worker detail",
+          },
+        },
+      };
+      pool.execute = async () => workerResponse;
+
+      const definePropertyDescriptor = Object.getOwnPropertyDescriptor(
+        Object,
+        "defineProperty",
+      )!;
+      const hasOwnDescriptor = Object.getOwnPropertyDescriptor(Object, "hasOwn")!;
+      const isSafeIntegerDescriptor = Object.getOwnPropertyDescriptor(
+        Number,
+        "isSafeInteger",
+      )!;
+      const nativeDefineProperty = definePropertyDescriptor.value as typeof Object.defineProperty;
+      const nativeHasOwn = hasOwnDescriptor.value as typeof Object.hasOwn;
+      const nativeIsSafeInteger = isSafeIntegerDescriptor.value as typeof Number.isSafeInteger;
+      let liveDefinePropertyCalls = 0;
+      let liveHasOwnCalls = 0;
+      let liveIsSafeIntegerCalls = 0;
+      let response: Response | undefined;
+
+      try {
+        Object.defineProperty(Object, "defineProperty", {
+          ...definePropertyDescriptor,
+          value: (target: object, key: PropertyKey, descriptor: PropertyDescriptor) => {
+            if (target instanceof Error && key === "stack") liveDefinePropertyCalls++;
+            return Reflect.apply(nativeDefineProperty, Object, [target, key, descriptor]);
+          },
+        });
+        Object.defineProperty(Object, "hasOwn", {
+          ...hasOwnDescriptor,
+          value: (target: object, key: PropertyKey) => {
+            if (key === "api-route-error") liveHasOwnCalls++;
+            return Reflect.apply(nativeHasOwn, Object, [target, key]);
+          },
+        });
+        Object.defineProperty(Number, "isSafeInteger", {
+          ...isSafeIntegerDescriptor,
+          value: (value: unknown) => {
+            if (value === 500) liveIsSafeIntegerCalls++;
+            return Reflect.apply(nativeIsSafeInteger, Number, [value]);
+          },
+        });
+
+        response = await runWithExactSourceIntegrationPolicy(
+          normalizeSourceIntegrationPolicy(undefined),
+          () =>
+            executeAppRouteWithBoundary(
+              {},
+              new Request("http://localhost/api/test"),
+              makeMatch("/api/test", "/tmp/project/route.ts"),
+              "/api/test",
+              makeAdapter(),
+              {
+                modulePath: "/tmp/project/route.ts",
+                projectDir: "/tmp/project",
+                isLocalProject: true,
+                preparedModule: TEST_ISOLATED_MODULE,
+                executionScopeId: "api:test-captured-worker-validation",
+              },
+            ),
+        );
+      } finally {
+        pool.execute = originalExecute;
+        Object.defineProperty(Object, "defineProperty", definePropertyDescriptor);
+        Object.defineProperty(Object, "hasOwn", hasOwnDescriptor);
+        Object.defineProperty(Number, "isSafeInteger", isSafeIntegerDescriptor);
+      }
+
+      const body = await response?.json();
+      assertEquals(response?.status, 500);
+      assertEquals(body.type, "https://veryfront.com/docs/errors/api-route-error");
+      assertEquals(body.detail, "worker detail");
+      assertEquals(liveDefinePropertyCalls, 0);
+      assertEquals(liveHasOwnCalls, 0);
+      assertEquals(liveIsSafeIntegerCalls, 0);
+    });
+
+    it("preserves explicit local app route in-process execution", async () => {
+      const envSnapshot = snapshotEnv([
+        "WORKER_ISOLATION_ENABLED",
+        "WORKER_ISOLATION_API",
+      ]);
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_API");
+      __resetPoolForTests();
+
       try {
         const response = await executeAppRoute(
           { GET: () => new Response("ok") },
@@ -1141,11 +1459,9 @@ describe("routing/api/route-executor", () => {
         );
 
         assertEquals(response.status, 200);
-        assertEquals(captured.getOutput(), "");
+        assertEquals(await response.text(), "ok");
       } finally {
-        captured.restore();
         restoreEnv(envSnapshot);
-        __resetLoggerConfigForTests();
       }
     });
   });

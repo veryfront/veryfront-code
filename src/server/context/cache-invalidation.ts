@@ -13,6 +13,8 @@ import { resetApiHandlerForProject } from "#veryfront/server/handlers/request/ap
 import { clearSourceMissCacheForProject } from "#veryfront/modules/server/module-source-resolution-cache.ts";
 import { invalidateProjectMiddlewareCache } from "#veryfront/server/runtime-handler/project-middleware.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { clearImportMapCache } from "#veryfront/modules/import-map/index.ts";
+import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 
 const logger = serverLogger.component("cache-invalidation");
 
@@ -135,6 +137,16 @@ export async function invalidateProjectCaches(
     await runPhase("SSR module cache", () => clearSSRModuleCacheForProject(projectId));
     await runPhase("render-pipeline module cache", () => clearModuleCacheForProject(projectId));
     await runPhase("router detection cache", () => clearRouterDetectionCacheForProject(projectId));
+  }
+  const importMapCacheKey = projectId ?? options?.projectDir;
+  if (importMapCacheKey) {
+    await runPhase("import-map cache", () => clearImportMapCache(importMapCacheKey));
+  }
+  const rscProjectDir = options?.projectDir ?? projectId;
+  if (rscProjectDir) {
+    await runPhase("RSC handler cache", () => {
+      invalidateRSCHandlersForProject(rscProjectDir, projectId);
+    });
   }
 
   await runPhase(

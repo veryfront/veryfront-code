@@ -5,6 +5,7 @@ import type {
   InvalidationProjectContext,
 } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
+import { type ConfigLoadResult, getConfigWithProvenance } from "#veryfront/config/loader.ts";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import {
   createEvalReportExporterRegistry,
@@ -63,6 +64,22 @@ const bootstrapProdLog = logger.component("bootstrap-prod");
 const bootstrapOwnership = new ExclusiveProcessOwner("Veryfront bootstrap");
 
 type ResourceDisposer = () => void | Promise<void>;
+
+/**
+ * Select the configuration used after an FS-adapter reload.
+ *
+ * Presence is explicit: a real remote file wins even when all of its values
+ * equal framework defaults. Only an absent remote file preserves the
+ * bootstrap configuration loaded from the local filesystem.
+ *
+ * @internal
+ */
+export function selectReloadedConfig(
+  originalConfig: VeryfrontConfig,
+  reloaded: ConfigLoadResult,
+): VeryfrontConfig {
+  return reloaded.provenance.kind === "defaults" ? originalConfig : reloaded.config;
+}
 
 /**
  * A bootstrap operation failed and at least one owned resource could not be
@@ -690,23 +707,10 @@ export async function bootstrap(
       clearConfigCache();
 
       const originalConfig = config;
-      const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
-
-      // HEURISTIC: detect whether FSAdapter returned a "default dev config" (i.e., the remote
-      // source had no config file) by checking for the exact default values veryfront uses when
-      // no config is found. Known limitation: a user whose real config happens to use port=3000,
-      // host=localhost, and no HMR block will have their config silently discarded here.
-      // A future improvement would be for FSAdapter to return an explicit "config not found"
-      // signal instead of the default-value object.
-      const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
-        reloadedConfig.dev?.host === "localhost" &&
-        !reloadedConfig.dev?.hmr;
-
-      if (usesDefaultDevConfig && originalConfig.dev) {
-        bootstrapLog.debug("Keeping original config (FSAdapter returned defaults)");
-        config = originalConfig;
-      } else {
-        config = reloadedConfig;
+      const reloaded = await getConfigWithProvenance(projectDir, enhancedAdapter);
+      config = selectReloadedConfig(originalConfig, reloaded);
+      if (reloaded.provenance.kind === "defaults") {
+        bootstrapLog.debug("Keeping original config (remote source has no config file)");
       }
 
       // Prepare the new sink first. A disabled reloaded config intentionally

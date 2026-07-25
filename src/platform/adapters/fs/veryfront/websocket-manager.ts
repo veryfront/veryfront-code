@@ -32,6 +32,7 @@ import {
   WS_RECONNECT_MAX_DELAY_MS,
   WS_RECONNECT_MAX_FAILURES,
 } from "./websocket-manager-helpers.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
@@ -68,6 +69,11 @@ interface WebSocketDeps {
   pregenerateStyles?: (
     files: Array<{ path: string; content?: string }>,
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
+}
+
+interface WebSocketConnectionCredential {
+  readonly projectId: string;
+  readonly token: string;
 }
 
 export class WebSocketManager {
@@ -143,8 +149,13 @@ export class WebSocketManager {
     return { ...this.pokeMetrics, connectionId: this.wsConnectionId };
   }
 
-  connect(projectId: string): void {
+  connect(projectId: string, apiToken = this.apiToken): void {
     if (this.disposed) return;
+
+    const credential: WebSocketConnectionCredential = Object.freeze({
+      projectId,
+      token: apiToken,
+    });
 
     this.cleanupTimers();
 
@@ -187,7 +198,7 @@ export class WebSocketManager {
       // Send the API token via a WebSocket subprotocol header instead of
       // a query-string parameter. Query strings can leak into server
       // access logs, proxy logs, and the browser's Referer header.
-      this.ws = new WebSocket(url, [`bearer-${this.apiToken}`]);
+      this.ws = new WebSocket(url, [`bearer-${credential.token}`]);
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
       this.wsErrorLogged = false;
 
@@ -215,13 +226,13 @@ export class WebSocketManager {
           );
         }
         this.wsLastPong = Date.now();
-        this.startHeartbeat(projectId);
+        this.startHeartbeat(credential);
       };
 
       this.ws.onmessage = (event) => {
         this.wsLastPong = Date.now();
         logger.debug("WebSocket message received:", { data: event.data });
-        this.handlePokeMessage(event);
+        this.handlePokeMessage(event, credential);
       };
 
       this.ws.onclose = (event) => {
@@ -249,7 +260,10 @@ export class WebSocketManager {
             wasClean: event.wasClean,
           }),
         );
-        this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
+        this.wsReconnectTimer = setTimeout(
+          () => this.connect(credential.projectId, credential.token),
+          delay,
+        );
       };
 
       this.ws.onerror = (event) => {
@@ -277,7 +291,10 @@ export class WebSocketManager {
           consecutiveFailures: this.wsConsecutiveFailures,
         }),
       );
-      this.wsReconnectTimer = setTimeout(() => this.connect(projectId), delay);
+      this.wsReconnectTimer = setTimeout(
+        () => this.connect(credential.projectId, credential.token),
+        delay,
+      );
     }
   }
 
@@ -316,7 +333,10 @@ export class WebSocketManager {
     }
   }
 
-  private handlePokeMessage(event: MessageEvent): void {
+  private handlePokeMessage(
+    event: MessageEvent,
+    credential: WebSocketConnectionCredential,
+  ): void {
     try {
       const message = parsePokeWebSocketMessage(event.data as string);
       if (!message) return;
@@ -489,12 +509,12 @@ export class WebSocketManager {
       }
 
       if (changedPaths?.length) {
-        this.scheduleSelectiveInvalidation(changedPaths);
+        this.scheduleSelectiveInvalidation(changedPaths, credential);
         return;
       }
 
       logger.debug("No changedPaths provided - using full invalidation");
-      this.scheduleInvalidation();
+      this.scheduleInvalidation(credential);
     } catch (error) {
       logger.debug("WebSocket message parse error", { error });
     }
@@ -606,7 +626,7 @@ export class WebSocketManager {
     })();
   }
 
-  private scheduleInvalidation(): void {
+  private scheduleInvalidation(credential: WebSocketConnectionCredential): void {
     if (this.invalidationTimer) clearTimeout(this.invalidationTimer);
 
     logger.debug("Scheduling invalidation", {
@@ -615,7 +635,10 @@ export class WebSocketManager {
 
     this.invalidationTimer = setTimeout(() => {
       this.invalidationTimer = null;
-      void this.performInvalidation().catch((error) => {
+      void this.runWithConnectionCredential(
+        credential,
+        () => this.performInvalidation(),
+      ).catch((error) => {
         logger.error("Full WebSocket invalidation failed", {
           projectSlug: this.deps.projectSlug,
           error: error instanceof Error ? error.message : String(error),
@@ -624,7 +647,10 @@ export class WebSocketManager {
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
-  private scheduleSelectiveInvalidation(changedPaths: string[]): void {
+  private scheduleSelectiveInvalidation(
+    changedPaths: string[],
+    credential: WebSocketConnectionCredential,
+  ): void {
     for (const path of changedPaths) this.pendingChangedPaths.add(path);
 
     if (this.selectiveInvalidationTimer) clearTimeout(this.selectiveInvalidationTimer);
@@ -637,7 +663,10 @@ export class WebSocketManager {
 
     this.selectiveInvalidationTimer = setTimeout(() => {
       this.selectiveInvalidationTimer = null;
-      void this.performSelectiveInvalidation().catch((error) => {
+      void this.runWithConnectionCredential(
+        credential,
+        () => this.performSelectiveInvalidation(),
+      ).catch((error) => {
         logger.error("Selective WebSocket invalidation failed", {
           projectSlug: this.deps.projectSlug,
           changedPaths: [...this.pendingChangedPaths],
@@ -922,7 +951,28 @@ export class WebSocketManager {
     }
   }
 
-  private startHeartbeat(projectId: string): void {
+  private runWithConnectionCredential<T>(
+    credential: WebSocketConnectionCredential,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const contentContext = this.deps.getContentContext();
+    const productionMode = contentContext !== null && contentContext.sourceType !== "branch";
+
+    return runWithRequestContext(
+      {
+        projectSlug: this.deps.projectSlug,
+        projectId: credential.projectId,
+        token: credential.token,
+        productionMode,
+        releaseId: productionMode ? contentContext?.releaseId ?? null : null,
+        branch: productionMode ? null : contentContext?.branch ?? null,
+        environmentName: contentContext?.environmentName ?? null,
+      },
+      fn,
+    );
+  }
+
+  private startHeartbeat(credential: WebSocketConnectionCredential): void {
     this.wsHeartbeatTimer = setInterval(() => {
       const timeSinceLastPong = Date.now() - this.wsLastPong;
       if (timeSinceLastPong <= WS_HEARTBEAT_TIMEOUT_MS) return;
@@ -949,7 +999,7 @@ export class WebSocketManager {
       }
 
       this.cleanupTimers();
-      this.connect(projectId);
+      this.connect(credential.projectId, credential.token);
     }, WS_HEARTBEAT_INTERVAL_MS);
   }
 

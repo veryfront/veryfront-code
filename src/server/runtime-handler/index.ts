@@ -103,12 +103,14 @@ import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
   filterRuntimeProjectEnv,
+  HostedProxyRoutingBindingCache,
   runWithProjectEnv,
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
 import { projectMiddlewareRuntime } from "./project-middleware.ts";
 import {
   prepareProjectRequest,
+  prepareProjectRuntimeSource,
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
@@ -276,6 +278,8 @@ export interface RuntimeHandlerOptions {
   defaultReleaseId?: string;
   /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
   defaultEnvironment?: "preview" | "production";
+  /** Injectable hosted-project HTTP capability. */
+  projectEnvFetch?: typeof globalThis.fetch;
 }
 
 export function createVeryfrontHandler(
@@ -310,13 +314,17 @@ export function createVeryfrontHandler(
 
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
   const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
-  const projectEnvFetch = globalThis.fetch;
+  const projectEnvFetch = opts.projectEnvFetch ?? globalThis.fetch;
   const envVarCache = new EnvironmentVariableCache(
     (environmentId, token, projectSlug, signal) =>
       fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token, {
         signal,
         fetch: projectEnvFetch,
       }),
+  );
+  const hostedSourceBindingCache = new HostedProxyRoutingBindingCache(
+    apiBaseUrl,
+    projectEnvFetch,
   );
 
   let config: VeryfrontConfig | undefined = opts.config;
@@ -379,11 +387,10 @@ export function createVeryfrontHandler(
       req,
       url,
       isProxyMode,
-      adapterEnv: adapter.env,
     });
     const { headers } = preparedRequest;
     let reqCtx = preparedRequest.requestContext;
-    const { proxyTrusted } = preparedRequest.proxyTrust;
+    const { proxyTopologyTrusted } = preparedRequest;
 
     const loggerContext: RequestContext = {
       logger: logger.child({
@@ -486,7 +493,11 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
+          // Query parameters are browser-controlled and cannot carry proxy
+          // routing authority. Standalone/local HMR retains the legacy selector.
+          const wsSlugOverride = isProxyMode
+            ? undefined
+            : url.searchParams.get("x-project-slug") || undefined;
 
           // Resolve project from various sources
           const projectRes = await profilePhase(
@@ -502,16 +513,24 @@ export function createVeryfrontHandler(
                 defaultProjectId: opts.defaultProjectId,
                 defaultReleaseId: opts.defaultReleaseId,
                 wsSlugOverride,
-                proxyTrust: { proxyTrusted },
+                proxyTopologyTrusted,
               }),
           );
           reqCtx = bindRequestTokenToProject(reqCtx, {
-            proxyTrusted: proxyTrusted === true,
+            proxyTopologyTrusted,
             projectSlug: projectRes.projectSlug,
           });
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
           setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
+
+          const sourcePlan = prepareProjectRuntimeSource({
+            req: request,
+            url,
+            isProxyMode,
+            proxyTopologyTrusted,
+            projectIdentity: projectRes,
+          });
 
           // Handle projects discovery UI
           if (
@@ -542,7 +561,8 @@ export function createVeryfrontHandler(
             headers,
             requestContext: reqCtx,
             isProxyMode,
-            proxyTrust: { proxyTrusted },
+            proxyTopologyTrusted,
+            sourcePlan,
             securityConfig: securityLoader.getSecurityConfig(),
             cspUserHeader: securityLoader.getCspUserHeader(),
             debug: opts.debug,
@@ -550,7 +570,10 @@ export function createVeryfrontHandler(
             moduleServerUrl: opts.moduleServerUrl,
             defaultEnvironment: opts.defaultEnvironment,
             envVarCache,
+            hostedSourceBindingCache,
             profileAdapter: (operation) => profilePhase("runtime.resolve_adapter", operation),
+            profileHostedSource: (operation) =>
+              profilePhase("runtime.bind_hosted_source", operation),
             profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
             onEnvironmentResolved: (envRes) => {
               updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
@@ -592,7 +615,7 @@ export function createVeryfrontHandler(
               profilePhase("handler.execute", () => {
                 if (shouldIsolateEnv) {
                   return runWithProjectEnv(
-                    filterRuntimeProjectEnv(envVarsForRequest),
+                    isProxyMode ? envVarsForRequest : filterRuntimeProjectEnv(envVarsForRequest),
                     executeRoute,
                   );
                 }

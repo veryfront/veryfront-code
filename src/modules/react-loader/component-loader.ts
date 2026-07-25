@@ -7,9 +7,11 @@ import { getProjectTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
+import { createSSRImportMapIdentity, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 export async function loadModuleFromSource(
   source: string,
@@ -27,6 +29,9 @@ export async function loadModuleFromSource(
     "modules.react.loadComponentFromSource",
     async () => {
       if (ssr) {
+        const importMapIdentity = await createSSRImportMapIdentity(
+          options?.importMap ?? await loadImportMap(projectDir, adapter),
+        );
         const loader = new SSRModuleLoader({
           projectDir,
           projectId,
@@ -36,11 +41,15 @@ export async function loadModuleFromSource(
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
           mode: options?.mode,
+          importMapIdentity,
         });
 
         return await loader.loadRawModule(filePath, source);
       }
 
+      const explicitImportMap = options?.importMap
+        ? snapshotImportMap(options.importMap)
+        : undefined;
       const transformOpts: TransformOptions = {
         projectId,
         dev,
@@ -48,6 +57,11 @@ export async function loadModuleFromSource(
         vendorBundleHash: options?.vendorBundleHash,
         ssr: false,
         reactVersion: options?.reactVersion,
+        ...(explicitImportMap
+          ? {
+            loadImportMap: async () => explicitImportMap,
+          }
+          : {}),
       };
 
       const transformedCode = await transformToESM(

@@ -1,15 +1,15 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
+import type { DirectoryEntry, FSAdapter, FSAdapterConfig, StyleConfigBinding } from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import {
-  asyncLocalStorage,
   clearRequestScopedFileCache,
-  type RequestContext,
+  getCurrentRequestContext,
   type RequestTokenProvenance,
+  runWithRequestContext,
 } from "./request-context.ts";
 export {
   clearRequestScopedFileCache,
@@ -23,9 +23,24 @@ export type { RequestContext } from "./request-context.ts";
 
 const logger = baseLogger.component("multi-project-fs-adapter");
 
+const IntrinsicAggregateError = AggregateError;
+const IntrinsicPerformance = performance;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
+const PerformanceNow = IntrinsicPerformance.now;
+const ReflectApply = Reflect.apply;
+
 const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+
+function monotonicNow(): number {
+  return ReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function formatDurationSince(startTime: number): string {
+  const duration = monotonicNow() - startTime;
+  return `${ReflectApply(NumberPrototypeToFixed, duration, [2]) as string}ms`;
+}
 
 export class MultiProjectFSAdapter implements FSAdapter {
   private manager: ProxyFSAdapterManager;
@@ -57,7 +72,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       tokenProvenance?: RequestTokenProvenance;
     },
   ): Promise<T> {
-    const startTime = performance.now();
+    const startTime = monotonicNow();
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
     const branch = options?.branch ?? null;
@@ -72,53 +87,50 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
     });
 
-    const context: RequestContext = {
-      projectSlug,
-      projectId,
-      token,
-      productionMode,
-      releaseId: productionMode ? releaseId : null,
-      branch: productionMode ? null : branch,
-      environmentName,
-      fileCache: new Map<string, string>(),
-      ...(options?.tokenProvenance === "project-bound"
-        ? {
-          cacheApiCredential: Object.freeze({ token, projectSlug, projectId }),
-        }
-        : {}),
-    };
-
     logger.debug("asyncLocalStorage.run START", { projectSlug });
 
-    return asyncLocalStorage.run(context, async () => {
-      logger.debug("Inside asyncLocalStorage.run callback", {
+    return runWithRequestContext(
+      {
         projectSlug,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
-      });
+        projectId,
+        token,
+        productionMode,
+        releaseId: productionMode ? releaseId : null,
+        branch,
+        environmentName,
+        tokenProvenance: options?.tokenProvenance,
+      },
+      async () => {
+        logger.debug("Inside asyncLocalStorage.run callback", {
+          projectSlug,
+          duration: formatDurationSince(startTime),
+        });
 
-      // Release asset manifest fetchers are registered by the concrete adapter.
-      // Materialize it before renderers can ask for the manifest on a first hit.
-      if (productionMode && releaseId) {
-        await this.getAdapter();
-      }
+        // Release asset manifest fetchers are registered by the concrete adapter.
+        // Materialize it before renderers can ask for the manifest on a first hit.
+        if (productionMode && releaseId) {
+          await this.getAdapter();
+        }
 
-      const result = await runWithCacheBatching(fn);
+        const result = await runWithCacheBatching(fn);
 
-      logger.debug("runWithContext callback complete", {
-        projectSlug,
-        totalDuration: `${(performance.now() - startTime).toFixed(2)}ms`,
-      });
+        logger.debug("runWithContext callback complete", {
+          projectSlug,
+          totalDuration: formatDurationSince(startTime),
+        });
 
-      return result;
-    });
+        return result;
+      },
+    );
   }
 
   setRequestContext(projectSlug: string, token: string): void {
-    const store = asyncLocalStorage.getStore();
+    const store = getCurrentRequestContext();
     if (!store) return;
 
     store.projectSlug = projectSlug;
     store.token = token;
+    store.requestApiCredential = undefined;
     store.cacheApiCredential = undefined;
   }
 
@@ -126,9 +138,22 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // No-op: In proxy mode, productionMode/releaseId are passed via runWithContext().
   }
 
+  async createStyleConfigBinding(): Promise<StyleConfigBinding> {
+    const adapter = await this.getAdapter();
+    return adapter.createStyleConfigBinding();
+  }
+
+  async installStyleConfig(
+    binding: StyleConfigBinding,
+    config: Readonly<object>,
+  ): Promise<boolean> {
+    const adapter = await this.getAdapter();
+    return adapter.installStyleConfig(binding, config);
+  }
+
   private async getAdapter(): Promise<VeryfrontFSAdapter> {
-    const startTime = performance.now();
-    const context = asyncLocalStorage.getStore();
+    const startTime = monotonicNow();
+    const context = getCurrentRequestContext();
 
     if (!context) {
       logger.debug("No context available", {
@@ -168,7 +193,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
     logger.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,
-      duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+      duration: formatDurationSince(startTime),
     });
 
     return adapter;
@@ -245,9 +270,36 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
-    this.manager.dispose();
-    this.defaultAdapter?.dispose();
-    this.defaultAdapter = undefined;
+    let managerError: unknown;
+    let managerFailed = false;
+    try {
+      this.manager.dispose();
+    } catch (error) {
+      managerError = error;
+      managerFailed = true;
+    }
+
+    let defaultAdapterError: unknown;
+    let defaultAdapterFailed = false;
+    const defaultAdapter = this.defaultAdapter;
+    try {
+      defaultAdapter?.dispose();
+    } catch (error) {
+      defaultAdapterError = error;
+      defaultAdapterFailed = true;
+    } finally {
+      this.defaultAdapter = undefined;
+    }
+
+    if (managerFailed && defaultAdapterFailed) {
+      throw new IntrinsicAggregateError(
+        [managerError, defaultAdapterError],
+        "Multiple filesystem adapters failed to dispose",
+      );
+    }
+    if (managerFailed) throw managerError;
+    if (defaultAdapterFailed) throw defaultAdapterError;
+
     logger.debug("Disposed");
   }
 

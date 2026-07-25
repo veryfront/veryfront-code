@@ -4,6 +4,18 @@ import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts"
 import { buildContentHashCacheKey } from "./keys.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 
+const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
+const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
+const EncodeURIComponent = encodeURIComponent;
+const NumberPrototypeToString = Number.prototype.toString;
+const ReflectApply = Reflect.apply;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypePadStart = String.prototype.padStart;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+
 type MultiProjectRequestContextType = {
   projectSlug: string;
   projectId?: string;
@@ -14,7 +26,33 @@ type MultiProjectRequestContextType = {
   environmentName?: string | null;
 };
 
-let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
+type MultiProjectRequestContextProvider = () => MultiProjectRequestContextType | null;
+
+let getCurrentRequestContextProvider: MultiProjectRequestContextProvider | undefined;
+
+/**
+ * Installs the platform-owned ambient request-context bridge exactly once.
+ *
+ * This deliberately keeps the provider in module-private state instead of a
+ * writable global. Re-registering the same provider is harmless for duplicate
+ * bootstrap paths, while a competing provider is an invariant violation.
+ */
+export function registerMultiProjectRequestContextProvider(
+  provider: MultiProjectRequestContextProvider,
+): void {
+  if (typeof provider !== "function") {
+    throw new TypeError("Multi-project request context provider must be a function");
+  }
+  if (getCurrentRequestContextProvider === undefined) {
+    getCurrentRequestContextProvider = provider;
+    return;
+  }
+  if (getCurrentRequestContextProvider !== provider) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "[CacheKeyBuilder] Multi-project request context provider is already registered",
+    });
+  }
+}
 
 export type { CacheKeyContext };
 
@@ -24,12 +62,20 @@ export interface RegistryScopeContext {
   immutable: boolean;
 }
 
+function getStringCodeUnit(value: string, index: number): number {
+  return ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+}
+
+function formatEscapedCodeUnit(codeUnit: number): string {
+  const hex = ReflectApply(NumberPrototypeToString, codeUnit, [16]) as string;
+  const upperHex = ReflectApply(StringPrototypeToUpperCase, hex, []) as string;
+  return `%u${ReflectApply(StringPrototypePadStart, upperHex, [4, "0"]) as string}`;
+}
+
 function encodeRegistryScopeSegment(value: string): string {
   try {
-    return encodeURIComponent(value);
-  } catch (error) {
-    if (!(error instanceof URIError)) throw error;
-
+    return EncodeURIComponent(value);
+  } catch {
     // encodeURIComponent rejects lone UTF-16 surrogates. Project identity comes
     // from external boundaries, so keep this encoder total without collapsing
     // malformed strings onto the replacement character. `%uXXXX` cannot collide
@@ -37,24 +83,31 @@ function encodeRegistryScopeSegment(value: string): string {
     let encoded = "";
     let chunkStart = 0;
     for (let index = 0; index < value.length; index++) {
-      const codeUnit = value.charCodeAt(index);
+      const codeUnit = getStringCodeUnit(value, index);
       const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
       const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+      const nextCodeUnit = isHighSurrogate && index + 1 < value.length
+        ? getStringCodeUnit(value, index + 1)
+        : -1;
 
       if (
-        isHighSurrogate && index + 1 < value.length &&
-        value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff
+        isHighSurrogate &&
+        nextCodeUnit >= 0xdc00 &&
+        nextCodeUnit <= 0xdfff
       ) {
         index++;
         continue;
       }
       if (!isHighSurrogate && !isLowSurrogate) continue;
 
-      encoded += encodeURIComponent(value.slice(chunkStart, index));
-      encoded += `%u${codeUnit.toString(16).toUpperCase().padStart(4, "0")}`;
+      encoded += EncodeURIComponent(
+        ReflectApply(StringPrototypeSlice, value, [chunkStart, index]) as string,
+      );
+      encoded += formatEscapedCodeUnit(codeUnit);
       chunkStart = index + 1;
     }
-    return encoded + encodeURIComponent(value.slice(chunkStart));
+    return encoded +
+      EncodeURIComponent(ReflectApply(StringPrototypeSlice, value, [chunkStart]) as string);
   }
 }
 
@@ -69,10 +122,33 @@ export function isRegistryScopeForProject(
   scopeId: string,
   projectId: string,
 ): boolean {
-  return scopeId.startsWith(`${encodeRegistryScopeSegment(projectId)}:`);
+  return ReflectApply(
+    StringPrototypeStartsWith,
+    scopeId,
+    [`${encodeRegistryScopeSegment(projectId)}:`],
+  ) as boolean;
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
+
+function getCacheKeyContextStore(): CacheKeyContext | null | undefined {
+  return ReflectApply(
+    AsyncLocalStoragePrototypeGetStore,
+    cacheKeyContextStorage,
+    [],
+  ) as CacheKeyContext | null | undefined;
+}
+
+function runWithCacheKeyContextStore<T>(
+  ctx: CacheKeyContext | null,
+  fn: () => T,
+): T {
+  return ReflectApply(
+    AsyncLocalStoragePrototypeRun,
+    cacheKeyContextStorage,
+    [ctx, fn],
+  ) as T;
+}
 
 function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
   return CacheKeyContextSchema.parse(ctx);
@@ -88,7 +164,7 @@ export function getContentHashKey(
 }
 
 export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T {
-  return cacheKeyContextStorage.run(validateCacheKeyContext(ctx), fn);
+  return runWithCacheKeyContextStore(validateCacheKeyContext(ctx), fn);
 }
 
 /**
@@ -99,37 +175,17 @@ export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T 
  * isolation.
  */
 export function runWithoutCacheKeyContext<T>(fn: () => T): T {
-  return cacheKeyContextStorage.run(null, fn);
+  return runWithCacheKeyContextStore(null, fn);
 }
 
 export function getCurrentCacheKeyContext(): CacheKeyContext {
-  const ctx = cacheKeyContextStorage.getStore();
+  const ctx = getCacheKeyContextStore();
   if (ctx) return ctx;
 
   throw CACHE_INVARIANT_VIOLATION.create({
     detail: "[CacheKeyBuilder] No cache context available. " +
       "Ensure runWithCacheKeyContext() was called at request entry.",
   });
-}
-
-function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  // Memoize only once the adapter is actually resolved. A miss must NOT be cached
-  // permanently: the multi-project adapter can be installed on globalThis after
-  // the first call, and caching null here would disable distributed caching for
-  // the whole process lifetime even after the adapter is later wired.
-  if (_getCurrentRequestContext) return _getCurrentRequestContext;
-
-  try {
-    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
-      | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
-      | undefined;
-    const fn = mod?.getCurrentRequestContext ?? null;
-    if (fn) _getCurrentRequestContext = fn;
-    return fn;
-  } catch (_) {
-    // expected: multi-project adapter may not be available yet — re-check next call
-    return null;
-  }
 }
 
 function extractCacheKeyContextFromMultiProjectContext(
@@ -158,10 +214,10 @@ function extractCacheKeyContextFromMultiProjectContext(
 }
 
 export function tryGetCacheKeyContext(): CacheKeyContext | null {
-  const explicitCtx = cacheKeyContextStorage.getStore();
+  const explicitCtx = getCacheKeyContextStore();
   if (explicitCtx) return explicitCtx;
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = getCurrentRequestContextProvider?.();
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
@@ -185,7 +241,7 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
 export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   // Explicit contexts are authoritative for workflows and other callers that
   // intentionally override ambient filesystem tenancy.
-  const cacheCtx = cacheKeyContextStorage.getStore();
+  const cacheCtx = getCacheKeyContextStore();
   if (cacheCtx) {
     return {
       scopeId: `${encodeRegistryScopeSegment(cacheCtx.projectId)}:${cacheCtx.mode}:` +
@@ -194,7 +250,7 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     };
   }
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = getCurrentRequestContextProvider?.();
   if (reqCtx) {
     const projectId = reqCtx.projectId || reqCtx.projectSlug;
     if (!projectId) return null;
@@ -232,8 +288,91 @@ export function tryGetRegistryScopeId(): string | null {
   return tryGetRegistryScopeContext()?.scopeId ?? null;
 }
 
+const PROJECT_SCOPED_CACHE_KEY_PREFIX = "project-scoped:v2";
+
+/**
+ * Escape code units that UTF-8 transports cannot preserve injectively.
+ *
+ * Valid Unicode and ordinary route text remain readable. Literal `%` is escaped
+ * first so `%uXXXX` for an unpaired surrogate cannot alias caller-provided text.
+ */
+function escapeProjectScopedKeyTransportText(value: string): string {
+  let escaped = "";
+  let chunkStart = 0;
+
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = getStringCodeUnit(value, index);
+    const isPercent = codeUnit === 0x25;
+    const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+    const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+    const nextCodeUnit = isHighSurrogate && index + 1 < value.length
+      ? getStringCodeUnit(value, index + 1)
+      : -1;
+
+    if (
+      !isPercent &&
+      isHighSurrogate &&
+      nextCodeUnit >= 0xdc00 &&
+      nextCodeUnit <= 0xdfff
+    ) {
+      index++;
+      continue;
+    }
+    if (!isPercent && !isHighSurrogate && !isLowSurrogate) continue;
+
+    escaped += ReflectApply(StringPrototypeSlice, value, [chunkStart, index]) as string;
+    escaped += isPercent ? "%25" : formatEscapedCodeUnit(codeUnit);
+    chunkStart = index + 1;
+  }
+
+  return escaped + (ReflectApply(StringPrototypeSlice, value, [chunkStart]) as string);
+}
+
+/**
+ * Frame one transport-safe string without relying on delimiter escaping.
+ *
+ * The escaped UTF-16 code-unit length makes composition injective even when
+ * values contain `:`, `|`, frame-like text, or unpaired surrogates.
+ */
+function frameProjectScopedKeySegment(value: string): string {
+  const escaped = escapeProjectScopedKeyTransportText(value);
+  return `${escaped.length}:${escaped}`;
+}
+
+/**
+ * Match user-facing search text against both legacy/raw keys and v2's
+ * transport-safe representation.
+ *
+ * @internal Used by caches that intentionally support substring invalidation.
+ */
+export function projectScopedKeyIncludesSearchText(
+  key: string,
+  searchText: string,
+): boolean {
+  const isV2Key = ReflectApply(
+    StringPrototypeStartsWith,
+    key,
+    [`${PROJECT_SCOPED_CACHE_KEY_PREFIX}:`],
+  ) as boolean;
+  const representedSearchText = isV2Key
+    ? escapeProjectScopedKeyTransportText(searchText)
+    : searchText;
+  return ReflectApply(StringPrototypeIncludes, key, [representedSearchText]) as boolean;
+}
+
+/**
+ * Compose the distributed cache identity for one project/source/resource.
+ *
+ * `v2` intentionally does not read or reproduce the legacy delimiter-only
+ * format. Deploying this version causes safe cache misses instead of consulting
+ * keys whose tenant/source boundaries cannot be reconstructed unambiguously.
+ */
 function buildProjectScopedKey(prefix: string, resourceKey: string, ctx: CacheKeyContext): string {
-  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
+  return `${PROJECT_SCOPED_CACHE_KEY_PREFIX}:${frameProjectScopedKeySegment(prefix)}|${
+    frameProjectScopedKeySegment(ctx.projectId)
+  }|${frameProjectScopedKeySegment(ctx.mode)}|${frameProjectScopedKeySegment(ctx.versionId)}|${
+    frameProjectScopedKeySegment(resourceKey)
+  }`;
 }
 
 export function getProjectScopedKey(prefix: string, resourceKey: string): string | null {

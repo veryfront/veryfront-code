@@ -492,11 +492,11 @@ export async function listRuntimeAgents(
  *
  * This is intentionally weaker than {@link verifyDispatchJws}: it answers
  * "was this JWS minted by a holder of the control-plane private key and is it
- * still fresh?" and is used as a trust signal in code paths (proxy-trust,
- * adapter selection) that don't yet have access to the authoritative request
- * body or project audience. Callers that consume request payloads MUST still
- * call {@link verifyDispatchJws} / {@link verifyControlPlaneJws} to bind the
- * signature to the body and project.
+ * still fresh?" It grants authenticity only: it MUST NOT authorize forwarded
+ * headers, filesystem paths, project selection, or any other request-scoped
+ * capability. Callers that consume request payloads MUST still call
+ * {@link verifyDispatchJws} / {@link verifyControlPlaneJws} to bind the
+ * signature to the body, audience, and project.
  *
  * Returns true iff the signature verifies and `iat`/`exp` are within the
  * allowed skew and max-age window. All other failures (including parsing

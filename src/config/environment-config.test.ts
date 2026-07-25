@@ -10,6 +10,7 @@ import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
   createTestEnvironmentConfig,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   type EnvironmentConfig,
   getEnvironmentConfig,
   initEnvironmentConfig,
@@ -350,7 +351,7 @@ describe("EnvironmentConfig", () => {
 
           expect(env.port).toBe(3000);
           expect(env.portSource).toBe("default");
-          expect(env.requestTimeoutMs).toBe(30000);
+          expect(env.requestTimeoutMs).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
           expect(env.httpFetchTimeoutMs).toBe(30000);
           expect(env.extensionSetupTimeoutMs).toBe(30000);
           expect(env.ssrMaxConcurrentTransforms).toBe(3);

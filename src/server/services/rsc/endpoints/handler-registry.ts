@@ -13,10 +13,17 @@ import {
 } from "../orchestrators/handler.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { assertImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
 
 const RSC_HANDLERS_MAX_ENTRIES = 50;
 const RSC_HANDLERS_TTL_MS = 60 * 60 * 1000; // 1 hour
 const RSC_HANDLERS_CLEANUP_INTERVAL_MS = 300_000; // 5 minutes
+// API routes can execute project code in the shared realm when worker
+// isolation is unavailable or disabled. Capture the cache-key codecs before
+// that code can replace ambient primordials and make invalidation miss entries.
+const arrayIsArray = Array.isArray;
+const jsonParse = JSON.parse;
+const jsonStringify = JSON.stringify;
 
 /**
  * Handler cache interface for dependency injection.
@@ -27,6 +34,7 @@ export interface HandlerCache<T> {
   set(key: string, value: T): void;
   delete(key: string): boolean;
   clear(): void;
+  keys(): IterableIterator<string>;
   readonly size: number;
 }
 
@@ -35,7 +43,6 @@ let cacheRegistered = false;
 
 /** Injected cache for testing (overrides default LRUCache) */
 let injectedCache: HandlerCache<RSCDevServerHandler> | null = null;
-const handlerKeysByProject = new Map<string, Set<string>>();
 
 function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   if (injectedCache) return injectedCache;
@@ -59,16 +66,41 @@ function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   return rscHandlersByProject;
 }
 
+function getExistingHandlersCache(): HandlerCache<RSCDevServerHandler> | null {
+  return injectedCache ?? rscHandlersByProject;
+}
+
+function cacheKeyBelongsToProject(cacheKey: string, projectKey: string): boolean {
+  try {
+    const cacheKeyParts: unknown = jsonParse(cacheKey);
+    return arrayIsArray(cacheKeyParts) && cacheKeyParts[0] === projectKey;
+  } catch {
+    return false;
+  }
+}
+
 export function getRSCHandler(
   projectDir: string,
   projectId?: string,
   options: RSCServerHandlerOptions = {},
 ): RSCDevServerHandler {
+  if (options.importMapIdentity) {
+    assertImportMapIdentity(options.importMapIdentity);
+  }
+  // A synchronous standalone caller cannot derive the exact merged
+  // deno.json/config fingerprint here. Keep serving it, but do not cache a
+  // closure over mutable import-map configuration under an incomplete key.
+  if (
+    options.config?.resolve?.importMap !== undefined &&
+    options.importMapIdentity === undefined
+  ) {
+    return new RSCDevServerHandler(projectDir, options);
+  }
   const baseKey = projectId ?? projectDir;
   const appDir = options.config?.directories?.app ?? "app";
   const mode = options.mode ?? "production";
   const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
-  const cacheKey = JSON.stringify([
+  const cacheKey = jsonStringify([
     baseKey,
     options.isLocalProject === true,
     mode,
@@ -77,6 +109,7 @@ export function getRSCHandler(
     ...(options.contentSourceId || options.releaseId
       ? [options.releaseId ?? null, options.contentSourceId ?? null]
       : []),
+    ...(options.importMapIdentity ? [options.importMapIdentity.fingerprint] : []),
   ]);
   const cache = getHandlersCache();
   const existing = cache.get(cacheKey);
@@ -84,9 +117,6 @@ export function getRSCHandler(
 
   const handler = new RSCDevServerHandler(projectDir, options);
   cache.set(cacheKey, handler);
-  const projectKeys = handlerKeysByProject.get(baseKey) ?? new Set<string>();
-  projectKeys.add(cacheKey);
-  handlerKeysByProject.set(baseKey, projectKeys);
   return handler;
 }
 
@@ -95,12 +125,15 @@ export function invalidateRSCHandlersForProject(
   projectId?: string,
 ): void {
   const projectKey = projectId ?? projectDir;
-  const cacheKeys = handlerKeysByProject.get(projectKey);
-  if (!cacheKeys) return;
+  const cache = getExistingHandlersCache();
+  if (!cache) return;
 
-  const cache = getHandlersCache();
-  for (const cacheKey of cacheKeys) cache.delete(cacheKey);
-  handlerKeysByProject.delete(projectKey);
+  // The handler cache is deliberately small, so scanning its authoritative
+  // live-key view is bounded. This also avoids retaining a second index after
+  // capacity eviction or TTL expiry.
+  for (const cacheKey of [...cache.keys()]) {
+    if (cacheKeyBelongsToProject(cacheKey, projectKey)) cache.delete(cacheKey);
+  }
 }
 
 export function __injectCacheForTests(
@@ -112,12 +145,10 @@ export function __injectCacheForTests(
 export function __resetRSCHandlerForTests(): void {
   const cache = injectedCache ?? rscHandlersByProject;
   cache?.clear();
-  handlerKeysByProject.clear();
 }
 
 export function __destroyRSCHandlerForTests(): void {
   injectedCache = null;
   rscHandlersByProject?.destroy();
   rscHandlersByProject = null;
-  handlerKeysByProject.clear();
 }

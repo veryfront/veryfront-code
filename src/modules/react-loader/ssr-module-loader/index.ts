@@ -5,6 +5,7 @@
  */
 
 export { SSRModuleLoader } from "./loader.ts";
+export { assertSSRImportMapIdentity, createSSRImportMapIdentity } from "./import-map-identity.ts";
 
 export type {
   FailureRecord,
@@ -12,6 +13,7 @@ export type {
   SSRModuleCacheStats,
   SSRModuleLoaderOptions,
 } from "./types.ts";
+export type { SSRImportMapIdentity } from "./import-map-identity.ts";
 
 export {
   CIRCUIT_BREAKER_RESET_MS,

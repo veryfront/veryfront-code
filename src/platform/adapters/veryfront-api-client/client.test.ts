@@ -4,14 +4,15 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import type { VeryfrontAPIConfig } from "./types.ts";
 
-const baseConfig = {
+const baseConfig: VeryfrontAPIConfig = {
   apiBaseUrl: "http://test.api",
   apiToken: "config-token",
   projectSlug: "config-slug",
 };
 
-function createClient(config = baseConfig): VeryfrontApiClient {
+function createClient(config: VeryfrontAPIConfig = baseConfig): VeryfrontApiClient {
   return new VeryfrontApiClient(config);
 }
 
@@ -38,6 +39,26 @@ describe("VeryfrontApiClient", () => {
     it("throws when no token available", () => {
       const client = createClient({ apiBaseUrl: "http://test.api" });
       assertThrows(() => client.getToken(), VeryfrontError, "No API token available");
+    });
+
+    it("keeps an injected request credential provider exclusive", () => {
+      const client = new VeryfrontApiClient(
+        baseConfig,
+        () => "immutable-request-token",
+      );
+
+      assertEquals(client.getToken(), "immutable-request-token");
+      assertThrows(
+        () => client.setRequestToken("replacement-token"),
+        VeryfrontError,
+        "Cannot mutate",
+      );
+      assertThrows(
+        () => client.clearRequestToken(),
+        VeryfrontError,
+        "Cannot clear",
+      );
+      assertEquals(client.getToken(), "immutable-request-token");
     });
   });
 

@@ -19,9 +19,12 @@ export { ProxyFSAdapterManager } from "./veryfront/proxy-manager.ts";
 export { VeryfrontFSAdapter } from "./veryfront/index.ts";
 export type {
   CacheStats,
+  ContextualFSAdapter,
   DirectoryEntry,
   FSAdapter,
   FSAdapterConfig,
+  StyleConfigBinding,
+  StylePregenerationContext,
   VeryfrontFSState,
 } from "./veryfront/types.ts";
 export {

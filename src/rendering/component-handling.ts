@@ -12,6 +12,7 @@ import { buildComponentCacheKey } from "#veryfront/cache/keys.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { toMDXFrontmatter } from "./frontmatter.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -55,6 +56,8 @@ export async function handleComponentPage(
     contentSourceId?: string;
     /** React version for transforms (from project config) */
     reactVersion?: string;
+    /** Import map snapshot resolved for this project/content source. */
+    importMap?: ImportMapConfig;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -91,6 +94,7 @@ export async function handleComponentPage(
         contentSourceId: options?.contentSourceId,
         reactVersion: options?.reactVersion,
         mode: options?.mode,
+        importMap: options?.importMap,
       },
     );
 

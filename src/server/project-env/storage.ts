@@ -52,9 +52,8 @@ export function getProjectEnvSnapshot(): ProjectEnvSnapshot | undefined {
 
 registerTrustedProjectEnvSnapshot(getProjectEnvSnapshot);
 
-// Preserve the two legacy lookup bridges still consumed by lower-level
-// process compatibility code. Worker snapshotting uses the trusted
-// closure-registration bridge above and is never published as mutable global
-// state.
+// Preserve the two legacy lookup bridges used by the compiled-binary runtime
+// shim. Host process compatibility code uses the trusted closure-registration
+// bridge above and never relies on mutable global state for project isolation.
 (globalThis as Record<string, unknown>).__vfProjectEnvGetter = getProjectEnv;
 (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker = isProjectEnvActive;

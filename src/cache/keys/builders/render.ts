@@ -93,8 +93,10 @@ export function buildLayoutComponentCacheKey(
   componentPath: string,
   hash: string,
   contentSourceId: string,
+  importMapFingerprint?: string,
 ): string {
-  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${contentSourceId}:${componentPath}:${hash}`;
+  const base = `${CacheKeyPrefix.LAYOUT}:${projectId}:${contentSourceId}:${componentPath}:${hash}`;
+  return importMapFingerprint ? `${base}:map-${importMapFingerprint}` : base;
 }
 
 export function buildErrorPageCacheKey(

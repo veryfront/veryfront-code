@@ -43,6 +43,12 @@ export interface ContextualFSAdapter extends FSAdapter {
 
   setProductionMode?(enabled: boolean, releaseId?: string | null): void;
 
+  createStyleConfigBinding?(): StyleConfigBinding | Promise<StyleConfigBinding>;
+  installStyleConfig?(
+    binding: StyleConfigBinding,
+    config: Readonly<object>,
+  ): boolean | Promise<boolean>;
+
   runWithContext?<T>(
     projectSlug: string,
     token: string,
@@ -82,10 +88,28 @@ export interface PreviewStyleArtifactInfo {
   assetPath: string;
 }
 
+/**
+ * Opaque, one-shot authority to install style configuration for one exact
+ * project content snapshot.
+ *
+ * Adapters validate object identity in addition to these diagnostic fields, so
+ * callers cannot fabricate or replay a binding after its source revision moves.
+ */
+export interface StyleConfigBinding {
+  readonly projectSlug: string;
+  readonly sourceKey: string;
+  readonly sourceRevision: number;
+}
+
 export interface StylePregenerationContext {
   projectSlug: string;
   projectDir?: string;
   contentContext: ResolvedContentContext | null;
+  /**
+   * Already validated project configuration supplied by the trusted hosted
+   * runtime. Platform adapters keep this value opaque.
+   */
+  config?: Readonly<object>;
 }
 
 export interface StyleCallbacks {

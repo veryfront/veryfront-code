@@ -19,6 +19,7 @@ function createHandlerCache(): HandlerCache<RSCDevServerHandler> {
     set: (key, value) => entries.set(key, value),
     delete: (key) => entries.delete(key),
     clear: () => entries.clear(),
+    keys: () => entries.keys(),
     get size() {
       return entries.size;
     },

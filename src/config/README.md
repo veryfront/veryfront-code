@@ -33,6 +33,31 @@ without a query or fragment. Project configuration must not override `fs`; an
 attempted override is rejected instead of producing a mixed backend
 configuration.
 
+### Hosted configuration boundary
+
+Local filesystems, standalone deployments, and trusted single-project virtual
+filesystems preserve executable TypeScript and JavaScript configuration.
+Shared multi-project runtimes use a different boundary: they read the selected
+config file once from an authenticated project/source context and evaluate its
+declarative subset in a bounded worker.
+
+The hosted evaluator accepts static data plus the supported `veryfront` config
+helpers. It rejects imports other than those helpers, host globals, filesystem
+or network access, dynamic code, executable extensions and middleware, and
+function-valued policies. The runtime validates project, source, release, and
+environment identity before filesystem access. `getEnv` receives only the
+filtered tenant environment snapshot prepared for that same source.
+
+Production environment sources are bound to their exact active release.
+Preview sources are bound to the selected branch and are not persisted in the
+production config cache. An exact release that has no authoritative environment
+identity is evaluated with the `release` label and an empty, frozen environment
+snapshot; it never inherits production secrets by convention.
+
+Hosted parse, policy, protocol, capacity, and timeout failures fail closed.
+They are not retried by executing tenant configuration in the host process, and
+operational file-read errors are not treated as a missing config file.
+
 ## Environment Config (`EnvironmentConfig`)
 
 System-level configuration read from environment variables. Captured as a frozen snapshot at startup.
@@ -55,16 +80,30 @@ console.log(env.debug); // from VERYFRONT_DEBUG
 
 ## Runtime Config (`RuntimeConfig`)
 
-The merged configuration used at runtime. Combines project config with environment overrides and adds runtime info.
+An opt-in, process-local helper that combines configuration supplied by its
+caller with an environment snapshot and adds runtime flags. Server bootstrap
+and hosted config loading do **not** automatically publish
+`veryfront.config.*` values to this singleton.
+
+Use `createRuntimeConfig(projectConfig, env)` when you need a standalone value.
+`initRuntimeConfig(projectConfig)` and `updateRuntimeConfig(projectConfig)` are
+only for trusted single-tenant startup or tooling. Never put request-scoped
+hosted tenant configuration in the singleton.
 
 ```typescript
-import { getRuntimeConfig } from "#veryfront/config";
+import { createRuntimeConfig, getRuntimeConfig, initRuntimeConfig } from "#veryfront/config";
 
-const config = getRuntimeConfig();
-console.log(config.build?.outDir); // from VeryfrontConfig
-console.log(config.runtime.isDevelopment); // computed from env
-console.log(config.runtime.env.apiToken); // from EnvironmentConfig
+const standalone = createRuntimeConfig({ build: { outDir: "output" } });
+console.log(standalone.build?.outDir); // "output"
+
+initRuntimeConfig({ title: "Trusted single-tenant process" });
+const processConfig = getRuntimeConfig();
+console.log(processConfig.runtime.isDevelopment); // computed from host env
 ```
+
+Calling `getRuntimeConfig()` before explicit initialization lazily creates a
+defaults-plus-host-environment singleton. It does not discover or load a
+project config file.
 
 **Structure:**
 
@@ -89,6 +128,9 @@ src/config/
 ├── environment-config.ts       # EnvironmentConfig type and getters
 ├── runtime-config.ts           # RuntimeConfig merging logic
 ├── loader.ts                   # Config file loading and caching
+├── declarative-evaluator.ts    # Hosted declarative parser/evaluator
+├── declarative-evaluator-worker-*.ts
+│                               # Bounded worker protocol and lifecycle
 ├── define-config.ts            # defineConfig() helper
 ├── defaults.ts                 # Default values
 ├── network-defaults.ts         # Network-related defaults

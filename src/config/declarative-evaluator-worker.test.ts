@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import {
   createPreparedDeclarativeConfigWorkerPayload,
   DeclarativeConfigEvaluationError,
+  type DeclarativeConfigFileName,
   prepareDeclarativeConfigContext,
 } from "./declarative-evaluator.ts";
 import {
@@ -15,12 +16,79 @@ import {
   evaluatePreparedDeclarativeConfigInWorker,
 } from "./declarative-evaluator-worker-runner.ts";
 
-async function createPayload(source: string) {
+const TestObjectDefineProperty = Object.defineProperty;
+const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function replacePropertyForTest(
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): () => void {
+  const previous = TestObjectGetOwnPropertyDescriptor(target, key);
+  TestObjectDefineProperty(target, key, {
+    configurable: true,
+    ...descriptor,
+  });
+  return () => {
+    if (previous) TestObjectDefineProperty(target, key, previous);
+    else Reflect.deleteProperty(target, key);
+  };
+}
+
+async function createPayload(
+  source: string,
+  fileName: DeclarativeConfigFileName = "veryfront.config.ts",
+) {
   const context = await prepareDeclarativeConfigContext({
     environmentName: "production",
     environment: { TENANT: "isolated" },
   });
-  return createPreparedDeclarativeConfigWorkerPayload(source, context);
+  return createPreparedDeclarativeConfigWorkerPayload(source, context, fileName);
+}
+
+async function waitForAdmissionState(
+  admission: {
+    snapshot(): Readonly<{ active: number; queued: number }>;
+  },
+  expected: Readonly<{ active: number; queued: number }>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (
+      admission.snapshot().active === expected.active &&
+      admission.snapshot().queued === expected.queued
+    ) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(
+    `Timed out waiting for admission state ${JSON.stringify(expected)}; observed ${
+      JSON.stringify(admission.snapshot())
+    }`,
+  );
+}
+
+async function waitForStartupState(
+  startup: {
+    snapshot(): Readonly<{ pending: number; maxPending: number }>;
+  },
+  expected: Readonly<{ pending: number; maxPending: number }>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const current = startup.snapshot();
+    if (
+      current.pending === expected.pending &&
+      current.maxPending === expected.maxPending
+    ) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(
+    `Timed out waiting for startup state ${JSON.stringify(expected)}; observed ${
+      JSON.stringify(startup.snapshot())
+    }`,
+  );
 }
 
 Deno.test("declarative config worker returns a recanonicalized frozen snapshot", async () => {
@@ -67,6 +135,25 @@ Deno.test("declarative config worker rehydrates typed evaluation failures", asyn
   assertEquals(error.reason, "unsupported-call");
   assertEquals(error.retryable, false);
   assertEquals(error.location?.fileName, "veryfront.config.ts");
+});
+
+Deno.test("declarative config worker preserves validated JS and MJS diagnostic names", async () => {
+  for (
+    const fileName of [
+      "veryfront.config.js",
+      "veryfront.config.mjs",
+    ] as const
+  ) {
+    const payload = await createPayload(
+      "export default { secret: process.env.SECRET };",
+      fileName,
+    );
+    const error = await assertRejects(
+      () => evaluatePreparedDeclarativeConfigInWorker(payload),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+    assertEquals(error.location?.fileName, fileName);
+  }
 });
 
 Deno.test("declarative config worker rejects a pre-aborted request without starting", async () => {
@@ -122,6 +209,75 @@ Deno.test("declarative config worker terminates a stalled endpoint at its deadli
   assertEquals(error.reason, "worker-timeout");
   assertEquals(error.retryable, true);
   assertEquals(terminationCount, 1);
+});
+
+Deno.test("declarative config worker caller deadline does not await a stuck termination", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  let terminationCount = 0;
+  const result = declarativeConfigWorkerRunnerInternals
+    .evaluateWithEndpointFactory(
+      payload,
+      { timeoutMs: 1 },
+      async () => ({
+        postMessage() {},
+        subscribe() {
+          return () => {};
+        },
+        terminate() {
+          terminationCount += 1;
+          return new Promise<never>(() => {});
+        },
+      }),
+      5,
+    );
+
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const callerStalled = new Promise<{ kind: "caller-stalled" }>((resolve) => {
+    watchdog = setTimeout(() => resolve({ kind: "caller-stalled" }), 50);
+  });
+  const outcome = await Promise.race([
+    result.then(
+      (value) => ({ kind: "resolved" as const, value }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    ),
+    callerStalled,
+  ]);
+  if (watchdog !== undefined) clearTimeout(watchdog);
+
+  assert(outcome.kind === "rejected", "caller result must reject independently");
+  assert(outcome.error instanceof DeclarativeConfigEvaluationError);
+  assertEquals(outcome.error.reason, "worker-timeout");
+  assertEquals(terminationCount, 1);
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+});
+
+Deno.test("declarative config worker contains a termination rejection after its drain bound", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  let onMessage: ((value: unknown) => void) | undefined;
+
+  const snapshot = await declarativeConfigWorkerRunnerInternals
+    .evaluateWithEndpointFactory(
+      payload,
+      { timeoutMs: 100 },
+      async () => ({
+        postMessage() {
+          onMessage?.({ ok: true, snapshot: { ready: true } });
+        },
+        subscribe(listeners) {
+          onMessage = listeners.onMessage;
+          return () => {};
+        },
+        terminate() {
+          return new Promise<void>((_resolve, reject) => {
+            setTimeout(() => reject(new Error("late termination failure")), 20);
+          });
+        },
+      }),
+      5,
+    );
+
+  assertEquals(snapshot, { ready: true });
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
 });
 
 Deno.test("declarative config worker aborts in flight and removes endpoint listeners", async () => {
@@ -330,52 +486,28 @@ Deno.test("declarative config worker bounds active and queued evaluations", asyn
   await Promise.resolve();
   assertEquals(factoryCalls, 2);
   assertEquals(admission.snapshot(), { active: 1, queued: 0 });
+  for (let attempt = 0; messageListeners.length < 2 && attempt < 100; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  assertEquals(messageListeners.length, 2);
 
   messageListeners[1]?.({ ok: true, snapshot: { sequence: 2 } });
   assertEquals(await second, { sequence: 2 });
-  assertEquals(admission.snapshot(), { active: 0, queued: 0 });
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
   assertEquals(terminationCount, 2);
 });
 
-Deno.test("declarative config worker retains admission until late startup drains", async () => {
+Deno.test("declarative config worker bounds factories that never settle without retaining ordinary admission", async () => {
   const payload = await createPayload("export default { ready: true };");
   const admission = declarativeConfigWorkerRunnerInternals
-    .createAdmissionController(1, 1);
-  let resolveFirstFactory:
-    | ((endpoint: {
-      postMessage(): void;
-      subscribe(): () => void;
-      terminate(): void;
-    }) => void)
-    | undefined;
-  const firstFactory = new Promise<{
-    postMessage(): void;
-    subscribe(): () => void;
-    terminate(): void;
-  }>((resolve) => {
-    resolveFirstFactory = resolve;
-  });
+    .createAdmissionController(1, 0);
+  const startup = declarativeConfigWorkerRunnerInternals
+    .createStartupController(1);
   let factoryCalls = 0;
-  let firstPostCount = 0;
-  let terminationCount = 0;
-
   const endpointFactory = () => {
     factoryCalls += 1;
-    if (factoryCalls === 1) return firstFactory;
-    return Promise.resolve({
-      postMessage() {
-        secondMessage?.({ ok: true, snapshot: { sequence: 2 } });
-      },
-      subscribe(listeners: { onMessage(value: unknown): void }) {
-        secondMessage = listeners.onMessage;
-        return () => {};
-      },
-      terminate() {
-        terminationCount += 1;
-      },
-    });
+    return new Promise<never>(() => {});
   };
-  let secondMessage: ((value: unknown) => void) | undefined;
 
   const first = declarativeConfigWorkerRunnerInternals
     .evaluateWithAdmissionController(
@@ -383,27 +515,138 @@ Deno.test("declarative config worker retains admission until late startup drains
       { timeoutMs: 1 },
       endpointFactory,
       admission,
+      5,
+      startup,
     );
   const timeoutError = await assertRejects(
     () => first,
     DeclarativeConfigEvaluationError,
   ) as DeclarativeConfigEvaluationError;
   assertEquals(timeoutError.reason, "worker-timeout");
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+  assertEquals(startup.snapshot(), { pending: 1, maxPending: 1 });
   assertEquals(factoryCalls, 1);
-  assertEquals(admission.snapshot(), { active: 1, queued: 0 });
 
-  const second = declarativeConfigWorkerRunnerInternals
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const overload = await assertRejects(
+      () =>
+        declarativeConfigWorkerRunnerInternals.evaluateWithAdmissionController(
+          payload,
+          { timeoutMs: 100 },
+          endpointFactory,
+          admission,
+          5,
+          startup,
+        ),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+    assertEquals(overload.reason, "worker-overloaded");
+  }
+  assertEquals(factoryCalls, 1);
+  assertEquals(admission.snapshot(), { active: 0, queued: 0 });
+  assertEquals(startup.snapshot(), { pending: 1, maxPending: 1 });
+});
+
+Deno.test("declarative config worker releases ordinary admission when an orphan factory is aborted", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  const admission = declarativeConfigWorkerRunnerInternals
+    .createAdmissionController(1, 0);
+  const startup = declarativeConfigWorkerRunnerInternals
+    .createStartupController(1);
+  const controller = new AbortController();
+  let factoryCalls = 0;
+
+  const evaluation = declarativeConfigWorkerRunnerInternals
     .evaluateWithAdmissionController(
       payload,
-      { timeoutMs: 1_000 },
-      endpointFactory,
+      { signal: controller.signal, timeoutMs: 1_000 },
+      () => {
+        factoryCalls += 1;
+        return new Promise<never>(() => {});
+      },
       admission,
+      5,
+      startup,
     );
   await Promise.resolve();
-  assertEquals(factoryCalls, 1);
-  assertEquals(admission.snapshot(), { active: 1, queued: 1 });
+  controller.abort();
 
-  resolveFirstFactory?.({
+  const error = await assertRejects(
+    () => evaluation,
+    DeclarativeConfigEvaluationError,
+  ) as DeclarativeConfigEvaluationError;
+  assertEquals(error.reason, "worker-aborted");
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+  assertEquals(factoryCalls, 1);
+  assertEquals(startup.snapshot(), { pending: 1, maxPending: 1 });
+});
+
+Deno.test("declarative config worker terminates a late factory result and recovers startup capacity", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  const admission = declarativeConfigWorkerRunnerInternals
+    .createAdmissionController(1, 0);
+  const startup = declarativeConfigWorkerRunnerInternals
+    .createStartupController(1);
+  const firstFactory = Promise.withResolvers<{
+    postMessage(): void;
+    subscribe(): () => void;
+    terminate(): void;
+  }>();
+  let factoryCalls = 0;
+  let firstPostCount = 0;
+  let terminationCount = 0;
+  let nextMessage: ((value: unknown) => void) | undefined;
+
+  const endpointFactory = () => {
+    factoryCalls += 1;
+    if (factoryCalls === 1) return firstFactory.promise;
+    return Promise.resolve({
+      postMessage() {
+        nextMessage?.({ ok: true, snapshot: { recovered: true } });
+      },
+      subscribe(listeners: { onMessage(value: unknown): void }) {
+        nextMessage = listeners.onMessage;
+        return () => {};
+      },
+      terminate() {
+        terminationCount += 1;
+      },
+    });
+  };
+
+  const first = declarativeConfigWorkerRunnerInternals
+    .evaluateWithAdmissionController(
+      payload,
+      { timeoutMs: 1 },
+      endpointFactory,
+      admission,
+      5,
+      startup,
+    );
+  const timeoutError = await assertRejects(
+    () => first,
+    DeclarativeConfigEvaluationError,
+  ) as DeclarativeConfigEvaluationError;
+  assertEquals(timeoutError.reason, "worker-timeout");
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+  assertEquals(startup.snapshot(), { pending: 1, maxPending: 1 });
+
+  const overload = await assertRejects(
+    () =>
+      declarativeConfigWorkerRunnerInternals.evaluateWithAdmissionController(
+        payload,
+        { timeoutMs: 100 },
+        endpointFactory,
+        admission,
+        5,
+        startup,
+      ),
+    DeclarativeConfigEvaluationError,
+  ) as DeclarativeConfigEvaluationError;
+  assertEquals(overload.reason, "worker-overloaded");
+  assertEquals(factoryCalls, 1);
+
+  firstFactory.resolve({
     postMessage() {
       firstPostCount += 1;
     },
@@ -414,12 +657,279 @@ Deno.test("declarative config worker retains admission until late startup drains
       terminationCount += 1;
     },
   });
-
-  assertEquals(await second, { sequence: 2 });
+  await waitForStartupState(startup, { pending: 0, maxPending: 1 });
   assertEquals(firstPostCount, 0);
+  assertEquals(terminationCount, 1);
+
+  const recovered = await declarativeConfigWorkerRunnerInternals
+    .evaluateWithAdmissionController(
+      payload,
+      { timeoutMs: 100 },
+      endpointFactory,
+      admission,
+      5,
+      startup,
+    );
+  assertEquals(recovered, { recovered: true });
   assertEquals(factoryCalls, 2);
   assertEquals(terminationCount, 2);
-  assertEquals(admission.snapshot(), { active: 0, queued: 0 });
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+  assertEquals(startup.snapshot(), { pending: 0, maxPending: 1 });
+});
+
+Deno.test("declarative config worker releases both capacity classes when a factory throws", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  const admission = declarativeConfigWorkerRunnerInternals
+    .createAdmissionController(1, 0);
+  const startup = declarativeConfigWorkerRunnerInternals
+    .createStartupController(1);
+  let factoryCalls = 0;
+  let onMessage: ((value: unknown) => void) | undefined;
+
+  const endpointFactory = () => {
+    factoryCalls += 1;
+    if (factoryCalls === 1) throw new Error("startup failed");
+    return Promise.resolve({
+      postMessage() {
+        onMessage?.({ ok: true, snapshot: { recovered: true } });
+      },
+      subscribe(listeners: { onMessage(value: unknown): void }) {
+        onMessage = listeners.onMessage;
+        return () => {};
+      },
+      terminate() {},
+    });
+  };
+
+  const error = await assertRejects(
+    () =>
+      declarativeConfigWorkerRunnerInternals.evaluateWithAdmissionController(
+        payload,
+        { timeoutMs: 100 },
+        endpointFactory,
+        admission,
+        5,
+        startup,
+      ),
+    DeclarativeConfigEvaluationError,
+  ) as DeclarativeConfigEvaluationError;
+  assertEquals(error.reason, "worker-unavailable");
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+  await waitForStartupState(startup, { pending: 0, maxPending: 1 });
+
+  const recovered = await declarativeConfigWorkerRunnerInternals
+    .evaluateWithAdmissionController(
+      payload,
+      { timeoutMs: 100 },
+      endpointFactory,
+      admission,
+      5,
+      startup,
+    );
+  assertEquals(recovered, { recovered: true });
+  assertEquals(factoryCalls, 2);
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+  assertEquals(startup.snapshot(), { pending: 0, maxPending: 1 });
+});
+
+Deno.test("declarative config worker lifecycle uses captured primordials after shared-realm poisoning", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  const preAbortedSignal = AbortSignal.abort();
+  const liveSignal = new AbortController().signal;
+  const restores: Array<() => void> = [];
+  let poisonCalls = 0;
+  const poison = () => {
+    poisonCalls += 1;
+    throw new Error("ambient lifecycle primordial must not run");
+  };
+  const replace = (
+    target: object,
+    key: PropertyKey,
+    descriptor: PropertyDescriptor,
+  ) => {
+    restores[restores.length] = replacePropertyForTest(target, key, descriptor);
+  };
+
+  let preAbortedError: unknown;
+  let expiredError: unknown;
+  let evaluationResult: unknown;
+  let admissionState: unknown;
+  let startupState: unknown;
+  try {
+    for (
+      const key of ["push", "shift", "indexOf", "splice"] as const
+    ) {
+      replace(Array.prototype, key, { value: poison, writable: true });
+    }
+    replace(Promise, "resolve", { value: poison, writable: true });
+    replace(Promise, "reject", { value: poison, writable: true });
+    replace(Promise.prototype, "then", { value: poison, writable: true });
+    replace(Object, "freeze", { value: poison, writable: true });
+    replace(Number, "isSafeInteger", { value: poison, writable: true });
+    replace(Math, "ceil", { value: poison, writable: true });
+    replace(AbortSignal.prototype, "aborted", { get: poison });
+    replace(EventTarget.prototype, "addEventListener", {
+      value: poison,
+      writable: true,
+    });
+    replace(EventTarget.prototype, "removeEventListener", {
+      value: poison,
+      writable: true,
+    });
+    replace(globalThis, "setTimeout", { value: poison, writable: true });
+    replace(globalThis, "clearTimeout", { value: poison, writable: true });
+    replace(Reflect, "apply", { value: poison, writable: true });
+
+    const admission = declarativeConfigWorkerRunnerInternals
+      .createAdmissionController(1, 2);
+    const startup = declarativeConfigWorkerRunnerInternals
+      .createStartupController(1);
+
+    try {
+      await admission.acquire(1_000, preAbortedSignal);
+    } catch (error) {
+      preAbortedError = error;
+    }
+    const releaseActive = await admission.acquire(1_000);
+    const expired = admission.acquire(1, liveSignal);
+    try {
+      await expired;
+    } catch (error) {
+      expiredError = error;
+    }
+    const dispatched = admission.acquire(1_000, liveSignal);
+    releaseActive();
+    const releaseDispatched = await dispatched;
+    releaseDispatched();
+
+    let onMessage: ((value: unknown) => void) | undefined;
+    evaluationResult = await declarativeConfigWorkerRunnerInternals
+      .evaluateWithAdmissionController(
+        payload,
+        { timeoutMs: 100 },
+        async () => ({
+          postMessage() {
+            onMessage?.({ ok: true, snapshot: { captured: true } });
+          },
+          subscribe(listeners) {
+            onMessage = listeners.onMessage;
+            return () => {};
+          },
+          terminate() {},
+        }),
+        admission,
+        5,
+        startup,
+      );
+    for (
+      let attempt = 0;
+      attempt < 10 &&
+      (admission.snapshot().active !== 0 || startup.snapshot().pending !== 0);
+      attempt += 1
+    ) {
+      await 0;
+    }
+    admissionState = admission.snapshot();
+    startupState = startup.snapshot();
+  } finally {
+    for (let index = restores.length - 1; index >= 0; index -= 1) {
+      restores[index]?.();
+    }
+  }
+
+  assert(preAbortedError instanceof DeclarativeConfigEvaluationError);
+  assertEquals(preAbortedError.reason, "worker-aborted");
+  assert(expiredError instanceof DeclarativeConfigEvaluationError);
+  assertEquals(expiredError.reason, "worker-timeout");
+  assertEquals(evaluationResult, { captured: true });
+  assertEquals(admissionState, { active: 0, queued: 0 });
+  assertEquals(startupState, { pending: 0, maxPending: 1 });
+  assertEquals(poisonCalls, 0);
+});
+
+Deno.test("declarative config worker releases admission after a stuck termination drain bound", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  const admission = declarativeConfigWorkerRunnerInternals
+    .createAdmissionController(1, 0);
+  let terminationCount = 0;
+
+  const first = declarativeConfigWorkerRunnerInternals
+    .evaluateWithAdmissionController(
+      payload,
+      { timeoutMs: 1 },
+      async () => ({
+        postMessage() {},
+        subscribe() {
+          return () => {};
+        },
+        terminate() {
+          terminationCount += 1;
+          return new Promise<never>(() => {});
+        },
+      }),
+      admission,
+      5,
+    );
+
+  const timeoutError = await assertRejects(
+    () => first,
+    DeclarativeConfigEvaluationError,
+  ) as DeclarativeConfigEvaluationError;
+  assertEquals(timeoutError.reason, "worker-timeout");
+  assertEquals(terminationCount, 1);
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+
+  let onMessage: ((value: unknown) => void) | undefined;
+  const second = await declarativeConfigWorkerRunnerInternals
+    .evaluateWithAdmissionController(
+      payload,
+      { timeoutMs: 100 },
+      async () => ({
+        postMessage() {
+          onMessage?.({ ok: true, snapshot: { recovered: true } });
+        },
+        subscribe(listeners) {
+          onMessage = listeners.onMessage;
+          return () => {};
+        },
+        terminate() {},
+      }),
+      admission,
+      5,
+    );
+
+  assertEquals(second, { recovered: true });
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
+});
+
+Deno.test("declarative config worker preserves a successful result when terminate throws", async () => {
+  const payload = await createPayload("export default { ready: true };");
+  const admission = declarativeConfigWorkerRunnerInternals
+    .createAdmissionController(1, 0);
+  let onMessage: ((value: unknown) => void) | undefined;
+
+  const snapshot = await declarativeConfigWorkerRunnerInternals
+    .evaluateWithAdmissionController(
+      payload,
+      { timeoutMs: 100 },
+      async () => ({
+        postMessage() {
+          onMessage?.({ ok: true, snapshot: { ready: true } });
+        },
+        subscribe(listeners) {
+          onMessage = listeners.onMessage;
+          return () => {};
+        },
+        terminate() {
+          throw new Error("termination failed");
+        },
+      }),
+      admission,
+      5,
+    );
+
+  assertEquals(snapshot, { ready: true });
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
 });
 
 Deno.test("declarative config worker removes aborted and expired queue entries", async () => {
@@ -484,11 +994,11 @@ Deno.test("declarative config worker removes aborted and expired queue entries",
 
   activeListener?.({ ok: true, snapshot: { ready: true } });
   await active;
-  assertEquals(admission.snapshot(), { active: 0, queued: 0 });
+  await waitForAdmissionState(admission, { active: 0, queued: 0 });
 });
 
 Deno.test("declarative config worker protocol rejects malformed responses", () => {
-  assertEquals(DECLARATIVE_CONFIG_WORKER_PROTOCOL_VERSION, 1);
+  assertEquals(DECLARATIVE_CONFIG_WORKER_PROTOCOL_VERSION, 2);
 
   for (
     const response of [
@@ -577,6 +1087,33 @@ Deno.test("declarative config worker protocol rejects hostile descriptors and tu
   assertEquals(getterCalls, 0);
 });
 
+Deno.test("declarative config worker protocol binds response locations to the request filename", () => {
+  const error = assertThrows(
+    () =>
+      decodeDeclarativeConfigWorkerResponse(
+        {
+          ok: false,
+          error: {
+            code: "syntax-error",
+            phase: "parse",
+            reason: "syntax-error",
+            location: {
+              line: 1,
+              column: 0,
+              offset: 0,
+              fileName: "veryfront.config.ts",
+            },
+            retryable: false,
+          },
+        },
+        10,
+        "veryfront.config.js",
+      ),
+    DeclarativeConfigEvaluationError,
+  ) as DeclarativeConfigEvaluationError;
+  assertEquals(error.reason, "worker-protocol");
+});
+
 Deno.test("declarative config worker protocol rejects hostile requests without getters", async () => {
   const payload = await createPayload("export default { ready: true };");
   const decoded = decodeDeclarativeConfigWorkerRequest(payload);
@@ -605,8 +1142,17 @@ Deno.test("declarative config worker protocol rejects hostile requests without g
         policyVersion: payload.policyVersion,
         evaluationOptions: {
           source: payload.evaluationOptions.source,
+          fileName: payload.evaluationOptions.fileName,
           environmentName: payload.evaluationOptions.environmentName,
           environment: hostileEnvironment,
+        },
+      },
+      {
+        cacheFingerprint: payload.cacheFingerprint,
+        policyVersion: payload.policyVersion,
+        evaluationOptions: {
+          ...payload.evaluationOptions,
+          fileName: "../../tenant/veryfront.config.ts",
         },
       },
       {

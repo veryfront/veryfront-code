@@ -187,7 +187,11 @@ export class RendererLifecycle {
     let cacheCoordinator: CacheCoordinator | undefined;
 
     try {
-      virtualModules = new VirtualModuleSystem("/_veryfront/modules", this.adapter);
+      virtualModules = new VirtualModuleSystem("/_veryfront/modules", this.adapter, {
+        projectId: this.projectId,
+        contentSourceId: this.contentSourceId,
+        config,
+      });
       componentRegistry = new ComponentRegistry(
         virtualModules,
         this.port,

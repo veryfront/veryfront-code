@@ -129,6 +129,173 @@ describe("project-env/cache", () => {
     assertEquals(fetchCount, 0);
   });
 
+  it("uses captured AbortSignal state and removes the waiter listener after settlement", async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const addDescriptor = Object.getOwnPropertyDescriptor(
+      EventTarget.prototype,
+      "addEventListener",
+    );
+    const removeDescriptor = Object.getOwnPropertyDescriptor(
+      EventTarget.prototype,
+      "removeEventListener",
+    );
+    if (
+      typeof addDescriptor?.value !== "function" ||
+      typeof removeDescriptor?.value !== "function"
+    ) {
+      throw new TypeError("EventTarget listener intrinsics are unavailable");
+    }
+
+    const originalAddEventListener = addDescriptor.value;
+    const originalRemoveEventListener = removeDescriptor.value;
+    let addCalls = 0;
+    let removeCalls = 0;
+    let IsolatedCache: typeof EnvironmentVariableCache | undefined;
+
+    Object.defineProperty(EventTarget.prototype, "addEventListener", {
+      ...addDescriptor,
+      value: function (
+        this: EventTarget,
+        type: string,
+        callback: EventListenerOrEventListenerObject | null,
+        options?: AddEventListenerOptions | boolean,
+      ): void {
+        if (this === signal && type === "abort") addCalls += 1;
+        Reflect.apply(originalAddEventListener, this, [type, callback, options]);
+      },
+    });
+    Object.defineProperty(EventTarget.prototype, "removeEventListener", {
+      ...removeDescriptor,
+      value: function (
+        this: EventTarget,
+        type: string,
+        callback: EventListenerOrEventListenerObject | null,
+        options?: EventListenerOptions | boolean,
+      ): void {
+        if (this === signal && type === "abort") removeCalls += 1;
+        Reflect.apply(originalRemoveEventListener, this, [type, callback, options]);
+      },
+    });
+    try {
+      const isolatedModule = await import(
+        `./cache.ts?abort-intrinsics=${crypto.randomUUID()}`
+      );
+      IsolatedCache = isolatedModule.EnvironmentVariableCache;
+    } finally {
+      Object.defineProperty(EventTarget.prototype, "addEventListener", addDescriptor);
+      Object.defineProperty(EventTarget.prototype, "removeEventListener", removeDescriptor);
+    }
+    if (!IsolatedCache) throw new Error("Failed to load isolated project environment cache");
+
+    const abortedDescriptor = Object.getOwnPropertyDescriptor(
+      AbortSignal.prototype,
+      "aborted",
+    );
+    if (typeof abortedDescriptor?.get !== "function") {
+      throw new TypeError("AbortSignal aborted getter is unavailable");
+    }
+
+    let poisonCalls = 0;
+    let result: Record<string, string> | undefined;
+    let failure: unknown;
+    const started = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<Record<string, string>>();
+    const cache = new IsolatedCache(async () => {
+      started.resolve();
+      return await resume.promise;
+    });
+
+    Object.defineProperty(AbortSignal.prototype, "aborted", {
+      ...abortedDescriptor,
+      get() {
+        poisonCalls += 1;
+        throw new Error("ambient AbortSignal.prototype.aborted must not run");
+      },
+    });
+    try {
+      const waiter = cache.get("environment", "token", "project", signal);
+      await started.promise;
+      resume.resolve({ SAFE: "value" });
+      result = await waiter;
+    } catch (error) {
+      failure = error;
+    } finally {
+      Object.defineProperty(AbortSignal.prototype, "aborted", abortedDescriptor);
+    }
+
+    if (failure) throw failure;
+    assertEquals(result, { SAFE: "value" });
+    assertEquals(poisonCalls, 0);
+    assertEquals(addCalls, 1);
+    assertEquals(removeCalls, 1);
+  });
+
+  it("uses captured AbortController operations for fetch deadlines", async () => {
+    const signalDescriptor = Object.getOwnPropertyDescriptor(
+      AbortController.prototype,
+      "signal",
+    );
+    const abortDescriptor = Object.getOwnPropertyDescriptor(
+      AbortController.prototype,
+      "abort",
+    );
+    if (
+      typeof signalDescriptor?.get !== "function" ||
+      typeof abortDescriptor?.value !== "function"
+    ) {
+      throw new TypeError("AbortController intrinsics are unavailable");
+    }
+    const intrinsicSignal = signalDescriptor.get;
+    const intrinsicAbort = abortDescriptor.value;
+    let ambientSignalGets = 0;
+    let ambientAbortCalls = 0;
+    let observedSignal: AbortSignal | undefined;
+    const cache = new EnvironmentVariableCache(
+      (_environmentId, _token, _projectSlug, signal) => {
+        observedSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        });
+      },
+      60_000,
+      10,
+      { fetchTimeoutMs: 5 },
+    );
+
+    Object.defineProperty(AbortController.prototype, "signal", {
+      ...signalDescriptor,
+      get(this: AbortController) {
+        ambientSignalGets += 1;
+        return Reflect.apply(intrinsicSignal, this, []);
+      },
+    });
+    Object.defineProperty(AbortController.prototype, "abort", {
+      ...abortDescriptor,
+      value(this: AbortController, ...args: unknown[]) {
+        ambientAbortCalls += 1;
+        return Reflect.apply(intrinsicAbort, this, args);
+      },
+    });
+
+    try {
+      const error = await assertRejects(
+        () => cache.get("environment", "token", "project"),
+        ProjectEnvCacheError,
+      ) as ProjectEnvCacheError;
+      assertEquals(error.code, "fetch-timeout");
+    } finally {
+      Object.defineProperty(AbortController.prototype, "signal", signalDescriptor);
+      Object.defineProperty(AbortController.prototype, "abort", abortDescriptor);
+    }
+
+    assertEquals(ambientSignalGets, 0);
+    assertEquals(ambientAbortCalls, 0);
+    assertEquals(observedSignal?.aborted, true);
+  });
+
   it("fails closed instead of returning expired data on fetch error", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(async () => {
@@ -233,6 +400,64 @@ describe("project-env/cache", () => {
     if (failure) throw failure;
     assertEquals(result, { SAFE: "value" });
     assertEquals(poisonCalls, 0);
+  });
+
+  it("uses captured Promise operations for failure cleanup and capacity release", async () => {
+    const thenDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "then");
+    if (typeof thenDescriptor?.value !== "function") {
+      throw new TypeError("Promise.then is unavailable");
+    }
+    const intrinsicThen = thenDescriptor.value as (...args: unknown[]) => unknown;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent): void => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async (environmentId) => {
+        fetchCount += 1;
+        if (environmentId === "env-fail") {
+          throw new Error("expected fetch failure");
+        }
+        return { VALUE: environmentId };
+      },
+      60_000,
+      10,
+      { maxInflight: 1, maxInflightPerProject: 1 },
+    );
+
+    // Let the test runner register its own reaction before installing a
+    // selective poison that targets only ambient calls made by cache.ts.
+    await Promise.resolve();
+    globalThis.addEventListener("unhandledrejection", onUnhandled);
+    Object.defineProperty(Promise.prototype, "then", {
+      ...thenDescriptor,
+      value(this: Promise<unknown>, ...args: unknown[]) {
+        if (new Error().stack?.includes("/server/project-env/cache.ts:")) {
+          throw new Error("ambient cache Promise.then must not run");
+        }
+        return Reflect.apply(intrinsicThen, this, args);
+      },
+    });
+
+    let success: Record<string, string> | undefined;
+    try {
+      await assertRejects(
+        () => cache.get("env-fail", "token-a", "project-a"),
+        Error,
+        "expected fetch failure",
+      );
+      success = await cache.get("env-live", "token-b", "project-b");
+      await delay(10);
+    } finally {
+      Object.defineProperty(Promise.prototype, "then", thenDescriptor);
+      globalThis.removeEventListener("unhandledrejection", onUnhandled);
+    }
+
+    assertEquals(success, { VALUE: "env-live" });
+    assertEquals(fetchCount, 2);
+    assertEquals(unhandled, []);
   });
 
   it("invalidate clears specific entry", async () => {

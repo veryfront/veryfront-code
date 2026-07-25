@@ -38,9 +38,17 @@ function formatMdxEsmTransformCacheKey(
   reactVersion: string,
   normalizedPath: string,
   contentHash: string,
+  importMapFingerprint?: string,
 ): string {
   const identity = hashString(
-    JSON.stringify([projectId, contentSourceId, reactVersion, normalizedPath, contentHash]),
+    JSON.stringify([
+      projectId,
+      contentSourceId,
+      reactVersion,
+      normalizedPath,
+      contentHash,
+      importMapFingerprint ?? null,
+    ]),
   );
   return `${namespace}:transform:${identity}:ssr`;
 }
@@ -50,6 +58,7 @@ function formatMdxEsmPathCacheKey(
   reactVersion: string,
   normalizedPath: string,
   sourceContentHash?: string,
+  importMapFingerprint?: string,
 ): string {
   // This cache is local and needs to support selective path invalidation. Keep
   // the framed identity parseable while binding it to the full source digest.
@@ -58,6 +67,7 @@ function formatMdxEsmPathCacheKey(
       reactVersion,
       normalizedPath,
       sourceContentHash ?? null,
+      importMapFingerprint ?? null,
     ])
   }`;
 }
@@ -102,12 +112,14 @@ function buildMdxEsmCacheSchemaSample() {
       "19.1.1",
       "_vf_modules/pages/index.js",
       "deadbeef",
+      "__vf_import_map__",
     ),
     pathKey: formatMdxEsmPathCacheKey(
       CACHE_NAMESPACE_SENTINEL,
       REACT_DEFAULT_VERSION,
       "_vf_modules/pages/index.js",
       "deadbeef",
+      "__vf_import_map__",
     ),
     moduleFile: formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
     moduleRecoveryKey: formatMdxEsmModuleRecoveryCacheKey(
@@ -172,6 +184,7 @@ export function buildMdxEsmTransformCacheKey(
   reactVersion: string,
   normalizedPath: string,
   contentHash: string,
+  importMapFingerprint?: string,
 ): string {
   return formatMdxEsmTransformCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
@@ -180,6 +193,7 @@ export function buildMdxEsmTransformCacheKey(
     reactVersion,
     normalizedPath,
     contentHash,
+    importMapFingerprint,
   );
 }
 
@@ -187,12 +201,14 @@ export function buildMdxEsmPathCacheKey(
   normalizedPath: string,
   reactVersion = REACT_DEFAULT_VERSION,
   sourceContentHash?: string,
+  importMapFingerprint?: string,
 ): string {
   return formatMdxEsmPathCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
     reactVersion,
     normalizedPath,
     sourceContentHash,
+    importMapFingerprint,
   );
 }
 

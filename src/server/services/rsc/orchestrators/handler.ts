@@ -8,6 +8,11 @@ import { StreamHandler } from "./stream-handler.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  assertImportMapIdentity,
+  type ImportMapIdentity,
+  preloadImportMap,
+} from "#veryfront/modules/import-map/index.ts";
 
 export interface RSCServerHandlerOptions {
   config?: VeryfrontConfig;
@@ -18,6 +23,13 @@ export interface RSCServerHandlerOptions {
   projectSlug?: string;
   contentSourceId?: string;
   releaseId?: string;
+  /**
+   * Exact immutable map selected at the authenticated request boundary.
+   *
+   * Direct standalone callers may omit this and retain the historical
+   * adapter-backed loading behavior.
+   */
+  importMapIdentity?: ImportMapIdentity;
 }
 
 export function getConfiguredRSCReactVersion(config?: VeryfrontConfig): string | undefined {
@@ -43,6 +55,11 @@ export class RSCDevServerHandler {
     private readonly projectDir: string,
     options: RSCServerHandlerOptions = {},
   ) {
+    const importMapIdentity = options.importMapIdentity;
+    if (importMapIdentity) {
+      assertImportMapIdentity(importMapIdentity);
+    }
+    const adapter = options.adapter;
     const appDir = options.config?.directories?.app ?? "app";
     const isLocalProject = options.isLocalProject === true;
     const mode = options.mode ?? "production";
@@ -51,7 +68,7 @@ export class RSCDevServerHandler {
     this.manifestHandler = new ManifestHandler(projectDir, {
       appDir,
       isLocalProject,
-      fs: options.adapter?.fs,
+      fs: adapter?.fs,
       contentSourceId,
     });
     this.renderHandler = new RenderHandler(
@@ -65,13 +82,27 @@ export class RSCDevServerHandler {
         projectSlug: options.projectSlug,
         contentSourceId,
         reactVersion: () => this.getReactVersion(),
+        importMap: importMapIdentity
+          ? async () => importMapIdentity.importMap
+          : adapter
+          ? () =>
+            preloadImportMap(
+              projectDir,
+              adapter,
+              options.projectId ?? projectDir,
+              {
+                contentSourceId,
+                config: options.config,
+              },
+            )
+          : undefined,
       },
     );
     this.streamHandler = new StreamHandler(this.renderHandler);
     this.appDir = appDir;
     this.isLocalProject = isLocalProject;
     this.mode = mode;
-    this.fs = options.adapter?.fs;
+    this.fs = adapter?.fs;
     this.config = options.config;
   }
 

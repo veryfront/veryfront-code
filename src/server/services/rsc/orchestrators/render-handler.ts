@@ -20,6 +20,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { compileContent, extractFrontmatter } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 interface RenderHandlerModuleOptions {
   adapter?: RuntimeAdapter;
@@ -27,6 +28,7 @@ interface RenderHandlerModuleOptions {
   projectSlug?: string;
   contentSourceId?: string;
   reactVersion?: () => Promise<string>;
+  importMap?: () => Promise<ImportMapConfig>;
 }
 
 const logger = serverLogger.component("rsc");
@@ -116,6 +118,7 @@ export class RenderHandler {
         this.moduleOptions.projectSlug,
         this.moduleOptions.contentSourceId,
         await this.moduleOptions.reactVersion?.(),
+        await this.moduleOptions.importMap?.(),
       ) as Record<string, unknown>;
     }
 
@@ -131,6 +134,7 @@ export class RenderHandler {
       dev: this.mode === "development",
       mode: this.mode === "development" ? "preview" : "production",
       reactVersion: await this.moduleOptions.reactVersion?.(),
+      importMap: await this.moduleOptions.importMap?.(),
     });
   }
 

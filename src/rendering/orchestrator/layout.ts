@@ -2,19 +2,39 @@ import * as React from "react";
 import type { EntityInfo, LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { LayoutApplicator } from "../layouts/index.ts";
 import { createDefaultMDXComponents } from "../utils/index.ts";
 import type { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
-import { loadTSXComponent, preloadMDXLayoutModule } from "../layouts/utils/component-loader.ts";
-import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { loadMDXLayout, loadTSXComponent } from "../layouts/utils/component-loader.ts";
+import {
+  assertImportMapIdentity,
+  clearImportMapCache,
+  createImportMapIdentity,
+  type ImportMapIdentity,
+  preloadImportMap,
+} from "#veryfront/modules/import-map/index.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
+const ObjectFreeze = Object.freeze;
+
+type AsyncOutcome<T> =
+  | { readonly success: true; readonly value: T }
+  | { readonly success: false; readonly error: unknown };
+
+async function captureAsyncOutcome<T>(
+  operation: () => Promise<T>,
+): Promise<AsyncOutcome<T>> {
+  try {
+    return { success: true, value: await operation() };
+  } catch (error) {
+    return { success: false, error };
+  }
+}
 
 export interface LayoutOrchestratorConfig {
   projectDir: string;
@@ -36,14 +56,27 @@ export interface LayoutCollectionResult {
   nestedLayouts: LayoutItem[];
 }
 
+export interface LayoutRequestOverrides {
+  projectId?: string;
+  projectSlug?: string;
+  contentSourceId?: string;
+}
+
+export interface LayoutRequestIdentity {
+  readonly projectId: string;
+  readonly projectSlug: string;
+  readonly contentSourceId: string;
+  readonly importMapIdentity: ImportMapIdentity;
+}
+
 interface LayoutPreloadResult {
-  type: "tsx" | "mdx" | "importMap";
+  type: "tsx" | "mdx";
   path?: string;
   success: boolean;
   error?: string;
 }
 
-interface LayoutPreloadSummary {
+export interface LayoutPreloadSummary {
   tsxTotal: number;
   tsxSuccess: number;
   tsxFailures: Array<{ path: string; error: string }>;
@@ -54,11 +87,11 @@ interface LayoutPreloadSummary {
   importMapError?: string;
   durationMs: number;
   allSuccess: boolean;
+  requestIdentity: LayoutRequestIdentity;
 }
 
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
-  private _preloadedImportMap: ImportMapConfig | null = null;
   private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: LayoutOrchestratorConfig) {
@@ -73,10 +106,6 @@ export class LayoutOrchestrator {
     return this.reactVersionPromise;
   }
 
-  getPreloadedImportMap(): ImportMapConfig | null {
-    return this._preloadedImportMap;
-  }
-
   clearCache(): void {
     if (this.config.layoutCache.clearForProject) {
       this.config.layoutCache.clearForProject(this.config.projectId);
@@ -85,7 +114,6 @@ export class LayoutOrchestrator {
     }
     clearSSRModuleCacheForProject(this.config.projectId);
     clearImportMapCache(this.config.projectId);
-    this._preloadedImportMap = null;
   }
 
   collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
@@ -100,7 +128,10 @@ export class LayoutOrchestrator {
     );
   }
 
-  preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<LayoutPreloadSummary> {
+  preloadLayoutModules(
+    nestedLayouts: LayoutItem[],
+    overrides: LayoutRequestOverrides = {},
+  ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
       async () => {
@@ -110,22 +141,39 @@ export class LayoutOrchestrator {
         const mdxLayouts = nestedLayouts.filter((layout) => layout.kind === "mdx" && layout.bundle);
 
         const preloadStart = performance.now();
+        const projectId = overrides.projectId ?? this.config.projectId;
+        const projectSlug = overrides.projectSlug ?? this.config.projectSlug;
+        const contentSourceId = overrides.contentSourceId ?? this.config.contentSourceId;
 
-        if (tsxLayouts.length === 0 && mdxLayouts.length === 0) {
-          return {
-            tsxTotal: 0,
-            tsxSuccess: 0,
-            tsxFailures: [],
-            mdxTotal: 0,
-            mdxSuccess: 0,
-            mdxFailures: [],
-            importMapSuccess: true,
-            durationMs: 0,
-            allSuccess: true,
-          };
-        }
+        // Start both prerequisites before awaiting either. Capturing each outcome
+        // immediately keeps a fast rejection observed while its sibling settles.
+        const reactVersionOutcomePromise = captureAsyncOutcome(() => this.getReactVersion());
+        const importMapIdentityOutcomePromise = captureAsyncOutcome(async () => {
+          const importMap = await preloadImportMap(
+            this.config.projectDir,
+            this.config.adapter,
+            projectId,
+            {
+              contentSourceId,
+              config: this.config.config,
+            },
+          );
+          const importMapIdentity = await createImportMapIdentity(importMap);
+          return importMapIdentity;
+        });
+        const reactVersionOutcome = await reactVersionOutcomePromise;
+        const importMapIdentityOutcome = await importMapIdentityOutcomePromise;
+        if (!reactVersionOutcome.success) throw reactVersionOutcome.error;
+        if (!importMapIdentityOutcome.success) throw importMapIdentityOutcome.error;
 
-        const reactVersion = await this.getReactVersion();
+        const reactVersion = reactVersionOutcome.value;
+        const importMapIdentity = importMapIdentityOutcome.value;
+        const requestIdentity: LayoutRequestIdentity = ObjectFreeze({
+          projectId,
+          projectSlug,
+          contentSourceId,
+          importMapIdentity,
+        });
 
         logger.debug("Preloading layout modules", {
           tsxCount: tsxLayouts.length,
@@ -134,30 +182,6 @@ export class LayoutOrchestrator {
         });
 
         const preloadPromises: Array<Promise<LayoutPreloadResult>> = [];
-
-        if (mdxLayouts.length > 0) {
-          preloadPromises.push(
-            (async (): Promise<LayoutPreloadResult> => {
-              try {
-                const importMap = await preloadImportMap(
-                  this.config.projectDir,
-                  this.config.adapter,
-                  this.config.projectId,
-                );
-                this._preloadedImportMap = importMap;
-                return { type: "importMap" as const, success: true };
-              } catch (error) {
-                const errorMsg = error instanceof Error ? error.message : String(error);
-                logger.error("Failed to preload import map", {
-                  error: errorMsg,
-                  projectDir: this.config.projectDir,
-                });
-                this._preloadedImportMap = null;
-                return { type: "importMap" as const, success: false, error: errorMsg };
-              }
-            })(),
-          );
-        }
 
         for (const layout of tsxLayouts) {
           const componentPath = layout.componentPath!;
@@ -169,10 +193,11 @@ export class LayoutOrchestrator {
                   this.config.projectDir,
                   this.config.layoutCache,
                   this.config.adapter,
-                  this.config.projectId,
-                  this.config.projectSlug,
-                  this.config.contentSourceId,
+                  projectId,
+                  projectSlug,
+                  contentSourceId,
                   reactVersion,
+                  importMapIdentity.importMap,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -197,13 +222,14 @@ export class LayoutOrchestrator {
           preloadPromises.push(
             (async (): Promise<LayoutPreloadResult> => {
               try {
-                await preloadMDXLayoutModule(
+                await loadMDXLayout(
                   layout.bundle!,
                   this.config.projectDir,
                   this.config.adapter,
-                  this.config.projectId,
-                  this.config.projectSlug,
-                  this.config.contentSourceId,
+                  projectId,
+                  projectSlug,
+                  contentSourceId,
+                  importMapIdentity.importMap,
                   reactVersion,
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
@@ -220,7 +246,10 @@ export class LayoutOrchestrator {
           );
         }
 
-        const results = await Promise.all(preloadPromises);
+        const results: LayoutPreloadResult[] = [];
+        for (const preloadPromise of preloadPromises) {
+          results.push(await preloadPromise);
+        }
 
         const tsxResults = results.filter(
           (r): r is LayoutPreloadResult & { type: "tsx" } => r.type === "tsx",
@@ -228,10 +257,6 @@ export class LayoutOrchestrator {
         const mdxResults = results.filter(
           (r): r is LayoutPreloadResult & { type: "mdx" } => r.type === "mdx",
         );
-        const importMapResult = results.find(
-          (r): r is LayoutPreloadResult & { type: "importMap" } => r.type === "importMap",
-        );
-
         const tsxFailures = tsxResults
           .filter((r) => !r.success && r.path && r.error)
           .map((r) => ({ path: r.path!, error: r.error! }));
@@ -240,8 +265,6 @@ export class LayoutOrchestrator {
           .filter((r) => !r.success && r.path && r.error)
           .map((r) => ({ path: r.path!, error: r.error! }));
 
-        const importMapSuccess = importMapResult?.success ?? true;
-
         const summary: LayoutPreloadSummary = {
           tsxTotal: tsxResults.length,
           tsxSuccess: tsxResults.filter((r) => r.success).length,
@@ -249,10 +272,10 @@ export class LayoutOrchestrator {
           mdxTotal: mdxResults.length,
           mdxSuccess: mdxResults.filter((r) => r.success).length,
           mdxFailures,
-          importMapSuccess,
-          importMapError: importMapResult?.error,
+          importMapSuccess: true,
           durationMs: Math.round(performance.now() - preloadStart),
-          allSuccess: tsxFailures.length === 0 && mdxFailures.length === 0 && importMapSuccess,
+          allSuccess: tsxFailures.length === 0 && mdxFailures.length === 0,
+          requestIdentity,
         };
 
         logger.debug("Preload complete", {
@@ -275,18 +298,19 @@ export class LayoutOrchestrator {
     pageInfo: EntityInfo,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
+    requestIdentity: LayoutRequestIdentity,
     layoutDataMap?: Map<string, Record<string, unknown>>,
     requestUrl?: URL,
     params?: Record<string, string | string[]>,
     frontmatter?: Record<string, unknown>,
     headings?: Array<{ id: string; text: string; level: number }>,
-    projectSlug?: string,
     clientPageIsland?: { clientLayoutPaths: readonly string[] },
     pageProps?: Record<string, unknown>,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
+        assertImportMapIdentity(requestIdentity.importMapIdentity);
         const reactVersion = await this.getReactVersion();
         const mergedComponents = {
           ...createDefaultMDXComponents(),
@@ -295,10 +319,10 @@ export class LayoutOrchestrator {
 
         const layoutApplicator = new LayoutApplicator({
           projectDir: this.config.projectDir,
-          projectId: this.config.projectId,
-          projectSlug: projectSlug ?? this.config.projectSlug,
-          contentSourceId: this.config.contentSourceId,
-          preloadedImportMap: this._preloadedImportMap,
+          projectId: requestIdentity.projectId,
+          projectSlug: requestIdentity.projectSlug,
+          contentSourceId: requestIdentity.contentSourceId,
+          preloadedImportMap: requestIdentity.importMapIdentity.importMap,
           adapter: this.config.adapter,
           config: this.config.config,
           layoutCache: this.config.layoutCache,

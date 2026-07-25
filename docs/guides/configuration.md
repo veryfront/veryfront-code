@@ -296,7 +296,7 @@ Common groups:
 - **Provider keys**: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
   and provider-specific base URLs.
 - **Runtime**: `PORT`, `NODE_ENV`, `REDIS_URL`, request timeouts, SSR limits,
-  and `VERYFRONT_EXPERIMENTAL_RSC`.
+  `VERYFRONT_EXPERIMENTAL_RSC`, and trusted-proxy topology settings.
 - **Observability**: `VERYFRONT_OTEL`, `OTEL_TRACES_ENABLED`,
   `OTEL_METRICS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, and related `OTEL_*`
@@ -309,6 +309,14 @@ enable flags. Veryfront filters `OTEL_*` and `VERYFRONT_OTEL` from shared
 runtime project env before request execution. Dedicated runtimes and local
 development can use project/deployment `OTEL_*` values because they run in their
 own process boundary.
+
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1` is an operator-only deployment boundary,
+not a project setting. Enable it only when the runtime is reachable exclusively
+through a private edge that removes untrusted routing headers and supplies its
+own. The exact value `1` authorizes routing-sensitive values such as
+`x-forwarded-host`, `x-environment`, and `x-project-path`; other values fail
+closed. A dispatch JWS proves signature authenticity but does not replace this
+topology guarantee or authorize those headers.
 
 Use [Providers](./providers.md) for model-provider setup. Use
 [Agent service runtime](./agent-service-runtime.md) for the registration
@@ -330,6 +338,35 @@ export default defineConfig({
   },
 });
 ```
+
+### Shared hosted runtimes
+
+Local development and standalone deployments load configuration as a normal
+project module. Shared hosted and proxy runtimes instead interpret
+`veryfront.config.js`, `veryfront.config.mjs`, and `veryfront.config.ts` as
+declarative configuration. Keep hosted config to literals, static data
+expressions, and the `defineConfig`, `defineConfigWithEnv`, `getEnv`, and
+`mergeConfigs` helpers exported by `veryfront`.
+
+Hosted config cannot import other modules, perform network or filesystem I/O,
+use host globals, evaluate dynamic code, or install executable extensions,
+custom middleware, or function-valued CORS policies. Move that behavior into
+project routes or other runtime modules.
+
+In a shared runtime, `getEnv` sees only the authenticated project's filtered
+environment snapshot. It cannot read variables from the host process or
+framework-owned credentials. An exact release operation that has no
+authoritative environment identity receives an empty `release` snapshot rather
+than inheriting production variables. Invalid or unsupported config fails the
+request; Veryfront does not execute it in the host process or silently replace
+it with defaults. A temporarily unavailable config evaluator returns a
+retryable service error.
+
+Automatic OpenAPI specification and documentation generation currently
+requires an explicitly local project because it reads metadata from executable
+route exports. In shared hosted and proxy runtimes, the generated OpenAPI
+endpoints return a non-cacheable `503 Service Unavailable` until metadata
+inspection is available inside the isolated project runtime.
 
 ## Reading config at runtime
 

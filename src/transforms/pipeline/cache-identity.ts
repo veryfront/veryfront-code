@@ -9,7 +9,30 @@ const MAX_IDENTITY_STRING_BYTES = 64 * 1024;
 const MAX_IMPORT_MAP_IDENTITY_BYTES = 8 * 1024 * 1024;
 const MAX_PLUGIN_IDENTITY_BYTES = 4 * 1024;
 const MAX_CUSTOM_PLUGINS = 1_000;
-const encoder = new TextEncoder();
+
+// Transform identities are derived after project code may have run in the
+// shared realm. Keep descriptor inspection, freezing, and bounded string
+// handling independent from later primordial replacement.
+const ArrayIsArray = Array.isArray;
+const ArrayPrototypePush = Array.prototype.push;
+const IntrinsicTextEncoder = TextEncoder;
+const IntrinsicRangeError = RangeError;
+const IntrinsicTypeError = TypeError;
+const JSONStringify = JSON.stringify;
+const MathAbs = Math.abs;
+const NumberIsFinite = Number.isFinite;
+const ObjectCreate = Object.create;
+const ObjectFreeze = Object.freeze;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
+const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const StringPrototypeTrim = String.prototype.trim;
+const TextEncoderPrototypeEncode = TextEncoder.prototype.encode;
+const controlCharacterPattern = /\p{Cc}/u;
+const encoder = new IntrinsicTextEncoder();
 
 interface ImportMapBudget {
   entries: number;
@@ -17,10 +40,10 @@ interface ImportMapBudget {
 }
 
 function readOwnDataProperty(value: object, key: PropertyKey, label: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
   if (!descriptor) return undefined;
   if (descriptor.get || descriptor.set) {
-    throw new TypeError(`${label} cannot contain accessor properties`);
+    throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
   }
   return descriptor.value;
 }
@@ -31,11 +54,13 @@ function countIdentityString(
   label: string,
   maxBytes = MAX_IDENTITY_STRING_BYTES,
 ): string {
-  const bytes = encoder.encode(value).byteLength;
-  if (bytes > maxBytes) throw new TypeError(`${label} is too large`);
+  const bytes = (
+    ReflectApply(TextEncoderPrototypeEncode, encoder, [value]) as Uint8Array
+  ).byteLength;
+  if (bytes > maxBytes) throw new IntrinsicTypeError(`${label} is too large`);
   budget.bytes += bytes;
   if (budget.bytes > MAX_IMPORT_MAP_IDENTITY_BYTES) {
-    throw new TypeError("Import map cache identity exceeds its byte limit");
+    throw new IntrinsicTypeError("Import map cache identity exceeds its byte limit");
   }
   return value;
 }
@@ -45,36 +70,42 @@ function snapshotStringRecord(
   label: string,
   budget: ImportMapBudget,
 ): Readonly<Record<string, string>> {
-  if (value === undefined) return Object.freeze(Object.create(null) as Record<string, string>);
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError(`${label} must be a plain object`);
+  if (value === undefined) {
+    return ObjectFreeze(ObjectCreate(null) as Record<string, string>);
   }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError(`${label} must be a plain object`);
+  if (value === null || typeof value !== "object" || ArrayIsArray(value)) {
+    throw new IntrinsicTypeError(`${label} must be a plain object`);
+  }
+  const prototype = ObjectGetPrototypeOf(value);
+  if (prototype !== ObjectPrototype && prototype !== null) {
+    throw new IntrinsicTypeError(`${label} must be a plain object`);
   }
 
-  const snapshot = Object.create(null) as Record<string, string>;
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string") throw new TypeError(`${label} cannot contain symbol keys`);
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  const snapshot = ObjectCreate(null) as Record<string, string>;
+  const keys = ReflectOwnKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "string") {
+      throw new IntrinsicTypeError(`${label} cannot contain symbol keys`);
+    }
+    const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
     if (!descriptor) continue;
     if (descriptor.get || descriptor.set) {
-      throw new TypeError(`${label} cannot contain accessor properties`);
+      throw new IntrinsicTypeError(`${label} cannot contain accessor properties`);
     }
     if (!descriptor.enumerable) continue;
 
     budget.entries++;
     if (budget.entries > MAX_IMPORT_MAP_ENTRIES) {
-      throw new TypeError("Import map cache identity contains too many entries");
+      throw new IntrinsicTypeError("Import map cache identity contains too many entries");
     }
     countIdentityString(key, budget, `${label} key`);
     if (typeof descriptor.value !== "string") {
-      throw new TypeError(`${label}.${key} must be a string`);
+      throw new IntrinsicTypeError(`${label}.${key} must be a string`);
     }
     snapshot[key] = countIdentityString(descriptor.value, budget, `${label}.${key}`);
   }
-  return Object.freeze(snapshot);
+  return ObjectFreeze(snapshot);
 }
 
 /**
@@ -83,19 +114,25 @@ function snapshotStringRecord(
  * mutation (or getters with side effects) from making those two views diverge.
  */
 export function snapshotImportMap(value: unknown): ImportMapConfig {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("Import map must be a plain object");
+  if (value === null || typeof value !== "object" || ArrayIsArray(value)) {
+    throw new IntrinsicTypeError("Import map must be a plain object");
   }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError("Import map must be a plain object");
+  const prototype = ObjectGetPrototypeOf(value);
+  if (prototype !== ObjectPrototype && prototype !== null) {
+    throw new IntrinsicTypeError("Import map must be a plain object");
   }
 
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== "string") throw new TypeError("Import map cannot contain symbol keys");
+  const keys = ReflectOwnKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "string") {
+      throw new IntrinsicTypeError("Import map cannot contain symbol keys");
+    }
     if (key !== "imports" && key !== "scopes") {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor?.enumerable) throw new TypeError(`Unknown import map field: ${key}`);
+      const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+      if (descriptor?.enumerable) {
+        throw new IntrinsicTypeError(`Unknown import map field: ${key}`);
+      }
     }
   }
 
@@ -106,29 +143,31 @@ export function snapshotImportMap(value: unknown): ImportMapConfig {
     budget,
   );
   const rawScopes = readOwnDataProperty(value, "scopes", "Import map");
-  const scopes = Object.create(null) as Record<string, Readonly<Record<string, string>>>;
+  const scopes = ObjectCreate(null) as Record<string, Readonly<Record<string, string>>>;
 
   if (rawScopes !== undefined) {
-    if (rawScopes === null || typeof rawScopes !== "object" || Array.isArray(rawScopes)) {
-      throw new TypeError("Import map scopes must be a plain object");
+    if (rawScopes === null || typeof rawScopes !== "object" || ArrayIsArray(rawScopes)) {
+      throw new IntrinsicTypeError("Import map scopes must be a plain object");
     }
-    const scopesPrototype = Object.getPrototypeOf(rawScopes);
-    if (scopesPrototype !== Object.prototype && scopesPrototype !== null) {
-      throw new TypeError("Import map scopes must be a plain object");
+    const scopesPrototype = ObjectGetPrototypeOf(rawScopes);
+    if (scopesPrototype !== ObjectPrototype && scopesPrototype !== null) {
+      throw new IntrinsicTypeError("Import map scopes must be a plain object");
     }
-    for (const scope of Reflect.ownKeys(rawScopes)) {
+    const scopeKeys = ReflectOwnKeys(rawScopes);
+    for (let index = 0; index < scopeKeys.length; index++) {
+      const scope = scopeKeys[index];
       if (typeof scope !== "string") {
-        throw new TypeError("Import map scopes cannot contain symbol keys");
+        throw new IntrinsicTypeError("Import map scopes cannot contain symbol keys");
       }
-      const descriptor = Object.getOwnPropertyDescriptor(rawScopes, scope);
+      const descriptor = ObjectGetOwnPropertyDescriptor(rawScopes, scope);
       if (!descriptor) continue;
       if (descriptor.get || descriptor.set) {
-        throw new TypeError("Import map scopes cannot contain accessor properties");
+        throw new IntrinsicTypeError("Import map scopes cannot contain accessor properties");
       }
       if (!descriptor.enumerable) continue;
       budget.entries++;
       if (budget.entries > MAX_IMPORT_MAP_ENTRIES) {
-        throw new TypeError("Import map cache identity contains too many entries");
+        throw new IntrinsicTypeError("Import map cache identity contains too many entries");
       }
       countIdentityString(scope, budget, "Import map scope");
       scopes[scope] = snapshotStringRecord(
@@ -139,9 +178,9 @@ export function snapshotImportMap(value: unknown): ImportMapConfig {
     }
   }
 
-  return Object.freeze({
+  return ObjectFreeze({
     imports,
-    scopes: Object.freeze(scopes),
+    scopes: ObjectFreeze(scopes),
   });
 }
 
@@ -157,9 +196,11 @@ export type CustomPluginCacheIdentity =
 export function getCustomPluginCacheIdentity(
   plugins: readonly TransformPlugin[] | undefined,
 ): CustomPluginCacheIdentity {
-  if (!plugins || plugins.length === 0) return { cacheable: true, identity: Object.freeze([]) };
+  if (!plugins || plugins.length === 0) {
+    return { cacheable: true, identity: ObjectFreeze([]) };
+  }
   if (plugins.length > MAX_CUSTOM_PLUGINS) {
-    throw new RangeError(
+    throw new IntrinsicRangeError(
       `Transform pipeline cannot contain more than ${MAX_CUSTOM_PLUGINS} plugins`,
     );
   }
@@ -168,7 +209,7 @@ export function getCustomPluginCacheIdentity(
   for (let index = 0; index < plugins.length; index++) {
     const plugin = plugins[index];
     if (plugin === null || typeof plugin !== "object") {
-      throw new TypeError(`Transform plugin at index ${index} must be an object`);
+      throw new IntrinsicTypeError(`Transform plugin at index ${index} must be an object`);
     }
     const name = readOwnDataProperty(plugin, "name", `Transform plugin ${index}`);
     const stage = readOwnDataProperty(plugin, "stage", `Transform plugin ${index}`);
@@ -179,12 +220,13 @@ export function getCustomPluginCacheIdentity(
     );
     if (
       typeof name !== "string" || name.length === 0 || name.length > 256 ||
-      name.trim() !== name || /\p{Cc}/u.test(name)
+      (ReflectApply(StringPrototypeTrim, name, []) as string) !== name ||
+      (ReflectApply(RegExpPrototypeTest, controlCharacterPattern, [name]) as boolean)
     ) {
-      throw new TypeError(`Transform plugin at index ${index} has an invalid name`);
+      throw new IntrinsicTypeError(`Transform plugin at index ${index} has an invalid name`);
     }
-    if (typeof stage !== "number" || !Number.isFinite(stage) || Math.abs(stage) > 1_000_000) {
-      throw new TypeError(`Transform plugin ${name} has an invalid stage`);
+    if (typeof stage !== "number" || !NumberIsFinite(stage) || MathAbs(stage) > 1_000_000) {
+      throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid stage`);
     }
     if (cacheIdentity === undefined) {
       return {
@@ -194,29 +236,39 @@ export function getCustomPluginCacheIdentity(
     }
     if (
       typeof cacheIdentity !== "string" || cacheIdentity.length === 0 ||
-      encoder.encode(cacheIdentity).byteLength > MAX_PLUGIN_IDENTITY_BYTES
+      (ReflectApply(TextEncoderPrototypeEncode, encoder, [cacheIdentity]) as Uint8Array)
+          .byteLength >
+        MAX_PLUGIN_IDENTITY_BYTES
     ) {
-      throw new TypeError(`Transform plugin ${name} has an invalid cacheIdentity`);
+      throw new IntrinsicTypeError(`Transform plugin ${name} has an invalid cacheIdentity`);
     }
-    identity.push(Object.freeze([index, name, stage, cacheIdentity] as const));
+    ReflectApply(
+      ArrayPrototypePush,
+      identity,
+      [ObjectFreeze([index, name, stage, cacheIdentity] as const)],
+    );
   }
-  return { cacheable: true, identity: Object.freeze(identity) };
+  return { cacheable: true, identity: ObjectFreeze(identity) };
 }
 
 function boundedOption(value: string | undefined, label: string): string | null {
   if (value === undefined) return null;
   if (typeof value !== "string") {
-    throw new TypeError(`${label} must be a string`);
+    throw new IntrinsicTypeError(`${label} must be a string`);
   }
-  if (encoder.encode(value).byteLength > MAX_IDENTITY_STRING_BYTES) {
-    throw new TypeError(`${label} is too large for transform cache identity`);
+  if (
+    (ReflectApply(TextEncoderPrototypeEncode, encoder, [value]) as Uint8Array)
+      .byteLength >
+      MAX_IDENTITY_STRING_BYTES
+  ) {
+    throw new IntrinsicTypeError(`${label} is too large for transform cache identity`);
   }
   return value;
 }
 
 function boundedRequiredOption(value: string, label: string): string {
   const bounded = boundedOption(value, label);
-  if (bounded === null) throw new TypeError(`${label} must be a string`);
+  if (bounded === null) throw new IntrinsicTypeError(`${label} must be a string`);
   return bounded;
 }
 
@@ -245,10 +297,10 @@ export async function computePipelineConfigIdentity(
     typeof input.studioEmbed !== "boolean" || typeof input.dev !== "boolean" ||
     typeof input.ssr !== "boolean"
   ) {
-    throw new TypeError("Transform pipeline mode identity fields must be booleans");
+    throw new IntrinsicTypeError("Transform pipeline mode identity fields must be booleans");
   }
-  if (!Array.isArray(input.customPlugins) || input.customPlugins.length > MAX_CUSTOM_PLUGINS) {
-    throw new RangeError(
+  if (!ArrayIsArray(input.customPlugins) || input.customPlugins.length > MAX_CUSTOM_PLUGINS) {
+    throw new IntrinsicRangeError(
       `Transform pipeline cache identity cannot contain more than ${MAX_CUSTOM_PLUGINS} plugins`,
     );
   }
@@ -269,5 +321,5 @@ export async function computePipelineConfigIdentity(
     boundedOption(input.importMapFingerprint, "Import map fingerprint"),
     input.customPlugins,
   ];
-  return computeHash(JSON.stringify(identity));
+  return computeHash(JSONStringify(identity));
 }

@@ -365,6 +365,7 @@
     "@std/testing": "jsr:@std/testing@1.0.17",
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "@std/yaml/parse": "jsr:@std/yaml@1.1.0/parse",
+    "@std/yaml/stringify": "jsr:@std/yaml@1.1.0/stringify",
     "@std/expect": "jsr:@std/expect@1.0.18",
     "@std/fs": "jsr:@std/fs@1.0.23",
     "@std/async": "jsr:@std/async@1.2.0",

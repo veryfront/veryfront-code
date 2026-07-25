@@ -77,10 +77,13 @@ export {
 
 export type {
   CacheStats,
+  ContextualFSAdapter,
   DirectoryEntry,
   ExtendedFileSystemAdapter,
   FSAdapter,
   FSAdapterConfig,
+  StyleConfigBinding,
+  StylePregenerationContext,
   VeryfrontFSState,
 } from "./fs/index.ts";
 

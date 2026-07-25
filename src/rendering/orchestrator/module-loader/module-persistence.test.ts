@@ -32,6 +32,7 @@ describe("module-loader/module-persistence", () => {
         cacheKey,
         contentSourceId: "preview-main",
         reactVersion: "19.1.1",
+        importMapFingerprint: "map-a",
       });
 
       const expectedHash = hashCodeHex(transformedCode).slice(0, 8);
@@ -40,8 +41,76 @@ describe("module-loader/module-persistence", () => {
       assertEquals(moduleCache.get(cacheKey), result);
 
       const pathCache = await getModulePathCache(tmpDir);
-      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      const mdxCacheKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/app/page.js",
+        "19.1.1",
+        undefined,
+        "map-a",
+      );
       assertEquals(pathCache.get(mdxCacheKey), result);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("keeps MDX path-cache pointers for different import maps isolated", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.tsx");
+    const moduleCache = new Map<string, string>();
+
+    try {
+      const mapAPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const map = 'a';",
+        localAdapter,
+        moduleCache,
+        cacheKey: "map-a-cache",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        importMapFingerprint: "map-a",
+      });
+      const mapBPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const map = 'b';",
+        localAdapter,
+        moduleCache,
+        cacheKey: "map-b-cache",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        importMapFingerprint: "map-b",
+      });
+      const pathCache = await getModulePathCache(tmpDir);
+
+      assertEquals(
+        pathCache.get(
+          buildMdxEsmPathCacheKey(
+            "_vf_modules/app/page.js",
+            "19.1.1",
+            undefined,
+            "map-a",
+          ),
+        ),
+        mapAPath,
+      );
+      assertEquals(
+        pathCache.get(
+          buildMdxEsmPathCacheKey(
+            "_vf_modules/app/page.js",
+            "19.1.1",
+            undefined,
+            "map-b",
+          ),
+        ),
+        mapBPath,
+      );
+      assertEquals(mapAPath === mapBPath, false);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);

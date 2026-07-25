@@ -24,16 +24,19 @@ export function getModuleCacheKey(
   contentSourceId?: string,
   reactVersion?: string,
   mode?: "development" | "production",
+  importMapFingerprint?: string,
 ): string {
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
-  return JSON.stringify([
+  const identity: string[] = [
     base,
     source,
     reactVersion ?? REACT_DEFAULT_VERSION,
     mode ?? "default",
     filePath,
-  ]);
+  ];
+  if (importMapFingerprint) identity.push(importMapFingerprint);
+  return JSON.stringify(identity);
 }
 
 type LookupMdxCache = typeof lookupMdxEsmCache;
@@ -46,6 +49,7 @@ export interface ResolveCachedModulePathInput {
   projectId?: string;
   contentSourceId?: string;
   reactVersion?: string;
+  importMapFingerprint?: string;
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
   fileSystem?: FileSystemReader;
@@ -104,6 +108,7 @@ async function resolveMdxEsmCachedPath(
       contentSourceId: input.contentSourceId,
     },
     input.reactVersion,
+    input.importMapFingerprint,
   );
 
   if (mdxCacheResult.status === "hit") {

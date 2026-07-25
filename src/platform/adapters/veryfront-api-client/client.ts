@@ -35,6 +35,7 @@ export class VeryfrontApiClient {
     retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>>;
   };
   private operations: VeryfrontAPIOperations;
+  private readonly requestCredentialProvider?: TokenProvider;
   private requestToken?: string;
   private requestProjectSlug?: string;
   private requestContext?: FileContext;
@@ -44,7 +45,7 @@ export class VeryfrontApiClient {
   /** Cached project data from initialization - avoids redundant API calls */
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
 
-  constructor(config: VeryfrontAPIConfig) {
+  constructor(config: VeryfrontAPIConfig, requestCredentialProvider?: TokenProvider) {
     const retryConfig = {
       maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
       initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
@@ -52,12 +53,14 @@ export class VeryfrontApiClient {
     };
 
     this.config = { ...config, retry: retryConfig };
+    this.requestCredentialProvider = requestCredentialProvider;
 
-    const tokenProvider: TokenProvider = () => {
-      if (this.requestToken) return this.requestToken;
-      if (this.config.apiToken) return this.config.apiToken;
-      throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
-    };
+    const tokenProvider: TokenProvider = requestCredentialProvider ??
+      (() => {
+        if (this.requestToken) return this.requestToken;
+        if (this.config.apiToken) return this.config.apiToken;
+        throw API_CLIENT_ERROR.create({ detail: "No API token available", status: 401 });
+      });
 
     this.operations = new VeryfrontAPIOperations(
       this.config.apiBaseUrl,
@@ -75,10 +78,22 @@ export class VeryfrontApiClient {
   }
 
   setRequestToken(token: string): void {
+    if (this.requestCredentialProvider) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Cannot mutate a client backed by an immutable request credential provider",
+        status: 409,
+      });
+    }
     this.requestToken = token;
   }
 
   clearRequestToken(): void {
+    if (this.requestCredentialProvider) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Cannot clear a client backed by an immutable request credential provider",
+        status: 409,
+      });
+    }
     this.requestToken = undefined;
   }
 

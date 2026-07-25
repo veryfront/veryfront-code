@@ -190,12 +190,12 @@ describe("createRequestContext", () => {
       }
     });
 
-    it("honours x-forwarded-host after request-scoped proxy verification", () => {
+    it("honours x-forwarded-host after explicit topology verification", () => {
       const req = makeRequest("https://127.0.0.1/page", {
         "x-forwarded-host": "my-app.preview.lvh.me",
         host: "other.lvh.me",
       });
-      const ctx = createRequestContext(req, { proxyTrusted: true });
+      const ctx = createRequestContext(req, { proxyTopologyTrusted: true });
       assertEquals(ctx.slug, "my-app");
       assertEquals(ctx.mode, "preview");
     });
@@ -233,11 +233,11 @@ describe("createRequestContext", () => {
     it("promotes a trusted request token only after resolving a concrete project", () => {
       const ctx = createRequestContext(
         makeRequest("https://example.com/page", { "x-token": "project-token" }),
-        { proxyTrusted: true },
+        { proxyTopologyTrusted: true },
       );
 
       const bound = bindRequestTokenToProject(ctx, {
-        proxyTrusted: true,
+        proxyTopologyTrusted: true,
         projectSlug: "project-a",
       });
 
@@ -245,18 +245,21 @@ describe("createRequestContext", () => {
       assertEquals(getRequestTokenProvenance(bound, "project-token"), "project-bound");
     });
 
-    it("does not bind a request token without proxy trust or a resolved project", () => {
+    it("does not bind a request token without topology trust or a resolved project", () => {
       const ctx = createRequestContext(
         makeRequest("https://example.com/page", { "x-token": "project-token" }),
       );
 
       assertEquals(
-        bindRequestTokenToProject(ctx, { proxyTrusted: false, projectSlug: "project-a" })
+        bindRequestTokenToProject(ctx, {
+          proxyTopologyTrusted: false,
+          projectSlug: "project-a",
+        })
           .tokenProvenance,
         "untrusted",
       );
       assertEquals(
-        bindRequestTokenToProject(ctx, { proxyTrusted: true }).tokenProvenance,
+        bindRequestTokenToProject(ctx, { proxyTopologyTrusted: true }).tokenProvenance,
         "untrusted",
       );
     });
@@ -266,10 +269,10 @@ describe("createRequestContext", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "host-token");
       try {
         const ctx = createRequestContext(makeRequest("https://example.com/page"), {
-          proxyTrusted: true,
+          proxyTopologyTrusted: true,
         });
         const bound = bindRequestTokenToProject(ctx, {
-          proxyTrusted: true,
+          proxyTopologyTrusted: true,
           projectSlug: "project-a",
         });
 
@@ -286,7 +289,7 @@ describe("createRequestContext", () => {
         createRequestContext(
           makeRequest("https://example.com/page", { "x-token": "project-token" }),
         ),
-        { proxyTrusted: true, projectSlug: "project-a" },
+        { proxyTopologyTrusted: true, projectSlug: "project-a" },
       );
 
       assertEquals(getRequestTokenProvenance(ctx, "different-token"), "untrusted");

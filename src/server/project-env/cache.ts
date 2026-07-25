@@ -4,6 +4,7 @@
  * @module server/project-env/cache
  */
 
+import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { createProjectEnvSnapshot, type ProjectEnvSnapshot } from "./snapshot.ts";
 
 interface CacheEntry {
@@ -40,7 +41,17 @@ const MAX_FETCH_TIMEOUT_MS = 300_000;
 const HEX_DIGITS = "0123456789abcdef";
 const IntrinsicAbortController = AbortController;
 const IntrinsicMap = Map;
+const IntrinsicPromise = Promise;
 const IntrinsicUint8Array = Uint8Array;
+const AbortControllerPrototypeAbort = AbortController.prototype.abort;
+const abortSignalAbortedGetter = Object.getOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  "aborted",
+)?.get;
+const abortControllerSignalGetter = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)?.get;
 const AbortSignalPrototypeThrowIfAborted = AbortSignal.prototype.throwIfAborted;
 const EventTargetPrototypeAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetPrototypeRemoveEventListener = EventTarget.prototype.removeEventListener;
@@ -50,6 +61,8 @@ const MapPrototypeEntries = Map.prototype.entries;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeKeys = Map.prototype.keys;
 const MapPrototypeSet = Map.prototype.set;
+const PromisePrototypeThen = Promise.prototype.then;
+const StringPrototypeIncludes = String.prototype.includes;
 const mapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")?.get;
 const mapIteratorPrototype = Object.getPrototypeOf(new IntrinsicMap().keys());
 const mapIteratorPrototypeNext = mapIteratorPrototype?.next;
@@ -65,9 +78,17 @@ const monotonicNow = performance.now.bind(performance);
 const scheduleTimeout = globalThis.setTimeout;
 const cancelTimeout = globalThis.clearTimeout;
 
+if (
+  typeof abortSignalAbortedGetter !== "function" ||
+  typeof abortControllerSignalGetter !== "function"
+) {
+  throw new TypeError("AbortController/AbortSignal intrinsics are unavailable");
+}
 if (!mapSizeGetter || typeof mapIteratorPrototypeNext !== "function") {
   throw new TypeError("Map intrinsics are unavailable");
 }
+const intrinsicAbortSignalAbortedGetter = abortSignalAbortedGetter as () => boolean;
+const intrinsicAbortControllerSignalGetter = abortControllerSignalGetter as () => AbortSignal;
 const intrinsicMapSizeGetter = mapSizeGetter as () => number;
 const intrinsicMapIteratorNext = mapIteratorPrototypeNext as () => IteratorResult<unknown>;
 
@@ -103,10 +124,67 @@ function iteratorNext<T>(iterator: Iterator<T>): IteratorResult<T> {
   return ReflectApply(intrinsicMapIteratorNext, iterator, []) as IteratorResult<T>;
 }
 
+function promiseThen<T, U>(
+  promise: Promise<T>,
+  onFulfilled: (value: T) => U | PromiseLike<U>,
+  onRejected?: (reason: unknown) => U | PromiseLike<U>,
+): Promise<U> {
+  return ReflectApply(
+    PromisePrototypeThen,
+    promise,
+    [onFulfilled, onRejected],
+  ) as Promise<U>;
+}
+
+function observePromise<T>(
+  promise: Promise<T>,
+  onFulfilled: (value: T) => void,
+  onRejected: (reason: unknown) => void,
+): void {
+  void promiseThen(promise, onFulfilled, onRejected);
+}
+
+function racePromises<T>(
+  first: Promise<T>,
+  second: Promise<never>,
+): Promise<T> {
+  return new IntrinsicPromise<T>((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = (value: T): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const rejectOnce = (reason: unknown): void => {
+      if (settled) return;
+      settled = true;
+      reject(reason);
+    };
+    observePromise(first, resolveOnce, rejectOnce);
+    observePromise(second, resolveOnce, rejectOnce);
+  });
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal) {
     ReflectApply(AbortSignalPrototypeThrowIfAborted, signal, []);
   }
+}
+
+function isAborted(signal: AbortSignal): boolean {
+  return ReflectApply(intrinsicAbortSignalAbortedGetter, signal, []) as boolean;
+}
+
+function getControllerSignal(controller: AbortController): AbortSignal {
+  return ReflectApply(intrinsicAbortControllerSignalGetter, controller, []) as AbortSignal;
+}
+
+function abortController(controller: AbortController, reason: unknown): void {
+  ReflectApply(AbortControllerPrototypeAbort, controller, [reason]);
+}
+
+function stringIncludes(value: string, searchValue: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [searchValue]) as boolean;
 }
 
 function waitForPromiseWithSignal<T>(
@@ -116,16 +194,22 @@ function waitForPromiseWithSignal<T>(
   if (!signal) return promise;
   throwIfAborted(signal);
 
-  return new Promise<T>((resolve, reject) => {
+  return new IntrinsicPromise<T>((resolve, reject) => {
     let settled = false;
-    const finish = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
+    let listenerRegistered = false;
+    const removeAbortListener = (): void => {
+      if (!listenerRegistered) return;
       ReflectApply(
         EventTargetPrototypeRemoveEventListener,
         signal,
         ["abort", onAbort],
       );
+      listenerRegistered = false;
+    };
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      removeAbortListener();
       callback();
     };
     const onAbort = (): void => {
@@ -139,18 +223,29 @@ function waitForPromiseWithSignal<T>(
       });
     };
 
-    ReflectApply(
-      EventTargetPrototypeAddEventListener,
-      signal,
-      ["abort", onAbort, { once: true }],
-    );
-    // Close the check/listen race without making the caller's signal control
-    // shared work used by other waiters.
-    if (signal.aborted) {
-      onAbort();
+    try {
+      ReflectApply(
+        EventTargetPrototypeAddEventListener,
+        signal,
+        ["abort", onAbort, { once: true }],
+      );
+      listenerRegistered = true;
+      // Close the check/listen race without making the caller's signal control
+      // shared work used by other waiters.
+      if (isAborted(signal)) {
+        onAbort();
+      }
+    } catch (error) {
+      try {
+        removeAbortListener();
+      } finally {
+        reject(error);
+      }
+      return;
     }
 
-    void promise.then(
+    observePromise(
+      promise,
       (value) => finish(() => resolve(value)),
       (error) => finish(() => reject(error)),
     );
@@ -167,12 +262,20 @@ export type ProjectEnvCacheErrorCode =
   | "capacity-exceeded"
   | "fetch-timeout";
 
-export class ProjectEnvCacheError extends Error {
+export class ProjectEnvCacheError extends VeryfrontError {
   readonly code: ProjectEnvCacheErrorCode;
   readonly retryable = true;
 
   constructor(code: ProjectEnvCacheErrorCode, message: string) {
-    super(message);
+    super(message, {
+      slug: SERVICE_OVERLOADED.slug,
+      category: SERVICE_OVERLOADED.category,
+      status: SERVICE_OVERLOADED.status,
+      title: SERVICE_OVERLOADED.title,
+      suggestion: SERVICE_OVERLOADED.suggestion,
+      detail: message,
+      context: ObjectFreeze({ code, retryable: true }),
+    });
     this.name = "ProjectEnvCacheError";
     this.code = code;
   }
@@ -183,7 +286,7 @@ function requireCacheIdentity(value: string, field: string): string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_CACHE_IDENTITY_CHARS ||
-    value.includes("\0")
+    stringIncludes(value, "\0")
   ) {
     throw new TypeError(
       `${field} must be a non-empty string of at most ${MAX_CACHE_IDENTITY_CHARS} characters`,
@@ -197,7 +300,7 @@ function requireCacheToken(value: string): string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_CACHE_TOKEN_CHARS ||
-    value.includes("\0")
+    stringIncludes(value, "\0")
   ) {
     throw new TypeError(
       `token must be a non-empty string of at most ${MAX_CACHE_TOKEN_CHARS} characters`,
@@ -357,7 +460,7 @@ export class EnvironmentVariableCache {
         mapDelete(this.inflight, cacheKey);
       }
     };
-    void promise.then(removeSettledInflight, removeSettledInflight);
+    observePromise(promise, removeSettledInflight, removeSettledInflight);
 
     return await waitForPromiseWithSignal(promise, signal);
   }
@@ -416,30 +519,31 @@ export class EnvironmentVariableCache {
       token,
       projectSlug,
       marker,
-      controller.signal,
+      getControllerSignal(controller),
     );
     // Capacity follows the underlying work rather than the deadline observed
     // by callers. A non-cooperative fetcher that ignores abort therefore keeps
     // its slot until it actually settles.
-    void work.then(
+    observePromise(
+      work,
       () => this.decrementActiveFetches(projectSlug),
       () => this.decrementActiveFetches(projectSlug),
     );
 
     let timeoutId: number | undefined;
-    const timeout = new Promise<never>((_resolve, reject) => {
+    const timeout = new IntrinsicPromise<never>((_resolve, reject) => {
       timeoutId = scheduleTimeout(() => {
         const error = new ProjectEnvCacheError(
           "fetch-timeout",
           `Project environment fetch exceeded ${this.fetchTimeoutMs} ms`,
         );
-        controller.abort(error);
+        abortController(controller, error);
         reject(error);
       }, this.fetchTimeoutMs);
     });
 
     try {
-      return await Promise.race([work, timeout]);
+      return await racePromises(work, timeout);
     } finally {
       if (timeoutId !== undefined) cancelTimeout(timeoutId);
     }

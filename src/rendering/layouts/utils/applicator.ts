@@ -97,6 +97,7 @@ export function applyLayoutsESM(
                 projectSlug,
                 contentSourceId,
                 reactVersion,
+                preloadedImportMap,
               ),
             spanAttrs,
           );
@@ -156,6 +157,7 @@ export async function applyLayoutsFunctionBody(
   projectSlug: string,
   contentSourceId: string,
   reactVersion?: string,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   let element = pageElement;
@@ -199,6 +201,7 @@ export async function applyLayoutsFunctionBody(
         projectSlug,
         contentSourceId,
         reactVersion,
+        preloadedImportMap,
       );
 
       const child = ensureValidChild(element, React);

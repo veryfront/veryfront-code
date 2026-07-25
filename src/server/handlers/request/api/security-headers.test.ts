@@ -40,6 +40,56 @@ describe("server/handlers/request/api/security-headers", () => {
       assertEquals(typeof devCsp, "string");
       assertEquals(typeof prodCsp, "string");
     });
+
+    it("does not let inherited or unreadable locality disable production CSP", () => {
+      const previous = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "isLocalProject",
+      );
+      let accessorCalls = 0;
+      let throwingDescriptorCalls = 0;
+      const inherited = makeCtx();
+      delete (inherited as { isLocalProject?: boolean }).isLocalProject;
+      Object.setPrototypeOf(inherited, { isLocalProject: true });
+      const accessor = Object.defineProperty(makeCtx(), "isLocalProject", {
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      });
+      const throwingProxy = new Proxy(makeCtx(), {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "isLocalProject") {
+            throwingDescriptorCalls++;
+            throw new Error("locality descriptor unavailable");
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      try {
+        assertEquals(buildCSP(inherited).length > 0, true);
+        assertEquals(buildCSP(accessor).length > 0, true);
+        assertEquals(buildCSP(throwingProxy).length > 0, true);
+
+        const poisoned = makeCtx();
+        delete (poisoned as { isLocalProject?: boolean }).isLocalProject;
+        Object.defineProperty(Object.prototype, "isLocalProject", {
+          configurable: true,
+          value: true,
+        });
+        assertEquals(buildCSP(poisoned).length > 0, true);
+      } finally {
+        if (previous) {
+          Object.defineProperty(Object.prototype, "isLocalProject", previous);
+        } else {
+          delete (Object.prototype as { isLocalProject?: boolean }).isLocalProject;
+        }
+      }
+
+      assertEquals(accessorCalls, 0);
+      assertEquals(throwingDescriptorCalls, 1);
+    });
   });
 
   describe("getSecurityHeader", () => {

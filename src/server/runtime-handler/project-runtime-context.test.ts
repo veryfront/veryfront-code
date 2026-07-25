@@ -9,10 +9,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
-  __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
-  type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { DomainLookupResult } from "../utils/domain-lookup.ts";
@@ -21,6 +19,7 @@ import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { __injectDepsForTests, extractRequestHeaders } from "./project-resolution.ts";
 import {
   prepareProjectRequest,
+  prepareProjectRuntimeSource,
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
@@ -136,7 +135,7 @@ function makeRuntimeContextInput(
     },
   } as unknown as VeryfrontConfig;
 
-  return {
+  const baseInput = {
     req,
     url,
     projectDir: "/base/project",
@@ -153,7 +152,7 @@ function makeRuntimeContextInput(
     headers,
     requestContext,
     isProxyMode: false,
-    proxyTrust: { proxyTrusted: undefined },
+    proxyTopologyTrusted: false,
     securityConfig: { allowedOrigins: ["*"] } as any,
     cspUserHeader: "default-src 'self'",
     debug: true,
@@ -162,9 +161,54 @@ function makeRuntimeContextInput(
     envVarCache: {
       get: () => Promise.resolve({ REMOTE_ONLY: "1" }),
     },
+    hostedSourceBindingCache: {
+      resolve: (input: {
+        projectSlug: string;
+        projectId?: string;
+        environmentId?: string;
+        selector:
+          | { kind: "name"; name: string }
+          | { kind: "domain"; domain: string };
+        mode: "preview" | "production";
+        releaseId?: string;
+        branch?: string | null;
+      }) => {
+        const environmentName = input.selector.kind === "name" ? input.selector.name : "production";
+        return Promise.resolve({
+          projectSlug: input.projectSlug,
+          projectId: input.projectId ?? "proj-remote",
+          environmentId: input.environmentId ?? "env-remote",
+          environmentName,
+          activeReleaseId: input.releaseId ?? null,
+          sourceContext: input.mode === "production"
+            ? {
+              productionMode: true as const,
+              releaseId: input.releaseId ?? null,
+              environmentName,
+            }
+            : {
+              productionMode: false as const,
+              branch: input.branch ?? null,
+            },
+        });
+      },
+    },
     logDebug: () => {},
+  };
+  const merged = {
+    ...baseInput,
     ...overrides,
-  } as Parameters<typeof resolveProjectRuntimeContext>[0];
+  } as unknown as Parameters<typeof resolveProjectRuntimeContext>[0];
+  if (!("sourcePlan" in overrides)) {
+    merged.sourcePlan = prepareProjectRuntimeSource({
+      req: merged.req,
+      url: merged.url,
+      isProxyMode: merged.isProxyMode,
+      proxyTopologyTrusted: merged.proxyTopologyTrusted,
+      projectIdentity: merged.projectIdentity,
+    });
+  }
+  return merged;
 }
 
 afterEach(() => {
@@ -186,8 +230,8 @@ async function assertJsonResponse(
 }
 
 describe("prepareProjectRequest", () => {
-  it("reuses explicit false proxy trust for headers and request context", async () => {
-    let trustChecks = 0;
+  it("preserves explicit false topology trust for headers and request context", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const req = new Request("http://localhost/page", {
       headers: {
         host: "localhost",
@@ -204,16 +248,15 @@ describe("prepareProjectRequest", () => {
       req,
       url,
       isProxyMode: true,
-      trustProxy: () => {
-        trustChecks += 1;
-        return Promise.resolve(false);
-      },
+      proxyTopologyTrusted: false,
     });
 
-    assertEquals(trustChecks, 1);
-    assertStrictEquals(prepared.proxyTrust.proxyTrusted, false);
+    assertStrictEquals(prepared.proxyTopologyTrusted, false);
     assertEquals(prepared.headers, extractRequestHeaders(req, url, false));
-    assertEquals(prepared.requestContext, createRequestContext(req, { proxyTrusted: false }));
+    assertEquals(
+      prepared.requestContext,
+      createRequestContext(req, { proxyTopologyTrusted: false }),
+    );
     assertEquals(prepared.headers.environment, undefined);
     assertEquals(prepared.loggerFacts.projectSlug, "header-project");
     assertEquals(prepared.trackingFacts.releaseId, "rel_123");
@@ -229,7 +272,7 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      proxyTopologyTrusted: false,
     });
 
     assertEquals(prepared.proxyGuard?.detail, "x-project-slug header is required in proxy mode");
@@ -248,7 +291,7 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      proxyTopologyTrusted: false,
     });
 
     assertEquals(prepared.proxyGuard?.detail, "x-token header is required in proxy mode");
@@ -271,7 +314,7 @@ describe("prepareProjectRequest", () => {
       req: forwardedOnly,
       url: new URL(forwardedOnly.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      proxyTopologyTrusted: false,
     });
 
     assertEquals(allowed.proxyGuard, undefined);
@@ -288,7 +331,7 @@ describe("prepareProjectRequest", () => {
       req: projectPath,
       url: new URL(projectPath.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      proxyTopologyTrusted: false,
     });
 
     assertEquals(
@@ -301,7 +344,7 @@ describe("prepareProjectRequest", () => {
     });
   });
 
-  it("preserves websocket environment query and skips the proxy guard", async () => {
+  it("ignores an untrusted websocket environment query and skips the proxy guard", async () => {
     const req = new Request(
       "http://localhost/_ws?x-environment=preview&x-project-slug=test-project",
     );
@@ -310,10 +353,11 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      proxyTopologyTrusted: false,
     });
 
-    assertEquals(prepared.headers.environment, "preview");
+    assertEquals(prepared.headers.environment, undefined);
+    assertEquals(prepared.requestContext.mode, "production");
     assertEquals(prepared.proxyGuard, undefined);
   });
 
@@ -326,7 +370,7 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      proxyTopologyTrusted: false,
     });
 
     assertEquals(prepared.proxyGuard, undefined);
@@ -351,7 +395,7 @@ describe("resolveProjectIdentity", () => {
           defaultProjectId: undefined,
           defaultReleaseId: undefined,
           wsSlugOverride: undefined,
-          proxyTrust: { proxyTrusted: undefined },
+          proxyTopologyTrusted: false,
         }),
       Error,
       "Unsupported project runtime context operation: runtime-context",
@@ -369,13 +413,13 @@ describe("resolveProjectIdentity", () => {
       req,
       url,
       headers: untrustedHeaders,
-      requestContext: createRequestContext(req, { proxyTrusted: false }),
+      requestContext: createRequestContext(req, { proxyTopologyTrusted: false }),
       config: undefined,
       defaultProjectSlug: undefined,
       defaultProjectId: undefined,
       defaultReleaseId: undefined,
       wsSlugOverride: undefined,
-      proxyTrust: { proxyTrusted: false },
+      proxyTopologyTrusted: false,
     });
 
     assertEquals(untrusted.projectSlug, undefined);
@@ -385,13 +429,13 @@ describe("resolveProjectIdentity", () => {
       req,
       url,
       headers: trustedHeaders,
-      requestContext: createRequestContext(req, { proxyTrusted: true }),
+      requestContext: createRequestContext(req, { proxyTopologyTrusted: true }),
       config: undefined,
       defaultProjectSlug: undefined,
       defaultProjectId: undefined,
       defaultReleaseId: undefined,
       wsSlugOverride: undefined,
-      proxyTrust: { proxyTrusted: true },
+      proxyTopologyTrusted: true,
     });
 
     assertEquals(trusted.projectSlug, "forwarded-project");
@@ -422,7 +466,7 @@ describe("resolveProjectIdentity", () => {
         defaultProjectId: "default-id",
         defaultReleaseId: undefined,
         wsSlugOverride: "ws-slug",
-        proxyTrust: { proxyTrusted: undefined },
+        proxyTopologyTrusted: false,
       });
 
       assertEquals(result.projectSlug, "request-slug");
@@ -475,7 +519,7 @@ describe("resolveProjectIdentity", () => {
         defaultProjectId: undefined,
         defaultReleaseId: "default-release",
         wsSlugOverride: undefined,
-        proxyTrust: { proxyTrusted: undefined },
+        proxyTopologyTrusted: false,
       });
 
       assertEquals(result.releaseId, "header-release");
@@ -517,7 +561,7 @@ describe("resolveProjectIdentity", () => {
         defaultProjectId: undefined,
         defaultReleaseId: undefined,
         wsSlugOverride: undefined,
-        proxyTrust: { proxyTrusted: undefined },
+        proxyTopologyTrusted: false,
       });
 
       assertEquals(result.projectSlug, "looked-up-slug");
@@ -604,7 +648,7 @@ describe("resolveProjectRuntimeContext", () => {
     });
     const url = new URL(req.url);
     const headers = extractRequestHeaders(req, url, true);
-    const requestContext = createRequestContext(req, { proxyTrusted: true });
+    const requestContext = createRequestContext(req, { proxyTopologyTrusted: true });
 
     let envLoadCount = 0;
     const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
@@ -622,7 +666,7 @@ describe("resolveProjectRuntimeContext", () => {
         parsedDomain: defaultParsedDomain,
       },
       isProxyMode: true,
-      proxyTrust: { proxyTrusted: true },
+      proxyTopologyTrusted: true,
       skipEnrichedContext: true,
       envVarCache: {
         get: () => {
@@ -646,13 +690,14 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(result.rawEnvVars, {});
   });
 
-  it("passes explicit false proxy trust so untrusted x-project-path is suppressed", async () => {
+  it("passes explicit false topology trust so untrusted x-project-path is suppressed", async () => {
     const adapter = createMockAdapter({
       "/attacker/chosen/path": { isDirectory: true },
       "/attacker/chosen/path/app": { isDirectory: true },
     });
+    adapter.fs.readFile = async () => "export default {};";
     defaultDiscoveryCache.adapters.set("/attacker/chosen/path", adapter);
-    const req = new Request("http://localhost/page", {
+    const req = new Request("http://remote-project.preview.lvh.me/page", {
       headers: {
         "x-project-slug": "remote-project",
         "x-project-id": "proj-remote",
@@ -668,9 +713,9 @@ describe("resolveProjectRuntimeContext", () => {
       url,
       adapter,
       headers,
-      requestContext: createRequestContext(req, { proxyTrusted: false }),
+      requestContext: createRequestContext(req, { proxyTopologyTrusted: false }),
       isProxyMode: true,
-      proxyTrust: { proxyTrusted: false },
+      proxyTopologyTrusted: false,
       projectIdentity: {
         projectSlug: "remote-project",
         projectId: "proj-remote",
@@ -686,25 +731,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(defaultDiscoveryCache.projects.has("remote-project"), false);
   });
 
-  it("returns production 404 responses and standalone synthetic fallback from environment resolution", async () => {
-    const remoteProduction = await resolveProjectRuntimeContext(makeRuntimeContextInput({
-      isProxyMode: true,
-      projectIdentity: {
-        projectSlug: "remote-project",
-        projectId: "proj-remote",
-        releaseId: undefined,
-        environmentName: "Production",
-        proxyEnv: "production",
-        parsedDomain: defaultParsedDomain,
-      },
-    }));
-
-    assertEquals(remoteProduction.environment.errorResponse?.status, 404);
-    assertEquals(
-      remoteProduction.environment.errorResponse?.headers.get("Content-Type"),
-      "text/html; charset=utf-8",
-    );
-
+  it("returns standalone synthetic fallback from environment resolution", async () => {
     const standaloneProduction = await resolveProjectRuntimeContext(makeRuntimeContextInput({
       isProxyMode: false,
       defaultEnvironment: "production",
@@ -769,11 +796,8 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(sourcePolicyReads, 0);
   });
 
-  it("honors host-level forwarded trust when runtime proxy trust is unresolved", async () => {
+  it("does not reread topology trust after explicit false was captured", () => {
     Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
-    __resetLoggerConfigForTests();
-    const entries: LogEntry[] = [];
-    __registerLogRecordEmitter((entry) => entries.push(entry));
 
     const req = new Request("http://internal.local/page", {
       headers: {
@@ -784,14 +808,11 @@ describe("resolveProjectRuntimeContext", () => {
       },
     });
     const url = new URL(req.url);
-
-    await resolveProjectRuntimeContext(makeRuntimeContextInput({
+    const sourcePlan = prepareProjectRuntimeSource({
       req,
       url,
-      headers: extractRequestHeaders(req, url, undefined),
-      requestContext: createRequestContext(req, { proxyTrusted: undefined }),
       isProxyMode: true,
-      proxyTrust: { proxyTrusted: undefined },
+      proxyTopologyTrusted: false,
       projectIdentity: {
         projectSlug: "remote-project",
         projectId: "proj-remote",
@@ -800,13 +821,13 @@ describe("resolveProjectRuntimeContext", () => {
         proxyEnv: "production",
         parsedDomain: defaultParsedDomain,
       },
-    }));
+    });
 
-    const warning = entries.find((entry) =>
-      entry.component === "environment-resolution" &&
-      entry.message === "No active release found (proxy mode)"
-    );
-    assertEquals(warning?.context?.host, "remote-project.production.veryfront.com");
+    assertEquals(sourcePlan.sourceHost, "internal.local");
+    assertEquals(sourcePlan.hostedSource?.selector, {
+      kind: "domain",
+      domain: "internal.local",
+    });
   });
 
   it("notifies environment resolution before source policy access and later failures", async () => {
@@ -836,6 +857,8 @@ describe("resolveProjectRuntimeContext", () => {
 
   it("keeps exact-source control-plane config undefined at the runtime-context boundary", async () => {
     let outerContextCalls = 0;
+    let hostedSourceBindingCalls = 0;
+    let envLoadCalls = 0;
     const adapter = createExtendedMockAdapter({
       onRunWithContext: () => {
         outerContextCalls += 1;
@@ -848,6 +871,7 @@ describe("resolveProjectRuntimeContext", () => {
         "x-project-slug": "proxy-project",
         "x-project-id": "proj-proxy",
         "x-token": "proxy-token",
+        "x-environment-id": "env-outer",
       },
     });
     const url = new URL(req.url);
@@ -858,6 +882,18 @@ describe("resolveProjectRuntimeContext", () => {
       headers: extractRequestHeaders(req, url),
       requestContext: createRequestContext(req),
       isProxyMode: true,
+      hostedSourceBindingCache: {
+        resolve: () => {
+          hostedSourceBindingCalls += 1;
+          return Promise.reject(new Error("outer source binding must not be resolved"));
+        },
+      },
+      envVarCache: {
+        get: () => {
+          envLoadCalls += 1;
+          return Promise.resolve({ SHOULD_NOT_LOAD: "1" });
+        },
+      },
       projectIdentity: {
         projectSlug: "proxy-project",
         projectId: "proj-proxy",
@@ -869,6 +905,9 @@ describe("resolveProjectRuntimeContext", () => {
     }));
 
     assertEquals(outerContextCalls, 0);
+    assertEquals(hostedSourceBindingCalls, 0);
+    assertEquals(envLoadCalls, 0);
+    assertEquals(result.rawEnvVars, {});
     assertEquals(result.adapter.config, undefined);
     assertEquals(result.handlerContext?.config, undefined);
   });

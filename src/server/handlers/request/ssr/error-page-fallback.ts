@@ -9,6 +9,7 @@ import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
@@ -249,6 +250,15 @@ async function loadErrorComponent(
       ctx.requestContext?.branch ?? null,
       ctx.releaseId,
     );
+  const importMap = await preloadImportMap(
+    ctx.projectDir,
+    ctx.adapter,
+    ctx.projectId,
+    {
+      contentSourceId,
+      config: ctx.config,
+    },
+  );
 
   const Component = await loadComponentFromSource(
     src,
@@ -260,6 +270,7 @@ async function loadErrorComponent(
       dev: isLocal,
       contentSourceId,
       reactVersion,
+      importMap,
     },
   );
 

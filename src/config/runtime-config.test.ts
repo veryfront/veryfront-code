@@ -62,6 +62,16 @@ describe("RuntimeConfig", () => {
       expect(config.runtime.env).toBe(env);
     });
 
+    it("keeps standalone config out of the process singleton", () => {
+      const config = createRuntimeConfig(
+        { title: "Request-scoped value" },
+        createTestEnvironmentConfig(),
+      );
+
+      expect(config.title).toBe("Request-scoped value");
+      expect(isRuntimeConfigInitialized()).toBe(false);
+    });
+
     it("merges file config with defaults", () => {
       const env = createTestEnvironmentConfig();
       const config = createRuntimeConfig(

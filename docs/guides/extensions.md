@@ -18,6 +18,14 @@ see [Framework extensions](../concepts/framework-extensions.md).
 - For a local extension: a folder under `extensions/` with a default-exported
   factory (see [Extension authoring](./extension-authoring.md)).
 
+Extension factories are executable configuration. They can be enabled from
+`veryfront.config.ts` in local development and standalone deployments, where
+configuration loads as a normal module. Shared hosted and proxy runtimes use
+declarative configuration: project config cannot import an extension package or
+execute a factory there. Provision hosted runtime capabilities through the
+platform instead. See
+[Shared hosted runtimes](./configuration.md#shared-hosted-runtimes).
+
 ## Enable an extension
 
 Add extension factories to `veryfront.config.ts`:

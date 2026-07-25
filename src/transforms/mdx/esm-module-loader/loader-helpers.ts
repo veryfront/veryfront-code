@@ -152,6 +152,8 @@ export async function processVfModuleImports(
     context.projectId,
     {
       contentSourceId: context.contentSourceId,
+      importMap: context.importMap,
+      importMapFingerprint: context.importMapFingerprint,
       reactVersion: context.reactVersion,
       projectSlug: context.projectSlug,
       logger: logger.child({

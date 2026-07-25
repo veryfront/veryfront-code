@@ -3,6 +3,7 @@ import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 
 export async function tryNotFoundFallback(
   req: Request,
@@ -31,10 +32,6 @@ export async function tryNotFoundFallback(
     );
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
-    const reactVersion = await resolveProjectReactVersion({
-      projectDir: ctx.projectDir,
-      config: ctx.config,
-    });
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
         !!ctx.isLocalProject,
@@ -42,6 +39,21 @@ export async function tryNotFoundFallback(
         ctx.requestContext?.branch ?? null,
         ctx.releaseId,
       );
+    const [reactVersion, importMap] = await Promise.all([
+      resolveProjectReactVersion({
+        projectDir: ctx.projectDir,
+        config: ctx.config,
+      }),
+      preloadImportMap(
+        ctx.projectDir,
+        ctx.adapter,
+        ctx.projectId,
+        {
+          contentSourceId,
+          config: ctx.config,
+        },
+      ),
+    ]);
 
     const NotFoundComp = await tryLoadReservedInDirs(
       dirs,
@@ -52,6 +64,7 @@ export async function tryNotFoundFallback(
       ctx.projectId,
       contentSourceId,
       reactVersion,
+      importMap,
     );
 
     if (!NotFoundComp) return null;

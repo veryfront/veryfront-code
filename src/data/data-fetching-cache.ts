@@ -4,7 +4,10 @@ import {
   DATA_FETCHING_TTL_MS,
 } from "#veryfront/utils/constants/cache.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
-import { getProjectScopedKey } from "#veryfront/cache/cache-key-builder.ts";
+import {
+  getProjectScopedKey,
+  projectScopedKeyIncludesSearchText,
+} from "#veryfront/cache/cache-key-builder.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
 
 function isLruIntervalDisabled(): boolean {
@@ -36,7 +39,7 @@ export class CacheManager {
 
   clearPattern(pattern: string): void {
     for (const key of this.cache.keys()) {
-      if (!key.includes(pattern)) continue;
+      if (!projectScopedKeyIncludesSearchText(key, pattern)) continue;
       this.cache.delete(key);
     }
   }

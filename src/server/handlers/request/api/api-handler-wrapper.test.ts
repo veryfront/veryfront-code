@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import type { APIRouteHandler } from "#veryfront/routing";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
 import { __injectCacheForTests, type HandlerCache, resetApiHandler } from "./pages-api-handler.ts";
 
@@ -111,6 +112,128 @@ afterEach(async () => {
 });
 
 describe("ApiHandlerWrapper", () => {
+  it("does not run host project discovery for a remote route when worker flags are disabled", async () => {
+    const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
+    const previousApi = Deno.env.get("WORKER_ISOLATION_API");
+    Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    Deno.env.delete("WORKER_ISOLATION_API");
+    __resetPoolForTests();
+
+    const ctx = createResponseCtx(false, null);
+    let fsExistsCalls = 0;
+    ctx.adapter.fs.exists = () => {
+      fsExistsCalls++;
+      return Promise.resolve(false);
+    };
+    injectApiResponse(new Response("project"));
+
+    try {
+      const result = await new ApiHandlerWrapper(ctx.projectDir, ctx.adapter).handle(
+        new Request("https://project.example/api/data"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(fsExistsCalls, 0);
+    } finally {
+      __resetPoolForTests();
+      if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
+      if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
+      else Deno.env.set("WORKER_ISOLATION_API", previousApi);
+    }
+  });
+
+  it("does not trust inherited, accessor, or throwing locality for host discovery", async () => {
+    const previousMaster = Deno.env.get("WORKER_ISOLATION_ENABLED");
+    const previousApi = Deno.env.get("WORKER_ISOLATION_API");
+    const previousPrototypeLocality = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "isLocalProject",
+    );
+    Deno.env.delete("WORKER_ISOLATION_ENABLED");
+    Deno.env.delete("WORKER_ISOLATION_API");
+    __resetPoolForTests();
+    injectApiResponse(new Response("project"));
+    let fsExistsCalls = 0;
+    let accessorCalls = 0;
+    let throwingDescriptorCalls = 0;
+
+    const makeRemoteCtx = (): HandlerContext => {
+      const ctx = createResponseCtx(false, null);
+      delete (ctx as { isLocalProject?: boolean }).isLocalProject;
+      ctx.adapter.fs.exists = () => {
+        fsExistsCalls++;
+        return Promise.resolve(false);
+      };
+      return ctx;
+    };
+    const inherited = makeRemoteCtx();
+    Object.setPrototypeOf(inherited, { isLocalProject: true });
+    const accessor = Object.defineProperty(
+      makeRemoteCtx(),
+      "isLocalProject",
+      {
+        get() {
+          accessorCalls++;
+          return true;
+        },
+      },
+    );
+    const throwingProxy = new Proxy(makeRemoteCtx(), {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "isLocalProject") {
+          throwingDescriptorCalls++;
+          throw new Error("locality descriptor unavailable");
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    try {
+      for (const ctx of [inherited, accessor, throwingProxy]) {
+        const result = await new ApiHandlerWrapper(ctx.projectDir, ctx.adapter).handle(
+          new Request("https://project.example/api/data"),
+          ctx,
+        );
+        assertEquals(result.response?.status, 200);
+      }
+
+      const poisoned = makeRemoteCtx();
+      Object.defineProperty(Object.prototype, "isLocalProject", {
+        configurable: true,
+        value: true,
+      });
+      const result = await new ApiHandlerWrapper(
+        poisoned.projectDir,
+        poisoned.adapter,
+      ).handle(
+        new Request("https://project.example/api/data"),
+        poisoned,
+      );
+      assertEquals(result.response?.status, 200);
+    } finally {
+      if (previousPrototypeLocality) {
+        Object.defineProperty(
+          Object.prototype,
+          "isLocalProject",
+          previousPrototypeLocality,
+        );
+      } else {
+        delete (Object.prototype as { isLocalProject?: boolean }).isLocalProject;
+      }
+      __resetPoolForTests();
+      if (previousMaster === undefined) Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      else Deno.env.set("WORKER_ISOLATION_ENABLED", previousMaster);
+      if (previousApi === undefined) Deno.env.delete("WORKER_ISOLATION_API");
+      else Deno.env.set("WORKER_ISOLATION_API", previousApi);
+    }
+
+    assertEquals(fsExistsCalls, 0);
+    assertEquals(accessorCalls, 0);
+    assertEquals(throwingDescriptorCalls > 0, true);
+  });
+
   it("forwards environmentName into multi-project request context", async () => {
     const captured: { options?: Record<string, unknown> } = {};
     const handler = new ApiHandlerWrapper("/tmp/project", createCtx(captured).adapter);

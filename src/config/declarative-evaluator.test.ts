@@ -687,6 +687,42 @@ export default process.env;`,
     assertEquals(located.location?.fileName, "veryfront.config.ts");
   });
 
+  it("reports only the validated selected config basename", async () => {
+    for (
+      const fileName of [
+        "veryfront.config.js",
+        "veryfront.config.ts",
+        "veryfront.config.mjs",
+      ] as const
+    ) {
+      const error = await assertRejects(
+        () =>
+          evaluateDeclarativeConfig({
+            source: "export default process.env;",
+            fileName,
+            environmentName: "production",
+            environment: {},
+          }),
+        DeclarativeConfigEvaluationError,
+      ) as DeclarativeConfigEvaluationError;
+      assertEquals(error.location?.fileName, fileName);
+    }
+
+    const invalid = await assertRejects(
+      () =>
+        evaluateDeclarativeConfig({
+          source: "export default {};",
+          fileName: "/tenant/private/veryfront.config.ts",
+          environmentName: "production",
+          environment: {},
+        } as never),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+    assertEquals(invalid.code, "input-invalid");
+    assertEquals(invalid.reason, "config-file-name");
+    assertEquals(invalid.location, null);
+  });
+
   it("counts every ECMAScript line terminator in source locations", async () => {
     for (
       const [name, terminator] of [
@@ -1186,6 +1222,10 @@ export default process.env;`,
     assertEquals(Object.isFrozen(workerPayload), true);
     assertEquals(Object.isFrozen(workerPayload.evaluationOptions), true);
     assertEquals(
+      workerPayload.evaluationOptions.fileName,
+      "veryfront.config.ts",
+    );
+    assertEquals(
       await evaluateDeclarativeConfig(workerPayload.evaluationOptions),
       { title: "original" },
     );
@@ -1241,6 +1281,7 @@ export default process.env;`,
     for (
       const key of [
         "source",
+        "fileName",
         "environmentName",
         "environment",
         "preparedContext",

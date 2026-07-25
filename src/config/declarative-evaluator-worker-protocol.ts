@@ -15,7 +15,9 @@ import {
   type DeclarativeConfigErrorPhase,
   type DeclarativeConfigErrorReason,
   DeclarativeConfigEvaluationError,
+  type DeclarativeConfigFileName,
   type DeclarativeConfigSourceLocation,
+  isDeclarativeConfigFileName,
   type PreparedDeclarativeConfigWorkerPayload,
 } from "./declarative-evaluator.ts";
 import { canonicalizeConfigSnapshot, type ConfigSnapshotRecord } from "./snapshot.ts";
@@ -37,7 +39,7 @@ const CACHE_FINGERPRINT_PREFIX = "ctx1:";
 const CACHE_FINGERPRINT_DIGEST_LENGTH = 64;
 
 /** Version of the worker request/response envelope contract. */
-export const DECLARATIVE_CONFIG_WORKER_PROTOCOL_VERSION = 1;
+export const DECLARATIVE_CONFIG_WORKER_PROTOCOL_VERSION = 2;
 
 /** The already-coupled cache identity and evaluator input sent to the worker. */
 export type DeclarativeConfigWorkerRequest = PreparedDeclarativeConfigWorkerPayload;
@@ -116,6 +118,7 @@ const ERROR_REASON_TABLE = ObjectFreeze(
     "ast-nodes": true,
     "ast-shape": true,
     "binding-count": true,
+    "config-file-name": true,
     "crypto-unavailable": true,
     "dangerous-key": true,
     "duplicate-binding": true,
@@ -392,6 +395,7 @@ function isLegalErrorTuple(
     case "input-invalid":
       return phase === "input" &&
         isOneOf(reason, [
+          "config-file-name",
           "environment-accessor",
           "environment-key",
           "environment-name",
@@ -528,6 +532,7 @@ function isCacheFingerprint(value: unknown): value is string {
 function captureLocation(
   value: unknown,
   maximumOffset = Number.MAX_SAFE_INTEGER,
+  expectedFileName?: DeclarativeConfigFileName,
 ): DeclarativeConfigSourceLocation | null {
   if (value === null) return null;
 
@@ -553,7 +558,8 @@ function captureLocation(
     offset > maximumOffset ||
     line > offset + 1 ||
     column > offset ||
-    captured.fileName !== DECLARATIVE_CONFIG_FILE_NAME
+    !isDeclarativeConfigFileName(captured.fileName) ||
+    (expectedFileName !== undefined && captured.fileName !== expectedFileName)
   ) {
     return failProtocol();
   }
@@ -562,7 +568,7 @@ function captureLocation(
     line: number;
     column: number;
     offset: number;
-    fileName: typeof DECLARATIVE_CONFIG_FILE_NAME;
+    fileName: DeclarativeConfigFileName;
   };
   defineDataProperty(location, "line", line);
   defineDataProperty(location, "column", column);
@@ -570,7 +576,7 @@ function captureLocation(
   defineDataProperty(
     location,
     "fileName",
-    DECLARATIVE_CONFIG_FILE_NAME,
+    captured.fileName,
   );
   return ObjectFreeze(location);
 }
@@ -682,11 +688,13 @@ export function decodeDeclarativeConfigWorkerRequest(
 
   const evaluationOptions = captureExactRecord(request.evaluationOptions, [
     "source",
+    "fileName",
     "environmentName",
     "environment",
   ]);
   if (
     typeof evaluationOptions.source !== "string" ||
+    !isDeclarativeConfigFileName(evaluationOptions.fileName) ||
     typeof evaluationOptions.environmentName !== "string"
   ) {
     return failProtocol();
@@ -694,10 +702,12 @@ export function decodeDeclarativeConfigWorkerRequest(
 
   const detachedOptions = ObjectCreate(null) as {
     source: string;
+    fileName: DeclarativeConfigFileName;
     environmentName: string;
     environment: Readonly<Record<string, string>>;
   };
   defineDataProperty(detachedOptions, "source", evaluationOptions.source);
+  defineDataProperty(detachedOptions, "fileName", evaluationOptions.fileName);
   defineDataProperty(
     detachedOptions,
     "environmentName",
@@ -797,6 +807,7 @@ export function createDeclarativeConfigWorkerErrorResponse(
 function decodeErrorDTO(
   value: unknown,
   maximumSourceOffset: number,
+  expectedFileName: DeclarativeConfigFileName,
 ): DeclarativeConfigWorkerErrorDTO {
   const error = captureExactRecord(value, [
     "code",
@@ -814,7 +825,11 @@ function decodeErrorDTO(
     return failProtocol();
   }
 
-  const location = captureLocation(error.location, maximumSourceOffset);
+  const location = captureLocation(
+    error.location,
+    maximumSourceOffset,
+    expectedFileName,
+  );
   if (
     !isLegalErrorTuple(
       error.code,
@@ -844,10 +859,12 @@ function decodeErrorDTO(
 export function decodeDeclarativeConfigWorkerResponse(
   value: unknown,
   maximumSourceOffset: number,
+  expectedFileName: DeclarativeConfigFileName = DECLARATIVE_CONFIG_FILE_NAME,
 ): DeclarativeConfigWorkerSuccessResponse {
   if (
     !NumberIsSafeInteger(maximumSourceOffset) ||
-    maximumSourceOffset < 0
+    maximumSourceOffset < 0 ||
+    !isDeclarativeConfigFileName(expectedFileName)
   ) {
     return failProtocol();
   }
@@ -871,6 +888,10 @@ export function decodeDeclarativeConfigWorkerResponse(
 
   if (ok !== false) return failProtocol();
   const errorResponse = captureExactRecord(value, ["ok", "error"]);
-  const error = decodeErrorDTO(errorResponse.error, maximumSourceOffset);
+  const error = decodeErrorDTO(
+    errorResponse.error,
+    maximumSourceOffset,
+    expectedFileName,
+  );
   throw new DeclarativeConfigEvaluationError(error);
 }

@@ -131,7 +131,6 @@ async function removeFixture(fixture: PreparedFixture): Promise<void> {
 
 testSuite(
   "prepared API loader real-worker compatibility",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterAll(async () => {
       const { stop } = await import("veryfront/extensions/bundler");
