@@ -24,6 +24,8 @@ export interface RuntimeUsage {
   totalTokens?: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  /** Compatibility alias for {@link RuntimeUsage.cacheReadInputTokens}. */
+  cachedInputTokens?: number;
   reasoningTokens?: number;
   billableInputTokens?: number;
   billableOutputTokens?: number;
@@ -65,6 +67,7 @@ const RUNTIME_USAGE_NUMERIC_FIELDS = [
 
 const RUNTIME_USAGE_FIELDS = [
   ...RUNTIME_USAGE_NUMERIC_FIELDS.map(([field]) => field),
+  "cachedInputTokens",
   "costSource",
   "billingMode",
   "usageCaptureStatus",
@@ -194,7 +197,7 @@ export function mergeRuntimeUsage(
   const normalizedNumbers = Object.create(null) as RuntimeUsage;
 
   for (const [field, kind] of RUNTIME_USAGE_NUMERIC_FIELDS) {
-    if (kind === "total") continue;
+    if (kind === "total" || field === "cacheReadInputTokens") continue;
     const read = kind === "token" ? readRuntimeTokenCount : readRuntimeCost;
     const value = latestValidValue(
       incoming[field],
@@ -204,6 +207,14 @@ export function mergeRuntimeUsage(
     if (value !== undefined) {
       normalizedNumbers[field] = value;
     }
+  }
+
+  const cacheReadInputTokens = readRuntimeTokenCount(incoming.cacheReadInputTokens) ??
+    readRuntimeTokenCount(incoming.cachedInputTokens) ??
+    readRuntimeTokenCount(previous.cacheReadInputTokens) ??
+    readRuntimeTokenCount(previous.cachedInputTokens);
+  if (cacheReadInputTokens !== undefined) {
+    normalizedNumbers.cacheReadInputTokens = cacheReadInputTokens;
   }
 
   const reportedTotal = latestValidValue(
@@ -233,6 +244,9 @@ export function mergeRuntimeUsage(
     const value = normalizedNumbers[field];
     if (value !== undefined) {
       defineRuntimeUsageDataProperty(merged, field, value);
+      if (field === "cacheReadInputTokens") {
+        defineRuntimeUsageDataProperty(merged, "cachedInputTokens", value);
+      }
     }
   }
 

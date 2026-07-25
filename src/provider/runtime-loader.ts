@@ -1,4 +1,5 @@
 import { isNumberArray } from "./runtime-loader/provider-embedding-responses.ts";
+import { createError, toError } from "#veryfront/errors";
 import {
   mergeUsage,
   readGatewayBillingMode,
@@ -194,6 +195,14 @@ function toOpenAICompatibleUserContent(
   return content.length > 0 ? content : readTextParts(parts);
 }
 
+function incompatibleProviderReplayError(subject: "calls" | "results"): Error {
+  return toError(createError({
+    type: "config",
+    message:
+      `OpenAI-compatible provider-executed assistant tool ${subject} cannot be replayed through Chat Completions`,
+  }));
+}
+
 /** Convert runtime prompt messages into OpenAI-compatible chat messages. */
 export function toOpenAICompatibleMessages(
   prompt: readonly ModelRuntimePromptMessage[],
@@ -225,14 +234,10 @@ export function toOpenAICompatibleMessages(
             continue;
           }
           if (part.type === "tool-result") {
-            throw new TypeError(
-              "OpenAI-compatible provider-executed assistant tool results cannot be replayed through Chat Completions",
-            );
+            throw incompatibleProviderReplayError("results");
           }
           if (part.providerExecuted === true) {
-            throw new TypeError(
-              "OpenAI-compatible provider-executed assistant tool calls cannot be replayed through Chat Completions",
-            );
+            throw incompatibleProviderReplayError("calls");
           }
 
           toolCalls.push({

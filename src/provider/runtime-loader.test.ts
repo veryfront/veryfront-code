@@ -1,9 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { fromError } from "#veryfront/errors";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { assertGreaterOrEqual } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
-import { withToolInputStatusTransitions } from "./runtime-loader.ts";
+import { toOpenAICompatibleMessages, withToolInputStatusTransitions } from "./runtime-loader.ts";
 import { createOpenAIModelRuntime } from "../../extensions/ext-llm-openai/src/openai-provider.ts";
 
 type Deferred<T> = {
@@ -81,6 +82,48 @@ function readRequestBody(init: RequestInit | undefined): string | null {
 }
 
 describe("provider/runtime-loader", () => {
+  it("classifies incompatible provider-executed replay as a configuration error", () => {
+    for (
+      const testCase of [
+        {
+          part: {
+            type: "tool-call" as const,
+            toolCallId: "provider-call-1",
+            toolName: "web_search",
+            input: { query: "Veryfront" },
+            providerExecuted: true as const,
+          },
+          subject: "calls",
+        },
+        {
+          part: {
+            type: "tool-result" as const,
+            toolCallId: "provider-call-1",
+            toolName: "web_search",
+            result: { type: "computer_initialize_state", id: "17" },
+            providerExecuted: true as const,
+          },
+          subject: "results",
+        },
+      ]
+    ) {
+      const message =
+        `OpenAI-compatible provider-executed assistant tool ${testCase.subject} cannot be replayed through Chat Completions`;
+      const error = assertThrows(
+        () =>
+          toOpenAICompatibleMessages([{
+            role: "assistant",
+            content: [testCase.part],
+          }]),
+        Error,
+      );
+
+      assertEquals(error.name, "VeryfrontError[config]");
+      assertEquals(fromError(error), { type: "config", message });
+      assertEquals(error.message, message);
+    }
+  });
+
   it("emits pending_input and streaming_input transitions when tool input goes silent and resumes", async () => {
     const pendingAfterStart = deferred("pending_input after tool-input-start");
     const pendingAfterDelta = deferred("pending_input after tool-input-delta");
