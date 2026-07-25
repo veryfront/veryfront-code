@@ -8,6 +8,8 @@ import {
   createObserverClass,
   createWindowStub,
 } from "./dom-stubs.ts";
+import { resetSSRGlobalsState } from "./context.ts";
+import { setupSSRGlobals } from "./index.ts";
 
 describe("rendering/ssr-globals/dom-stubs", () => {
   describe("createElementStub", () => {
@@ -244,6 +246,88 @@ describe("rendering/ssr-globals/dom-stubs", () => {
       assertEquals(win.URL, globalThis.URL);
       assertEquals(win.TextEncoder, globalThis.TextEncoder);
       assertEquals(win.TextDecoder, globalThis.TextDecoder);
+    });
+
+    it("should provide observer constructors", () => {
+      const win = createWindowStub();
+      assertEquals(typeof win.ResizeObserver, "function");
+      assertEquals(typeof win.IntersectionObserver, "function");
+      assertEquals(typeof win.MutationObserver, "function");
+    });
+  });
+
+  describe("setupSSRGlobals", () => {
+    type ObserverStubConstructor = new (callback?: unknown) => {
+      observe: () => void;
+      unobserve: () => void;
+      disconnect: () => void;
+      takeRecords: () => [];
+    };
+
+    const globalNames = [
+      "window",
+      "document",
+      "navigator",
+      "location",
+      "history",
+      "localStorage",
+      "sessionStorage",
+      "matchMedia",
+      "getComputedStyle",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "self",
+      "__VERYFRONT_SSR__",
+      "Element",
+      "HTMLElement",
+      "SVGElement",
+      "Node",
+      "Text",
+      "Comment",
+      "DocumentFragment",
+      "ResizeObserver",
+      "IntersectionObserver",
+      "MutationObserver",
+    ] as const;
+
+    it("should mirror observer constructors onto window", () => {
+      const originalDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>();
+      for (const name of globalNames) {
+        originalDescriptors.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+        Reflect.deleteProperty(globalThis, name);
+      }
+
+      try {
+        resetSSRGlobalsState();
+        setupSSRGlobals();
+
+        const globalRecord = globalThis as Record<string, unknown>;
+        const windowStub = globalRecord.window as {
+          ResizeObserver: ObserverStubConstructor;
+          IntersectionObserver: ObserverStubConstructor;
+          MutationObserver: ObserverStubConstructor;
+        };
+
+        for (
+          const name of ["ResizeObserver", "IntersectionObserver", "MutationObserver"] as const
+        ) {
+          assertEquals(windowStub[name], globalRecord[name]);
+          const observer = new windowStub[name](() => {});
+          observer.observe();
+          observer.disconnect();
+          assertEquals(observer.takeRecords().length, 0);
+        }
+      } finally {
+        resetSSRGlobalsState();
+        for (const name of globalNames) {
+          const descriptor = originalDescriptors.get(name);
+          if (descriptor) {
+            Object.defineProperty(globalThis, name, descriptor);
+          } else {
+            Reflect.deleteProperty(globalThis, name);
+          }
+        }
+      }
     });
   });
 

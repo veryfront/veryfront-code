@@ -371,6 +371,9 @@ export function createWindowStub(): {
   URLSearchParams: typeof globalThis.URLSearchParams;
   TextEncoder: typeof globalThis.TextEncoder;
   TextDecoder: typeof globalThis.TextDecoder;
+  ResizeObserver: ReturnType<typeof createObserverClass>;
+  IntersectionObserver: ReturnType<typeof createObserverClass>;
+  MutationObserver: ReturnType<typeof createObserverClass>;
 } {
   return {
     __veryfrontSSRStub: true,
@@ -486,6 +489,9 @@ export function createWindowStub(): {
     URLSearchParams: globalThis.URLSearchParams,
     TextEncoder: globalThis.TextEncoder,
     TextDecoder: globalThis.TextDecoder,
+    ResizeObserver: createObserverClass("ResizeObserver"),
+    IntersectionObserver: createObserverClass("IntersectionObserver"),
+    MutationObserver: createObserverClass("MutationObserver"),
   };
 }
 
