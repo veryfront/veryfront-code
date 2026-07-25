@@ -13,6 +13,8 @@ export type {
   ChatMessage,
   ChatMessagePart,
   ChatReasoningPart,
+  ChatSourceDocumentPart,
+  ChatSourceUrlPart,
   ChatStatus,
   ChatStepPart,
   ChatStreamEvent,

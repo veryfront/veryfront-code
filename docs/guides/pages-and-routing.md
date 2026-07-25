@@ -153,8 +153,8 @@ function PageTitle() {
 ### Reading server data from a layout or nested component
 
 A page's [`getServerData`](./data-fetching.md) props are passed to the page
-component. To read them from a layout or a deeply-nested component — without
-prop-drilling — use `usePageContext().data`:
+component. To read them from a layout or a deeply-nested component without
+prop-drilling, use `usePageContext().data`:
 
 ```tsx
 import { usePageContext } from "veryfront/context";

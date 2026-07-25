@@ -156,6 +156,38 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes source URLs as durable custom events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const sourceUrl = {
+      type: "source-url" as const,
+      sourceId: "web-1",
+      url: "https://example.com/reference",
+      title: "Reference",
+    };
+
+    assertEquals(encoder.encode(sourceUrl), [{
+      type: conversationRunEventTypes.custom,
+      name: "source-url",
+      value: sourceUrl,
+    }]);
+  });
+
+  it("encodes files as durable custom events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const file = {
+      type: "file" as const,
+      url: "https://cdn.example.com/report.pdf",
+      mediaType: "application/pdf",
+      filename: "report.pdf",
+    };
+
+    assertEquals(encoder.encode(file), [{
+      type: conversationRunEventTypes.custom,
+      name: "file",
+      value: file,
+    }]);
+  });
+
   it("encodes and normalizes whole event lists", () => {
     const events = [
       { type: "text-start", id: "msg-1" },

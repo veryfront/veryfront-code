@@ -44,7 +44,7 @@ used by a server data hook.
 
 The `props` you return are passed to the page component. To read them from a
 layout or a nested component without prop-drilling, use `usePageContext().data`
-(see [Pages and routing](./pages-and-routing.md)) — it holds the same `props`
+(see [Pages and routing](./pages-and-routing.md)). It holds the same `props`
 object on the server render, in the hydration markup, and after client-side
 navigation.
 
