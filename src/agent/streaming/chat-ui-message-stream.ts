@@ -217,8 +217,9 @@ function observeChatStreamEvent(input: {
   event: ChatStreamEvent;
   responseMessageId: string;
   state: FrameworkUiMessageState;
+  replaceExistingSourceDocument?: boolean;
 }): void {
-  const { event, responseMessageId, state } = input;
+  const { event, responseMessageId, state, replaceExistingSourceDocument = false } = input;
 
   switch (event.type) {
     case "text-start": {
@@ -381,7 +382,8 @@ function observeChatStreamEvent(input: {
       return;
     }
     case "source-document": {
-      if (state.sourceDocumentParts.has(event.sourceId)) {
+      const existingSource = state.sourceDocumentParts.get(event.sourceId);
+      if (existingSource && !replaceExistingSourceDocument) {
         return;
       }
       state.sourceDocumentParts.set(event.sourceId, {
@@ -390,9 +392,11 @@ function observeChatStreamEvent(input: {
         mediaType: event.mediaType,
         title: event.title,
         ...(event.filename ? { filename: event.filename } : {}),
-        order: state.nextOrder,
+        order: existingSource?.order ?? state.nextOrder,
       });
-      state.nextOrder += 1;
+      if (!existingSource) {
+        state.nextOrder += 1;
+      }
       return;
     }
     case "source-url": {
@@ -613,6 +617,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
     onError: options.onError,
   });
   const materializedToolCallIds = new Set<string>();
+  const derivedSourceDocumentIds = new Set<string>();
   let finishReason: ChatFinishReason = "stop";
 
   return normalizeChatUiMessageStream(
@@ -637,14 +642,19 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         const chatEvents = chatEventEncoder.encode(event);
         finishReason = chatEventEncoder.state.finishReason;
         for (const chatEvent of chatEvents) {
+          const replacesDerivedSourceDocument = chatEvent.type === "source-document" &&
+            state.sourceDocumentParts.has(chatEvent.sourceId) &&
+            derivedSourceDocumentIds.delete(chatEvent.sourceId);
           const isDuplicateSourceDocument = chatEvent.type === "source-document" &&
-            state.sourceDocumentParts.has(chatEvent.sourceId);
+            state.sourceDocumentParts.has(chatEvent.sourceId) &&
+            !replacesDerivedSourceDocument;
           const isDuplicateSourceUrl = chatEvent.type === "source-url" &&
             state.sourceUrlParts.has(chatEvent.sourceId);
           observeChatStreamEvent({
             event: chatEvent,
             responseMessageId,
             state,
+            replaceExistingSourceDocument: replacesDerivedSourceDocument,
           });
           const chunk = toUiChunk(chatEvent);
           if (chunk && !isDuplicateSourceDocument && !isDuplicateSourceUrl) {
@@ -661,6 +671,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
           if (!sourceChunk || state.sourceDocumentParts.has(sourceChunk.sourceId)) {
             continue;
           }
+          derivedSourceDocumentIds.add(sourceChunk.sourceId);
           observeChatStreamEvent({
             event: sourceChunk,
             responseMessageId,

@@ -183,6 +183,71 @@ describe("createChatUiMessageStreamFromDataStream", () => {
     );
   });
 
+  it("replaces a derived source with richer upstream metadata", async () => {
+    const path = "knowledge/product/limits.md";
+    const fallbackSource = {
+      type: "source-document" as const,
+      sourceId: path,
+      mediaType: "text/markdown",
+      title: path,
+      filename: path,
+    };
+    const upstreamSource = {
+      type: "source-document" as const,
+      sourceId: path,
+      mediaType: "text/x-markdown",
+      title: "Curated product limits",
+      filename: "limits.md",
+    };
+    let finish: ChatUiMessageStreamFinish | undefined;
+    const stream = createSseStream([
+      { type: "message-start", messageId: "framework-message" },
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-1",
+        toolName: "get_file",
+        input: { path },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "tool-1",
+        output: { path, type: "file", content: "# Limits" },
+      },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "The annual limit is 300 KEUR." },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "data",
+        data: {
+          name: "source-document",
+          value: upstreamSource,
+        },
+      },
+      { type: "message-finish" },
+    ]);
+
+    const chunks = await collectChunks(
+      createChatUiMessageStreamFromDataStream(
+        { stream },
+        {
+          generateMessageId: () => "assistant-message",
+          onFinish: (value) => {
+            finish = value;
+          },
+        },
+      ),
+    );
+
+    assertEquals(
+      chunks.filter((chunk) => chunk.type === "source-document"),
+      [fallbackSource, upstreamSource],
+    );
+    assertEquals(
+      finish?.responseMessage.parts.filter((part) => part.type === "source-document"),
+      [upstreamSource],
+    );
+  });
+
   it("persists ordered source urls once by source id in the final response message", async () => {
     let finish: ChatUiMessageStreamFinish | undefined;
     const stream = createSseStream([
