@@ -677,6 +677,63 @@ describe("adapter-factory", () => {
       assertEquals(calls.runWithContext !== undefined || threw, true);
     });
 
+    it("refreshes mutable source before loading proxy config", async () => {
+      let sourceFresh = false;
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => fn(),
+        ensureSourceSnapshotFresh: () => {
+          sourceFresh = true;
+          return Promise.resolve();
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Error(`Not found: ${path}`));
+          }
+          return Promise.resolve(
+            `export default { router: "${sourceFresh ? "pages" : "app"}" };`,
+          );
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+      });
+
+      assertEquals(sourceFresh, true);
+      assertEquals(result.config?.router, "pages");
+    });
+
     it("re-throws config loading errors in proxy mode", async () => {
       // Use an extended adapter whose runWithContext throws
       const base = createMockAdapter({});

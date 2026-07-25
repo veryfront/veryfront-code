@@ -112,6 +112,13 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "refreshSourceSnapshot"));
     });
 
+    it("should expose source snapshot freshness methods", () => {
+      withAdapter((adapter) => {
+        assertMethod(adapter, "ensureSourceSnapshotFresh");
+        assertMethod(adapter, "getSourceSnapshotVersion");
+      });
+    });
+
     it("should have getManagerStats method", () => {
       withAdapter((adapter) => assertMethod(adapter, "getManagerStats"));
     });
@@ -186,6 +193,83 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(capturedBranch, "main");
         assertEquals(cachedBeforeRefresh, "stale-content");
         assertEquals(cachedAfterRefresh, undefined);
+      });
+    });
+
+    it("clears request-scoped files only when a freshness check advances the snapshot", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let freshnessReason: string | undefined;
+        let sourceSnapshotVersion = 6;
+        let freshnessChecks = 0;
+
+        (adapter as any).manager = {
+          getAdapter() {
+            return Promise.resolve({
+              ensureSourceSnapshotFresh(reason?: string) {
+                freshnessReason = reason;
+                freshnessChecks++;
+                if (freshnessChecks === 1) sourceSnapshotVersion++;
+                return Promise.resolve();
+              },
+              getSourceSnapshotVersion() {
+                return sourceSnapshotVersion;
+              },
+            });
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            async () => {
+              setRequestScopedFile("file:pages/index.mdx", "stale-content");
+              await adapter.ensureSourceSnapshotFresh("page-routing");
+              assertEquals(getRequestScopedFile("file:pages/index.mdx"), undefined);
+              assertEquals(await adapter.getSourceSnapshotVersion(), 7);
+
+              setRequestScopedFile("file:pages/index.mdx", "current-content");
+              await adapter.ensureSourceSnapshotFresh("page-routing");
+              assertEquals(getRequestScopedFile("file:pages/index.mdx"), "current-content");
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(freshnessReason, "page-routing");
+      });
+    });
+
+    it("preserves optional snapshot capabilities for legacy project adapters", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve({}),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            async () => {
+              await adapter.ensureSourceSnapshotFresh("config-load");
+              assertEquals(await adapter.getSourceSnapshotVersion(), undefined);
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
       });
     });
 
