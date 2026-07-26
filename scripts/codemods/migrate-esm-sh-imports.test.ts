@@ -596,6 +596,31 @@ Deno.test("esm-sh codemod handles a package name that collides with Object.proto
   assertEquals(result.conflicts, []);
 });
 
+Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, no prototype pollution', () => {
+  // If updatedDeps is a regular object, `updatedDeps["__proto__"] = version`
+  // triggers the inherited setter and mutates the object's prototype instead
+  // of creating an own property.  With a null-prototype object the key is
+  // stored as a plain own property.
+  //
+  // NOTE: { "__proto__": "1.0.0" } in an object literal is NOT an own property
+  // — JS interprets __proto__ as a prototype setter, so Object.entries returns
+  // nothing.  We must build the newPins argument on a null-prototype object so
+  // "__proto__" is a genuine own enumerable property that Object.entries can see.
+  const newPins = Object.create(null) as Record<string, string>;
+  newPins["__proto__"] = "1.0.0";
+  const { updatedDeps, conflicts } = mergeEsmShPins({}, newPins);
+
+  // The version must be stored and retrievable.
+  assert(Object.hasOwn(updatedDeps, "__proto__"), '"__proto__" must be an own property');
+  assertEquals(
+    (updatedDeps as Record<string, string>)["__proto__"],
+    "1.0.0",
+  );
+  // Object.prototype must be completely unaffected.
+  assertEquals(typeof ({} as Record<string, unknown>)["missingKey"], "undefined");
+  assertEquals(conflicts, []);
+});
+
 // ---------------------------------------------------------------------------
 // Non-top-level import declaration (Fix 2)
 // ---------------------------------------------------------------------------

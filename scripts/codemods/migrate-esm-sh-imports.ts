@@ -82,7 +82,11 @@ export interface EsmShReport {
   pins: Record<string, string>;
   needsResolution: string[];
   conflicts: Array<{ pkg: string; existing: string; fromVersion: string }>;
-  /** Non-fatal errors encountered during the run (e.g. unreadable package.json). */
+  /**
+   * Errors encountered during the run.  May include a fatal abort reason (e.g.
+   * corrupt or unreadable package.json): when a fatal error is present no source
+   * files have been written and the process exits non-zero.
+   */
   errors: string[];
 }
 
@@ -280,7 +284,14 @@ export function mergeEsmShPins(
   existingDeps: Record<string, string>,
   newPins: Record<string, string>,
 ): PinMergeResult {
-  const updatedDeps = { ...existingDeps };
+  // Null-prototype object prevents a package named "__proto__" or "constructor"
+  // from triggering an inherited setter when updatedDeps[pkg] = version is executed.
+  // Object.assign copies only own enumerable properties from existingDeps, so the
+  // null prototype is established before any URL-derived keys are written.
+  const updatedDeps = Object.assign(
+    Object.create(null) as Record<string, string>,
+    existingDeps,
+  );
   const conflicts: Array<{ pkg: string; existing: string; fromVersion: string }> = [];
 
   for (const [pkg, version] of Object.entries(newPins)) {
