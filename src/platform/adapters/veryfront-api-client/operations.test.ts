@@ -192,6 +192,63 @@ describe("VeryfrontAPIOperations", () => {
     });
   });
 
+  describe("file detail metadata", () => {
+    it("preserves validated metadata for branch, environment, and release files", async () => {
+      const baseFile = {
+        id: "file-id",
+        version_id: "version-id",
+        path: "pages/index.tsx",
+        content: "export default null",
+        type: "page",
+        size: 321,
+        updated_at: "2026-07-25T12:34:56.000Z",
+      };
+      stubJsonFetch((url) => {
+        if (url.includes("/environments/")) {
+          return {
+            ...baseFile,
+            environment_id: "environment-id",
+            environment_name: "production",
+            release_id: "release-id",
+            release_version: "7",
+          };
+        }
+        if (url.includes("/releases/")) {
+          return {
+            ...baseFile,
+            release_id: "release-id",
+            release_version: "7",
+          };
+        }
+        return baseFile;
+      });
+
+      const operations = createOps();
+      const branch = await operations.getBranchFile(
+        "project-slug",
+        "main",
+        "pages/index.tsx",
+      );
+      const environment = await operations.getEnvironmentFile(
+        "project-slug",
+        "production",
+        "pages/index.tsx",
+      );
+      const release = await operations.getReleaseFile(
+        "project-slug",
+        "7",
+        "pages/index.tsx",
+      );
+
+      for (const detail of [branch, environment, release]) {
+        assertEquals(detail.type, "page");
+        assertEquals(detail.size, 321);
+        assertEquals(detail.updated_at, "2026-07-25T12:34:56.000Z");
+        assertEquals(detail.version_id, "version-id");
+      }
+    });
+  });
+
   describe("runtime server function access", () => {
     it("requests branch file lists with server functions for preview route discovery", async () => {
       let requestedUrl = "";

@@ -32,13 +32,14 @@ describe("veryfront/adapter-content-context", () => {
       summarizeFileList([
         { path: "pages/index.tsx", content: "export default function Page() {}" },
         { path: "docs/intro.mdx" },
+        { path: "pages/empty.tsx", content: "" },
         { path: "assets/logo.svg", content: "<svg />" },
       ]),
       {
-        totalFiles: 3,
-        filesWithContent: 2,
-        sourceFiles: 2,
-        sourceFilesWithContent: 1,
+        totalFiles: 4,
+        filesWithContent: 3,
+        sourceFiles: 3,
+        sourceFilesWithContent: 2,
       },
     );
   });

@@ -47,7 +47,9 @@ import { VERYFRONT_FS_ADAPTER_KIND } from "./adapter-kind.ts";
 import {
   clearCachedReleaseAssetManifests,
   registerManifestFetcherForRelease,
-  unregisterManifestFetcherForRelease,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import type {
+  ReleaseAssetManifestFetcherCleanup,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
@@ -185,6 +187,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
+  private disposed = false;
+  private contentContextRevision = 0;
 
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
@@ -215,6 +221,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private pendingStylePregeneration: PendingStylePregeneration | null = null;
   private styleSourceRevision = 0;
   private readonly styleConfigBindings = new IntrinsicWeakSet<object>();
+  private manifestFetcherCleanup: ReleaseAssetManifestFetcherCleanup | null = null;
 
   /** Per-request branch override (for branch preview URLs) */
   private requestBranch: string | null = null;
@@ -305,7 +312,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       hasResult: !!files,
       resultSize: files?.length ?? 0,
       hasContent: (files as Array<{ content?: string }> | undefined)?.filter((file) =>
-        !!file.content
+        file.content !== undefined
       )?.length ?? 0,
     });
 
@@ -451,19 +458,40 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async initialize(): Promise<void> {
+    this.assertNotDisposed();
+    if (this.initialized) return;
+
+    const pendingInitialization = this.initializationPromise;
+    if (pendingInitialization) {
+      await pendingInitialization;
+      return;
+    }
+
+    const generation = this.lifecycleGeneration;
+    const initialization = this.doInitialize(generation);
+    this.initializationPromise = initialization;
+
+    try {
+      await initialization;
+    } finally {
+      this.fileListReadyResolve?.();
+      this.fileListReadyResolve = null;
+      if (this.initializationPromise === initialization) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  private async doInitialize(generation: number): Promise<void> {
     const initStartTime = performance.now();
     const projectSlug = this.client.getProjectSlug();
+    this.assertLifecycleCurrent(generation);
 
     logger.debug("initialize START", {
       projectSlug,
       contentSource: this.contentSource,
       alreadyInitialized: this.initialized,
     });
-
-    if (this.initialized) {
-      logger.debug("Already initialized, skipping", { projectSlug });
-      return;
-    }
 
     const fileListReadyPromise = new Promise<void>((resolve) => {
       this.fileListReadyResolve = resolve;
@@ -473,6 +501,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     logger.debug("Step 1: client.initialize START", { projectSlug });
     const step1Start = performance.now();
     await this.client.initialize();
+    this.assertLifecycleCurrent(generation);
     logger.debug("Step 1: client.initialize DONE", {
       projectSlug,
       duration: `${(performance.now() - step1Start).toFixed(2)}ms`,
@@ -483,7 +512,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const step2Start = performance.now();
 
     const cachedProject = this.client.getCachedProject();
-    this.projectData = cachedProject ?? (await this.client.getProject(projectId));
+    const projectData = cachedProject ?? (await this.client.getProject(projectId));
+    this.assertLifecycleCurrent(generation);
+    this.projectData = projectData;
 
     logger.debug(
       `[VeryfrontFSAdapter] Step 2: getProject DONE (${cachedProject ? "from cache" : "from API"})`,
@@ -503,6 +534,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.contentSource,
         this.projectSlug,
       );
+      this.assertLifecycleCurrent(generation);
       this.setContentContext(resolvedContext);
       logger.debug("Step 3: resolveContentSource DONE", {
         projectSlug,
@@ -517,6 +549,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const contentContext = this.contentContext;
+    const contentContextRevision = this.contentContextRevision;
     if (!contentContext) {
       throw toError(
         createError({
@@ -539,9 +572,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     try {
       const files = await fetchFileListForContext(this.client, contentContext);
+      this.assertLifecycleCurrent(generation, contentContextRevision);
       const fileSummary = summarizeFileList(files);
 
       await this.cache.setAsync(cacheKey, files);
+      try {
+        this.assertLifecycleCurrent(generation, contentContextRevision);
+      } catch (error) {
+        // `setAsync` can populate the adapter-local fallback synchronously.
+        // Remove only that local entry; never delete a shared backend value
+        // that may already belong to a newer adapter instance.
+        this.cache.delete(cacheKey);
+        throw error;
+      }
       this.markSourceSnapshotChanged(files);
 
       this.fileListReadyResolve?.();
@@ -602,6 +645,37 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.fileListReadyResolve = null;
       throw error;
     }
+  }
+
+  private assertNotDisposed(): void {
+    if (!this.disposed) return;
+    throw API_CLIENT_ERROR.create({
+      detail: "Veryfront filesystem adapter has been disposed",
+      status: 409,
+    });
+  }
+
+  private isLifecycleCurrent(
+    generation: number,
+    contentContextRevision?: number,
+  ): boolean {
+    return !this.disposed &&
+      generation === this.lifecycleGeneration &&
+      (
+        contentContextRevision === undefined ||
+        contentContextRevision === this.contentContextRevision
+      );
+  }
+
+  private assertLifecycleCurrent(
+    generation: number,
+    contentContextRevision?: number,
+  ): void {
+    if (this.isLifecycleCurrent(generation, contentContextRevision)) return;
+    throw new DOMException(
+      "Veryfront filesystem adapter lifecycle was invalidated",
+      "AbortError",
+    );
   }
 
   private isPersistentCacheInvalidated(prefix: string): boolean {
@@ -736,7 +810,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   private scheduleFileListWarmup(reason: string, cacheKey?: string): void {
-    if (!this.initialized || !this.contentContext) return;
+    if (this.disposed || !this.initialized || !this.contentContext) return;
 
     const effectiveCacheKey = cacheKey ?? buildFileListCacheKey(this.contentContext);
 
@@ -749,12 +823,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const warmupContext = this.contentContext;
+    const generation = this.lifecycleGeneration;
+    const contentContextRevision = this.contentContextRevision;
     let warmupPromise: Promise<void> | null = null;
     warmupPromise = (async () => {
       try {
         const existing = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
           effectiveCacheKey,
         );
+        if (!this.isLifecycleCurrent(generation, contentContextRevision)) return;
 
         if (existing?.length) {
           logger.debug("Skipping file list warmup because cache is already populated", {
@@ -786,7 +863,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
           "file-list-warmup",
         );
         const files = await fetchFileListForContext(this.client, warmupContext);
+        if (!this.isLifecycleCurrent(generation, contentContextRevision)) return;
         await this.cache.setAsync(effectiveCacheKey, files);
+        if (!this.isLifecycleCurrent(generation, contentContextRevision)) {
+          this.cache.delete(effectiveCacheKey);
+          return;
+        }
         const fileSummary = summarizeFileList(files);
 
         if (
@@ -805,9 +887,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
           reason,
           cacheKey: effectiveCacheKey,
           totalFiles: files.length,
-          filesWithContent: files.filter((file) => file.content).length,
+          filesWithContent: files.filter((file) => file.content !== undefined).length,
         });
       } catch (error) {
+        if (!this.isLifecycleCurrent(generation, contentContextRevision)) {
+          logger.debug("File list warmup invalidated", {
+            reason,
+            cacheKey: effectiveCacheKey,
+          });
+          return;
+        }
         logger.warn("File list warmup failed", {
           reason,
           cacheKey: effectiveCacheKey,
@@ -851,7 +940,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     cacheKey: string,
     files: SourceSnapshotFile[],
   ): Promise<void> {
+    const generation = this.lifecycleGeneration;
+    const contentContextRevision = this.contentContextRevision;
     return this.runSourceSnapshotMutation(async () => {
+      if (!this.isLifecycleCurrent(generation, contentContextRevision)) return;
       const context = this.contentContext;
       if (!context || buildFileListCacheKey(context) !== cacheKey) {
         logger.debug("Discarding source snapshot for superseded content context", {
@@ -862,6 +954,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
 
       await this.cache.setAsync(cacheKey, files);
+      if (!this.isLifecycleCurrent(generation, contentContextRevision)) {
+        this.cache.delete(cacheKey);
+        return;
+      }
       this.readOps.clearFileListIndex();
       this.markSourceSnapshotChanged(files);
     });
@@ -900,6 +996,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private async performSourceSnapshotRefresh(reason: string): Promise<void> {
     await this.ensureInitialized();
+    const generation = this.lifecycleGeneration;
+    const contentContextRevision = this.contentContextRevision;
+    this.assertLifecycleCurrent(generation, contentContextRevision);
 
     if (!this.contentContext) {
       logger.debug("Skipping source snapshot refresh without content context", {
@@ -917,8 +1016,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const previousVersion = this.sourceSnapshotVersion;
     let refreshStyleRevision: number | undefined;
     const files = await fetchFileListForContext(this.client, refreshContext);
+    this.assertLifecycleCurrent(generation, contentContextRevision);
     const result = await this.runSourceSnapshotMutation(async () => {
       if (
+        !this.isLifecycleCurrent(generation, contentContextRevision) ||
         this.contentContext !== refreshContext ||
         this.getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
         this.sourceSnapshotVersion !== previousVersion
@@ -941,13 +1042,35 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
           this.cache.deleteAsync(cacheKey),
         ]);
+        if (
+          !this.isLifecycleCurrent(generation, contentContextRevision) ||
+          this.contentContext !== refreshContext ||
+          this.getCurrentSourceSnapshotIdentity() !== refreshIdentity
+        ) {
+          return { applied: false, sourceChanged: false };
+        }
       }
 
       await this.cache.setAsync(cacheKey, files);
+      if (
+        !this.isLifecycleCurrent(generation, contentContextRevision) ||
+        this.contentContext !== refreshContext ||
+        this.getCurrentSourceSnapshotIdentity() !== refreshIdentity
+      ) {
+        this.cache.delete(cacheKey);
+        return { applied: false, sourceChanged: false };
+      }
       this.branchMissRecoveryFailures.clear();
 
       if (sourceChanged) {
         await this.invalidateDerivedSourceCaches();
+        if (
+          !this.isLifecycleCurrent(generation, contentContextRevision) ||
+          this.contentContext !== refreshContext ||
+          this.getCurrentSourceSnapshotIdentity() !== refreshIdentity
+        ) {
+          return { applied: false, sourceChanged: false };
+        }
         // Publish freshness only after every cache derived from the previous
         // snapshot has been invalidated. Concurrent followers remain attached
         // to the refresh singleflight until this point.
@@ -970,6 +1093,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
+    this.assertLifecycleCurrent(generation, contentContextRevision);
     const fileSummary = summarizeFileList(files);
 
     if (
@@ -1115,17 +1239,37 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.lifecycleGeneration++;
+    this.contentContextRevision++;
     this.advanceStyleSourceRevision("dispose");
+    this.fileListReadyResolve?.();
+    this.fileListReadyResolve = null;
+    this.client.reset();
     this.wsManager.dispose();
+    this.manifestFetcherCleanup?.();
+    this.manifestFetcherCleanup = null;
     this.cache.clear();
+    this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.initializationPromise = null;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.branchMissRecoveryPromise = null;
     this.branchMissRecoveryGeneration++;
     this.branchMissRecoveryFailures.clear();
+    this.sourceSnapshotCheckedAt = 0;
+    this.sourceSnapshotVersion = 0;
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotFiles = undefined;
+    this.sourceSnapshotRefreshPromise = null;
+    this.sourceSnapshotMutationTail = Promise.resolve();
+    this.projectData = undefined;
+    this.contentContext = null;
+    this.requestBranch = null;
 
     logger.debug("Disposed");
   }
@@ -1139,6 +1283,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
+    this.assertNotDisposed();
+    const generation = this.lifecycleGeneration;
+    const contentContextRevision = this.contentContextRevision;
     if (!this.contentContext) {
       logger.debug("getAllSourceFiles called without contentContext", {
         initialized: this.initialized,
@@ -1152,6 +1299,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       "getAllSourceFiles",
       "getAllSourceFiles miss",
     );
+    this.assertLifecycleCurrent(generation, contentContextRevision);
     const cacheKey = cached?.cacheKey;
     const files = cached?.files;
 
@@ -1194,29 +1342,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
   async getFilePathByEntityIdAsync(
     entityId: string,
   ): Promise<{ path: string; body?: string } | undefined> {
+    this.assertNotDisposed();
+    const generation = this.lifecycleGeneration;
     const cachedPath = this.getFilePathByEntityId(entityId);
     if (cachedPath) return { path: cachedPath };
 
     logger.debug("Fetching file by entity ID from API", { entityId });
 
-    try {
-      const file = await this.client.getFileById(entityId);
-      if (!file) return undefined;
+    const file = await this.client.getFileById(entityId);
+    this.assertLifecycleCurrent(generation);
+    if (!file) return undefined;
 
-      logger.debug("File resolved from API", {
-        entityId,
-        path: file.path,
-        contentLength: file.content.length,
-      });
+    logger.debug("File resolved from API", {
+      entityId,
+      path: file.path,
+      contentLength: file.content.length,
+    });
 
-      return { path: file.path, body: file.content };
-    } catch (error) {
-      logger.warn("Failed to fetch file by entity ID", {
-        entityId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    }
+    return { path: file.path, body: file.content };
   }
 
   private advanceStyleSourceRevision(reason: string): number {
@@ -1232,6 +1375,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   createStyleConfigBinding(): StyleConfigBinding {
+    this.assertNotDisposed();
     const contentContext = this.contentContext;
     if (!contentContext) {
       throw toError(
@@ -1255,6 +1399,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     binding: StyleConfigBinding,
     config: Readonly<object>,
   ): boolean {
+    if (this.disposed) return false;
     if (
       typeof binding !== "object" ||
       binding === null ||
@@ -1295,6 +1440,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   setRequestToken(token: string): void {
+    this.assertNotDisposed();
     if (this.proxyMode) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -1307,6 +1453,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   clearRequestToken(): void {
+    this.assertNotDisposed();
     if (this.proxyMode) {
       throw API_CLIENT_ERROR.create({
         detail: "Proxy filesystem credentials are immutable and scoped to runWithContext()",
@@ -1318,6 +1465,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   setRequestBranch(branch: string | null): void {
+    this.assertNotDisposed();
     this.requestBranch = branch;
     this.syncClientContext();
   }
@@ -1327,11 +1475,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   clearRequestBranch(): void {
+    this.assertNotDisposed();
     this.requestBranch = null;
     this.syncClientContext();
   }
 
   setContentContext(context: ResolvedContentContext): void {
+    this.assertNotDisposed();
     const oldContext = this.contentContext;
     const contextChanged = hasContentContextChanged(oldContext, context);
 
@@ -1347,28 +1497,29 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contextWillChange: contextChanged,
     });
 
-    const oldReleaseId = oldContext?.releaseId;
     const nextReleaseId = context.releaseId;
 
-    // Unregister the manifest fetcher for the previous release (if any).
-    // Environment/domain contexts can also carry a deployed releaseId.
-    if (oldReleaseId && oldReleaseId !== nextReleaseId) {
-      unregisterManifestFetcherForRelease(oldReleaseId);
-    }
+    this.manifestFetcherCleanup?.();
+    this.manifestFetcherCleanup = null;
 
     // Register a per-releaseId manifest fetcher so production HTML can
     // consult ready manifests when the feature flag is on. Using the per-
     // releaseId registry ensures the correct project-scoped token is always
     // used, even under multi-tenant / proxy-manager operation.
     if (nextReleaseId) {
-      registerManifestFetcherForRelease(nextReleaseId, buildManifestFetcher(this.client));
+      this.manifestFetcherCleanup = registerManifestFetcherForRelease(
+        nextReleaseId,
+        buildManifestFetcher(this.client),
+      );
     }
 
     this.contentContext = context;
     this.syncClientContext();
 
     if (contextChanged) {
+      this.contentContextRevision++;
       this.advanceStyleSourceRevision("content-context-change");
+      this.readOps.clearFileListIndex();
       this.statOps.clearIndex();
       this.dirOps.clearTree();
       this.fileListWarmupPromise = null;

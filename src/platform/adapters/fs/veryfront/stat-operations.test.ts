@@ -219,6 +219,61 @@ describe("StatOperations", () => {
       await statOps.stat("pages/blog/index.mdx");
       assertEquals(statOps.getOriginalApiPath("pages/blog/index.mdx"), "pages/blog/");
     });
+
+    it("should load real metadata for an exact API-search fallback", async () => {
+      let detailReads = 0;
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.resolve([{ id: "file-1", path: "pages/new.tsx" }]),
+          getFile: () => {
+            detailReads++;
+            return Promise.resolve({
+              id: "file-1",
+              version_id: "version-7",
+              path: "pages/new.tsx",
+              content: "export default null",
+              type: "page",
+              size: 321,
+              updated_at: "2026-07-25T12:34:56.000Z",
+            });
+          },
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      const first = await statOps.stat("pages/new.tsx");
+      const second = await statOps.stat("pages/new.tsx");
+
+      assertEquals(first.size, 321);
+      assertEquals(first.mtime?.toISOString(), "2026-07-25T12:34:56.000Z");
+      assertEquals(second.size, 321);
+      assertEquals(detailReads, 1);
+    });
+
+    it("should reject invalid file metadata instead of fabricating stat values", async () => {
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: () => Promise.resolve([{ path: "pages/bad.tsx" }]),
+          getFile: () =>
+            Promise.resolve({
+              path: "pages/bad.tsx",
+              content: "",
+              type: "page",
+              size: -1,
+              updated_at: "not-a-date",
+            }),
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+      );
+
+      await assertRejects(
+        () => statOps.stat("pages/bad.tsx"),
+        TypeError,
+        "size must be non-negative",
+      );
+    });
   });
 
   describe("exists", () => {
@@ -616,6 +671,56 @@ describe("StatOperations", () => {
       assertEquals(exists2, true);
       assertEquals(exists3, true);
       assertEquals(buildCount, 1);
+    });
+
+    it("should retry after an index build fails", async () => {
+      let attempts = 0;
+      const contextProvider: ContentContextProvider = {
+        ...createBranchContextWithFiles([]),
+        getFileList: () => {
+          attempts++;
+          return attempts === 1
+            ? Promise.reject(new Error("malformed file list"))
+            : Promise.resolve([makeFile("pages/recovered.tsx")]);
+        },
+      };
+      const statOps = createStatOps(createMockClient(), new PathNormalizer(), contextProvider);
+
+      await assertRejects(
+        () => statOps.stat("pages/recovered.tsx"),
+        Error,
+        "malformed file list",
+      );
+      assertEquals((await statOps.stat("pages/recovered.tsx")).isFile, true);
+      assertEquals(attempts, 2);
+    });
+
+    it("should discard an in-flight index build after clearIndex", async () => {
+      let resolveFirst: ((files: ProjectFile[]) => void) | undefined;
+      let attempts = 0;
+      const contextProvider: ContentContextProvider = {
+        ...createBranchContextWithFiles([]),
+        getFileList: () => {
+          attempts++;
+          if (attempts === 1) {
+            return new Promise<ProjectFile[]>((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return Promise.resolve([
+            makeFile("pages/fresh.tsx", { size: 222 }),
+          ]);
+        },
+      };
+      const statOps = createStatOps(createMockClient(), new PathNormalizer(), contextProvider);
+
+      const pendingStat = statOps.stat("pages/fresh.tsx");
+      await Promise.resolve();
+      statOps.clearIndex();
+      resolveFirst?.([makeFile("pages/stale.tsx", { size: 111 })]);
+
+      assertEquals((await pendingStat).size, 222);
+      assertEquals(attempts, 2);
     });
 
     it("should fall back to API when no file list provider exists", async () => {

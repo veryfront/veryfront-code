@@ -86,6 +86,8 @@ export interface ReleaseAssetManifestFetcher {
   >;
 }
 
+export type ReleaseAssetManifestFetcherCleanup = () => void;
+
 /** Per-releaseId fetcher registry (keyed by releaseId). */
 const fetcherRegistry = new Map<string, ReleaseAssetManifestFetcher>();
 
@@ -99,14 +101,24 @@ const fetcherRegistry = new Map<string, ReleaseAssetManifestFetcher>();
 export function registerManifestFetcherForRelease(
   releaseId: string,
   fetcher: ReleaseAssetManifestFetcher,
-): void {
+): ReleaseAssetManifestFetcherCleanup {
   fetcherRegistry.set(releaseId, fetcher);
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    if (fetcherRegistry.get(releaseId) === fetcher) {
+      fetcherRegistry.delete(releaseId);
+    }
+  };
 }
 
 /**
  * Remove the manifest fetcher for the given releaseId.
  *
- * Called when an adapter transitions away from a release context.
+ * This is an unconditional administrative removal. Adapter owners should use
+ * the cleanup returned by `registerManifestFetcherForRelease` so an older
+ * adapter cannot remove a newer registration for the same release.
  */
 export function unregisterManifestFetcherForRelease(releaseId: string): void {
   fetcherRegistry.delete(releaseId);

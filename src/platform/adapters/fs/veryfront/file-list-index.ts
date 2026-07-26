@@ -4,7 +4,12 @@ const logger = baseLogger.component("read-operations");
 
 interface FileListCacheEntry {
   path: string;
+  id?: string;
+  version_id?: string;
   content?: string;
+  type?: string;
+  size?: number;
+  updated_at?: string;
 }
 
 export interface FileListMatchResult {
@@ -16,10 +21,38 @@ export interface FileListMatchResult {
 
 const INDEX_STALENESS_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
+function fileListEntriesEqual(
+  previous: FileListCacheEntry,
+  next: FileListCacheEntry,
+): boolean {
+  return previous.path === next.path &&
+    previous.id === next.id &&
+    previous.version_id === next.version_id &&
+    previous.content === next.content &&
+    previous.type === next.type &&
+    previous.size === next.size &&
+    previous.updated_at === next.updated_at;
+}
+
+function fileListsEqual(
+  previous: FileListCacheEntry[] | null,
+  next: FileListCacheEntry[],
+): boolean {
+  if (previous === null || previous.length !== next.length) return false;
+  return next.every((entry, index) => {
+    const previousEntry = previous[index];
+    return previousEntry !== undefined && fileListEntriesEqual(previousEntry, entry);
+  });
+}
+
+function copyFileList(entries: FileListCacheEntry[]): FileListCacheEntry[] {
+  return entries.map((entry) => ({ ...entry }));
+}
+
 export class FileListIndex {
   private index: Map<string, string> | null = null;
   private pathSet: Set<string> | null = null;
-  private indexKey: string | null = null;
+  private indexedFileList: FileListCacheEntry[] | null = null;
   private indexBuiltAt = 0;
   private indexFresh = false;
   private readyPromise: Promise<void> | null = null;
@@ -33,12 +66,10 @@ export class FileListIndex {
   }
 
   clear(): void {
-    if (!this.index) return;
-
-    const indexedWithContent = this.index.size;
+    const indexedWithContent = this.index?.size ?? 0;
     this.index = null;
     this.pathSet = null;
-    this.indexKey = null;
+    this.indexedFileList = null;
     this.indexBuiltAt = 0;
     this.indexFresh = false;
     logger.debug("Cleared file list index", { indexedWithContent });
@@ -79,7 +110,7 @@ export class FileListIndex {
     }
 
     const content = snapshot.content.get(normalizedPath);
-    if (!content) {
+    if (content === undefined) {
       logger.debug("File list index contains path without inline content", {
         path: normalizedPath,
         fresh: snapshot.fresh,
@@ -108,7 +139,7 @@ export class FileListIndex {
     normalizedPaths: string[],
   ): Promise<{ path: string; content: string } | undefined> {
     const match = await this.findFirstMatch(normalizedPaths);
-    if (match.status !== "hit" || !match.path || !match.content) return undefined;
+    if (match.status !== "hit" || !match.path || match.content === undefined) return undefined;
     return { path: match.path, content: match.content };
   }
 
@@ -124,7 +155,7 @@ export class FileListIndex {
       if (!snapshot.paths.has(path)) continue;
 
       const content = snapshot.content.get(path);
-      if (content) {
+      if (content !== undefined) {
         return {
           status: "hit",
           fresh: snapshot.fresh,
@@ -182,7 +213,7 @@ export class FileListIndex {
         });
         this.index = null;
         this.pathSet = null;
-        this.indexKey = null;
+        this.indexedFileList = null;
         this.indexFresh = false;
       }
       logger.debug(
@@ -193,13 +224,14 @@ export class FileListIndex {
 
     logger.debug("getOrBuildFileListIndex: got file list from cache", {
       fileListSize: fileList.length,
-      filesWithContent: fileList.filter((f) => f.content).length,
+      filesWithContent: fileList.filter((file) => file.content !== undefined).length,
     });
 
-    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
-      fileList[fileList.length - 1]?.path ?? ""
-    }`;
-    if (this.index && this.pathSet && this.indexKey === indexKey) {
+    if (
+      this.index &&
+      this.pathSet &&
+      fileListsEqual(this.indexedFileList, fileList)
+    ) {
       this.indexBuiltAt = Date.now();
       this.indexFresh = true;
       return {
@@ -213,12 +245,12 @@ export class FileListIndex {
     const pathSet = new Set<string>();
     for (const file of fileList) {
       pathSet.add(file.path);
-      if (file.content) index.set(file.path, file.content);
+      if (file.content !== undefined) index.set(file.path, file.content);
     }
 
     this.index = index;
     this.pathSet = pathSet;
-    this.indexKey = indexKey;
+    this.indexedFileList = copyFileList(fileList);
     this.indexBuiltAt = Date.now();
     this.indexFresh = true;
 

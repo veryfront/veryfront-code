@@ -35,7 +35,7 @@ export function summarizeFileList(files: Array<{ path: string; content?: string 
   let sourceFilesWithContent = 0;
 
   for (const file of files) {
-    const hasContent = !!file.content;
+    const hasContent = file.content !== undefined;
     if (hasContent) {
       filesWithContent++;
     }

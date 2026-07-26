@@ -106,9 +106,9 @@ export class ReadOperations {
     normalizedPath: string,
     cacheKey: string,
     ctx: ResolvedContentContext | null,
-  ): string | null {
+  ): string | undefined {
     const requestCached = getRequestScopedFile(cacheKey);
-    if (!requestCached) return null;
+    if (requestCached === undefined) return undefined;
 
     logContentMetric("REQUEST_SCOPED_HIT", {
       path: normalizedPath,
@@ -132,7 +132,7 @@ export class ReadOperations {
     releaseId: string | null | undefined,
     isPrefixInvalidated: boolean,
     ctx: ResolvedContentContext | null,
-  ): Promise<string | null> {
+  ): Promise<string | undefined> {
     if (isProduction && skipPersistentCaches) {
       logger.info("PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
         path: normalizedPath,
@@ -145,10 +145,10 @@ export class ReadOperations {
 
     // Check persistent cache for PRODUCTION mode only
     // Preview mode skips persistent cache to avoid staleness risk when WebSocket is slow/disconnected
-    if (!isProduction || skipPersistentCaches) return null;
+    if (!isProduction || skipPersistentCaches) return undefined;
 
     const cached = await this.cache.getAsync<string>(cacheKey);
-    if (!cached) return null;
+    if (cached === undefined) return undefined;
 
     logContentMetric("PERSISTENT_CACHE_HIT", {
       path: normalizedPath,
@@ -188,7 +188,7 @@ export class ReadOperations {
     }
 
     const match = await this.fileListIndex.match(normalizedPath);
-    if (match.status === "hit" && match.content) {
+    if (match.status === "hit" && match.content !== undefined) {
       logContentMetric("FILE_LIST_HIT", {
         path: normalizedPath,
         mode: ctx?.sourceType ?? "unknown",
@@ -304,7 +304,7 @@ export class ReadOperations {
       if (cachedResolvedPath) {
         const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
         const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
-        if (cached) {
+        if (cached !== undefined) {
           logger.debug("Extension resolution cache hit", {
             basePath: apiPath,
             resolvedPath: cachedResolvedPath,
@@ -333,11 +333,11 @@ export class ReadOperations {
         logMessage: "Resolved extension for base path",
       });
     } catch (error) {
-      logger.debug("resolveFileWithExtension failed", {
+      logger.error("resolveFileWithExtension failed", {
         basePath: apiPath,
         error: error instanceof Error ? error.message : String(error),
       });
-      return null;
+      throw error;
     }
   }
 
@@ -351,7 +351,11 @@ export class ReadOperations {
   ): Promise<FileListMatchResult> {
     const candidatePaths = buildExtensionCandidatePaths(normalizedPath);
     const resolved = await this.fileListIndex.findFirstMatch(candidatePaths);
-    if (resolved.status !== "hit" || !resolved.path || !resolved.content) return resolved;
+    if (
+      resolved.status !== "hit" ||
+      !resolved.path ||
+      resolved.content === undefined
+    ) return resolved;
 
     logContentMetric("FILE_LIST_HIT", {
       path: normalizedPath,
@@ -484,7 +488,7 @@ export class ReadOperations {
     });
 
     const requestCached = this.getRequestScopedHit(normalizedPath, cacheKey, ctx);
-    if (requestCached) return requestCached;
+    if (requestCached !== undefined) return requestCached;
 
     const persistentCached = await this.getProductionPersistentCacheHit(
       normalizedPath,
@@ -496,7 +500,7 @@ export class ReadOperations {
       isPrefixInvalidated,
       ctx,
     );
-    if (persistentCached) return persistentCached;
+    if (persistentCached !== undefined) return persistentCached;
 
     const fileListMatch = await this.getFileListCacheHit(
       normalizedPath,
@@ -507,7 +511,9 @@ export class ReadOperations {
       isPreviewMode,
       ctx,
     );
-    if (fileListMatch.status === "hit" && fileListMatch.content) return fileListMatch.content;
+    if (fileListMatch.status === "hit" && fileListMatch.content !== undefined) {
+      return fileListMatch.content;
+    }
     if (fileListMatch.status === "present_without_content") {
       return this.setupInFlightFetch(
         normalizedPath,
@@ -531,7 +537,10 @@ export class ReadOperations {
           ctx,
           isPreviewMode,
         );
-        if (resolvedFromFileList.status === "hit" && resolvedFromFileList.content) {
+        if (
+          resolvedFromFileList.status === "hit" &&
+          resolvedFromFileList.content !== undefined
+        ) {
           return resolvedFromFileList.content;
         }
 
@@ -581,7 +590,7 @@ export class ReadOperations {
         isProduction,
         skipPersistentCaches,
       );
-      if (resolved) return resolved;
+      if (resolved !== null) return resolved;
     }
 
     if (fileListMatch.status === "missing" && fileListMatch.fresh) {
@@ -679,31 +688,31 @@ export class ReadOperations {
 
     try {
       const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
-      if (!result) return null;
+      if (result) {
+        logger.debug("Pattern search found file", {
+          originalPath: apiPath,
+          foundPath: result.path,
+          contentLength: result.content.length,
+        });
 
-      logger.debug("Pattern search found file", {
-        originalPath: apiPath,
-        foundPath: result.path,
-        contentLength: result.content.length,
-      });
-
-      return this.storeFetchedContent(cacheKey, result.content, shouldCache);
+        return this.storeFetchedContent(cacheKey, result.content, shouldCache);
+      }
     } catch (error) {
-      logger.debug("Pattern search failed, trying sequential fallback", {
+      if (!isNotFoundLikeError(error)) throw error;
+      logger.debug("Pattern search returned not found, trying exact variants", {
         originalPath: apiPath,
-        error: error instanceof Error ? error.message : String(error),
       });
-
-      return this.tryFallbackExtensionsSequential(
-        apiPath,
-        originalExt,
-        basePath,
-        cacheKey,
-        shouldCache,
-        releaseId,
-        environmentName,
-      );
     }
+
+    return this.tryFallbackExtensionsSequential(
+      apiPath,
+      originalExt,
+      basePath,
+      cacheKey,
+      shouldCache,
+      releaseId,
+      environmentName,
+    );
   }
 
   private async tryFallbackExtensionsSequential(
@@ -753,7 +762,8 @@ export class ReadOperations {
         });
 
         return this.storeFetchedContent(cacheKey, content, shouldCache);
-      } catch (_) {
+      } catch (error) {
+        if (!isNotFoundLikeError(error)) throw error;
         /* expected: this extension variant does not exist, try next priority */
         continue;
       }

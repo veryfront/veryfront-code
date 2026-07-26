@@ -1,5 +1,5 @@
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
-import { INVALID_IMPORT } from "#veryfront/errors";
+import { INVALID_IMPORT, VeryfrontError } from "#veryfront/errors";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { READ_OPERATION_EXTENSION_PRIORITY } from "./extension-priority.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -98,10 +98,24 @@ export function splitKnownFileExtension(
 }
 
 export function isNotFoundLikeError(error: unknown): boolean {
-  const errorMessage = error instanceof Error ? error.message : String(error);
-  return errorMessage.includes("404") || errorMessage.includes("Not Found");
+  if (error instanceof VeryfrontError) {
+    return error.status === 404 || error.slug === "file-not-found";
+  }
+
+  if (error instanceof Error) {
+    if ((error as NotFoundLikeError).code === "ENOENT") return true;
+    return isLegacyNotFoundMessage(error.message);
+  }
+
+  return typeof error === "string" && isLegacyNotFoundMessage(error);
 }
 
 export function createNotFoundLikeError(path: string): NotFoundLikeError {
   return Object.assign(new Error(`404 Not Found: ${path}`), { code: "ENOENT" });
+}
+
+function isLegacyNotFoundMessage(message: string): boolean {
+  const normalized = message.trim();
+  return /^(?:API request failed:\s*)?404(?:\s|$)/i.test(normalized) ||
+    /^Not Found(?:\s|:|$)/i.test(normalized);
 }

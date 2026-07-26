@@ -63,6 +63,24 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       assertEquals(await index.lookup("pages/no-content.tsx"), undefined);
     });
 
+    it("should preserve valid empty file content", async () => {
+      const index = new FileListIndex(async () => [
+        { path: "pages/empty.tsx", content: "" },
+      ]);
+
+      assertEquals(await index.lookup("pages/empty.tsx"), "");
+      assertEquals(await index.match("pages/empty.tsx"), {
+        status: "hit",
+        fresh: true,
+        path: "pages/empty.tsx",
+        content: "",
+      });
+      assertEquals(
+        await index.findFirstWithContent(["pages/empty.tsx"]),
+        { path: "pages/empty.tsx", content: "" },
+      );
+    });
+
     it("should return undefined when cache returns undefined", async () => {
       const index = new FileListIndex(async () => undefined);
       assertEquals(await index.lookup("anything"), undefined);
@@ -200,6 +218,25 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
       await index.lookup("a.ts");
       // Both lookups call getFileListCache but second should reuse the built index
       assertEquals(callCount, 2); // getFileListCache is called each time, but index is reused
+    });
+
+    it("should rebuild when a middle entry changes without changing list boundaries", async () => {
+      let fileList = [
+        { path: "a.ts", version_id: "v1", content: "a" },
+        { path: "b.ts", version_id: "v1", content: "before" },
+        { path: "c.ts", version_id: "v1", content: "c" },
+      ];
+      const index = new FileListIndex(async () => fileList);
+
+      assertEquals(await index.lookup("b.ts"), "before");
+
+      fileList = [
+        { path: "a.ts", version_id: "v1", content: "a" },
+        { path: "b.ts", version_id: "v2", content: "after" },
+        { path: "c.ts", version_id: "v1", content: "c" },
+      ];
+
+      assertEquals(await index.lookup("b.ts"), "after");
     });
   });
 });

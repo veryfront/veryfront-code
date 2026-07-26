@@ -16,6 +16,7 @@ interface DirNode {
 export class DirectoryOperations extends VeryfrontOperationsBase {
   private dirTree: Map<string, DirNode> | null = null;
   private buildingTree: Promise<void> | null = null;
+  private treeGeneration = 0;
 
   readdir(path: string): Promise<DirectoryEntry[]> {
     return withSpan(
@@ -72,19 +73,23 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   }
 
   private async ensureTreeBuilt(): Promise<void> {
-    if (this.dirTree) return;
+    while (!this.dirTree) {
+      const generation = this.treeGeneration;
+      let build = this.buildingTree;
+      if (!build) {
+        build = this.buildTree(generation);
+        this.buildingTree = build;
+      }
 
-    if (this.buildingTree) {
-      await this.buildingTree;
-      return;
+      try {
+        await build;
+      } finally {
+        if (this.buildingTree === build) this.buildingTree = null;
+      }
     }
-
-    this.buildingTree = this.buildTree();
-    await this.buildingTree;
-    this.buildingTree = null;
   }
 
-  private buildTree(): Promise<void> {
+  private buildTree(generation: number): Promise<void> {
     return withSpan(
       "fs.veryfront.buildTree",
       async () => {
@@ -138,6 +143,14 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
           dirNode.files.set(fileName, file);
         }
 
+        if (this.treeGeneration !== generation) {
+          logger.debug("Discarded directory tree built for an invalidated snapshot", {
+            generation,
+            currentGeneration: this.treeGeneration,
+          });
+          return;
+        }
+
         this.dirTree = tree;
         logger.debug("Tree built", { directories: tree.size });
       },
@@ -146,6 +159,7 @@ export class DirectoryOperations extends VeryfrontOperationsBase {
   }
 
   clearTree(): void {
+    this.treeGeneration++;
     this.dirTree = null;
   }
 

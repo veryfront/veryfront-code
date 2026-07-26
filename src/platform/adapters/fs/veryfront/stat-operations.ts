@@ -39,6 +39,25 @@ interface SearchFileMatch {
   path: string;
 }
 
+function toFileInfo(file: Pick<ProjectFile, "path" | "size" | "updated_at">): FileInfo {
+  if (!Number.isFinite(file.size) || file.size < 0) {
+    throw new TypeError(`Malformed file metadata for "${file.path}": size must be non-negative`);
+  }
+
+  const mtime = new Date(file.updated_at);
+  if (Number.isNaN(mtime.getTime())) {
+    throw new TypeError(`Malformed file metadata for "${file.path}": updated_at is invalid`);
+  }
+
+  return {
+    size: file.size,
+    mtime,
+    isDirectory: false,
+    isFile: true,
+    isSymlink: false,
+  };
+}
+
 function assertValidSearchMatches(matches: unknown): asserts matches is SearchFileMatch[] {
   const valid = Array.isArray(matches) &&
     matches.every((match) => {
@@ -58,9 +77,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
-
-  private indexBuildLockResolver: (() => void) | null = null;
-  private indexBuildLockPromise: Promise<void> | null = null;
+  private indexGeneration = 0;
 
   private pathMapping: Map<string, string> = new Map();
 
@@ -98,13 +115,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const file = fileIdx.get(normalizedPath);
     if (file) {
       logger.debug("stat found file", { normalizedPath });
-      return {
-        size: file.size,
-        mtime: new Date(file.updated_at),
-        isDirectory: false,
-        isFile: true,
-        isSymlink: false,
-      };
+      return toFileInfo(file);
     }
 
     if (dirIdx.has(normalizedPath)) {
@@ -136,24 +147,27 @@ export class StatOperations extends VeryfrontOperationsBase {
 
           const exactMatch = matches.find((m) => m.path === normalizedPath);
           if (exactMatch) {
-            logger.debug("stat found via API search", { normalizedPath });
-            // Add to index for future lookups
-            fileIdx.set(normalizedPath, {
-              id: exactMatch.id,
-              version_id: undefined,
-              path: normalizedPath,
-              content: undefined,
-              type: "file",
-              size: 0,
-              updated_at: new Date().toISOString(),
-            });
-            return {
-              size: 0,
-              mtime: new Date(),
-              isDirectory: false,
-              isFile: true,
-              isSymlink: false,
+            const detail = await this.client.getFile(exactMatch.path);
+            const detailPath = this.normalizer.normalize(detail.path);
+            if (detailPath !== normalizedPath) {
+              throw new TypeError(
+                `Malformed file detail response: expected "${normalizedPath}", received "${detailPath}"`,
+              );
+            }
+
+            const indexedDetail: ProjectFile = {
+              id: detail.id ?? exactMatch.id,
+              version_id: detail.version_id,
+              path: detailPath,
+              content: detail.content,
+              type: detail.type,
+              size: detail.size,
+              updated_at: detail.updated_at,
             };
+            const info = toFileInfo(indexedDetail);
+            logger.debug("stat found via API search", { normalizedPath });
+            fileIdx.set(normalizedPath, indexedDetail);
+            return info;
           }
         } catch (error) {
           if (isFileNotFoundError(error)) {
@@ -191,46 +205,25 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   private async ensureIndexBuilt(): Promise<void> {
-    if (this.fileIndex && this.directoryIndex) {
-      logger.debug("ensureIndexBuilt - index already built");
-      return;
-    }
+    while (!this.fileIndex || !this.directoryIndex) {
+      const generation = this.indexGeneration;
+      let build = this.buildingIndex;
+      if (!build) {
+        build = this.buildIndex(generation);
+        this.buildingIndex = build;
+      } else {
+        logger.debug("ensureIndexBuilt - waiting for concurrent build");
+      }
 
-    if (this.buildingIndex) {
-      logger.debug("ensureIndexBuilt - waiting for concurrent build");
-      const waitStart = performance.now();
-      await this.buildingIndex;
-      logger.debug("ensureIndexBuilt - concurrent build done", {
-        waitMs: Math.round(performance.now() - waitStart),
-      });
-      return;
-    }
-
-    if (this.indexBuildLockPromise) {
-      logger.debug("ensureIndexBuilt - waiting for lock");
-      await this.indexBuildLockPromise;
-      if (this.buildingIndex) await this.buildingIndex;
-      return;
-    }
-
-    this.indexBuildLockPromise = new Promise((resolve) => {
-      this.indexBuildLockResolver = resolve;
-    });
-
-    try {
-      if (this.fileIndex && this.directoryIndex) return;
-
-      this.buildingIndex = this.buildIndex();
-      await this.buildingIndex;
-    } finally {
-      this.buildingIndex = null;
-      this.indexBuildLockResolver?.();
-      this.indexBuildLockResolver = null;
-      this.indexBuildLockPromise = null;
+      try {
+        await build;
+      } finally {
+        if (this.buildingIndex === build) this.buildingIndex = null;
+      }
     }
   }
 
-  private async buildIndex(): Promise<void> {
+  private async buildIndex(generation: number): Promise<void> {
     const buildStart = performance.now();
     logger.debug("buildIndex START");
 
@@ -264,6 +257,14 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
+    if (this.indexGeneration !== generation) {
+      logger.debug("Discarded file index built for an invalidated snapshot", {
+        generation,
+        currentGeneration: this.indexGeneration,
+      });
+      return;
+    }
+
     this.fileIndex = fileIdx;
     this.directoryIndex = dirIdx;
     this.pathMapping = pathMap;
@@ -281,6 +282,7 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   clearIndex(): void {
+    this.indexGeneration++;
     this.fileIndex = null;
     this.directoryIndex = null;
     this.pathMapping.clear();

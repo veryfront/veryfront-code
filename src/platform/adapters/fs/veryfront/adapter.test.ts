@@ -486,6 +486,19 @@ describe("VeryfrontFSAdapter", () => {
       });
     });
 
+    it("propagates operational entity lookup failures", async () => {
+      const adapter = createAdapter();
+      const backendFailure = new Error("entity lookup backend unavailable");
+      (adapter.getClient() as unknown as {
+        getFileById: (entityId: string) => Promise<never>;
+      }).getFileById = () => Promise.reject(backendFailure);
+
+      const error = await assertRejects(
+        () => adapter.getFilePathByEntityIdAsync("entity-1"),
+      );
+      assertEquals(error, backendFailure);
+    });
+
     it("should set release context", () => {
       const adapter = createAdapter();
       adapter.setContentContext({
@@ -942,6 +955,132 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("initialize", () => {
+    it("coalesces concurrent initialization through one filesystem snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const releaseClientInitialization = Promise.withResolvers<void>();
+      let clientInitializationCount = 0;
+      let fileListCount = 0;
+      let websocketConnections = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content: string }>>;
+        };
+      }).client;
+      client.initialize = () => {
+        clientInitializationCount++;
+        return releaseClientInitialization.promise;
+      };
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        fileListCount++;
+        return Promise.resolve([{ path: "pages/index.tsx", content: "home" }]);
+      };
+      (adapter as unknown as { wsManager: { connect: () => void } }).wsManager.connect = () => {
+        websocketConnections++;
+      };
+
+      const initializations = [
+        adapter.initialize(),
+        adapter.initialize(),
+        adapter.initialize(),
+      ];
+      assertEquals(clientInitializationCount, 1);
+      releaseClientInitialization.resolve();
+      await Promise.all(initializations);
+
+      assertEquals(clientInitializationCount, 1);
+      assertEquals(fileListCount, 1);
+      assertEquals(websocketConnections, 1);
+    });
+
+    it("does not publish a file snapshot or reconnect after disposal", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const releaseFileList = Promise.withResolvers<
+        Array<{ path: string; content: string }>
+      >();
+      let fileListStarted = false;
+      let websocketConnections = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<Array<{ path: string; content: string }>>;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        fileListStarted = true;
+        return releaseFileList.promise;
+      };
+      (adapter as unknown as { wsManager: { connect: () => void } }).wsManager.connect = () => {
+        websocketConnections++;
+      };
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const cacheKey = buildFileListCacheKey(adapter.getContentContext());
+
+      const initialization = adapter.initialize();
+      await waitFor(() => Promise.resolve(fileListStarted));
+      adapter.dispose();
+      releaseFileList.resolve([{ path: "pages/index.tsx", content: "stale" }]);
+
+      await assertRejects(
+        () => initialization,
+        Error,
+        "lifecycle was invalidated",
+      );
+      const internals = adapter as unknown as {
+        initialized: boolean;
+        projectData?: unknown;
+        cache: { get<T>(key: string): T | undefined };
+      };
+      assertEquals(internals.initialized, false);
+      assertEquals(internals.projectData, undefined);
+      assertEquals(internals.cache.get(cacheKey), undefined);
+      assertEquals(adapter.getContentContext(), null);
+      assertEquals(websocketConnections, 0);
+      await assertRejects(
+        () => adapter.initialize(),
+        Error,
+        "filesystem adapter has been disposed",
+      );
+      await assertRejects(
+        () => adapter.getAllSourceFiles(),
+        Error,
+        "filesystem adapter has been disposed",
+      );
+    });
+
     it("should throw without causing unhandled rejection when file list fetch fails", async () => {
       // Regression: initialize() used to call fileListReadyReject() in its catch block.
       // Since no lookup() was pending, the rejected promise had no handler, causing

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
@@ -144,6 +144,61 @@ describe("DirectoryOperations", () => {
       // Should rebuild on next call
       const entries = await dirOps.readdir("");
       assertEquals(entries.length, 1);
+    });
+
+    it("should retry after a failed tree build", async () => {
+      let attempts = 0;
+      const client = {
+        getRequestBranch: () => "main",
+        listPublishedFiles: () => {
+          attempts++;
+          return attempts === 1
+            ? Promise.reject(new Error("malformed file list"))
+            : Promise.resolve([{ path: "recovered.tsx" }]);
+        },
+      } as any;
+      const dirOps = new DirectoryOperations(
+        client,
+        new FileCache({ enabled: false, ttl: 1000, maxSize: 10 }),
+        new PathNormalizer(),
+      );
+
+      await assertRejects(() => dirOps.readdir(""), Error, "malformed file list");
+      assertEquals((await dirOps.readdir("")).map((entry) => entry.name), ["recovered.tsx"]);
+      assertEquals(attempts, 2);
+    });
+
+    it("should discard an in-flight tree build after clearTree", async () => {
+      let resolveFirst: ((files: Array<{ path: string }>) => void) | undefined;
+      let attempts = 0;
+      const client = {
+        getRequestBranch: () => "main",
+        listPublishedFiles: () => {
+          attempts++;
+          if (attempts === 1) {
+            return new Promise<Array<{ path: string }>>((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return Promise.resolve([{ path: "fresh.tsx" }]);
+        },
+      } as any;
+      const dirOps = new DirectoryOperations(
+        client,
+        new FileCache({ enabled: false, ttl: 1000, maxSize: 10 }),
+        new PathNormalizer(),
+      );
+
+      const pendingRead = dirOps.readdir("");
+      for (let index = 0; index < 10 && resolveFirst === undefined; index++) {
+        await Promise.resolve();
+      }
+      assertExists(resolveFirst);
+      dirOps.clearTree();
+      resolveFirst?.([{ path: "stale.tsx" }]);
+
+      assertEquals((await pendingRead).map((entry) => entry.name), ["fresh.tsx"]);
+      assertEquals(attempts, 2);
     });
 
     it("should normalize leading slashes", async () => {

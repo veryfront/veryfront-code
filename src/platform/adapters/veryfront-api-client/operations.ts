@@ -71,10 +71,11 @@ export interface FileListResult {
 export interface FileDetail {
   path: string;
   content: string;
+  type: ProjectFile["type"];
+  size: number;
+  updated_at: string;
   id?: string;
   version_id?: string;
-  type?: string;
-  size?: number;
   release_id?: string;
   release_version?: string | null;
 }
@@ -403,8 +404,10 @@ export class VeryfrontAPIOperations {
           path: response.path,
           content: response.content,
           id: response.id,
+          version_id: response.version_id,
           type: response.type,
           size: response.size,
+          updated_at: response.updated_at,
         };
       },
       {
@@ -489,6 +492,9 @@ export class VeryfrontAPIOperations {
           content: response.content,
           id: response.id,
           version_id: response.version_id,
+          type: response.type,
+          size: response.size,
+          updated_at: response.updated_at,
           release_id: response.release_id,
           release_version: response.release_version,
         };
@@ -557,6 +563,9 @@ export class VeryfrontAPIOperations {
           content: response.content,
           id: response.id,
           version_id: response.version_id,
+          type: response.type,
+          size: response.size,
+          updated_at: response.updated_at,
           release_id: response.release_id,
           release_version: response.release_version,
         };

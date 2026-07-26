@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 
@@ -84,6 +84,51 @@ describe("PathNormalizer", () => {
     it("should normalize repeated slashes after stripping projectDir", () => {
       const normalizer = new PathNormalizer("/project");
       assertEquals(normalizer.normalize("/project//src///page.tsx"), "src/page.tsx");
+    });
+
+    it("should only strip projectDir at a path-segment boundary", () => {
+      const normalizer = new PathNormalizer("/project/root");
+      assertEquals(
+        normalizer.normalize("/project/root-other/src/page.tsx"),
+        "project/root-other/src/page.tsx",
+      );
+    });
+
+    it("should reject traversal and current-directory segments", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertThrows(
+        () => normalizer.normalize("/project/src/../secrets.ts"),
+        TypeError,
+        'must not contain ".." segments',
+      );
+      assertThrows(
+        () => normalizer.normalize("src/./page.tsx"),
+        TypeError,
+        'must not contain "." segments',
+      );
+    });
+
+    it("should reject backslashes and control characters", () => {
+      const normalizer = new PathNormalizer();
+      assertThrows(
+        () => normalizer.normalize("src\\secrets.ts"),
+        TypeError,
+        "must use forward slashes",
+      );
+      assertThrows(
+        () => normalizer.normalize("src/\u0000secrets.ts"),
+        TypeError,
+        "must not contain control characters",
+      );
+    });
+
+    it("should reject unbounded paths", () => {
+      const normalizer = new PathNormalizer();
+      assertThrows(
+        () => normalizer.normalize("a".repeat(4_097)),
+        TypeError,
+        "exceeds the 4096-character limit",
+      );
     });
   });
 });

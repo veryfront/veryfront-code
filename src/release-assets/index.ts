@@ -38,6 +38,7 @@ export {
   isReleaseAssetManifestEnabled,
   registerManifestFetcherForRelease,
   type ReleaseAssetManifestFetcher,
+  type ReleaseAssetManifestFetcherCleanup,
   unregisterManifestFetcherForRelease,
 } from "./manifest-cache.ts";
 export {

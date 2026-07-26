@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { API_CLIENT_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import {
   assertProjectSourcePath,
@@ -110,7 +111,20 @@ describe("read-operations helpers", () => {
     it("detects not-found-like errors", () => {
       assertEquals(isNotFoundLikeError(new Error("404 Not Found")), true);
       assertEquals(isNotFoundLikeError("Not Found"), true);
+      assertEquals(
+        isNotFoundLikeError(API_CLIENT_ERROR.create({ detail: "missing", status: 404 })),
+        true,
+      );
+      assertEquals(isNotFoundLikeError(FILE_NOT_FOUND.create({ detail: "missing" })), true);
       assertEquals(isNotFoundLikeError(new Error("500 Internal Server Error")), false);
+      assertEquals(
+        isNotFoundLikeError(new Error("Upstream returned a 404-shaped diagnostic")),
+        false,
+      );
+      assertEquals(
+        isNotFoundLikeError(new Error("Authentication failed: Not Found in token claims")),
+        false,
+      );
     });
   });
 });

@@ -226,6 +226,31 @@ describe("ReadOperations", () => {
       assertEquals(fetchCount, 1);
     });
 
+    it("should treat empty request-scoped content as a cache hit", async () => {
+      let fetchCount = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getFileContent: () => {
+            fetchCount++;
+            return Promise.resolve("");
+          },
+        }),
+        false,
+        createBranchContext(),
+      );
+
+      const results = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => [
+          await readOps.readTextFile("pages/empty.tsx"),
+          await readOps.readTextFile("pages/empty.tsx"),
+        ],
+      );
+
+      assertEquals(results, ["", ""]);
+      assertEquals(fetchCount, 1);
+    });
+
     it("should hit persistent cache across production requests", async () => {
       let fetchCount = 0;
       const client = createMockClient({
@@ -263,6 +288,43 @@ describe("ReadOperations", () => {
 
       assertEquals(first, "published content 1");
       assertEquals(second, "published content 1");
+      assertEquals(fetchCount, 1);
+    });
+
+    it("should treat empty persistent content as a cache hit", async () => {
+      let fetchCount = 0;
+      const readOps = new ReadOperations(
+        createMockClient({
+          getPublishedFileContent: () => {
+            fetchCount++;
+            return Promise.resolve("");
+          },
+        }),
+        new FileCache({ enabled: true, ttl: 60000, maxSize: 100 }),
+        new PathNormalizer(),
+        createReleaseContext("rel-empty-cache"),
+      );
+      const requestContext = {
+        projectSlug: "test",
+        token: "token-1",
+        productionMode: true,
+        releaseId: "rel-empty-cache",
+      };
+
+      assertEquals(
+        await runWithRequestContext(
+          requestContext,
+          () => readOps.readTextFile("pages/empty.tsx"),
+        ),
+        "",
+      );
+      assertEquals(
+        await runWithRequestContext(
+          requestContext,
+          () => readOps.readTextFile("pages/empty.tsx"),
+        ),
+        "",
+      );
       assertEquals(fetchCount, 1);
     });
 
@@ -376,6 +438,26 @@ describe("ReadOperations", () => {
       const content = await readOps.readTextFile("pages/index.tsx");
       // Now uses file list cache instead of API fetch
       assertEquals(content, "cached file list content");
+      assertEquals(apiFetchCalled, false);
+    });
+
+    it("should preserve empty content from the file list cache", async () => {
+      let apiFetchCalled = false;
+      const client = createMockClient({
+        getFileContent: () => {
+          apiFetchCalled = true;
+          return Promise.resolve("unexpected");
+        },
+      });
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createBranchContext(),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "pages/empty.tsx", content: "" }]),
+      );
+
+      assertEquals(await readOps.readTextFile("pages/empty.tsx"), "");
       assertEquals(apiFetchCalled, false);
     });
 
@@ -625,19 +707,17 @@ describe("ReadOperations", () => {
       assertEquals(resolveCallCount, 2);
     });
 
-    it("should fall back to API fetch when extension resolution fails", async () => {
+    it("should propagate operational extension-resolution failures", async () => {
       let resolveCallCount = 0;
       let fileFetchCount = 0;
-      const fetchedPaths: string[] = [];
 
       const client = createMockClient({
         resolveFileWithExtension: () => {
           resolveCallCount++;
           return Promise.reject(new Error("resolver unavailable"));
         },
-        getFileContent: (path: string) => {
+        getFileContent: () => {
           fileFetchCount++;
-          fetchedPaths.push(path);
           return Promise.resolve("draft fallback content");
         },
       });
@@ -645,20 +725,14 @@ describe("ReadOperations", () => {
       const readOps = createReadOps(client, false, createBranchContext());
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      const [first, second] = await runWithRequestContext(
-        { projectSlug: "test", token: "token-1", productionMode: false },
-        async () => {
-          const first = await readOps.readTextFile("pages/profile");
-          const second = await readOps.readTextFile("pages/profile");
-          return [first, second] as const;
-        },
+      await assertRejects(
+        () => readOps.readTextFile("pages/profile"),
+        Error,
+        "resolver unavailable",
       );
 
-      assertEquals(first, "draft fallback content");
-      assertEquals(second, "draft fallback content");
       assertEquals(resolveCallCount, 1);
-      assertEquals(fileFetchCount, 1);
-      assertEquals(fetchedPaths, ["pages/profile"]);
+      assertEquals(fileFetchCount, 0);
     });
 
     it("should use pattern search fallback when published extension lookup returns 404", async () => {
@@ -715,7 +789,7 @@ describe("ReadOperations", () => {
         },
         resolveFileWithExtension: () => {
           resolveCallCount++;
-          return Promise.reject(new Error("pattern search unavailable"));
+          return Promise.resolve(null);
         },
       });
 
@@ -742,7 +816,7 @@ describe("ReadOperations", () => {
           if (path === "pages/multi.jsx") return Promise.resolve("jsx content");
           return Promise.reject(new Error("404 Not Found"));
         },
-        resolveFileWithExtension: () => Promise.reject(new Error("unavailable")),
+        resolveFileWithExtension: () => Promise.resolve(null),
       });
 
       const readOps = createReadOps(client, false, createReleaseContext("rel-priority"));
@@ -770,7 +844,7 @@ describe("ReadOperations", () => {
             deferred.set(path, { resolve, reject });
           });
         },
-        resolveFileWithExtension: () => Promise.reject(new Error("unavailable")),
+        resolveFileWithExtension: () => Promise.resolve(null),
       });
 
       const readOps = createReadOps(client, false, createReleaseContext("rel-perf"));
@@ -832,7 +906,7 @@ describe("ReadOperations", () => {
           }
           return Promise.reject(new Error("404"));
         },
-        resolveFileWithExtension: () => Promise.reject(new Error("unavailable")),
+        resolveFileWithExtension: () => Promise.resolve(null),
       });
 
       const readOps = createReadOps(client, false, createReleaseContext("rel-nowait"));
