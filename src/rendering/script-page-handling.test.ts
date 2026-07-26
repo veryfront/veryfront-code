@@ -7,6 +7,11 @@ import { flattenRouteParams } from "#veryfront/routing";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FakeTime } from "#std/testing/time";
 
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
+const ENCODED_PIN_KEY_B = encodeURIComponent(PIN_KEY_B);
+
 type ScriptModuleOutput =
   | string
   | Response
@@ -364,13 +369,13 @@ describe("script-page-handling helpers", () => {
         const snapshotB = await renderWithPageRenderer(
           projectDir,
           pagePath,
-          "on:snapshot-b",
+          PIN_KEY_B,
           { react: "19.0.0", veryfront: "0.2.0" },
         );
         const snapshotA = await renderWithPageRenderer(
           projectDir,
           pagePath,
-          "on:snapshot-a",
+          PIN_KEY_A,
           { react: "18.3.1", veryfront: "0.1.10" },
         );
         const importsB = extractInlineJson(snapshotB, "importmap").imports as
@@ -382,20 +387,20 @@ describe("script-page-handling helpers", () => {
 
         assertEquals(
           importsB?.["veryfront/router"],
-          "/_vf_modules/_pins/on%3Asnapshot-b/_veryfront/react/runtime/core.js",
+          `/_vf_modules/_pins/${ENCODED_PIN_KEY_B}/_veryfront/react/runtime/core.js`,
         );
         assertEquals(
           importsA?.["veryfront/router"],
-          "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+          `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
         );
         assertEquals(importsA?.react?.includes("react@18.3.1"), true);
         assertEquals(importsB?.react?.includes("react@19.0.0"), true);
         assertEquals(
           extractInlineJson(snapshotA, "veryfront-hydration-data")
             .dependencyPinningCacheKey,
-          "on:snapshot-a",
+          PIN_KEY_A,
         );
-        assertEquals(snapshotA.includes("on%3Asnapshot-b"), false);
+        assertEquals(snapshotA.includes(ENCODED_PIN_KEY_B), false);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -414,7 +419,7 @@ describe("script-page-handling helpers", () => {
         const html = await renderWithPageRenderer(
           projectDir,
           pagePath,
-          "on:snapshot-a",
+          PIN_KEY_A,
           { react: "18.3.1", veryfront: "0.1.10" },
         );
         const imports = extractInlineJson(html, "importmap").imports as
@@ -424,10 +429,10 @@ describe("script-page-handling helpers", () => {
 
         assertEquals(
           imports?.["veryfront/router"],
-          "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+          `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
         );
         assertEquals(hydrationData, {
-          dependencyPinningCacheKey: "on:snapshot-a",
+          dependencyPinningCacheKey: PIN_KEY_A,
         });
         assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
       } finally {

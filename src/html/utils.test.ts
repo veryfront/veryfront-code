@@ -19,6 +19,11 @@ import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG } from "#veryfront/release
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
+const ENCODED_PIN_KEY_B = encodeURIComponent(PIN_KEY_B);
+
 describe("html-generation/utils", () => {
   const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
 
@@ -142,7 +147,7 @@ describe("html-generation/utils", () => {
       const snapshotB = await buildImportMapJson({
         projectDir: "/project",
         config,
-        dependencyPinningCacheKey: "on:snapshot-b",
+        dependencyPinningCacheKey: PIN_KEY_B,
         dependencyPinningDependencies: {
           react: "^19.0.0",
           veryfront: "^0.2.0",
@@ -151,7 +156,7 @@ describe("html-generation/utils", () => {
       const snapshotA = await buildImportMapJson({
         projectDir: "/project",
         config,
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey: PIN_KEY_A,
         dependencyPinningDependencies: {
           react: "^18.3.1",
           veryfront: "^0.1.10",
@@ -187,7 +192,7 @@ describe("html-generation/utils", () => {
       const snapshotB = JSON.parse(
         await buildImportMapJson({
           ...common,
-          dependencyPinningCacheKey: "on:snapshot-b",
+          dependencyPinningCacheKey: PIN_KEY_B,
           dependencyPinningDependencies: {
             react: "19.0.0",
             veryfront: "0.2.0",
@@ -197,7 +202,7 @@ describe("html-generation/utils", () => {
       const snapshotA = JSON.parse(
         await buildImportMapJson({
           ...common,
-          dependencyPinningCacheKey: "on:snapshot-a",
+          dependencyPinningCacheKey: PIN_KEY_A,
           dependencyPinningDependencies: {
             react: "18.3.1",
             veryfront: "0.1.10",
@@ -207,24 +212,24 @@ describe("html-generation/utils", () => {
 
       assertEquals(
         snapshotB["veryfront/router"],
-        "/_vf_modules/_pins/on%3Asnapshot-b/_veryfront/react/runtime/core.js",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_B}/_veryfront/react/runtime/core.js`,
       );
       assertEquals(
         snapshotA["veryfront/router"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
       );
       assertEquals(
         snapshotA["custom-local"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/custom/widget.js?mode=browser#entry",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/custom/widget.js?mode=browser#entry`,
       );
       assertEquals(snapshotA["custom-remote"], "https://cdn.example.com/widget.js");
       assertEquals(
         snapshotA["custom-absolute"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/custom/absolute.js",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/custom/absolute.js`,
       );
       assertEquals(
         snapshotA["custom-protocol"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/custom/protocol.js",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/custom/protocol.js`,
       );
       assertEquals(
         snapshotA["foreign-module"],
@@ -232,15 +237,15 @@ describe("html-generation/utils", () => {
       );
       assertEquals(
         snapshotB["@/"],
-        "/_vf_modules/_pins/on%3Asnapshot-b/custom-root/",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_B}/custom-root/`,
       );
       assertEquals(
         snapshotA["@/"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/custom-root/",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/custom-root/`,
       );
       assertEquals(
         snapshotA["custom-prefix/"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/custom-prefix/",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/custom-prefix/`,
       );
       assertEquals(
         snapshotA["legacy-prefix/"],
@@ -284,7 +289,7 @@ describe("html-generation/utils", () => {
     it("pins custom local modules in bundled import maps", async () => {
       const result = await buildImportMapJson({
         config: { client: { moduleResolution: "bundled" } },
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey: PIN_KEY_A,
         dependencyPinningDependencies: { react: "18.3.1" },
         customImports: {
           "custom-local": "/_vf_modules/custom/widget.js",
@@ -295,7 +300,7 @@ describe("html-generation/utils", () => {
 
       assertEquals(
         imports["custom-local"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/custom/widget.js",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/custom/widget.js`,
       );
     });
 
@@ -333,7 +338,7 @@ describe("html-generation/utils", () => {
     it("binds self-hosted library modules to the document snapshot", async () => {
       const result = await buildImportMapJson({
         config: { client: { moduleResolution: "self-hosted" } },
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey: PIN_KEY_A,
         dependencyPinningDependencies: {
           react: "18.3.1",
           veryfront: "0.1.10",
@@ -344,11 +349,11 @@ describe("html-generation/utils", () => {
 
       assertEquals(
         imports["veryfront/chat"],
-        "/_veryfront/lib/chat.js?pins=on%3Asnapshot-a",
+        `/_veryfront/lib/chat.js?pins=${ENCODED_PIN_KEY_A}`,
       );
       assertEquals(
         imports["veryfront/workflow"],
-        "/_veryfront/lib/workflow.js?pins=on%3Asnapshot-a",
+        `/_veryfront/lib/workflow.js?pins=${ENCODED_PIN_KEY_A}`,
       );
     });
 
@@ -586,7 +591,7 @@ describe("html-generation/utils", () => {
       };
 
       const result = await buildImportMapJson({
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey: PIN_KEY_A,
         dependencyPinningDependencies: {
           react: "18.3.1",
           veryfront: "0.1.10",
@@ -598,11 +603,11 @@ describe("html-generation/utils", () => {
 
       assertEquals(
         imports["veryfront/router"],
-        `/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js?vf_release=release-id&vf_runtime=${VERYFRONT_VERSION}`,
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js?vf_release=release-id&vf_runtime=${VERYFRONT_VERSION}`,
       );
       assertEquals(
         imports["@/"],
-        "/_vf_modules/_pins/on%3Asnapshot-a/",
+        `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/`,
       );
     });
 

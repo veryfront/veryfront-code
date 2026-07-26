@@ -32,6 +32,8 @@ type Head = {
 
 const REACT_HASH = "e".repeat(64);
 const REACT_CDN_URL = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
 
 function releaseManifest(): ReleaseAssetManifest {
   return {
@@ -384,8 +386,8 @@ describe("HTMLGenerator helpers", () => {
           },
         }));
 
-      const snapshotBHtml = await renderSnapshot("on:snapshot-b", "^19.0.0");
-      const snapshotAHtml = await renderSnapshot("on:snapshot-a", "^18.3.1");
+      const snapshotBHtml = await renderSnapshot(PIN_KEY_B, "^19.0.0");
+      const snapshotAHtml = await renderSnapshot(PIN_KEY_A, "^18.3.1");
       const parseImportMap = (html: string) => {
         const json = html.match(
           /<script type="importmap"[^>]*>([\s\S]*?)<\/script>/,
@@ -405,7 +407,7 @@ describe("HTMLGenerator helpers", () => {
       assertStringIncludes(parseImportMap(snapshotAHtml).react!, "react@18.3.1");
       assertEquals(
         parseHydrationData(snapshotAHtml).dependencyPinningCacheKey,
-        "on:snapshot-a",
+        PIN_KEY_A,
       );
     });
 

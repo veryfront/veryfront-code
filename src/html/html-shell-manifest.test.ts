@@ -22,6 +22,8 @@ const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
 const COMPONENT_HASH = "d".repeat(64);
 const REACT_HASH = "e".repeat(64);
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
 
 function meta(): RenderMetadata {
   return { title: "T", slug: "index", frontmatter: {} };
@@ -121,7 +123,7 @@ describe("html shell release asset manifest consumption", () => {
       meta(),
       prodOptions({
         releaseId: "rel-1",
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey: PIN_KEY_A,
         dependencyPinningDependencies: {
           react: "18.3.1",
           veryfront: "0.1.10",
@@ -132,13 +134,13 @@ describe("html shell release asset manifest consumption", () => {
 
     assertStringIncludes(
       result.start,
-      `/_vf_modules/_pins/on%3Asnapshot-a/pages/index.js?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
+      `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/pages/index.js?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
     );
     assertEquals(
       imports["veryfront/router"],
-      "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+      `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
     );
-    assertEquals(imports["@/"], "/_vf_modules/_pins/on%3Asnapshot-a/");
+    assertEquals(imports["@/"], `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/`);
   });
 
   it("uses manifest route closure preloads for index routes", async () => {

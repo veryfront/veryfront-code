@@ -6,6 +6,9 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { bundleComponentForClient } from "./component-handling.ts";
 
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (!predicate()) {
@@ -195,25 +198,25 @@ describe("rendering/component-handling", () => {
 
     const flagOffA = await bundle("off", "https://app-a.example");
     const flagOffB = await bundle("off", "https://app-b.example");
-    const snapshotA = await bundle("on:snapshot-a", "https://app-a.example");
+    const snapshotA = await bundle(PIN_KEY_A, "https://app-a.example");
     const snapshotAOtherOrigin = await bundle(
-      "on:snapshot-a",
+      PIN_KEY_A,
       "https://app-b.example",
     );
-    const snapshotB = await bundle("on:snapshot-b", "https://app-a.example");
+    const snapshotB = await bundle(PIN_KEY_B, "https://app-a.example");
 
     assertEquals(flagOffB, flagOffA);
-    assertEquals(snapshotA, "on:snapshot-a:https://app-a.example");
+    assertEquals(snapshotA, `${PIN_KEY_A}:https://app-a.example`);
     assertEquals(
       snapshotAOtherOrigin,
-      "on:snapshot-a:https://app-b.example",
+      `${PIN_KEY_A}:https://app-b.example`,
     );
-    assertEquals(snapshotB, "on:snapshot-b:https://app-a.example");
+    assertEquals(snapshotB, `${PIN_KEY_B}:https://app-a.example`);
     assertEquals(transformed, [
       "off:https://app-a.example",
-      "on:snapshot-a:https://app-a.example",
-      "on:snapshot-a:https://app-b.example",
-      "on:snapshot-b:https://app-a.example",
+      `${PIN_KEY_A}:https://app-a.example`,
+      `${PIN_KEY_A}:https://app-b.example`,
+      `${PIN_KEY_B}:https://app-a.example`,
     ]);
   });
 

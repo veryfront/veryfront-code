@@ -13,6 +13,11 @@ import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scri
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FakeTime } from "#std/testing/time";
 
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
+const ENCODED_PIN_KEY_B = encodeURIComponent(PIN_KEY_B);
+
 describe("html-generation/html-shell-generator", () => {
   const mockConfig = {
     dev: {
@@ -304,7 +309,7 @@ describe("html-generation/html-shell-generator", () => {
         createMeta(),
         {
           ...common,
-          dependencyPinningCacheKey: "on:snapshot-b",
+          dependencyPinningCacheKey: PIN_KEY_B,
           dependencyPinningDependencies: {
             react: "19.0.0",
             veryfront: "0.2.0",
@@ -316,7 +321,7 @@ describe("html-generation/html-shell-generator", () => {
         createMeta(),
         {
           ...common,
-          dependencyPinningCacheKey: "on:snapshot-a",
+          dependencyPinningCacheKey: PIN_KEY_A,
           dependencyPinningDependencies: {
             react: "18.3.1",
             veryfront: "0.1.10",
@@ -326,17 +331,17 @@ describe("html-generation/html-shell-generator", () => {
 
       assertStringIncludes(
         snapshotB,
-        '<link rel="modulepreload" href="/_vf_modules/_pins/on%3Asnapshot-b/pages/dashboard.js">',
+        `<link rel="modulepreload" href="/_vf_modules/_pins/${ENCODED_PIN_KEY_B}/pages/dashboard.js">`,
       );
       assertStringIncludes(
         snapshotA,
-        '<link rel="modulepreload" href="/_vf_modules/_pins/on%3Asnapshot-a/pages/dashboard.js">',
+        `<link rel="modulepreload" href="/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/pages/dashboard.js">`,
       );
       assertStringIncludes(
         snapshotA,
-        '<link rel="modulepreload" href="/_vf_modules/_pins/on%3Asnapshot-a/app/layout.js">',
+        `<link rel="modulepreload" href="/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/app/layout.js">`,
       );
-      assertEquals(snapshotA.includes("on%3Asnapshot-b"), false);
+      assertEquals(snapshotA.includes(ENCODED_PIN_KEY_B), false);
     });
 
     it("keeps flag-off fallback preload output byte-identical", async () => {
