@@ -65,7 +65,7 @@ describe("veryfront/invalidation-state", () => {
     clearAllPendingInvalidations();
   });
 
-  it("cleans up stale invalidations and avoids blocking after stale timeout", () => {
+  it("keeps old invalidations blocked until explicit completion", () => {
     clearAllPendingInvalidations();
 
     const originalNow = Date.now;
@@ -76,9 +76,18 @@ describe("veryfront/invalidation-state", () => {
       const stalePrefix = "file:branch:project-a:main";
       addPendingInvalidation(stalePrefix);
 
-      // Advance past cleanup interval (30s) and stale threshold (5m)
+      // A slow or failed purge must not silently expose stale cached content.
       now += (5 * 60 * 1000) + (30 * 1000) + 1;
 
+      assertEquals(isPrefixBeingInvalidated(stalePrefix), true);
+      assertEquals(getPendingInvalidationsCount(), 1);
+      assertEquals(
+        (getInvalidationDebugState().entries[0]?.ageMs ?? 0) >
+          5 * 60 * 1000,
+        true,
+      );
+
+      removePendingInvalidation(stalePrefix);
       assertEquals(isPrefixBeingInvalidated(stalePrefix), false);
       assertEquals(getPendingInvalidationsCount(), 0);
     } finally {

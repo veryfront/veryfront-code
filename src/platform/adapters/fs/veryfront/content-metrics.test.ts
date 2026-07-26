@@ -43,10 +43,8 @@ describe("platform/adapters/fs/veryfront/content-metrics", () => {
 
     it("should not throw when endRequestMetrics called without context", () => {
       resetContentMetrics();
-      // endRequestMetrics is a no-op when there is no active metrics store
-      // Note: enterWith from previous tests may persist in the same async context,
-      // so we just verify it does not throw
       endRequestMetrics({ requestId: "no-start" });
+      assertEquals(getContentMetricsSnapshot().requestsTracked, 0);
     });
 
     it("should handle endRequestMetrics with no context", () => {
@@ -55,6 +53,51 @@ describe("platform/adapters/fs/veryfront/content-metrics", () => {
       endRequestMetrics();
       const snapshot = getContentMetricsSnapshot();
       assertEquals(snapshot.requestsTracked, 1);
+    });
+
+    it("settles each request only once", () => {
+      resetContentMetrics();
+      startRequestMetrics();
+      logContentMetric("NETWORK_FETCH", { path: "pages/index.tsx" });
+      endRequestMetrics();
+      endRequestMetrics();
+
+      const snapshot = getContentMetricsSnapshot();
+      assertEquals(snapshot.requestsTracked, 1);
+      assertEquals(snapshot.networkFetches, 1);
+    });
+
+    it("ignores events emitted after request settlement", () => {
+      resetContentMetrics();
+      startRequestMetrics();
+      endRequestMetrics();
+      logContentMetric("NETWORK_FETCH", { path: "late.ts" });
+
+      const snapshot = getContentMetricsSnapshot();
+      assertEquals(snapshot.requestsTracked, 1);
+      assertEquals(snapshot.networkFetches, 0);
+    });
+
+    it("closes contexts inherited by late asynchronous work", async () => {
+      resetContentMetrics();
+      startRequestMetrics();
+
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const lateMetric = (async () => {
+        await released;
+        logContentMetric("NETWORK_FETCH", { path: "late-async.ts" });
+      })();
+
+      endRequestMetrics();
+      release();
+      await lateMetric;
+
+      const snapshot = getContentMetricsSnapshot();
+      assertEquals(snapshot.requestsTracked, 1);
+      assertEquals(snapshot.networkFetches, 0);
     });
   });
 
@@ -111,6 +154,18 @@ describe("platform/adapters/fs/veryfront/content-metrics", () => {
       endRequestMetrics();
       const snapshot = getContentMetricsSnapshot();
       assertEquals(snapshot.totalNetworkMs, 0);
+    });
+
+    it("ignores invalid network durations", () => {
+      resetContentMetrics();
+      startRequestMetrics();
+      logContentMetric("NETWORK_FETCH_COMPLETE", { durationMs: -1 });
+      logContentMetric("NETWORK_FETCH_COMPLETE", { durationMs: Number.NaN });
+      logContentMetric("NETWORK_FETCH_COMPLETE", {
+        durationMs: Number.POSITIVE_INFINITY,
+      });
+      endRequestMetrics();
+      assertEquals(getContentMetricsSnapshot().totalNetworkMs, 0);
     });
 
     it("should handle logContentMetric without active request context", () => {

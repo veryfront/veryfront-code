@@ -16,6 +16,7 @@ export type MissReason =
   | "indexed_without_content";
 
 interface PerRequestMetrics {
+  ended: boolean;
   startTime: number;
   requestScopedHits: number;
   persistentCacheHits: number;
@@ -46,10 +47,11 @@ const cumulativeMetrics: CumulativeMetrics = {
   requestsTracked: 0,
 };
 
-const metricsStore = new AsyncLocalStorage<PerRequestMetrics>();
+const metricsStore = new AsyncLocalStorage<PerRequestMetrics | null>();
 
 function createFreshRequestMetrics(): PerRequestMetrics {
   return {
+    ended: false,
     startTime: performance.now(),
     requestScopedHits: 0,
     persistentCacheHits: 0,
@@ -87,7 +89,13 @@ export function endRequestMetrics(
   requestContext?: { requestId?: string; pathname?: string; mode?: string },
 ): void {
   const req = metricsStore.getStore();
-  if (!req) return;
+  if (!req || req.ended) return;
+
+  // Descendant async work inherits the same object. Mark it closed before
+  // recording so late completions and duplicate lifecycle calls cannot mutate
+  // or record this request again.
+  req.ended = true;
+  metricsStore.enterWith(null);
 
   const durationMs = Math.round(performance.now() - req.startTime);
 
@@ -148,7 +156,7 @@ export function logContentMetric(
   const path = details.path ?? "";
   const currentRequest = metricsStore.getStore();
 
-  if (currentRequest) {
+  if (currentRequest && !currentRequest.ended) {
     currentRequest.filesAccessed.add(path);
     if (details.isPreviewMode !== undefined) {
       currentRequest.isPreviewMode = details.isPreviewMode;
@@ -172,7 +180,11 @@ export function logContentMetric(
         currentRequest.fetchesByType[detectFileType(path)]++;
         break;
       case "NETWORK_FETCH_COMPLETE":
-        if (details.durationMs) {
+        if (
+          typeof details.durationMs === "number" &&
+          Number.isFinite(details.durationMs) &&
+          details.durationMs >= 0
+        ) {
           currentRequest.networkMs += details.durationMs;
         }
         break;

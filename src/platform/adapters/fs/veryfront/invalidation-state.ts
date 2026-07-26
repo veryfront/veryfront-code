@@ -2,39 +2,9 @@ import { logger as baseLogger } from "#veryfront/utils";
 
 const logger = baseLogger.component("invalidation-state");
 
-const STALE_INVALIDATION_THRESHOLD_MS = 5 * 60 * 1000;
-const CLEANUP_INTERVAL_MS = 30 * 1000;
-
-let lastCleanupTime = 0;
 let totalBlockedReads = 0;
 
 const pendingInvalidations = new Map<string, { startedAt: number; count: number }>();
-
-function cleanupStaleInvalidations(): void {
-  const now = Date.now();
-
-  if (now - lastCleanupTime < CLEANUP_INTERVAL_MS) return;
-  lastCleanupTime = now;
-
-  const staleEntries: Array<{ prefix: string; ageMs: number }> = [];
-
-  for (const [prefix, entry] of pendingInvalidations) {
-    const { startedAt } = entry;
-    const ageMs = now - startedAt;
-    if (ageMs <= STALE_INVALIDATION_THRESHOLD_MS) continue;
-
-    staleEntries.push({ prefix, ageMs });
-    pendingInvalidations.delete(prefix);
-  }
-
-  if (staleEntries.length === 0) return;
-
-  logger.warn("INVALIDATION_STALE_CLEANUP - removed orphaned entries", {
-    removedCount: staleEntries.length,
-    entries: staleEntries,
-    remainingCount: pendingInvalidations.size,
-  });
-}
 
 export function addPendingInvalidation(prefix: string): void {
   const startedAt = Date.now();
@@ -78,8 +48,6 @@ export function removePendingInvalidation(prefix: string): void {
 }
 
 export function isPrefixBeingInvalidated(prefix: string): boolean {
-  cleanupStaleInvalidations();
-
   for (const [pendingPrefix, entry] of pendingInvalidations) {
     if (!prefix.startsWith(pendingPrefix) && !pendingPrefix.startsWith(prefix)) continue;
 
