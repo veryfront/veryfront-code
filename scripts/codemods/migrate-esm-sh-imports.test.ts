@@ -114,17 +114,15 @@ Deno.test("esm-sh codemod does not request resolution when the same file provide
 });
 
 // ---------------------------------------------------------------------------
-// Scoped package with subpath and query params
+// Scoped package with subpath
 // ---------------------------------------------------------------------------
 
-Deno.test("esm-sh codemod handles scoped package with subpath and query params", () => {
-  const source =
-    'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist/index?external=react&target=es2022";\n';
+Deno.test("esm-sh codemod handles a scoped package with a subpath", () => {
+  const source = 'import { Foo } from "https://esm.sh/@scope/pkg@2.0.0/dist/index";\n';
   const result = migrateEsmShImports(source);
 
   assert(result.changed);
   assertStringIncludes(result.code, 'from "@scope/pkg/dist/index"');
-  assert(!result.code.includes("?external"));
   assertEquals(result.pins, { "@scope/pkg": "2.0.0" });
   assertEquals(result.needsResolution, []);
 });
@@ -146,6 +144,107 @@ Deno.test("esm-sh codemod handles esm.sh build-version prefix (v135/)", () => {
   assert(result.changed);
   assertStringIncludes(result.code, 'from "zod"');
   assertEquals(result.pins, { zod: "3.22.4" });
+});
+
+// ---------------------------------------------------------------------------
+// Unsafe URL forms
+// ---------------------------------------------------------------------------
+
+Deno.test("esm-sh codemod leaves behavior-changing query options untouched", () => {
+  const source = [
+    'import worker from "https://esm.sh/pkg@1.2.3?worker";',
+    'import raw from "https://esm.sh/pkg@1.2.3?raw";',
+    'import aliased from "https://esm.sh/pkg@1.2.3?alias=react:preact/compat";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assertEquals(result.changed, false);
+  assertEquals(result.code, source);
+  assertEquals(result.pins, {});
+  assertEquals(result.needsResolution, []);
+});
+
+Deno.test("esm-sh codemod leaves non-npm esm.sh registries untouched", () => {
+  const source = [
+    'import gh from "https://esm.sh/gh/owner/repository@1.2.3";',
+    'import github from "https://esm.sh/github.com/owner/repository@1.2.3";',
+    'import jsr from "https://esm.sh/jsr/@scope/pkg@1.2.3";',
+    'import preview from "https://esm.sh/pr/tinylibs/tinybench/tinybench@a832a55";',
+    'import previewAlias from "https://esm.sh/pkg.pr.new/tinylibs/tinybench@a832a55";',
+    'import nodeShim from "https://esm.sh/node/fs.mjs";',
+    'import embedded from "https://esm.sh/embed/tsx.ts";',
+    'import tsx from "https://esm.sh/tsx";',
+    'import run from "https://esm.sh/run";',
+    'import installer from "https://esm.sh/install";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assertEquals(result.changed, false);
+  assertEquals(result.code, source);
+  assertEquals(result.pins, {});
+  assertEquals(result.needsResolution, []);
+});
+
+Deno.test("esm-sh codemod lets Babel safely quote rewritten subpaths", () => {
+  const source = String.raw`import value from 'https://esm.sh/pkg@1.2.3/foo\'bar';` + "\n";
+  const result = migrateEsmShImports(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, `"pkg/foo'bar"`);
+  assertEquals(result.pins, { pkg: "1.2.3" });
+  // The transformed source must remain valid JavaScript.
+  parse(result.code, { sourceType: "module" });
+});
+
+Deno.test("esm-sh codemod leaves non-canonical npm subpaths untouched", () => {
+  const source = [
+    'import parent from "https://esm.sh/pkg@1.2.3/../evil";',
+    'import current from "https://esm.sh/pkg@1.2.3/./feature";',
+    'import empty from "https://esm.sh/pkg@1.2.3/feature//nested";',
+    'import colon from "https://esm.sh/pkg@1.2.3/feature:mode";',
+    'import backslash from "https://esm.sh/pkg@1.2.3\\\\feature";',
+    'import control from "https://esm.sh/pkg@1.2.3/feature\\u0001";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assertEquals(result.changed, false);
+  assertEquals(result.code, source);
+  assertEquals(result.pins, {});
+  assertEquals(result.needsResolution, []);
+});
+
+Deno.test("esm-sh codemod leaves tags, partial versions, and ranges untouched", () => {
+  const source = [
+    'import tagged from "https://esm.sh/pkg@next";',
+    'import major from "https://esm.sh/pkg@4";',
+    'import minor from "https://esm.sh/pkg@4.2";',
+    'import ranged from "https://esm.sh/pkg@^4.2.0";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assertEquals(result.changed, false);
+  assertEquals(result.code, source);
+  assertEquals(result.pins, {});
+  assertEquals(result.needsResolution, []);
+});
+
+Deno.test("esm-sh codemod accepts exact prerelease and build SemVer pins", () => {
+  const source = [
+    'import prerelease from "https://esm.sh/pkg-a@1.2.3-rc.1";',
+    'import build from "https://esm.sh/pkg-b@2.0.0+build.7";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assert(result.changed);
+  assertEquals(result.pins, {
+    "pkg-a": "1.2.3-rc.1",
+    "pkg-b": "2.0.0+build.7",
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -540,6 +639,46 @@ Deno.test(
 );
 
 Deno.test(
+  "invalid package.json shapes abort without modifying source or manifest",
+  async (testContext) => {
+    const cases = [
+      { name: "array root", manifest: "[]\n" },
+      { name: "null root", manifest: "null\n" },
+      { name: "array dependencies", manifest: '{"dependencies":[]}\n' },
+      {
+        name: "non-string dependency value",
+        manifest: '{"dependencies":{"lodash":{"version":"4.17.21"}}}\n',
+      },
+    ];
+
+    for (const testCase of cases) {
+      await testContext.step(testCase.name, async () => {
+        const dir = await Deno.makeTempDir();
+        const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+        try {
+          await Deno.writeTextFile(`${dir}/app.ts`, source);
+          await Deno.writeTextFile(`${dir}/package.json`, testCase.manifest);
+
+          let thrown: unknown;
+          try {
+            await main(["--", dir]);
+          } catch (error) {
+            thrown = error;
+          }
+
+          assert(thrown instanceof Error, "main() should reject an invalid package.json shape");
+          assertStringIncludes(thrown.message, "package.json");
+          assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
+          assertEquals(await Deno.readTextFile(`${dir}/package.json`), testCase.manifest);
+        } finally {
+          await Deno.remove(dir, { recursive: true });
+        }
+      });
+    }
+  },
+);
+
+Deno.test(
   "happy path: package.json written before source files, both updated",
   async () => {
     const dir = await Deno.makeTempDir();
@@ -565,6 +704,102 @@ Deno.test(
         dependencies?: Record<string, string>;
       };
       assertEquals(pkg.dependencies?.lodash, "4.17.21");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// main() integration: fail closed on version conflicts
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  "intra-file version conflict leaves source and package.json unchanged",
+  async () => {
+    const dir = await Deno.makeTempDir();
+    const source = [
+      'import first from "https://esm.sh/pkg@1.0.0";',
+      'import second from "https://esm.sh/pkg@2.0.0";',
+      "",
+    ].join("\n");
+    const manifest = JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/app.ts`, source);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      let thrown: unknown;
+      try {
+        await main(["--", dir]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should reject conflicting versions");
+      assertStringIncludes(thrown.message, "version conflict");
+      assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
+      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "cross-file version conflict leaves all files unchanged",
+  async () => {
+    const dir = await Deno.makeTempDir();
+    const firstSource = 'import first from "https://esm.sh/pkg@1.0.0";\n';
+    const secondSource = 'import second from "https://esm.sh/pkg@2.0.0";\n';
+    const manifest = JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/first.ts`, firstSource);
+      await Deno.writeTextFile(`${dir}/second.ts`, secondSource);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      let thrown: unknown;
+      try {
+        await main(["--", dir]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should reject conflicting versions");
+      assertStringIncludes(thrown.message, "version conflict");
+      assertEquals(await Deno.readTextFile(`${dir}/first.ts`), firstSource);
+      assertEquals(await Deno.readTextFile(`${dir}/second.ts`), secondSource);
+      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "package.json range conflict leaves source and manifest unchanged",
+  async () => {
+    const dir = await Deno.makeTempDir();
+    const source = 'import value from "https://esm.sh/pkg@2.0.0";\n';
+    const manifest = JSON.stringify(
+      { name: "test", dependencies: { pkg: "^1.0.0" } },
+      null,
+      2,
+    ) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/app.ts`, source);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      let thrown: unknown;
+      try {
+        await main(["--", dir]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should reject conflicting versions");
+      assertStringIncludes(thrown.message, "version conflict");
+      assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
+      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

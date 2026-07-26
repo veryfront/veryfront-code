@@ -28,13 +28,40 @@ function resolveDefaultExport<T>(module: unknown): T {
 
 const generate = resolveDefaultExport<GenerateFunction>(generateModule);
 
-// Matches esm.sh URLs with optional build-version prefix (v135/), scoped packages
-// (@scope/name), subpaths, and query params. Query params are matched but
-// deliberately not captured, so the generated bare specifier drops them.
+// Matches the path portion of a canonical npm-backed esm.sh URL after any
+// build-version prefix (v135/) has been removed.
 //
 // Groups: (1) package name, (2) version, (3) subpath (leading slash included)
-const ESM_SH_URL_RE =
-  /^https:\/\/esm\.sh\/(?:v\d+\/)?(@[^/@]+\/[^/@?]+|[^@/?]+)(?:@([^/?]+))?(\/[^?]*)?(?:\?.*)?$/;
+const ESM_SH_PATH_RE =
+  /^(@[A-Za-z0-9][A-Za-z0-9._~-]*\/[A-Za-z0-9][A-Za-z0-9._~-]*|[A-Za-z0-9][A-Za-z0-9._~-]*)(?:@([^/]+))?(\/(?!\/).+)?$/;
+
+const ESM_SH_SUBPATH_SEGMENT_RE = /^[A-Za-z0-9@._~!$&'()*+,;=-]+$/;
+
+// Routes served by esm.sh itself rather than by its npm package resolver.
+// Prefix entries include a trailing slash so npm packages with the same bare
+// name (for example "node" or "pr") remain eligible for migration.
+const ESM_SH_NON_NPM_EXACT_PATHS = new Set([
+  "error.js",
+  "favicon.ico",
+  "install",
+  "robots.txt",
+  "run",
+  "status.json",
+  "tsx",
+]);
+const ESM_SH_NON_NPM_PREFIXES = [
+  "embed/",
+  "gh/",
+  "github.com/",
+  "jsr/",
+  "node/",
+  "pkg.pr.new/",
+  "pr/",
+];
+
+// SemVer 2.0.0 without range operators, tags, partial versions, or a leading v.
+const EXACT_SEMVER_RE =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 // React-family specifiers are managed by the Veryfront import map; leave them alone.
 const REACT_SKIP_PACKAGES = new Set(["react", "react-dom"]);
@@ -94,7 +121,7 @@ export interface EsmShReport {
 export interface PackageJsonReadResult {
   data: Record<string, unknown>;
   existingDeps: Record<string, string>;
-  /** Set when the file exists but could not be read or parsed; the file must not be overwritten. */
+  /** Set when the file could not be read, parsed, or validated; it must not be overwritten. */
   parseError: string | null;
 }
 
@@ -109,8 +136,49 @@ interface EsmShParsed {
 }
 
 function parseEsmShUrl(url: string): EsmShParsed | null {
-  const m = ESM_SH_URL_RE.exec(url);
+  const prefix = "https://esm.sh/";
+  if (!url.startsWith(prefix)) return null;
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return null;
+  }
+
+  // URL parsing normalizes dot segments, backslashes, control characters, and
+  // other non-canonical spellings. Rewriting is safe only when normalization
+  // leaves the complete URL untouched.
+  if (parsedUrl.href !== url || parsedUrl.origin !== "https://esm.sh") return null;
+  if (parsedUrl.search || parsedUrl.hash || parsedUrl.pathname.includes("%")) return null;
+
+  let path = parsedUrl.pathname.slice(1);
+
+  const buildPrefix = /^v\d+\//.exec(path);
+  if (buildPrefix) path = path.slice(buildPrefix[0].length);
+
+  // esm.sh also serves built-in scripts, runtime shims, repository previews,
+  // and other non-npm resources. They cannot be represented safely in
+  // package.json dependencies.
+  if (
+    ESM_SH_NON_NPM_EXACT_PATHS.has(path) ||
+    ESM_SH_NON_NPM_PREFIXES.some((prefix) => path.startsWith(prefix))
+  ) {
+    return null;
+  }
+
+  const m = ESM_SH_PATH_RE.exec(path);
   if (!m) return null;
+  if (m[2] !== undefined && !EXACT_SEMVER_RE.test(m[2])) return null;
+  if (
+    m[3] !== undefined &&
+    m[3].slice(1).split("/").some((segment) =>
+      segment === "." || segment === ".." || !ESM_SH_SUBPATH_SEGMENT_RE.test(segment)
+    )
+  ) {
+    return null;
+  }
+
   return {
     pkg: m[1]!,
     version: m[2] ?? undefined,
@@ -176,15 +244,11 @@ function processStringLiteral(
 
   rewrites.push({ from: url, to: bare });
 
-  // Mutate the literal in place.  Update both value and extra.raw so the
-  // generator emits the bare specifier preserving the original quote style.
+  // Mutate the literal in place. Drop the parser's raw spelling so Babel
+  // chooses and escapes a safe quote style for the new value. Reusing the
+  // original quote can produce invalid code when a valid subpath contains it.
   literal.value = bare;
-  if (literal.extra) {
-    const rawStr = literal.extra.raw as string | undefined;
-    const quote = rawStr ? rawStr[0] : '"';
-    literal.extra.raw = `${quote}${bare}${quote}`;
-    literal.extra.rawValue = bare;
-  }
+  delete literal.extra;
 
   return true;
 }
@@ -312,12 +376,19 @@ export function mergeEsmShPins(
 // I/O helpers — exported for testing
 // ---------------------------------------------------------------------------
 
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype;
+}
+
 /**
  * Read and parse the project's package.json.
  *
  * Returns `parseError: null` when the file is absent (treat as empty).
- * Returns a non-null `parseError` when the file exists but cannot be read or
- * parsed — the caller must NOT overwrite the file in that case.
+ * Returns a non-null `parseError` when the file exists but cannot be read,
+ * parsed, or validated. The caller must NOT overwrite the file in that case.
  */
 export async function readProjectPackageJson(path: string): Promise<PackageJsonReadResult> {
   let text: string;
@@ -338,10 +409,30 @@ export async function readProjectPackageJson(path: string): Promise<PackageJsonR
     };
   }
   try {
-    const data = JSON.parse(text) as Record<string, unknown>;
-    const existingDeps = data["dependencies"] && typeof data["dependencies"] === "object"
-      ? (data["dependencies"] as Record<string, string>)
-      : {};
+    const parsed = JSON.parse(text) as unknown;
+    if (!isPlainJsonObject(parsed)) {
+      return {
+        data: {},
+        existingDeps: {},
+        parseError: "package.json root must be a JSON object.",
+      };
+    }
+
+    const dependencies = parsed["dependencies"];
+    if (
+      dependencies !== undefined &&
+      (!isPlainJsonObject(dependencies) ||
+        Object.values(dependencies).some((version) => typeof version !== "string"))
+    ) {
+      return {
+        data: {},
+        existingDeps: {},
+        parseError: "package.json dependencies must be a JSON object with string values.",
+      };
+    }
+
+    const existingDeps = (dependencies ?? {}) as Record<string, string>;
+    const data = parsed;
     return { data, existingDeps, parseError: null };
   } catch (e) {
     return {
@@ -430,7 +521,8 @@ async function main(args: string[]): Promise<void> {
     errors: [],
   };
 
-  // Collect pins across all files; first version seen for a package wins.
+  // Collect candidate pins across all files. Any disagreement aborts the run
+  // before a file is written.
   const allPins = new Map<string, string>();
   const allNeedsResolution = new Set<string>();
 
@@ -500,6 +592,20 @@ async function main(args: string[]): Promise<void> {
     report.rewrites = [];
     console.log(JSON.stringify(report, null, 2));
     throw new Error(pkgJsonParseError);
+  }
+
+  if (report.conflicts.length > 0) {
+    const count = report.conflicts.length;
+    const subject = count === 1
+      ? "1 dependency version conflict requires"
+      : `${count} dependency version conflicts require`;
+    const message =
+      `Migration aborted because ${subject} manual resolution. No files were changed.`;
+    report.errors.push(message);
+    report.filesChanged = 0;
+    report.rewrites = [];
+    console.log(JSON.stringify(report, null, 2));
+    throw new Error(message);
   }
 
   if (!dryRun) {
