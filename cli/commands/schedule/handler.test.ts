@@ -6,7 +6,11 @@ import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
-import { handleScheduleCommand, waitForRemoteScheduleRun } from "./handler.ts";
+import {
+  formatRemoteScheduleRunOutput,
+  handleScheduleCommand,
+  waitForRemoteScheduleRun,
+} from "./handler.ts";
 
 const originalCwd = Deno.cwd();
 const originalExit = Deno.exit;
@@ -244,6 +248,25 @@ describe("schedule command", () => {
 });
 
 describe("remote schedule polling", () => {
+  it("preserves the waiting reason in caller-visible output", () => {
+    assertEquals(
+      formatRemoteScheduleRunOutput(
+        makeRun({
+          status: "waiting",
+          waiting_reason: "awaiting_human",
+          output: null,
+          completed_at: null,
+        }),
+      ),
+      {
+        runId,
+        status: "waiting",
+        waitingReason: "awaiting_human",
+        result: null,
+      },
+    );
+  });
+
   it("uses the accepted cloud schedule timeout instead of the local definition", async () => {
     const runs = [
       makeRun({ status: "pending", output: null, completed_at: null }),

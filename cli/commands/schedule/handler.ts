@@ -74,6 +74,15 @@ export async function waitForRemoteScheduleRun(
   }
 }
 
+export function formatRemoteScheduleRunOutput(run: Run): Record<string, unknown> {
+  return {
+    runId: run.run_id,
+    status: run.status,
+    ...(run.waiting_reason ? { waitingReason: run.waiting_reason } : {}),
+    result: run.output,
+  };
+}
+
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
   const projectDir = Deno.cwd();
@@ -114,11 +123,7 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
         command: "schedule",
         triggerId: schedule.id,
         target: schedule.target,
-        output: {
-          runId: remoteRun.run_id,
-          status: remoteRun.status,
-          result: remoteRun.output,
-        },
+        output: formatRemoteScheduleRunOutput(remoteRun),
         durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
       });
       return;
