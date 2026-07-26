@@ -25,6 +25,7 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_KNOWLEDGE_INGEST_RUN_NAME = "Ingest knowledge";
+const GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX = "schedule-run";
 
 /** Configuration used by the Veryfront runs client. */
 export interface VeryfrontRunsClientConfig {
@@ -295,6 +296,8 @@ export class VeryfrontRunsClient {
   createScheduleRun(input: CreateScheduleRunInput): Promise<ScheduleRunCreateResponse> {
     const { scheduleId, projectReference, runName, idempotencyKey } = input;
     const project = this.resolveProjectReference(projectReference);
+    const resolvedIdempotencyKey = idempotencyKey ??
+      `${GENERATED_SCHEDULE_RUN_IDEMPOTENCY_PREFIX}:${crypto.randomUUID()}`;
     return this.requestJson(
       `/projects/${encodeURIComponent(project)}/schedules/${encodeURIComponent(scheduleId)}/runs`,
       ScheduleRunCreateResponseSchema,
@@ -302,7 +305,7 @@ export class VeryfrontRunsClient {
         method: "POST",
         body: {
           run_name: runName,
-          idempotency_key: idempotencyKey,
+          idempotency_key: resolvedIdempotencyKey,
         },
       },
     );

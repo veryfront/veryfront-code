@@ -1,4 +1,5 @@
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
+import { resolveConfigWithAuth } from "#cli/shared/config";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess } from "#cli/utils";
@@ -129,8 +130,11 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
     const { adapter, config, configCacheKey, projectId } = context;
     if (opts.remote) {
       const startedAt = Date.now();
+      const cliConfig = await resolveConfigWithAuth(projectDir);
       const client = createRunsClient({
-        projectReference: config.projectSlug,
+        apiUrl: cliConfig.apiUrl,
+        authToken: cliConfig.apiToken,
+        projectReference: cliConfig.projectSlug,
       });
       const accepted = await client.createScheduleRunFromSource({
         sourceTriggerId: opts.id,

@@ -346,6 +346,34 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
+  it("generates an idempotency key for direct schedule run creation", async () => {
+    mockFetch([
+      jsonResponse({
+        run_id: "run_11111111-1111-4111-8111-111111111111",
+        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
+        schedule_id: scheduleId,
+      }, 201),
+    ]);
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.createScheduleRun({
+      scheduleId,
+      runName: "Manual schedule retry guard",
+    });
+
+    const body = jsonBody(0) as { run_name: string; idempotency_key: string };
+    assertEquals(call(0).init?.method, "POST");
+    assertEquals(body, {
+      run_name: "Manual schedule retry guard",
+      idempotency_key: body.idempotency_key,
+    });
+    assertStringIncludes(body.idempotency_key, "schedule-run:");
+  });
+
   it("does not create a run when the pushed source schedule is missing", async () => {
     mockFetch([
       jsonResponse({

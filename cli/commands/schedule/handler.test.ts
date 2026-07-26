@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import { setJsonMode } from "../../shared/json-output.ts";
@@ -21,6 +22,7 @@ const environmentNames = [
   "VERYFRONT_API_URL",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
+  "XDG_CONFIG_HOME",
 ] as const;
 const originalEnvironment = Object.fromEntries(
   environmentNames.map((name) => [name, Deno.env.get(name)]),
@@ -121,11 +123,13 @@ describe("schedule command", () => {
     console.log = originalConsoleLog;
     setJsonMode(false);
     restoreEnvironment();
+    _resetEnvironmentConfig();
     clearProjectAgentRuntimeRegistries();
   });
 
   it("runs a pushed schedule without importing broken local schedule files", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-remote-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-remote-config-home-" });
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
@@ -159,13 +163,23 @@ describe("schedule command", () => {
         'export default { projectSlug: "dreamy-haven", fs: { type: "local" } };\n',
       );
       await Deno.writeTextFile(
+        `${projectDir}/veryfront.json`,
+        JSON.stringify({
+          apiUrl: "https://api.from-config.test",
+          apiToken: "config-token",
+          projectSlug: "json-only-project",
+        }) + "\n",
+      );
+      await Deno.writeTextFile(
         `${projectDir}/schedules/unrelated-broken.ts`,
         "export default nope(",
       );
 
-      Deno.env.set("VERYFRONT_API_URL", "https://api.test.com");
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-      Deno.env.set("VERYFRONT_PROJECT_SLUG", "dreamy-haven");
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
       Deno.chdir(projectDir);
       setJsonMode(true);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
@@ -202,10 +216,18 @@ describe("schedule command", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
-        "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
-        `https://api.test.com/projects/dreamy-haven/schedules/${scheduleId}/runs`,
-        `https://api.test.com/runs/${encodeURIComponent(runId)}`,
+        "https://api.from-config.test/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
+        `https://api.from-config.test/projects/dreamy-haven/schedules/${scheduleId}/runs`,
+        `https://api.from-config.test/runs/${encodeURIComponent(runId)}`,
       ]);
+      assertEquals(
+        requests.map((request) => new Headers(request.init?.headers).get("Authorization")),
+        [
+          "Bearer config-token",
+          "Bearer config-token",
+          "Bearer config-token",
+        ],
+      );
       const createRunBody = JSON.parse(String(requests[1]?.init?.body));
       assertEquals(createRunBody.run_name, "Process job submissions");
       assertEquals(typeof createRunBody.idempotency_key, "string");
@@ -231,6 +253,7 @@ describe("schedule command", () => {
     } finally {
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
     }
   });
 
