@@ -91,7 +91,6 @@
   "src/server/service-server.test.ts",
   "src/server/shared/renderer/adapter.test.ts",
   "src/tool/factory.test.ts",
-  "src/transforms/import-rewriter/strategies/cross-project-strategy.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
   "src/transforms/md/compiler/md-compiler.test.ts",
   "src/transforms/mdx/compiler/index.test.ts",

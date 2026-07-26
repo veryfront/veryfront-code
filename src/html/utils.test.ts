@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import {
   buildImportMap,
   buildImportMapJson,
@@ -265,15 +270,15 @@ describe("html-generation/utils", () => {
         ...common,
         dependencyPinningCacheKey: "off",
       });
-      const unkeyedCacheKey = (await buildImportMap(common)).cacheKey;
-      const flagOffCacheKey = (await buildImportMap({
+      const unkeyedEntry = await buildImportMap(common);
+      const flagOffEntry = await buildImportMap({
         ...common,
         moduleServerOrigin: "https://app.example",
         dependencyPinningCacheKey: "off",
-      })).cacheKey;
+      });
 
       assertEquals(flagOff, unkeyed);
-      assertEquals(flagOffCacheKey, unkeyedCacheKey);
+      assertStrictEquals(flagOffEntry, unkeyedEntry);
     });
 
     it("pins custom local modules in bundled import maps", async () => {
