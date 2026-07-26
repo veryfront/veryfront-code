@@ -95,7 +95,8 @@ export class AsyncLocalStorage {
  * Browser polyfill for unknown Node.js built-in modules.
  * Exports an empty object to prevent import crashes.
  */
-export default {};
+const nodeNoop = {};
+export { nodeNoop, nodeNoop as default };
 `,
   // dnt build artifacts — no-op in browser. These imports are injected by
   // dnt when building the npm package and must resolve when the module

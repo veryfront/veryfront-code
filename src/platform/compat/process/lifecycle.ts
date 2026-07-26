@@ -1,4 +1,9 @@
 import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
+import {
+  type GlobalErrorHandler,
+  invokeGlobalErrorHandler,
+  normalizeGlobalError,
+} from "./global-error.ts";
 import { runtimeProcess } from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
@@ -165,18 +170,22 @@ export function onSignal(
  * @param onError - Callback invoked with the error. Return true to prevent process exit.
  */
 export function onGlobalError(
-  onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void,
+  onError: GlobalErrorHandler,
 ): void {
   if (IS_DENO) {
     // Intentionally permanent: process-level handlers must persist for the entire runtime
     globalThis.addEventListener("error", (event) => {
-      const error = event.error instanceof Error ? event.error : new Error(String(event.error));
-      if (onError(error, "uncaughtException")) event.preventDefault();
+      const error = normalizeGlobalError(event.error);
+      if (invokeGlobalErrorHandler(onError, error, "uncaughtException")) {
+        event.preventDefault();
+      }
     });
 
     globalThis.addEventListener("unhandledrejection", (event) => {
-      const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
-      if (onError(error, "unhandledRejection")) event.preventDefault();
+      const error = normalizeGlobalError(event.reason);
+      if (invokeGlobalErrorHandler(onError, error, "unhandledRejection")) {
+        event.preventDefault();
+      }
     });
 
     return;
@@ -189,17 +198,7 @@ export function onGlobalError(
     error: Error,
     type: "uncaughtException" | "unhandledRejection",
   ): void => {
-    let shouldPreventExit = false;
-    try {
-      shouldPreventExit = onError(error, type) === true;
-    } catch (handlerError) {
-      const handlerException = handlerError instanceof Error
-        ? handlerError
-        : new Error(String(handlerError));
-      console.error("Global error handler threw while processing", type, handlerException);
-    }
-
-    if (shouldPreventExit) return;
+    if (invokeGlobalErrorHandler(onError, error, type)) return;
 
     // Node/Bun suppress default fatal behavior when a listener is registered.
     // If the callback did not explicitly handle the error, exit to preserve
@@ -208,12 +207,17 @@ export function onGlobalError(
   };
 
   runtimeProcess.on("uncaughtException", (error: Error) => {
-    handleNodeGlobalError(error, "uncaughtException");
+    handleNodeGlobalError(
+      normalizeGlobalError(error),
+      "uncaughtException",
+    );
   });
 
   runtimeProcess.on("unhandledRejection", (reason: unknown) => {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    handleNodeGlobalError(error, "unhandledRejection");
+    handleNodeGlobalError(
+      normalizeGlobalError(reason),
+      "unhandledRejection",
+    );
   });
 }
 

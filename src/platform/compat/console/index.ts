@@ -1,8 +1,8 @@
 /**
  * Cross-runtime console styling
  *
- * Provides terminal colors that work in Deno, Node.js, and Bun.
- * Falls back to no-op functions in environments without terminal support.
+ * Provides terminal colors in Deno. Node.js and Bun use identity styling
+ * because the logging layer owns color policy and TTY detection there.
  */
 
 import { isDeno } from "../runtime.ts";

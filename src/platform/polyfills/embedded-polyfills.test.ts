@@ -49,6 +49,29 @@ describe("Embedded Polyfills", () => {
     }
   });
 
+  it("embedded Node polyfills preserve their source export contracts", () => {
+    const asyncHooks = EMBEDDED_POLYFILLS["_veryfront/platform/polyfills/node-async-hooks"] ??
+      "";
+    for (
+      const expected of [
+        "export class AsyncLocalStorage",
+        "run(",
+        "getStore(",
+        "disable(",
+        "enterWith(",
+      ]
+    ) {
+      assertEquals(asyncHooks.includes(expected), true);
+    }
+
+    const nodeNoop = EMBEDDED_POLYFILLS["_veryfront/platform/polyfills/node-noop"] ?? "";
+    assertEquals(nodeNoop.includes("const nodeNoop = {}"), true);
+    assertEquals(
+      nodeNoop.includes("export { nodeNoop, nodeNoop as default }"),
+      true,
+    );
+  });
+
   it("dnt shim polyfills exist with _veryfront/ prefix", () => {
     const keys = Object.keys(EMBEDDED_POLYFILLS);
     assertEquals(keys.includes("_veryfront/_dnt.shims"), true);
