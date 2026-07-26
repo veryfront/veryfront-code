@@ -5,6 +5,7 @@ import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
 } from "../../src/config/environment-config.ts";
+import { createIssuesManager } from "../../src/issues/index.ts";
 import { MCPDevServer } from "./server.ts";
 import type { MCPServerConfig } from "./server.ts";
 
@@ -245,6 +246,61 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(resourceUris.includes("veryfront://errors"), true);
       assertEquals(resourceUris.includes("veryfront://logs"), true);
       assertEquals(resourceUris.includes("issues://"), true);
+    });
+
+    it("serves bounded issue resources and rejects invalid issue IDs", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "issues-resource-test-",
+      });
+      const portNum = 19903;
+      try {
+        const manager = createIssuesManager(projectDir);
+        const open = await manager.create({ title: "Open resource" });
+        const closed = await manager.create({ title: "Closed resource" });
+        await manager.close(closed.metadata.id);
+
+        server = new MCPDevServer({ httpPort: portNum, projectDir });
+        server.start();
+        await waitForServerBind();
+
+        const listResponse = await postMcp(portNum, {
+          jsonrpc: "2.0",
+          id: 42,
+          method: "resources/read",
+          params: { uri: "issues://" },
+        });
+        const listPayload = await listResponse.json();
+        const list = JSON.parse(listPayload.result.contents[0].text);
+        assertEquals(list.total, 1);
+        assertEquals(list.issues.map((issue: { metadata: { id: string } }) => issue.metadata.id), [
+          open.metadata.id,
+        ]);
+
+        const itemResponse = await postMcp(portNum, {
+          jsonrpc: "2.0",
+          id: 43,
+          method: "resources/read",
+          params: { uri: `issues://${open.metadata.id}` },
+        });
+        const itemPayload = await itemResponse.json();
+        const item = JSON.parse(itemPayload.result.contents[0].text);
+        assertEquals(item.metadata.id, open.metadata.id);
+
+        const invalidResponse = await postMcp(portNum, {
+          jsonrpc: "2.0",
+          id: 44,
+          method: "resources/read",
+          params: { uri: "issues://../outside" },
+        });
+        const invalidPayload = await invalidResponse.json();
+        assertExists(invalidPayload.error);
+      } finally {
+        if (server) {
+          await server.stop();
+          server = null;
+        }
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("should omit secrets and local paths from the config resource", async () => {

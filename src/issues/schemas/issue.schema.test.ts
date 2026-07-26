@@ -1,12 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createIssueSchema,
   generateIssueId,
+  isoDateSchema,
   ISSUE_PREFIXES,
+  issueMetadataSchema,
+  issueSchema,
   isValidIssueId,
+  listIssuesSchema,
   parseIssueId,
   parseState,
+  updateIssueSchema,
 } from "./issue.schema.ts";
 
 describe("issues/schema", () => {
@@ -137,6 +143,151 @@ describe("issues/schema", () => {
       for (const state of ["unknown", "pending"] as const) {
         assertEquals(parseState(state), null);
       }
+    });
+  });
+
+  describe("runtime input bounds", () => {
+    it("rejects unsafe or unbounded issue IDs", () => {
+      for (
+        const id of [
+          "ISSUE-9007199254740992",
+          `ISSUE-${"9".repeat(100)}`,
+        ]
+      ) {
+        assertEquals(isValidIssueId(id), false);
+        assertEquals(parseIssueId(id), null);
+      }
+    });
+
+    it("accepts real ISO timestamps and rejects loose Date.parse inputs", () => {
+      for (
+        const timestamp of [
+          "2026-01-23T00:00:00Z",
+          "2026-01-23T00:00:00.123Z",
+          "2026-01-23T01:30:00+01:30",
+        ]
+      ) {
+        assertEquals(isoDateSchema.parse(timestamp), timestamp);
+      }
+
+      for (
+        const timestamp of [
+          "01/23/2026",
+          "2026-02-30T00:00:00Z",
+          "2026-01-23",
+          "2026-01-23T00:00:00+14:01",
+        ]
+      ) {
+        assertThrows(() => isoDateSchema.parse(timestamp));
+      }
+
+      const metadata = {
+        id: "ISSUE-001",
+        title: "Timestamp ordering",
+        state: "open" as const,
+        labels: [],
+        assignees: [],
+        created_at: "2026-01-23T00:00:00.000000002Z",
+        updated_at: "2026-01-23T00:00:00.000000001Z",
+      };
+      assertThrows(() => issueMetadataSchema.parse(metadata));
+      assertEquals(
+        issueMetadataSchema.parse({
+          ...metadata,
+          created_at: "2026-01-23T01:00:00.000000001+01:00",
+        }).updated_at,
+        metadata.updated_at,
+      );
+    });
+
+    it("rejects blank, control-bearing, duplicate, and oversized metadata", () => {
+      const base = {
+        id: "ISSUE-001",
+        title: "Valid",
+        state: "open" as const,
+        labels: ["bug"],
+        assignees: ["alice"],
+        created_at: "2026-01-23T00:00:00.000Z",
+        updated_at: "2026-01-23T00:00:00.000Z",
+      };
+
+      for (
+        const metadata of [
+          { ...base, title: "   " },
+          { ...base, title: "line\nbreak" },
+          { ...base, title: "line\u2028break" },
+          { ...base, title: "next\u0085line" },
+          { ...base, title: "unpaired\uD800surrogate" },
+          { ...base, labels: ["bug", "bug"] },
+          { ...base, labels: [" padded"] },
+          { ...base, assignees: ["alice", "alice"] },
+          { ...base, milestone: "bad\u0000value" },
+        ]
+      ) {
+        assertThrows(() => issueMetadataSchema.parse(metadata));
+      }
+    });
+
+    it("bounds bodies, collections, and list limits at public schemas", () => {
+      assertThrows(() =>
+        createIssueSchema.parse({
+          title: "Too large",
+          body: "x".repeat(1_000_001),
+        })
+      );
+      for (
+        const body of [
+          "terminal\u001b[31mcontrol",
+          "terminal\u009b31mcontrol",
+          "bare\rcarriage-return",
+          "unpaired\uDC00surrogate",
+        ]
+      ) {
+        assertThrows(() => createIssueSchema.parse({ title: "Unsafe body", body }));
+      }
+      for (const body of ["line one\nline two", "line one\r\nline two", "a\tcode block"]) {
+        assertEquals(createIssueSchema.parse({ title: "Safe body", body }).body, body);
+      }
+      const validIssue = {
+        metadata: {
+          id: "ISSUE-001",
+          title: "Valid",
+          state: "open" as const,
+          labels: [],
+          assignees: [],
+          created_at: "2026-01-23T00:00:00.000Z",
+          updated_at: "2026-01-23T00:00:00.000Z",
+        },
+        body: "",
+      };
+      for (const path of ["issues/bad\u001bpath.md", "issues/bad\uD800path.md"]) {
+        assertThrows(() => issueSchema.parse({ ...validIssue, path }));
+      }
+      assertThrows(() =>
+        updateIssueSchema.parse({
+          labels: Array.from({ length: 65 }, (_, index) => `label-${index}`),
+        })
+      );
+
+      assertEquals(listIssuesSchema.parse({ limit: 1_000 }).limit, 1_000);
+      for (const limit of [0, 1.5, 1_001, Number.POSITIVE_INFINITY]) {
+        assertThrows(() => listIssuesSchema.parse({ limit }));
+      }
+    });
+
+    it("rejects unknown object properties instead of silently discarding them", () => {
+      assertThrows(() =>
+        createIssueSchema.parse({
+          title: "Known",
+          unexpected: true,
+        })
+      );
+      assertThrows(() =>
+        listIssuesSchema.parse({
+          state: "open",
+          unexpected: true,
+        })
+      );
     });
   });
 });

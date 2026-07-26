@@ -14,14 +14,23 @@ import { createIssuesManager } from "./core.ts";
 import type { Issue } from "./schemas/index.ts";
 import {
   getCreateIssueSchema,
+  getIssueAssigneeSchema,
+  getIssueAssigneesSchema,
+  getIssueBodySchema,
   getIssueIdSchema,
+  getIssueLabelsSchema,
+  getIssueMilestoneSchema,
+  getIssuePathSchema,
   getIssuePrefixSchema,
   getIssueStateSchema,
-  getLabelSchema,
+  getIssueTitleSchema,
   getListIssuesSchema,
   getUpdateIssueSchema,
+  ISSUE_STATE_INPUTS,
+  MAX_ISSUE_LIST_LIMIT,
   parseState,
 } from "./schemas/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 function getManager(projectDir?: string) {
   return createIssuesManager(projectDir ?? cwd());
@@ -33,25 +42,31 @@ function getManager(projectDir?: string) {
 
 const getProjectDirSchema = defineSchema((v) =>
   v.object({
-    projectDir: v.string().optional().describe("Project directory (defaults to cwd)"),
-  })
+    projectDir: getIssuePathSchema()
+      .refine(
+        (path) => path.trim() !== "",
+        "Project directory must be non-blank",
+      )
+      .optional()
+      .describe("Project directory (defaults to cwd)"),
+  }).strict()
 );
 
 // ============================================================================
 // Tool: issues_create
 // ============================================================================
 
-const getIssuesCreateInput = defineSchema((v) =>
+const getIssuesCreateInput = defineSchema((_v) =>
   getCreateIssueSchema().extend({
-    title: v.string().describe("Issue title"),
-    body: v.string().optional().describe("Issue description in markdown"),
-    labels: v.array(getLabelSchema()).optional().describe(
+    title: getIssueTitleSchema().describe("Issue title"),
+    body: getIssueBodySchema().optional().describe("Issue description in markdown"),
+    labels: getIssueLabelsSchema().optional().describe(
       "Labels to apply (e.g., ['bug', 'priority:high'])",
     ),
-    milestone: v.string().optional().describe("Milestone to assign"),
-    assignees: v.array(v.string()).optional().describe("Users to assign"),
+    milestone: getIssueMilestoneSchema().optional().describe("Milestone to assign"),
+    assignees: getIssueAssigneesSchema().optional().describe("Users to assign"),
     prefix: getIssuePrefixSchema().optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
-  }).merge(getProjectDirSchema())
+  }).merge(getProjectDirSchema()).strict()
 );
 const issuesCreateInput = lazySchema(getIssuesCreateInput);
 
@@ -60,10 +75,15 @@ type IssuesCreateInput = InferSchema<ReturnType<typeof getIssuesCreateInput>>;
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
   title: "Create Issue",
-  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
   description: "Use this when you need to create a new issue, task, or plan as a markdown file. " +
     "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features. " +
-    "Returns the created issue. Do not use for updating — use issues_update instead.",
+    "Returns the created issue. Do not use for updating; use issues_update instead.",
   inputSchema: issuesCreateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -85,7 +105,7 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
 const getIssuesGetInput = defineSchema((_v) =>
   getProjectDirSchema().extend({
     id: getIssueIdSchema().describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
-  })
+  }).strict()
 );
 const issuesGetInput = lazySchema(getIssuesGetInput);
 
@@ -96,7 +116,7 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   title: "Get Issue",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to retrieve a specific issue by its ID. Returns the issue or null if not found. Do not use for listing — use issues_list instead.",
+    "Use this when you need to retrieve a specific issue by its ID. Returns the issue or null if not found. Do not use for listing; use issues_list instead.",
   inputSchema: issuesGetInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -111,15 +131,19 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
 const getIssuesUpdateInput = defineSchema((v) =>
   getUpdateIssueSchema().extend({
     id: getIssueIdSchema().describe("Issue ID to update"),
-    title: v.string().optional().describe("New title"),
-    body: v.string().optional().describe("New body content"),
-    state: v.string().optional().describe(
-      "New state: 'open' or 'closed' (aliases: done, resolved)",
+    title: getIssueTitleSchema().optional().describe("New title"),
+    body: getIssueBodySchema().optional().describe("New body content"),
+    state: v.enum(ISSUE_STATE_INPUTS).optional().describe(
+      `New state or alias (${ISSUE_STATE_INPUTS.join(", ")})`,
     ),
-    labels: v.array(getLabelSchema()).optional().describe("Labels to set (replaces existing)"),
-    milestone: v.string().nullable().optional().describe("Milestone (set to null to remove)"),
-    assignees: v.array(v.string()).optional().describe("Assignees to set (replaces existing)"),
-  }).merge(getProjectDirSchema())
+    labels: getIssueLabelsSchema().optional().describe("Labels to set (replaces existing)"),
+    milestone: getIssueMilestoneSchema().nullable().optional().describe(
+      "Milestone (set to null to remove)",
+    ),
+    assignees: getIssueAssigneesSchema().optional().describe(
+      "Assignees to set (replaces existing)",
+    ),
+  }).merge(getProjectDirSchema()).strict()
 );
 const issuesUpdateInput = lazySchema(getIssuesUpdateInput);
 
@@ -136,7 +160,7 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   },
   description:
     "Use this when you need to modify an existing issue. Only provided fields are updated. " +
-    "Returns the updated issue or null if not found. Do not use to close — use issues_close instead.",
+    "Returns the updated issue or null if not found. Do not use to close; use issues_close instead.",
   inputSchema: issuesUpdateInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -150,7 +174,12 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
 
     if (input.state !== undefined) {
       const state = parseState(input.state);
-      if (state) updates.state = state;
+      if (!state) {
+        throw INVALID_ARGUMENT.create({
+          detail: `Unsupported issue state: ${input.state}`,
+        });
+      }
+      updates.state = state;
     }
 
     return manager.update(input.id, updates);
@@ -164,14 +193,18 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
 const getIssuesListInput = defineSchema((v) =>
   getListIssuesSchema().extend({
     state: getIssueStateSchema().optional().describe("Filter by state"),
-    labels: v.array(getLabelSchema()).optional().describe("Filter by labels (must have ALL)"),
-    milestone: v.string().optional().describe("Filter by milestone"),
-    assignee: v.string().optional().describe("Filter by assignee"),
+    labels: getIssueLabelsSchema().optional().describe("Filter by labels (must have ALL)"),
+    milestone: getIssueMilestoneSchema().optional().describe("Filter by milestone"),
+    assignee: getIssueAssigneeSchema().optional().describe("Filter by assignee"),
     prefix: getIssuePrefixSchema().optional().describe("Filter by prefix (ISSUE, TASK, PLAN)"),
     sortBy: v.enum(["created_at", "updated_at", "id"]).optional().describe("Sort field"),
     sortDirection: v.enum(["asc", "desc"]).optional().describe("Sort direction"),
-    limit: v.number().optional().describe("Maximum results"),
-  }).merge(getProjectDirSchema())
+    limit: v.number().int().positive().max(MAX_ISSUE_LIST_LIMIT).default(
+      MAX_ISSUE_LIST_LIMIT,
+    ).describe(
+      "Maximum results",
+    ),
+  }).merge(getProjectDirSchema()).strict()
 );
 const issuesListInput = lazySchema(getIssuesListInput);
 
@@ -187,7 +220,7 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   title: "List Issues",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description: "Use this when you need to find issues matching criteria. " +
-    "Returns matching issues and total count. Do not use to get a single known issue — use issues_get instead.",
+    "Returns matching issues and total count. Do not use to get a single known issue; use issues_get instead.",
   inputSchema: issuesListInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -211,7 +244,7 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
 const getIssuesCloseInput = defineSchema((_v) =>
   getProjectDirSchema().extend({
     id: getIssueIdSchema().describe("Issue ID to close"),
-  })
+  }).strict()
 );
 const issuesCloseInput = lazySchema(getIssuesCloseInput);
 
@@ -227,7 +260,7 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
     openWorldHint: false,
   },
   description:
-    "Use this when you need to close an issue. Returns the updated issue or null if not found. Do not use to delete — use issues_delete instead.",
+    "Use this when you need to close an issue. Returns the updated issue or null if not found. Do not use to delete; use issues_delete instead.",
   inputSchema: issuesCloseInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);
@@ -242,7 +275,7 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
 const getIssuesDeleteInput = defineSchema((_v) =>
   getProjectDirSchema().extend({
     id: getIssueIdSchema().describe("Issue ID to delete"),
-  })
+  }).strict()
 );
 const issuesDeleteInput = lazySchema(getIssuesDeleteInput);
 
@@ -264,7 +297,7 @@ const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
   description:
     "Use this when you need to permanently delete an issue. Returns {deleted: true/false}. " +
     "WARNING: this is irreversible and cannot be undone. Prefer issues_close unless permanent deletion is explicitly requested. " +
-    "Do not use to close — use issues_close instead.",
+    "Do not use to close; use issues_close instead.",
   inputSchema: issuesDeleteInput,
   execute: async (input) => {
     const manager = getManager(input.projectDir);

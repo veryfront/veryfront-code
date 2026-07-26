@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    15 |      25.9% | Current formal closure evidence remains valid       |
+| Closed                         |    16 |      27.6% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     3 |       5.2% | No current authoritative-branch review delta exists |
+| Pending current review         |     2 |       3.4% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 55/58 (94.8%). This is progress coverage, not a substitute for the
+coverage of 56/58 (96.6%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -42,6 +42,7 @@ stricter closure count.
 - `embedding`
 - `eval`
 - `extensions`
+- `issues`
 - `knowledge`
 - `markdown`
 - `mdx`
@@ -103,7 +104,6 @@ stricter closure count.
 ### Pending current review
 
 - `chat`
-- `issues`
 - `studio`
 
 ## Historical recovery context
@@ -121,7 +121,7 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `eval`,
-`extensions`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
+`extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
 `repositories`, `runs`, `runtime`, `sandbox`, `schemas`, and `version.ts`. The
 latest independent adversarial knowledge, Markdown, MDX, provider,
 repositories, runs, runtime, and sandbox findings are remediated and
@@ -132,8 +132,140 @@ consumer map, deep module-level review, adversarial boundary tests,
 public-contract documentation, and repository-wide static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
-unit. `issues` is the next pending current-state target after this checkpoint
-is committed, pushed, and synchronized with `origin/main`.
+unit. `studio` is the next pending current-state target after this checkpoint
+is committed, pushed, and synchronized with `origin/main`; it is the smaller
+and more dependency-local of the two remaining untouched units.
+
+### Issues closure checkpoint
+
+The `issues` audit unit owns the internal file-backed project issue contract:
+strict runtime schemas, Markdown/frontmatter serialization, persistent ID
+allocation, CRUD and list behavior, and the six issue MCP tools. Its direct
+dependencies are the shared schema extension, structured errors, compatibility
+path/process helpers, and the platform `FileSystem` abstraction. Its production
+consumers are the `veryfront issues` CLI, the development MCP tool registry,
+and the HTTP MCP `issues://` resources. `veryfront/issues` is a workspace import
+but is not an npm export, so generated public API reference is intentionally
+limited to the adjacent exported filesystem lines changed by this checkpoint.
+
+The current issues findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** traversal-shaped, oversized,
+  unsafe-integer, and control-bearing IDs or project paths reached path
+  construction. The source was a permissive ID regex plus validation after
+  filesystem access. The consequence was path escape, ambiguous identity, and
+  unbounded boundary work. IDs, prefixes, paths, text, collections, bodies,
+  files, and list limits now use strict shared schemas before dependent work.
+- **Symptom -> Source -> Consequence -> Remedy:** permission, corruption, and
+  malformed-frontmatter failures appeared as missing issues. The source was
+  broad catch-and-return behavior in get, list, and delete paths. The
+  consequence was silent data loss and misleading automation. Only recognized
+  not-found errors map to null, false, or an empty list; invalid files surface
+  a structured 422 error and operational failures retain their causes.
+- **Symptom -> Source -> Consequence -> Remedy:** issue files and storage
+  directories could be symbolic links. The source was following `stat` and
+  direct reads without terminal-link checks. The consequence was reading or
+  mutating outside the intended project storage. Default adapters now use
+  `lstat` for directories and files and fail closed on links or non-regular
+  storage.
+- **Symptom -> Source -> Consequence -> Remedy:** concurrent creates selected
+  the same next ID, deleted IDs were reused, and empty reservation directories
+  disappeared from Git. The source was scan-then-write allocation with no
+  durable identity record. The consequence was overwrites and clone-dependent
+  identity reuse. Atomic `.ids/<ID>` directory claims now contain a
+  Git-trackable marker, successful and deleted IDs remain reserved, allocation
+  is bounded, and failed reservations roll back with combined cleanup errors.
+- **Symptom -> Source -> Consequence -> Remedy:** updates performed
+  read-modify-write without cross-manager coordination and wrote directly over
+  the live file. The source was same-instance assumptions and a filesystem
+  abstraction without replacement support. The consequence was lost labels,
+  partial files, and alias-dependent races. A fair same-storage queue plus
+  atomic per-ID `.locks/<ID>` directories serializes mutations; default Deno
+  and Node adapters expose same-filesystem rename; temporary writes replace
+  the live file only after validation; every cleanup path preserves both the
+  operation and cleanup error.
+- **Symptom -> Source -> Consequence -> Remedy:** the hand-written YAML parser
+  corrupted quoted strings and arrays, admitted unsupported structures and
+  duplicate keys, created prototype-bearing objects, and trimmed meaningful
+  body whitespace. The source was delimiter splitting and broad whitespace
+  normalization. The consequence was non-round-tripping records and unsafe
+  metadata interpretation. Parsing is now a documented, bounded flat YAML
+  subset paired with canonical JSON-compatible string serialization, a
+  null-prototype result, strict metadata validation, and exact removal of only
+  the serializer's framing newlines.
+- **Symptom -> Source -> Consequence -> Remedy:** `Date.parse`, lexical ID
+  ordering, and unconditional rewrites made sub-millisecond ordering,
+  zero-padded IDs, locale behavior, and no-op timestamps unstable. The source
+  was lossy date conversion and locale-sensitive string comparison. The
+  consequence was nondeterministic lists and false change history. ISO
+  date-times receive calendar and offset validation and exact nanosecond
+  comparison; ASCII IDs have numeric and code-unit tie ordering; no-op updates
+  preserve the record; real updates advance monotonically and reject
+  unrepresentable year overflow before writing.
+- **Symptom -> Source -> Consequence -> Remedy:** CLI casts trusted arbitrary
+  sort controls, an invalid numeric `--limit` became no limit, invalid
+  states/prefixes could become no-ops, fields could not be cleared, and delete
+  ignored JSON mode. The consequence was boundary-dependent behavior and
+  scripting output drift. Explicit type guards and bounded numeric parsing now
+  produce structured argument errors, empty edit values clear supported
+  fields, not-found results are structured, and every JSON mutation has a
+  stable machine-readable result.
+- **Symptom -> Source -> Consequence -> Remedy:** MCP duplicated weaker schemas,
+  silently ignored unsupported state values, advertised inaccurate idempotency,
+  and exposed unbounded list/resource output counts. The consequence was drift
+  between programmatic, CLI, and transport contracts. MCP now composes the
+  canonical schemas, validates documented aliases, uses behavior-accurate
+  annotations, applies the shared maximum count by default, and validates
+  `issues://` item IDs before filesystem access. The HTTP resource server
+  snapshots an explicit or construction-time project directory rather than
+  consulting mutable process cwd for every request.
+- **Symptom -> Source -> Consequence -> Remedy:** the CLI suite copied private
+  helper implementations and asserted inert argument objects rather than
+  invoking the command. The consequence was coverage that could remain green
+  while command wiring regressed. Those tests were replaced with real create,
+  list, edit, lifecycle, deletion, structured-error, clear-field, JSON, and
+  invalid-boundary workflows; the MCP suite now executes every CRUD tool.
+
+Reproducible checkpoint evidence:
+
+- The direct core, schema, and MCP suites pass 66 tests and 38 nested steps
+  with zero failures. They cover malformed storage, parser round trips,
+  traversal, symlinks, allocation races, deleted-ID retention, atomic
+  replacement failure, timestamp precision and overflow, lock contention,
+  cleanup failure, and the complete MCP lifecycle.
+- Direct `src/issues` coverage is 89.1 percent branches, 100 percent functions,
+  and 88.5 percent lines. Core reaches 100 percent function coverage, and the
+  MCP implementation reaches 96.9 percent line coverage.
+- The expanded issue, CLI, filesystem-adapter, MCP registry, and HTTP resource
+  set passes 76 tests and 156 nested steps with zero failures.
+- Formatting, lint, direct typechecks, diff checks, generated documentation,
+  46 executable documentation tests with 89 steps, and all 735 documentation
+  links pass.
+- `deno task verify:quick` passes generated manifests, formatting of the full
+  source tree, lint and architecture ratchets, dependency and module
+  boundaries, extension contracts, documentation validation, and every
+  configured entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilds the npm package and every first-party
+  extension, verifies root import lifecycle, and passes consumer composition
+  against the generated declarations. A direct Node 24 smoke of the built
+  public filesystem entry confirms rename replaces the target and removes the
+  source.
+
+No unresolved critical or high-confidence issues production risk remains. The
+following bounded residuals are explicit:
+
+| Severity | Surface                              | Evidence and consequence                                                                                                                                                                                                                                                | Required resolution                                                                                                                                                                      |
+| -------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Moderate | Compatibility filesystem adapters    | Default Deno and Node adapters provide `lstat` and atomic rename. A caller-injected legacy `FileSystem` may omit either optional capability; that preserves the existing seam but cannot prove terminal-link safety and uses direct write replacement.                  | Make both capabilities mandatory through an explicit compatibility release, then remove the fallback and add third-party adapter conformance tests.                                      |
+| Low      | Crash durability                     | Same-filesystem rename prevents partial visibility but the abstraction has no file or directory `fsync` contract. A host crash can therefore lose a recently acknowledged issue or reservation even though ordinary operation failures are handled.                     | Add an opt-in durable-write capability with platform tests before claiming power-loss durability.                                                                                        |
+| Low      | Filesystem race window               | Terminal `lstat`, bounded read, and atomic replacement reduce link and partial-write risks, but path components can change between checks because the abstraction has no directory-handle or no-follow operation.                                                       | Evolve the platform layer around directory handles or equivalent no-follow primitives where supported; keep project issue storage within a trusted local workspace meanwhile.            |
+| Low      | Stale mutation locks                 | A process crash can leave `.locks/<ID>` behind. Automatic age-based reaping could admit two writers, so mutations deliberately fail with 409 until an operator verifies no writer is active and removes only that lock.                                                 | Introduce owner tokens and a tested lease/heartbeat protocol before automating stale-lock recovery.                                                                                      |
+| Low      | Large local collections              | Programmatic and CLI `list()` preserve the historical all-results behavior when no limit is supplied and must scan matching files to compute total and sort. MCP caps count at 1,000, but schema-valid bodies can still make a maximum response large.                  | Add cursor pagination and an explicit response-byte contract through a compatibility-reviewed API evolution.                                                                             |
+| Low      | Distributed reservation coordination | A crash between atomic reservation-directory creation and marker writing leaves a locally reserved but untracked empty directory, and independent Git branches can still select the same uncommitted ID. The marker prevents reuse only after it is written and shared. | Use a durable centralized allocator when globally unique cross-branch identity is required; otherwise commit `.ids` markers with issue changes and resolve branch collisions explicitly. |
+
+The `issues` unit is closed. Adjacent `platform`, CLI, MCP server, and generated
+filesystem/testing reference changes passed their focused consumers but keep
+those top-level audit units in revalidation.
 
 ### Repositories closure checkpoint
 

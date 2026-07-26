@@ -11,7 +11,7 @@ import { createHttpServer, type HttpServer } from "veryfront/platform/http";
 import type { StdinReader } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { createIssuesManager } from "veryfront/issues";
+import { createIssuesManager, type IssuesManager, MAX_ISSUE_LIST_LIMIT } from "veryfront/issues";
 import type { ToolListEntry } from "veryfront/mcp";
 import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import { isRequestBodyTooLargeError, readBodyWithLimit } from "veryfront/security";
@@ -59,6 +59,8 @@ export interface MCPServerConfig {
   serverName?: string;
   /** Server version */
   serverVersion?: string;
+  /** Project directory used by project-scoped resources (defaults to cwd). */
+  projectDir?: string;
 }
 
 export class MCPDevServer {
@@ -67,6 +69,7 @@ export class MCPDevServer {
   private stdinReader: StdinReader | null = null;
   private httpServer: HttpServer | null = null;
   private httpServePromise: Promise<void> | null = null;
+  private readonly issuesManager: IssuesManager;
 
   constructor(config: MCPServerConfig = {}) {
     this.config = {
@@ -74,6 +77,7 @@ export class MCPDevServer {
       serverVersion: "1.0.0",
       ...config,
     };
+    this.issuesManager = createIssuesManager(config.projectDir ?? cwd());
 
     // Set server start time for status tool
     setServerStartTime(Date.now());
@@ -483,10 +487,11 @@ export class MCPDevServer {
 
         if (!uri.startsWith("issues://")) throw new Error(`Unknown resource: ${uri}`);
 
-        const manager = createIssuesManager(cwd());
-
         if (uri === "issues://") {
-          const result = await manager.list({ state: "open" });
+          const result = await this.issuesManager.list({
+            state: "open",
+            limit: MAX_ISSUE_LIST_LIMIT,
+          });
           return {
             contents: [
               {
@@ -499,7 +504,7 @@ export class MCPDevServer {
         }
 
         const id = uri.slice("issues://".length);
-        const issue = await manager.get(id);
+        const issue = await this.issuesManager.get(id);
         if (!issue) throw new Error(`Issue not found: ${id}`);
 
         return {
