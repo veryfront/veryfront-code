@@ -4,13 +4,17 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../../release-assets/constants.ts";
 import {
   _clearNpmVersionCache,
   _pendingResolutions,
   getCachedNpmVersion,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import {
+  clearReactVersionCache,
+  getProjectDependenciesSync,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import {
   createBareExternalPlugin,
   createHttpExternalPlugin,
@@ -286,6 +290,68 @@ describe(
       // Wait for the background registry fetch (fired inside onResolve) to settle.
       await _pendingResolutions();
       assertEquals(getCachedNpmVersion("lodash", "/project"), "4.17.21");
+    });
+  },
+);
+
+describe(
+  "createBareExternalPlugin — warms dep cache from real package.json independent of react config",
+  () => {
+    let tmpDir: string;
+    let originalFetch: typeof globalThis.fetch;
+    let originalFlag: string | undefined;
+
+    beforeEach(async () => {
+      tmpDir = await Deno.makeTempDir({ prefix: "vf-esbuild-pin-" });
+      await Deno.writeTextFile(
+        `${tmpDir}/package.json`,
+        JSON.stringify({ dependencies: { lodash: "4.17.20" } }),
+      );
+      originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      _clearNpmVersionCache();
+      // Mock fetch to prevent real network calls from scheduleNpmVersionResolution.
+      originalFetch = globalThis.fetch;
+      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+    });
+
+    afterEach(async () => {
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+      await _pendingResolutions();
+      globalThis.fetch = originalFetch;
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      _clearNpmVersionCache();
+      await Deno.remove(tmpDir, { recursive: true });
+    });
+
+    it("getProjectDependenciesSync is cold before the build and warm after (regression guard for config.react.version path)", async () => {
+      // Before the build the cache is cold — simulates what happens when the
+      // handler resolved reactVersion from config.react.version and skipped
+      // readProjectDependencyVersions.
+      assertEquals(getProjectDependenciesSync(tmpDir), undefined);
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        stdin: {
+          contents: 'import x from "lodash"; console.log(x);',
+          loader: "js",
+          sourcefile: `${tmpDir}/app/page.js`,
+          resolveDir: `${tmpDir}/app`,
+        },
+        plugins: [createBareExternalPlugin({ projectDir: tmpDir })],
+      });
+
+      // After the build the warmup promise settled inside onResolve — the
+      // package.json dep cache is now warm with the real file contents.
+      assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.20");
     });
   },
 );

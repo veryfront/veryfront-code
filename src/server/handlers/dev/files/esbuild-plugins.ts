@@ -423,16 +423,18 @@ export function createBareExternalPlugin(
     (opts.projectDir && bundle ? createLockfileManager(opts.projectDir) : null);
   const importMapImports = mergeBrowserImportMapImports(opts.importMapImports);
 
+  // Kick off the dep-cache warm-up immediately at plugin-creation time so the
+  // Promise is already in flight before any onResolve callback fires. Awaited
+  // inside the handler right before buildPinnedEsmUrl so the cache is
+  // guaranteed warm when getProjectDependenciesSync is consulted.
+  // No-op when VERYFRONT_DEPENDENCY_PINNING is off or projectDir is absent;
+  // mtime-cached so repeat calls within the same build are free.
+  const warmup = ensureProjectDependenciesLoaded(opts.projectDir);
+
   return {
     name: "veryfront-bare-ext",
     setup(build: PluginBuild) {
-      // Warm the package.json dep cache once before any onResolve callbacks
-      // fire. No-op when VERYFRONT_DEPENDENCY_PINNING is off or when projectDir
-      // is absent. The underlying readProjectDependencyVersions is mtime-cached
-      // so this is cheap on warm paths.
-      build.onStart(() => ensureProjectDependenciesLoaded(opts.projectDir));
-
-      build.onResolve({ filter: /.*/ }, (args: OnResolveArgs) => {
+      build.onResolve({ filter: /.*/ }, async (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
 
@@ -457,6 +459,10 @@ export function createBareExternalPlugin(
         if (importMapOwnsSpecifier(args.path, importMapImports)) {
           return { path: args.path, external: true };
         }
+
+        // Ensure the package.json dep cache is warm before consulting it for
+        // a version pin. The warmup Promise resolves immediately on warm paths.
+        await warmup;
 
         return resolveAsExternalOrHttps(buildPinnedEsmUrl(args.path, opts.projectDir), bundle);
       });
