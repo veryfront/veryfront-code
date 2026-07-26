@@ -1,10 +1,89 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
+import {
+  rewriteBodyImports,
+  rewriteCompiledImports,
+  rewriteImportSpecifier,
+} from "./import-rewriter.ts";
 import type { ImportRewriterConfig } from "./import-rewriter.ts";
 
 describe("transforms/mdx/compiler/import-rewriter", () => {
+  describe("rewriteImportSpecifier", () => {
+    it("encodes filesystem paths as valid file URLs", () => {
+      const result = rewriteImportSpecifier("./my component.tsx", {
+        filePath: "/project/app/page.mdx",
+        target: "server",
+      });
+
+      assertStringIncludes(result, "file://");
+      assertStringIncludes(result, "/project/app/my%20component.tsx");
+    });
+
+    it("rejects malformed file URLs instead of remapping them as paths", () => {
+      assertThrows(
+        () =>
+          rewriteImportSpecifier("file://%", {
+            filePath: "/project/app/page.mdx",
+            target: "server",
+          }),
+        TypeError,
+      );
+    });
+
+    it("resolves root-relative project imports against projectDir", () => {
+      const result = rewriteImportSpecifier("/components/Button.tsx", {
+        filePath: "/project/pages/page.mdx",
+        projectDir: "/project",
+        target: "server",
+      });
+
+      assertEquals(result, "file:///project/components/Button.tsx");
+    });
+
+    it("preserves query and fragment suffixes on local module specifiers", () => {
+      const result = rewriteImportSpecifier("./Button.tsx?client#preview", {
+        filePath: "/project/pages/page.mdx",
+        target: "server",
+      });
+
+      assertEquals(result, "file:///project/pages/Button.tsx?client#preview");
+    });
+
+    it("resolves relative filePath hints from projectDir", () => {
+      const result = rewriteImportSpecifier("./Button.tsx", {
+        filePath: "pages/page.mdx",
+        projectDir: "/project",
+        target: "server",
+      });
+
+      assertEquals(result, "file:///project/pages/Button.tsx");
+    });
+
+    it("joins browser filesystem URLs without duplicate path separators", () => {
+      const result = rewriteImportSpecifier("./Button.tsx", {
+        filePath: "/project/pages/page.mdx",
+        target: "browser",
+        baseUrl: "https://cdn.example.com/",
+      });
+
+      assertStringIncludes(result, "https://cdn.example.com/_veryfront/fs/");
+    });
+
+    it("normalizes source extensions in browser alias imports", () => {
+      const result = rewriteImportSpecifier("@/components/Button.tsx?client", {
+        filePath: "/project/pages/page.mdx",
+        target: "browser",
+        baseUrl: "https://cdn.example.com/",
+      });
+
+      assertEquals(
+        result,
+        "https://cdn.example.com/_vf_modules/components/Button.js?client",
+      );
+    });
+  });
+
   describe("rewriteBodyImports", () => {
     it("rewrites relative import for SSR", () => {
       const config: ImportRewriterConfig = {

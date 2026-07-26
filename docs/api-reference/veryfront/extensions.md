@@ -217,12 +217,16 @@ import "veryfront/extensions/content";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CompilationMode` | Compilation mode. Dev surfaces extra diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L23) |
+| `CompilationMode` | Build mode made available to content-pipeline integrations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L23) |
 | `CompilationTarget` | Where the output is destined: server-side RSC or browser bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L26) |
-| `ContentCompileOptions` | Options for `ContentProcessor.compileMdx` and `ContentProcessor.compileMarkdown`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L45) |
-| `ContentPlugin` | Opaque unified-compatible plugin entry. Kept as an unknown-typed value or tuple so the contract surface doesn't require consumers to depend on the `unified` package directly. Callers cast to the plugin-list shape they need. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L75) |
+| `ContentCompileOptions` | Options for `ContentProcessor.compileMdx` and `ContentProcessor.compileMarkdown`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L81) |
+| `ContentFrontmatterOptions` | Options for syntax-aware frontmatter extraction. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L48) |
+| `ContentFrontmatterResult` | Source body and merged metadata returned by frontmatter extraction. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L58) |
+| `ContentModuleValues` | Values injected into a generated MDX program after the source document has been parsed. Values must be finite JSON data stored in plain objects, dense arrays, and data properties; dates normalize to ISO strings. Accessors, symbols, cycles, sparse arrays, non-plain objects, and non-finite numbers are rejected. Keys must be valid JavaScript identifiers, and one key cannot be both a binding and an export. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L73) |
+| `ContentPlugin` | Opaque unified-compatible plugin or `[plugin, ...parameters]` tuple. The contract stays independent of `unified` types, and implementations preserve tuple boundaries and list order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L119) |
 | `ContentProcessingResult` | Processing result returned by the content pipeline. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L29) |
-| `ContentProcessor` | ContentProcessor contract for MDX/Markdown processing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L89) |
+| `ContentProcessor` | ContentProcessor contract for MDX/Markdown processing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L133) |
+| `ContentSyntax` | Syntax family used when classifying document metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/content/content-processor.ts#L45) |
 
 ### `veryfront/extensions/contracts`
 

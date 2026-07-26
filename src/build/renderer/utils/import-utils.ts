@@ -72,22 +72,26 @@ export async function processImports(
   code: string,
   filePath: string,
   projectDir: string,
-  processImport: (importPath: string) => Promise<string | null>,
+  processImport: (resolvedPath: string, authoredSpecifier: string) => Promise<string | null>,
 ): Promise<string> {
   const imports = extractImports(code);
   let processedCode = code;
 
-  for (const importPath of imports) {
-    const resolvedPath = resolveImportPath(importPath, filePath, projectDir);
-    const newPath = await processImport(resolvedPath);
+  for (const authoredSpecifier of imports) {
+    const resolvedPath = resolveImportPath(authoredSpecifier, filePath, projectDir);
+    const newPath = await processImport(resolvedPath, authoredSpecifier);
 
-    if (!newPath || newPath === importPath) continue;
+    if (!newPath || newPath === authoredSpecifier) continue;
 
     processedCode = processedCode.replace(
-      new RegExp(`(['"])${importPath}\\1`, "g"),
-      `$1${newPath}$1`,
+      new RegExp(`(['"])${escapeRegExp(authoredSpecifier)}\\1`, "g"),
+      (_match, quote: string) => `${quote}${newPath}${quote}`,
     );
   }
 
   return processedCode;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -1,9 +1,10 @@
 import type { ContentPlugin } from "#veryfront/extensions/content/index.ts";
 
-export function normalizePlugins(plugins: ContentPlugin[] | undefined): ContentPlugin[] {
-  if (!plugins) return [];
-
-  if (Array.isArray(plugins)) return plugins.flat() as ContentPlugin[];
-
-  return [plugins] as ContentPlugin[];
+/**
+ * Copy a Unified plugin list without flattening `[plugin, options]` tuples.
+ */
+export function normalizePlugins(
+  plugins: readonly ContentPlugin[] | undefined,
+): ContentPlugin[] {
+  return plugins === undefined ? [] : [...plugins];
 }

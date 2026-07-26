@@ -6,7 +6,11 @@
 
 export { compileMDXRuntime } from "./mdx-compiler.ts";
 export { extractFrontmatter } from "./frontmatter-extractor.ts";
-export { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
+export {
+  rewriteBodyImports,
+  rewriteCompiledImports,
+  rewriteImportSpecifier,
+} from "./import-rewriter.ts";
 export type {
   CompilationMode,
   CompilationTarget,

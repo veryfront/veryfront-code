@@ -458,8 +458,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   },
 
   "veryfront/mdx": {
-    MDXProvider: "Override MDX components",
-    useMDXComponents: "Get current MDX overrides",
+    MDXProvider: "Provide composable MDX component overrides",
+    useMDXComponents: "Get inherited and local MDX component overrides",
     MDXProviderProps: "`<MDXProvider>` props",
   },
 

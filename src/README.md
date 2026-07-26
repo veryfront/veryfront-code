@@ -684,7 +684,9 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `veryfront/mdx`
 
 - `<MDXProvider>` for component overrides in `.mdx` pages
-- `useMDXComponents` hook
+- Nested providers inherit outer overrides; the nearest entry wins
+- `useMDXComponents` returns the memoized effective component map
+- Provider maps are application code; runtime strings belong in `veryfront/markdown`
 
 #### `extensions/` - Extension Bridge
 

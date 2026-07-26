@@ -1,66 +1,83 @@
-import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
 import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
+import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
+import type { ContentFrontmatterResult } from "#veryfront/extensions/content/index.ts";
 
-export interface FrontmatterExtractionResult {
-  body: string;
-  frontmatter: Record<string, unknown>;
-}
+/** @deprecated Prefer {@link ContentFrontmatterResult}. */
+export type FrontmatterExtractionResult = ContentFrontmatterResult;
 
-function extractYamlFrontmatter(content: string): FrontmatterExtractionResult {
-  if (!content.trim().startsWith("---")) return { body: content, frontmatter: {} };
-
-  const extracted = extract(content);
-
-  return {
-    body: extracted.body,
-    frontmatter: extracted.attrs as Record<string, unknown>,
-  };
-}
-
-function parseExportValue(rawValue: string): unknown {
-  if (rawValue === "true") return true;
-  if (rawValue === "false") return false;
-  if (rawValue === "null") return null;
-  if (/^\d+(?:\.\d+)?$/.test(rawValue)) return parseFloat(rawValue);
-
-  return rawValue.replace(/^['"`]|['"`]$/g, "");
-}
-
-function extractExportConstants(body: string): { body: string; exports: Record<string, unknown> } {
-  const exportRegex =
-    /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*;?\s*$/gm;
-
-  const exports: Record<string, unknown> = {};
-  let cleanedBody = body;
-  let match: RegExpExecArray | null;
-
-  while ((match = exportRegex.exec(body)) !== null) {
-    const key = match[1];
-    const rawValue = match[2];
-    if (!key || !rawValue) continue;
-
-    exports[key] = parseExportValue(rawValue);
-    cleanedBody = cleanedBody.replace(match[0], "");
+function assignFrontmatterData(
+  target: Record<string, unknown>,
+  source: Record<string, unknown> | undefined,
+  path: string,
+): void {
+  if (source === undefined) return;
+  if (typeof source !== "object" || source === null || Array.isArray(source)) {
+    throw new TypeError(`${path} must be a plain object`);
+  }
+  const prototype = Object.getPrototypeOf(source);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${path} must be a plain object`);
   }
 
-  return { body: cleanedBody, exports };
+  const descriptors = Object.getOwnPropertyDescriptors(source);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = descriptors[key as keyof typeof descriptors];
+    if (!descriptor?.enumerable) continue;
+    if (typeof key !== "string") {
+      throw new TypeError(`${path} cannot contain enumerable symbol keys`);
+    }
+    if (!("value" in descriptor)) {
+      throw new TypeError(`${path}.${key} must be a data property`);
+    }
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    });
+  }
 }
 
+/**
+ * Merge frontmatter records in precedence order without invoking accessors.
+ *
+ * Each tuple supplies a record and the path used in validation errors.
+ */
+export function mergeFrontmatter(
+  ...sources: ReadonlyArray<
+    readonly [Record<string, unknown> | undefined, string]
+  >
+): Record<string, unknown> {
+  const frontmatter: Record<string, unknown> = {};
+  for (const [source, path] of sources) {
+    assignFrontmatterData(frontmatter, source, path);
+  }
+  return frontmatter;
+}
+
+/**
+ * Extract dependency-free YAML frontmatter and merge caller-provided values.
+ *
+ * Syntax-aware static JavaScript metadata belongs to the registered content
+ * processor, whose parser implementation lives outside dependency-free core.
+ */
 export function extractFrontmatter(
   content: string,
   providedFrontmatter?: Record<string, unknown>,
-): FrontmatterExtractionResult {
-  const { body: yamlBody, frontmatter: yamlFrontmatter } = extractYamlFrontmatter(content);
+): ContentFrontmatterResult {
+  const yamlContent = content.startsWith("\uFEFF") ? content.slice(1) : content;
+  const extracted = /^---(?:\r\n|\r|\n|$)/.test(yamlContent) ? extract(yamlContent) : undefined;
+  const body = extracted?.body ?? content;
+  const yamlFrontmatter = extracted?.attrs as
+    | Record<string, unknown>
+    | undefined;
+  const frontmatter = mergeFrontmatter(
+    [yamlFrontmatter, "YAML frontmatter"],
+    [providedFrontmatter, "Provided frontmatter"],
+  );
 
-  const { body, exports } = extractExportConstants(yamlBody);
-
-  const frontmatter: Record<string, unknown> = {
-    ...yamlFrontmatter,
-    ...(providedFrontmatter ?? {}),
-    ...exports,
-  };
-
-  logger.debug("Extracted frontmatter:", frontmatter);
-
+  logger.debug("Extracted frontmatter", {
+    fieldCount: Object.keys(frontmatter).length,
+  });
   return { body, frontmatter };
 }

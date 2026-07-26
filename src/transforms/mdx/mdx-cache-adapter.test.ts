@@ -64,6 +64,10 @@ describe("MDXCacheAdapter", () => {
     registerContract<ContentProcessor>("ContentProcessor", {
       cacheIdentity: "test-content-processor@1",
       resultIsolation: "structured-clone",
+      extractFrontmatter: ({ content, frontmatter }) => ({
+        body: content,
+        frontmatter: frontmatter ?? {},
+      }),
       compileMdx: () => Promise.reject(new Error("not used by cache adapter tests")),
       compileMarkdown: () => Promise.reject(new Error("not used by cache adapter tests")),
       getRemarkPlugins: () => [],
@@ -164,6 +168,10 @@ describe("MDXCacheAdapter", () => {
       registerContract(
         "ContentProcessor",
         {
+          extractFrontmatter: ({ content, frontmatter }) => ({
+            body: content,
+            frontmatter: frontmatter ?? {},
+          }),
           compileMdx: () => Promise.reject(new Error("not used")),
           compileMarkdown: () => Promise.reject(new Error("not used")),
           getRemarkPlugins: () => [],
@@ -228,6 +236,10 @@ describe("MDXCacheAdapter", () => {
       registerContract<ContentProcessor>("ContentProcessor", {
         cacheIdentity: "test-content-processor@2",
         resultIsolation: "structured-clone",
+        extractFrontmatter: ({ content, frontmatter }) => ({
+          body: content,
+          frontmatter: frontmatter ?? {},
+        }),
         compileMdx: () => Promise.reject(new Error("not used")),
         compileMarkdown: () => Promise.reject(new Error("not used")),
         getRemarkPlugins: () => [],

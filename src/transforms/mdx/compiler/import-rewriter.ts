@@ -1,6 +1,14 @@
-import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  resolve as pathResolve,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import type { CompilationTarget } from "#veryfront/extensions/content/index.ts";
 import { base64urlEncode } from "#veryfront/utils";
+import { buildModuleServerUrl, normalizeExtension } from "../../import-rewriter/url-builder.ts";
 
 export interface ImportRewriterConfig {
   filePath: string;
@@ -10,18 +18,13 @@ export interface ImportRewriterConfig {
 }
 
 function toAbsPath(spec: string, basedir: string): string {
-  try {
-    if (spec.startsWith("file://")) return new URL(spec).pathname;
-    if (spec.startsWith("/")) return pathResolve(spec);
-    if (spec.startsWith("http://") || spec.startsWith("https://")) return spec;
+  if (spec.startsWith("file:")) return fromFileUrl(spec);
+  if (spec.startsWith("/")) return pathResolve(spec);
+  if (spec.startsWith("http://") || spec.startsWith("https://")) return spec;
 
-    if (!spec.startsWith(".") && !spec.startsWith("/")) return spec;
+  if (!spec.startsWith(".") && !spec.startsWith("/")) return spec;
 
-    return pathResolve(join(basedir, spec));
-  } catch (_) {
-    /* expected: specifier may not be a valid URL or path */
-    return spec;
-  }
+  return pathResolve(join(basedir, spec));
 }
 
 function toBrowserFs(abs: string, baseUrl?: string): string {
@@ -29,28 +32,78 @@ function toBrowserFs(abs: string, baseUrl?: string): string {
 
   const b64 = base64urlEncode(abs);
   const path = `/_veryfront/fs/${b64}.js`;
-  return baseUrl ? `${baseUrl}${path}` : path;
+  return baseUrl ? buildModuleServerUrl(baseUrl, path) : path;
 }
 
-function mapSpec(
+function toBrowserAliasPath(path: string): string {
+  const normalizedPath = normalizeExtension(path);
+  return /\.(?:mjs|cjs|js|css)$/.test(normalizedPath) ? normalizedPath : `${normalizedPath}.js`;
+}
+
+function splitLocalSpecifier(spec: string): { path: string; suffix: string } {
+  if (spec.startsWith("file:")) {
+    const url = new URL(spec);
+    const suffix = `${url.search}${url.hash}`;
+    url.search = "";
+    url.hash = "";
+    return { path: url.href, suffix };
+  }
+
+  if (!spec.startsWith(".") && !spec.startsWith("/")) {
+    return { path: spec, suffix: "" };
+  }
+
+  const queryIndex = spec.indexOf("?");
+  const fragmentIndex = spec.indexOf("#");
+  const suffixIndex = queryIndex === -1
+    ? fragmentIndex
+    : fragmentIndex === -1
+    ? queryIndex
+    : Math.min(queryIndex, fragmentIndex);
+  return suffixIndex === -1
+    ? { path: spec, suffix: "" }
+    : { path: spec.slice(0, suffixIndex), suffix: spec.slice(suffixIndex) };
+}
+
+/**
+ * Map one parser-recognized module specifier for the requested compile target.
+ *
+ * This function deliberately does not scan source text. Callers own syntax
+ * parsing so code examples and string literals cannot be mistaken for imports.
+ */
+export function rewriteImportSpecifier(
   spec: string,
-  basedir: string,
-  target: CompilationTarget,
-  baseUrl?: string,
+  config: ImportRewriterConfig,
 ): string {
+  const configuredFilePath = config.filePath.startsWith("file:")
+    ? fromFileUrl(config.filePath)
+    : config.filePath;
+  const filePath = config.projectDir && !isAbsolute(configuredFilePath)
+    ? pathResolve(config.projectDir, configuredFilePath)
+    : configuredFilePath;
+  const basedir = dirname(filePath);
+
   // Handle @/ project-relative aliases
   // @/ maps to components/ directory in veryfront projects
   if (spec.startsWith("@/")) {
-    if (target !== "browser") return spec;
+    if (config.target !== "browser") return spec;
 
-    const relativePath = spec.slice(2);
-    const path = `/_vf_modules/${relativePath}.js`;
-    return baseUrl ? `${baseUrl}${path}` : path;
+    const { path: relativePath, suffix } = splitLocalSpecifier(spec.slice(1));
+    const modulePath = toBrowserAliasPath(relativePath.slice(1));
+    const path = `/_vf_modules/${modulePath}${suffix}`;
+    return config.baseUrl ? buildModuleServerUrl(config.baseUrl, path) : path;
   }
 
-  const abs = toAbsPath(spec, basedir);
+  const localSpecifier = splitLocalSpecifier(spec);
+  // MDX has historically treated a leading slash as project-relative rather
+  // than as the host filesystem root. Preserve that contract when the caller
+  // provides the project boundary.
+  const resolvableSpecifier = localSpecifier.path.startsWith("/") && config.projectDir
+    ? join(config.projectDir, localSpecifier.path)
+    : localSpecifier.path;
+  const abs = toAbsPath(resolvableSpecifier, basedir);
 
-  const isBare = abs === spec &&
+  const isBare = abs === resolvableSpecifier &&
     !spec.startsWith(".") &&
     !spec.startsWith("/") &&
     !spec.startsWith("file://") &&
@@ -58,13 +111,14 @@ function mapSpec(
 
   if (isBare) return spec;
 
-  if (target === "browser") return toBrowserFs(abs, baseUrl);
-  return abs.startsWith("http") ? abs : `file://${abs}`;
+  if (config.target === "browser") {
+    return `${toBrowserFs(abs, config.baseUrl)}${localSpecifier.suffix}`;
+  }
+  return abs.startsWith("http") ? abs : `${toFileUrl(abs).href}${localSpecifier.suffix}`;
 }
 
 export function rewriteBodyImports(body: string, config: ImportRewriterConfig): string {
-  const basedir = dirname(config.filePath);
-  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
+  const mapper = (spec: string) => rewriteImportSpecifier(spec, config);
 
   // Rewrite `import … from '…'` and `export … from '…'`, including multiline
   // destructured imports.  `[\s\S]*?` crosses newlines so that
@@ -89,8 +143,7 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
 }
 
 export function rewriteCompiledImports(compiledCode: string, config: ImportRewriterConfig): string {
-  const basedir = dirname(config.filePath);
-  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
+  const mapper = (spec: string) => rewriteImportSpecifier(spec, config);
 
   const replaceAll = (code: string, patterns: RegExp[]): string => {
     for (const pattern of patterns) {

@@ -5,11 +5,19 @@
  */
 
 // Type aliases (unions / shape aliases)
-export type { CompilationMode, CompilationTarget, ContentPlugin } from "./content-processor.ts";
+export type {
+  CompilationMode,
+  CompilationTarget,
+  ContentPlugin,
+  ContentSyntax,
+} from "./content-processor.ts";
 
 // Interfaces
 export type {
   ContentCompileOptions,
+  ContentFrontmatterOptions,
+  ContentFrontmatterResult,
+  ContentModuleValues,
   ContentProcessingResult,
   ContentProcessor,
 } from "./content-processor.ts";

@@ -70,6 +70,22 @@ describe("transforms/esm/lexer", () => {
       assertEquals(imports[0]!.n, "https://esm.sh/react@18");
     });
 
+    it("does not unmask a distinct placeholder-shaped specifier", async () => {
+      const code = [
+        'import remote from "https://example.com/remote.js";',
+        'import local from "./__VF_HTTP_MASK_e3c2_0__.js";',
+      ].join("\n");
+      const imports = await parseImports(code);
+
+      assertEquals(
+        imports.map(({ n }) => n),
+        [
+          "https://example.com/remote.js",
+          "./__VF_HTTP_MASK_e3c2_0__.js",
+        ],
+      );
+    });
+
     it("handles HTTP URLs in string literals (non-import context)", async () => {
       const code = `
         import React from "react";

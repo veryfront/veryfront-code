@@ -58,6 +58,22 @@ export { foo } from "bar";
       assertEquals(parsed.imports[0]!.specifier, "https://esm.sh/react@18");
     });
 
+    it("does not unmask a distinct placeholder-shaped specifier", async () => {
+      const code = [
+        'import remote from "https://example.com/remote.js";',
+        'import local from "./__VFURL_0__.js";',
+      ].join("\n");
+      const parsed = await parseAllImports(code);
+
+      assertEquals(
+        parsed.imports.map(({ specifier }) => specifier),
+        [
+          "https://example.com/remote.js",
+          "./__VFURL_0__.js",
+        ],
+      );
+    });
+
     it("provides position data", async () => {
       const code = `import React from "react";`;
       const parsed = await parseAllImports(code);

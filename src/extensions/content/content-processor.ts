@@ -19,7 +19,7 @@
  * @module extensions/content/content-processor
  */
 
-/** Compilation mode. Dev surfaces extra diagnostics. */
+/** Build mode made available to content-pipeline integrations. */
 export type CompilationMode = "development" | "production";
 
 /** Where the output is destined: server-side RSC or browser bundle. */
@@ -41,9 +41,49 @@ export interface ContentProcessingResult {
   rawHtml?: string;
 }
 
+/** Syntax family used when classifying document metadata. */
+export type ContentSyntax = "markdown" | "mdx";
+
+/** Options for syntax-aware frontmatter extraction. */
+export interface ContentFrontmatterOptions {
+  /** Source document content. */
+  content: string;
+  /** Optional frontmatter pre-seed merged with document metadata. */
+  frontmatter?: Record<string, unknown>;
+  /** Parser grammar used to distinguish metadata from rendered content. */
+  syntax: ContentSyntax;
+}
+
+/** Source body and merged metadata returned by frontmatter extraction. */
+export interface ContentFrontmatterResult {
+  /** Source with YAML and parser-recognized metadata declarations removed. */
+  body: string;
+  /** Merged document metadata. */
+  frontmatter: Record<string, unknown>;
+}
+
+/**
+ * Values injected into a generated MDX program after the source document has
+ * been parsed. Values must be finite JSON data stored in plain objects, dense
+ * arrays, and data properties; dates normalize to ISO strings. Accessors,
+ * symbols, cycles, sparse arrays, non-plain objects, and non-finite numbers are
+ * rejected. Keys must be valid JavaScript identifiers, and one key cannot be
+ * both a binding and an export.
+ */
+export interface ContentModuleValues {
+  /** Module-local constants available to MDX expressions. */
+  bindings?: Readonly<Record<string, unknown>>;
+  /** Named ESM constants exported by the generated module. */
+  exports?: Readonly<Record<string, unknown>>;
+}
+
 /** Options for {@link ContentProcessor.compileMdx} and {@link ContentProcessor.compileMarkdown}. */
 export interface ContentCompileOptions {
-  /** Compilation mode. Defaults to "production" when omitted. */
+  /**
+   * Build mode. Defaults to "production" when omitted. This does not select
+   * React's JSX runtime: generated MDX uses the portable runtime in both modes
+   * so one module graph cannot mix incompatible React runtime instances.
+   */
   mode?: CompilationMode;
   /** Absolute project root (used for resolving relative import rewrites). */
   projectDir: string;
@@ -55,22 +95,26 @@ export interface ContentCompileOptions {
   filePath?: string;
   /** Compile target. Defaults to "server". */
   target?: CompilationTarget;
-  /** Base URL used when rewriting bare-specifier imports. */
+  /** Optional prefix for browser filesystem and project-alias module URLs. */
   baseUrl?: string;
   /** When true, preserves node-position metadata for studio overlays. */
   studioEmbed?: boolean;
   /** MDX output shape. Defaults to "program". */
   outputFormat?: "program" | "function-body";
-  /** Additional remark plugins supplied by legacy build helpers. */
+  /** Module that supplies `useMDXComponents` to generated program output. */
+  providerImportSource?: string;
+  /** Structured values injected into generated MDX program output. */
+  moduleValues?: ContentModuleValues;
+  /** Additional remark plugins, including `[plugin, ...parameters]` tuples. */
   remarkPlugins?: ContentPlugin[];
-  /** Additional rehype plugins supplied by legacy build helpers. */
+  /** Additional rehype plugins, including `[plugin, ...parameters]` tuples. */
   rehypePlugins?: ContentPlugin[];
 }
 
 /**
- * Opaque unified-compatible plugin entry. Kept as an unknown-typed value or
- * tuple so the contract surface doesn't require consumers to depend on the
- * `unified` package directly. Callers cast to the plugin-list shape they need.
+ * Opaque unified-compatible plugin or `[plugin, ...parameters]` tuple. The
+ * contract stays independent of `unified` types, and implementations preserve
+ * tuple boundaries and list order.
  */
 export type ContentPlugin = unknown | [unknown, ...unknown[]];
 
@@ -94,6 +138,11 @@ export interface ContentProcessor {
   readonly cacheIdentity?: string;
   /** Explicit promise that compilation results support structured cloning. */
   readonly resultIsolation?: "structured-clone";
+  /**
+   * Parse YAML and syntax-aware static metadata without treating examples,
+   * comments, expressions, or malformed documents as declarations.
+   */
+  extractFrontmatter(options: ContentFrontmatterOptions): ContentFrontmatterResult;
   /** Process MDX source into compiled code and extracted metadata. */
   compileMdx(options: ContentCompileOptions): Promise<ContentProcessingResult>;
   /** Process plain Markdown into compiled code and extracted metadata. */

@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/testing/deno-compat";
@@ -12,11 +12,14 @@ import type {
 } from "../../../../../src/build/renderer/types/bundler-types.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
 
-function createOptions(projectDir: string): BundlerOptions {
+function createOptions(
+  projectDir: string,
+  mode: BundlerOptions["mode"] = "production",
+): BundlerOptions {
   return {
     sources: [],
     projectDir,
-    mode: "development",
+    mode,
   };
 }
 
@@ -62,7 +65,8 @@ This is a simple MDX document.
         assertExists(output);
 
         assertEquals(output.type, "js");
-        assertEquals(output.content.includes("React"), true);
+        assertStringIncludes(output.content, 'from "react/jsx-runtime"');
+        assertStringIncludes(output.content, 'from "veryfront/mdx"');
         assertEquals(output.content.includes("export default function"), true);
         assertEquals(output.content.includes("export const meta"), true);
       });
@@ -171,6 +175,16 @@ import Imported from "./imported.mdx"
 
         const importOutputPath = join(context.projectDir, "imported.js");
         assertExists(result.outputs.get(importOutputPath));
+        const mainOutput = result.outputs.get(join(context.projectDir, "main.js"));
+        assertExists(mainOutput);
+        assertStringIncludes(mainOutput.content, "/imported.js");
+        assertEquals(mainOutput.content.includes("/imported.mdx"), false);
+        assertEquals(
+          result.dependencies.get(source.path)?.some((dependency) =>
+            dependency.endsWith("/imported.js")
+          ),
+          true,
+        );
       });
     });
 
@@ -195,6 +209,7 @@ import NonExistent from "./non-existent.js"
         await bundleMdx(source, options, result, compileMDXForImport);
 
         assertEquals(result.errors.length > 0, true);
+        assertEquals(result.outputs.size, 0);
         const hasImportError = result.errors.some((err) =>
           err.message.includes("Cannot find module")
         );
@@ -204,6 +219,10 @@ import NonExistent from "./non-existent.js"
 
     it("tracks dependencies", async () => {
       await withTestContext("mdx-dependencies", async (context) => {
+        await writeTextFile(
+          join(context.projectDir, "component.tsx"),
+          "export default function Component() { return null; }",
+        );
         const content = `---
 title: Test
 ---
@@ -224,7 +243,8 @@ import Component from "./component.tsx"
 
         const deps = result.dependencies.get(source.path);
         assertExists(deps);
-        assertEquals(deps.includes("react"), true);
+        assertEquals(deps.includes("react/jsx-runtime"), true);
+        assertEquals(deps.includes("veryfront/mdx"), true);
       });
     });
 
@@ -255,7 +275,7 @@ import Component from "./component.tsx"
           content: `# Development Mode Test`,
         };
 
-        const options = createOptions(context.projectDir);
+        const options = createOptions(context.projectDir, "development");
         const result = createResult();
 
         await bundleMdx(source, options, result, compileMDXForImport);
@@ -265,6 +285,12 @@ import Component from "./component.tsx"
         assertExists(output);
 
         assertExists(output.content);
+        assertStringIncludes(output.content, 'from "react/jsx-runtime"');
+        assertEquals(
+          result.dependencies.get(source.path)?.includes("react/jsx-runtime"),
+          true,
+        );
+        assertEquals(output.content.includes("react/jsx-dev-runtime"), false);
       });
     });
   });
@@ -288,8 +314,9 @@ Using custom bundler.`;
         });
 
         assertExists(result.code);
-        assertEquals(result.code.includes("React"), true);
         assertEquals(result.code.includes("export default"), true);
+        assertEquals(result.dependencies.includes("react/jsx-runtime"), true);
+        assertEquals(result.dependencies.includes("veryfront/mdx"), true);
 
         assertExists(result.frontmatter);
         assertEquals(result.frontmatter.title, "Custom Options Test");
@@ -314,8 +341,11 @@ Using global: {API_URL}`;
           },
         });
 
-        assertEquals(result.code.includes("API_URL"), true);
-        assertEquals(result.code.includes("globalThis"), true);
+        assertStringIncludes(
+          result.code,
+          'const API_URL = "https://api.example.com";',
+        );
+        assertEquals(result.code.includes("globalThis"), false);
       });
     });
 

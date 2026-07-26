@@ -1,10 +1,11 @@
 import { compile } from "@mdx-js/mdx";
 import type { Pluggable } from "unified";
 import type { ContentCompileOptions, ContentProcessingResult } from "veryfront/extensions/content";
-import { extractFrontmatter } from "veryfront/transforms/frontmatter";
-import { rewriteBodyImports, rewriteCompiledImports } from "veryfront/transforms/import-rewriter";
 import { getRehypePlugins, getRemarkPlugins } from "../plugins/plugin-loader.ts";
+import { extractContentFrontmatter } from "./frontmatter-extractor.ts";
 import { rehypeNodePositions } from "../plugins/rehype-node-positions.ts";
+import { createModuleImportRewriter } from "./module-imports.ts";
+import { prepareModuleValues, validateModuleProgram } from "./module-values.ts";
 
 type PluggableList = Pluggable[];
 
@@ -18,6 +19,8 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
     baseUrl,
     studioEmbed,
     outputFormat = "program",
+    providerImportSource,
+    moduleValues,
     remarkPlugins: additionalRemarkPlugins = [],
     rehypePlugins: additionalRehypePlugins = [],
   } = options;
@@ -34,27 +37,41 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
   if (studioEmbed && filePath) {
     rehypePlugins.push([rehypeNodePositions, { filePath }] as unknown as Pluggable);
   }
+  if (moduleValues !== undefined && outputFormat !== "program") {
+    throw new TypeError("MDX module values require program output");
+  }
 
-  const { body: extractedBody, frontmatter: extractedFrontmatter } = extractFrontmatter(
+  const { body: extractedBody, frontmatter: extractedFrontmatter } = extractContentFrontmatter({
     content,
-    providedFrontmatter,
-  );
+    frontmatter: providedFrontmatter,
+    syntax: "mdx",
+  });
 
-  const shouldRewriteImports = Boolean(filePath) &&
-    (target === "browser" || target === "server");
-  const body = shouldRewriteImports
-    ? rewriteBodyImports(extractedBody, { filePath: filePath!, target, baseUrl, projectDir })
-    : extractedBody;
+  const preparedModuleValues = moduleValues === undefined
+    ? undefined
+    : prepareModuleValues(moduleValues);
+  const moduleImportRewriter = createModuleImportRewriter({
+    filePath,
+    target,
+    baseUrl,
+    projectDir,
+  });
+  const recmaPlugins: PluggableList = [moduleImportRewriter];
+  if (preparedModuleValues) recmaPlugins.push(preparedModuleValues.plugin);
 
-  const compiled = await compile(body, {
+  const compiled = await compile(extractedBody, {
     outputFormat,
-    // Always false: @mdx-js/mdx development mode emits extra JSX
-    // transforms that break the existing rendering pipeline.
+    // Build mode is not a React-runtime selector. Veryfront intentionally emits
+    // the portable JSX runtime in both modes until the server, browser import
+    // map, and renderer can select one shared development React instance.
+    // Mixing jsx-dev-runtime with the current production-compatible renderer
+    // crashes during element creation (`dispatcher.getOwner` is unavailable).
     development: false,
     remarkPlugins,
     rehypePlugins,
-    providerImportSource: undefined,
+    providerImportSource,
     jsxImportSource: "react",
+    recmaPlugins,
   });
 
   const headings = (compiled.data?.headings as
@@ -62,20 +79,16 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
     | undefined) ??
     [];
 
-  const compiledString = String(compiled);
-  const compiledCode = shouldRewriteImports
-    ? rewriteCompiledImports(compiledString, {
-      filePath: filePath!,
-      target,
-      baseUrl,
-      projectDir,
-    })
-    : compiledString;
+  const compiledCode = String(compiled);
+
+  if (outputFormat === "program") {
+    validateModuleProgram(compiledCode);
+  }
 
   return {
     compiledCode,
     frontmatter: extractedFrontmatter,
-    globals: {},
+    globals: preparedModuleValues?.bindings ?? {},
     headings,
     nodeMap: new Map(),
   };

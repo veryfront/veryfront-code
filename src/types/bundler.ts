@@ -57,7 +57,7 @@ export interface MDXBundleOptions {
   projectDir: string;
   /** Optimization mode used for compilation. */
   mode?: "development" | "production";
-  /** Global replacements made available to the MDX module. */
+  /** Named string values embedded as module-local bindings for MDX expressions. */
   globals?: Record<string, string>;
   /** Remark plugins passed to the MDX compiler. */
   remarkPlugins?: unknown[];

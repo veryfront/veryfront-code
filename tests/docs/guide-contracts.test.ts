@@ -554,7 +554,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/context.md",
       "../api-reference/veryfront/mdx.md",
     ],
-    snippets: ["app router", "useRouter", "Link"],
+    snippets: ["app router", "useRouter", "Link", "MDXProvider"],
   },
   "guides/project-structure.md": {
     references: ["../api-reference/veryfront/index.md"],

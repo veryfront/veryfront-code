@@ -3,7 +3,8 @@
   // ./README.md.
   //
   // Requires `deno task build:npm` to have produced `npm/`. The public
-  // `veryfront/ui`, `veryfront/chat`, and `veryfront/markdown` specifiers
+  // `veryfront/ui`, `veryfront/chat`, `veryfront/markdown`, and
+  // `veryfront/mdx` specifiers
   // resolve to the emitted `.d.ts`; `react` resolves to a real `@types/react`
   // (as any consumer has). This is the ONLY configuration that exercises the
   // published declarations the way an external React-19 app compiles them —
@@ -38,6 +39,7 @@
       "veryfront/chat/types": ["./npm/esm/src/chat/types.d.ts"],
       "veryfront/chat/uploads": ["./npm/esm/src/chat/upload-handler.d.ts"],
       "veryfront/markdown": ["./npm/esm/src/markdown/index.d.ts"],
+      "veryfront/mdx": ["./npm/esm/src/mdx/index.d.ts"],
       "veryfront/mcp": ["./npm/esm/src/mcp/index.d.ts"],
       "veryfront/prompt": ["./npm/esm/src/prompt/index.d.ts"],
       "veryfront/resource": ["./npm/esm/src/resource/index.d.ts"],

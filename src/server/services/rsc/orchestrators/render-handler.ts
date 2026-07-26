@@ -18,7 +18,7 @@ import type { RenderProps } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
-import { compileContent, extractFrontmatter } from "#veryfront/transforms/mdx/compiler/index.ts";
+import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
@@ -100,12 +100,11 @@ export class RenderHandler {
       const source = adapter
         ? await adapter.fs.readFile(componentPath)
         : await fs.readTextFile(componentPath);
-      const { body, frontmatter } = extractFrontmatter(source);
       const compiled = await compileContent(
         this.mode,
         this.projectDir,
-        body,
-        frontmatter,
+        source,
+        undefined,
         componentPath,
         "server",
       );

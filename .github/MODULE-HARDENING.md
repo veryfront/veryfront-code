@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    12 |      20.7% | Current formal closure evidence remains valid       |
+| Closed                         |    13 |      22.4% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     6 |      10.3% | No current authoritative-branch review delta exists |
+| Pending current review         |     5 |       8.6% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 52/58 (89.7%). This is progress coverage, not a substitute for the
+coverage of 53/58 (91.4%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -44,6 +44,7 @@ stricter closure count.
 - `extensions`
 - `knowledge`
 - `markdown`
+- `mdx`
 - `metrics`
 - `provider`
 - `runs`
@@ -101,7 +102,6 @@ stricter closure count.
 
 - `chat`
 - `issues`
-- `mdx`
 - `repositories`
 - `sandbox`
 - `studio`
@@ -121,18 +121,108 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `eval`,
-`extensions`, `knowledge`, `markdown`, `metrics`, `provider`, `runs`,
+`extensions`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`, `runs`,
 `runtime`, `schemas`, and `version.ts`. The latest independent adversarial
-knowledge, Markdown, provider, runs, and runtime findings are remediated and
-revalidated. `prompt` and `resource` have now received deep current-state
+knowledge, Markdown, MDX, provider, runs, and runtime findings are remediated
+and revalidated. `prompt` and `resource` have now received deep current-state
 reviews and substantial remediation, but remain open while their documented
 cross-cutting findings are unresolved. Each closure requires a complete
 consumer map, deep module-level review, adversarial boundary tests,
 public-contract documentation, and repository-wide static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
-unit. `mdx` is the next dependency-adjacent target after this checkpoint is
-committed, pushed, and synchronized with `origin/main`.
+unit. `sandbox` is the next pending current-state target after this checkpoint
+is committed, pushed, and synchronized with `origin/main`.
+
+### MDX closure checkpoint
+
+The `mdx` audit unit owns the public `veryfront/mdx` component-provider facade.
+The first-party `ext-content-mdx` implementation and the build renderer are its
+primary compilation consumers. The public facade now documents that it
+composes application-owned React components and does not compile or sanitize
+arbitrary source. Nested providers inherit outer entries, nearest overrides
+win, and stable inputs retain a stable memoized component map.
+
+The current MDX findings are remediated:
+
+- Content parsing now has one explicit extension-owned boundary.
+  `ContentProcessor.extractFrontmatter()` owns syntax-aware metadata parsing,
+  while core retains dependency-free YAML extraction and safe merge helpers.
+  The processor contract, cache identity, result-isolation promise, plugin
+  tuple shape, module-value constraints, runtime choice, and output shapes are
+  documented and present in generated declarations.
+- YAML, supplied metadata, and parser-recognized static exports merge in a
+  deterministic order. Static-export examples inside fences, comments, JSX,
+  or expressions remain content. Malformed surrounding documents keep
+  candidate exports intact so compilation reports the real syntax error.
+  Accessors, enumerable symbols, and prototype-pollution keys cannot cross the
+  metadata boundary unnoticed.
+- Generated module bindings and exports accept only valid identifiers and
+  finite, owned JSON data. Plain objects, dense arrays, data properties, and
+  valid dates are normalized deterministically; cycles, accessors, symbols,
+  sparse arrays, non-plain objects, non-finite numbers, duplicate
+  binding/export names, authored-declaration collisions, and unsupported
+  option keys fail closed before code generation.
+- Import discovery now delegates to the registered `ModuleLexer` contract
+  instead of regex matching or adding parser dependencies to core. Static
+  imports, re-exports, literal dynamic imports, import attributes, query
+  strings, and fragments retain their syntax and ordering; comments, examples,
+  and ordinary strings cannot become false dependencies.
+- Authored local imports resolve through an explicit project boundary.
+  Extension inference is deterministic, explicit suffixes are not guessed a
+  second time, root-relative and file URL paths are normalized, and both
+  lexical traversal and symlinks escaping the canonical project directory are
+  rejected before a module is emitted. Cyclic graphs terminate, failed child
+  modules prevent parent emission, and dependency/output order is stable.
+- A placeholder-shaped authored or replacement specifier could previously be
+  rewritten into an unrelated HTTP URL. The source was a non-injective
+  substring restoration step that confused internal lexer tokens with user
+  text; the consequence was deterministic but incorrect module mutation.
+  Placeholder restoration now requires an exact parsed-specifier match, and
+  inserted literals escape token-shaped text before source unmasking.
+  Regressions cover both lexer implementations and the MDX replacement path.
+- Unified plugin tuples retain their parameters and list order. Plain Markdown
+  accepts configured plugins but always runs the sanitizer after caller
+  rehype transforms. MDX remains explicitly application-authored executable
+  content rather than claiming an untrusted-input sandbox.
+- Both build modes emit the portable React JSX runtime. This avoids mixing
+  incompatible React runtime instances in one generated module graph; `mode`
+  remains build context rather than an undocumented runtime selector.
+- Parser dependencies are pinned to the content extension, excluded from the
+  root npm package metadata, represented in the frozen lockfile, and absent
+  from dependency-free core. The Reference-oriented extension README and API
+  pages and the How-to-oriented pages-and-routing guide describe the actual
+  provider, frontmatter, plugin, and generated-module contracts.
+
+Reproducible checkpoint evidence:
+
+- Eighteen focused MDX, Markdown, provider, lexer, import-rewriter, and build
+  suites passed 240 checks with zero failures.
+- The complete content extension surface passed eight suites and 113 checks
+  with zero failures. The build-renderer integration passed 18 additional
+  checks with zero failures.
+- The repository suite passed 3,549 tests and 28,179 steps with zero failures;
+  one 36-step group remains intentionally ignored under the repository
+  baseline.
+- `deno task verify:quick` passed formatting, lint, dependency and module
+  boundaries, extension audits, documentation validation, and all configured
+  entrypoint typechecks. Core retained zero disallowed third-party imports.
+- `deno task typecheck:consumer` rebuilt the root package and every first-party
+  extension, verified root import lifecycle behavior, and compiled documented
+  MDX composition against the generated npm declarations.
+- API-reference regeneration was byte-for-byte deterministic at 38 module
+  groups and 3,471 of 3,726 documented public declarations. All 731
+  documentation links passed.
+- The frozen dependency install passed, `git diff --check` passed, and the npm
+  audit found no vulnerabilities across 70 dependencies.
+
+The generic build output-directory and output-collision policy, legacy
+build/compiler and import helpers, and any future true React development
+runtime ABI remain assigned to the still-open `build`, `transforms`, and
+`react` units. They are not hidden by this closure, and the consumer modules
+changed here remain in revalidation. No unresolved critical or
+high-confidence production risk remains inside the MDX provider and content
+processing boundary.
 
 ### Markdown closure checkpoint
 
@@ -298,12 +388,12 @@ Reproducible checkpoint evidence:
 No unresolved critical or high-confidence Markdown production risk remains.
 The following bounded residuals are explicit:
 
-| Severity | Surface                         | Evidence and consequence                                                                                                                                                        | Required resolution                                                                                                                   |
-| -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Low      | Remote Markdown images          | The default safe pipeline can still emit an ordinary remote `<img>` URL, causing the browser to contact that origin. This is documented and does not execute raw HTML.           | Override the `img` component with an application allowlist, proxy, or placeholder when the content or privacy boundary requires it.   |
-| Low      | Caller-owned document size      | The renderer preserves arbitrary input for API compatibility; it does not impose a universal byte or AST limit, so an application accepting unbounded hostile documents can consume CPU or memory. | Bound request and stored-document size at the application trust boundary according to its workload.                                  |
-| Low      | Trusted extension points        | `remarkPlugins`, `rehypePlugins`, and custom components execute as application code and can intentionally weaken default URL or HTML behavior.                                   | Keep plugin/component lists deployment-owned and review any safety-changing extension as code; never derive executable plugins from input. |
-| Low      | Standalone preview CDN outage   | A cold standalone preview still needs the exact audited esm.sh Mermaid module for SVG enhancement. Import failure leaves the original source untouched and readable.            | Vendor the audited module if offline SVG enhancement becomes a product requirement; source readability already fails open safely.    |
+| Severity | Surface                       | Evidence and consequence                                                                                                                                                                           | Required resolution                                                                                                                        |
+| -------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Low      | Remote Markdown images        | The default safe pipeline can still emit an ordinary remote `<img>` URL, causing the browser to contact that origin. This is documented and does not execute raw HTML.                             | Override the `img` component with an application allowlist, proxy, or placeholder when the content or privacy boundary requires it.        |
+| Low      | Caller-owned document size    | The renderer preserves arbitrary input for API compatibility; it does not impose a universal byte or AST limit, so an application accepting unbounded hostile documents can consume CPU or memory. | Bound request and stored-document size at the application trust boundary according to its workload.                                        |
+| Low      | Trusted extension points      | `remarkPlugins`, `rehypePlugins`, and custom components execute as application code and can intentionally weaken default URL or HTML behavior.                                                     | Keep plugin/component lists deployment-owned and review any safety-changing extension as code; never derive executable plugins from input. |
+| Low      | Standalone preview CDN outage | A cold standalone preview still needs the exact audited esm.sh Mermaid module for SVG enhancement. Import failure leaves the original source untouched and readable.                               | Vendor the audited module if offline SVG enhancement becomes a product requirement; source readability already fails open safely.          |
 
 The touched `build`, `html`, `react`, `server`, `transforms`, and `utils`
 consumers remain in their own top-level revalidation categories. Closing

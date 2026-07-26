@@ -1,6 +1,6 @@
 ---
 title: "veryfront/mdx"
-description: "Component overrides for `.mdx` page rendering."
+description: "Composable component overrides for compiled `.mdx` page rendering."
 order: 16
 ---
 
@@ -20,6 +20,10 @@ import { MDXProvider } from "veryfront/mdx";
 </MDXProvider>
 ```
 
+Nested providers inherit outer entries, with the nearest override taking
+precedence. Component maps are application-owned React code; this module
+does not compile or sanitize arbitrary MDX source.
+
 For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 ## Exports
@@ -28,16 +32,16 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProvider` | Render MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L13) |
+| `MDXProvider` | Provide component overrides to compiled MDX. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L20) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `useMDXComponents` | React hook for mdxcomponents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L21) |
+| `useMDXComponents` | Return the memoized effective component map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L33) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
+| `MDXProviderProps` | Props accepted by `MDXProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |

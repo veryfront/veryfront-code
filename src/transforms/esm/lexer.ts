@@ -53,6 +53,13 @@ function unmaskHttpUrls(code: string, urlMap: Map<string, string>): string {
   return result;
 }
 
+function unmaskHttpSpecifier(
+  specifier: string,
+  urlMap: ReadonlyMap<string, string>,
+): string {
+  return urlMap.get(specifier) ?? specifier;
+}
+
 function getLexer(): ModuleLexer {
   return resolveContract<ModuleLexer>("ModuleLexer");
 }
@@ -109,7 +116,7 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
   return imports.map((imp) => {
     if (!imp.n) return imp;
 
-    const restoredN = unmaskHttpUrls(imp.n, urlMap);
+    const restoredN = unmaskHttpSpecifier(imp.n, urlMap);
     return restoredN === imp.n ? imp : { ...imp, n: restoredN };
   });
 }
@@ -167,7 +174,7 @@ export async function replaceSpecifiers(
     const imp = imports[i];
     if (!imp?.n) continue;
 
-    const originalSpecifier = unmaskHttpUrls(imp.n, urlMap);
+    const originalSpecifier = unmaskHttpSpecifier(imp.n, urlMap);
     const isDynamic = imp.d > -1;
     const replacement = replacer(originalSpecifier, isDynamic);
 
@@ -212,7 +219,7 @@ export async function rewriteImports(
     const imp = imports[i];
     if (!imp) continue;
 
-    const unmaskedImp = imp.n ? { ...imp, n: unmaskHttpUrls(imp.n, urlMap) } : imp;
+    const unmaskedImp = imp.n ? { ...imp, n: unmaskHttpSpecifier(imp.n, urlMap) } : imp;
     const statement = unmaskHttpUrls(masked.substring(imp.ss, imp.se), urlMap);
 
     const replacement = rewriter(unmaskedImp, statement);

@@ -20,10 +20,13 @@
 import type { ExtensionFactory } from "veryfront/extensions";
 import type {
   ContentCompileOptions,
+  ContentFrontmatterOptions,
+  ContentFrontmatterResult,
   ContentPlugin,
   ContentProcessingResult,
   ContentProcessor,
 } from "veryfront/extensions/content";
+import { extractContentFrontmatter } from "./compiler/frontmatter-extractor.ts";
 import { compileMdx } from "./compiler/mdx-compile.ts";
 import { compileMarkdown } from "./compiler/markdown-compile.ts";
 import { getRehypePlugins, getRemarkPlugins } from "./plugins/plugin-loader.ts";
@@ -32,6 +35,9 @@ class MdxContentProcessor implements ContentProcessor {
   readonly cacheIdentity = "@veryfront/ext-content-mdx@0.1.0";
   readonly resultIsolation = "structured-clone" as const;
 
+  extractFrontmatter(options: ContentFrontmatterOptions): ContentFrontmatterResult {
+    return extractContentFrontmatter(options);
+  }
   compileMdx(options: ContentCompileOptions): Promise<ContentProcessingResult> {
     return compileMdx(options);
   }

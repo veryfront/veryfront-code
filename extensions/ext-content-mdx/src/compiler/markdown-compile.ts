@@ -1,4 +1,4 @@
-import { unified } from "unified";
+import { type Pluggable, unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
@@ -13,9 +13,9 @@ import { toString } from "mdast-util-to-string";
 import Slugger from "github-slugger";
 import type { Heading, Root as MdastRoot } from "mdast";
 import type { ContentCompileOptions, ContentProcessingResult } from "veryfront/extensions/content";
-import { extractFrontmatter } from "veryfront/transforms/frontmatter";
 import { isMarkdownPreview } from "veryfront/transforms/md-utils";
 import { rehypeNodePositions } from "../plugins/rehype-node-positions.ts";
+import { extractContentFrontmatter } from "./frontmatter-extractor.ts";
 
 interface ExtractedHeading {
   id: string;
@@ -65,12 +65,24 @@ export default function MDContent({ components, params, className, ...props }) {
 export async function compileMarkdown(
   options: ContentCompileOptions,
 ): Promise<ContentProcessingResult> {
-  const { content, frontmatter: providedFrontmatter, filePath, studioEmbed } = options;
+  if (options.moduleValues !== undefined) {
+    throw new TypeError("Structured module values are only supported for MDX compilation");
+  }
 
-  const { body, frontmatter: extractedFrontmatter } = extractFrontmatter(
+  const {
     content,
-    providedFrontmatter,
-  );
+    frontmatter: providedFrontmatter,
+    filePath,
+    studioEmbed,
+    remarkPlugins = [],
+    rehypePlugins = [],
+  } = options;
+
+  const { body, frontmatter: extractedFrontmatter } = extractContentFrontmatter({
+    content,
+    frontmatter: providedFrontmatter,
+    syntax: "markdown",
+  });
 
   const headings: ExtractedHeading[] = [];
 
@@ -78,7 +90,11 @@ export async function compileMarkdown(
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkFrontmatter)
-    .use(remarkExtractHeadings, headings)
+    .use(remarkExtractHeadings, headings);
+
+  pipeline.use(remarkPlugins as Pluggable[]);
+
+  pipeline
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(rehypeStarryNight)
     .use(rehypeSlug);
@@ -88,6 +104,8 @@ export async function compileMarkdown(
   if (studioEmbed && filePath) {
     pipeline.use(rehypeNodePositions, { filePath });
   }
+
+  pipeline.use(rehypePlugins as Pluggable[]);
 
   const sanitizeSchema = studioEmbed
     ? {

@@ -53,15 +53,7 @@ function maskHttpUrls(code: string): UrlMaskResult {
 }
 
 function unmaskUrl(specifier: string, urlMap: Map<string, string>): string {
-  if (urlMap.size === 0) return specifier;
-
-  for (const [placeholder, url] of urlMap) {
-    if (specifier.includes(placeholder)) {
-      return specifier.replace(placeholder, url);
-    }
-  }
-
-  return specifier;
+  return urlMap.get(specifier) ?? specifier;
 }
 
 /**
