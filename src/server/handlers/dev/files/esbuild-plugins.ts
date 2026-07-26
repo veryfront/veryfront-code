@@ -29,6 +29,7 @@ import {
   getCachedNpmVersion,
   isDependencyPinningEnabled,
   isExactSemver,
+  scheduleNpmVersionResolution,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 
@@ -326,6 +327,9 @@ function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string
         const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;
         return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${versionedPath}`;
       }
+      // Cache is cold — schedule a background registry fetch to warm it for the
+      // next bundler run. Fire-and-forget; must never block the build.
+      scheduleNpmVersionResolution(parsed.packageName, rawPin, projectDir);
     }
   }
   return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;

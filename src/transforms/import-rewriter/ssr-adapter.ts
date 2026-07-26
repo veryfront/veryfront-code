@@ -10,6 +10,7 @@ import {
   getCachedNpmVersion,
   isDependencyPinningEnabled,
   isExactSemver,
+  scheduleNpmVersionResolution,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 
@@ -129,7 +130,13 @@ function resolveBareImportPin(bareSpecifier: string, projectDir: string): string
   // semver — never strip range prefixes to manufacture a pin.
   if (rawPin && isExactSemver(rawPin)) return rawPin;
 
-  return getCachedNpmVersion(parsed.packageName, projectDir);
+  const cached = getCachedNpmVersion(parsed.packageName, projectDir);
+  if (cached) return cached;
+
+  // Cache is cold — schedule a background registry fetch to warm it for the
+  // next SSR render. Fire-and-forget; must never block or fail a render.
+  scheduleNpmVersionResolution(parsed.packageName, rawPin, projectDir);
+  return undefined;
 }
 
 function rewriteBareImports(code: string, version?: string, projectDir?: string): string {

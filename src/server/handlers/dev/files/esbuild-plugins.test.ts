@@ -1,9 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { asyncLocalStorage } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../../release-assets/constants.ts";
+import {
+  _clearNpmVersionCache,
+  _pendingResolutions,
+  getCachedNpmVersion,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
 import {
   createBareExternalPlugin,
   createHttpExternalPlugin,
@@ -223,6 +230,63 @@ describe(
       );
       assertEquals(errors.length, 0, `unexpected errors: ${JSON.stringify(errors)}`);
       assertEquals(output.includes("z = 1") || output.includes("var z"), true);
+    });
+  },
+);
+
+describe(
+  "createBareExternalPlugin \u2014 schedules background resolution when pinning is enabled and cache is cold",
+  { sanitizeResources: false, sanitizeOps: false },
+  () => {
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(async () => {
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+      // Drain any in-flight background fetches before moving on.
+      await _pendingResolutions();
+      _clearNpmVersionCache();
+      globalThis.fetch = originalFetch;
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    });
+
+    it("warms the npm version cache via background fetch when caches are cold and pinning is enabled", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      // Mock fetch: npm registry returns a version; the plugin marks bare imports
+      // as external (no module content fetch needed) so only the registry path runs.
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "4.17.21" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        stdin: {
+          contents: 'import x from "lodash"; console.log(x);',
+          loader: "js",
+          sourcefile: "/project/app/page.js",
+          resolveDir: "/project/app",
+        },
+        // opts.bundle defaults to false: bare imports become { external: true },
+        // so esbuild never fetches the esm.sh URL content.
+        plugins: [createBareExternalPlugin({ projectDir: "/project" })],
+      });
+
+      // Wait for the background registry fetch (fired inside onResolve) to settle.
+      await _pendingResolutions();
+      assertEquals(getCachedNpmVersion("lodash", "/project"), "4.17.21");
     });
   },
 );

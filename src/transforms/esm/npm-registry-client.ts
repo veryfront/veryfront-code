@@ -18,6 +18,13 @@ import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 
 const logger = rendererLogger.component("npm-registry-client");
 
+/**
+ * Maximum number of distinct project directories held in the version cache.
+ * When exceeded, the oldest entry is evicted (Maps preserve insertion order).
+ * Bounds memory in long-running server processes that serve many projects.
+ */
+const VERSION_CACHE_MAX_PROJECTS = 256;
+
 /** Per-project cache: projectDir -> packageName -> resolved version string */
 const versionCache = new Map<string, Map<string, string>>();
 
@@ -61,6 +68,12 @@ export function getCachedNpmVersion(
 function setCachedVersion(projectDir: string, packageName: string, version: string): void {
   let projectCache = versionCache.get(projectDir);
   if (!projectCache) {
+    // Evict the oldest project entry when the cap is reached. JavaScript Maps
+    // preserve insertion order, so keys().next().value is the oldest key.
+    if (versionCache.size >= VERSION_CACHE_MAX_PROJECTS) {
+      const oldest = versionCache.keys().next().value;
+      if (oldest !== undefined) versionCache.delete(oldest);
+    }
     projectCache = new Map();
     versionCache.set(projectDir, projectCache);
   }
@@ -70,8 +83,8 @@ function setCachedVersion(projectDir: string, packageName: string, version: stri
 /**
  * Schedule a non-blocking npm registry lookup for the package.
  *
- * - If rangeHint is an exact semver (after stripping range chars), it is stored
- *   directly without a network fetch and onResolved fires synchronously.
+ * - If rangeHint is already an exact semver literal (no range prefix stripped),
+ *   it is stored directly without a network fetch and onResolved fires synchronously.
  * - Otherwise a background fetch is started. The result is stored in the cache
  *   and onResolved is called when it completes.
  * - Duplicate in-flight fetches for the same package+project are suppressed.

@@ -9,6 +9,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import {
   _clearNpmVersionCache,
+  _pendingResolutions,
   scheduleNpmVersionResolution,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
@@ -228,15 +229,18 @@ describe("BareStrategy", () => {
       globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+      // Drain any in-flight background resolutions before the sanitizer runs.
+      await _pendingResolutions();
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
       _clearNpmVersionCache();
       clearReactVersionCache();
       globalThis.fetch = originalFetch;
     });
 
-    it("uses the npm registry cache version when the package.json cache is cold", () => {
-      // Pre-warm the npm registry cache (simulates a prior background fetch).
+    it("uses a synchronously stored exact version from the npm cache (no registry fetch needed)", () => {
+      // Store an exact semver synchronously — scheduleNpmVersionResolution short-
+      // circuits for exact literals, so no background network request is issued.
       scheduleNpmVersionResolution("lodash", "4.17.21", "/project");
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
       assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
@@ -300,9 +304,9 @@ describe("BareStrategy", () => {
     });
 
     it("treats a compound range in package.json as unpinned and falls back to registry cache", () => {
-      // Compound ranges like ">=1.0.0 <2.0.0" strip to "1.0.0 <2.0.0" which is
-      // not a valid semver and would produce a malformed esm.sh URL. The strategy
-      // must skip it and fall through to the npm registry cache instead.
+      // Compound ranges like ">=1.0.0 <2.0.0" are not exact semver literals so
+      // isExactSemver returns false. The strategy skips them and falls through to
+      // the npm registry cache (which is also cold here) — unversioned fallback.
       _primeDependenciesCache("/project", { lodash: ">=1.0.0 <2.0.0" });
       // No registry cache entry — should fall through to cold-cache (unversioned).
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
