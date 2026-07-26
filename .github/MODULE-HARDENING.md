@@ -2638,9 +2638,69 @@ Reproducible checkpoint evidence:
   imports and two baselined cycle edges. No new Platform architecture violation
   was introduced.
 
-Platform remains open. The next wave must replace the hard-coded Cloudflare
-capability and agent-step policy with an explicit deployment policy, complete
-the remaining runtime and hosted-adapter review, and reconcile the stale
-Platform and adapter documentation before formal closure.
+The Cloudflare runtime and deployment-policy wave is also complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the runtime profile invented
+  fixed Cloudflare CPU and agent-step ceilings, the Agent runtime silently
+  clamped authored execution policy to those guesses, and the generic
+  capability helper treated numeric limits and display metadata as boolean
+  capabilities. The source was a deployment-specific assumption embedded in a
+  global runtime profile. The consequence was behavior that changed according
+  to an inaccurate platform guess instead of explicit application policy.
+  Plan-dependent CPU limits are now represented as unknown, the invariant
+  128 MiB memory limit remains explicit, agent steps come only from authored
+  agent/edge/execution policy, and capability queries accept only boolean
+  capability keys.
+- **Symptom -> Source -> Consequence -> Remedy:** the Cloudflare adapter
+  advertised KV and writable storage without a binding, mutated deployment
+  bindings through its environment facade, and pretended `serve()` had opened
+  a listener by returning a dummy server with a hard-coded address. The source
+  was a static capability record and local-runtime lifecycle assumptions
+  applied to a request-driven Worker. Storage capabilities now derive from the
+  supplied binding, environment writes use a request-local overlay,
+  `serve()` fails with actionable `createWorker()` guidance, the dummy server
+  is removed, and a typed `createCloudflareAdapter()` factory is available from
+  the Platform barrel.
+- **Symptom -> Source -> Consequence -> Remedy:** the KV filesystem read only
+  the first list page, accepted malformed or unsorted pages, ignored
+  Cloudflare's key/value byte limits, acknowledged `mkdir` without creating a
+  directory, silently succeeded on mutation without a binding, allowed
+  file/directory collisions, and could partially delete a non-empty directory.
+  The consequence was truncated discovery, false success, ambiguous paths, and
+  acknowledged destructive operations with non-atomic results. Listing now
+  follows and validates cursors through empty pages, enforces sorted canonical
+  keys and documented byte limits, uses reserved trailing-slash markers for
+  persistent empty directories, validates parent/target types, removes files
+  and empty directories atomically, and fails closed for non-atomic recursive
+  directory deletion.
+- **Symptom -> Source -> Consequence -> Remedy:** the Cloudflare WebSocket
+  adapter ignored every upgrade option and accepted non-upgrade requests, while
+  the Worker factory returned `unknown` and coupled the Platform layer directly
+  to the middleware implementation. The consequence was silently lost
+  subprotocol, header, and timeout intent plus an avoidable layer dependency.
+  Upgrade validation now accepts only client-offered subprotocols, preserves
+  application response headers, rejects runtime-managed handshake headers,
+  accepts the portable zero-timeout sentinel while failing closed for
+  unsupported nonzero timeouts, and reports a structured error outside the
+  Worker runtime. `createWorker()` now exposes `Promise<Response>` through a
+  small structural pipeline contract with no Platform-to-middleware import.
+
+Current-wave verification evidence:
+
+- The complete supported Deno Platform suite passes 180 suites and 2,428 nested
+  steps with zero failures.
+- Every supported Node Platform harness shard passes with zero failures.
+- The affected Agent input-policy and factory suites pass 28 nested steps with
+  zero failures.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,331
+  configured files, lint, all style and architecture ratchets, documentation
+  validation and all 739 documentation links, and every configured source and
+  browser entrypoint typecheck.
+
+Platform remains open. The next wave must complete the remaining Node, Deno,
+Bun, shared runtime, hosted-adapter, and residual adapter-documentation review
+before formal closure. Agent remains listed for its own module-level
+revalidation because this checkpoint verified only the execution-policy
+consumer changed by Platform.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

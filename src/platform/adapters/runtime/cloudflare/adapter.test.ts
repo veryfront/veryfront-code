@@ -1,7 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { CloudflareAdapter } from "./adapter.ts";
+import { CloudflareAdapter, createCloudflareAdapter } from "./adapter.ts";
+import type { KVNamespace } from "./types.ts";
+
+const mockKv = {
+  delete: () => Promise.resolve(),
+  get: () => Promise.resolve(null),
+  getWithMetadata: () => Promise.resolve({ metadata: null, value: null }),
+  list: () => Promise.resolve({ keys: [], list_complete: true, cursor: "" }),
+  put: () => Promise.resolve(),
+} satisfies KVNamespace;
 
 describe("CloudflareAdapter", () => {
   it("should export CloudflareAdapter class", () => {
@@ -17,8 +26,14 @@ describe("CloudflareAdapter", () => {
     });
 
     it("should be instantiable with env and kvNamespace", () => {
-      const mockKv: any = {};
       assertExists(new CloudflareAdapter(mockEnv, mockKv));
+    });
+
+    it("provides the factory named by runtime detection guidance", () => {
+      const adapter = createCloudflareAdapter(mockEnv, mockKv);
+
+      assertEquals(adapter instanceof CloudflareAdapter, true);
+      assertEquals(adapter.capabilities.kvStore, true);
     });
 
     it("should have id and name properties", () => {
@@ -35,20 +50,14 @@ describe("CloudflareAdapter", () => {
       assertExists(adapter.shell);
     });
 
-    it("should have capabilities", () => {
-      const adapter = new CloudflareAdapter(mockEnv);
-      const { capabilities } = adapter;
+    it("derives storage capabilities from the supplied bindings", () => {
+      const withoutKv = new CloudflareAdapter(mockEnv).capabilities;
+      const withKv = new CloudflareAdapter(mockEnv, mockKv).capabilities;
 
-      assertExists(capabilities);
-      assertEquals(capabilities.typescript, false);
-      assertEquals(capabilities.jsx, false);
-      assertEquals(capabilities.http2, true);
-      assertEquals(capabilities.websocket, true);
-      assertEquals(capabilities.workers, false);
-      assertEquals(capabilities.fileWatching, false);
-      assertEquals(capabilities.shell, false);
-      assertEquals(capabilities.kvStore, true);
-      assertEquals(capabilities.writableFs, false);
+      assertEquals(withoutKv.kvStore, false);
+      assertEquals(withoutKv.writableFs, false);
+      assertEquals(withKv.kvStore, true);
+      assertEquals(withKv.writableFs, true);
     });
 
     it("should have serve and shutdown methods", () => {
@@ -61,10 +70,13 @@ describe("CloudflareAdapter", () => {
       assertEquals(typeof adapter.shutdown, "function");
     });
 
-    it("serve should return a server", async () => {
+    it("fails closed instead of pretending to open a listener", async () => {
       const adapter = new CloudflareAdapter(mockEnv);
-      const server = await adapter.serve(() => new Response("test"));
-      assertExists(server);
+      await assertRejects(
+        () => adapter.serve(() => new Response("test")),
+        Error,
+        "fetch handler",
+      );
     });
 
     it("shutdown should complete without error", async () => {

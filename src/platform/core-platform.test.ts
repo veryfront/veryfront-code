@@ -32,11 +32,13 @@ describe("platform/core-platform", () => {
       assertEquals(caps.displayName, "Bun");
     });
 
-    it("should return limited capabilities for cloudflare-workers", () => {
+    it("reports invariant Cloudflare capabilities without inventing plan limits", () => {
       const caps = getPlatformCapabilities("cloudflare-workers");
       assertEquals(caps.canRunMCPServer, false);
       assertEquals(caps.hasFileSystem, false);
-      assertEquals(caps.maxAgentSteps, 3);
+      assertEquals(caps.cpuTimeLimit, null);
+      assertEquals(caps.memoryLimit, 128);
+      assertEquals(caps.supportsLongRunning, true);
       assertEquals(caps.streamingRecommended, true);
     });
 
@@ -66,12 +68,15 @@ describe("platform/core-platform", () => {
   });
 
   describe("supportsCapability", () => {
-    it("should return true for boolean capabilities that are true", () => {
-      assertEquals(supportsCapability("canRunMCPServer"), true);
-    });
-
-    it("should return true for positive number capabilities", () => {
-      assertEquals(supportsCapability("maxAgentSteps"), true);
+    it("reports boolean capabilities for an explicit platform", () => {
+      assertEquals(
+        supportsCapability("canRunMCPServer", "deno"),
+        true,
+      );
+      assertEquals(
+        supportsCapability("canRunMCPServer", "cloudflare-workers"),
+        false,
+      );
     });
   });
 
@@ -89,13 +94,13 @@ describe("platform/core-platform", () => {
       assertEquals(result.errors.length, 0);
     });
 
-    it("should error when maxSteps exceeds platform limit", () => {
+    it("does not turn a plan-dependent Cloudflare CPU budget into an agent-step limit", () => {
       const result = validatePlatformCompatibility(
         { maxSteps: 10 },
         "cloudflare-workers",
       );
-      assertEquals(result.compatible, false);
-      assertEquals(result.errors.length > 0, true);
+      assertEquals(result.compatible, true);
+      assertEquals(result.errors, []);
     });
 
     it("should error when filesystem required but not supported", () => {
@@ -141,7 +146,7 @@ describe("platform/core-platform", () => {
       assertEquals(result.errors.length, 0);
     });
 
-    it("should be compatible when maxSteps is within limit", () => {
+    it("accepts a valid authored maxSteps policy", () => {
       const result = validatePlatformCompatibility(
         { maxSteps: 2 },
         "cloudflare-workers",
@@ -162,7 +167,7 @@ describe("platform/core-platform", () => {
       assertEquals(result.compatible, true);
     });
 
-    it("rejects invalid maxSteps values before applying platform limits", () => {
+    it("rejects invalid authored maxSteps values", () => {
       for (const maxSteps of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
         const result = validatePlatformCompatibility({ maxSteps }, "deno");
         assertEquals(result.compatible, false);
@@ -201,43 +206,36 @@ describe("platform/core-platform", () => {
       assertEquals(caps.memoryLimit, null);
     });
 
-    it("should return specific limits for cloudflare-workers", () => {
+    it("returns only the invariant Cloudflare memory limit", () => {
       const caps = getPlatformCapabilities("cloudflare-workers");
-      assertEquals(caps.cpuTimeLimit, 30_000);
+      assertEquals(caps.cpuTimeLimit, null);
       assertEquals(caps.memoryLimit, 128);
     });
 
-    it("should return limits for unknown platform", () => {
+    it("does not invent resource limits for an unknown platform", () => {
       const caps = getPlatformCapabilities("unknown");
-      assertEquals(caps.cpuTimeLimit, 60_000);
-      assertEquals(caps.memoryLimit, 512);
-      assertEquals(caps.maxAgentSteps, 5);
+      assertEquals(caps.cpuTimeLimit, null);
+      assertEquals(caps.memoryLimit, null);
     });
   });
 
   describe("supportsCapability edge cases", () => {
     it("should return false for streamingRecommended on deno", () => {
-      assertEquals(supportsCapability("streamingRecommended"), false);
-    });
-
-    it("should return false for null cpuTimeLimit", () => {
-      assertEquals(supportsCapability("cpuTimeLimit"), false);
-    });
-
-    it("should return false for string displayName", () => {
-      assertEquals(supportsCapability("displayName"), false);
+      assertEquals(
+        supportsCapability("streamingRecommended", "deno"),
+        false,
+      );
     });
 
     it("should return true for hasFileSystem on deno", () => {
-      assertEquals(supportsCapability("hasFileSystem"), true);
+      assertEquals(supportsCapability("hasFileSystem", "deno"), true);
     });
 
     it("should return true for supportsLongRunning on deno", () => {
-      assertEquals(supportsCapability("supportsLongRunning"), true);
-    });
-
-    it("should return false for null memoryLimit on deno", () => {
-      assertEquals(supportsCapability("memoryLimit"), false);
+      assertEquals(
+        supportsCapability("supportsLongRunning", "deno"),
+        true,
+      );
     });
   });
 
@@ -245,6 +243,16 @@ describe("platform/core-platform", () => {
     it("should return empty array for deno", () => {
       const warnings = getPlatformWarnings();
       assertEquals(warnings, []);
+    });
+
+    it("does not report fabricated Cloudflare CPU or step ceilings", () => {
+      const warnings = getPlatformWarnings("cloudflare-workers");
+      assertEquals(
+        warnings.some((warning) => warning.includes("no native file system")),
+        true,
+      );
+      assertEquals(warnings.some((warning) => warning.includes("limited agent steps")), false);
+      assertEquals(warnings.some((warning) => warning.includes("CPU time limit")), false);
     });
   });
 
@@ -255,7 +263,7 @@ describe("platform/core-platform", () => {
         "cloudflare-workers",
       );
       assertEquals(result.compatible, false);
-      assertEquals(result.errors.length, 3);
+      assertEquals(result.errors.length, 2);
       assertEquals(result.warnings.length, 1);
     });
 

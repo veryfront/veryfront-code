@@ -2,14 +2,23 @@ export type Platform = "deno" | "node" | "bun" | "cloudflare-workers" | "unknown
 
 export interface PlatformCapabilities {
   readonly canRunMCPServer: boolean;
-  readonly maxAgentSteps: number;
+  /**
+   * Fixed CPU ceiling in milliseconds, or `null` when it varies by deployment
+   * plan/configuration or cannot be detected at runtime.
+   */
   readonly cpuTimeLimit: number | null;
+  /** Fixed isolate/process memory ceiling in MiB, when one is invariant. */
   readonly memoryLimit: number | null;
   readonly hasFileSystem: boolean;
+  /** Whether an HTTP response may remain active while its client is connected. */
   readonly supportsLongRunning: boolean;
   readonly streamingRecommended: boolean;
   readonly displayName: string;
 }
+
+export type BooleanPlatformCapability = {
+  [Key in keyof PlatformCapabilities]: PlatformCapabilities[Key] extends boolean ? Key : never;
+}[keyof PlatformCapabilities];
 
 type RuntimeGlobal = typeof globalThis & {
   Deno?: { version?: { deno?: string } };
@@ -42,30 +51,15 @@ export function detectPlatform(): Platform {
   return "unknown";
 }
 
-/** CPU time limit for Cloudflare Workers (30 seconds) */
-const CF_WORKERS_CPU_TIME_LIMIT_MS = 30_000;
-/** Memory limit for Cloudflare Workers (128 MB) */
+/**
+ * Invariant per-isolate memory limit for Cloudflare Workers.
+ * @see https://developers.cloudflare.com/workers/platform/limits/
+ */
 const CF_WORKERS_MEMORY_LIMIT_MB = 128;
-/** Max agent steps for Cloudflare Workers */
-const CF_WORKERS_MAX_AGENT_STEPS = 3;
-
-/** CPU time limit for unknown platforms (60 seconds) */
-const UNKNOWN_PLATFORM_CPU_TIME_LIMIT_MS = 60_000;
-/** Memory limit for unknown platforms (512 MB) */
-const UNKNOWN_PLATFORM_MEMORY_LIMIT_MB = 512;
-/** Max agent steps for unknown platforms */
-const UNKNOWN_PLATFORM_MAX_AGENT_STEPS = 5;
-
-/** Minimum agent steps threshold for generating a warning */
-const MIN_AGENT_STEPS_WARNING_THRESHOLD = 10;
-
-/** CPU time limit below which a platform warning is emitted (60 seconds) */
-const CPU_TIME_WARNING_THRESHOLD_MS = 60_000;
 
 const PLATFORM_CAPABILITIES: Readonly<Record<Platform, PlatformCapabilities>> = Object.freeze({
   deno: Object.freeze({
     canRunMCPServer: true,
-    maxAgentSteps: Infinity,
     cpuTimeLimit: null,
     memoryLimit: null,
     hasFileSystem: true,
@@ -75,7 +69,6 @@ const PLATFORM_CAPABILITIES: Readonly<Record<Platform, PlatformCapabilities>> = 
   }),
   node: Object.freeze({
     canRunMCPServer: true,
-    maxAgentSteps: Infinity,
     cpuTimeLimit: null,
     memoryLimit: null,
     hasFileSystem: true,
@@ -85,7 +78,6 @@ const PLATFORM_CAPABILITIES: Readonly<Record<Platform, PlatformCapabilities>> = 
   }),
   bun: Object.freeze({
     canRunMCPServer: true,
-    maxAgentSteps: Infinity,
     cpuTimeLimit: null,
     memoryLimit: null,
     hasFileSystem: true,
@@ -95,19 +87,17 @@ const PLATFORM_CAPABILITIES: Readonly<Record<Platform, PlatformCapabilities>> = 
   }),
   "cloudflare-workers": Object.freeze({
     canRunMCPServer: false,
-    maxAgentSteps: CF_WORKERS_MAX_AGENT_STEPS,
-    cpuTimeLimit: CF_WORKERS_CPU_TIME_LIMIT_MS,
+    cpuTimeLimit: null,
     memoryLimit: CF_WORKERS_MEMORY_LIMIT_MB,
     hasFileSystem: false,
-    supportsLongRunning: false,
+    supportsLongRunning: true,
     streamingRecommended: true,
     displayName: "Cloudflare Workers",
   }),
   unknown: Object.freeze({
     canRunMCPServer: false,
-    maxAgentSteps: UNKNOWN_PLATFORM_MAX_AGENT_STEPS,
-    cpuTimeLimit: UNKNOWN_PLATFORM_CPU_TIME_LIMIT_MS,
-    memoryLimit: UNKNOWN_PLATFORM_MEMORY_LIMIT_MB,
+    cpuTimeLimit: null,
+    memoryLimit: null,
     hasFileSystem: false,
     supportsLongRunning: false,
     streamingRecommended: true,
@@ -119,17 +109,15 @@ export function getPlatformCapabilities(platform?: Platform): PlatformCapabiliti
   return PLATFORM_CAPABILITIES[platform ?? detectPlatform()] ?? PLATFORM_CAPABILITIES.unknown;
 }
 
-export function supportsCapability(capability: keyof PlatformCapabilities): boolean {
-  const value = getPlatformCapabilities()[capability];
-
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value > 0;
-
-  return false;
+export function supportsCapability(
+  capability: BooleanPlatformCapability,
+  platform: Platform = detectPlatform(),
+): boolean {
+  return getPlatformCapabilities(platform)[capability];
 }
 
-export function getPlatformWarnings(): string[] {
-  const capabilities = getPlatformCapabilities();
+export function getPlatformWarnings(platform: Platform = detectPlatform()): string[] {
+  const capabilities = getPlatformCapabilities(platform);
   const warnings: string[] = [];
 
   if (!capabilities.canRunMCPServer) {
@@ -138,23 +126,10 @@ export function getPlatformWarnings(): string[] {
     );
   }
 
-  if (capabilities.maxAgentSteps < MIN_AGENT_STEPS_WARNING_THRESHOLD) {
-    warnings.push(
-      `${capabilities.displayName} has limited agent steps (${capabilities.maxAgentSteps}). Use simple agents only.`,
-    );
-  }
-
-  if (
-    capabilities.cpuTimeLimit !== null &&
-    capabilities.cpuTimeLimit < CPU_TIME_WARNING_THRESHOLD_MS
-  ) {
-    warnings.push(
-      `${capabilities.displayName} has CPU time limit of ${capabilities.cpuTimeLimit}ms. Enable streaming for better UX.`,
-    );
-  }
-
   if (!capabilities.hasFileSystem) {
-    warnings.push(`${capabilities.displayName} has no file system access. Avoid file-based tools.`);
+    warnings.push(
+      `${capabilities.displayName} has no native file system. Provide an explicit storage-backed adapter for file-based tools.`,
+    );
   }
 
   return warnings;
@@ -182,18 +157,13 @@ export function validatePlatformCompatibility(
   if (config.maxSteps !== undefined) {
     if (!Number.isSafeInteger(config.maxSteps) || config.maxSteps <= 0) {
       errors.push("Agent maxSteps must be a positive safe integer");
-    } else if (
-      capabilities.maxAgentSteps !== Infinity &&
-      config.maxSteps > capabilities.maxAgentSteps
-    ) {
-      errors.push(
-        `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
-      );
     }
   }
 
   if (config.requiresFileSystem && !capabilities.hasFileSystem) {
-    errors.push(`Agent requires file system but ${capabilities.displayName} doesn't support it`);
+    errors.push(
+      `Agent requires a native file system but ${capabilities.displayName} doesn't provide one`,
+    );
   }
 
   if (config.requiresMCP && !capabilities.canRunMCPServer) {

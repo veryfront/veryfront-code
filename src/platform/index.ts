@@ -78,5 +78,19 @@ export type {
   StylePregenerationContext,
 } from "./adapters/fs/index.ts";
 
+// Cloudflare Workers require request-scoped bindings and therefore cannot use
+// automatic runtime adapter construction.
+export {
+  CloudflareAdapter,
+  createCloudflareAdapter,
+  createWorker,
+} from "./adapters/runtime/cloudflare/index.ts";
+export type {
+  CloudflareEnv,
+  CloudflareRequestPipeline,
+  ExecutionContext as CloudflareExecutionContext,
+  KVNamespace as CloudflareKVNamespace,
+} from "./adapters/runtime/cloudflare/index.ts";
+
 // Adapters: API client
 export { VeryfrontApiClient } from "./adapters/veryfront-api-client/index.ts";

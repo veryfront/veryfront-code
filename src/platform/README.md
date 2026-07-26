@@ -221,6 +221,50 @@ const adapter = new BunAdapter();
 // Web API compatibility
 ```
 
+### Cloudflare Workers
+
+Cloudflare Workers receive requests through an exported `fetch` handler; they
+cannot open a listener. Construct the adapter with the bindings from the current
+request and export a worker handler:
+
+```typescript
+import {
+  type CloudflareKVNamespace,
+  createCloudflareAdapter,
+  createWorker,
+} from "#veryfront/platform";
+import { MiddlewarePipeline } from "#veryfront/middleware";
+
+export default createWorker((env) => {
+  const files = env.FILES as CloudflareKVNamespace | undefined;
+  const adapter = createCloudflareAdapter(env, files);
+
+  return new MiddlewarePipeline().use(() => {
+    return Response.json({
+      runtime: adapter.id,
+      writableFilesystem: adapter.capabilities.writableFs,
+    });
+  });
+});
+```
+
+`CloudflareAdapter.serve()` rejects because there is no listener to open. Pass a
+KV namespace explicitly to enable the KV-backed virtual filesystem. KV has no
+native directory primitive, so the adapter stores reserved trailing-slash keys
+for empty directories. Empty-directory and file removal are supported;
+recursive removal of non-empty directories fails closed because KV has no
+atomic multi-key delete. WebSocket upgrades accept custom response headers and
+an offered subprotocol. Cloudflare has no transport-level idle-timeout option,
+so use application heartbeats; `idleTimeout: 0` is accepted as the portable
+“no timeout” sentinel.
+
+The invariant Worker memory limit is 128 MiB. CPU limits depend on the
+deployment plan and configuration, so Veryfront does not invent a CPU budget or
+derive an agent-step cap from the runtime profile. See Cloudflare's
+[Workers limits](https://developers.cloudflare.com/workers/platform/limits/),
+[KV limits](https://developers.cloudflare.com/kv/platform/limits/), and
+[WebSocket API](https://developers.cloudflare.com/workers/runtime-apis/websockets/).
+
 ## Testing
 
 ```typescript

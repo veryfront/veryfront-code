@@ -45,7 +45,10 @@ function createKVNamespace(initialEntries: Record<string, string>): KVNamespace 
       return Promise.resolve({
         keys: [...entries.keys()]
           .filter((key) => key.startsWith(prefix))
+          .sort()
           .map((name) => ({ name })),
+        list_complete: true,
+        cursor: "",
       });
     },
     put(key, value) {
@@ -53,6 +56,31 @@ function createKVNamespace(initialEntries: Record<string, string>): KVNamespace 
       return Promise.resolve();
     },
   };
+}
+
+function createPaginatedKVNamespace(
+  pages: ReadonlyMap<
+    string,
+    { keys: string[]; listComplete: boolean; cursor?: string }
+  >,
+): { kv: KVNamespace; cursors: Array<string | undefined> } {
+  const cursors: Array<string | undefined> = [];
+  const kv = createKVNamespace({});
+  kv.list = (options = {}) => {
+    const cursor = options.cursor;
+    cursors.push(cursor);
+    const page = pages.get(cursor ?? "") ?? {
+      keys: [],
+      listComplete: true,
+      cursor: "",
+    };
+    return Promise.resolve({
+      keys: page.keys.map((name) => ({ name })),
+      list_complete: page.listComplete,
+      cursor: page.cursor ?? "",
+    });
+  };
+  return { kv, cursors };
 }
 
 describe("CloudflareFileSystemAdapter realPath", () => {
@@ -110,6 +138,181 @@ describe("CloudflareFileSystemAdapter realPath", () => {
     assertEquals(await fs.exists("foo"), false);
     assertEquals(await collectDirectory(fs.readDir("foo")), []);
     await assertRejects(() => fs.stat("foo"), Error, "File not found");
+  });
+
+  it("follows KV cursors even when an intermediate page has no visible keys", async () => {
+    const { kv, cursors } = createPaginatedKVNamespace(
+      new Map([
+        ["", { keys: [], listComplete: false, cursor: "page-2" }],
+        [
+          "page-2",
+          {
+            keys: ["pages/about.mdx", "pages/guides/start.mdx"],
+            listComplete: true,
+          },
+        ],
+      ]),
+    );
+    const fs = new CloudflareFileSystemAdapter(kv);
+
+    assertEquals(await fs.exists("pages"), true);
+    assertEquals(await collectDirectory(fs.readDir("pages")), [
+      { name: "about.mdx", isFile: true, isDirectory: false },
+      { name: "guides", isFile: false, isDirectory: true },
+    ]);
+    assertEquals((await fs.stat("pages")).isDirectory, true);
+    assertEquals(cursors.includes("page-2"), true);
+  });
+
+  it("detects file-directory conflicts that straddle KV pages", async () => {
+    const { kv } = createPaginatedKVNamespace(
+      new Map([
+        [
+          "",
+          {
+            keys: ["pages/conflict"],
+            listComplete: false,
+            cursor: "page-2",
+          },
+        ],
+        [
+          "page-2",
+          {
+            keys: ["pages/conflict/nested.mdx"],
+            listComplete: true,
+          },
+        ],
+      ]),
+    );
+    const fs = new CloudflareFileSystemAdapter(kv);
+
+    await assertRejects(
+      () => collectDirectory(fs.readDir("pages")),
+      Error,
+      "both a file and a directory",
+    );
+  });
+
+  it("rejects malformed cursor responses instead of looping or truncating", async () => {
+    const { kv } = createPaginatedKVNamespace(
+      new Map([
+        ["", { keys: [], listComplete: false }],
+      ]),
+    );
+    const fs = new CloudflareFileSystemAdapter(kv);
+
+    await assertRejects(
+      () => collectDirectory(fs.readDir("pages")),
+      Error,
+      "pagination cursor",
+    );
+  });
+
+  it("rejects duplicate or unsorted list pages instead of emitting ambiguous entries", async () => {
+    const { kv } = createPaginatedKVNamespace(
+      new Map([
+        [
+          "",
+          {
+            keys: ["pages/z.mdx", "pages/a.mdx"],
+            listComplete: true,
+          },
+        ],
+      ]),
+    );
+    const fs = new CloudflareFileSystemAdapter(kv);
+
+    await assertRejects(
+      () => collectDirectory(fs.readDir("pages")),
+      Error,
+      "duplicate or unsorted",
+    );
+  });
+
+  it("rejects KV keys and values beyond Cloudflare's byte limits", async () => {
+    const fs = new CloudflareFileSystemAdapter(createKVNamespace({}));
+
+    await assertRejects(
+      () => fs.writeFile("é".repeat(257), "value"),
+      Error,
+      "512-byte",
+    );
+    await assertRejects(
+      () => fs.writeFile("oversized.txt", "x".repeat(25 * 1024 * 1024 + 1)),
+      Error,
+      "25 MiB",
+    );
+  });
+
+  it("does not silently succeed on mutating operations without a KV binding", async () => {
+    const fs = new CloudflareFileSystemAdapter();
+
+    await assertRejects(() => fs.mkdir("pages"), Error, "KV namespace required");
+    await assertRejects(() => fs.remove("pages/index.mdx"), Error, "KV namespace required");
+  });
+
+  it("rejects file-directory collisions before writing them", async () => {
+    const directoryFs = new CloudflareFileSystemAdapter(createKVNamespace({
+      "pages/index.mdx": "# Existing child",
+    }));
+    await assertRejects(
+      () => directoryFs.writeFile("pages", "file collision"),
+      Error,
+      "existing directory",
+    );
+
+    const parentFileFs = new CloudflareFileSystemAdapter(createKVNamespace({
+      "pages": "existing file",
+    }));
+    await assertRejects(
+      () => parentFileFs.writeFile("pages/index.mdx", "# Child collision"),
+      Error,
+      "parent path is a file",
+    );
+  });
+
+  it("fails closed for virtual directory removal instead of reporting false success", async () => {
+    const fs = new CloudflareFileSystemAdapter(createKVNamespace({
+      "pages/index.mdx": "# Keep",
+    }));
+
+    await assertRejects(
+      () => fs.remove("pages", { recursive: true }),
+      Error,
+      "directory removal",
+    );
+    assertEquals(await fs.readFile("pages/index.mdx"), "# Keep");
+  });
+
+  it("persists empty directory markers and removes an empty directory atomically", async () => {
+    const fs = new CloudflareFileSystemAdapter(createKVNamespace({}));
+
+    await fs.mkdir("project/cache", { recursive: true });
+
+    assertEquals(await fs.exists("project"), true);
+    assertEquals(await fs.exists("project/cache"), true);
+    assertEquals((await fs.stat("project/cache")).isDirectory, true);
+    assertEquals(await collectDirectory(fs.readDir("project/cache")), []);
+    assertEquals(await collectDirectory(fs.readDir("project")), [
+      { name: "cache", isFile: false, isDirectory: true },
+    ]);
+
+    await fs.remove("project/cache");
+    assertEquals(await fs.exists("project/cache"), false);
+    assertEquals(await fs.exists("project"), true);
+  });
+
+  it("requires an existing parent for non-recursive directory creation", async () => {
+    const fs = new CloudflareFileSystemAdapter(createKVNamespace({}));
+
+    await assertRejects(
+      () => fs.mkdir("project/cache"),
+      Error,
+      "Parent directory not found",
+    );
+    await fs.mkdir("project");
+    await fs.mkdir("project/cache");
+    assertEquals(await fs.exists("project/cache"), true);
   });
 
   it("bounds paths and keeps virtual roots directory-only", async () => {

@@ -28,7 +28,7 @@ import {
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
-import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
+import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -906,8 +906,7 @@ export class AgentRuntime {
     abortSignal?: AbortSignal,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
-      const { maxAgentSteps } = getPlatformCapabilities();
-      const maxSteps = this.computeMaxSteps(maxAgentSteps);
+      const maxSteps = this.computeMaxSteps();
       const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
       const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -1544,8 +1543,7 @@ export class AgentRuntime {
     abortSignal?: AbortSignal,
     temperatureModelString?: string,
   ): Promise<AgentResponse> {
-    const { maxAgentSteps } = getPlatformCapabilities();
-    const maxSteps = this.computeMaxSteps(maxAgentSteps);
+    const maxSteps = this.computeMaxSteps();
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -2200,12 +2198,10 @@ export class AgentRuntime {
     return "You are a helpful assistant.";
   }
 
-  /**
-   * Compute max steps considering edge config and platform limits.
-   */
-  private computeMaxSteps(platformLimit: number): number {
+  /** Compute max steps from the agent's explicit execution policy. */
+  private computeMaxSteps(): number {
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
-    return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
+    return getMaxSteps(this.config.maxSteps, edgeMaxSteps);
   }
 
   private resolveTemperature(

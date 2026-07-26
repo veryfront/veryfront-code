@@ -19,13 +19,13 @@ Veryfront supports both router modes.
 
 These are the runtime capability profiles modeled by the framework.
 
-| Runtime            | Filesystem | MCP server | Long-running agents/workflows | Notes                                                                                 |
-| ------------------ | ---------- | ---------- | ----------------------------- | ------------------------------------------------------------------------------------- |
-| Deno               | Yes        | Yes        | Yes                           | Primary local/runtime target in this repo.                                            |
-| Node.js            | Yes        | Yes        | Yes                           | Full runtime profile.                                                                 |
-| Bun                | Yes        | Yes        | Yes                           | Full runtime profile.                                                                 |
-| Cloudflare Workers | No         | No         | Limited                       | Streaming is recommended; the runtime uses conservative step, CPU, and memory limits. |
-| Unknown runtime    | No         | No         | Limited                       | Falls back to a constrained compatibility profile.                                    |
+| Runtime            | Filesystem                | MCP server | Long-running agents/workflows | Notes                                                                                                                                              |
+| ------------------ | ------------------------- | ---------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deno               | Yes                       | Yes        | Yes                           | Primary local/runtime target in this repo.                                                                                                         |
+| Node.js            | Yes                       | Yes        | Yes                           | Full runtime profile.                                                                                                                              |
+| Bun                | Yes                       | Yes        | Yes                           | Full runtime profile.                                                                                                                              |
+| Cloudflare Workers | No native FS; optional KV | No         | Connected responses           | Streaming is recommended. Memory is fixed at 128 MiB; CPU is plan/configuration-dependent, and the framework does not infer an agent-step ceiling. |
+| Unknown runtime    | No                        | No         | Not assumed                   | Unknown capabilities remain unspecified instead of being replaced with fabricated CPU, memory, or agent-step limits.                               |
 
 ## Capability boundaries
 

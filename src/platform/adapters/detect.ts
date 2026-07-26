@@ -30,7 +30,8 @@ function throwConfigError(message: string): never {
  * ```
  *
  * @returns A new RuntimeAdapter instance for the detected runtime
- * @throws Error if the runtime is unsupported or requires manual initialization (Cloudflare)
+ * @throws Error if the runtime is unsupported or requires request-scoped
+ * Cloudflare bindings. Use `createCloudflareAdapter(env)` in a Worker handler.
  */
 export function getAdapter(): Promise<RuntimeAdapter> {
   const runtimeId = detectRuntime();
