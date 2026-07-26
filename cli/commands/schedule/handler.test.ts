@@ -202,7 +202,7 @@ describe("schedule command", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
-        "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions&limit=1",
+        "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
         `https://api.test.com/projects/dreamy-haven/schedules/${scheduleId}/runs`,
         `https://api.test.com/runs/${encodeURIComponent(runId)}`,
       ]);

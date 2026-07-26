@@ -318,7 +318,6 @@ export class VeryfrontRunsClient {
         toQueryParams({
           status: "active",
           source_trigger_id: input.sourceTriggerId,
-          limit: 1,
         }),
       ),
       ScheduleReferenceListSchema,

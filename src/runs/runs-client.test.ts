@@ -332,7 +332,7 @@ describe("VeryfrontRunsClient", () => {
     });
     assertEquals(
       call(0).url,
-      "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions&limit=1",
+      "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
     );
     assertEquals(
       call(1).url,
@@ -371,7 +371,61 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1);
     assertEquals(
       call(0).url,
-      "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=missing-schedule&limit=1",
+      "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=missing-schedule",
+    );
+  });
+
+  it("creates the matching source schedule when it is not the first listed schedule", async () => {
+    const matchingScheduleId = "44444444-4444-4444-8444-444444444444";
+    mockFetch([
+      jsonResponse({
+        schedules: [
+          {
+            id: "99999999-9999-4999-8999-999999999999",
+            name: "Another active schedule",
+            status: "active",
+            target: {
+              kind: "agent",
+              id: "other-agent",
+            },
+            definition_source: "source",
+            source_trigger_id: "other-source-schedule",
+            timeout_seconds: 300,
+          },
+          {
+            id: matchingScheduleId,
+            name: "Process job submissions",
+            status: "active",
+            target: {
+              kind: "agent",
+              id: "job-submission-orchestrator",
+            },
+            definition_source: "source",
+            source_trigger_id: "process-job-submissions",
+            timeout_seconds: 1800,
+          },
+        ],
+      }),
+      jsonResponse({
+        run_id: "run_11111111-1111-4111-8111-111111111111",
+        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
+        schedule_id: matchingScheduleId,
+      }, 201),
+    ]);
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    const response = await client.createScheduleRunFromSource({
+      sourceTriggerId: "process-job-submissions",
+    });
+
+    assertEquals(response.scheduleRun.schedule_id, matchingScheduleId);
+    assertEquals(
+      call(1).url,
+      `https://api.test.com/projects/dreamy-haven/schedules/${matchingScheduleId}/runs`,
     );
   });
 
