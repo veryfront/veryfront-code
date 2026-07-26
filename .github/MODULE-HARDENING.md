@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    10 |      17.2% | Current formal closure evidence remains valid       |
+| Closed                         |    11 |      19.0% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     8 |      13.8% | No current authoritative-branch review delta exists |
+| Pending current review         |     7 |      12.1% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 50/58 (86.2%). This is progress coverage, not a substitute for the
+coverage of 51/58 (87.9%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -42,6 +42,7 @@ stricter closure count.
 - `embedding`
 - `eval`
 - `extensions`
+- `knowledge`
 - `metrics`
 - `provider`
 - `runs`
@@ -99,7 +100,6 @@ stricter closure count.
 
 - `chat`
 - `issues`
-- `knowledge`
 - `markdown`
 - `mdx`
 - `repositories`
@@ -121,18 +121,18 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `eval`,
-`extensions`, `metrics`, `provider`, `runs`, `runtime`, `schemas`, and
-`version.ts`. The latest independent adversarial provider, runs, and runtime
-findings are remediated and revalidated. `prompt` and `resource` have now
-received deep current-state reviews and substantial remediation, but remain
-open while their documented cross-cutting findings are unresolved. Each closure
-requires a complete consumer map, deep module-level review, adversarial boundary
-tests, public-contract documentation, and repository-wide static verification.
-Cross-module consumers changed by a fix remain in revalidation; focused
-evidence for one boundary does not by itself close the consumer's top-level
-unit. The next target will be selected from the remaining dependency-adjacent
-units after this checkpoint is committed, pushed, and synchronized with
-`origin/main`.
+`extensions`, `knowledge`, `metrics`, `provider`, `runs`, `runtime`, `schemas`,
+and `version.ts`. The latest independent adversarial knowledge, provider, runs,
+and runtime findings are remediated and revalidated. `prompt` and `resource`
+have now received deep current-state reviews and substantial remediation, but
+remain open while their documented cross-cutting findings are unresolved. Each
+closure requires a complete consumer map, deep module-level review, adversarial
+boundary tests, public-contract documentation, and repository-wide static
+verification. Cross-module consumers changed by a fix remain in revalidation;
+focused evidence for one boundary does not by itself close the consumer's
+top-level unit. The next target will be selected from the remaining
+dependency-adjacent units after this checkpoint is committed, pushed, and
+synchronized with `origin/main`.
 
 ### Runs closure checkpoint
 
@@ -227,6 +227,125 @@ Residual risk is explicit and low: `setRequestToken()` and
 on a client shared across concurrent requests. They are deprecated and the
 guide directs concurrent consumers to `withRequestContext()`. No unresolved
 critical or high-confidence `runs` production risk remains.
+
+### Knowledge closure checkpoint
+
+The `knowledge` unit owns source-controlled project retrieval, local and hosted
+OKF lookup, the `search_knowledge` tool, query normalization, and deterministic
+prompt-context formatting. Its public contract is `veryfront/knowledge`:
+`projectKnowledge`, `normalizeKnowledgeQuery`, `formatKnowledgeContext`,
+`searchProjectKnowledge`, `createSearchKnowledgeTool`, and their configuration,
+lookup, result, and RAG types. It depends on the embedding RAG store, tool
+factory and schema contracts, bounded platform filesystem and path adapters,
+request-scoped project context, the Veryfront API client, cloud URL resolution,
+the shared error registry, and YAML compatibility parsing. Direct consumers
+include discovery/runtime bootstrap, project-authored agents and tools,
+executable RAG and ingestion guides, and generated package declarations.
+Runtime paths cover explicit local indexing and retrieval, local manifest
+traversal, request-scoped hosted release/environment/branch file listing,
+cursor pagination, exact document lookup, and tool-mediated retrieval.
+
+Material findings and remedies:
+
+- **Symptom:** Malformed lookup inputs were validated after hosted I/O, while
+  cursors, queries, file traversal, document content, frontmatter, hosted pages,
+  and prompt context had incomplete or no resource budgets; several read and
+  parse failures silently became empty metadata or browse results. **Source:**
+  Admission, traversal, parsing, scoring, and response construction lived in
+  one public module and relied on remote validation, string truncation, and
+  catch-and-continue fallbacks. **Consequence:** Invalid callers could consume
+  network, CPU, or memory; malformed knowledge could be treated as valid
+  evidence; and large repositories or pagination loops could amplify work.
+  **Remedy:** Public config, calls, cursors, queries, manifest traversal,
+  document bytes, frontmatter shape, hosted pagination, result counts, and
+  context bytes now have explicit validation and limits before dependent work.
+  Invalid or unreadable knowledge fails closed, repeated or empty cursors are
+  rejected, and hosted pages are validated incrementally before another page
+  is requested.
+- **Symptom:** Production hosted lookup could fall back to mutable `main` or a
+  configured local directory, ignore `project_reference`, inherit request
+  authority from an explicitly empty credential, and bypass the centralized
+  API URL resolver. **Source:** Content-source selection and credential routing
+  were inferred independently from optional fields. **Consequence:** A request
+  could read content outside its immutable release or project authority, and
+  deployment-specific API routing could drift from the rest of the platform.
+  **Remedy:** Hosted project and credential identity is canonicalized from the
+  trusted request context; production requires an immutable release or
+  environment source, release wins when both are present, supplied project
+  references must match the request scope, explicit empty credentials do not
+  inherit authority, hosted context cannot fall through to local files, and
+  API construction uses the central cloud resolver.
+- **Symptom:** Non-Latin queries degraded to browse behavior, locale-dependent
+  ordering changed pagination, scalar or sequence YAML roots could masquerade
+  as empty metadata, nested metadata limits were ineffective, exact empty
+  document content was omitted, and query text could be silently truncated.
+  **Source:** ASCII tokenization, `localeCompare`, permissive shared
+  frontmatter coercion, shallow metadata counting, truthiness checks, and
+  implicit normalization encoded incompatible assumptions. **Consequence:**
+  Search and pagination varied by language or runtime, invalid metadata hid
+  authoring errors, and exact lookup results could misrepresent source
+  content. **Remedy:** Search uses bounded Unicode normalization and tokens,
+  sorting uses stable code-unit comparison, the knowledge boundary uses a
+  strict mapping extractor while the shared compatibility extractor preserves
+  its existing contract, nested metadata is snapshotted under depth/node/key
+  budgets, empty content is retained, and overlong queries are rejected rather
+  than shortened.
+- **Symptom:** Construction retained caller-owned configuration, unknown and
+  accessor-backed options were accepted, per-call RAG options were unbounded,
+  and cancellation stopped only between hosted pages. **Source:** Configuration
+  and option objects were read lazily, and abort signals were not propagated
+  through the API transport and retry backoff. **Consequence:** Caller mutation
+  could change admitted work, hostile accessors could execute inside lookup,
+  and cancelled requests could continue consuming network or retry time.
+  **Remedy:** Construction and call options are data-only validated snapshots;
+  unknown keys and accessors fail before work; RAG counts, thresholds, and
+  context output are bounded; and abort signals flow through search, retrieval,
+  file listing, in-flight transport, attempt timeouts, and retry delay.
+- **Symptom:** The public entrypoint mixed API contracts, RAG orchestration,
+  hosted transport policy, filesystem traversal, parsing, scoring, and cursor
+  machinery in one large implementation, while no goal-oriented knowledge
+  guide described source authority or failure semantics. **Source:** Successive
+  behavior was appended to `src/knowledge/index.ts` without an internal module
+  boundary. **Consequence:** A local fix had a wide regression radius and users
+  could mistake explicit browse mode for evidence-backed search. **Remedy:** The
+  public facade now delegates to focused config, type, query, and lookup
+  modules; the API surface remains source compatible; the new project-knowledge
+  how-to and revised RAG/ingestion guides document immutable hosted sources,
+  limits, cancellation, exact lookup, and explicit non-evidentiary browse mode.
+
+Reproducible closure evidence:
+
+- The knowledge suite passes two suites and 40 steps, including validation
+  before I/O, canonical cursor enforcement, traversal and byte budgets, strict
+  metadata, Unicode search, stable ordering, hosted authority, cancellation,
+  configuration snapshots, and bounded prompt context.
+- The strict-mapping compatibility repair and direct consumers pass six suites
+  and 103 steps. Legacy frontmatter extraction retains its established
+  body/attribute behavior, while knowledge rejects non-mapping roots.
+- API transport cancellation passes six steps; API client operations pass 40
+  steps; the affected error, frontmatter, API, discovery, and MDX consumer
+  surfaces pass their focused regression suites.
+- Documentation validation covers all 38 reference groups, 66 public guides,
+  and 109 public documentation files. Forty-six executable/code-example suites
+  pass 88 steps, and all 730 documentation links resolve.
+- `deno task verify:quick` passes generated manifests, formatting, lint,
+  architecture and boundary ratchets, documentation validation, and every
+  configured entrypoint typecheck. The typed-test ratchet reports 71
+  grandfathered files and zero new exceptions.
+- `deno task typecheck:consumer` rebuilds the npm package and every first-party
+  extension, verifies root import lifecycle, and passes consumer composition
+  against generated declarations.
+- `deno task test` passes 3,542 tests and 28,079 steps with zero failures; one
+  intentional test with 36 steps remains ignored.
+
+Residual risk is explicit and low. The shared API transport parses a trusted
+Veryfront API JSON response before knowledge applies its per-page retained-data
+budgets; a generic raw-response byte ceiling is a platform protocol decision
+and remains for that unit's revalidation. Local files may grow between `stat`
+and `read`, but the post-read byte check rejects the result before parsing or
+retention. Browse results are deliberately exposed only with `mode: "browse"`
+and are documented as navigation rather than evidence. No unresolved critical
+or high-confidence `knowledge` production risk remains.
 
 ### Main integration checkpoint
 

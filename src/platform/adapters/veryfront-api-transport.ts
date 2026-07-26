@@ -26,6 +26,8 @@ export interface TransportRequestInit {
   returnText?: boolean;
   expected404?: boolean;
   timeoutMs?: number;
+  /** Caller-owned cancellation signal, composed with the per-attempt timeout. */
+  signal?: AbortSignal;
 }
 
 export interface VeryfrontApiTransportConfig<T> {
@@ -84,7 +86,11 @@ function createValidatedVeryfrontApiTransport<T>(
         context: { details: { originalError: err } },
       }));
   return {
-    request(pathOrUrl: string, init: TransportRequestInit = {}): Promise<T> {
+    async request(
+      pathOrUrl: string,
+      init: TransportRequestInit = {},
+    ): Promise<T> {
+      init.signal?.throwIfAborted();
       const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${baseUrl}${pathOrUrl}`;
       const method = init.method ?? "GET";
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
@@ -92,8 +98,8 @@ function createValidatedVeryfrontApiTransport<T>(
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
       // matching the pre-transport requestWithRetry semantics.
       const token = getToken();
-      return retryWithBackoff(
-        (signal, attempt) => {
+      return await retryWithBackoff(
+        async (signal, attempt) => {
           const doFetch = async (): Promise<T> => {
             const headers = new Headers(init.headers);
             for (const [k, v] of Object.entries(defaultHeaders)) {
@@ -102,18 +108,31 @@ function createValidatedVeryfrontApiTransport<T>(
             headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
             const start = performance.now();
-            const res = await fetch(url, { method, headers, body: init.body, signal });
+            const res = await fetch(url, {
+              method,
+              headers,
+              body: init.body,
+              signal,
+            });
             afterFetch?.(res.status, performance.now() - start);
-            return onResponse(res, init, url);
+            return await onResponse(res, init, url);
           };
-          return wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch();
+          try {
+            return await (wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch());
+          } catch (error) {
+            init.signal?.throwIfAborted();
+            throw error;
+          }
         },
         {
+          abortSignal: init.signal,
           maxAttempts: maxRetries + 1,
           initialDelay,
           maxDelay,
           timeoutMs,
-          shouldRetry,
+          shouldRetry(error, attempt) {
+            return init.signal?.aborted !== true && shouldRetry(error, attempt);
+          },
           onRetry: config.onRetry
             ? ({ error, attempt, delay, isTimeout }) =>
               config.onRetry!({ error, attempt, delay, isTimeout, url, timeoutMs })

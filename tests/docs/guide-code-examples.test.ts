@@ -33,6 +33,11 @@ import { defineConfig } from "../../src/config/index.ts";
 import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
 import {
+  createSearchKnowledgeTool,
+  normalizeKnowledgeQuery,
+  projectKnowledge,
+} from "../../src/knowledge/index.ts";
+import {
   type ExtensionFactory,
   ExtensionLoader,
   parsePackageMetadata,
@@ -100,6 +105,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "move-studio-changes-to-git.md",
   "pages-and-routing.md",
   "project-structure.md",
+  "project-knowledge.md",
   "project-metrics.md",
   "quickstart.md",
   "sandbox.md",
@@ -230,6 +236,30 @@ describe("Guide: project-metrics.md", () => {
     assertEquals(typeof projectMetrics.histogram, "function");
     assertEquals(typeof projectMetrics.gauge, "function");
     assertStringIncludes(guide, 'import { metrics } from "veryfront/metrics"');
+  });
+});
+
+describe("Guide: project-knowledge.md", () => {
+  it("uses the public manifest and RAG helper contracts", async () => {
+    const guide = await readGuide("project-knowledge.md");
+    const knowledge = projectKnowledge({ projectDir: "." });
+    const searchKnowledge = createSearchKnowledgeTool({
+      id: "search_knowledge",
+      description: "Search reviewed project knowledge.",
+    });
+
+    assertEquals(typeof knowledge.lookup, "function");
+    assertEquals(typeof knowledge.index, "function");
+    assertEquals(typeof knowledge.retrieve, "function");
+    assertEquals(searchKnowledge.id, "search_knowledge");
+    assertEquals(normalizeKnowledgeQuery("  SSO   recovery  "), "SSO recovery");
+    assertStringIncludes(
+      guide,
+      'import { projectKnowledge } from "veryfront/knowledge"',
+    );
+    assertStringIncludes(guide, "page.mode");
+    assertStringIncludes(guide, "page_info.next");
+    assertStringIncludes(guide, "lookup_target");
   });
 });
 

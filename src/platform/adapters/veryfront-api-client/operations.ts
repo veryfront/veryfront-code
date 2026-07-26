@@ -44,6 +44,7 @@ export interface ListFilesOptions {
   limit?: number;
   path?: string;
   pattern?: string;
+  signal?: AbortSignal;
   sortBy?: "path" | "updated_at";
   sortOrder?: "asc" | "desc";
 }
@@ -261,7 +262,7 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${encodeURIComponent(projectRef)}/files?${params}`;
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal: options.signal });
     const response = getListBranchFilesResponseSchema().parse(raw);
 
     return {
@@ -342,7 +343,7 @@ export class VeryfrontAPIOperations {
       pattern: options.pattern,
     });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal: options.signal });
     const response = getListEnvironmentFilesResponseSchema().parse(raw);
 
     return {
@@ -424,7 +425,7 @@ export class VeryfrontAPIOperations {
     }/files?${params}`;
     logger.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
 
-    const raw = await this.request(url);
+    const raw = await this.request(url, { signal: options.signal });
     const response = getListReleaseFilesResponseSchema().parse(raw);
 
     return {

@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import {
   handleErrorWithFallback,
@@ -236,6 +236,33 @@ describe("error-handlers", () => {
       );
 
       assertEquals(thrown, original);
+      assertEquals(attempts, 1);
+    });
+
+    it("should cancel a pending backoff without starting another attempt", async () => {
+      const controller = new AbortController();
+      let attempts = 0;
+      let backoffStarted: (() => void) | undefined;
+      const backoff = new Promise<void>((resolve) => {
+        backoffStarted = resolve;
+      });
+
+      const pending = retryWithBackoff(async () => {
+        attempts += 1;
+        throw new Error("retry");
+      }, {
+        abortSignal: controller.signal,
+        maxAttempts: 3,
+        initialDelay: 60_000,
+        maxDelay: 60_000,
+        onRetry: () => backoffStarted?.(),
+      });
+      await backoff;
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      const error = await assertRejects(() => pending);
+      assertInstanceOf(error, DOMException);
+      assertEquals(error.name, "AbortError");
       assertEquals(attempts, 1);
     });
 

@@ -321,6 +321,8 @@ text and that the embedding provider is configured.
 
 - [Build a chat UI](./chat-ui.md): Add or customize the chat surface
 - [Providers](./providers.md): Configure model and embedding routing
+- [Project knowledge](./project-knowledge.md): Search paths and frontmatter or
+  retrieve an exact knowledge document
 - [CLI knowledge ingestion](./cli-knowledge-ingestion.md): Turn files into project knowledge
 
 ## Related

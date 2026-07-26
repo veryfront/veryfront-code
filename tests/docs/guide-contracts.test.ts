@@ -571,6 +571,17 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Do not expose arbitrary raw metric writes over MCP",
     ],
   },
+  "guides/project-knowledge.md": {
+    references: ["../api-reference/veryfront/knowledge.md"],
+    snippets: [
+      "projectKnowledge",
+      "createSearchKnowledgeTool",
+      'mode: "browse"',
+      "release-backed content",
+      "abortSignal",
+      "500 normalized code units",
+    ],
+  },
   "getting-started/installation.md": {
     references: [],
     snippets: [
