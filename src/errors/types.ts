@@ -1,5 +1,10 @@
 import { buildErrorDocsUrl, sanitizeBoundedDiagnosticText } from "./diagnostic-policy.ts";
 
+const freeze = Object.freeze;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const numberIsFinite = Number.isFinite;
+const VERYFRONT_ERROR_INSTANCES = new WeakSet<object>();
+
 /**
  * Error categories for domain-based grouping and handling
  */
@@ -90,23 +95,28 @@ export function defineError(definition: ErrorDefinition): RegisteredError {
   const registered: RegisteredError = {
     ...snapshot,
     create(options?: ErrorCreateOptions): VeryfrontError {
+      const message = options?.message;
+      const detail = options?.detail;
+      const cause = options?.cause;
+      const instance = options?.instance;
+      const context = options?.context;
       const status = options?.status ?? snapshot.status;
 
-      return new VeryfrontError(options?.message || options?.detail || snapshot.title, {
+      return new VeryfrontError(message || detail || snapshot.title, {
         slug: snapshot.slug,
         category: snapshot.category,
         status,
         title: snapshot.title,
         suggestion: snapshot.suggestion,
-        detail: options?.detail,
-        cause: options?.cause,
-        instance: options?.instance,
-        context: options?.context,
+        detail,
+        cause,
+        instance,
+        context,
       });
     },
   };
 
-  return Object.freeze(registered);
+  return freeze(registered);
 }
 
 /**
@@ -151,6 +161,7 @@ export class VeryfrontError extends Error {
 
   constructor(message: string, options: VeryfrontErrorOptions) {
     super(message);
+    VERYFRONT_ERROR_INSTANCES.add(this);
     this.name = "VeryfrontError";
 
     this.slug = options.slug;
@@ -209,11 +220,9 @@ export class VeryfrontError extends Error {
 
 /** Runtime-safe VeryfrontError guard for values caught from untrusted code. */
 export function isVeryfrontErrorInstance(error: unknown): error is VeryfrontError {
-  try {
-    return error instanceof VeryfrontError;
-  } catch {
-    return false;
-  }
+  return typeof error === "object" &&
+    error !== null &&
+    VERYFRONT_ERROR_INSTANCES.has(error);
 }
 
 /**
@@ -239,23 +248,29 @@ export function snapshotKnownVeryfrontError(
   error: VeryfrontError,
 ): VeryfrontErrorSnapshot | null {
   try {
-    const slug = error.slug;
-    const category = error.category;
-    const status = error.status;
-    const title = error.title;
-    const message = error.message;
-    const suggestion = error.suggestion;
-    const detail = error.detail;
-    const cause = error.cause;
-    const instance = error.instance;
-    const context = error.context;
-    const stack = error.stack;
+    if (!isVeryfrontErrorInstance(error)) return null;
+    const descriptors = getOwnPropertyDescriptors(error);
+    const dataValue = (key: string): unknown => {
+      const descriptor = descriptors[key];
+      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+    };
+    const slug = dataValue("slug");
+    const category = dataValue("category");
+    const status = dataValue("status");
+    const title = dataValue("title");
+    const message = dataValue("message");
+    const suggestion = dataValue("suggestion");
+    const detail = dataValue("detail");
+    const cause = dataValue("cause");
+    const instance = dataValue("instance");
+    const context = dataValue("context");
+    const stack = dataValue("stack");
 
     if (
       typeof slug !== "string" ||
-      !ERROR_CATEGORIES.has(category) ||
+      !ERROR_CATEGORIES.has(category as ErrorCategory) ||
       typeof status !== "number" ||
-      !Number.isFinite(status) ||
+      !numberIsFinite(status) ||
       typeof title !== "string" ||
       typeof message !== "string" ||
       (suggestion !== undefined && typeof suggestion !== "string") ||
@@ -268,7 +283,7 @@ export function snapshotKnownVeryfrontError(
 
     return {
       slug,
-      category,
+      category: category as ErrorCategory,
       status,
       title,
       message,

@@ -48,7 +48,7 @@ describe("formatErrorBox", () => {
     }
   });
 
-  it("should use one message snapshot for the header and solution", () => {
+  it("should not invoke proxy traps while formatting", () => {
     let messageReads = 0;
     const stateful = new Proxy(new Error("unused"), {
       get(target, property, receiver): unknown {
@@ -62,10 +62,9 @@ describe("formatErrorBox", () => {
 
     const result = formatErrorBox(stateful);
 
-    assert(result.includes("Port is in use"));
-    assert(result.includes("Port is already in use"));
-    assertEquals(result.includes("Build failed with errors"), false);
-    assertEquals(messageReads, 1);
+    assert(result.includes("Unknown error"));
+    assert(result.includes("veryfront doctor"));
+    assertEquals(messageReads, 0);
   });
 
   it("should bound box-width amplification from an oversized message", () => {
@@ -145,7 +144,7 @@ describe("formatUserError", () => {
     }
   });
 
-  it("should use one message snapshot for plain output and its solution", () => {
+  it("should not invoke proxy traps in plain output", () => {
     let messageReads = 0;
     const stateful = new Proxy(new Error("unused"), {
       get(target, property, receiver): unknown {
@@ -159,9 +158,8 @@ describe("formatUserError", () => {
 
     const output = formatUserError(stateful);
 
-    assert(output.includes("Port is in use"));
-    assert(output.includes("Port is already in use"));
-    assertEquals(output.includes("Build failed with errors"), false);
-    assertEquals(messageReads, 1);
+    assert(output.includes("Unknown error"));
+    assert(output.includes("veryfront doctor"));
+    assertEquals(messageReads, 0);
   });
 });

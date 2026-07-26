@@ -5,8 +5,13 @@
 // function in this module is called, all modules have finished initializing.
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
-import { sanitizeDiagnosticText, sanitizeStackDiagnosticText } from "./safe-diagnostics.ts";
-import { getErrorMessage, isErrorInstance, snapshotError } from "./veryfront-error.ts";
+import {
+  sanitizeDiagnosticText,
+  sanitizeStackDiagnosticText,
+  snapshotErrorForBoundary,
+} from "./safe-diagnostics.ts";
+
+const arrayIsArray = Array.isArray;
 
 export interface ErrorContext {
   operation: string;
@@ -30,11 +35,14 @@ function snapshotDiagnostic(error: unknown): {
   readonly message: string;
   readonly stack?: string;
 } {
-  const snapshot = snapshotError(error);
-  if (snapshot) return snapshot;
+  const snapshot = snapshotErrorForBoundary(error);
+  const message = snapshot.slug === "unknown-error"
+    ? snapshot.detail ?? snapshot.message
+    : snapshot.message;
 
   return {
-    message: isErrorInstance(error) ? "Unknown error" : getErrorMessage(error),
+    message,
+    stack: snapshot.stack,
   };
 }
 
@@ -54,7 +62,7 @@ function snapshotContext(context: ErrorContext): ErrorContext {
 function sanitizedDetails(details: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!details) return {};
   const snapshot = redactForSerialization(details);
-  return snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+  return snapshot && typeof snapshot === "object" && !arrayIsArray(snapshot)
     ? snapshot as Record<string, unknown>
     : {};
 }

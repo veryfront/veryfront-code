@@ -120,7 +120,7 @@ describe("wrap-unknown", () => {
       assertEquals(wrapped.cause, undefined);
     });
 
-    it("should detach stateful errors once for boundary consumers", () => {
+    it("should treat proxied errors as opaque without invoking traps", () => {
       let statusReads = 0;
       const source = CONFIG_NOT_FOUND.create({ detail: "Missing file" });
       const stateful = new Proxy(source, {
@@ -135,9 +135,25 @@ describe("wrap-unknown", () => {
 
       const detached = detachBoundaryError(stateful);
 
-      assertEquals(detached.status, 404);
-      assertEquals(detached.status, 404);
-      assertEquals(statusReads, 1);
+      assertEquals(detached.status, 500);
+      assertEquals(detached.slug, "unknown-error");
+      assertEquals(statusReads, 0);
+    });
+
+    it("should not invoke object conversion hooks", () => {
+      let coercions = 0;
+      const hostile = {
+        [Symbol.toPrimitive](): never {
+          coercions++;
+          throw new Error("conversion hook must not run");
+        },
+      };
+
+      const wrapped = wrapUnknownError(hostile);
+
+      assertEquals(wrapped.slug, "unknown-error");
+      assertEquals(wrapped.detail, "Unknown error");
+      assertEquals(coercions, 0);
     });
   });
 
@@ -164,14 +180,17 @@ describe("wrap-unknown", () => {
       assertEquals(isVeryfrontError(undefined), false);
     });
 
-    it("should return false for values that throw during inspection", () => {
+    it("should reject proxies without invoking their prototype trap", () => {
+      let prototypeReads = 0;
       const hostile = new Proxy({}, {
-        getPrototypeOf(): never {
-          throw new Error("blocked");
+        getPrototypeOf(target): object | null {
+          prototypeReads++;
+          return Reflect.getPrototypeOf(target);
         },
       });
 
       assertEquals(isVeryfrontError(hostile), false);
+      assertEquals(prototypeReads, 0);
     });
   });
 
@@ -192,7 +211,7 @@ describe("wrap-unknown", () => {
       assertEquals(wrapped.detail, "Build failed: Missing file");
     });
 
-    it("should derive all wrapped fields from one VeryfrontError snapshot", () => {
+    it("should treat proxied VeryfrontErrors as opaque without reading fields", () => {
       let messageReads = 0;
       const source = CONFIG_NOT_FOUND.create({ detail: "Missing file" });
       const stateful = new Proxy(source, {
@@ -208,11 +227,11 @@ describe("wrap-unknown", () => {
 
       const wrapped = wrapWithContext(stateful, "Build failed");
 
-      assertEquals(wrapped.slug, "config-not-found");
-      assertEquals(wrapped.category, "CONFIG");
-      assertEquals(wrapped.status, 404);
-      assertEquals(wrapped.detail, "Build failed: Missing file");
-      assertEquals(messageReads, 1);
+      assertEquals(wrapped.slug, "unknown-error");
+      assertEquals(wrapped.category, "GENERAL");
+      assertEquals(wrapped.status, 500);
+      assertEquals(wrapped.detail, "Build failed: Unknown error");
+      assertEquals(messageReads, 0);
     });
 
     it("should add context to wrapped error", () => {

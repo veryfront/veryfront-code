@@ -35,6 +35,29 @@ describe("errors/types", () => {
       assertEquals(error.slug, "vendor/custom error");
       assertEquals(error.status, 399);
     });
+
+    it("should read each create option at most once", () => {
+      const registered = defineError({
+        slug: "stable-options",
+        category: "GENERAL",
+        status: 500,
+        title: "Stable options",
+      });
+      let detailReads = 0;
+      const options = Object.defineProperty({}, "detail", {
+        enumerable: true,
+        get() {
+          detailReads++;
+          return detailReads === 1 ? "first detail" : "changed detail";
+        },
+      });
+
+      const error = registered.create(options);
+
+      assertEquals(error.message, "first detail");
+      assertEquals(error.detail, "first detail");
+      assertEquals(detailReads, 1);
+    });
   });
 
   describe("VeryfrontError", () => {

@@ -16,6 +16,12 @@ The module has three intentionally distinct representations:
 3. `VeryfrontErrorData` in `veryfront-error.ts` is the legacy serializable data
    union used by adapters. It is not the throwable `VeryfrontError` class.
 
+`toError()` in `veryfront-error.ts` attaches legacy data to a genuine native
+`Error`. The server-side `fromError()` decoder in `legacy-error-codec.ts`
+accepts only a genuine `Error` with an own data-valued `context` property and
+returns a defensive deep snapshot. Structural lookalikes, proxies, accessors,
+cycles, malformed variants, and values above the snapshot limits are rejected.
+
 `user-friendly/` preserves older solution keys for compatibility. Its
 identifier maps canonical `VeryfrontError` slugs to those keys before falling
 back to message heuristics.
@@ -114,6 +120,11 @@ diagnostic details and development stack frames.
 canonical `unknown-error`. `wrapWithContext()` creates a new error and preserves
 the original error as provenance.
 
+Boundary adapters inspect genuine errors through runtime brand checks and own
+data properties. Proxy-wrapped errors and arbitrary thrown objects are opaque:
+they become `unknown-error` without executing proxy traps, accessors, or object
+conversion hooks.
+
 ## Logging and tracing
 
 `logError()` emits a human-readable development record or structured production
@@ -166,8 +177,9 @@ the supplied `AbortSignal`. Its timer is cleared as soon as the attempt settles,
 before retry hooks or backoff work runs.
 
 `onRetry` and `wrapFinalError` receive a detached Error snapshot so repeated
-diagnostic reads cannot re-enter a hostile proxy. Without `wrapFinalError`, a
-terminal Error is rethrown with its original identity and subclass; non-Error
+diagnostic reads cannot re-enter project code. Proxy-wrapped errors are
+represented as an opaque `Unknown error`. Without `wrapFinalError`, a terminal
+genuine Error is rethrown with its original identity and subclass; non-Error
 throws are normalized to Error.
 
 ## Tests

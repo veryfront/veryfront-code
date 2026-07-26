@@ -97,6 +97,25 @@ describe("error-context", () => {
 
       assertEquals(await resultPromise, "fallback");
     });
+
+    it("should not invoke conversion hooks on a thrown object", async () => {
+      let coercions = 0;
+      const hostile = {
+        [Symbol.toPrimitive](): never {
+          coercions++;
+          throw new Error("conversion hook must not run");
+        },
+      };
+
+      const result = await withErrorContext(
+        () => Promise.reject(hostile),
+        { operation: "test" },
+        { fallback: "fallback" },
+      );
+
+      assertEquals(result, "fallback");
+      assertEquals(coercions, 0);
+    });
   });
 
   describe("withErrorContextSync", () => {

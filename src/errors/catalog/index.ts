@@ -19,6 +19,9 @@ import { RSC_ERROR_CATALOG } from "./rsc-errors.ts";
 import { RUNTIME_ERROR_CATALOG } from "./runtime-errors.ts";
 import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 
+const objectHasOwn = Object.hasOwn;
+const objectValues = Object.values;
+
 export function composeErrorCatalog(
   ...catalogs: ReadonlyArray<PartialErrorCatalog>
 ): PartialErrorCatalog {
@@ -39,7 +42,7 @@ export const ERROR_CATALOG: PartialErrorCatalog = composeErrorCatalog(
 );
 
 export function getErrorSolution(slug: ErrorSlug): ErrorSolution | null {
-  return Object.hasOwn(ERROR_CATALOG, slug) ? ERROR_CATALOG[slug] ?? null : null;
+  return objectHasOwn(ERROR_CATALOG, slug) ? ERROR_CATALOG[slug] ?? null : null;
 }
 
 export function searchErrors(query: string): ErrorSolution[] {
@@ -51,7 +54,7 @@ export function searchErrors(query: string): ErrorSolution[] {
     "-",
   );
 
-  return Object.values(ERROR_CATALOG).filter((error) => {
+  return objectValues(ERROR_CATALOG).filter((error) => {
     if (normalizedSlugQuery && error.slug.includes(normalizedSlugQuery)) return true;
     if (error.title.toLowerCase().includes(lowerQuery)) return true;
     if (error.message.toLowerCase().includes(lowerQuery)) return true;

@@ -67,7 +67,7 @@ describe("http-error-boundary", () => {
       assertEquals(body.instance, "/test");
     });
 
-    it("should use one detached status for observability and the response", async () => {
+    it("should treat proxied errors as opaque without invoking traps", async () => {
       let statusReads = 0;
       const source = CONFIG_NOT_FOUND.create({ detail: "Missing file" });
       const stateful = new Proxy(source, {
@@ -86,11 +86,11 @@ describe("http-error-boundary", () => {
       const result = await handler(createMockRequest(), createMockContext());
 
       assertExists(result.response);
-      assertEquals(result.response.status, 404);
+      assertEquals(result.response.status, 500);
       const body = await result.response.json();
-      assertEquals(body.status, 404);
-      assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
-      assertEquals(statusReads, 1);
+      assertEquals(body.status, 500);
+      assertEquals(body.type, "https://veryfront.com/docs/errors/unknown-error");
+      assertEquals(statusReads, 0);
     });
 
     it("should wrap plain Error as unknown-error", async () => {
@@ -286,9 +286,13 @@ describe("http-error-boundary", () => {
     });
 
     it("should preserve the error response when the request URL is unreadable", async () => {
+      let urlReads = 0;
       const request = new Proxy(createMockRequest(), {
         get(target, property, receiver): unknown {
-          if (property === "url") throw new Error("unreadable URL");
+          if (property === "url") {
+            urlReads++;
+            throw new Error("unreadable URL");
+          }
           return Reflect.get(target, property, receiver);
         },
       });
@@ -303,6 +307,7 @@ describe("http-error-boundary", () => {
       const body = await result.response.json();
       assertEquals(body.type, "https://veryfront.com/docs/errors/config-not-found");
       assertEquals(body.instance, undefined);
+      assertEquals(urlReads, 0);
     });
 
     it("should extract relative URLs and omit malformed URLs", async () => {
@@ -326,9 +331,11 @@ describe("http-error-boundary", () => {
     });
 
     it("should default to production filtering when context inspection fails", async () => {
+      let environmentReads = 0;
       const context = new Proxy(createMockContext(true), {
         get(target, property, receiver): unknown {
           if (property === "isLocalProject") {
+            environmentReads++;
             throw new Error("unreadable environment");
           }
           return Reflect.get(target, property, receiver);
@@ -351,6 +358,7 @@ describe("http-error-boundary", () => {
       const body = await result.response.json();
       assertEquals(body.detail, undefined);
       assertEquals(body.stack, undefined);
+      assertEquals(environmentReads, 0);
     });
 
     it("should preserve existing instance if set", async () => {

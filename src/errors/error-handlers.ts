@@ -6,7 +6,11 @@ import {
   DEFAULT_RETRY_MAX_DELAY_MS,
 } from "#veryfront/utils/constants/retry.ts";
 import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
-import { isErrorInstance, snapshotErrorAsError } from "./veryfront-error.ts";
+import { detachThrowableForBoundary } from "./safe-diagnostics.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
+const numberIsInteger = Number.isInteger;
+
 const logger = serverLogger.component("errors");
 
 function safeLog(logFn: () => void): void {
@@ -146,7 +150,7 @@ export async function retryWithBackoff<T>(
     wrapFinalError,
   } = options;
 
-  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+  if (!numberIsInteger(maxAttempts) || maxAttempts < 1) {
     throw new RangeError(
       `retryWithBackoff requires an integer maxAttempts >= 1, got ${maxAttempts}`,
     );
@@ -181,11 +185,11 @@ export async function retryWithBackoff<T>(
     } catch (error) {
       abortSignal?.throwIfAborted();
       lastThrown = error;
-      lastError = snapshotErrorAsError(error);
 
       if (shouldRetry && !shouldRetry(error, attempt)) {
         throw error;
       }
+      lastError = detachThrowableForBoundary(error);
 
       if (attempt >= maxAttempts - 1) {
         break;
@@ -215,5 +219,5 @@ export async function retryWithBackoff<T>(
   if (wrapFinalError) {
     throw wrapFinalError(finalError, Math.max(0, maxAttempts - 1));
   }
-  throw isErrorInstance(lastThrown) ? lastThrown : finalError;
+  throw isNativeErrorWithoutHooks(lastThrown) ? lastThrown : finalError;
 }

@@ -17,6 +17,10 @@ import {
   snapshotErrorForLoggingBoundary,
 } from "./safe-diagnostics.ts";
 
+const arrayIsArray = Array.isArray;
+const jsonStringify = JSON.stringify;
+const NativeDate = Date;
+
 export interface ErrorLogEntry {
   level: "error";
   slug: string;
@@ -33,7 +37,7 @@ export interface ErrorLogEntry {
 function toContextRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") return undefined;
   try {
-    return Array.isArray(value) ? undefined : value as Record<string, unknown>;
+    return arrayIsArray(value) ? undefined : value as Record<string, unknown>;
   } catch {
     return undefined;
   }
@@ -54,7 +58,7 @@ function redactAndMergeContext(
   if (!merged) return undefined;
 
   try {
-    return JSON.stringify(merged).length <= ERROR_CONTEXT_MAX_LENGTH_CHARS
+    return jsonStringify(merged).length <= ERROR_CONTEXT_MAX_LENGTH_CHARS
       ? merged
       : { context_truncated: true };
   } catch {
@@ -63,10 +67,10 @@ function redactAndMergeContext(
 }
 
 function stringifyErrorLogEntry(entry: ErrorLogEntry): string {
-  const serialized = JSON.stringify(entry);
+  const serialized = jsonStringify(entry);
   if (serialized.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return serialized;
 
-  return JSON.stringify(
+  return jsonStringify(
     {
       level: entry.level,
       slug: entry.slug,
@@ -108,7 +112,7 @@ export function logError(
       : sanitizeDiagnosticText(snapshot.suggestion),
     status: snapshot.status,
     docs: buildErrorDocsUrl(snapshot.slug),
-    timestamp: new Date().toISOString(),
+    timestamp: new NativeDate().toISOString(),
     context: safeContext,
   };
 
@@ -127,7 +131,7 @@ export function logError(
     }
     serverLogger.error(`  📚 Docs: ${entry.docs}`);
     if (safeContext) {
-      serverLogger.error(`  Context: ${JSON.stringify(safeContext, null, 2)}`);
+      serverLogger.error(`  Context: ${jsonStringify(safeContext, null, 2)}`);
     }
   }
 }

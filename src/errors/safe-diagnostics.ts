@@ -1,5 +1,6 @@
 import {
   type ErrorCategory,
+  isVeryfrontErrorInstance,
   type RFC9457Response,
   VeryfrontError,
   type VeryfrontErrorSnapshot,
@@ -13,7 +14,15 @@ import {
   sanitizeBoundedTerminalText,
 } from "./diagnostic-policy.ts";
 import { type RedactedValue, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
-import { types as nodeUtilTypes } from "node:util";
+import {
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
+
+export {
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
 export {
   buildErrorDocsUrl,
@@ -27,7 +36,11 @@ export {
   sanitizeBoundedErrorSlug,
 } from "./diagnostic-policy.ts";
 
-const UNKNOWN_ERROR_SNAPSHOT: VeryfrontErrorSnapshot = Object.freeze({
+const freeze = Object.freeze;
+const jsonStringify = JSON.stringify;
+const numberIsFinite = Number.isFinite;
+const numberIsInteger = Number.isInteger;
+const UNKNOWN_ERROR_SNAPSHOT: VeryfrontErrorSnapshot = freeze({
   slug: "unknown-error",
   category: "GENERAL",
   status: 500,
@@ -35,13 +48,10 @@ const UNKNOWN_ERROR_SNAPSHOT: VeryfrontErrorSnapshot = Object.freeze({
   message: "Unknown/unclassified error",
   suggestion: "Check logs for more details",
 });
-const nativeErrorBrandCheck = nodeUtilTypes.isNativeError;
-const nativeProxyBrandCheck = nodeUtilTypes.isProxy;
 const apply = Reflect.apply;
 const defineProperties = Object.defineProperties;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
-const setPrototypeOf = Object.setPrototypeOf;
 const NativeError = Error;
 const NativeString = String;
 const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
@@ -57,14 +67,16 @@ const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "AGENT",
   "GENERAL",
 ]);
-const MAX_ERROR_PROTOTYPE_DEPTH = 16;
 const MISSING_DATA_FIELD = Symbol("missing-data-field");
 const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
   ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
   : undefined;
+const DOM_EXCEPTION_NAME_GETTER = typeof DOMException === "function"
+  ? getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
+  : undefined;
 
 function isProblemDetailsResponseStatus(status: number): boolean {
-  return Number.isInteger(status) &&
+  return numberIsInteger(status) &&
     status >= 200 &&
     status <= 599 &&
     status !== 204 &&
@@ -94,44 +106,12 @@ export function sanitizeOptionalDiagnosticText(value: unknown): string | undefin
   return value === undefined ? undefined : sanitizeDiagnosticText(value);
 }
 
-/**
- * Identify native Error values without evaluating project-owned proxy hooks.
- *
- * Unlike `instanceof Error`, Node's native brand check returns false for Error
- * proxies without invoking their `getPrototypeOf` trap. Use this before any
- * boundary logic that would otherwise inspect or detach an untrusted Error.
- */
-export function isNativeErrorWithoutHooks(error: unknown): error is Error {
-  return nativeErrorBrandCheck(error);
-}
-
-/** Identify a Proxy without evaluating any trap on the proxied value. */
-export function isProxyWithoutHooks(value: unknown): boolean {
-  return nativeProxyBrandCheck(value);
-}
-
 function ownDataField(
   value: object,
   key: PropertyKey,
 ): unknown | typeof MISSING_DATA_FIELD {
   const descriptor = getOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : MISSING_DATA_FIELD;
-}
-
-function hasVeryfrontErrorPrototype(error: Error): boolean {
-  let current: object | null = getPrototypeOf(error);
-
-  for (
-    let depth = 0;
-    current !== null && depth < MAX_ERROR_PROTOTYPE_DEPTH;
-    depth++
-  ) {
-    if (current === VeryfrontError.prototype) return true;
-    if (isProxyWithoutHooks(current)) return false;
-    current = getPrototypeOf(current);
-  }
-
-  return false;
 }
 
 function optionalOwnString(
@@ -149,6 +129,29 @@ function readOwnDataStack(error: Error): string | undefined {
       typeof descriptor.value === "string"
     ? descriptor.value
     : undefined;
+}
+
+function readNativeErrorName(error: Error): string {
+  const ownName = ownDataField(error, "name");
+  if (typeof ownName === "string" && ownName) {
+    return sanitizeDiagnosticText(ownName);
+  }
+
+  const prototype = getPrototypeOf(error);
+  if (prototype === null || isProxyWithoutHooks(prototype)) return "Error";
+  const descriptor = getOwnPropertyDescriptor(prototype, "name");
+  if (descriptor && "value" in descriptor && typeof descriptor.value === "string") {
+    return sanitizeDiagnosticText(descriptor.value || "Error");
+  }
+  if (descriptor?.get === DOM_EXCEPTION_NAME_GETTER && DOM_EXCEPTION_NAME_GETTER) {
+    try {
+      const name = apply(DOM_EXCEPTION_NAME_GETTER, error, []);
+      return typeof name === "string" && name ? sanitizeDiagnosticText(name) : "Error";
+    } catch {
+      return "Error";
+    }
+  }
+  return "Error";
 }
 
 interface ThrowableBoundarySnapshot {
@@ -174,10 +177,9 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
   try {
     const rawStack = readOwnDataStack(error);
     const stack = rawStack === undefined ? undefined : sanitizeStackDiagnosticText(rawStack);
-    const rawName = ownDataField(error, "name");
-    const name = typeof rawName === "string" && rawName ? sanitizeDiagnosticText(rawName) : "Error";
+    const name = readNativeErrorName(error);
 
-    if (hasVeryfrontErrorPrototype(error)) {
+    if (isVeryfrontErrorInstance(error)) {
       const slug = ownDataField(error, "slug");
       const category = ownDataField(error, "category");
       const status = ownDataField(error, "status");
@@ -193,7 +195,7 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
         typeof category === "string" &&
         ERROR_CATEGORIES.has(category as ErrorCategory) &&
         typeof status === "number" &&
-        Number.isFinite(status) &&
+        numberIsFinite(status) &&
         typeof title === "string" &&
         suggestion !== MISSING_DATA_FIELD &&
         detail !== MISSING_DATA_FIELD &&
@@ -249,9 +251,18 @@ function snapshotThrowableBoundary(error: unknown): ThrowableBoundarySnapshot {
 export function detachThrowableForBoundary(error: unknown): Error {
   const boundary = snapshotThrowableBoundary(error);
   const snapshot = boundary.error;
-  const detached = new NativeError(
-    boundary.registered ? snapshot.message : snapshot.detail ?? snapshot.message,
-  );
+  const detached = boundary.registered
+    ? new VeryfrontError(snapshot.message, {
+      slug: snapshot.slug,
+      category: snapshot.category,
+      status: snapshot.status,
+      title: snapshot.title,
+      suggestion: snapshot.suggestion,
+      detail: snapshot.detail,
+      cause: snapshot.cause,
+      instance: snapshot.instance,
+    })
+    : new NativeError(snapshot.detail ?? snapshot.message);
 
   defineProperties(detached, {
     name: {
@@ -266,50 +277,6 @@ export function detachThrowableForBoundary(error: unknown): Error {
     },
   });
 
-  if (!boundary.registered) return detached;
-
-  defineProperties(detached, {
-    slug: { configurable: true, enumerable: true, value: snapshot.slug, writable: true },
-    category: {
-      configurable: true,
-      enumerable: true,
-      value: snapshot.category,
-      writable: true,
-    },
-    status: { configurable: true, enumerable: true, value: snapshot.status, writable: true },
-    title: { configurable: true, enumerable: true, value: snapshot.title, writable: true },
-    suggestion: {
-      configurable: true,
-      enumerable: true,
-      value: snapshot.suggestion,
-      writable: true,
-    },
-    detail: {
-      configurable: true,
-      enumerable: true,
-      value: snapshot.detail,
-      writable: true,
-    },
-    cause: {
-      configurable: true,
-      enumerable: true,
-      value: snapshot.cause,
-      writable: true,
-    },
-    instance: {
-      configurable: true,
-      enumerable: true,
-      value: snapshot.instance,
-      writable: true,
-    },
-    context: {
-      configurable: true,
-      enumerable: true,
-      value: undefined,
-      writable: true,
-    },
-  });
-  setPrototypeOf(detached, VeryfrontError.prototype);
   return detached;
 }
 
@@ -456,7 +423,7 @@ export function stringifySafeProblemDetails(
   pretty = false,
 ): string {
   const bounded = { ...body };
-  const serialize = (): string => JSON.stringify(bounded, null, pretty ? 2 : undefined);
+  const serialize = (): string => jsonStringify(bounded, null, pretty ? 2 : undefined);
   let serialized = serialize();
   if (serialized.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return serialized;
 
@@ -466,7 +433,7 @@ export function stringifySafeProblemDetails(
     if (serialized.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS) return serialized;
   }
 
-  return JSON.stringify(
+  return jsonStringify(
     {
       type: buildErrorDocsUrl(UNKNOWN_ERROR_SNAPSHOT.slug),
       title: UNKNOWN_ERROR_SNAPSHOT.title,

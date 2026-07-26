@@ -10,25 +10,21 @@
 
 import { isVeryfrontErrorInstance, snapshotKnownVeryfrontError, VeryfrontError } from "../types.ts";
 import { UNKNOWN_ERROR } from "../error-registry.ts";
-import { isErrorInstance, snapshotErrorAsError, snapshotKnownError } from "../veryfront-error.ts";
+import { snapshotKnownError } from "../veryfront-error.ts";
 import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
+import { detachThrowableForBoundary } from "../safe-diagnostics.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
+const arrayIsArray = Array.isArray;
 
 function snapshotContext(
   context: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!context) return undefined;
   const snapshot = redactForSerialization(context);
-  return snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+  return snapshot && typeof snapshot === "object" && !arrayIsArray(snapshot)
     ? snapshot as Record<string, unknown>
     : undefined;
-}
-
-function stringifyThrownValue(error: unknown): string {
-  try {
-    return String(error);
-  } catch {
-    return "Unknown error";
-  }
 }
 
 /**
@@ -55,26 +51,14 @@ export function wrapUnknownError(
   error: unknown,
   context?: Record<string, unknown>,
 ): VeryfrontError {
-  // If already a VeryfrontError, return as-is
-  if (isVeryfrontErrorInstance(error)) {
-    if (snapshotKnownVeryfrontError(error)) return error;
-    return UNKNOWN_ERROR.create({
-      detail: "Unknown error",
-      context: snapshotContext(context),
-    });
-  }
-
-  if (isErrorInstance(error)) {
-    const snapshot = snapshotKnownError(error);
-    return UNKNOWN_ERROR.create({
-      detail: snapshot?.message ?? "Unknown error",
-      cause: snapshot ? error : undefined,
-      context: snapshotContext(context),
-    });
+  const detached = detachThrowableForBoundary(error);
+  if (isVeryfrontErrorInstance(detached)) {
+    return isVeryfrontErrorInstance(error) ? error : detached;
   }
 
   return UNKNOWN_ERROR.create({
-    detail: stringifyThrownValue(error),
+    detail: detached.message,
+    cause: isNativeErrorWithoutHooks(error) ? error : undefined,
     context: snapshotContext(context),
   });
 }
@@ -86,7 +70,11 @@ export function wrapUnknownError(
  * observability, formatting, and the final response.
  */
 export function detachBoundaryError(error: unknown): VeryfrontError {
-  return wrapUnknownError(snapshotErrorAsError(error));
+  const detached = detachThrowableForBoundary(error);
+  return isVeryfrontErrorInstance(detached) ? detached : UNKNOWN_ERROR.create({
+    detail: detached.message,
+    cause: detached,
+  });
 }
 
 /**
@@ -150,7 +138,7 @@ export function wrapWithContext(
     });
   }
 
-  if (isErrorInstance(error)) {
+  if (isNativeErrorWithoutHooks(error)) {
     const snapshot = snapshotKnownError(error);
     const originalMessage = snapshot?.message ?? "Unknown error";
     return UNKNOWN_ERROR.create({
@@ -163,7 +151,7 @@ export function wrapWithContext(
     });
   }
 
-  const originalMessage = stringifyThrownValue(error);
+  const originalMessage = detachThrowableForBoundary(error).message;
   return UNKNOWN_ERROR.create({
     detail: `${message}: ${originalMessage}`,
     context: {

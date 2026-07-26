@@ -38,7 +38,7 @@ import {
   INVALID_ROUTE_FILE,
   ROUTE_CONFLICT,
 } from "#veryfront/errors/error-registry/route.ts";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
 
 const logger = baseLogger.component("get-entity-by-slug");
 

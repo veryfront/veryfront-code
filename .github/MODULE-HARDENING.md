@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    24 |      41.4% | Current formal closure evidence remains valid       |
+| Closed                         |    25 |      43.1% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    32 |      55.2% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    31 |      53.4% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -43,6 +43,7 @@ stricter closure count.
 - `chat`
 - `config`
 - `embedding`
+- `errors`
 - `eval`
 - `extensions`
 - `fs`
@@ -75,7 +76,6 @@ stricter closure count.
 - `client`
 - `data`
 - `discovery`
-- `errors`
 - `html`
 - `integrations`
 - `internal-agents`
@@ -122,12 +122,12 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
-`embedding`, `eval`, `extensions`, `fs`, `issues`, `knowledge`, `markdown`,
-`mdx`, `metrics`, `provider`, `prompt`, `registry`, `repositories`, `runs`,
-`runtime`, `sandbox`, `schemas`, `studio`, `types`, and `version.ts`. The latest
-Chat findings and the independent adversarial knowledge, Markdown, MDX,
-provider, repositories, runs, runtime, and sandbox findings are remediated and
-revalidated. `prompt` is closed after its cross-cutting registry, discovery,
+`embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
+`markdown`, `mdx`, `metrics`, `provider`, `prompt`, `registry`, `repositories`,
+`runs`, `runtime`, `sandbox`, `schemas`, `studio`, `types`, and `version.ts`.
+The latest Chat findings and the independent adversarial knowledge, Markdown,
+MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
+and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
 HMR, request-lifecycle, and MCP findings were remediated and revalidated.
 `registry` is closed after its scope lifecycle, request-generation isolation,
 transaction invalidation, and cross-entry validation findings were remediated
@@ -138,9 +138,12 @@ closed after its signed-envelope, proxy trust, route identity, invoke lifecycle,
 serialization, and consumer findings were remediated and revalidated. `fs` is
 closed after its public facade, cross-runtime failure semantics, atomic
 temporary allocation, path/cwd dependencies, package declarations, and direct
-consumers were remediated and revalidated. `types` is closed after its shared
-server and RSC contracts, runtime consumers, package surface, dependency
-direction, and type-level regressions were remediated and revalidated.
+consumers were remediated and revalidated. `errors` is closed after its error
+identity, throwable normalization, HTTP and CLI boundaries, retry semantics,
+diagnostic redaction, cross-runtime compatibility, and direct consumer findings
+were remediated and revalidated. `types` is closed after its shared server and
+RSC contracts, runtime consumers, package surface, dependency direction, and
+type-level regressions were remediated and revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -2456,5 +2459,99 @@ No additional unresolved critical or high-confidence Utils risk is known. The
 three listed changes alter observable published behavior and therefore remain
 explicit decisions rather than being hidden inside an otherwise
 backward-compatible hardening checkpoint.
+
+### Errors closure checkpoint
+
+The `errors` audit unit owns typed error identity, registered definitions and
+troubleshooting catalogs, RFC 9457 serialization, HTTP and CLI boundaries,
+retry and fallback helpers, diagnostic redaction, logging and tracing adapters,
+and legacy serializable-error conversion. More than 400 source files import its
+workspace surface. Its lower-level dependencies are shared diagnostic, timer,
+logger, schema, and platform-compatibility primitives; routing, sandbox,
+rendering, workflow, discovery, build, and most other units consume it.
+
+The current Errors findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** HTTP, CLI, retry, logging, and
+  formatting paths classified throwables with `instanceof`, direct field
+  reads, or object string conversion. The source was several independently
+  evolved normalization paths. The consequence was execution of project-owned
+  proxy traps, accessors, or conversion hooks during error handling, plus
+  inconsistent identity and status across observers. A platform-owned,
+  hook-free native brand check, an unforgeable `VeryfrontError` instance brand,
+  own-data snapshots, and one boundary detacher now make proxies and arbitrary
+  objects opaque while preserving genuine registered errors.
+- **Symptom -> Source -> Consequence -> Remedy:** request URLs, handler
+  requests, and local-project flags were read through ordinary property access
+  on failure paths. The source was treating best-effort diagnostics as trusted
+  input. The consequence was re-entry into tenant code while handling another
+  error and possible development-detail disclosure from mutable context.
+  Error boundaries now reject proxies, accept only own context data, and use
+  the captured native `Request.url` getter for genuine requests.
+- **Symptom -> Source -> Consequence -> Remedy:** retry callbacks could receive
+  a stateful proxy, while terminal handling mixed snapshot data with the
+  original throwable. The source was detaching through reads that still
+  admitted proxies. The consequence was callback-dependent diagnostics and
+  repeated project-code execution. Retry bookkeeping and terminal wrappers now
+  receive stable detached errors; `shouldRetry: false` and unwrapped terminal
+  genuine errors retain their documented original identity.
+- **Symptom -> Source -> Consequence -> Remedy:** a CLI logging failure replaced
+  the operation failure it was meant to report. The source was an unguarded
+  logger call inside the catch path. The consequence was loss of the root cause
+  and misleading caller behavior. Logging is now best effort and the original
+  thrown value is always rethrown.
+- **Symptom -> Source -> Consequence -> Remedy:** registered error creation read
+  `detail` twice, and the legacy decoder admitted structural root objects. The
+  source was property-by-property construction without first snapshotting
+  options or proving native Error identity. The consequence was internally
+  inconsistent message/detail pairs and ambiguous forged transport values.
+  Factories read every option once; `fromError()` accepts only a genuine Error
+  with an own data-valued context and returns a bounded defensive deep snapshot.
+- **Symptom -> Source -> Consequence -> Remedy:** Node-specific Error and Proxy
+  introspection lived in the Errors layer, and moving it naively into a shared
+  import would leak `node:util` into React browser bundles. The source was
+  runtime-specific compatibility logic without explicit environment ownership.
+  The consequence was an architecture violation or an unresolved Node builtin
+  in browser output. Server boundary introspection and the legacy decoder are
+  separated from the React-safe core; runtime introspection lives in
+  `platform/compat`, the browser adapter uses the standard `Error.isError`
+  brand when available with a portable compatibility path, and a permanent
+  browser-bundle regression rejects transitive Node imports.
+
+Reproducible checkpoint evidence:
+
+- The regression-first adversarial set failed 15 assertions before
+  implementation. The complete Deno Errors and platform-introspection gate now
+  passes 31 suites and 514 nested steps with zero failures.
+- Direct Errors coverage is 85.4 percent branches, 90.6 percent functions, and
+  90.3 percent lines. The new platform compatibility leaf has 100 percent line
+  coverage.
+- The supported Node harness passes 416 Errors and platform tests with zero
+  failures. The routing module-loader, route executor, and sandbox worker
+  consumer matrix passes 16 suites and 291 nested steps with zero failures. The
+  direct legacy-codec consumer matrix passes another 20 suites and 225 nested
+  steps with zero failures; five model-download steps remain intentionally
+  ignored.
+- The browser-build regression passes all six focused script tests and proves
+  that the `useAgent` browser bundle contains no `node:` import.
+  React error-adapter entrypoints and the Errors and platform entrypoints pass
+  direct type checking.
+- Changed sources pass formatting and lint. Core dependencies and dependency
+  boundaries report zero violations, and the module-boundary ratchet remains at
+  75 baselined broad imports and two baselined cycle edges. The Errors
+  platform-specific violation is removed; the separate platform audit still
+  owns the 27 pre-existing violations elsewhere in `src`.
+- `deno task docs` regenerates all 39 API-reference groups.
+  `deno task docs:validate` validates 66 guides, all configured executable guide
+  examples, and all 739 documentation links.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,334
+  configured files, lint across 4,241 configured files, every style and
+  architecture ratchet, documentation validation, and all configured source and
+  browser entrypoint typechecks.
+
+No unresolved critical or high-confidence Errors production risk remains.
+Platform, routing, sandbox, and the build-script surface changed or were
+extended by this checkpoint and remain listed for their own top-level
+revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

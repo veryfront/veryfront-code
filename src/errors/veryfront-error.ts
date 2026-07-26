@@ -5,6 +5,23 @@ import {
   type VeryfrontErrorSnapshot,
 } from "./types.ts";
 
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const getPrototypeOf = Object.getPrototypeOf;
+const hasOwn = Object.hasOwn;
+const objectEntries = Object.entries;
+const objectPrototype = Object.prototype;
+const numberIsFinite = Number.isFinite;
+const NativeArray = Array;
+const NativeError = Error;
+const NativeSet = Set;
+const NativeString = String;
+const captureStackTrace = Error.captureStackTrace;
+
 export interface BuildContext {
   file?: string;
   line?: number;
@@ -107,9 +124,29 @@ const SNAPSHOT_FAILED = Symbol("snapshot-failed");
 const INVALID_ERROR_DATA = Symbol("invalid-error-data");
 const MAX_SNAPSHOT_DEPTH = 16;
 const MAX_SNAPSHOT_ENTRIES = 10_000;
+const standardIsError = getOwnPropertyDescriptor(NativeError, "isError")?.value;
+
+function hasNativeErrorBrand(error: unknown): error is Error {
+  if (typeof standardIsError === "function") {
+    try {
+      return apply(standardIsError, NativeError, [error]) as boolean;
+    } catch {
+      return false;
+    }
+  }
+
+  // Compatibility path for engines predating Error.isError. Modern runtimes
+  // use the hook-free brand check above.
+  try {
+    return error instanceof NativeError;
+  } catch {
+    return false;
+  }
+}
 
 interface SnapshotState {
   readonly seen: Set<object>;
+  readonly isProxy: (value: object) => boolean;
   remainingEntries: number;
 }
 
@@ -131,15 +168,16 @@ function snapshotPlainValue(
   if (
     typeof value !== "object" ||
     depth >= MAX_SNAPSHOT_DEPTH ||
-    state.seen.has(value)
+    state.seen.has(value) ||
+    state.isProxy(value)
   ) {
     return SNAPSHOT_FAILED;
   }
 
   state.seen.add(value);
   try {
-    if (Array.isArray(value)) {
-      const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
+    if (arrayIsArray(value)) {
+      const descriptors = getOwnPropertyDescriptors(value) as unknown as Record<
         string,
         PropertyDescriptor
       >;
@@ -153,7 +191,7 @@ function snapshotPlainValue(
         return SNAPSHOT_FAILED;
       }
       state.remainingEntries -= lengthDescriptor.value;
-      const result = new Array(lengthDescriptor.value);
+      const result = new NativeArray(lengthDescriptor.value);
       for (let index = 0; index < lengthDescriptor.value; index++) {
         const descriptor = descriptors[String(index)];
         if (!descriptor) continue;
@@ -165,11 +203,11 @@ function snapshotPlainValue(
       return result;
     }
 
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return SNAPSHOT_FAILED;
+    const prototype = getPrototypeOf(value);
+    if (prototype !== objectPrototype && prototype !== null) return SNAPSHOT_FAILED;
 
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const entries = Object.entries(descriptors).filter(([, descriptor]) => descriptor.enumerable);
+    const descriptors = getOwnPropertyDescriptors(value);
+    const entries = objectEntries(descriptors).filter(([, descriptor]) => descriptor.enumerable);
     if (entries.length > state.remainingEntries) return SNAPSHOT_FAILED;
     state.remainingEntries -= entries.length;
 
@@ -178,7 +216,7 @@ function snapshotPlainValue(
       if (!("value" in descriptor)) return SNAPSHOT_FAILED;
       const child = snapshotPlainValue(descriptor.value, depth + 1, state);
       if (child === SNAPSHOT_FAILED) return SNAPSHOT_FAILED;
-      Object.defineProperty(result, key, {
+      defineProperty(result, key, {
         configurable: true,
         enumerable: true,
         value: child,
@@ -197,7 +235,7 @@ type InvalidErrorData = typeof INVALID_ERROR_DATA;
 type OptionalField<T> = T | undefined | InvalidErrorData;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !arrayIsArray(value);
 }
 
 function isString(value: unknown): value is string {
@@ -205,7 +243,7 @@ function isString(value: unknown): value is string {
 }
 
 function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+  return typeof value === "number" && numberIsFinite(value);
 }
 
 function optionalField<T>(
@@ -213,7 +251,7 @@ function optionalField<T>(
   key: string,
   predicate: (value: unknown) => value is T,
 ): OptionalField<T> {
-  if (!Object.hasOwn(source, key) || source[key] === undefined) return undefined;
+  if (!hasOwn(source, key) || source[key] === undefined) return undefined;
   return predicate(source[key]) ? source[key] : INVALID_ERROR_DATA;
 }
 
@@ -221,14 +259,14 @@ function optionalContext<T>(
   source: Record<string, unknown>,
   normalize: (value: unknown) => T | InvalidErrorData,
 ): OptionalField<T> {
-  if (!Object.hasOwn(source, "context") || source.context === undefined) {
+  if (!hasOwn(source, "context") || source.context === undefined) {
     return undefined;
   }
   return normalize(source.context);
 }
 
 function normalizeStringArray(value: unknown): string[] | InvalidErrorData {
-  if (!Array.isArray(value)) return INVALID_ERROR_DATA;
+  if (!arrayIsArray(value)) return INVALID_ERROR_DATA;
   const normalized: string[] = [];
   for (const entry of value) {
     if (!isString(entry)) return INVALID_ERROR_DATA;
@@ -240,7 +278,7 @@ function normalizeStringArray(value: unknown): string[] | InvalidErrorData {
 function normalizeMissingDependencies(
   value: unknown,
 ): BuildContext["missing"] | InvalidErrorData {
-  if (!Array.isArray(value)) return INVALID_ERROR_DATA;
+  if (!arrayIsArray(value)) return INVALID_ERROR_DATA;
 
   const normalized: NonNullable<BuildContext["missing"]> = [];
   for (const entry of value) {
@@ -261,7 +299,7 @@ function normalizeMissingDependencies(
   return normalized;
 }
 
-const BUILD_PHASES: ReadonlySet<NonNullable<BuildContext["phase"]>> = new Set([
+const BUILD_PHASES: ReadonlySet<NonNullable<BuildContext["phase"]>> = new NativeSet([
   "parse",
   "transform",
   "bundle",
@@ -285,8 +323,8 @@ function normalizeBuildContext(value: unknown): BuildContext | InvalidErrorData 
   const moduleId = optionalField(value, "moduleId", isString);
   const phase = optionalField(value, "phase", isBuildPhase);
   const failures = optionalField(value, "failures", isFiniteNumber);
-  const missing = optionalField(value, "missing", Array.isArray);
-  const failed = optionalField(value, "failed", Array.isArray);
+  const missing = optionalField(value, "missing", arrayIsArray);
+  const failed = optionalField(value, "failed", arrayIsArray);
   const cacheDir = optionalField(value, "cacheDir", isString);
   if (
     file === INVALID_ERROR_DATA ||
@@ -331,8 +369,8 @@ function normalizeHeaders(
 ): Record<string, string> | InvalidErrorData {
   if (!isRecord(value)) return INVALID_ERROR_DATA;
 
-  const headers: Record<string, string> = Object.create(null);
-  for (const [name, headerValue] of Object.entries(value)) {
+  const headers: Record<string, string> = createObject(null);
+  for (const [name, headerValue] of objectEntries(value)) {
     if (typeof headerValue !== "string") return INVALID_ERROR_DATA;
     headers[name] = headerValue;
   }
@@ -365,7 +403,7 @@ function normalizeAPIContext(value: unknown): APIContext | InvalidErrorData {
   return normalized;
 }
 
-const RENDER_PHASES: ReadonlySet<NonNullable<RenderContext["phase"]>> = new Set([
+const RENDER_PHASES: ReadonlySet<NonNullable<RenderContext["phase"]>> = new NativeSet([
   "server",
   "client",
   "hydration",
@@ -394,7 +432,7 @@ function normalizeRenderContext(value: unknown): RenderContext | InvalidErrorDat
   if (component !== undefined) normalized.component = component;
   if (route !== undefined) normalized.route = route;
   if (phase !== undefined) normalized.phase = phase;
-  if (Object.hasOwn(value, "props") && value.props !== undefined) {
+  if (hasOwn(value, "props") && value.props !== undefined) {
     normalized.props = value.props;
   }
   return normalized;
@@ -417,7 +455,7 @@ function normalizeConfigContext(value: unknown): ConfigContext | InvalidErrorDat
   const normalized: ConfigContext = {};
   if (configFile !== undefined) normalized.configFile = configFile;
   if (field !== undefined) normalized.field = field;
-  if (Object.hasOwn(value, "value") && value.value !== undefined) {
+  if (hasOwn(value, "value") && value.value !== undefined) {
     normalized.value = value.value;
   }
   if (expected !== undefined) normalized.expected = expected;
@@ -444,7 +482,7 @@ function normalizeAgentContext(value: unknown): AgentContext | InvalidErrorData 
   return normalized;
 }
 
-const FILE_OPERATIONS: ReadonlySet<NonNullable<FileContext["operation"]>> = new Set([
+const FILE_OPERATIONS: ReadonlySet<NonNullable<FileContext["operation"]>> = new NativeSet([
   "read",
   "write",
   "delete",
@@ -588,16 +626,18 @@ export function toError<T extends Error>(
 ): T;
 export function toError(
   veryfrontError: VeryfrontErrorData,
-  ErrorType: new (message?: string) => Error = Error,
+  ErrorType: new (message?: string) => Error = NativeError,
 ): Error {
   const error = new ErrorType(veryfrontError.message);
   error.name = `VeryfrontError[${veryfrontError.type}]`;
 
   // Capture stack at call site, excluding toError from the trace
   // This makes debugging easier by showing where createError+toError was called
-  if (Error.captureStackTrace) Error.captureStackTrace(error, toError);
+  if (captureStackTrace) {
+    apply(captureStackTrace, NativeError, [error, toError]);
+  }
 
-  Object.defineProperty(error, "context", {
+  defineProperty(error, "context", {
     value: veryfrontError,
     enumerable: false,
     configurable: true,
@@ -606,21 +646,22 @@ export function toError(
   return error;
 }
 
-export function fromError(error: unknown): VeryfrontErrorData | null {
+/** @internal Decode one already-extracted legacy context value. */
+export function decodeVeryfrontErrorData(
+  contextValue: unknown,
+  isProxy: (value: object) => boolean,
+): VeryfrontErrorData | null {
   try {
-    if (!error || typeof error !== "object") return null;
-    const descriptor = Object.getOwnPropertyDescriptor(error, "context");
-    if (!descriptor || !("value" in descriptor)) return null;
-
-    const context = snapshotPlainValue(descriptor.value, 0, {
-      seen: new Set<object>(),
+    const context = snapshotPlainValue(contextValue, 0, {
+      isProxy,
+      seen: new NativeSet<object>(),
       remainingEntries: MAX_SNAPSHOT_ENTRIES,
     });
     if (
       context === SNAPSHOT_FAILED ||
       !context ||
       typeof context !== "object" ||
-      Array.isArray(context)
+      arrayIsArray(context)
     ) {
       return null;
     }
@@ -636,11 +677,11 @@ export function fromError(error: unknown): VeryfrontErrorData | null {
  */
 export function getErrorMessage(error: unknown): string {
   try {
-    if (error instanceof Error) {
+    if (isErrorInstance(error)) {
       const message = error.message;
       return typeof message === "string" ? message : "Unknown error";
     }
-    return String(error);
+    return NativeString(error);
   } catch {
     return "Unknown error";
   }
@@ -648,11 +689,7 @@ export function getErrorMessage(error: unknown): string {
 
 /** Runtime-safe native Error guard for values caught from untrusted code. */
 export function isErrorInstance(error: unknown): error is Error {
-  try {
-    return error instanceof Error;
-  } catch {
-    return false;
-  }
+  return hasNativeErrorBrand(error);
 }
 
 export interface ErrorSnapshot {
@@ -669,9 +706,26 @@ export function snapshotError(error: unknown): ErrorSnapshot | null {
 
 export function snapshotKnownError(error: Error): ErrorSnapshot | null {
   try {
-    const name = error.name;
-    const message = error.message;
-    const stack = error.stack;
+    const descriptors = getOwnPropertyDescriptors(error);
+    const ownDataValue = (key: string): unknown => {
+      const descriptor = descriptors[key];
+      return descriptor && "value" in descriptor ? descriptor.value : undefined;
+    };
+    const ownName = ownDataValue("name");
+    const ownMessage = ownDataValue("message");
+    const ownStack = ownDataValue("stack");
+    const prototype = getPrototypeOf(error);
+    const prototypeName = prototype !== null
+      ? getOwnPropertyDescriptor(prototype, "name")
+      : undefined;
+    const name = ownName === undefined &&
+        prototypeName &&
+        "value" in prototypeName &&
+        typeof prototypeName.value === "string"
+      ? prototypeName.value
+      : ownName ?? "Error";
+    const message = ownMessage === undefined ? "" : ownMessage;
+    const stack = ownStack === undefined ? undefined : ownStack;
     if (
       typeof name !== "string" ||
       typeof message !== "string" ||
@@ -687,7 +741,7 @@ export function snapshotKnownError(error: Error): ErrorSnapshot | null {
 
 function applySnapshotStack(error: Error, stack: string | undefined): void {
   if (stack === undefined) return;
-  Object.defineProperty(error, "stack", {
+  defineProperty(error, "stack", {
     configurable: true,
     value: stack,
     writable: true,
@@ -712,11 +766,11 @@ function detachVeryfrontError(snapshot: VeryfrontErrorSnapshot): VeryfrontError 
 
 function copyOwnDataProperties(source: Error, target: Error): void {
   try {
-    const descriptors = Object.getOwnPropertyDescriptors(source);
-    for (const [key, descriptor] of Object.entries(descriptors)) {
+    const descriptors = getOwnPropertyDescriptors(source);
+    for (const [key, descriptor] of objectEntries(descriptors)) {
       if (key === "name" || key === "message" || key === "stack") continue;
       if (!("value" in descriptor)) continue;
-      Object.defineProperty(target, key, {
+      defineProperty(target, key, {
         configurable: true,
         enumerable: descriptor.enumerable,
         value: descriptor.value,
@@ -729,7 +783,7 @@ function copyOwnDataProperties(source: Error, target: Error): void {
 }
 
 function detachNativeError(source: Error, snapshot: ErrorSnapshot): Error {
-  const detached = new Error(snapshot.message);
+  const detached = new NativeError(snapshot.message);
   detached.name = snapshot.name;
   applySnapshotStack(detached, snapshot.stack);
   copyOwnDataProperties(source, detached);
@@ -746,18 +800,32 @@ function detachNativeError(source: Error, snapshot: ErrorSnapshot): Error {
 export function snapshotErrorAsError(error: unknown): Error {
   if (isVeryfrontErrorInstance(error)) {
     const veryfrontSnapshot = snapshotKnownVeryfrontError(error);
-    return veryfrontSnapshot ? detachVeryfrontError(veryfrontSnapshot) : new Error("Unknown error");
+    return veryfrontSnapshot
+      ? detachVeryfrontError(veryfrontSnapshot)
+      : new NativeError("Unknown error");
   }
 
   if (isErrorInstance(error)) {
     const nativeSnapshot = snapshotKnownError(error);
-    return nativeSnapshot ? detachNativeError(error, nativeSnapshot) : new Error("Unknown error");
+    return nativeSnapshot
+      ? detachNativeError(error, nativeSnapshot)
+      : new NativeError("Unknown error");
   }
 
+  return new NativeError(safePrimitiveErrorMessage(error));
+}
+
+function safePrimitiveErrorMessage(error: unknown): string {
+  if (
+    (typeof error === "object" && error !== null) ||
+    typeof error === "function"
+  ) {
+    return "Unknown error";
+  }
   try {
-    return new Error(String(error));
+    return NativeString(error);
   } catch {
-    return new Error("Unknown error");
+    return "Unknown error";
   }
 }
 
@@ -767,7 +835,7 @@ export function snapshotErrorAsError(error: unknown): Error {
  */
 export function ensureError(error: unknown): Error {
   if (isErrorInstance(error)) {
-    return snapshotError(error) ? error : new Error("Unknown error");
+    return snapshotError(error) ? error : new NativeError("Unknown error");
   }
-  return new Error(getErrorMessage(error));
+  return new NativeError(safePrimitiveErrorMessage(error));
 }

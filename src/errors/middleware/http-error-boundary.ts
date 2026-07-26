@@ -14,10 +14,18 @@ import { extractRequestPathname } from "../request-instance.ts";
 import { createSafeProblemDetails, stringifySafeProblemDetails } from "../safe-diagnostics.ts";
 import { observeBoundaryErrorBestEffort } from "./boundary-observability.ts";
 import { detachBoundaryError } from "./wrap-unknown.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const NativeResponse = Response;
 
 function isLocalProjectBestEffort(ctx: HandlerContext): boolean {
   try {
-    return ctx.isLocalProject === true;
+    if (isProxyWithoutHooks(ctx)) return false;
+    const descriptor = getOwnPropertyDescriptor(ctx, "isLocalProject");
+    return descriptor !== undefined &&
+      "value" in descriptor &&
+      descriptor.value === true;
   } catch {
     return false;
   }
@@ -109,7 +117,7 @@ export function errorToRFC9457Response(
     }
   }
 
-  return new Response(stringifySafeProblemDetails(body, isDev), {
+  return new NativeResponse(stringifySafeProblemDetails(body, isDev), {
     status: body.status,
     headers: {
       "Content-Type": PROBLEM_JSON_CONTENT_TYPE,

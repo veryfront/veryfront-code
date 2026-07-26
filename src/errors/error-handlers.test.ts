@@ -193,7 +193,7 @@ describe("error-handlers", () => {
       assertEquals(firstSignal?.aborted, false);
     });
 
-    it("should detach stateful Error proxies before retry bookkeeping", async () => {
+    it("should treat Error proxies as opaque during retry bookkeeping", async () => {
       let attempts = 0;
       let nameReads = 0;
       const hostile = new Proxy(new Error("retry"), {
@@ -220,7 +220,31 @@ describe("error-handlers", () => {
       });
 
       assertEquals(result, "ok");
-      assertEquals(nameReads, 1);
+      assertEquals(nameReads, 0);
+    });
+
+    it("should not invoke conversion hooks while normalizing retry errors", async () => {
+      let attempts = 0;
+      let coercions = 0;
+      const hostile = {
+        [Symbol.toPrimitive](): never {
+          coercions++;
+          throw new Error("conversion hook must not run");
+        },
+      };
+
+      const result = await retryWithBackoff(async () => {
+        attempts++;
+        if (attempts === 1) throw hostile;
+        return "ok";
+      }, {
+        maxAttempts: 2,
+        computeDelay: () => 0,
+        onRetry: ({ error }) => assertEquals(error.message, "Unknown error"),
+      });
+
+      assertEquals(result, "ok");
+      assertEquals(coercions, 0);
     });
 
     it("should rethrow the original error immediately when shouldRetry returns false", async () => {
@@ -380,7 +404,7 @@ describe("error-handlers", () => {
       assertEquals((thrown as Error).message, "wrapped:boom:1");
     });
 
-    it("should give terminal wrappers a stable snapshot of stateful proxies", async () => {
+    it("should give terminal wrappers an opaque snapshot of Error proxies", async () => {
       let nameReads = 0;
       const hostile = new Proxy(new Error("wrapped proxy"), {
         get(target, property, receiver): unknown {
@@ -402,7 +426,7 @@ describe("error-handlers", () => {
       );
 
       assertEquals((thrown as Error).message, "wrapped:Error:Error");
-      assertEquals(nameReads, 1);
+      assertEquals(nameReads, 0);
     });
 
     it("should preserve terminal Error subclass and identity without a wrapper", async () => {

@@ -1,7 +1,10 @@
 import { snapshotVeryfrontError } from "../types.ts";
 import { getErrorMessage, isErrorInstance, snapshotError } from "../veryfront-error.ts";
 
-const REGISTERED_ERROR_SOLUTIONS: Readonly<Record<string, string>> = Object.freeze({
+const objectFreeze = Object.freeze;
+const objectHasOwn = Object.hasOwn;
+
+const REGISTERED_ERROR_SOLUTIONS: Readonly<Record<string, string>> = objectFreeze({
   "config-not-found": "missing-config",
   "config-invalid": "invalid-config",
   "config-parse-error": "invalid-config",
@@ -23,7 +26,7 @@ const REGISTERED_ERROR_SOLUTIONS: Readonly<Record<string, string>> = Object.free
 export function identifyError(error: Error): string {
   const snapshot = snapshotVeryfrontError(error);
   if (snapshot) {
-    if (Object.hasOwn(REGISTERED_ERROR_SOLUTIONS, snapshot.slug)) {
+    if (objectHasOwn(REGISTERED_ERROR_SOLUTIONS, snapshot.slug)) {
       return REGISTERED_ERROR_SOLUTIONS[snapshot.slug]!;
     }
   }

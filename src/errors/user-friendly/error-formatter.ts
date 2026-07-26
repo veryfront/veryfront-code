@@ -4,16 +4,17 @@ import { isProduction } from "#veryfront/platform/environment.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 import { identifyError } from "./error-identifier.ts";
 import {
+  detachThrowableForBoundary,
   limitRenderedErrorOutput,
   sanitizeTerminalDiagnosticText,
   snapshotErrorForBoundary,
 } from "../safe-diagnostics.ts";
-import { getErrorMessage, snapshotErrorAsError } from "../veryfront-error.ts";
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
+const objectHasOwn = Object.hasOwn;
 
 function getSolution(errorKey: string): (typeof ERROR_SOLUTIONS)[string] | undefined {
-  return Object.hasOwn(ERROR_SOLUTIONS, errorKey) ? ERROR_SOLUTIONS[errorKey] : undefined;
+  return objectHasOwn(ERROR_SOLUTIONS, errorKey) ? ERROR_SOLUTIONS[errorKey] : undefined;
 }
 
 function buildSolutionDetailsLines(
@@ -49,12 +50,12 @@ function buildSolutionDetailsLines(
  * Format error as a polished box with solution
  */
 export function formatErrorBox(error: Error): string {
-  const stableError = snapshotErrorAsError(error);
+  const stableError = detachThrowableForBoundary(error);
   const errorKey = identifyError(stableError);
   const solution = getSolution(errorKey);
 
   const content: string[] = [
-    sanitizeTerminalDiagnosticText(getErrorMessage(stableError)),
+    sanitizeTerminalDiagnosticText(stableError.message),
   ];
 
   if (!solution) {
@@ -82,8 +83,8 @@ export function formatErrorBox(error: Error): string {
  * Format error with plain text (existing behavior)
  */
 export function formatUserError(error: Error): string {
-  const stableError = snapshotErrorAsError(error);
-  const message = sanitizeTerminalDiagnosticText(getErrorMessage(stableError));
+  const stableError = detachThrowableForBoundary(error);
+  const message = sanitizeTerminalDiagnosticText(stableError.message);
   const output: string[] = ["", red(bold("✖ Error: ")) + bold(message), ""];
 
   const errorKey = identifyError(stableError);

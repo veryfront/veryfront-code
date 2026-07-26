@@ -24,13 +24,15 @@ import {
 } from "./safe-diagnostics.ts";
 import { extractHandlerRequestPathname } from "./request-instance.ts";
 
+const NativeResponse = Response;
+
 /**
  * Content-Type header for RFC 9457 responses
  */
 export const PROBLEM_JSON_CONTENT_TYPE = "application/problem+json";
 
 function createProblemDetailsResponse(body: RFC9457Response): Response {
-  return new Response(stringifySafeProblemDetails(body), {
+  return new NativeResponse(stringifySafeProblemDetails(body), {
     status: body.status,
     headers: {
       "Content-Type": PROBLEM_JSON_CONTENT_TYPE,

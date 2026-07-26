@@ -4,7 +4,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createError,
   ensureError,
-  fromError,
   getErrorMessage,
   isAPIError,
   isBuildError,
@@ -16,7 +15,15 @@ import {
   toError,
   type VeryfrontErrorData,
 } from "./veryfront-error.ts";
+import { fromError } from "./legacy-error-codec.ts";
 import { VeryfrontError } from "./types.ts";
+
+function errorWithContext(context: unknown): Error {
+  return Object.defineProperty(new Error("encoded Veryfront error"), "context", {
+    configurable: true,
+    value: context,
+  });
+}
 
 describe("veryfront-error", () => {
   describe("createError", () => {
@@ -160,15 +167,18 @@ describe("veryfront-error", () => {
 
     it("should return null for objects without proper context", () => {
       assertEquals(fromError({ context: "not an error" }), null);
-      assertEquals(fromError({ context: { notType: true } }), null);
+      assertEquals(fromError(errorWithContext("not an error")), null);
+      assertEquals(fromError(errorWithContext({ notType: true })), null);
     });
 
     it("should reject structurally invalid error data", () => {
       assertEquals(
-        fromError({ context: { type: "forged", message: "Not a Veryfront error" } }),
+        fromError(
+          errorWithContext({ type: "forged", message: "Not a Veryfront error" }),
+        ),
         null,
       );
-      assertEquals(fromError({ context: { type: "build", message: 42 } }), null);
+      assertEquals(fromError(errorWithContext({ type: "build", message: 42 })), null);
     });
 
     it("should validate each discriminated variant before returning it", () => {
@@ -285,18 +295,123 @@ describe("veryfront-error", () => {
       ];
 
       for (const context of invalid) {
-        assertEquals(fromError({ context }), null);
+        assertEquals(fromError(errorWithContext(context)), null);
       }
     });
 
     it("should fail closed when context access throws", () => {
-      const error = Object.defineProperty({}, "context", {
+      const error = Object.defineProperty(new Error("unreadable context"), "context", {
         get(): never {
           throw new Error("unreadable");
         },
       });
 
       assertEquals(fromError(error), null);
+    });
+
+    it("should reject proxied roots without invoking traps", () => {
+      let descriptorReads = 0;
+      const proxied = new Proxy(
+        toError({
+          type: "build",
+          message: "Build failed",
+        }),
+        {
+          getOwnPropertyDescriptor(target, property) {
+            descriptorReads++;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+        },
+      );
+
+      assertEquals(fromError(proxied), null);
+      assertEquals(descriptorReads, 0);
+    });
+
+    it("should reject nested context proxies without invoking traps", () => {
+      let trapCalls = 0;
+      const nested = new Proxy({ component: "PrivateComponent" }, {
+        get(): never {
+          trapCalls++;
+          throw new Error("get trap must not run");
+        },
+        getOwnPropertyDescriptor(): never {
+          trapCalls++;
+          throw new Error("descriptor trap must not run");
+        },
+        getPrototypeOf(): never {
+          trapCalls++;
+          throw new Error("prototype trap must not run");
+        },
+        ownKeys(): never {
+          trapCalls++;
+          throw new Error("ownKeys trap must not run");
+        },
+      });
+      const encoded = errorWithContext({
+        type: "render",
+        message: "Render failed",
+        context: nested,
+      });
+
+      assertEquals(fromError(encoded), null);
+      assertEquals(trapCalls, 0);
+    });
+
+    it("should use captured inspection primordials", () => {
+      const source: VeryfrontErrorData = {
+        type: "api",
+        message: "Request failed",
+        context: {
+          headers: { accept: "application/json" },
+          statusCode: 503,
+        },
+      };
+      const encoded = toError(source);
+      const originals = {
+        apply: Reflect.apply,
+        arrayIsArray: Array.isArray,
+        defineProperty: Object.defineProperty,
+        entries: Object.entries,
+        getOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
+        getOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
+        getPrototypeOf: Object.getPrototypeOf,
+        hasOwn: Object.hasOwn,
+        numberIsFinite: Number.isFinite,
+      };
+      const blocked = (): never => {
+        throw new Error("live primordial must not run");
+      };
+      let extracted: VeryfrontErrorData | null = null;
+
+      try {
+        Reflect.apply = blocked as typeof Reflect.apply;
+        Array.isArray = blocked as typeof Array.isArray;
+        Object.defineProperty = blocked as typeof Object.defineProperty;
+        Object.entries = blocked as typeof Object.entries;
+        Object.getOwnPropertyDescriptor = blocked as typeof Object.getOwnPropertyDescriptor;
+        Object.getOwnPropertyDescriptors = blocked as typeof Object.getOwnPropertyDescriptors;
+        Object.getPrototypeOf = blocked as typeof Object.getPrototypeOf;
+        Object.hasOwn = blocked as typeof Object.hasOwn;
+        Number.isFinite = blocked as typeof Number.isFinite;
+
+        extracted = fromError(encoded);
+      } finally {
+        Reflect.apply = originals.apply;
+        Array.isArray = originals.arrayIsArray;
+        Object.defineProperty = originals.defineProperty;
+        Object.entries = originals.entries;
+        Object.getOwnPropertyDescriptor = originals.getOwnPropertyDescriptor;
+        Object.getOwnPropertyDescriptors = originals.getOwnPropertyDescriptors;
+        Object.getPrototypeOf = originals.getPrototypeOf;
+        Object.hasOwn = originals.hasOwn;
+        Number.isFinite = originals.numberIsFinite;
+      }
+
+      assert(extracted?.type === "api");
+      assertEquals(extracted.message, "Request failed");
+      assertEquals(extracted.context?.statusCode, 503);
+      assertEquals(extracted.context?.headers?.accept, "application/json");
     });
 
     it("should snapshot nested data without retaining mutable source references", () => {
@@ -327,7 +442,10 @@ describe("veryfront-error", () => {
         },
       });
 
-      assertEquals(fromError({ context: { type: "render", message: "failed", context } }), null);
+      assertEquals(
+        fromError(errorWithContext({ type: "render", message: "failed", context })),
+        null,
+      );
       assertEquals(reads, 0);
     });
 
@@ -338,7 +456,7 @@ describe("veryfront-error", () => {
         context: Array.from({ length: 101 }, () => new Array(100)),
       };
 
-      assertEquals(fromError({ context }), null);
+      assertEquals(fromError(errorWithContext(context)), null);
     });
   });
 
@@ -432,7 +550,7 @@ describe("veryfront-error", () => {
   });
 
   describe("snapshotErrorAsError", () => {
-    it("should detach stateful proxies for repeated boundary reads", () => {
+    it("should treat Error proxies as opaque without reading fields", () => {
       let nameReads = 0;
       const hostile = new Proxy(new Error("retry"), {
         get(target, property, receiver): unknown {
@@ -448,7 +566,8 @@ describe("veryfront-error", () => {
       assert(result !== hostile, "Expected a detached Error");
       assertEquals(result.name, "Error");
       assertEquals(result.name, "Error");
-      assertEquals(nameReads, 1);
+      assertEquals(result.message, "Unknown error");
+      assertEquals(nameReads, 0);
     });
 
     it("should preserve safe own error metadata on the detached snapshot", () => {
@@ -461,7 +580,7 @@ describe("veryfront-error", () => {
       assertEquals(result.code, "ECONNRESET");
     });
 
-    it("should read stateful VeryfrontError fields only once", () => {
+    it("should treat proxied VeryfrontErrors as opaque", () => {
       let statusReads = 0;
       const source = new VeryfrontError("missing", {
         slug: "config-not-found",
@@ -481,10 +600,9 @@ describe("veryfront-error", () => {
 
       const result = snapshotErrorAsError(stateful);
 
-      assert(result instanceof VeryfrontError);
-      assertEquals(result.status, 404);
-      assertEquals(result.status, 404);
-      assertEquals(statusReads, 1);
+      assertEquals(result instanceof VeryfrontError, false);
+      assertEquals(result.message, "Unknown error");
+      assertEquals(statusReads, 0);
     });
 
     it("should not revisit an invalid VeryfrontError proxy as a native Error", () => {
@@ -508,7 +626,7 @@ describe("veryfront-error", () => {
       const result = snapshotErrorAsError(stateful);
 
       assertEquals(result.message, "Unknown error");
-      assertEquals(messageReads, 1);
+      assertEquals(messageReads, 0);
     });
   });
 });

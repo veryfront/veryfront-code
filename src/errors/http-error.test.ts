@@ -81,6 +81,55 @@ describe("http-error", () => {
     assertEquals(relative.instance, "/projects/example");
   });
 
+  it("should use captured boundary primordials after project poisoning", async () => {
+    const handler = createErrorHandler();
+    const error = CONFIG_NOT_FOUND.create();
+    const context = {
+      req: { url: "https://example.com/api/build?mode=fast" },
+    };
+    const originals = {
+      apply: Reflect.apply,
+      getOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
+      jsonStringify: JSON.stringify,
+      numberIsFinite: Number.isFinite,
+      numberIsInteger: Number.isInteger,
+      response: globalThis.Response,
+      trim: String.prototype.trim,
+      url: globalThis.URL,
+    };
+    const blocked = (): never => {
+      throw new Error("live primordial must not run");
+    };
+    let response: Response | undefined;
+
+    try {
+      Reflect.apply = blocked as typeof Reflect.apply;
+      Object.getOwnPropertyDescriptor = blocked as typeof Object.getOwnPropertyDescriptor;
+      JSON.stringify = blocked as typeof JSON.stringify;
+      Number.isFinite = blocked as typeof Number.isFinite;
+      Number.isInteger = blocked as typeof Number.isInteger;
+      globalThis.Response = blocked as unknown as typeof Response;
+      String.prototype.trim = blocked as typeof String.prototype.trim;
+      globalThis.URL = blocked as unknown as typeof URL;
+
+      response = handler(error, context);
+    } finally {
+      Reflect.apply = originals.apply;
+      Object.getOwnPropertyDescriptor = originals.getOwnPropertyDescriptor;
+      JSON.stringify = originals.jsonStringify;
+      Number.isFinite = originals.numberIsFinite;
+      Number.isInteger = originals.numberIsInteger;
+      globalThis.Response = originals.response;
+      String.prototype.trim = originals.trim;
+      globalThis.URL = originals.url;
+    }
+
+    assert(response);
+    const body = await response.json();
+    assertEquals(response.status, 404);
+    assertEquals(body.instance, "/api/build");
+  });
+
   it("should preserve the original error response when request URL access fails", async () => {
     const handler = createErrorHandler();
     const req = Object.defineProperty({}, "url", {
