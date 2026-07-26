@@ -26,6 +26,19 @@ describe("platform/adapters/redis/modules", () => {
       const second = await getRedisModule();
       assertExists(first);
       assertExists(second);
+      assertEquals(first.NodeRedis, second.NodeRedis);
+    });
+
+    it("should coalesce concurrent module loads", async () => {
+      clearModuleCache();
+      const [first, second, third] = await Promise.all([
+        getRedisModule(),
+        getRedisModule(),
+        getRedisModule(),
+      ]);
+
+      assertEquals(first.NodeRedis, second.NodeRedis);
+      assertEquals(second.NodeRedis, third.NodeRedis);
     });
 
     it("should return fresh result after clearModuleCache", async () => {

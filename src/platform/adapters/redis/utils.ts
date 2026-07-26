@@ -7,7 +7,12 @@ export function arrayToObject(arr: string[]): Record<string, string> {
 
     if (!key || value === undefined) continue;
 
-    obj[key] = value;
+    Object.defineProperty(obj, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
   }
 
   return obj;

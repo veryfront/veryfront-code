@@ -7,6 +7,8 @@ import {
 import {
   DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/limits.ts";
 
 // ---------------------------------------------------------------------------
 // GlobalThis bridges — config/ is a middle layer, platform/ is bottom layer.
@@ -34,15 +36,54 @@ function isRuntimeConfigInitialized(): boolean {
 
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 
-function normalizeApiBaseUrl(value: string | undefined): string | undefined {
+function normalizeApiBaseUrl(
+  value: string | undefined,
+  label: string,
+): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
-  return trimmed.replace(/\/graphql\/?$/, "/api").replace(/\/+$/, "");
+  if (trimmed.length > MAX_URL_LENGTH_FOR_VALIDATION) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} exceeds the ${MAX_URL_LENGTH_FOR_VALIDATION}-character limit`,
+    });
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch (cause) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a valid HTTP(S) URL`,
+      cause,
+    });
+  }
+
+  if (
+    (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be an HTTP(S) URL without credentials, query parameters, or fragments`,
+    });
+  }
+
+  let pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname.endsWith("/graphql")) {
+    pathname = `${pathname.slice(0, -"/graphql".length)}/api`;
+  }
+  return `${parsed.origin}${pathname}`;
 }
 
 export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {
-  return normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_BASE_URL")) ??
-    normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL")) ?? DEFAULT_API_BASE_URL;
+  return normalizeApiBaseUrl(
+    getHostEnv("VERYFRONT_API_BASE_URL"),
+    "VERYFRONT_API_BASE_URL",
+  ) ??
+    normalizeApiBaseUrl(getHostEnv("VERYFRONT_API_URL"), "VERYFRONT_API_URL") ??
+    DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID;
@@ -53,7 +94,7 @@ export interface VeryfrontCloudBootstrap {
   apiBaseUrl: string;
   apiToken?: string;
   projectSlug?: string;
-  serviceLayer?: string;
+  serviceLayer?: "auto" | "cloud" | "local";
   hasRequestContext: boolean;
   usesVeryfrontFs: boolean;
 }
@@ -81,9 +122,17 @@ function normalizeCloudModelString(value: string | undefined, fallback: string):
   return resolved.startsWith("veryfront-cloud/") ? resolved : `veryfront-cloud/${resolved}`;
 }
 
-function normalizeServiceLayer(value: string | undefined): string | undefined {
+function normalizeServiceLayer(
+  value: string | undefined,
+): VeryfrontCloudBootstrap["serviceLayer"] {
   const normalized = value?.trim().toLowerCase();
-  return normalized?.length ? normalized : undefined;
+  if (!normalized) return undefined;
+  if (normalized === "auto" || normalized === "cloud" || normalized === "local") {
+    return normalized;
+  }
+  throw INVALID_ARGUMENT.create({
+    detail: "Veryfront service layer must be one of: auto, cloud, local",
+  });
 }
 
 function hasScopedRuntimeContext(context: VeryfrontCloudContext | undefined): boolean {
@@ -92,20 +141,28 @@ function hasScopedRuntimeContext(context: VeryfrontCloudContext | undefined): bo
   );
 }
 
-function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiBaseUrl"> {
+function getResolvedVeryfrontCloudContext(
+  scopedContext = getCurrentVeryfrontCloudContext(),
+  scopedApiBaseUrl = normalizeApiBaseUrl(
+    scopedContext?.apiBaseUrl,
+    "Scoped Veryfront API base URL",
+  ),
+): Omit<VeryfrontCloudBootstrap, "apiBaseUrl"> {
   const requestContext = getCurrentRequestContext();
-  const scopedContext = getCurrentVeryfrontCloudContext();
   const runtimeBootstrap = getRuntimeBootstrap();
+  const hasScopedApiBaseUrl = scopedApiBaseUrl !== undefined;
 
   return {
     apiToken: requestContext?.token ??
       scopedContext?.apiToken ??
-      getHostEnv("VERYFRONT_API_TOKEN") ??
-      runtimeBootstrap.apiToken,
+      (hasScopedApiBaseUrl
+        ? undefined
+        : getHostEnv("VERYFRONT_API_TOKEN") ?? runtimeBootstrap.apiToken),
     projectSlug: requestContext?.projectSlug ??
       scopedContext?.projectSlug ??
-      getHostEnv("VERYFRONT_PROJECT_SLUG") ??
-      runtimeBootstrap.projectSlug,
+      (hasScopedApiBaseUrl
+        ? undefined
+        : getHostEnv("VERYFRONT_PROJECT_SLUG") ?? runtimeBootstrap.projectSlug),
     serviceLayer: normalizeServiceLayer(scopedContext?.serviceLayer) ??
       normalizeServiceLayer(getHostEnv("VERYFRONT_SERVICE_LAYER")),
     hasRequestContext: requestContext !== null || hasScopedRuntimeContext(scopedContext),
@@ -123,10 +180,14 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
   const scopedContext = getCurrentVeryfrontCloudContext();
+  const scopedApiBaseUrl = normalizeApiBaseUrl(
+    scopedContext?.apiBaseUrl,
+    "Scoped Veryfront API base URL",
+  );
 
   return {
-    apiBaseUrl: scopedContext?.apiBaseUrl?.trim() || resolveVeryfrontApiBaseUrlFromHostEnv(),
-    ...getResolvedVeryfrontCloudContext(),
+    apiBaseUrl: scopedApiBaseUrl ?? resolveVeryfrontApiBaseUrlFromHostEnv(),
+    ...getResolvedVeryfrontCloudContext(scopedContext, scopedApiBaseUrl),
   };
 }
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeRedisAdapter } from "./node.ts";
 
@@ -203,22 +203,43 @@ describe("platform/adapters/redis/node", () => {
       assertEquals(result, []);
     });
 
-    it("should map lowercase set options (nx/px/ex) to redis NX/PX/EX", async () => {
+    it("should map lowercase set options to redis NX/PX/EX", async () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
-      await adapter.set("key", "val", { nx: true, px: 1000, ex: 60 });
-      assertEquals(firstCall(calls).args[2], { NX: true, PX: 1000, EX: 60 });
+      await adapter.set("key", "val", { nx: true, px: 1000 });
+      assertEquals(firstCall(calls).args[2], { NX: true, PX: 1000 });
+
+      calls.length = 0;
+      await adapter.set("key", "val", { ex: 60 });
+      assertEquals(firstCall(calls).args[2], { EX: 60 });
     });
 
-    it("should leave NX undefined when nx is falsy", async () => {
+    it("should omit the options object when no SET options are active", async () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.set("key", "val");
-      assertEquals(firstCall(calls).args[2], {
-        NX: undefined,
-        PX: undefined,
-        EX: undefined,
-      });
+      assertEquals(firstCall(calls).args[2], undefined);
+    });
+
+    it("should reject contradictory or invalid SET expiry options", () => {
+      const { client } = createMockClient();
+      const adapter = new NodeRedisAdapter(client as never);
+
+      assertThrows(
+        () => adapter.set("key", "val", { px: 1000, ex: 1 }),
+        TypeError,
+        "either px or ex",
+      );
+      assertThrows(
+        () => adapter.set("key", "val", { px: 0 }),
+        RangeError,
+        "positive integer",
+      );
+      assertThrows(
+        () => adapter.set("key", "val", { ex: 1.5 }),
+        RangeError,
+        "positive integer",
+      );
     });
 
     it("should call client.close on quit (v5 rename)", async () => {

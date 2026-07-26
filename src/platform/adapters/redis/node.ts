@@ -102,13 +102,32 @@ export class NodeRedisAdapter implements RedisAdapter {
     value: string,
     options?: { nx?: boolean; px?: number; ex?: number },
   ): Promise<string | null> {
-    const opts: { NX?: true; PX?: number; EX?: number } = {
-      NX: options?.nx ? true : undefined,
-      PX: options?.px,
-      EX: options?.ex,
-    };
+    if (options?.px !== undefined && options.ex !== undefined) {
+      throw new TypeError("Redis SET accepts either px or ex, not both");
+    }
+    if (
+      options?.px !== undefined &&
+      (!Number.isInteger(options.px) || options.px <= 0)
+    ) {
+      throw new RangeError("Redis SET px must be a positive integer");
+    }
+    if (
+      options?.ex !== undefined &&
+      (!Number.isInteger(options.ex) || options.ex <= 0)
+    ) {
+      throw new RangeError("Redis SET ex must be a positive integer");
+    }
 
-    return this.client.set(key, value, opts);
+    const opts: { NX?: true; PX?: number; EX?: number } = {};
+    if (options?.nx) opts.NX = true;
+    if (options?.px !== undefined) opts.PX = options.px;
+    if (options?.ex !== undefined) opts.EX = options.ex;
+
+    return this.client.set(
+      key,
+      value,
+      options?.nx || options?.px !== undefined || options?.ex !== undefined ? opts : undefined,
+    );
   }
 
   get(key: string): Promise<string | null> {

@@ -29,6 +29,13 @@ describe("platform/adapters/redis/utils", () => {
       assertEquals(arrayToObject(["key", ""]), { key: "" });
     });
 
+    it("should preserve __proto__ as an own data property", () => {
+      const result = arrayToObject(["__proto__", "safe"]);
+      assertEquals(Object.hasOwn(result, "__proto__"), true);
+      assertEquals(result["__proto__"], "safe");
+      assertEquals(({} as { polluted?: unknown }).polluted, undefined);
+    });
+
     it("should handle large arrays", () => {
       const arr: string[] = [];
       for (let i = 0; i < 100; i++) {

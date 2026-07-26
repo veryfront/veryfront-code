@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "#veryfront/config/runtime-config.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,
   getDefaultVeryfrontCloudModel,
@@ -127,6 +128,51 @@ describe("platform/cloud/resolver", () => {
     assertEquals(getVeryfrontCloudProjectSlug(), "env-project");
   });
 
+  it("does not send ambient host credentials to a scoped alternate API endpoint", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "host-project");
+
+    runWithVeryfrontCloudContext(
+      { apiBaseUrl: "https://alternate.example.com/graphql/" },
+      () => {
+        assertEquals(getVeryfrontCloudBootstrap(), {
+          apiBaseUrl: "https://alternate.example.com/api",
+          apiToken: undefined,
+          projectSlug: undefined,
+          serviceLayer: undefined,
+          hasRequestContext: true,
+          usesVeryfrontFs: false,
+        });
+        assertEquals(isVeryfrontCloudEnabled(), false);
+      },
+    );
+  });
+
+  it("keeps paired request credentials when a scoped endpoint is explicit", async () => {
+    await runWithRequestContext(
+      {
+        projectSlug: "request-project",
+        token: "request-token",
+        tokenProvenance: "untrusted",
+      },
+      async () => {
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "https://alternate.example.com/api/" },
+          () => {
+            assertEquals(getVeryfrontCloudBootstrap(), {
+              apiBaseUrl: "https://alternate.example.com/api",
+              apiToken: "request-token",
+              projectSlug: "request-project",
+              serviceLayer: undefined,
+              hasRequestContext: true,
+              usesVeryfrontFs: false,
+            });
+          },
+        );
+      },
+    );
+  });
+
   it("keeps direct host bootstrap identity isolated from scoped request context", () => {
     setEnv("VERYFRONT_API_URL", "https://api.veryfront.org");
     setEnv("VERYFRONT_API_TOKEN", "vf_host_token");
@@ -184,6 +230,33 @@ describe("platform/cloud/resolver", () => {
     assertEquals(
       resolveVeryfrontApiBaseUrlFromHostEnv(),
       "http://veryfront-api.veryfront-staging.svc",
+    );
+  });
+
+  it("rejects unsafe API base URLs instead of forwarding credentials", () => {
+    for (
+      const apiBaseUrl of [
+        "file:///tmp/veryfront",
+        "https://user:secret@api.example.com",
+        "https://api.example.com?target=other",
+        "https://api.example.com/#fragment",
+      ]
+    ) {
+      setEnv("VERYFRONT_API_BASE_URL", apiBaseUrl);
+      assertThrows(
+        () => resolveVeryfrontApiBaseUrlFromHostEnv(),
+        Error,
+        "must be an HTTP(S) URL without credentials",
+      );
+    }
+  });
+
+  it("rejects unknown service-layer values", () => {
+    setEnv("VERYFRONT_SERVICE_LAYER", "cluod");
+    assertThrows(
+      () => isVeryfrontCloudEnabled(),
+      Error,
+      "must be one of: auto, cloud, local",
     );
   });
 

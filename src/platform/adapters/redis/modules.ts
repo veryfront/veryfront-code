@@ -3,41 +3,65 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { NodeRedisModule } from "./types.ts";
 
-let NodeRedis: NodeRedisModule | null = null;
+interface LoadedRedisModule {
+  NodeRedis: NodeRedisModule;
+}
 
-export function getRedisModule(): Promise<{
-  NodeRedis: NodeRedisModule | null;
-}> {
-  if (NodeRedis) {
-    return Promise.resolve({ NodeRedis });
+let cachedNodeRedis: NodeRedisModule | null = null;
+let pendingModuleLoad: Promise<LoadedRedisModule> | null = null;
+let moduleCacheGeneration = 0;
+
+async function loadRedisModule(): Promise<NodeRedisModule> {
+  try {
+    const candidate: unknown = isDeno ? await import("npm:redis@5.11.0") : await import("redis");
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof (candidate as { createClient?: unknown }).createClient !== "function"
+    ) {
+      throw new TypeError("Redis package does not export createClient()");
+    }
+    return candidate as NodeRedisModule;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const packageName = isDeno ? "npm:redis@5.11.0" : "redis";
+
+    throw INITIALIZATION_ERROR.create({
+      detail:
+        `Failed to load '${packageName}' package. Ensure the Redis dependency is installed and resolvable.\nError: ${message}`,
+      cause: error instanceof Error ? error : undefined,
+    });
   }
+}
 
-  return withSpan(
+export function getRedisModule(): Promise<LoadedRedisModule> {
+  if (cachedNodeRedis) {
+    return Promise.resolve({ NodeRedis: cachedNodeRedis });
+  }
+  if (pendingModuleLoad) return pendingModuleLoad;
+
+  const loadGeneration = moduleCacheGeneration;
+  const load = withSpan(
     "platform.redis.getModule",
     async () => {
-      try {
-        if (isDeno) {
-          NodeRedis = (await import("npm:redis@5.11.0")) as unknown as NodeRedisModule;
-        } else {
-          NodeRedis = (await import("redis")) as unknown as NodeRedisModule;
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const packageName = isDeno ? "npm:redis@5.11.0" : "redis";
-
-        throw INITIALIZATION_ERROR.create({
-          detail:
-            `Failed to load '${packageName}' package. Please install it with: npm install redis\nError: ${message}`,
-          cause: error instanceof Error ? error : undefined,
-        });
+      const NodeRedis = await loadRedisModule();
+      if (loadGeneration === moduleCacheGeneration) {
+        cachedNodeRedis = NodeRedis;
       }
-
       return { NodeRedis };
     },
     { "redis.runtime": isDeno ? "deno" : "node" },
   );
+
+  const trackedLoad = load.finally(() => {
+    if (pendingModuleLoad === trackedLoad) pendingModuleLoad = null;
+  });
+  pendingModuleLoad = trackedLoad;
+  return trackedLoad;
 }
 
 export function clearModuleCache(): void {
-  NodeRedis = null;
+  moduleCacheGeneration++;
+  cachedNodeRedis = null;
+  pendingModuleLoad = null;
 }
