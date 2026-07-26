@@ -132,6 +132,17 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(ops.getProjectId(), "new-project-id");
     });
 
+    it("clears the project identity explicitly", () => {
+      const ops = createOps("token", "project-id");
+      ops.clearProjectId();
+
+      assertThrows(
+        () => ops.getProjectId(),
+        Error,
+        "Veryfront API client not initialized",
+      );
+    });
+
     it("should throw when getting project ID if not set", () => {
       const ops = createOps("token");
 
@@ -448,6 +459,157 @@ describe("VeryfrontAPIOperations", () => {
       await createOps().getReleaseFile("project-slug", "release-id", "pages/api/articles-2.ts");
 
       assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+  });
+
+  describe("file pagination guards", () => {
+    it("fails closed when the API repeats a pagination cursor", async () => {
+      let requests = 0;
+      stubJsonFetch(() => {
+        requests++;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: "loop", prev: null },
+        };
+      });
+
+      await assertRejects(
+        () => createOps().listAllBranchFiles("project-slug", "main"),
+        Error,
+        "repeated pagination cursor",
+      );
+      assertEquals(requests, 2);
+    });
+
+    it("rejects invalid page limits before making a request", async () => {
+      let requests = 0;
+      stubJsonFetch(() => {
+        requests++;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+        };
+      });
+
+      const ops = createOps();
+      for (const limit of [0, 101, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await assertRejects(
+          () => ops.listBranchFiles("project-slug", "main", { limit }),
+          Error,
+          "integer between 1 and 100",
+        );
+      }
+      assertEquals(requests, 0);
+    });
+  });
+
+  describe("request input and routing boundaries", () => {
+    it("preserves a configured API base path", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return { data: [] };
+      });
+      const ops = new VeryfrontAPIOperations(
+        "https://api.example.com/root/",
+        "token",
+        { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      );
+
+      await ops.listProjects();
+
+      assertEquals(requestedUrl, "https://api.example.com/root/projects");
+    });
+
+    it("rejects invalid project-list limits before making a request", async () => {
+      let requests = 0;
+      stubJsonFetch(() => {
+        requests++;
+        return { data: [] };
+      });
+      const ops = createOps();
+
+      for (const limit of [0, 101, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await assertRejects(
+          () => ops.listProjects({ limit }),
+          Error,
+          "integer between 1 and 100",
+        );
+      }
+      assertEquals(requests, 0);
+    });
+
+    it("canonicalizes domain hosts and matches canonical upstream domains", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          id: "00000000-0000-4000-a000-000000000001",
+          name: "Project",
+          slug: "project",
+          environments: [{
+            id: "00000000-0000-4000-a000-000000000002",
+            name: "production",
+            domains: ["EXAMPLE.COM."],
+            active_release_id: "00000000-0000-4000-a000-000000000003",
+          }],
+        };
+      });
+
+      const result = await createOps().lookupProjectByDomain("Example.COM:443");
+
+      assertEquals(new URL(requestedUrl).pathname, "/projects/example.com");
+      assertEquals(result?.environment?.name, "production");
+      assertEquals(result?.release_id, "00000000-0000-4000-a000-000000000003");
+    });
+
+    it("handles bracketed IPv6 hosts without corrupting the address", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          id: "00000000-0000-4000-a000-000000000001",
+          name: "Project",
+          slug: "project",
+          environments: [{
+            id: "00000000-0000-4000-a000-000000000002",
+            name: "development",
+            domains: ["[::1]"],
+            active_release_id: null,
+          }],
+        };
+      });
+
+      const result = await createOps().lookupProjectByDomain("[::1]:8000");
+
+      assertStringIncludes(requestedUrl, "/projects/%5B%3A%3A1%5D");
+      assertEquals(result?.environment?.name, "development");
+    });
+
+    it("rejects URL-like or credential-bearing domain inputs before fetch", async () => {
+      let requests = 0;
+      stubJsonFetch(() => {
+        requests++;
+        return {};
+      });
+
+      for (
+        const domain of [
+          "",
+          " example.com",
+          "https://example.com",
+          "user@example.com",
+          "example.com/path",
+          "example.com?token=secret",
+        ]
+      ) {
+        await assertRejects(
+          () => createOps().lookupProjectByDomain(domain),
+          Error,
+          "valid bounded host",
+        );
+      }
+      assertEquals(requests, 0);
     });
   });
 

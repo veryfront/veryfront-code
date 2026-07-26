@@ -1,10 +1,11 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger, parallelMap } from "#veryfront/utils";
 import { normalizeVeryfrontApiRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
 import {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,
+  type ListProjectsOptions,
   type ProjectStyleArtifactResolution,
   type ResolveStyleArtifactInput,
   type TokenProvider,
@@ -40,6 +41,8 @@ export class VeryfrontApiClient {
   private requestBranch?: string | null;
   private initialized = false;
   private initializingPromise?: Promise<void>;
+  private initializationController?: AbortController;
+  private initializationGeneration = 0;
   /** Cached project data from initialization - avoids redundant API calls */
   private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
 
@@ -92,7 +95,18 @@ export class VeryfrontApiClient {
   }
 
   setProjectSlug(slug: string): void {
+    if (typeof slug !== "string" || slug.trim().length === 0) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Project slug must be a non-empty string",
+        status: 400,
+      });
+    }
+
+    const previousSlug = this.getProjectSlug();
     this.requestProjectSlug = slug;
+    if (slug !== previousSlug) {
+      this.invalidateInitialization();
+    }
   }
 
   getProjectSlug(): string | undefined {
@@ -113,7 +127,11 @@ export class VeryfrontApiClient {
   }
 
   clearProjectSlug(): void {
+    const previousSlug = this.getProjectSlug();
     this.requestProjectSlug = undefined;
+    if (this.getProjectSlug() !== previousSlug) {
+      this.invalidateInitialization();
+    }
   }
 
   setContext(context: FileContext): void {
@@ -185,17 +203,32 @@ export class VeryfrontApiClient {
       return;
     }
 
-    this.initializingPromise = this.doInitialize();
+    const generation = this.initializationGeneration;
+    const controller = new AbortController();
+    this.initializationController = controller;
+    const initialization = this.doInitialize(slug, generation, controller.signal).then(() => {
+      this.assertInitializationCurrent(generation, controller.signal);
+    });
+    this.initializingPromise = initialization;
+
     try {
-      await this.initializingPromise;
+      await initialization;
     } finally {
-      this.initializingPromise = undefined;
+      if (this.initializingPromise === initialization) {
+        this.initializingPromise = undefined;
+      }
+      if (this.initializationController === controller) {
+        this.initializationController = undefined;
+      }
     }
   }
 
-  private async doInitialize(): Promise<void> {
+  private async doInitialize(
+    slug: string | undefined,
+    generation: number,
+    signal: AbortSignal,
+  ): Promise<void> {
     const initStartTime = performance.now();
-    const slug = this.getProjectSlug();
     logger.debug("doInitialize START", { slug });
 
     if (!slug) {
@@ -205,12 +238,15 @@ export class VeryfrontApiClient {
       });
     }
 
-    if (this.config.projectId) {
+    this.assertInitializationCurrent(generation, signal);
+
+    if (this.config.projectId && slug === this.config.projectSlug) {
       logger.debug("Using known projectId", {
         slug,
         projectId: this.config.projectId,
         duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
       });
+      this.assertInitializationCurrent(generation, signal);
       this.operations.setProjectId(this.config.projectId);
       this.initialized = true;
       return;
@@ -220,7 +256,8 @@ export class VeryfrontApiClient {
     // with tokens that have project access but not list access
     logger.debug("Calling getProject API", { slug });
     const getProjectStart = performance.now();
-    const project = await this.operations.getProject(slug);
+    const project = await this.operations.getProject(slug, signal);
+    this.assertInitializationCurrent(generation, signal);
     logger.debug("getProject API completed", {
       slug,
       projectId: project.id,
@@ -240,9 +277,30 @@ export class VeryfrontApiClient {
   }
 
   reset(): void {
-    this.initialized = false;
+    this.invalidateInitialization();
+  }
+
+  private invalidateInitialization(): void {
+    this.initializationGeneration++;
+    const controller = this.initializationController;
+    this.initializationController = undefined;
     this.initializingPromise = undefined;
-    this.operations.setProjectId("");
+    this.initialized = false;
+    this.cachedProjectData = undefined;
+    this.operations.clearProjectId();
+    controller?.abort(
+      new DOMException("Veryfront API client initialization was invalidated", "AbortError"),
+    );
+  }
+
+  private assertInitializationCurrent(generation: number, signal: AbortSignal): void {
+    signal.throwIfAborted();
+    if (generation !== this.initializationGeneration) {
+      throw new DOMException(
+        "Veryfront API client initialization was invalidated",
+        "AbortError",
+      );
+    }
   }
 
   getProjectId(): string {
@@ -262,8 +320,8 @@ export class VeryfrontApiClient {
   // Project Operations
   // =============================================================================
 
-  listProjects() {
-    return this.operations.listProjects();
+  listProjects(options: ListProjectsOptions = {}) {
+    return this.operations.listProjects(options);
   }
 
   getProject(projectRef?: string) {
@@ -451,7 +509,7 @@ export class VeryfrontApiClient {
 
   async getFileById(entityId: string): Promise<{ path: string; content: string } | null> {
     try {
-      const file = await this.getFile(entityId);
+      const file = await this.getFile(entityId, { expectedMissing: true });
       return { path: file.path, content: file.content };
     } catch (error) {
       if (error instanceof VeryfrontError && error.status === 404) return null;
@@ -460,8 +518,8 @@ export class VeryfrontApiClient {
   }
 
   async searchFiles(pattern: string): Promise<{ id?: string; path: string }[]> {
-    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
-    return result.files.map((f) => ({ id: f.id, path: f.path }));
+    const files = await this.listAllFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
+    return files.map((file) => ({ id: file.id, path: file.path }));
   }
 
   /**
@@ -477,38 +535,30 @@ export class VeryfrontApiClient {
   async searchFilesWithContent(
     pattern: string,
   ): Promise<Array<{ path: string; content: string }>> {
-    const result = await this.listFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
-
-    const filesWithContent: Array<{ path: string; content: string }> = [];
-    const filesNeedingContent: string[] = [];
-
-    for (const file of result.files) {
-      if (file.content) {
-        filesWithContent.push({ path: file.path, content: file.content });
-      } else {
-        filesNeedingContent.push(file.path);
-      }
-    }
-
-    if (filesNeedingContent.length === 0) return filesWithContent;
-
-    const fetched = await Promise.all(
-      filesNeedingContent.map(async (path) => {
-        try {
-          const content = await this.getFileContent(path);
-          return { path, content };
-        } catch (error) {
-          logger.debug("Failed to fetch file content during search", { path, error });
-          return null;
+    const files = await this.listAllFiles({ pattern, limit: DEFAULT_SEARCH_LIMIT });
+    const resolved = await parallelMap(
+      files,
+      async (file): Promise<{ path: string; content: string } | null> => {
+        if (file.content !== undefined) {
+          return { path: file.path, content: file.content };
         }
-      }),
+
+        try {
+          const content = await this.getOptionalFileContent(file.path);
+          return { path: file.path, content };
+        } catch (error) {
+          if (error instanceof VeryfrontError && error.status === 404) {
+            logger.debug("File disappeared during search", { path: file.path });
+            return null;
+          }
+          throw error;
+        }
+      },
     );
 
-    for (const item of fetched) {
-      if (item) filesWithContent.push(item);
-    }
-
-    return filesWithContent;
+    return resolved.filter(
+      (file): file is { path: string; content: string } => file !== null,
+    );
   }
 
   private listFilesByContext(

@@ -6,6 +6,7 @@ import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { VeryfrontAPIConfig } from "./types.ts";
 
 const baseConfig: VeryfrontAPIConfig = {
@@ -81,6 +82,45 @@ describe("VeryfrontApiClient", () => {
       client.setProjectSlug("request-slug");
       client.clearProjectSlug();
       assertEquals(client.getProjectSlug(), "config-slug");
+    });
+
+    it("rejects blank project slugs", () => {
+      const client = createClient();
+      assertThrows(
+        () => client.setProjectSlug(" \t "),
+        VeryfrontError,
+        "non-empty string",
+      );
+      assertEquals(client.getProjectSlug(), "config-slug");
+    });
+
+    it("setting the already-effective slug preserves initialized state", async () => {
+      const client = createClient({ ...baseConfig, projectId: "test-id" });
+      await client.initialize();
+      client.setProjectSlug("config-slug");
+      assertEquals(client.isInitialized(), true);
+      assertEquals(client.getProjectId(), "test-id");
+    });
+
+    it("does not reuse a configured project ID for a different request slug", async () => {
+      let requests = 0;
+      await withMockFetch(
+        () => {
+          requests++;
+          return Promise.resolve(Response.json({
+            id: "00000000-0000-4000-a000-000000000002",
+            name: "Project B",
+            slug: "project-b",
+          }));
+        },
+        async () => {
+          const client = createClient({ ...baseConfig, projectId: "project-a-id" });
+          client.setProjectSlug("project-b");
+          await client.initialize();
+          assertEquals(requests, 1);
+          assertEquals(client.getProjectId(), "00000000-0000-4000-a000-000000000002");
+        },
+      );
     });
   });
 
@@ -203,6 +243,69 @@ describe("VeryfrontApiClient", () => {
       // excessive cache misses and individual API round-trips.
       assertEquals(typeof client.searchFilesWithContent, "function");
     });
+
+    it("searches every result page and preserves empty file content", async () => {
+      let requests = 0;
+      await withMockFetch(
+        (input) => {
+          requests++;
+          const cursor = new URL(String(input)).searchParams.get("cursor");
+          return Promise.resolve(Response.json({
+            data: [{
+              path: cursor ? "second.ts" : "empty.ts",
+              content: cursor ? "export {};" : "",
+              size: cursor ? 10 : 0,
+              type: "file",
+              updated_at: "2026-07-26T00:00:00.000Z",
+            }],
+            page_info: {
+              self: null,
+              first: null,
+              next: cursor ? null : "second-page",
+              prev: null,
+            },
+          }));
+        },
+        async () => {
+          const files = await createClient().searchFilesWithContent("*.ts");
+          assertEquals(files, [
+            { path: "empty.ts", content: "" },
+            { path: "second.ts", content: "export {};" },
+          ]);
+          assertEquals(requests, 2);
+        },
+      );
+    });
+
+    it("propagates content-fetch failures instead of returning partial results", async () => {
+      const client = createClient();
+      const mutable = client as unknown as {
+        listAllFiles: () => Promise<
+          Array<{
+            path: string;
+            content?: string;
+            size: number;
+            type: "file";
+            updated_at: string;
+          }>
+        >;
+        getOptionalFileContent: (path: string) => Promise<string>;
+      };
+      mutable.listAllFiles = () =>
+        Promise.resolve([{
+          path: "missing-content.ts",
+          size: 1,
+          type: "file",
+          updated_at: "2026-07-26T00:00:00.000Z",
+        }]);
+      mutable.getOptionalFileContent = () => Promise.reject(new Error("content backend failed"));
+
+      await assertRejects(
+        () => client.searchFilesWithContent("*.ts"),
+        Error,
+        "content backend failed",
+      );
+    });
   });
 
   describe("context management", () => {
@@ -298,6 +401,115 @@ describe("VeryfrontApiClient", () => {
       assertEquals(client.isInitialized(), true);
       client.reset();
       assertEquals(client.isInitialized(), false);
+    });
+
+    it("clears cached project data and invalidates initialization in flight", async () => {
+      let request = 0;
+      let resolveFirst: ((response: Response) => void) | undefined;
+
+      await withMockFetch(
+        (_input, init) => {
+          request++;
+          if (request === 1) {
+            return new Promise<Response>((resolve, reject) => {
+              resolveFirst = resolve;
+              init?.signal?.addEventListener(
+                "abort",
+                () => reject(init.signal?.reason),
+                { once: true },
+              );
+            });
+          }
+          return Promise.resolve(Response.json({
+            id: "00000000-0000-4000-a000-000000000002",
+            name: "Replacement",
+            slug: "config-slug",
+          }));
+        },
+        async () => {
+          const client = createClient();
+          const pending = client.initialize();
+          await Promise.resolve();
+          client.reset();
+          resolveFirst?.(Response.json({
+            id: "00000000-0000-4000-a000-000000000001",
+            name: "Stale",
+            slug: "config-slug",
+          }));
+
+          await assertRejects(
+            () => pending,
+            DOMException,
+            "invalidated",
+          );
+          assertEquals(client.isInitialized(), false);
+          assertEquals(client.getCachedProject(), undefined);
+          assertThrows(() => client.getProjectId(), VeryfrontError, "not initialized");
+
+          await client.initialize();
+          assertEquals(client.getProjectId(), "00000000-0000-4000-a000-000000000002");
+          assertEquals(client.getCachedProject()?.name, "Replacement");
+        },
+      );
+    });
+
+    it("invalidates stale project identity when the effective slug changes", async () => {
+      await withMockFetch(
+        (input) => {
+          const slug = String(input).includes("/projects/project-b") ? "project-b" : "config-slug";
+          return Promise.resolve(Response.json({
+            id: slug === "project-b"
+              ? "00000000-0000-4000-a000-000000000002"
+              : "00000000-0000-4000-a000-000000000001",
+            name: slug,
+            slug,
+          }));
+        },
+        async () => {
+          const client = createClient();
+          await client.initialize();
+          assertEquals(client.getProjectId(), "00000000-0000-4000-a000-000000000001");
+
+          client.setProjectSlug("project-b");
+          assertEquals(client.isInitialized(), false);
+          assertEquals(client.getCachedProject(), undefined);
+          assertThrows(() => client.getProjectId(), VeryfrontError, "not initialized");
+
+          await client.initialize();
+          assertEquals(client.getProjectId(), "00000000-0000-4000-a000-000000000002");
+          assertEquals(client.getCachedProject()?.slug, "project-b");
+        },
+      );
+    });
+
+    it("invalidates request-scoped identity when clearing a slug override", async () => {
+      await withMockFetch(
+        (input) => {
+          const slug = String(input).includes("/projects/project-b") ? "project-b" : "config-slug";
+          return Promise.resolve(Response.json({
+            id: slug === "project-b"
+              ? "00000000-0000-4000-a000-000000000002"
+              : "00000000-0000-4000-a000-000000000001",
+            name: slug,
+            slug,
+          }));
+        },
+        async () => {
+          const client = createClient();
+          client.setProjectSlug("project-b");
+          await client.initialize();
+          assertEquals(client.getProjectId(), "00000000-0000-4000-a000-000000000002");
+
+          client.clearProjectSlug();
+          assertEquals(client.getProjectSlug(), "config-slug");
+          assertEquals(client.isInitialized(), false);
+          assertEquals(client.getCachedProject(), undefined);
+          assertThrows(() => client.getProjectId(), VeryfrontError, "not initialized");
+
+          await client.initialize();
+          assertEquals(client.getProjectId(), "00000000-0000-4000-a000-000000000001");
+        },
+      );
     });
   });
 

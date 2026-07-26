@@ -36,6 +36,9 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 const logger = baseLogger.component("api");
 
 const DEFAULT_PAGE_LIMIT = 100;
+const MAX_LIST_ALL_PAGES = 10_000;
+const MAX_DOMAIN_CODE_UNITS = 253;
+const MAX_DOMAIN_INPUT_CODE_UNITS = MAX_DOMAIN_CODE_UNITS + 8;
 
 export type TokenProvider = () => string;
 
@@ -46,6 +49,13 @@ export interface ListFilesOptions {
   pattern?: string;
   signal?: AbortSignal;
   sortBy?: "path" | "updated_at";
+  sortOrder?: "asc" | "desc";
+}
+
+export interface ListProjectsOptions {
+  search?: string;
+  limit?: number;
+  sortBy?: string;
   sortOrder?: "asc" | "desc";
 }
 
@@ -119,6 +129,13 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
     sortOrder = "desc",
   } = options;
 
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > DEFAULT_PAGE_LIMIT) {
+    throw API_CLIENT_ERROR.create({
+      detail: `File-list limit must be an integer between 1 and ${DEFAULT_PAGE_LIMIT}`,
+      status: 400,
+    });
+  }
+
   const params = new URLSearchParams({
     limit: String(limit),
     sort_by: sortBy,
@@ -175,19 +192,77 @@ function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolutio
   };
 }
 
+function normalizeLookupDomain(
+  value: string,
+  source: "request" | "upstream",
+): string {
+  const status = source === "request" ? 400 : 502;
+  const detail = source === "request"
+    ? "Domain lookup requires a valid bounded host"
+    : "Veryfront API returned an invalid environment domain";
+  const fail = (): never => {
+    throw API_CLIENT_ERROR.create({ detail, status });
+  };
+
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_DOMAIN_INPUT_CODE_UNITS ||
+    value !== value.trim() ||
+    /[\p{Cc}\s/@?#]/u.test(value)
+  ) {
+    return fail();
+  }
+
+  try {
+    const parsed = new URL(`http://${value}`);
+    if (
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      parsed.hostname.length === 0 ||
+      parsed.hostname.length > MAX_DOMAIN_CODE_UNITS
+    ) {
+      return fail();
+    }
+
+    const normalized = parsed.hostname.toLowerCase().replace(/\.$/u, "");
+    return normalized.length > 0 ? normalized : fail();
+  } catch {
+    return fail();
+  }
+}
+
 async function listAllFiles(
   list: (cursor?: string) => Promise<FileListResult>,
 ): Promise<ProjectFile[]> {
   const allFiles: ProjectFile[] = [];
+  const seenCursors = new Set<string>();
   let cursor: string | undefined;
 
-  do {
+  for (let page = 0; page < MAX_LIST_ALL_PAGES; page++) {
     const result = await list(cursor);
     allFiles.push(...result.files);
-    cursor = result.page_info.next ?? undefined;
-  } while (cursor);
+    const nextCursor = result.page_info.next ?? undefined;
+    if (!nextCursor) return allFiles;
 
-  return allFiles;
+    if (seenCursors.has(nextCursor)) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Veryfront API returned a repeated pagination cursor",
+        status: 502,
+      });
+    }
+
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  throw API_CLIENT_ERROR.create({
+    detail: `Veryfront API pagination exceeded ${MAX_LIST_ALL_PAGES} pages`,
+    status: 502,
+  });
 }
 
 export class VeryfrontAPIOperations {
@@ -222,6 +297,10 @@ export class VeryfrontAPIOperations {
     this.projectId = projectId;
   }
 
+  clearProjectId(): void {
+    this.projectId = undefined;
+  }
+
   getProjectId(): string {
     if (this.projectId) return this.projectId;
 
@@ -230,25 +309,34 @@ export class VeryfrontAPIOperations {
     });
   }
 
-  async listProjects(options?: {
-    search?: string;
-    limit?: number;
-    sortBy?: string;
-    sortOrder?: "asc" | "desc";
-  }): Promise<Project[]> {
+  async listProjects(options: ListProjectsOptions = {}): Promise<Project[]> {
+    if (
+      options.limit !== undefined &&
+      (
+        !Number.isSafeInteger(options.limit) ||
+        options.limit < 1 ||
+        options.limit > DEFAULT_PAGE_LIMIT
+      )
+    ) {
+      throw API_CLIENT_ERROR.create({
+        detail: `Project-list limit must be an integer between 1 and ${DEFAULT_PAGE_LIMIT}`,
+        status: 400,
+      });
+    }
+
     const params = new URLSearchParams();
-    if (options?.search) params.set("search", options.search);
-    if (options?.limit) params.set("limit", String(options.limit));
-    if (options?.sortBy) params.set("sort_by", options.sortBy);
-    if (options?.sortOrder) params.set("sort_order", options.sortOrder);
+    if (options.search) params.set("search", options.search);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.sortBy) params.set("sort_by", options.sortBy);
+    if (options.sortOrder) params.set("sort_order", options.sortOrder);
 
     const query = params.toString();
     const raw = await this.request(query ? `/projects?${query}` : "/projects");
     return getListProjectsResponseSchema().parse(raw).data;
   }
 
-  async getProject(projectRef: string): Promise<Project> {
-    const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`);
+  async getProject(projectRef: string, signal?: AbortSignal): Promise<Project> {
+    const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`, { signal });
     return getProjectSchema().parse(raw);
   }
 
@@ -482,20 +570,22 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
-    return withSpan(
+  async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
+    const normalizedDomain = normalizeLookupDomain(domain, "request");
+    return await withSpan(
       SpanNames.API_DOMAIN_LOOKUP,
       async () => {
-        const domainWithoutPort = domain.replace(/:\d+$/, "");
-        const url = `/projects/${encodeURIComponent(domainWithoutPort)}`;
-        logger.debug("lookupProjectByDomain", { domain });
+        const url = `/projects/${encodeURIComponent(normalizedDomain)}`;
+        logger.debug("lookupProjectByDomain", { domain: normalizedDomain });
 
         try {
           const raw = await this.request(url);
           const project = getProjectWithEnvironmentsSchema().parse(raw);
 
           const matchingEnv = project.environments?.find((env) =>
-            env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase())
+            env.domains?.some((candidate) =>
+              normalizeLookupDomain(candidate, "upstream") === normalizedDomain
+            )
           );
 
           const response: LookupDomainResponse = {
@@ -507,7 +597,7 @@ export class VeryfrontAPIOperations {
           };
 
           logger.debug("Domain lookup result", {
-            domain,
+            domain: normalizedDomain,
             projectSlug: response.project_slug,
             environment: response.environment?.name,
           });
@@ -515,13 +605,13 @@ export class VeryfrontAPIOperations {
           return response;
         } catch (error) {
           if (error instanceof VeryfrontError && error.status === 404) {
-            logger.debug("No project found for domain", { domain });
+            logger.debug("No project found for domain", { domain: normalizedDomain });
             return null;
           }
           throw error;
         }
       },
-      { "api.domain": domain },
+      { "api.domain": normalizedDomain },
     );
   }
 
@@ -714,7 +804,7 @@ export class VeryfrontAPIOperations {
   private request(endpoint: string, options: TransportRequestInit = {}): Promise<unknown> {
     return withSpan(
       SpanNames.API_REQUEST,
-      () => this.transport.request(`${this.apiBaseUrl}${endpoint}`, options),
+      () => this.transport.request(endpoint, options),
       { "api.endpoint": endpoint, "api.base_url": this.apiBaseUrl },
     );
   }

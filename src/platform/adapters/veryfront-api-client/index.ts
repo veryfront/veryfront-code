@@ -10,6 +10,7 @@ export {
   type FileDetail,
   type FileListResult,
   type ListFilesOptions,
+  type ListProjectsOptions,
   type ProjectStyleArtifactResolution,
   type ResolveStyleArtifactInput,
   type StyleArtifactSelector,
