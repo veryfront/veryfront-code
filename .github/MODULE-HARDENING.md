@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    22 |      37.9% | Current formal closure evidence remains valid       |
+| Closed                         |    23 |      39.7% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    35 |      60.3% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    34 |      58.6% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -45,6 +45,7 @@ stricter closure count.
 - `embedding`
 - `eval`
 - `extensions`
+- `fs`
 - `issues`
 - `knowledge`
 - `markdown`
@@ -73,7 +74,6 @@ stricter closure count.
 - `data`
 - `discovery`
 - `errors`
-- `fs`
 - `html`
 - `integrations`
 - `internal-agents`
@@ -122,20 +122,23 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
-`embedding`, `eval`, `extensions`, `issues`, `knowledge`, `markdown`, `mdx`,
-`metrics`, `provider`, `prompt`, `registry`, `repositories`, `runs`, `runtime`,
-`sandbox`, `schemas`, `studio`, and `version.ts`. The latest Chat findings and
-the independent adversarial knowledge, Markdown, MDX, provider, repositories,
-runs, runtime, and sandbox findings are remediated and revalidated. `prompt` is
-closed after its cross-cutting registry, discovery, HMR, request-lifecycle, and
-MCP findings were remediated and revalidated. `registry` is closed after its
-scope lifecycle, request-generation isolation, transaction invalidation, and
-cross-entry validation findings were remediated and revalidated. `cache` is
-closed after its backend contracts, key identity and invalidation, portability,
-request lifecycle, multi-tier coordination, and dependency hashing findings
-were remediated and revalidated. `channels` is closed after its signed-envelope,
-proxy trust, route identity, invoke lifecycle, serialization, and consumer
-findings were remediated and revalidated. `resource` has received a deep
+`embedding`, `eval`, `extensions`, `fs`, `issues`, `knowledge`, `markdown`,
+`mdx`, `metrics`, `provider`, `prompt`, `registry`, `repositories`, `runs`,
+`runtime`, `sandbox`, `schemas`, `studio`, and `version.ts`. The latest Chat
+findings and the independent adversarial knowledge, Markdown, MDX, provider,
+repositories, runs, runtime, and sandbox findings are remediated and
+revalidated. `prompt` is closed after its cross-cutting registry, discovery,
+HMR, request-lifecycle, and MCP findings were remediated and revalidated.
+`registry` is closed after its scope lifecycle, request-generation isolation,
+transaction invalidation, and cross-entry validation findings were remediated
+and revalidated. `cache` is closed after its backend contracts, key identity
+and invalidation, portability, request lifecycle, multi-tier coordination, and
+dependency hashing findings were remediated and revalidated. `channels` is
+closed after its signed-envelope, proxy trust, route identity, invoke lifecycle,
+serialization, and consumer findings were remediated and revalidated. `fs` is
+closed after its public facade, cross-runtime failure semantics, atomic
+temporary allocation, path/cwd dependencies, package declarations, and direct
+consumers were remediated and revalidated. `resource` has received a deep
 current-state review and substantial remediation, but remains open while its
 cache-policy breaking-change decision is unresolved. Each closure requires a
 complete consumer map, deep module-level review, adversarial boundary tests,
@@ -2199,5 +2202,79 @@ and freshness without consuming the streaming request body; every handler still
 performs authoritative body, audience, project, subject, and scoped-claim
 binding before acting. Proxy and Server consumer units changed here remain
 listed for their own top-level revalidation.
+
+### FS closure checkpoint
+
+The `fs` audit unit owns the intentionally narrow `veryfront/fs` public facade:
+runtime-neutral text and directory operations, canonical path helpers, current
+working-directory inspection, the `FileSystem` type, and construction of the
+runtime-native filesystem implementation. The implementation dependency is the
+Platform compatibility layer. Direct production consumers are CLI sync,
+deployment-provenance and server-startup boundaries, generated integration and
+coding-agent templates, discovery transpilation, and lockfile persistence. The
+facade is a published Deno and npm subpath; runtime exports, generated
+declarations, and the built Node artifact are therefore part of the contract.
+
+The current FS findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** Node temporary-directory
+  prefixes accepted path separators and parent traversal, allocation used only
+  eight UUID characters, and recursive `mkdir` treated a pre-existing candidate
+  as success. The source was manual path composition plus non-exclusive
+  creation instead of the operating system's temp primitive. The consequence
+  was allocation outside the temp root and reuse of an attacker-precreated
+  directory for sensitive intermediate files. Both runtimes now accept only a
+  basename prefix, reject invalid input through the promised asynchronous
+  boundary, and Node uses atomic `mkdtemp` beneath the OS temp root.
+- **Symptom -> Source -> Consequence -> Remedy:** `chmod` reported success for
+  missing paths, permission denial, and arbitrary I/O failures. The source was
+  a broad catch intended to tolerate limited Windows chmod support. The
+  consequence was credential stores and other callers believing restrictive
+  permissions had been applied when no change occurred. Only explicit
+  unsupported-operation errors on Windows remain compatibility no-ops; every
+  operational failure now rejects on Deno, Node, and Bun.
+- **Symptom -> Source -> Consequence -> Remedy:** recursive removal rejected a
+  missing path on Deno but silently succeeded on Node. The source was coupling
+  Node's `force` option to the unrelated `recursive` flag. The consequence was
+  runtime-dependent control flow and hidden stale or misidentified cleanup
+  targets. Node now keeps `force` disabled, matching the public fail-closed
+  contract; callers that intentionally tolerate absence use
+  `isNotFoundError`.
+- **Symptom -> Source -> Consequence -> Remedy:** the public-barrel test checked
+  runtime names but did not prove the `FileSystem` type or its non-barrel
+  capabilities survived packaging, while the npm smoke covered only happy-path
+  helpers. The consequence was a green Deno facade despite Node-only security
+  and failure-semantic regressions. The barrel now typechecks and instantiates
+  the public contract, and the built-package smoke adversarially exercises
+  chmod, recursive removal, prefix traversal, and pre-existing temp-directory
+  collisions.
+
+Reproducible checkpoint evidence:
+
+- The regression-first Deno test failed because `chmod` resolved for a missing
+  path. The pre-fix built Node smoke then failed all three added checks for
+  chmod failure propagation, path-bearing temp prefixes, and collision reuse.
+- The public facade, filesystem implementation, path/cwd dependencies, runtime
+  integration, auth stores, deployment provenance, ignore handling, discovery
+  transpilation, and lockfile consumer matrix passes 23 suites and 412 nested
+  steps with zero failures.
+- The deterministic complete unit baseline
+  (`DENO_JOBS=1 deno task test:unit`) passes 3,231 tests and 24,693 nested steps
+  with zero failures; the existing one test and five nested steps remain
+  explicitly ignored.
+- `deno task build:npm` rebuilds the root package and every extension. The
+  resulting Node package passes 90/90 runtime smoke checks, including all new FS
+  assertions, and the npm export-map verifier passes all 68 public paths.
+- `deno task docs` and `deno task docs:coverage` generate 39 reference pages
+  and account for all 3,967 published source links. The `veryfront/fs`
+  reference now states the fail-closed removal, existence, and error contracts.
+- `deno task verify:quick` passes manifest freshness, formatting, lint and
+  architecture ratchets, all 739 documentation links and guide contracts, and
+  every configured source and browser entrypoint typecheck.
+
+No unresolved critical or high-confidence FS production risk remains. Platform
+remains listed for its own top-level review because it owns the broader
+compatibility layer beyond the narrow filesystem, path, and cwd surface
+validated here.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

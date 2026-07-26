@@ -10,7 +10,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join as joinPath } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -290,7 +292,53 @@ try {
   // Sanity: join() should join paths
   const joined = fs.join("foo", "bar", "baz.ts");
   assert(joined === "foo/bar/baz.ts" || joined === "foo\\bar\\baz.ts", "join() works");
-  console.log("  OK    fs — 7 checks");
+
+  const adapter = fs.createFileSystem();
+  let chmodRejected = false;
+  try {
+    await adapter.chmod(resolve(NPM, ".missing-chmod-target"), 0o600);
+  } catch {
+    chmodRejected = true;
+  }
+  assert(chmodRejected, "chmod surfaces missing-path failures");
+
+  let recursiveRemoveRejected = false;
+  try {
+    await adapter.remove(resolve(NPM, ".missing-recursive-remove"), { recursive: true });
+  } catch {
+    recursiveRemoveRejected = true;
+  }
+  assert(recursiveRemoveRejected, "recursive remove surfaces missing-path failures");
+
+  const traversalPrefix = `../veryfront-fs-traversal-${process.pid}-`;
+  let escapedTempDir;
+  let traversalRejected = false;
+  try {
+    escapedTempDir = await adapter.makeTempDir({ prefix: traversalPrefix });
+  } catch {
+    traversalRejected = true;
+  } finally {
+    if (escapedTempDir) await rm(escapedTempDir, { recursive: true, force: true });
+  }
+  assert(traversalRejected, "makeTempDir rejects path-bearing prefixes");
+
+  const collisionPrefix = `veryfront-fs-collision-${process.pid}-`;
+  const fixedUuid = "11111111-1111-4111-8111-111111111111";
+  const collisionPath = joinPath(tmpdir(), `${collisionPrefix}11111111`);
+  const originalRandomUuid = globalThis.crypto.randomUUID;
+  let allocatedTempDir;
+  await mkdir(collisionPath);
+  try {
+    globalThis.crypto.randomUUID = () => fixedUuid;
+    allocatedTempDir = await adapter.makeTempDir({ prefix: collisionPrefix });
+    assert(allocatedTempDir !== collisionPath, "makeTempDir never reuses a pre-existing directory");
+  } finally {
+    globalThis.crypto.randomUUID = originalRandomUuid;
+    if (allocatedTempDir) await rm(allocatedTempDir, { recursive: true, force: true });
+    await rm(collisionPath, { recursive: true, force: true });
+  }
+
+  console.log("  OK    fs — 11 checks");
 } catch (err) {
   failed++;
   errors.push(`fs: ${err.message}`);

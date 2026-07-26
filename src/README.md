@@ -668,7 +668,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - Cross-runtime file operations (read, write, exists, mkdir)
 - Path utilities (join, resolve, dirname, basename, extname)
-- Working directory management
+- Working directory inspection
 
 #### `markdown/` - Markdown rendering
 

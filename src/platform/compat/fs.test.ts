@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests verify the cross-runtime filesystem abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   chmod,
@@ -212,6 +212,13 @@ describe("Filesystem Compat", () => {
       await remove(dirPath, { recursive: true });
       assertEquals(await exists(dirPath), false);
     });
+
+    it("surfaces a missing path even when recursive", async () => {
+      await assertRejects(
+        () => remove(join(testDir, "missing-recursive-remove"), { recursive: true }),
+        Error,
+      );
+    });
   });
 
   describe("makeTempDir", () => {
@@ -224,6 +231,21 @@ describe("Filesystem Compat", () => {
 
       await remove(tempDir, { recursive: true });
     });
+
+    it("rejects path-bearing prefixes", async () => {
+      await assertRejects(
+        () => makeTempDir({ prefix: "../outside-temp-root-" }),
+        Error,
+      );
+      await assertRejects(
+        () => makeTempDir({ prefix: "nested/temp-" }),
+        Error,
+      );
+      await assertRejects(
+        () => makeTempDir({ prefix: String.raw`nested\temp-` }),
+        Error,
+      );
+    });
   });
 
   describe("chmod", () => {
@@ -233,6 +255,13 @@ describe("Filesystem Compat", () => {
 
       // Should not throw (may be no-op on Windows)
       await chmod(filePath, 0o600);
+    });
+
+    it("surfaces filesystem failures", async () => {
+      await assertRejects(
+        () => chmod(join(testDir, "missing-chmod-target.txt"), 0o600),
+        Error,
+      );
     });
   });
 

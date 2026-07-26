@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as fsModule from "./index.ts";
 import * as publicFsModule from "veryfront/fs";
+import type { FileSystem as PublicFileSystem } from "veryfront/fs";
 import * as compatFsModule from "#veryfront/platform/compat/fs.ts";
 import * as pathModule from "#veryfront/platform/compat/path/index.ts";
 import * as processModule from "#veryfront/platform/compat/process.ts";
@@ -64,5 +65,10 @@ describe("fs/index.ts exports", () => {
     assertEquals(publicFsModule.readTextFile, fsModule.readTextFile);
     assertEquals(publicFsModule.resolve, fsModule.resolve);
     assertEquals(publicFsModule.cwd, fsModule.cwd);
+
+    const fileSystem: PublicFileSystem = publicFsModule.createFileSystem();
+    assertEquals(typeof fileSystem.makeTempDir, "function");
+    assertEquals(typeof fileSystem.chmod, "function");
+    assertEquals(typeof fileSystem.remove, "function");
   });
 });

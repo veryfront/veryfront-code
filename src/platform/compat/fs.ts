@@ -2,6 +2,33 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
+const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
+const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
+  "ENOSYS",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+]);
+
+function validateTempDirectoryPrefix(prefix: unknown): string {
+  if (typeof prefix !== "string") {
+    throw new TypeError("Temporary directory prefix must be a string");
+  }
+  if (prefix.includes("/") || prefix.includes("\\") || prefix.includes("\0")) {
+    throw new TypeError(
+      "Temporary directory prefix must not contain path separators or null bytes",
+    );
+  }
+  return prefix;
+}
+
+function isUnsupportedChmodError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "NotSupported") return true;
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === "string" && UNSUPPORTED_CHMOD_ERROR_CODES.has(code);
+}
+
 /**
  * Typed accessor for the Deno global.
  *
@@ -14,7 +41,12 @@ function denoGlobal(): typeof Deno {
   return (globalThis as { Deno: typeof Deno }).Deno;
 }
 
-/** Public API contract for file system. */
+/**
+ * Runtime-neutral filesystem contract.
+ *
+ * Operations reject filesystem failures. Callers that intentionally tolerate a
+ * missing path can classify the rejection with {@link isNotFoundError}.
+ */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
   readFile(path: string): Promise<Uint8Array>;
@@ -29,8 +61,11 @@ export interface FileSystem {
   readDir(
     path: string,
   ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }>;
+  /** Remove a path, rejecting when it does not exist. */
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+  /** Atomically create a unique directory beneath the operating-system temp root. */
   makeTempDir(options?: { prefix?: string }): Promise<string>;
+  /** Change permissions, rejecting operational failures. */
   chmod(path: string, mode: number): Promise<void>;
 }
 
@@ -70,6 +105,7 @@ interface NodeFsPromises {
     }>
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  mkdtemp(prefix: string): Promise<string>;
   chmod(path: string, mode: number): Promise<void>;
 }
 
@@ -207,27 +243,29 @@ class NodeFileSystem implements FileSystem {
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     const recursive = options?.recursive ?? false;
-    await this.getFs().rm(path, { recursive, force: recursive });
+    await this.getFs().rm(path, { recursive, force: false });
   }
 
   async makeTempDir(options?: { prefix?: string }): Promise<string> {
     await this.ensureInitialized();
-    const tempDir = this.getPath().join(
-      this.getOs().tmpdir(),
-      `${options?.prefix ?? "tmp-"}${crypto.randomUUID().slice(0, 8)}`,
+    const prefix = validateTempDirectoryPrefix(
+      options?.prefix ?? DEFAULT_TEMP_DIRECTORY_PREFIX,
     );
-    await this.getFs().mkdir(tempDir, { recursive: true });
-    return tempDir;
+    const tempRoot = this.getOs().tmpdir();
+    const separator = this.getPath().sep;
+    const tempRootPrefix = tempRoot.endsWith(separator) ? tempRoot : `${tempRoot}${separator}`;
+    return await this.getFs().mkdtemp(`${tempRootPrefix}${prefix}`);
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     await this.ensureInitialized();
     try {
       await this.getFs().chmod(path, mode);
-    } catch {
-      // Ignore errors on Windows where chmod is not fully supported.
-      // Intentionally not logged: this low-level compat module must stay
-      // importable without `--allow-env` (the logger reads env at import).
+    } catch (error: unknown) {
+      if (this.getOs().platform() === "win32" && isUnsupportedChmodError(error)) {
+        return;
+      }
+      throw error;
     }
   }
 }
@@ -311,20 +349,26 @@ class DenoFileSystem implements FileSystem {
     await denoGlobal().remove(path, { recursive: options?.recursive ?? false });
   }
 
-  makeTempDir(options?: { prefix?: string }): Promise<string> {
-    return denoGlobal().makeTempDir({ prefix: options?.prefix });
+  async makeTempDir(options?: { prefix?: string }): Promise<string> {
+    const prefix = validateTempDirectoryPrefix(
+      options?.prefix ?? DEFAULT_TEMP_DIRECTORY_PREFIX,
+    );
+    return await denoGlobal().makeTempDir({ prefix });
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     try {
       await denoGlobal().chmod(path, mode);
-    } catch (_) {
-      /* expected: chmod is not fully supported on Windows */
+    } catch (error: unknown) {
+      if (denoGlobal().build.os === "windows" && isUnsupportedChmodError(error)) {
+        return;
+      }
+      throw error;
     }
   }
 }
 
-/** Create file system. */
+/** Create the runtime-native filesystem implementation. */
 export function createFileSystem(): FileSystem {
   return isDeno ? new DenoFileSystem() : new NodeFileSystem();
 }
@@ -356,7 +400,7 @@ export function writeFile(path: string, data: Uint8Array): Promise<void> {
   return getFs().writeFile(path, data);
 }
 
-/** Check whether a path exists. */
+/** Return false for a missing path and propagate every other filesystem error. */
 export function exists(path: string): Promise<boolean> {
   return getFs().exists(path);
 }
@@ -395,7 +439,7 @@ export function mkdir(path: string, options?: { recursive?: boolean }): Promise<
   return getFs().mkdir(path, options);
 }
 
-/** Remove a file or directory. */
+/** Remove a file or directory, rejecting when the path does not exist. */
 export function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().remove(path, options);
 }
@@ -412,12 +456,12 @@ export function readDir(
   return getFs().readDir(path);
 }
 
-/** Create temp dir. */
+/** Atomically create a unique directory beneath the operating-system temp root. */
 export function makeTempDir(options?: { prefix?: string }): Promise<string> {
   return getFs().makeTempDir(options);
 }
 
-/** Change file permissions. */
+/** Change file permissions, rejecting operational failures. */
 export function chmod(path: string, mode: number): Promise<void> {
   return getFs().chmod(path, mode);
 }
@@ -455,7 +499,7 @@ type DenoGlobal = typeof globalThis & {
   };
 };
 
-/** Error shape for is not found. */
+/** Return whether an error or its cause chain represents a missing path. */
 export function isNotFoundError(error: unknown, seen: Set<unknown> = new Set()): boolean {
   if (seen.has(error)) return false;
   seen.add(error);
