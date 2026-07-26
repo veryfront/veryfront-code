@@ -1,4 +1,5 @@
 import type { ChatUiMessageChunk, MessageMetadata } from "./types.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 
 /** Default value for chat stream idle timeout ms. */
 export const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 120_000;
@@ -363,10 +364,14 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
 }
 
 function requirePositiveTimeout(value: number, optionName: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new RangeError(`Chat stream watchdog ${optionName} must be a positive safe integer`);
+  const normalized = normalizeTimerDurationMs(
+    value,
+    `Chat stream watchdog ${optionName}`,
+  );
+  if (normalized === 0) {
+    throw new RangeError(`Chat stream watchdog ${optionName} must be greater than zero`);
   }
-  return value;
+  return normalized;
 }
 
 function normalizeLongRunningToolPrefixes(prefixes: Iterable<string>): string[] {

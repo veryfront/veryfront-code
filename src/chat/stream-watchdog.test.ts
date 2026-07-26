@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import {
   createChatStreamWatchdog,
   getNextChatStreamWatchdogState,
@@ -17,7 +18,15 @@ const watchdogOptions = {
 
 describe("chat/stream-watchdog", () => {
   it("rejects invalid timeout and long-running-prefix configuration", () => {
-    for (const idleTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (
+      const idleTimeoutMs of [
+        0,
+        -1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+      ]
+    ) {
       assertThrows(
         () => createChatStreamWatchdog({ idleTimeoutMs }),
         RangeError,

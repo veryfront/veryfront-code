@@ -63,6 +63,8 @@ describe("chat/knowledge-source-document", () => {
       const path of [
         "knowledge/../secret.md",
         "knowledge/./secret.md",
+        "knowledge/%2e%2e/secret.md",
+        "knowledge/%2Fsecret.md",
         "knowledge//secret.md",
         "knowledge\\secret.md",
         "knowledge/",

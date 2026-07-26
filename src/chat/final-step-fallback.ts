@@ -7,6 +7,7 @@ import {
 } from "./conversation.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "./types.ts";
 import { parseKnownProblemBody, safeJsonParse } from "./provider-errors.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 
 function toToolInput(value: unknown): Record<string, unknown> {
   return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
@@ -891,13 +892,20 @@ async function resolveStreamPromiseWithTimeout<T>(
   timeoutMs: number,
   fallback: T,
 ): Promise<T> {
+  const normalizedTimeoutMs = normalizeTimerDurationMs(
+    timeoutMs,
+    "Chat final-step timeoutMs",
+  );
   let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   try {
     const resolved = await Promise.race([
       Promise.resolve(promise),
       new Promise<typeof STREAM_PROMISE_TIMEOUT_TOKEN>((resolve) => {
-        timeoutId = globalThis.setTimeout(() => resolve(STREAM_PROMISE_TIMEOUT_TOKEN), timeoutMs);
+        timeoutId = globalThis.setTimeout(
+          () => resolve(STREAM_PROMISE_TIMEOUT_TOKEN),
+          normalizedTimeoutMs,
+        );
       }),
     ]);
 

@@ -450,6 +450,31 @@ describe("chat/ag-ui", () => {
     ]);
   });
 
+  it("parses complete JSON number grammar in serialized tool results", () => {
+    const state = createAgUiChatEventDecoderState();
+    const exponent = decodeAgUiSseChunk(
+      state,
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-exponent","content":"1e3"}\n\n',
+    );
+    const leadingZero = decodeAgUiSseChunk(
+      state,
+      'event: ToolCallResult\ndata: {"toolCallId":"tool-leading-zero","content":"01"}\n\n',
+    );
+
+    assertEquals(exponent.events[0]?.chatEvents.at(-1), {
+      type: "tool-output-available",
+      toolCallId: "tool-exponent",
+      output: 1_000,
+      providerExecuted: true,
+    });
+    assertEquals(leadingZero.events[0]?.chatEvents.at(-1), {
+      type: "tool-output-available",
+      toolCallId: "tool-leading-zero",
+      output: "01",
+      providerExecuted: true,
+    });
+  });
+
   it("retains decoded wire events alongside canonical chat events", () => {
     const state = createAgUiChatEventDecoderState();
     const result = decodeAgUiSseChunk(
