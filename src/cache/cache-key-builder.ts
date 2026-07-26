@@ -7,7 +7,9 @@ import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
 const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
 const EncodeURIComponent = encodeURIComponent;
+const IntrinsicWeakMap = WeakMap;
 const NumberPrototypeToString = Number.prototype.toString;
+const ObjectFreeze = Object.freeze;
 const ReflectApply = Reflect.apply;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeIncludes = String.prototype.includes;
@@ -15,6 +17,9 @@ const StringPrototypePadStart = String.prototype.padStart;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const WeakMapPrototypeDelete = WeakMap.prototype.delete;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 
 type MultiProjectRequestContextType = {
   projectSlug: string;
@@ -37,6 +42,7 @@ type MultiProjectRequestContextSnapshot =
 type MultiProjectRequestContextProvider = () => MultiProjectRequestContextSnapshot | null;
 
 let getCurrentRequestContextProvider: MultiProjectRequestContextProvider | undefined;
+const registryScopeOwners = new IntrinsicWeakMap<object, object>();
 
 function isRevokedRequestContext(
   context: MultiProjectRequestContextSnapshot | null | undefined,
@@ -47,6 +53,18 @@ function isRevokedRequestContext(
 
 function getMultiProjectRequestContextSnapshot(): MultiProjectRequestContextSnapshot | null {
   return getCurrentRequestContextProvider?.() ?? null;
+}
+
+function weakMapDelete<K extends object, V>(map: WeakMap<K, V>, key: K): void {
+  ReflectApply(WeakMapPrototypeDelete, map, [key]);
+}
+
+function weakMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return ReflectApply(WeakMapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  ReflectApply(WeakMapPrototypeSet, map, [key, value]);
 }
 
 function throwFinalizedRequestContextInvariant(): never {
@@ -134,6 +152,20 @@ function encodeRegistryScopeSegment(value: string): string {
     return encoded +
       EncodeURIComponent(ReflectApply(StringPrototypeSlice, value, [chunkStart]) as string);
   }
+}
+
+/**
+ * Build the canonical registry scope for a versioned preview or production
+ * source. Every segment is encoded independently so delimiter-bearing tenant
+ * identifiers cannot alias another scope.
+ */
+export function buildVersionedRegistryScopeId(
+  projectId: string,
+  mode: CacheKeyContext["mode"],
+  versionId: string,
+): string {
+  return `${encodeRegistryScopeSegment(projectId)}:${mode}:` +
+    encodeRegistryScopeSegment(versionId);
 }
 
 /**
@@ -276,8 +308,11 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   const cacheCtx = getCacheKeyContextStore();
   if (cacheCtx) {
     return {
-      scopeId: `${encodeRegistryScopeSegment(cacheCtx.projectId)}:${cacheCtx.mode}:` +
-        encodeRegistryScopeSegment(cacheCtx.versionId),
+      scopeId: buildVersionedRegistryScopeId(
+        cacheCtx.projectId,
+        cacheCtx.mode,
+        cacheCtx.versionId,
+      ),
       immutable: cacheCtx.mode === "production",
     };
   }
@@ -289,8 +324,11 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     if (reqCtx.productionMode) {
       if (reqCtx.releaseId) {
         return {
-          scopeId: `${encodeRegistryScopeSegment(projectId)}:production:` +
-            encodeRegistryScopeSegment(reqCtx.releaseId),
+          scopeId: buildVersionedRegistryScopeId(
+            projectId,
+            "production",
+            reqCtx.releaseId,
+          ),
           immutable: true,
         };
       }
@@ -306,8 +344,11 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     }
 
     return {
-      scopeId: `${encodeRegistryScopeSegment(projectId)}:preview:` +
-        encodeRegistryScopeSegment(reqCtx.branch || "main"),
+      scopeId: buildVersionedRegistryScopeId(
+        projectId,
+        "preview",
+        reqCtx.branch || "main",
+      ),
       immutable: false,
     };
   }
@@ -317,6 +358,39 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
 
 export function tryGetRegistryScopeId(): string | null {
   return tryGetRegistryScopeContext()?.scopeId ?? null;
+}
+
+/**
+ * Return an opaque identity for the active hosted request.
+ *
+ * Registry managers use this only as a WeakMap key to retain the exact
+ * generation first observed by an in-flight request. The token contains no
+ * tenant metadata or credentials and is released when the request finalizes.
+ */
+export function tryGetRegistryScopeOwner(): object | null {
+  const requestContext = getMultiProjectRequestContextSnapshot();
+  if (!requestContext) return null;
+  if (isRevokedRequestContext(requestContext)) {
+    throwFinalizedRequestContextInvariant();
+  }
+
+  const existing = weakMapGet(registryScopeOwners, requestContext);
+  if (existing) return existing;
+
+  const owner = ReflectApply(ObjectFreeze, undefined, [{}]) as object;
+  weakMapSet(registryScopeOwners, requestContext, owner);
+  return owner;
+}
+
+/**
+ * Release the opaque generation owner for a finalized request context.
+ *
+ * The request context itself can remain reachable from detached async work;
+ * deleting this association lets registry generation snapshots become
+ * collectible immediately after the trusted request lifecycle ends.
+ */
+export function releaseRegistryScopeOwner(requestContext: object): void {
+  weakMapDelete(registryScopeOwners, requestContext);
 }
 
 const PROJECT_SCOPED_CACHE_KEY_PREFIX = "project-scoped:v2";

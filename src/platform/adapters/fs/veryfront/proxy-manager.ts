@@ -6,6 +6,8 @@ import {
 } from "#veryfront/errors/error-registry.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import { buildProxyManagerCacheKey } from "#veryfront/cache/keys/index.ts";
+import { buildVersionedRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
+import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { getGetAdapterParamsSchema } from "./schemas/index.ts";
@@ -128,6 +130,7 @@ function throwCleanupFailures(failures: unknown[], message: string): void {
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
+  registryScopeId: string;
   lastAccessed: number;
   projectId?: string;
   initializing?: Promise<void>;
@@ -596,6 +599,11 @@ export class ProxyFSAdapterManager {
 
     const projectAdapter: ProjectAdapter = {
       adapter,
+      registryScopeId: buildVersionedRegistryScopeId(
+        projectId || projectSlug,
+        productionMode ? "production" : "preview",
+        productionMode ? releaseId! : branch!,
+      ),
       lastAccessed: DateNow(),
       projectId,
       activeLeases: 0,
@@ -743,12 +751,27 @@ export class ProxyFSAdapterManager {
   ): { readonly error: unknown } | null {
     if (projectAdapter.disposed && !force) return null;
     projectAdapter.disposed = true;
+    const cleanupFailures: unknown[] = [];
+
     try {
       projectAdapter.adapter.dispose();
-      return null;
     } catch (error) {
-      return { error };
+      arrayPush(cleanupFailures, error);
     }
+    try {
+      clearRegistryScope(projectAdapter.registryScopeId);
+    } catch (error) {
+      arrayPush(cleanupFailures, error);
+    }
+
+    if (cleanupFailures.length === 0) return null;
+    if (cleanupFailures.length === 1) return { error: cleanupFailures[0] };
+    return {
+      error: new IntrinsicAggregateError(
+        cleanupFailures,
+        "Adapter and registry generation cleanup failed",
+      ),
+    };
   }
 
   hasAdapter(

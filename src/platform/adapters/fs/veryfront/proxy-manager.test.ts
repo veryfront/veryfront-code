@@ -13,6 +13,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import { runWithRequestContext } from "./request-context.ts";
+import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 const baseConfig = {
   veryfront: {
@@ -236,6 +237,48 @@ describe("ProxyFSAdapterManager", () => {
   });
 
   describe("bounded lifecycle", () => {
+    it("evicts the registry generation owned by a disposed adapter", async () => {
+      const adapterManager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      const registry = new ProjectScopedRegistryManager<string>("adapter-lifecycle");
+      const projectSlug = "registry-lifecycle-project";
+      const projectId = "registry:lifecycle:id";
+      const requestOptions = {
+        projectSlug,
+        projectId,
+        token: "registry-token",
+        branch: "main",
+      };
+
+      try {
+        await runWithRequestContext(requestOptions, async () => {
+          await adapterManager.getAdapter(
+            projectSlug,
+            requestOptions.token,
+            projectId,
+            false,
+            null,
+            null,
+            "main",
+          );
+          registry.register("item", "generation");
+        });
+
+        adapterManager.evictAdapter(projectSlug, false, null, "main");
+
+        await runWithRequestContext(requestOptions, async () => {
+          assertEquals(registry.get("item"), undefined);
+        });
+      } finally {
+        adapterManager.dispose();
+      }
+    });
+
     it("releases request leases after post-import collection poisoning", async () => {
       let disposeCalls = 0;
       const manager = createManager({

@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    19 |      32.8% | Current formal closure evidence remains valid       |
+| Closed                         |    20 |      34.5% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -50,6 +50,7 @@ stricter closure count.
 - `metrics`
 - `provider`
 - `prompt`
+- `registry`
 - `repositories`
 - `runs`
 - `runtime`
@@ -84,7 +85,6 @@ stricter closure count.
 - `platform`
 - `proxy`
 - `react`
-- `registry`
 - `release-assets`
 - `rendering`
 - `routing`
@@ -123,14 +123,16 @@ every affected unit.
 
 The current closed review chain covers `chat`, `config`, `embedding`, `eval`,
 `extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
-`prompt`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, and
-`version.ts`. The latest Chat findings and the independent adversarial
-knowledge, Markdown, MDX, provider, repositories, runs, runtime, and sandbox
-findings are remediated and revalidated. `prompt` is now closed after its
-cross-cutting registry, discovery, HMR, request-lifecycle, and MCP findings
-were remediated and revalidated. `resource` has received a deep current-state
-review and substantial remediation, but remains open while its cache-policy
-breaking-change decision is unresolved. Each
+`prompt`, `registry`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`,
+`studio`, and `version.ts`. The latest Chat findings and the independent
+adversarial knowledge, Markdown, MDX, provider, repositories, runs, runtime,
+and sandbox findings are remediated and revalidated. `prompt` is closed after
+its cross-cutting registry, discovery, HMR, request-lifecycle, and MCP findings
+were remediated and revalidated. `registry` is closed after its scope
+lifecycle, request-generation isolation, transaction invalidation, and
+cross-entry validation findings were remediated and revalidated. `resource`
+has received a deep current-state review and substantial remediation, but
+remains open while its cache-policy breaking-change decision is unresolved. Each
 closure requires a complete consumer map, deep module-level review,
 adversarial boundary tests, public-contract documentation, and repository-wide
 static verification.
@@ -1870,5 +1872,84 @@ No unresolved critical or high-confidence Chat production risk remains.
 Cross-module Agent and React files exercised or adjusted by this checkpoint
 remain correctly listed as touched units until their own top-level
 revalidation.
+
+### Registry closure checkpoint
+
+The `registry` audit unit owns the internal project-scoped registry manager and
+facade used by Agent, Tool, Skill, Prompt, Resource, Workflow, model-provider,
+and embedding-provider registries. Its transaction consumer is project
+discovery replacement; its production scope owners are the hosted request
+context and bounded Veryfront filesystem adapter manager. Registry remains an
+internal deep module with no root npm export.
+
+The current Registry findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** project invalidation compared
+  raw project prefixes with percent-encoded canonical scope identifiers. The
+  consequence was stale discovery and registrations for delimiter-bearing
+  project IDs. Scope construction is now centralized, discovery records retain
+  exact project identity, and invalidation uses exact identity and canonical
+  encoded matching.
+- **Symptom -> Source -> Consequence -> Remedy:** registry scope maps outlived
+  the bounded adapter that owned their source generation. The consequence was
+  process-lifetime retention of superseded release and source registries.
+  Adapter disposal now retires its exact registry scope after active leases
+  drain, while authoritative project invalidation retires every matching
+  scope. Project-wide retirement continues across listener failures and
+  reports collected cleanup errors only after every known scope is attempted.
+- **Symptom -> Source -> Consequence -> Remedy:** mutating a shared map during
+  retirement would change registry visibility inside an active request. The
+  consequence was generation mixing and non-repeatable request behavior.
+  Request contexts now bind an opaque owner to an immutable registry
+  generation; retirement detaches that generation, new requests observe the
+  replacement, stale writes remain isolated, and finalization releases the
+  owner binding.
+- **Symptom -> Source -> Consequence -> Remedy:** a project or scope could be
+  invalidated while its discovery transaction was still running. The
+  consequence was a late commit resurrecting invalidated definitions.
+  Authoritative cleanup now invalidates matching active transactions and
+  prevents their publication.
+- **Symptom -> Source -> Consequence -> Remedy:** shared registrations bypassed
+  manager conflict validation, and per-registration checks could not validate
+  a transaction against concurrently published entries. The consequence was
+  inconsistent conflict behavior and ambiguous Resource patterns after a
+  valid-looking transaction committed. Shared and scoped candidates now use
+  the same configured validator, complete effective shared-plus-scoped
+  transaction state is validated before publication, every live scope is
+  checked before shared publication, and Resource supplies a deterministic
+  whole-registry overlap validator.
+- **Symptom -> Source -> Consequence -> Remedy:** clearing and rebuilding a
+  registry inside one request initially targeted only its detached snapshot.
+  The consequence was a replacement invisible to later requests. Clearing the
+  current generation now resets that request's binding before registration;
+  clearing from a stale request remains fenced from the current generation.
+
+Reproducible checkpoint evidence:
+
+- Six regressions reproduced the original adapter-eviction, encoded-project
+  invalidation, shared-validation, active-request snapshot, transaction
+  invalidation, and concurrent Resource-overlap failures before remediation.
+  Further regressions cover the clear-and-rebuild publication defect and a
+  concurrent shared-versus-scoped Resource overlap found during verification,
+  plus complete multi-scope retirement when one lifecycle listener fails.
+- The four directly changed suites pass 6 tests and 163 nested steps with zero
+  failures.
+- The expanded Cache, request-context, adapter, Registry, discovery, Agent,
+  Tool, Skill, Prompt, Resource, Workflow, provider, and embedding boundary set
+  passes 35 tests and 448 nested steps with zero failures.
+- The complete unit suite passes 3,223 tests and 24,658 nested steps with zero
+  failures; its one ignored test and five ignored nested steps match the
+  repository baseline.
+- `deno task verify:quick` passes generated manifests, formatting and lint,
+  sanitizer and skipped-test baselines, architecture boundaries,
+  documentation validation with all 736 links, every configured root
+  entrypoint typecheck, and the isolated Studio browser typecheck.
+
+No unresolved critical or high-confidence Registry production risk remains.
+Manual internal callers that establish an explicit cache-key scope without a
+hosted request context do not receive request-generation snapshots or adapter
+eviction; they retain the existing explicit `clear` and `clearProject`
+ownership contract. This path is not a public Registry API and does not affect
+the hosted production lifecycle.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

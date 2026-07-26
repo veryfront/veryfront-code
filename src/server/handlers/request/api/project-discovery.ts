@@ -7,7 +7,14 @@ import {
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
-import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
+import {
+  isRegistryScopeForProject,
+  tryGetRegistryScopeContext,
+} from "#veryfront/cache/cache-key-builder.ts";
+import {
+  clearProjectRegistryScopes,
+  registerRegistryScopeEvictionListener,
+} from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -24,10 +31,14 @@ const logger = serverLogger.component("api-wrapper");
  */
 interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
+  projectIdentity: string;
   sourceSnapshotVersion?: number;
 }
 
 const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
+registerRegistryScopeEvictionListener((scopeId) => {
+  discoveredProjects.delete(scopeId);
+});
 const MAX_DISCOVERY_FAILURES_TO_LOG = 5;
 const MAX_DISCOVERY_ERROR_MESSAGE_LENGTH = 500;
 
@@ -158,6 +169,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   }
 
   const discovery = {
+    projectIdentity: ctx.projectId ?? ctx.projectSlug ?? ctx.projectDir,
     sourceSnapshotVersion,
     promise: (async () => {
       const discoveryOptions = createProjectDiscoveryConfig({
@@ -247,8 +259,13 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
  * from its current source snapshot.
  */
 export function clearProjectDiscoveryCacheForProject(projectId: string): void {
+  clearProjectRegistryScopes(projectId);
   for (const key of discoveredProjects.keys()) {
-    if (key === projectId || key.startsWith(`${projectId}:`)) {
+    const record = discoveredProjects.get<DiscoveryRecord>(key);
+    if (
+      record?.projectIdentity === projectId ||
+      isRegistryScopeForProject(key, projectId)
+    ) {
       discoveredProjects.delete(key);
     }
   }

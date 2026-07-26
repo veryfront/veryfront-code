@@ -44,40 +44,17 @@ function assertEquivalentResourceId(
   );
 }
 
-const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource", {
-  validateRegistration: assertEquivalentResourceId,
-});
+function assertUnambiguousResourceRegistry(
+  registry: ReadonlyMap<string, Resource>,
+): void {
+  const entries = Array.from(registry);
+  for (let incomingIndex = 1; incomingIndex < entries.length; incomingIndex++) {
+    const [incomingId, incoming] = entries[incomingIndex]!;
+    const incomingPattern = compiledPatternFor(incoming);
 
-class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
-  override register<TParams, TData>(
-    id: string,
-    resource: Resource<TParams, TData>,
-  ): void {
-    const normalized = normalizeResourceDefinition(resource);
-    this.assertUnambiguousRegistration(id, normalized);
-    super.register(id, normalized as unknown as Resource);
-  }
-
-  override registerShared<TParams, TData>(
-    id: string,
-    resource: Resource<TParams, TData>,
-  ): void {
-    const normalized = normalizeResourceDefinition(resource);
-    this.assertUnambiguousRegistration(id, normalized);
-    super.registerShared(id, normalized as unknown as Resource);
-  }
-
-  private assertUnambiguousRegistration<TParams, TData>(
-    id: string,
-    incoming: Resource<TParams, TData>,
-  ): void {
-    const incomingPattern = compiledPatternFor(incoming as unknown as Resource);
-
-    for (const [existingId, existing] of this.getAll()) {
-      if (existingId === id) {
-        assertEquivalentResourceId(id, existing, incoming);
-        continue;
-      }
+    for (let existingIndex = 0; existingIndex < incomingIndex; existingIndex++) {
+      const [existingId, existing] = entries[existingIndex]!;
+      if (existingId === incomingId) continue;
 
       const existingPattern = compiledPatternFor(existing);
       if (
@@ -90,6 +67,56 @@ class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
         );
       }
     }
+  }
+}
+
+function assertUnambiguousResourceCandidate(
+  registry: ReadonlyMap<string, Resource>,
+  id: string,
+  incoming: Resource,
+): void {
+  const incomingPattern = compiledPatternFor(incoming);
+
+  for (const [existingId, existing] of registry) {
+    if (existingId === id) {
+      assertEquivalentResourceId(id, existing, incoming);
+      continue;
+    }
+
+    const existingPattern = compiledPatternFor(existing);
+    if (
+      existingPattern.signature === incomingPattern.signature ||
+      resourceTemplatePatternsOverlap(existingPattern, incomingPattern)
+    ) {
+      throw new Error(
+        `Resource pattern "${incoming.pattern}" conflicts with registered resource ` +
+          `"${existingId}" using pattern "${existing.pattern}"`,
+      );
+    }
+  }
+}
+
+const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource", {
+  validateRegistration: assertEquivalentResourceId,
+  validateRegistryCandidate: assertUnambiguousResourceCandidate,
+  validateRegistry: assertUnambiguousResourceRegistry,
+});
+
+class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
+  override register<TParams, TData>(
+    id: string,
+    resource: Resource<TParams, TData>,
+  ): void {
+    const normalized = normalizeResourceDefinition(resource);
+    super.register(id, normalized as unknown as Resource);
+  }
+
+  override registerShared<TParams, TData>(
+    id: string,
+    resource: Resource<TParams, TData>,
+  ): void {
+    const normalized = normalizeResourceDefinition(resource);
+    super.registerShared(id, normalized as unknown as Resource);
   }
 
   findEntryByPattern(uri: string): readonly [string, Resource] | undefined {

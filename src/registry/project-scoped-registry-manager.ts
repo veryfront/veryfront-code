@@ -25,7 +25,9 @@
 
 import {
   isRegistryScopeForProject,
+  tryGetRegistryScopeContext,
   tryGetRegistryScopeId,
+  tryGetRegistryScopeOwner,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { agentLogger } from "#veryfront/utils";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -55,16 +57,170 @@ interface ManagedRegistryTransactionStage<T> extends RegistryTransactionStage {
 interface ProjectScopedRegistryManagerOptions<T> {
   /** Must be side-effect free; transaction preparation may invoke it again. */
   validateRegistration?(id: string, existing: T, incoming: T): void;
+  /**
+   * Validate one candidate against the current effective registry.
+   *
+   * This is the incremental form of `validateRegistry`; provide it when the
+   * same invariant can be checked without rescanning every existing pair.
+   * Must be side-effect free.
+   */
+  validateRegistryCandidate?(
+    registry: ReadonlyMap<string, T>,
+    id: string,
+    incoming: T,
+  ): void;
+  /**
+   * Validate invariants involving multiple entries.
+   *
+   * Called before a registration is published and again against the combined
+   * effective shared-plus-scoped transaction state after concurrent live
+   * mutations have been replayed. Shared candidates are checked against every
+   * live project scope. Must be side-effect free.
+   */
+  validateRegistry?(registry: ReadonlyMap<string, T>): void;
 }
 
 interface RegistryTransaction {
   readonly targetScopeId: string;
   readonly stages: Map<object, RegistryTransactionStage>;
   state: "active" | "committed" | "aborted";
+  invalidated: boolean;
 }
 
 const registryTransactionStorage = new AsyncLocalStorage<RegistryTransaction>();
 const registryTransactionLocks = new Map<string, Promise<void>>();
+const activeRegistryTransactions = new Map<string, RegistryTransaction>();
+const registryManagerReferences = new Set<
+  WeakRef<ProjectScopedRegistryManager<unknown>>
+>();
+const registryManagerFinalizer = new FinalizationRegistry<
+  WeakRef<ProjectScopedRegistryManager<unknown>>
+>((reference) => registryManagerReferences.delete(reference));
+const registryScopeEvictionListeners = new Set<(scopeId: string) => void>();
+
+interface RegistryScopeAccess {
+  readonly scopeId: string;
+  readonly owner: object | null;
+}
+
+interface RequestScopeBinding<T> {
+  registry: Map<string, T> | undefined;
+}
+
+function trackRegistryManager<T>(manager: ProjectScopedRegistryManager<T>): void {
+  const reference = new WeakRef(
+    manager as unknown as ProjectScopedRegistryManager<unknown>,
+  );
+  registryManagerReferences.add(reference);
+  registryManagerFinalizer.register(manager, reference, reference);
+}
+
+function getLiveRegistryManagers(): ProjectScopedRegistryManager<unknown>[] {
+  const managers: ProjectScopedRegistryManager<unknown>[] = [];
+  for (const reference of registryManagerReferences) {
+    const manager = reference.deref();
+    if (manager) managers.push(manager);
+    else registryManagerReferences.delete(reference);
+  }
+  return managers;
+}
+
+function invalidateRegistryTransaction(scopeId: string): void {
+  const transaction = activeRegistryTransactions.get(scopeId);
+  if (transaction?.state === "active") transaction.invalidated = true;
+}
+
+function invalidateProjectRegistryTransactions(projectId: string): void {
+  for (const [scopeId, transaction] of activeRegistryTransactions) {
+    if (
+      transaction.state === "active" &&
+      isRegistryScopeForProject(scopeId, projectId)
+    ) {
+      transaction.invalidated = true;
+    }
+  }
+}
+
+function throwLifecycleErrors(errors: unknown[], message: string): void {
+  if (errors.length === 0) return;
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, message);
+}
+
+/**
+ * Subscribe to exact registry-scope eviction.
+ *
+ * Lifecycle owners use this to discard derived generation records whenever the
+ * underlying registries are retired. The returned disposer is idempotent.
+ */
+export function registerRegistryScopeEvictionListener(
+  listener: (scopeId: string) => void,
+): () => void {
+  registryScopeEvictionListeners.add(listener);
+  return () => {
+    registryScopeEvictionListeners.delete(listener);
+  };
+}
+
+/**
+ * Retire one canonical scope from every registry manager.
+ *
+ * Active hosted requests retain the generation they already captured; new
+ * requests see an empty scope and must rebuild it through their normal owner
+ * lifecycle. An in-flight replacement transaction is invalidated so work based
+ * on a retired source snapshot cannot publish afterward.
+ */
+export function clearRegistryScope(scopeId: string): void {
+  invalidateRegistryTransaction(scopeId);
+  const errors: unknown[] = [];
+
+  for (const manager of getLiveRegistryManagers()) {
+    try {
+      manager.clearScopeForLifecycle(scopeId);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  for (const listener of registryScopeEvictionListeners) {
+    try {
+      listener(scopeId);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  throwLifecycleErrors(errors, `Failed to clear registry scope "${scopeId}"`);
+}
+
+/**
+ * Retire every canonical source scope currently owned by a project.
+ */
+export function clearProjectRegistryScopes(projectId: string): void {
+  invalidateProjectRegistryTransactions(projectId);
+  const scopeIds = new Set<string>();
+
+  for (const scopeId of activeRegistryTransactions.keys()) {
+    if (isRegistryScopeForProject(scopeId, projectId)) scopeIds.add(scopeId);
+  }
+  for (const manager of getLiveRegistryManagers()) {
+    for (const scopeId of manager.getScopeIdsForLifecycle()) {
+      if (isRegistryScopeForProject(scopeId, projectId)) scopeIds.add(scopeId);
+    }
+  }
+
+  const errors: unknown[] = [];
+  for (const scopeId of scopeIds) {
+    try {
+      clearRegistryScope(scopeId);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  throwLifecycleErrors(
+    errors,
+    `Failed to clear registry scopes for project "${projectId}"`,
+  );
+}
 
 async function acquireRegistryTransactionLock(scopeId: string): Promise<() => void> {
   const previous = registryTransactionLocks.get(scopeId) ?? Promise.resolve();
@@ -93,6 +249,13 @@ function buildRegistryScopeId(): string {
   return tryGetRegistryScopeId() ?? DEFAULT_SCOPE_ID;
 }
 
+function getCurrentRegistryScopeAccess(): RegistryScopeAccess {
+  return {
+    scopeId: tryGetRegistryScopeContext()?.scopeId ?? DEFAULT_SCOPE_ID,
+    owner: tryGetRegistryScopeOwner(),
+  };
+}
+
 /**
  * Stage project-scoped registry mutations and publish them as one synchronous
  * commit after the callback succeeds. Reads inside the callback see staged
@@ -117,12 +280,19 @@ export async function runWithRegistryTransaction<T>(fn: () => Promise<T>): Promi
     targetScopeId,
     stages: new Map(),
     state: "active",
+    invalidated: false,
   };
+  activeRegistryTransactions.set(targetScopeId, transaction);
 
   try {
     return await registryTransactionStorage.run(transaction, async () => {
       try {
         const result = await fn();
+        if (transaction.invalidated) {
+          throw new Error(
+            `Registry transaction for scope "${targetScopeId}" was invalidated`,
+          );
+        }
 
         // Prepare every manager before publishing any of them. Publication is
         // synchronous, so no request can observe a partial generation.
@@ -146,6 +316,9 @@ export async function runWithRegistryTransaction<T>(fn: () => Promise<T>): Promi
       }
     });
   } finally {
+    if (activeRegistryTransactions.get(targetScopeId) === transaction) {
+      activeRegistryTransactions.delete(targetScopeId);
+    }
     releaseLock();
   }
 }
@@ -159,11 +332,17 @@ export class ProjectScopedRegistryManager<T> {
   private registriesByScope = new Map<string, Map<string, T>>();
   private sharedRegistry = new Map<string, T>();
   private activeStagesByScope = new Map<string, Set<ManagedRegistryTransactionStage<T>>>();
+  private requestBindings = new WeakMap<
+    object,
+    Map<string, RequestScopeBinding<T>>
+  >();
 
   constructor(
     private registryName: string,
     private options: ProjectScopedRegistryManagerOptions<T> = {},
-  ) {}
+  ) {
+    trackRegistryManager(this);
+  }
 
   private validateRegistration(
     registry: Map<string, T>,
@@ -172,6 +351,66 @@ export class ProjectScopedRegistryManager<T> {
   ): void {
     if (!registry.has(id)) return;
     this.options.validateRegistration?.(id, registry.get(id) as T, incoming);
+  }
+
+  private buildEffectiveRegistry(
+    registry: ReadonlyMap<string, T>,
+    sharedRegistry: ReadonlyMap<string, T> = this.sharedRegistry,
+  ): Map<string, T> {
+    const effective = new Map(sharedRegistry);
+    for (const [id, item] of registry) effective.set(id, item);
+    return effective;
+  }
+
+  private validateEffectiveRegistry(
+    registry: ReadonlyMap<string, T>,
+    sharedRegistry: ReadonlyMap<string, T> = this.sharedRegistry,
+  ): void {
+    if (!this.options.validateRegistry) return;
+    this.options.validateRegistry(
+      this.buildEffectiveRegistry(registry, sharedRegistry),
+    );
+  }
+
+  private validateCandidateAgainstRegistry(
+    registry: ReadonlyMap<string, T>,
+    id: string,
+    incoming: T,
+  ): void {
+    if (this.options.validateRegistryCandidate) {
+      this.options.validateRegistryCandidate(registry, id, incoming);
+      return;
+    }
+    if (!this.options.validateRegistry) return;
+
+    const candidate = new Map(registry);
+    candidate.set(id, incoming);
+    this.options.validateRegistry(candidate);
+  }
+
+  private validateScopedCandidateRegistration(
+    registry: Map<string, T>,
+    id: string,
+    incoming: T,
+  ): void {
+    this.validateRegistration(registry, id, incoming);
+    this.validateCandidateAgainstRegistry(
+      this.buildEffectiveRegistry(registry),
+      id,
+      incoming,
+    );
+  }
+
+  private validateSharedCandidateRegistration(id: string, incoming: T): void {
+    this.validateRegistration(this.sharedRegistry, id, incoming);
+    this.validateCandidateAgainstRegistry(this.sharedRegistry, id, incoming);
+    for (const registry of this.registriesByScope.values()) {
+      this.validateCandidateAgainstRegistry(
+        this.buildEffectiveRegistry(registry),
+        id,
+        incoming,
+      );
+    }
   }
 
   private applyMutation(
@@ -199,14 +438,56 @@ export class ProjectScopedRegistryManager<T> {
    * Get the current project ID from AsyncLocalStorage context.
    * Falls back to default for CLI/test scenarios.
    */
-  private getCurrentScopeId(): string {
-    return buildRegistryScopeId();
+  private getCurrentScopeAccess(): RegistryScopeAccess {
+    return getCurrentRegistryScopeAccess();
+  }
+
+  private getRequestBinding(
+    access: RegistryScopeAccess,
+  ): RequestScopeBinding<T> | undefined {
+    if (!access.owner) return undefined;
+
+    let bindings = this.requestBindings.get(access.owner);
+    if (!bindings) {
+      bindings = new Map();
+      this.requestBindings.set(access.owner, bindings);
+    }
+
+    let binding = bindings.get(access.scopeId);
+    if (!binding) {
+      binding = { registry: this.registriesByScope.get(access.scopeId) };
+      bindings.set(access.scopeId, binding);
+    }
+    return binding;
+  }
+
+  private getBoundScopeRegistry(
+    access: RegistryScopeAccess,
+  ): Map<string, T> | undefined {
+    const binding = this.getRequestBinding(access);
+    return binding ? binding.registry : this.registriesByScope.get(access.scopeId);
+  }
+
+  private updateRequestBinding(
+    access: RegistryScopeAccess,
+    registry: Map<string, T> | undefined,
+  ): void {
+    const binding = this.getRequestBinding(access);
+    if (binding) binding.registry = registry;
+  }
+
+  private isCurrentGeneration(
+    scopeId: string,
+    registry: Map<string, T> | undefined,
+  ): boolean {
+    return this.registriesByScope.get(scopeId) === registry;
   }
 
   /** Return the transaction-local stage for this manager and scope. */
   private getTransactionStage(
-    scopeId: string,
+    access: RegistryScopeAccess,
   ): ManagedRegistryTransactionStage<T> | undefined {
+    const { scopeId } = access;
     const transaction = registryTransactionStorage.getStore();
     if (!transaction) return undefined;
     if (transaction.state === "committed") return undefined;
@@ -246,7 +527,7 @@ export class ProjectScopedRegistryManager<T> {
     const stage: ManagedRegistryTransactionStage<T> = {
       registry,
       validateRegistration: (id, incoming) => {
-        this.validateRegistration(validationRegistry, id, incoming);
+        this.validateScopedCandidateRegistration(validationRegistry, id, incoming);
       },
       record: (mutation) => {
         mutations.push(mutation);
@@ -257,14 +538,17 @@ export class ProjectScopedRegistryManager<T> {
         for (const mutation of mutations) {
           this.applyMutation(replacement, mutation, true);
         }
+        this.validateEffectiveRegistry(replacement);
 
         return {
           publish: () => {
             close();
             if (replacement.size === 0) {
               this.registriesByScope.delete(scopeId);
+              this.updateRequestBinding(access, undefined);
             } else {
               this.registriesByScope.set(scopeId, replacement);
+              this.updateRequestBinding(access, replacement);
             }
           },
         };
@@ -286,19 +570,22 @@ export class ProjectScopedRegistryManager<T> {
   }
 
   /** Read the active registry, routing transaction access to its staged copy. */
-  private getActiveScopeRegistry(scopeId: string): Map<string, T> | undefined {
-    return this.getTransactionStage(scopeId)?.registry ?? this.registriesByScope.get(scopeId);
+  private getActiveScopeRegistry(access: RegistryScopeAccess): Map<string, T> | undefined {
+    return this.getTransactionStage(access)?.registry ?? this.getBoundScopeRegistry(access);
   }
 
   /**
    * Get or create registry for a specific project.
    */
-  private getScopeRegistry(scopeId: string): Map<string, T> {
-    const existing = this.registriesByScope.get(scopeId);
+  private getScopeRegistry(access: RegistryScopeAccess): Map<string, T> {
+    const existing = this.getBoundScopeRegistry(access);
     if (existing) return existing;
 
     const registry = new Map<string, T>();
-    this.registriesByScope.set(scopeId, registry);
+    if (this.isCurrentGeneration(access.scopeId, existing)) {
+      this.registriesByScope.set(access.scopeId, registry);
+    }
+    this.updateRequestBinding(access, registry);
     return registry;
   }
 
@@ -306,23 +593,25 @@ export class ProjectScopedRegistryManager<T> {
    * Register an item for the current project.
    */
   register(id: string, item: T): void {
-    const scopeId = this.getCurrentScopeId();
-    const stage = this.getTransactionStage(scopeId);
-    const registry = stage?.registry ?? this.getScopeRegistry(scopeId);
+    const access = this.getCurrentScopeAccess();
+    const stage = this.getTransactionStage(access);
+    const registry = stage?.registry ?? this.getScopeRegistry(access);
 
     if (stage) stage.validateRegistration(id, item);
-    else this.validateRegistration(registry, id, item);
+    else this.validateScopedCandidateRegistration(registry, id, item);
     if (registry.has(id)) {
       agentLogger.debug(
-        `[${this.registryName}] "${id}" already registered for scope ${scopeId}. Overwriting.`,
+        `[${this.registryName}] "${id}" already registered for scope ${access.scopeId}. Overwriting.`,
       );
     }
 
     registry.set(id, item);
     const mutation: RegistryMutation<T> = { type: "set", id, item };
     if (stage) stage.record(mutation);
-    else this.recordLiveMutation(scopeId, mutation);
-    agentLogger.debug(`[${this.registryName}] Registered "${id}" for scope ${scopeId}`);
+    else if (this.isCurrentGeneration(access.scopeId, registry)) {
+      this.recordLiveMutation(access.scopeId, mutation);
+    }
+    agentLogger.debug(`[${this.registryName}] Registered "${id}" for scope ${access.scopeId}`);
   }
 
   /**
@@ -333,6 +622,7 @@ export class ProjectScopedRegistryManager<T> {
     // Shared framework infrastructure is intentionally process-wide and is
     // published immediately even inside a project transaction. Project
     // discovery must never use this method for tenant-owned definitions.
+    this.validateSharedCandidateRegistration(id, item);
     if (this.sharedRegistry.has(id)) {
       agentLogger.debug(`[${this.registryName}] Shared "${id}" already registered. Overwriting.`);
     }
@@ -348,8 +638,9 @@ export class ProjectScopedRegistryManager<T> {
    * `undefined` still shadows a shared item with the same id.
    */
   get(id: string): T | undefined {
-    const scopeId = this.getCurrentScopeId();
-    const projectRegistry = this.getActiveScopeRegistry(scopeId);
+    const projectRegistry = this.getActiveScopeRegistry(
+      this.getCurrentScopeAccess(),
+    );
     if (projectRegistry?.has(id)) return projectRegistry.get(id);
     return this.sharedRegistry.get(id);
   }
@@ -361,16 +652,14 @@ export class ProjectScopedRegistryManager<T> {
    * same-scope duplicate.
    */
   getOwn(id: string): T | undefined {
-    const scopeId = this.getCurrentScopeId();
-    return this.getActiveScopeRegistry(scopeId)?.get(id);
+    return this.getActiveScopeRegistry(this.getCurrentScopeAccess())?.get(id);
   }
 
   /**
    * Check if item exists for the current project.
    */
   has(id: string): boolean {
-    const scopeId = this.getCurrentScopeId();
-    return (this.getActiveScopeRegistry(scopeId)?.has(id) ?? false) ||
+    return (this.getActiveScopeRegistry(this.getCurrentScopeAccess())?.has(id) ?? false) ||
       this.sharedRegistry.has(id);
   }
 
@@ -381,8 +670,9 @@ export class ProjectScopedRegistryManager<T> {
    * Iteration stops after the first match.
    */
   some(predicate: (item: T, id: string) => boolean): boolean {
-    const scopeId = this.getCurrentScopeId();
-    const projectRegistry = this.getActiveScopeRegistry(scopeId);
+    const projectRegistry = this.getActiveScopeRegistry(
+      this.getCurrentScopeAccess(),
+    );
 
     for (const [id, sharedItem] of this.sharedRegistry) {
       const item = projectRegistry?.has(id) ? projectRegistry.get(id) as T : sharedItem;
@@ -401,8 +691,9 @@ export class ProjectScopedRegistryManager<T> {
    * Get all IDs for the current project (includes shared items).
    */
   getAllIds(): string[] {
-    const scopeId = this.getCurrentScopeId();
-    const projectIds = this.getActiveScopeRegistry(scopeId)?.keys() ?? [];
+    const projectIds = this.getActiveScopeRegistry(
+      this.getCurrentScopeAccess(),
+    )?.keys() ?? [];
     const sharedIds = this.sharedRegistry.keys();
     return Array.from(new Set([...projectIds, ...sharedIds]));
   }
@@ -411,8 +702,9 @@ export class ProjectScopedRegistryManager<T> {
    * Get all items for the current project (includes shared items).
    */
   getAll(): Map<string, T> {
-    const scopeId = this.getCurrentScopeId();
-    const projectRegistry = this.getActiveScopeRegistry(scopeId);
+    const projectRegistry = this.getActiveScopeRegistry(
+      this.getCurrentScopeAccess(),
+    );
     if (!projectRegistry) return new Map(this.sharedRegistry);
 
     const result = new Map<string, T>(this.sharedRegistry);
@@ -424,17 +716,29 @@ export class ProjectScopedRegistryManager<T> {
    * Delete an item from the current project's registry.
    */
   delete(id: string): boolean {
-    const scopeId = this.getCurrentScopeId();
-    const stage = this.getTransactionStage(scopeId);
-    const registry = stage?.registry ?? this.registriesByScope.get(scopeId);
+    const access = this.getCurrentScopeAccess();
+    const stage = this.getTransactionStage(access);
+    const registry = stage?.registry ?? this.getBoundScopeRegistry(access);
+    const isCurrentGeneration = !stage &&
+      this.isCurrentGeneration(access.scopeId, registry);
     const existed = registry?.has(id) ?? false;
-    if (!existed && !stage && !this.activeStagesByScope.has(scopeId)) return false;
+    if (
+      !existed &&
+      !stage &&
+      !(isCurrentGeneration && this.activeStagesByScope.has(access.scopeId))
+    ) {
+      return false;
+    }
 
     registry?.delete(id);
     const mutation: RegistryMutation<T> = { type: "delete", id };
     if (stage) stage.record(mutation);
-    else this.recordLiveMutation(scopeId, mutation);
-    agentLogger.debug(`[${this.registryName}] Deleted "${id}" from scope ${scopeId}`);
+    else if (isCurrentGeneration) {
+      this.recordLiveMutation(access.scopeId, mutation);
+    }
+    agentLogger.debug(
+      `[${this.registryName}] Deleted "${id}" from scope ${access.scopeId}`,
+    );
     return existed;
   }
 
@@ -442,20 +746,28 @@ export class ProjectScopedRegistryManager<T> {
    * Clear all items for the current project.
    */
   clear(): void {
-    const scopeId = this.getCurrentScopeId();
-    const stage = this.getTransactionStage(scopeId);
+    const access = this.getCurrentScopeAccess();
+    const stage = this.getTransactionStage(access);
     if (stage) {
       stage.registry.clear();
       stage.record({ type: "clear" });
       return;
     }
 
-    const cleared = this.registriesByScope.delete(scopeId);
-    if (!cleared && !this.activeStagesByScope.has(scopeId)) return;
+    const registry = this.getBoundScopeRegistry(access);
+    const isCurrentGeneration = this.isCurrentGeneration(access.scopeId, registry);
+    registry?.clear();
+    if (!isCurrentGeneration) return;
 
-    this.recordLiveMutation(scopeId, { type: "clear" });
+    const cleared = this.registriesByScope.delete(access.scopeId);
+    this.updateRequestBinding(access, undefined);
+    if (!cleared && !this.activeStagesByScope.has(access.scopeId)) return;
+
+    this.recordLiveMutation(access.scopeId, { type: "clear" });
     if (cleared) {
-      agentLogger.debug(`[${this.registryName}] Cleared registry for scope ${scopeId}`);
+      agentLogger.debug(
+        `[${this.registryName}] Cleared registry for scope ${access.scopeId}`,
+      );
     }
   }
 
@@ -470,6 +782,7 @@ export class ProjectScopedRegistryManager<T> {
       );
     }
 
+    invalidateProjectRegistryTransactions(projectId);
     let cleared = false;
     const scopeIds = new Set([
       ...this.registriesByScope.keys(),
@@ -477,14 +790,36 @@ export class ProjectScopedRegistryManager<T> {
     ]);
     for (const scopeId of scopeIds) {
       if (isRegistryScopeForProject(scopeId, projectId)) {
-        cleared = this.registriesByScope.delete(scopeId) || cleared;
-        this.recordLiveMutation(scopeId, { type: "clear" });
+        cleared = this.clearScopeForLifecycle(scopeId) || cleared;
       }
     }
 
     if (cleared) {
       agentLogger.debug(`[${this.registryName}] Cleared registry for project ${projectId}`);
     }
+  }
+
+  /**
+   * Internal lifecycle hook used by canonical adapter/discovery ownership.
+   *
+   * The current map is detached rather than mutated so in-flight request
+   * snapshots remain coherent until their request owner is released.
+   */
+  clearScopeForLifecycle(scopeId: string): boolean {
+    const cleared = this.registriesByScope.delete(scopeId);
+    if (!cleared && !this.activeStagesByScope.has(scopeId)) return false;
+    this.recordLiveMutation(scopeId, { type: "clear" });
+    return cleared;
+  }
+
+  /** Internal lifecycle inspection; returns a detached scope-id snapshot. */
+  getScopeIdsForLifecycle(): string[] {
+    return Array.from(
+      new Set([
+        ...this.registriesByScope.keys(),
+        ...this.activeStagesByScope.keys(),
+      ]),
+    );
   }
 
   /**
@@ -503,6 +838,7 @@ export class ProjectScopedRegistryManager<T> {
       ...this.activeStagesByScope.keys(),
     ]);
     for (const scopeId of scopeIds) {
+      invalidateRegistryTransaction(scopeId);
       this.recordLiveMutation(scopeId, { type: "clear" });
     }
     this.registriesByScope.clear();
@@ -519,7 +855,7 @@ export class ProjectScopedRegistryManager<T> {
     totalItems: number;
     currentProjectItems: number;
   } {
-    const scopeId = this.getCurrentScopeId();
+    const access = this.getCurrentScopeAccess();
     const totalItems = this.sharedRegistry.size +
       Array.from(this.registriesByScope.values()).reduce(
         (sum, registry) => sum + registry.size,
@@ -530,7 +866,7 @@ export class ProjectScopedRegistryManager<T> {
       projectCount: this.registriesByScope.size,
       sharedCount: this.sharedRegistry.size,
       totalItems,
-      currentProjectItems: this.getActiveScopeRegistry(scopeId)?.size ?? 0,
+      currentProjectItems: this.getActiveScopeRegistry(access)?.size ?? 0,
     };
   }
 }

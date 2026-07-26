@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { registerMultiProjectRequestContextProvider } from "#veryfront/cache/cache-key-builder.ts";
+import {
+  registerMultiProjectRequestContextProvider,
+  releaseRegistryScopeOwner,
+} from "#veryfront/cache/cache-key-builder.ts";
 
 export interface RequestContext {
   projectSlug: string;
@@ -208,6 +211,7 @@ export function registerRequestContextFinalizer(
 function finalizeRequestContext(context: RequestContext): unknown[] {
   if (weakSetHas(finalizedRequestContexts, context)) return [];
   weakSetAdd(finalizedRequestContexts, context);
+  releaseRegistryScopeOwner(context);
 
   const finalizers = weakMapGet(requestContextFinalizers, context);
   weakMapDelete(requestContextFinalizers, context);

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { resource } from "./factory.ts";
 import { resourceRegistry, resourceRegistryInternal } from "./registry.ts";
 
@@ -155,6 +156,78 @@ describe("resource registry", () => {
         Error,
         'conflicts with registered resource "users_id"',
       );
+    });
+
+    it("rejects an ambiguous pattern introduced by a concurrent live registration", async () => {
+      const byId = resource({
+        pattern: "/users/:id",
+        description: "User by id",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      const byName = resource({
+        pattern: "/users/:name",
+        description: "User by name",
+        paramsSchema: defineSchema((v) => v.object({ name: v.string() }))(),
+        load: async () => ({}),
+      });
+      const stageReady = Promise.withResolvers<void>();
+      const releaseStage = Promise.withResolvers<void>();
+
+      const transaction = runWithRegistryTransaction(async () => {
+        resourceRegistry.clear();
+        resourceRegistry.register(byId.id, byId);
+        stageReady.resolve();
+        await releaseStage.promise;
+      });
+
+      await stageReady.promise;
+      resourceRegistry.register(byName.id, byName);
+      releaseStage.resolve();
+
+      await assertRejects(
+        () => transaction,
+        Error,
+        'conflicts with registered resource "users_id"',
+      );
+      assertEquals(resourceRegistry.get(byId.id), undefined);
+      assertEquals(resourceRegistry.get(byName.id), byName);
+    });
+
+    it("rejects an ambiguous pattern introduced by a concurrent shared registration", async () => {
+      const byId = resource({
+        pattern: "/accounts/:id",
+        description: "Account by id",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      const byName = resource({
+        pattern: "/accounts/:name",
+        description: "Account by name",
+        paramsSchema: defineSchema((v) => v.object({ name: v.string() }))(),
+        load: async () => ({}),
+      });
+      const stageReady = Promise.withResolvers<void>();
+      const releaseStage = Promise.withResolvers<void>();
+
+      const transaction = runWithRegistryTransaction(async () => {
+        resourceRegistry.clear();
+        resourceRegistry.register(byId.id, byId);
+        stageReady.resolve();
+        await releaseStage.promise;
+      });
+
+      await stageReady.promise;
+      resourceRegistryInternal.registerShared(byName.id, byName);
+      releaseStage.resolve();
+
+      await assertRejects(
+        () => transaction,
+        Error,
+        'conflicts with registered resource "accounts_name"',
+      );
+      assertEquals(resourceRegistry.get(byId.id), undefined);
+      assertEquals(resourceRegistry.get(byName.id), byName);
     });
 
     it("should reject templates whose wildcard positions overlap", () => {

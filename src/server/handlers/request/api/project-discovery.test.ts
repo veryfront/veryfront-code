@@ -330,6 +330,43 @@ describe(
       assertEquals(updatedAgent.config.system, "SECOND");
     });
 
+    it("invalidates encoded request-scope discovery by raw project id", async () => {
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
+
+      const ctx = createHandlerContext(
+        "/encoded-project-id-invalidation",
+        "encoded-project-id-invalidation-slug",
+        "production",
+        "release-encoded",
+      );
+      ctx.projectId = "project:id%with-delimiters";
+      const agentId = "encoded-project-id-invalidation-agent";
+      const requestOptions = {
+        projectSlug: ctx.projectSlug!,
+        projectId: ctx.projectId,
+        token: "encoded-token",
+        productionMode: true,
+        releaseId: ctx.releaseId,
+      };
+
+      await writeAgentFile(ctx, agentId, "FIRST");
+      await runWithRequestContext(requestOptions, () => ensureProjectDiscovery(ctx));
+
+      await writeAgentFile(ctx, agentId, "SECOND");
+      await runWithRequestContext(requestOptions, () => ensureProjectDiscovery(ctx));
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(getAgent(agentId)?.config.system, "FIRST");
+      });
+
+      clearProjectDiscoveryCacheForProject(ctx.projectId);
+      await runWithRequestContext(requestOptions, () => ensureProjectDiscovery(ctx));
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(getAgent(agentId)?.config.system, "SECOND");
+      });
+    });
+
     it("does not cache completed production discovery without a release id", async () => {
       agentRegistryInternal.clearAll();
       toolRegistryInternal.clearAll();

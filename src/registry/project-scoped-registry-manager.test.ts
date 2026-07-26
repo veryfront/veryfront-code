@@ -1,10 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
-import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import {
+  buildVersionedRegistryScopeId,
+  runWithCacheKeyContext,
+} from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import {
+  clearProjectRegistryScopes,
   ProjectScopedRegistryManager,
+  registerRegistryScopeEvictionListener,
   runWithRegistryTransaction,
 } from "./project-scoped-registry-manager.ts";
 
@@ -86,6 +91,55 @@ describe("ProjectScopedRegistryManager", () => {
       manager.registerShared("shared-tool", "first");
       manager.registerShared("shared-tool", "second");
       assertEquals(manager.get("shared-tool"), "second");
+    });
+
+    it("applies configured conflict validation to shared registrations", () => {
+      const manager = new ProjectScopedRegistryManager<string>("tool", {
+        validateRegistration: (id, existing, incoming) => {
+          if (existing !== incoming) {
+            throw new Error(`conflicting shared registration: ${id}`);
+          }
+        },
+      });
+      manager.registerShared("shared-tool", "first");
+
+      assertThrows(
+        () => manager.registerShared("shared-tool", "second"),
+        Error,
+        "conflicting shared registration: shared-tool",
+      );
+      assertEquals(manager.get("shared-tool"), "first");
+    });
+
+    it("validates a shared candidate against every live project scope", () => {
+      const manager = new ProjectScopedRegistryManager<string>("tool", {
+        validateRegistry: (registry) => {
+          const values = Array.from(registry.values());
+          if (new Set(values).size !== values.length) {
+            throw new Error("duplicate effective value");
+          }
+        },
+      });
+      const projectScope = {
+        projectId: "shared-validation-project",
+        mode: "preview" as const,
+        versionId: "main",
+      };
+      runWithCacheKeyContext(
+        projectScope,
+        () => manager.register("project-tool", "duplicate"),
+      );
+
+      assertThrows(
+        () => manager.registerShared("shared-tool", "duplicate"),
+        Error,
+        "duplicate effective value",
+      );
+      assertEquals(manager.get("shared-tool"), undefined);
+      runWithCacheKeyContext(
+        projectScope,
+        () => assertEquals(manager.get("project-tool"), "duplicate"),
+      );
     });
 
     it("should prefer project-specific item over shared item", () => {
@@ -283,6 +337,29 @@ describe("ProjectScopedRegistryManager", () => {
       assertEquals(manager.get("shared-a"), "value");
       assertEquals(manager.get("proj-a"), undefined);
     });
+
+    it("publishes registrations made after a request clears its current generation", async () => {
+      const manager = createManager<string>("tool");
+      const requestOptions = {
+        projectSlug: "clear-replace-project",
+        projectId: "clear-replace-project-id",
+        token: "clear-replace-token",
+        branch: "main",
+      };
+
+      await runWithRequestContext(requestOptions, async () => {
+        manager.register("old", "old");
+        manager.clear();
+        manager.register("new", "new");
+        assertEquals(manager.get("old"), undefined);
+        assertEquals(manager.get("new"), "new");
+      });
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(manager.get("old"), undefined);
+        assertEquals(manager.get("new"), "new");
+      });
+    });
   });
 
   describe("clearProject", () => {
@@ -349,6 +426,87 @@ describe("ProjectScopedRegistryManager", () => {
       );
       runWithCacheKeyContext(
         delimiterProjectScope,
+        () => assertEquals(manager.get("item"), undefined),
+      );
+    });
+
+    it("keeps an active request on its captured generation while new requests see the clear", async () => {
+      const manager = createManager<string>("tool");
+      const requestOptions = {
+        projectSlug: "snapshot-project",
+        projectId: "snapshot-project-id",
+        token: "snapshot-token",
+        branch: "main",
+      };
+      const generationReady = Promise.withResolvers<void>();
+      const releaseRequest = Promise.withResolvers<void>();
+
+      const activeRequest = runWithRequestContext(requestOptions, async () => {
+        manager.register("item", "captured");
+        generationReady.resolve();
+        await releaseRequest.promise;
+        assertEquals(manager.get("item"), "captured");
+        manager.clear();
+        manager.register("stale-item", "stale");
+      });
+
+      await generationReady.promise;
+      manager.clearProject(requestOptions.projectId);
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(manager.get("item"), undefined);
+        manager.register("current-item", "current");
+      });
+
+      releaseRequest.resolve();
+      await activeRequest;
+
+      await runWithRequestContext(requestOptions, async () => {
+        assertEquals(manager.get("current-item"), "current");
+        assertEquals(manager.get("stale-item"), undefined);
+      });
+    });
+
+    it("retires every project scope before surfacing a lifecycle listener failure", () => {
+      const manager = createManager<string>("tool");
+      const projectId = "lifecycle-error-project";
+      const mainScope = {
+        projectId,
+        mode: "preview" as const,
+        versionId: "main",
+      };
+      const featureScope = {
+        projectId,
+        mode: "preview" as const,
+        versionId: "feature",
+      };
+      runWithCacheKeyContext(mainScope, () => manager.register("item", "main"));
+      runWithCacheKeyContext(featureScope, () => manager.register("item", "feature"));
+
+      const failingScopeId = buildVersionedRegistryScopeId(
+        projectId,
+        "preview",
+        "main",
+      );
+      const disposeListener = registerRegistryScopeEvictionListener((scopeId) => {
+        if (scopeId === failingScopeId) throw new Error("listener cleanup failed");
+      });
+      try {
+        assertThrows(
+          () => clearProjectRegistryScopes(projectId),
+          Error,
+          "listener cleanup failed",
+        );
+      } finally {
+        disposeListener();
+      }
+
+      runWithCacheKeyContext(
+        mainScope,
+        () => assertEquals(manager.get("item"), undefined),
+      );
+      runWithCacheKeyContext(
+        featureScope,
         () => assertEquals(manager.get("item"), undefined),
       );
     });
@@ -476,6 +634,36 @@ describe("ProjectScopedRegistryManager transactions", () => {
 
     runWithCacheKeyContext(scope, () => {
       assertEquals(manager.get("staged-agent"), undefined);
+    });
+  });
+
+  it("rejects a generation invalidated by authoritative project cleanup", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("agent");
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.register("staged-agent", "staged");
+          stageReady.resolve();
+          await releaseStage.promise;
+          manager.register("late-agent", "late");
+        }),
+    );
+
+    await stageReady.promise;
+    manager.clearProject(scope.projectId);
+    releaseStage.resolve();
+
+    await assertRejects(
+      () => transaction,
+      Error,
+      "invalidated",
+    );
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("staged-agent"), undefined);
+      assertEquals(manager.get("late-agent"), undefined);
     });
   });
 
