@@ -11,7 +11,7 @@ import {
   type VeryfrontRunsClient,
 } from "veryfront/runs";
 import { discoverSchedules } from "veryfront/schedule";
-import { runTriggerTarget } from "veryfront/trigger";
+import { runTriggerTarget, type TriggerTarget } from "veryfront/trigger";
 import { outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
 
 const REMOTE_SCHEDULE_POLL_INTERVAL_MS = 1_000;
@@ -83,6 +83,18 @@ export function formatRemoteScheduleRunOutput(run: Run): Record<string, unknown>
   };
 }
 
+export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): TriggerTarget {
+  if (!run.target) return fallback;
+  const separator = run.target.indexOf(":");
+  if (separator < 1) return fallback;
+  const kind = run.target.slice(0, separator);
+  const id = run.target.slice(separator + 1).trim();
+  if ((kind !== "agent" && kind !== "task" && kind !== "workflow") || id.length === 0) {
+    return fallback;
+  }
+  return { kind, id };
+}
+
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
   const projectDir = Deno.cwd();
@@ -122,7 +134,7 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       await outputTriggerRun({
         command: "schedule",
         triggerId: schedule.id,
-        target: schedule.target,
+        target: resolveRemoteScheduleTarget(remoteRun, schedule.target),
         output: formatRemoteScheduleRunOutput(remoteRun),
         durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
       });

@@ -9,6 +9,7 @@ import type { ParsedArgs } from "../../shared/types.ts";
 import {
   formatRemoteScheduleRunOutput,
   handleScheduleCommand,
+  resolveRemoteScheduleTarget,
   waitForRemoteScheduleRun,
 } from "./handler.ts";
 
@@ -157,7 +158,7 @@ describe("schedule command", () => {
           '  name: "Process job submissions",',
           '  schedule: "0 * * * *",',
           '  timezone: "Europe/Berlin",',
-          '  target: { kind: "agent", id: "job-submission-orchestrator" },',
+          '  target: { kind: "agent", id: "local-unpushed-orchestrator" },',
           '  input: { prompt: "Process job submissions." },',
           "  timeoutSeconds: 5,",
           "});",
@@ -248,6 +249,15 @@ describe("schedule command", () => {
 });
 
 describe("remote schedule polling", () => {
+  it("falls back to the local target when the cloud run target is unavailable", () => {
+    const fallback = { kind: "agent" as const, id: "local-orchestrator" };
+    assertEquals(resolveRemoteScheduleTarget(makeRun({ target: null }), fallback), fallback);
+    assertEquals(
+      resolveRemoteScheduleTarget(makeRun({ target: "eval:unsupported" }), fallback),
+      fallback,
+    );
+  });
+
   it("preserves the waiting reason in caller-visible output", () => {
     assertEquals(
       formatRemoteScheduleRunOutput(
