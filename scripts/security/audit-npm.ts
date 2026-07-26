@@ -7,6 +7,8 @@
  * Usage: deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts
  */
 
+import { parseNpmImport } from "../build/npm-dependency-sources.ts";
+
 export interface AuditPackageJson {
   name: string;
   version: string;
@@ -28,10 +30,9 @@ export function collectNpmDependencies(
 
   for (const manifest of manifests) {
     for (const [_specifier, target] of Object.entries(manifest.imports)) {
-      if (!target.startsWith("npm:")) continue;
-      const match = target.match(/^npm:(.+)@(\d[^/]*)/);
-      if (!match) continue;
-      const [, name, version] = match;
+      const parsed = parseNpmImport(target);
+      if (!parsed) continue;
+      const { name, version } = parsed;
       const versions = versionsByName.get(name) ?? new Set<string>();
       versions.add(version);
       versionsByName.set(name, versions);

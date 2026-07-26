@@ -1,5 +1,6 @@
 import "../_helpers/contract-init.ts";
 import React from "react";
+import { renderToString } from "react-dom/server";
 import {
   assert,
   assertEquals,
@@ -32,6 +33,7 @@ import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
 import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
+import { Markdown } from "../../src/markdown/index.ts";
 import {
   createSearchKnowledgeTool,
   normalizeKnowledgeQuery,
@@ -311,6 +313,22 @@ describe("Guide: chat-ui.md", () => {
       ),
     );
     assertEquals(element.type, ChatRoot);
+  });
+
+  it("server-renders the documented standalone Markdown surface", async () => {
+    const guide = await readGuide("chat-ui.md");
+    const html = renderToString(
+      React.createElement(
+        Markdown,
+        null,
+        "# Result\n\n| Check | Result |\n| --- | --- |\n| Tests | Passed |",
+      ),
+    );
+
+    assertStringIncludes(html, "<h1>Result</h1>");
+    assertStringIncludes(html, "<table");
+    assertStringIncludes(guide, 'import { Markdown } from "veryfront/markdown"');
+    assertStringIncludes(guide, "renderCodeBlock");
   });
 });
 

@@ -131,6 +131,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "theme",
       "attachments",
       "chat context providers",
+      "veryfront/markdown",
+      "server-rendered",
+      "renderCodeBlock",
+      "unsafe link protocols",
     ],
   },
   "guides/cli-knowledge-ingestion.md": {

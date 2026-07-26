@@ -3,7 +3,7 @@ import { describe, it } from "#std/testing/bdd";
 import { buildAuditPackageJson, collectNpmDependencies } from "./audit-npm.ts";
 
 describe("collectNpmDependencies", () => {
-  it("collects pinned npm imports across root and extension manifests", () => {
+  it("collects pinned npm and esm.sh imports across workspace manifests", () => {
     const deps = collectNpmDependencies([
       {
         sourceLocation: "deno.json",
@@ -18,6 +18,13 @@ describe("collectNpmDependencies", () => {
         },
       },
       {
+        sourceLocation: "react/deno.json",
+        imports: {
+          "@veryfront/mermaid-upstream":
+            "https://esm.sh/mermaid@11.16.0?target=es2022&pin=v135",
+        },
+      },
+      {
         sourceLocation: "extensions/ext-empty/deno.json",
         imports: {
           "#local": "./src/index.ts",
@@ -27,6 +34,7 @@ describe("collectNpmDependencies", () => {
     ]);
 
     assertEquals(deps, {
+      "mermaid": "11.16.0",
       "react": "19.2.4",
       "zod": "4.3.6",
     });

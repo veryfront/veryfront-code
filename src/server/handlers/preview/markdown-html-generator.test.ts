@@ -147,4 +147,23 @@ describe("generateMarkdownHtml", () => {
     assert(html.includes('<script type="module" nonce="nonce-123">'));
     assert(html.includes('<script src="/_veryfront/preview-hmr.js" nonce="nonce-123"></script>'));
   });
+
+  it("uses the audited Mermaid pin and preserves readable source on render failures", () => {
+    const html = generateMarkdownHtml(
+      makeOptions({
+        rawHtml: '<pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre>',
+      }),
+    );
+
+    assert(
+      html.includes(
+        "https://esm.sh/mermaid@11.16.0?target=es2022&pin=v135",
+      ),
+    );
+    assert(!html.includes("mermaid@11.4.1"));
+    assert(html.includes("securityLevel: 'strict'"));
+    assert(html.includes("catch (error)"));
+    assert(html.includes("Mermaid rendering failed; showing source"));
+    assert(!html.includes("style.visibility = 'hidden'"));
+  });
 });

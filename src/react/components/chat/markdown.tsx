@@ -1,30 +1,41 @@
 import * as React from "react";
+import ReactMarkdown, {
+  type Components,
+  type Options as ReactMarkdownOptions,
+} from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "./theme.ts";
 import { CodeBlock as SyntaxCodeBlock } from "../ui/code-block.tsx";
 
 /**
  * Custom element renderers keyed by HTML tag name, the shape of
- * react-markdown's `Components` option. Declared locally instead of
- * type-importing from the esm.sh URL: a static remote import (even
- * type-only) pulls react-markdown's remote graph into the deno graph, and
- * the dnt npm build cannot map esm.sh-internal specifiers (`stable/react`)
- * onto valid npm package names. The package itself still loads at runtime
- * via the ESM URL below.
+ * react-markdown's `Components` option.
  */
-export type Components = Partial<
-  Record<keyof React.JSX.IntrinsicElements, React.ElementType>
+export type { Components };
+
+type UpstreamPluginList = NonNullable<
+  ReactMarkdownOptions["remarkPlugins"]
 >;
 
-/** remark/rehype plugin list (react-markdown's `PluggableList`), opaque here. */
-export type PluggableList = readonly unknown[];
+/**
+ * Readonly remark/rehype plugin list accepted by react-markdown.
+ *
+ * Readonly is intentional and preserves the existing public contract for
+ * frozen application configuration. A mutable copy is passed upstream.
+ */
+export type PluggableList = readonly UpstreamPluginList[number][];
 
 /** Props accepted by markdown. */
 export interface MarkdownProps {
-  /** Markdown content to render */
+  /** CommonMark/GFM source to render. */
   children: string;
-  /** Additional class name */
+  /** Additional class name for the outer container. */
   className?: string;
-  /** Custom code block renderer */
+  /**
+   * Replace the default fenced-code renderer. Inline code remains an ordinary
+   * `<code>` element. The callback receives the fence language exactly as
+   * authored and source text with only the parser-added final newline removed.
+   */
   renderCodeBlock?: (props: CodeBlockProps) => React.ReactNode;
   /**
    * Custom element renderers merged OVER the built-in defaults (consumer
@@ -33,23 +44,27 @@ export interface MarkdownProps {
    * `pre`/code path unless a `pre` entry is supplied here.
    */
   components?: Components;
-  /** Extra remark plugins, appended after the built-in list (GFM etc.). */
+  /**
+   * Trusted remark plugins appended after the built-in GFM plugin. Plugins run
+   * as application code and are not sandboxed.
+   */
   remarkPlugins?: PluggableList;
-  /** Extra rehype plugins, appended after the built-in list. */
+  /**
+   * Trusted rehype plugins. Plugins can alter the default HTML-safety
+   * properties, so do not derive this list from untrusted input.
+   */
   rehypePlugins?: PluggableList;
 }
 
-/** Props accepted by code block. */
+/** Props passed to a custom fenced-code renderer. */
 export interface CodeBlockProps {
+  /** Fence language identifier, or `undefined` for an unlabelled fence. */
   language: string | undefined;
+  /** Fence source with meaningful leading and trailing whitespace preserved. */
   code: string;
+  /** Always `false`; retained for renderer compatibility. */
   inline?: boolean;
 }
-
-export function getReactMarkdownModuleUrl(reactVersion = React.version): string {
-  return `https://esm.sh/react-markdown@9.0.3?target=es2022&pin=v135&deps=react@${reactVersion}`;
-}
-const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 // Self-contained prose styling. Studio's ChatMessageText leans on the
 // `@tailwindcss/typography` `prose` plugin for element defaults (list markers,
 // heading sizes, spacing). This package is dependency-light and must not
@@ -83,14 +98,6 @@ const MARKDOWN_CONTAINER_CLASS = [
   "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_*]:max-w-full",
 ].join(" ");
 
-type DefaultModule<T> = { default: T };
-
-/**
- * Opaque remark/rehype plugin handle. The plugin internals are not used
- * directly; they are only passed through to react-markdown.
- */
-type MarkdownPlugin = unknown;
-
 /** Props passed by react-markdown to a custom `pre` renderer. */
 interface PreRendererProps {
   children?: React.ReactNode;
@@ -118,23 +125,6 @@ interface TableCellProps {
   children?: React.ReactNode;
   style?: React.CSSProperties;
 }
-
-/** Minimal shape of the react-markdown default export used here. */
-interface ReactMarkdownProps {
-  remarkPlugins?: MarkdownPlugin[];
-  rehypePlugins?: MarkdownPlugin[];
-  components?: Record<string, (props: never) => React.ReactNode>;
-  children?: string;
-}
-
-type ReactMarkdownComponent = (props: ReactMarkdownProps) => React.ReactElement;
-
-async function importFromUrl<T>(url: string): Promise<T> {
-  return await import(/* @vite-ignore */ url) as T;
-}
-
-let ReactMarkdown: ReactMarkdownComponent | null = null;
-let remarkGfm: MarkdownPlugin | null = null;
 
 /**
  * Recursively flatten a react-markdown child tree to plain text. Fenced code
@@ -176,18 +166,15 @@ function CodeBlock({
   return <SyntaxCodeBlock code={code} language={language} />;
 }
 
-function FallbackMarkdown({
-  children,
-  className,
-}: Pick<MarkdownProps, "children" | "className">): React.ReactElement {
-  return (
-    <div className={cn(MARKDOWN_CONTAINER_CLASS, className)}>
-      <p className="whitespace-pre-wrap">{children}</p>
-    </div>
-  );
-}
-
-/** Render markdown. */
+/**
+ * Render CommonMark and GitHub Flavored Markdown synchronously.
+ *
+ * Headings, emphasis, lists, tables, task lists, links, and custom components
+ * are present in server output. Fenced source also renders during SSR; Shiki
+ * highlighting and Mermaid SVGs progressively enhance it in the browser.
+ * Raw HTML and unsafe link protocols are excluded by react-markdown's default
+ * pipeline unless a caller intentionally changes that pipeline with plugins.
+ */
 export function Markdown({
   children,
   className,
@@ -196,51 +183,7 @@ export function Markdown({
   remarkPlugins,
   rehypePlugins,
 }: MarkdownProps): React.ReactElement {
-  const [isLoaded, setIsLoaded] = React.useState(false);
-  // Incremented on transient import failure to trigger one automatic retry.
-  // Capped at 1: a second failure (persistent network error or CSP block)
-  // leaves the component on the plain-text fallback rather than looping.
-  const [loadAttempt, setLoadAttempt] = React.useState(0);
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    async function load(): Promise<void> {
-      try {
-        if (!ReactMarkdown) {
-          const [rmModule, gfmModule] = await Promise.all([
-            importFromUrl<DefaultModule<unknown>>(getReactMarkdownModuleUrl()),
-            importFromUrl<DefaultModule<unknown>>(ESM_REMARK_GFM),
-          ]);
-
-          ReactMarkdown = rmModule.default as ReactMarkdownComponent;
-          remarkGfm = gfmModule.default;
-        }
-
-        if (cancelled) return;
-        setIsLoaded(true);
-      } catch (_) {
-        // Reset module vars so a retry starts fresh (stale partial assignments
-        // would cause the next attempt to skip the import and call a null default).
-        ReactMarkdown = null;
-        remarkGfm = null;
-        // Schedule one automatic retry; cap at attempt 1 to avoid an infinite loop.
-        if (!cancelled && loadAttempt === 0) setLoadAttempt(1);
-      }
-    }
-
-    load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loadAttempt]);
-
-  if (!isLoaded || !ReactMarkdown) {
-    return <FallbackMarkdown className={className}>{children}</FallbackMarkdown>;
-  }
-
-  const builtinComponents: ReactMarkdownProps["components"] = {
+  const builtinComponents: Components = {
     // Override `pre` (not `code`) — Studio's approach. Block code arrives
     // as `<pre><code class="language-x">…</code></pre>`; we pull the
     // language + text off the inner (default-rendered) `<code>` element
@@ -254,7 +197,7 @@ export function Markdown({
         return <pre>{props.children}</pre>;
       }
       const codeClassName = child.props.className;
-      const match = /language-(\w+)/.exec(codeClassName || "");
+      const match = /(?:^|\s)language-([^\s]+)/.exec(codeClassName || "");
       const language = match ? match[1] : undefined;
       const code = extractText(child.props.children).replace(/\n$/, "");
 
@@ -327,17 +270,17 @@ export function Markdown({
   // `components` uses react-markdown's `Components`.
   const mergedComponents = {
     ...builtinComponents,
-    ...(components as ReactMarkdownProps["components"] | undefined),
-  } as ReactMarkdownProps["components"];
+    ...components,
+  } satisfies Components;
 
   return (
     <div className={cn(MARKDOWN_CONTAINER_CLASS, className)}>
       <ReactMarkdown
         remarkPlugins={[
-          ...(remarkGfm ? [remarkGfm] : []),
-          ...((remarkPlugins ?? []) as MarkdownPlugin[]),
+          remarkGfm,
+          ...(remarkPlugins ?? []),
         ]}
-        rehypePlugins={(rehypePlugins ?? []) as MarkdownPlugin[]}
+        rehypePlugins={rehypePlugins ? [...rehypePlugins] : undefined}
         components={mergedComponents}
       >
         {children}

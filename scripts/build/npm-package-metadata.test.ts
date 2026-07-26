@@ -9,6 +9,7 @@ import {
   normalizeNpmPackageMetadata,
   removeInternalNpmEntryPointExports,
   ROOT_OPTIONAL_RUNTIME_PEERS,
+  ROOT_SHARED_WORKSPACE_DEPENDENCIES,
 } from "./npm-package-metadata.ts";
 import {
   type ExtensionManifest,
@@ -334,6 +335,7 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
   ) as RootPackageConfig;
   const owned = new Set<string>(EXTENSION_OWNED_DEPENDENCIES);
   const optionalPeers = new Set<string>(ROOT_OPTIONAL_RUNTIME_PEERS);
+  const rootShared = new Set<string>(ROOT_SHARED_WORKSPACE_DEPENDENCIES);
 
   const manifestPaths = firstPartyExtensionManifestPaths(denoConfig);
   assertEquals(
@@ -362,9 +364,10 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
 
     for (const dependency of dependencies) {
       assertEquals(
-        owned.has(dependency) || optionalPeers.has(dependency),
+        owned.has(dependency) || optionalPeers.has(dependency) ||
+          rootShared.has(dependency),
         true,
-        `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
+        `${dependency} (declared by ${manifestPath}) must be classified as extension-owned, an optional root peer, or an intentional root/workspace shared dependency`,
       );
     }
   }

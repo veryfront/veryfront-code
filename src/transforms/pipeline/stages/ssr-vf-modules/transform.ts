@@ -301,11 +301,16 @@ async function rewriteFallbackRelativeImports(
       continue;
     }
 
-    // Same React-instance fix as the main path: route React re-exports to the
-    // esm.sh bundle instead of linking veryfront's project-React bridge.
-    const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion, reactImportMap);
-    if (reactUrl) {
-      replacements.set(specifier, reactUrl);
+    // Route React-workspace facades directly to their exact esm.sh runtime
+    // dependencies. This preserves one React instance and keeps package-owned
+    // Markdown dependencies pinned in the depth-limit fallback.
+    const workspaceReExportUrl = reactReExportToEsmUrl(
+      resolvedPath,
+      ctx.reactVersion,
+      reactImportMap,
+    );
+    if (workspaceReExportUrl) {
+      replacements.set(specifier, workspaceReExportUrl);
       continue;
     }
 
@@ -529,12 +534,16 @@ async function transformFrameworkCodeUncoalesced(
           continue;
         }
 
-        // veryfront's own React re-exports bridge to project React, which is a
-        // different instance than the esm.sh react-dom bundle during SSR.
-        // Point these straight at the esm.sh bundle so SSR shares one React.
-        const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion, reactImportMap);
-        if (reactUrl) {
-          relativeReplacements.set(specifier, reactUrl);
+        // Route React-workspace facades directly to exact esm.sh dependencies:
+        // React re-exports must share one instance, while Markdown runtime
+        // packages must not drift or leave unresolved workspace aliases.
+        const workspaceReExportUrl = reactReExportToEsmUrl(
+          resolvedPath,
+          ctx.reactVersion,
+          reactImportMap,
+        );
+        if (workspaceReExportUrl) {
+          relativeReplacements.set(specifier, workspaceReExportUrl);
           continue;
         }
 

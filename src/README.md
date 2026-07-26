@@ -66,20 +66,20 @@
 
 ### Services & Infrastructure
 
-| Module                 | Export Alias             | Purpose                                           |
-| ---------------------- | ------------------------ | ------------------------------------------------- |
-| **`runs/`**            | `veryfront/runs`         | Durable runs client                               |
-| **`task/`**            | `#veryfront/task`        | Task definitions and runner                       |
-| **`sandbox/`**         | `veryfront/sandbox`      | Ephemeral compute environments                    |
-| **`channels/`**        | `#veryfront/channels`    | Control-plane agent routing                       |
-| **`integrations/`**    | `veryfront/integrations` | Third-party connector metadata and remote tools   |
-| **`internal-agents/`** | -                        | Hosted agent runtime (AG-UI, sessions, auth)      |
-| **`schemas/`**         | `#veryfront/schemas`     | Shared Zod validation schemas and `defineSchema`  |
-| **`registry/`**        | -                        | Project-scoped multi-tenant registry manager      |
-| **`fs/`**              | `veryfront/fs`           | Cross-runtime filesystem and path utilities       |
-| **`markdown/`**        | `veryfront/markdown`     | Markdown React component with syntax highlighting |
-| **`mdx/`**             | `veryfront/mdx`          | MDXProvider for component overrides               |
-| **`extensions/`**      | `#veryfront/extensions`  | Extension contracts, loader, and orchestration    |
+| Module                 | Export Alias             | Purpose                                            |
+| ---------------------- | ------------------------ | -------------------------------------------------- |
+| **`runs/`**            | `veryfront/runs`         | Durable runs client                                |
+| **`task/`**            | `#veryfront/task`        | Task definitions and runner                        |
+| **`sandbox/`**         | `veryfront/sandbox`      | Ephemeral compute environments                     |
+| **`channels/`**        | `#veryfront/channels`    | Control-plane agent routing                        |
+| **`integrations/`**    | `veryfront/integrations` | Third-party connector metadata and remote tools    |
+| **`internal-agents/`** | -                        | Hosted agent runtime (AG-UI, sessions, auth)       |
+| **`schemas/`**         | `#veryfront/schemas`     | Shared Zod validation schemas and `defineSchema`   |
+| **`registry/`**        | -                        | Project-scoped multi-tenant registry manager       |
+| **`fs/`**              | `veryfront/fs`           | Cross-runtime filesystem and path utilities        |
+| **`markdown/`**        | `veryfront/markdown`     | SSR CommonMark/GFM with progressive code rendering |
+| **`mdx/`**             | `veryfront/mdx`          | MDXProvider for component overrides                |
+| **`extensions/`**      | `#veryfront/extensions`  | Extension contracts, loader, and orchestration     |
 
 ### Supporting Modules
 
@@ -670,11 +670,13 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - Path utilities (join, resolve, dirname, basename, extname)
 - Working directory management
 
-#### `markdown/` - Markdown Rendering
+#### `markdown/` - Markdown rendering
 
 **Exports**: `veryfront/markdown`
 
-- `<Markdown>` React component with syntax highlighting
+- Synchronous SSR for CommonMark and GitHub Flavored Markdown
+- Readable fenced source with progressive Shiki and Mermaid enhancement
+- Custom element and fenced-code renderers
 - Code block rendering with language detection
 
 #### `mdx/` - MDX Provider

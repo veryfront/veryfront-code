@@ -668,6 +668,27 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, 'id="veryfront-portals"');
     });
 
+    it("uses the audited Mermaid pin and preserves readable source on render failures", async () => {
+      const result = await wrapInHTMLShell(
+        '<pre><code class="language-mermaid">flowchart LR\nA --&gt; B</code></pre>',
+        createMeta(),
+        createOptions({
+          pagePath: "/project/README.md",
+          pageType: "md",
+        }),
+      );
+
+      assertStringIncludes(
+        result,
+        "https://esm.sh/mermaid@11.16.0?target=es2022&pin=v135",
+      );
+      assert(!result.includes("https://esm.sh/mermaid@11'"));
+      assertStringIncludes(result, "securityLevel: 'strict'");
+      assertStringIncludes(result, "catch (error)");
+      assertStringIncludes(result, "Mermaid rendering failed; showing source");
+      assert(!result.includes("style.visibility = 'hidden'"));
+    });
+
     it("should escape HTML in metadata", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",

@@ -20,6 +20,7 @@ import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { buildNonceAttribute, escapeHTML } from "./html-escape.ts";
+import { buildMarkdownMermaidScript } from "./markdown-mermaid-script.ts";
 import {
   generateHydrationData,
   getDevScripts,
@@ -469,23 +470,7 @@ async function generateHTMLShellPartsImpl(
     ? `<script src="/_veryfront/preview-hmr.js"${nonceAttr}></script>`
     : "";
 
-  const mermaidScript = isMarkdownPreview
-    ? `<script type="module"${nonceAttr}>
-import mermaid from 'https://esm.sh/mermaid@11';
-mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
-// Convert code.language-mermaid blocks to mermaid-compatible format
-document.querySelectorAll('code.language-mermaid').forEach((code, i) => {
-  const pre = code.parentElement;
-  if (pre?.tagName === 'PRE') {
-    const div = document.createElement('pre');
-    div.className = 'mermaid';
-    div.textContent = code.textContent;
-    pre.replaceWith(div);
-  }
-});
-mermaid.run();
-</script>`
-    : "";
+  const mermaidScript = isMarkdownPreview ? buildMarkdownMermaidScript(nonce) : "";
 
   const end = `</div>
   <div id="veryfront-portals"></div>

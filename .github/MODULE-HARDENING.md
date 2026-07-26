@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    11 |      19.0% | Current formal closure evidence remains valid       |
+| Closed                         |    12 |      20.7% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     7 |      12.1% | No current authoritative-branch review delta exists |
+| Pending current review         |     6 |      10.3% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 51/58 (87.9%). This is progress coverage, not a substitute for the
+coverage of 52/58 (89.7%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -43,6 +43,7 @@ stricter closure count.
 - `eval`
 - `extensions`
 - `knowledge`
+- `markdown`
 - `metrics`
 - `provider`
 - `runs`
@@ -100,7 +101,6 @@ stricter closure count.
 
 - `chat`
 - `issues`
-- `markdown`
 - `mdx`
 - `repositories`
 - `sandbox`
@@ -121,18 +121,193 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `eval`,
-`extensions`, `knowledge`, `metrics`, `provider`, `runs`, `runtime`, `schemas`,
-and `version.ts`. The latest independent adversarial knowledge, provider, runs,
-and runtime findings are remediated and revalidated. `prompt` and `resource`
-have now received deep current-state reviews and substantial remediation, but
-remain open while their documented cross-cutting findings are unresolved. Each
-closure requires a complete consumer map, deep module-level review, adversarial
-boundary tests, public-contract documentation, and repository-wide static
-verification. Cross-module consumers changed by a fix remain in revalidation;
-focused evidence for one boundary does not by itself close the consumer's
-top-level unit. The next target will be selected from the remaining
-dependency-adjacent units after this checkpoint is committed, pushed, and
-synchronized with `origin/main`.
+`extensions`, `knowledge`, `markdown`, `metrics`, `provider`, `runs`,
+`runtime`, `schemas`, and `version.ts`. The latest independent adversarial
+knowledge, Markdown, provider, runs, and runtime findings are remediated and
+revalidated. `prompt` and `resource` have now received deep current-state
+reviews and substantial remediation, but remain open while their documented
+cross-cutting findings are unresolved. Each closure requires a complete
+consumer map, deep module-level review, adversarial boundary tests,
+public-contract documentation, and repository-wide static verification.
+Cross-module consumers changed by a fix remain in revalidation; focused
+evidence for one boundary does not by itself close the consumer's top-level
+unit. `mdx` is the next dependency-adjacent target after this checkpoint is
+committed, pushed, and synchronized with `origin/main`.
+
+### Markdown closure checkpoint
+
+The `markdown` unit owns the thin public `veryfront/markdown` facade and its
+standalone Markdown rendering contract. The shared implementation lives in the
+React component and code-surface modules; those changes are evidence for this
+boundary but do not close the top-level `react` unit. The public contract is
+`Markdown`, `MarkdownProps`, `CodeBlockProps`, `Components`, and
+`PluggableList`: synchronous CommonMark/GFM rendering, consumer element and
+fenced-code overrides, readonly trusted plugin lists, exact fence text, and
+readable source before or after browser-only enhancement.
+
+Runtime dependencies are React, `react-markdown` 9.0.3, `remark-gfm` 4.0.1,
+Shiki 1.24.0, Mermaid 11.16.0, the strict trusted-HTML validator, package
+generation, the browser import rewriter, and the standalone HTML-preview
+enhancer. Direct consumers include chat message and reasoning surfaces,
+`veryfront/chat`, `veryfront/ui`, the npm `veryfront/markdown` entrypoint,
+generated API references, the chat UI guide, and both HTML-shell and
+standalone-preview Markdown paths. Exercised runtime paths include semantic
+SSR, hydration and progressive syntax highlighting, Mermaid rendering and
+theme changes, custom components and plugins, Deno workspace resolution, npm
+package emission, browser bare-import rewriting, SSR framework-module
+rewriting, and CDN-backed standalone previews.
+
+Material findings and remedies:
+
+- **SSR semantics were conditional on a browser CDN effect.**
+
+  Symptom: server output was a whitespace-preserving paragraph, while
+  `react-markdown` and GFM loaded later in `useEffect`; a blocked or failed load
+  left the downgrade permanent.
+
+  Source: A Philosophy of Software Design - information leakage and shallow
+  modules.
+
+  Consequence: headings, lists, tables, links, and accessible document
+  structure were absent from SSR, search output, and failure states despite the
+  public API promising Markdown.
+
+  Remedy: `src/react/components/chat/markdown.tsx` now uses package-owned static
+  renderer and GFM imports through explicit Deno/npm workspace facades, so the
+  semantic tree exists synchronously and browser dependencies enhance rather
+  than define the content.
+
+- **Fence parsing and fallback rendering corrupted authored source.**
+
+  Symptom: the language regex accepted only `\w`, Shiki trimmed all code, and
+  Mermaid loading or error states replaced source with a skeleton or error
+  alone.
+
+  Source: Code Complete - defensive programming and input-preservation
+  discipline.
+
+  Consequence: identifiers such as `c++`, indentation, leading or trailing
+  blank lines, and failed diagram source could be lost or changed.
+
+  Remedy: fence IDs are captured through the next whitespace boundary, only
+  the parser-added final newline is removed, Shiki and plain rendering preserve
+  the exact remaining text, and every Mermaid loading and failure path retains
+  readable source.
+
+- **Lazy dependency and Mermaid singleton state had unsafe lifecycle
+  semantics.**
+
+  Symptom: rejected module/highlighter promises could remain cached, concurrent
+  theme renders could interleave `initialize` and `render`, and stale effects
+  could publish output for superseded props.
+
+  Source: Code Complete - explicit error paths and resource-lifecycle
+  discipline; The Pragmatic Programmer - orthogonality.
+
+  Consequence: one transient load failure could require a page reload,
+  simultaneous diagrams could use the wrong theme, and fast prop changes could
+  flash stale HTML.
+
+  Remedy: retryable singleflight loaders, a failure-tolerant FIFO executor,
+  serialized Mermaid configuration plus rendering, keyed result state, and
+  effect cancellation now define the lifecycle. Focused tests cover
+  coalescing, retry, failure recovery, serialization, source restoration, and
+  forced theme overlap.
+
+- **Mermaid version and security knowledge was duplicated across preview
+  paths.**
+
+  Symptom: React code, the HTML shell, and the standalone preview independently
+  referenced 11.4.1, a major-only `mermaid@11`, or a separate configuration;
+  the dependency audit inspected only `npm:` targets.
+
+  Source: The Pragmatic Programmer - DRY as duplicated knowledge; A Philosophy
+  of Software Design - information leakage.
+
+  Consequence: previews could silently drift to an unreviewed release, retain
+  known Mermaid vulnerabilities, race theme renders, or hide source after a
+  partial failure while the audit still reported clean.
+
+  Remedy: one exact package policy owns Mermaid 11.16.0 and esm.sh pin `v135`;
+  both preview producers use one strict, serialized, source-restoring script;
+  the audit now includes exact esm.sh manifest dependencies.
+
+- **Package-owned imports were not deterministic at every transform
+  boundary.**
+
+  Symptom: unversioned browser imports defaulted to the latest esm.sh package,
+  and the first full-suite run proved the new React-workspace facades lacked SSR
+  re-export routing.
+
+  Source: Software Engineering at Google - dependency management and upgrade
+  blockage; Clean Architecture - dependency boundary integrity.
+
+  Consequence: browser behavior could change without a source or lockfile
+  change, while SSR could recursively reach workspace-only aliases and fail
+  module linking.
+
+  Remedy: the browser strategy pins all four framework-owned packages while
+  preserving explicit application-authored versions; one URL registry also
+  drives exact workspace URLs, React-facade SSR routing, config drift tests, and
+  generated bundles. The routing drift guard covers every source facade under
+  `react/`.
+
+- **Published types and user guidance did not prove the real contract.**
+
+  Symptom: no external npm consumer fixture compiled `veryfront/markdown`, and
+  public guidance did not state SSR semantics, progressive fallback, plugin
+  trust, unsafe-protocol behavior, remote-image requests, or caller-owned input
+  limits.
+
+  Source: Software Engineering at Google - Hyrum's Law and backward
+  compatibility.
+
+  Consequence: declaration regressions could ship unnoticed and users could
+  infer safety or availability guarantees the implementation did not provide.
+
+  Remedy: package metadata and DNT mappings now publish exact dependencies; a
+  real React/TypeScript consumer fixture covers components, code renderers, and
+  frozen plugin lists; JSDoc, generated reference pages, the module map, the
+  how-to guide, and executable guide contracts now describe and exercise the
+  boundary.
+
+Reproducible checkpoint evidence:
+
+- The final focused Markdown, code-runtime, HTML-preview, transform, package
+  metadata, audit-parser, documentation, and drift-guard surface passed 50
+  tests and 269 steps with zero failures.
+- The repository suite passed 3,546 tests and 28,101 steps with zero failures;
+  one unrelated intentional test remains ignored with 36 steps.
+- `deno task verify:quick` passed manifest freshness, formatting, lint and
+  policy ratchets, dependency and module boundaries, all documentation
+  validation, and every configured entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilt the root npm package and every
+  first-party extension, verified root-import lifecycle behavior, and compiled
+  the published Markdown declarations through a real external React consumer.
+- Documentation generation produced all 38 public module groups;
+  `deno task docs:validate` passed the executable guide portfolio and all 731
+  link checks.
+- `deno task audit` found no vulnerabilities across 65 workspace npm
+  dependencies. The rebuilt npm package also reported zero install
+  vulnerabilities.
+- Consecutive fresh `deno task generate` runs produced byte-identical client
+  template, framework-candidate, and RSC bundle artifacts. `git diff --check`
+  passed, and the final lock contains only the intended exact Markdown runtime
+  releases rather than the prior Mermaid 11.4.1 or unreviewed target variants.
+
+No unresolved critical or high-confidence Markdown production risk remains.
+The following bounded residuals are explicit:
+
+| Severity | Surface                         | Evidence and consequence                                                                                                                                                        | Required resolution                                                                                                                   |
+| -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Low      | Remote Markdown images          | The default safe pipeline can still emit an ordinary remote `<img>` URL, causing the browser to contact that origin. This is documented and does not execute raw HTML.           | Override the `img` component with an application allowlist, proxy, or placeholder when the content or privacy boundary requires it.   |
+| Low      | Caller-owned document size      | The renderer preserves arbitrary input for API compatibility; it does not impose a universal byte or AST limit, so an application accepting unbounded hostile documents can consume CPU or memory. | Bound request and stored-document size at the application trust boundary according to its workload.                                  |
+| Low      | Trusted extension points        | `remarkPlugins`, `rehypePlugins`, and custom components execute as application code and can intentionally weaken default URL or HTML behavior.                                   | Keep plugin/component lists deployment-owned and review any safety-changing extension as code; never derive executable plugins from input. |
+| Low      | Standalone preview CDN outage   | A cold standalone preview still needs the exact audited esm.sh Mermaid module for SVG enhancement. Import failure leaves the original source untouched and readable.            | Vendor the audited module if offline SVG enhancement becomes a product requirement; source readability already fails open safely.    |
+
+The touched `build`, `html`, `react`, `server`, `transforms`, and `utils`
+consumers remain in their own top-level revalidation categories. Closing
+Markdown does not certify those broader units.
 
 ### Runs closure checkpoint
 

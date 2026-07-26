@@ -109,6 +109,38 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier?.includes("esm.sh/lodash@4.17.21"), true);
     });
 
+    it("pins framework-owned browser dependencies to audited releases", () => {
+      const expected = {
+        "react-markdown":
+          "https://esm.sh/react-markdown@9.0.3?external=react,react-dom&target=es2022&pin=v135",
+        "remark-gfm":
+          "https://esm.sh/remark-gfm@4.0.1?external=react,react-dom&target=es2022&pin=v135",
+        "shiki": "https://esm.sh/shiki@1.24.0?external=react,react-dom&target=es2022&pin=v135",
+        "mermaid": "https://esm.sh/mermaid@11.16.0?external=react,react-dom&target=es2022&pin=v135",
+      };
+
+      for (const [specifier, url] of Object.entries(expected)) {
+        assertEquals(
+          bareStrategy.rewrite(
+            makeInfo(specifier),
+            makeCtx({ target: "browser" }),
+          ).specifier,
+          url,
+          specifier,
+        );
+      }
+    });
+
+    it("preserves an application-authored explicit framework dependency version", () => {
+      assertEquals(
+        bareStrategy.rewrite(
+          makeInfo("mermaid@10.9.1"),
+          makeCtx({ target: "browser" }),
+        ).specifier,
+        "https://esm.sh/mermaid@10.9.1?external=react,react-dom&target=es2022",
+      );
+    });
+
     // R1 regression: a known server-only driver (`redis`) and its explicit Deno
     // `npm:` form only run server-side. They must be left external (specifier:
     // null) for the runtime to resolve natively — never routed through esm.sh,

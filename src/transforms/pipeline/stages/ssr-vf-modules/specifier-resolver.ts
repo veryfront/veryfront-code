@@ -6,6 +6,7 @@
 
 import { join } from "#veryfront/compat/path/index.ts";
 import { buildReactUrl, getReactImportMap } from "../../../import-rewriter/url-builder.ts";
+import { getFrameworkWorkspaceDependencyUrl } from "../../../import-rewriter/framework-dependencies.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
 
 export interface FrameworkSpecifierResolverInput {
@@ -43,8 +44,8 @@ export function resolveReactSpecifier(
 }
 
 /**
- * veryfront's own React re-export modules under `FRAMEWORK_ROOT/react/`
- * mapped to the bare specifier they stand in for.
+ * Veryfront's React-workspace re-export modules under
+ * `FRAMEWORK_ROOT/react/`, mapped to the bare specifier they stand in for.
  */
 const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
   "react.js": "react",
@@ -53,15 +54,21 @@ const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
   "react-dom-server.js": "react-dom/server",
   "jsx-runtime.js": "react/jsx-runtime",
   "jsx-dev-runtime.js": "react/jsx-dev-runtime",
+  "react-markdown.js": "react-markdown",
+  "remark-gfm.js": "remark-gfm",
+  "shiki.js": "shiki",
+  "mermaid.js": "mermaid",
 };
 
 /** `FRAMEWORK_ROOT/react/` prefix, precomputed (invariant per process). */
 const REACT_REEXPORT_DIR = join(FRAMEWORK_ROOT, "react") + "/";
 
 /**
- * If `resolvedPath` is one of veryfront's React re-export modules
- * (`FRAMEWORK_ROOT/react/*.js`), return the esm.sh URL it should be rewritten
- * to for the given React version. Returns `null` for anything else.
+ * If `resolvedPath` is one of Veryfront's React-workspace re-export modules
+ * (`FRAMEWORK_ROOT/react/*.js`), return its exact esm.sh URL. React itself is
+ * resolved for the active project React version; framework-owned Markdown
+ * dependencies use their audited workspace versions. Returns `null` for
+ * anything else.
  */
 export function reactReExportToEsmUrl(
   resolvedPath: string,
@@ -71,7 +78,9 @@ export function reactReExportToEsmUrl(
   if (!resolvedPath.startsWith(REACT_REEXPORT_DIR)) return null;
   const specifier = REACT_REEXPORT_SPECIFIERS[resolvedPath.slice(REACT_REEXPORT_DIR.length)];
   if (!specifier) return null;
-  return resolveReactSpecifier(specifier, reactVersion, reactImportMap);
+  return resolveReactSpecifier(specifier, reactVersion, reactImportMap) ??
+    getFrameworkWorkspaceDependencyUrl(specifier) ??
+    null;
 }
 
 /**

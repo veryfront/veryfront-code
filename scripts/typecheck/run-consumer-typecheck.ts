@@ -1,14 +1,14 @@
 /**
  * Consumer `tsc --noEmit` gate.
  *
- * Typechecks {@link ./fixtures} — documented `veryfront/ui` / `veryfront/chat`
- * composition — against the BUILT npm package (`npm/esm/**.d.ts`) using a real
- * `@types/react`, exactly the way an external app compiles the published
- * declarations. This is the gap `deno check` (Deno's own react types + source)
- * and a source-level `tsc` both leave open: it is what caught, and now guards
- * against, the dnt react-shim regression that stripped `children`/`className`/
- * event handlers from every `extends React.HTMLAttributes` component's public
- * type. See ./README.md.
+ * Typechecks {@link ./fixtures} — documented `veryfront/ui`,
+ * `veryfront/chat`, and `veryfront/markdown` composition — against the BUILT
+ * npm package (`npm/esm/**.d.ts`) using a real `@types/react`, exactly the way
+ * an external app compiles the published declarations. This is the gap
+ * `deno check` (Deno's own react types + source) and a source-level `tsc` both
+ * leave open: it is what caught, and now guards against, the dnt react-shim
+ * regression that stripped `children`/`className`/event handlers from every
+ * `extends React.HTMLAttributes` component's public type. See ./README.md.
  *
  * Preflight:
  *   - Needs the TypeScript compiler from `storybook/node_modules` (the repo's
@@ -50,7 +50,9 @@ if (!exists(TSC)) {
   Deno.exit(1);
 }
 
-console.log("Rebuilding npm/ from the current source with deno task build:npm.");
+console.log(
+  "Rebuilding npm/ from the current source with deno task build:npm.",
+);
 const buildCode = await run("deno", ["task", "build:npm"]);
 if (buildCode !== 0) {
   console.error("✖ consumer typecheck: build:npm failed");
@@ -62,6 +64,8 @@ console.log(
 );
 const code = await run(TSC, ["--noEmit", "-p", TSCONFIG]);
 if (code === 0) {
-  console.log("✓ consumer typecheck: published composition types are consumer-clean");
+  console.log(
+    "✓ consumer typecheck: published composition types are consumer-clean",
+  );
 }
 Deno.exit(code);

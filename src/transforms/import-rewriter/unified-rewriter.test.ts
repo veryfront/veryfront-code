@@ -159,4 +159,18 @@ describe("rewriteImports with the default strategies", () => {
 
     assertStringIncludes(result, "https://cdn.example.com/icons/logo.svg");
   });
+
+  it("pins static and lazy framework-owned browser dependencies", async () => {
+    const result = await rewriteImports(
+      [
+        'import ReactMarkdown from "react-markdown";',
+        'const loadMermaid = () => import("mermaid");',
+      ].join("\n"),
+      defaultCtx({ target: "browser" }),
+    );
+
+    assertStringIncludes(result, "react-markdown@9.0.3");
+    assertStringIncludes(result, "mermaid@11.16.0");
+    assertEquals((result.match(/pin=v135/g) ?? []).length, 2);
+  });
 });

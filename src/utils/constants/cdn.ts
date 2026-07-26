@@ -2,6 +2,15 @@ export const ESM_CDN_BASE = "https://esm.sh";
 export const JSDELIVR_CDN_BASE = "https://cdn.jsdelivr.net";
 export const DENO_STD_BASE = "https://deno.land";
 
+/** Audited Mermaid release used by package and standalone preview renderers. */
+export const MERMAID_VERSION = FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS.mermaid;
+export const MERMAID_ESM_URL = buildEsmShUrl(
+  "mermaid",
+  MERMAID_VERSION,
+  undefined,
+  { pin: ESM_SH_BUILD_PIN },
+);
+
 export const REACT_VERSION_17 = "17.0.2";
 export const REACT_VERSION_18_2 = "18.2.0";
 export const REACT_VERSION_18_3 = "18.3.1";
@@ -12,10 +21,15 @@ export const REACT_VERSION_19 = "19.2.4";
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
 
 import {
+  buildEsmShUrl,
   buildReactUrl,
   getReactImportMap as buildReactImportMap,
   TAILWIND_VERSION,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  ESM_SH_BUILD_PIN,
+  FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS,
+} from "#veryfront/transforms/import-rewriter/framework-dependencies.ts";
 
 export function esmShReact(
   pkg: string,

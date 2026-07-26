@@ -79,6 +79,22 @@ const reactRange = npmDependencyRange(
 	"@veryfront/react-upstream",
 	"^",
 );
+const reactMarkdownRange = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/react-markdown-upstream",
+);
+const remarkGfmRange = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/remark-gfm-upstream",
+);
+const shikiRange = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/shiki-upstream",
+);
+const mermaidRange = npmDependencyRange(
+	denoConfigSet,
+	"@veryfront/mermaid-upstream",
+);
 
 await build({
 	entryPoints,
@@ -163,6 +179,22 @@ await build({
 			version: reactRange,
 			subPath: "jsx-dev-runtime",
 		},
+		"./react/react-markdown.ts": {
+			name: "react-markdown",
+			version: reactMarkdownRange,
+		},
+		"./react/remark-gfm.ts": {
+			name: "remark-gfm",
+			version: remarkGfmRange,
+		},
+		"./react/shiki.ts": {
+			name: "shiki",
+			version: shikiRange,
+		},
+		"./react/mermaid.ts": {
+			name: "mermaid",
+			version: mermaidRange,
+		},
 		// Keep the worker entry behind the separately published parser-only
 		// package boundary. Without this mapping dnt follows the workspace
 		// export and rewrites the import to a bundled extensions/ source path,
@@ -196,6 +228,10 @@ await build({
 		dependencies: {
 			"@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
 			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
+			"react-markdown": reactMarkdownRange,
+			"remark-gfm": remarkGfmRange,
+			"shiki": shikiRange,
+			"mermaid": mermaidRange,
 			// Root deno.json intentionally rejects core npm imports; ws is a
 			// Node-only dynamic import used by the npm server/HMR path.
 			"ws": "8.21.0",

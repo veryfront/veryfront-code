@@ -377,6 +377,10 @@
     "react-dom/client": "./react/react-dom-client.ts",
     "react/jsx-runtime": "./react/jsx-runtime.ts",
     "react/jsx-dev-runtime": "./react/jsx-dev-runtime.ts",
+    "react-markdown": "./react/react-markdown.ts",
+    "remark-gfm": "./react/remark-gfm.ts",
+    "mermaid": "./react/mermaid.ts",
+    "shiki": "./react/shiki.ts",
     "veryfront/schemas": "./src/schemas/index.ts",
     "veryfront/chat/message-prep": "./src/chat/message-prep.ts",
     "#dnt": "jsr:@deno/dnt@0.42.3"

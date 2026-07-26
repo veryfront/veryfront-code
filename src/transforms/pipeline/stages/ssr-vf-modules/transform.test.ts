@@ -19,6 +19,7 @@ import {
   veryfrontTransformCache,
 } from "./constants.ts";
 import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { getFrameworkWorkspaceDependencyUrl } from "#veryfront/transforms/import-rewriter/framework-dependencies.ts";
 import { resolveVeryfrontSourcePath } from "./path-resolver.ts";
 
 const TEST_IMPORT_MAP = { imports: {}, scopes: {} } as const;
@@ -66,14 +67,31 @@ describe("reactReExportToEsmUrl", () => {
     );
   });
 
+  it("maps package-owned React-workspace facades to exact audited URLs", () => {
+    for (
+      const packageName of [
+        "react-markdown",
+        "remark-gfm",
+        "shiki",
+        "mermaid",
+      ]
+    ) {
+      assertEquals(
+        reactReExportToEsmUrl(reactPath(`${packageName}.js`), "19.2.4"),
+        getFrameworkWorkspaceDependencyUrl(packageName),
+        packageName,
+      );
+    }
+  });
+
   it("returns null for non-react-re-export framework files", () => {
     assertEquals(reactReExportToEsmUrl(join(FRAMEWORK_ROOT, "src", "foo.js"), "19.2.4"), null);
     assertEquals(reactReExportToEsmUrl(reactPath("not-a-reexport.js"), "19.2.4"), null);
   });
 
-  // Drift guard: every React re-export source module under `react/` must have
-  // a routing entry, otherwise SSR would link it to project React (the
-  // dual-instance bug) and nothing would catch the regression.
+  // Drift guard: every React-workspace facade must have a routing entry.
+  // Otherwise SSR either links to a second React instance or recursively
+  // transforms a package alias that only exists in react/deno.json.
   it("routes every React re-export source module to an esm.sh URL", async () => {
     const reactSrcDir = new URL("../../../../../react/", import.meta.url);
     const sources: string[] = [];

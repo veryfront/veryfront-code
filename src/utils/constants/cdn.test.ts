@@ -7,9 +7,28 @@ import {
   ESM_CDN_BASE,
   getDenoStdNodeBase,
   getTailwindCSSUrl,
+  MERMAID_ESM_URL,
+  MERMAID_VERSION,
   REACT_DEFAULT_VERSION,
 } from "./cdn.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  ESM_SH_BUILD_PIN,
+  FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS,
+  getFrameworkWorkspaceDependencyUrl,
+} from "#veryfront/transforms/import-rewriter/framework-dependencies.ts";
+
+interface ReactWorkspaceImports {
+  imports?: Record<string, string>;
+}
+
+async function readReactWorkspaceImports(): Promise<Record<string, string>> {
+  const url = new URL("../../../react/deno.json", import.meta.url);
+  const config = JSON.parse(
+    await Deno.readTextFile(url),
+  ) as ReactWorkspaceImports;
+  return config.imports ?? {};
+}
 
 /**
  * Read the React version veryfront's build bundles from `react/deno.json`.
@@ -20,14 +39,18 @@ import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url
  * producing a hard SSR module-link error.
  */
 async function buildReactVersion(): Promise<string> {
-  const url = new URL("../../../react/deno.json", import.meta.url);
-  const config = JSON.parse(await Deno.readTextFile(url)) as {
-    imports?: Record<string, string>;
-  };
-  const reactImport = config.imports?.react ?? "";
+  const reactImport = (await readReactWorkspaceImports()).react ?? "";
   const match = reactImport.match(/react@(\d+\.\d+\.\d+)/);
   if (!match) throw new Error(`Could not parse react version from "${reactImport}"`);
   return match[1]!;
+}
+
+async function buildMermaidUrl(): Promise<string> {
+  const mermaidImport = (await readReactWorkspaceImports())["@veryfront/mermaid-upstream"] ?? "";
+  if (!mermaidImport) {
+    throw new Error("react/deno.json does not define the Mermaid upstream");
+  }
+  return mermaidImport;
 }
 
 describe("constants/cdn — React default version drift guard", () => {
@@ -41,6 +64,47 @@ describe("constants/cdn — React default version drift guard", () => {
 
   it("the two React default constants agree with each other", () => {
     assertEquals(REACT_DEFAULT_VERSION, DEFAULT_REACT_VERSION);
+  });
+});
+
+describe("constants/cdn — Mermaid dependency drift guard", () => {
+  it("standalone previews use the exact package-audited Mermaid URL", async () => {
+    assertEquals(MERMAID_ESM_URL, await buildMermaidUrl());
+  });
+
+  it("all browser-owned versions and esm.sh pins match react/deno.json", async () => {
+    const imports = await readReactWorkspaceImports();
+    for (
+      const [packageName, version] of Object.entries(
+        FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS,
+      )
+    ) {
+      const target = imports[`@veryfront/${packageName}-upstream`];
+      if (!target) {
+        throw new Error(
+          `react/deno.json does not define ${packageName} upstream`,
+        );
+      }
+      const url = new URL(target);
+      assertEquals(url.pathname, `/${packageName}@${version}`, packageName);
+      assertEquals(
+        url.searchParams.get("pin"),
+        ESM_SH_BUILD_PIN,
+        packageName,
+      );
+      assertEquals(
+        target,
+        getFrameworkWorkspaceDependencyUrl(packageName),
+        packageName,
+      );
+    }
+  });
+
+  it("the shared URL contains the declared exact version", () => {
+    assertEquals(
+      new URL(MERMAID_ESM_URL).pathname,
+      `/mermaid@${MERMAID_VERSION}`,
+    );
   });
 });
 

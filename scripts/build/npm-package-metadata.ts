@@ -19,6 +19,17 @@ export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 	"redis",
 ] as const;
 
+/**
+ * Dependencies owned by both an isolated workspace and the root package.
+ *
+ * `remark-gfm` is compiled by the content extension and is also required by
+ * the public `veryfront/markdown` React entrypoint. It must remain in the root
+ * package instead of being stripped with extension-only dependencies.
+ */
+export const ROOT_SHARED_WORKSPACE_DEPENDENCIES = [
+	"remark-gfm",
+] as const;
+
 // Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
 // their packages never appear in the generated dependencies. Without this
 // fallback the optional-peer move silently skips them and the published
@@ -75,7 +86,6 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"rehype-starry-night",
 	"rehype-stringify",
 	"remark-frontmatter",
-	"remark-gfm",
 	"remark-parse",
 	"remark-rehype",
 	"tailwindcss",

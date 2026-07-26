@@ -25,6 +25,7 @@ type EsmShOptions = {
   external?: string[];
   target?: string;
   deps?: Record<string, string>;
+  pin?: string;
 };
 
 /**
@@ -54,6 +55,10 @@ export function buildEsmShUrl(
       .map(([k, v]) => `${k}@${v}`)
       .join(",");
     params.push(`deps=${depsStr}`);
+  }
+
+  if (options?.pin) {
+    params.push(`pin=${options.pin}`);
   }
 
   const versionStr = version ? `@${version}` : "";

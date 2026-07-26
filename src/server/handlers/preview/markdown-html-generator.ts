@@ -10,6 +10,7 @@
 
 import { escapeHtml } from "veryfront/utils/html-escape";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+import { buildMarkdownMermaidScript } from "#veryfront/html/markdown-mermaid-script.ts";
 
 /** Options for generating markdown preview HTML. */
 interface MarkdownHtmlOptions {
@@ -100,6 +101,7 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
   const studioScript = buildStudioScript(url, projectId, filePath, nonce);
   const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
   const nonceAttr = buildNonceAttribute(nonce);
+  const mermaidScript = buildMarkdownMermaidScript(nonce);
 
   return `<!DOCTYPE html>
 <html lang="en"${themeAttrs}>
@@ -121,64 +123,7 @@ export function generateMarkdownHtml(options: MarkdownHtmlOptions): string {
 
   ${studioScript}
 
-  <script type="module"${nonceAttr}>
-    import mermaid from 'https://esm.sh/mermaid@11.4.1?pin=v135';
-
-    function getMermaidTheme() {
-      return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';
-    }
-
-    async function initMermaid() {
-      mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
-      // Convert code.language-mermaid blocks to mermaid-compatible format
-      // Store original source in data attribute for theme changes
-      const elements = [];
-      document.querySelectorAll('code.language-mermaid').forEach((code) => {
-        const pre = code.parentElement;
-        if (pre?.tagName === 'PRE') {
-          const div = document.createElement('pre');
-          div.className = 'mermaid';
-          div.dataset.source = code.textContent;
-          div.textContent = code.textContent;
-          div.style.visibility = 'hidden';
-          pre.replaceWith(div);
-          elements.push(div);
-        }
-      });
-      await mermaid.run();
-      elements.forEach((el) => el.style.visibility = '');
-    }
-
-    async function rerenderMermaid() {
-      mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
-      // Hide, restore source, re-render, then show
-      const elements = document.querySelectorAll('.mermaid');
-      elements.forEach((el) => {
-        if (el.dataset.source) {
-          el.style.visibility = 'hidden';
-          el.innerHTML = '';
-          el.textContent = el.dataset.source;
-          el.removeAttribute('data-processed');
-        }
-      });
-      await mermaid.run();
-      elements.forEach((el) => el.style.visibility = '');
-    }
-
-    // Initial render
-    initMermaid();
-
-    // Re-render mermaid when color mode changes (via Studio bridge)
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.attributeName === 'data-theme') {
-          rerenderMermaid();
-        }
-      }
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-
-  </script>
+  ${mermaidScript}
 
   <!-- Preview HMR -->
   <script src="/_veryfront/preview-hmr.js"${nonceAttr}></script>

@@ -3,12 +3,13 @@
   // ./README.md.
   //
   // Requires `deno task build:npm` to have produced `npm/`. The public
-  // `veryfront/ui` / `veryfront/chat` specifiers resolve to the emitted `.d.ts`;
-  // `react` resolves to a real `@types/react` (as any consumer has). This is the
-  // ONLY configuration that exercises the published declarations the way an
-  // external React-19 app compiles them — `deno check` and a source-level `tsc`
-  // both miss it (that gap once let every `extends React.HTMLAttributes`
-  // component ship with its DOM props stripped for consumers; see README).
+  // `veryfront/ui`, `veryfront/chat`, and `veryfront/markdown` specifiers
+  // resolve to the emitted `.d.ts`; `react` resolves to a real `@types/react`
+  // (as any consumer has). This is the ONLY configuration that exercises the
+  // published declarations the way an external React-19 app compiles them —
+  // `deno check` and a source-level `tsc` both miss it (that gap once let every
+  // `extends React.HTMLAttributes` component ship with its DOM props stripped
+  // for consumers; see README).
   "compilerOptions": {
     "jsx": "react-jsx",
     "module": "ESNext",
@@ -21,15 +22,22 @@
     "baseUrl": "../..",
     "paths": {
       "react": ["./storybook/node_modules/@types/react"],
-      "react/jsx-runtime": ["./storybook/node_modules/@types/react/jsx-runtime"],
-      "react/jsx-dev-runtime": ["./storybook/node_modules/@types/react/jsx-dev-runtime"],
+      "react/jsx-runtime": [
+        "./storybook/node_modules/@types/react/jsx-runtime"
+      ],
+      "react/jsx-dev-runtime": [
+        "./storybook/node_modules/@types/react/jsx-dev-runtime"
+      ],
       "react-dom": ["./storybook/node_modules/@types/react-dom"],
       "react-dom/*": ["./storybook/node_modules/@types/react-dom/*"],
       "veryfront/ui": ["./npm/esm/src/react/components/ui/index.d.ts"],
-      "veryfront/ui/icons": ["./npm/esm/src/react/components/ui/icons/index.d.ts"],
+      "veryfront/ui/icons": [
+        "./npm/esm/src/react/components/ui/icons/index.d.ts"
+      ],
       "veryfront/chat": ["./npm/esm/src/chat/index.d.ts"],
       "veryfront/chat/types": ["./npm/esm/src/chat/types.d.ts"],
       "veryfront/chat/uploads": ["./npm/esm/src/chat/upload-handler.d.ts"],
+      "veryfront/markdown": ["./npm/esm/src/markdown/index.d.ts"],
       "veryfront/mcp": ["./npm/esm/src/mcp/index.d.ts"],
       "veryfront/prompt": ["./npm/esm/src/prompt/index.d.ts"],
       "veryfront/resource": ["./npm/esm/src/resource/index.d.ts"],

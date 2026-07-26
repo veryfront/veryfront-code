@@ -5,14 +5,14 @@
  *
  * - **Themes:** shiki built-in `github-light` / `github-dark`, switched on our
  *   `useColorMode` — NOT Studio's `veryfrontDarkTheme`.
- * - **Dependency-light:** shiki and mermaid are lazy-loaded from esm.sh on first
- *   render (same pattern as `markdown.tsx`), never bundled. A `Skeleton` shows
- *   while the highlighter loads; a plain `<pre>` is the graceful fallback.
+ * - **Dependency-light:** shiki and mermaid are package-owned, lazy imports.
+ *   Plain source is rendered during SSR and while the browser enhancement
+ *   loads.
  * - **Stripped (Studio-panel only):** `openTab`/`openPanel`/`openFilePath`/
  *   `executeCommand`, file previews, the actions dropdown, radix
  *   `useControllableState`, and `printReadiness`.
  *
- * Private to the chat module.
+ * Shared by `veryfront/ui` and the chat Markdown renderer.
  *
  * @module react/components/ui/code-block
  */
@@ -22,19 +22,16 @@ import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { CheckIcon, ChevronDownIcon, CopyIcon } from "./icons/index.ts";
 import { useColorModeOptional } from "./color-mode.tsx";
-
-/** Light/dark, for switching the shiki + mermaid theme. */
-type CodeBlockMode = "light" | "dark";
-import { Skeleton } from "./skeleton.tsx";
+import { createRetryableModuleLoader, createSerialAsyncExecutor } from "./code-block-runtime.ts";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible.tsx";
 import { IconButton } from "./icon-button.tsx";
 
-// ---------------------------------------------------------------------------
-// Lazy esm.sh loaders (dependency-light — mirrors markdown.tsx)
-// ---------------------------------------------------------------------------
+/** Light/dark, for switching the shiki + mermaid theme. */
+type CodeBlockMode = "light" | "dark";
 
-const ESM_SHIKI = "https://esm.sh/shiki@1.24.0?target=es2022&pin=v135";
-const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
+// ---------------------------------------------------------------------------
+// Lazy package loaders
+// ---------------------------------------------------------------------------
 
 /** Shiki built-in themes we switch between on color mode. */
 type ShikiTheme = "github-light" | "github-dark";
@@ -66,13 +63,15 @@ interface MermaidModule {
   };
 }
 
-async function importFromUrl<T>(url: string): Promise<T> {
-  return await import(/* @vite-ignore */ url) as T;
-}
+const shikiModuleLoader = createRetryableModuleLoader(
+  () => import("shiki") as Promise<ShikiModule>,
+);
+const mermaidModuleLoader = createRetryableModuleLoader(
+  () => import("mermaid") as Promise<MermaidModule>,
+);
 
 // The shiki highlighter is expensive to spin up and its grammars are loaded on
 // demand, so cache a single instance (and per-language load promises) module-wide.
-let shikiModule: ShikiModule | null = null;
 let highlighterPromise: Promise<ShikiHighlighter> | null = null;
 let highlighter: ShikiHighlighter | null = null;
 const loadedLangs = new Set<string>(["text"]);
@@ -83,19 +82,20 @@ async function loadHighlighter(): Promise<ShikiHighlighter | null> {
   if (highlighter) return highlighter;
 
   if (!highlighterPromise) {
-    highlighterPromise = (async () => {
-      shikiModule ??= await importFromUrl<ShikiModule>(ESM_SHIKI);
+    const current = (async () => {
+      const shikiModule = await shikiModuleLoader.load();
       return await shikiModule.createHighlighter({
         themes: ["github-light", "github-dark"],
         langs: ["text"],
       });
     })();
+    highlighterPromise = current;
     // Reset the cached promise on failure so the next call can retry. Without
     // this, a transient network error (e.g. CSP, CDN blip) permanently locks
     // every subsequent highlight attempt against the same rejected promise —
     // the only recovery would be a full page reload.
-    highlighterPromise.catch(() => {
-      highlighterPromise = null;
+    current.catch(() => {
+      if (highlighterPromise === current) highlighterPromise = null;
     });
   }
 
@@ -127,36 +127,49 @@ async function ensureLanguage(lang: string): Promise<void> {
   await load;
 }
 
-let mermaidPromise: Promise<MermaidModule> | null = null;
-let mermaidModule: MermaidModule | null = null;
 let mermaidTheme: "dark" | "default" | null = null;
+const executeMermaidRender = createSerialAsyncExecutor();
 
-async function loadMermaid(
+async function renderMermaid(
+  id: string,
+  code: string,
   theme: "dark" | "default",
-): Promise<MermaidModule | null> {
-  if (!isBrowserEnvironment()) return null;
+  signal: AbortSignal,
+): Promise<{ svg: string }> {
+  return await executeMermaidRender(async () => {
+    signal.throwIfAborted();
+    const mermaidModule = await mermaidModuleLoader.load();
+    signal.throwIfAborted();
 
-  mermaidPromise ??= importFromUrl<MermaidModule>(ESM_MERMAID);
-  mermaidModule = await mermaidPromise;
+    // Mermaid configuration is singleton state. Initialization and rendering
+    // must stay in the same serialized operation or simultaneous light/dark
+    // diagrams can race and use the wrong theme.
+    if (mermaidTheme !== theme) {
+      mermaidModule.default.initialize({
+        startOnLoad: false,
+        theme,
+        securityLevel: "strict",
+        fontFamily: "inherit",
+      });
+      mermaidTheme = theme;
+    }
 
-  // Re-initialize when the theme flips so the SVG re-renders in the new palette.
-  if (mermaidTheme !== theme) {
-    mermaidModule.default.initialize({
-      startOnLoad: false,
-      theme,
-      securityLevel: "strict",
-      fontFamily: "inherit",
-    });
-    mermaidTheme = theme;
-  }
-
-  return mermaidModule;
+    signal.throwIfAborted();
+    return await mermaidModule.default.render(id, code);
+  });
 }
 
 // ---------------------------------------------------------------------------
 // MermaidDiagram — ported from Studio's MermaidDiagram, next-themes swapped for
-// useColorMode, Skeleton kept, printReadiness dropped.
+// useColorMode, printReadiness dropped.
 // ---------------------------------------------------------------------------
+
+interface MermaidRenderState {
+  code: string;
+  mode: CodeBlockMode;
+  svg?: string;
+  error?: string;
+}
 
 function MermaidDiagram(
   { code, className, resolvedMode }: {
@@ -165,42 +178,51 @@ function MermaidDiagram(
     resolvedMode: CodeBlockMode;
   },
 ): React.ReactElement {
-  const [svg, setSvg] = React.useState<string>("");
-  const [error, setError] = React.useState<string>("");
+  const [renderState, setRenderState] = React.useState<MermaidRenderState>();
+  const renderId = `mermaid-${React.useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+  const currentState = renderState?.code === code &&
+      renderState.mode === resolvedMode
+    ? renderState
+    : undefined;
 
   React.useEffect(() => {
     if (!isBrowserEnvironment() || !code.trim()) return;
 
-    let cancelled = false;
+    const controller = new AbortController();
     const theme = resolvedMode === "dark" ? "dark" : "default";
 
     async function render(): Promise<void> {
       try {
-        const mermaid = await loadMermaid(theme);
-        if (!mermaid || cancelled) return;
-
-        const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-        const { svg: rendered } = await mermaid.default.render(id, code.trim());
-        if (cancelled) return;
-        setSvg(validateTrustedHtml(rendered, { strict: true }));
-        setError("");
-      } catch (err) {
-        if (cancelled) return;
-        setError(
-          err instanceof Error ? err.message : "Failed to render diagram",
+        const { svg: rendered } = await renderMermaid(
+          renderId,
+          code.trim(),
+          theme,
+          controller.signal,
         );
-        setSvg("");
+        if (controller.signal.aborted) return;
+        setRenderState({
+          code,
+          mode: resolvedMode,
+          svg: validateTrustedHtml(rendered, { strict: true }),
+        });
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setRenderState({
+          code,
+          mode: resolvedMode,
+          error: err instanceof Error ? err.message : "Failed to render diagram",
+        });
       }
     }
 
     render();
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [code, resolvedMode]);
+  }, [code, renderId, resolvedMode]);
 
-  if (error) {
+  if (currentState?.error) {
     return (
       <div
         className={cn(
@@ -209,13 +231,27 @@ function MermaidDiagram(
         )}
       >
         <p className="font-medium">Diagram error</p>
-        <pre className="mt-1 whitespace-pre-wrap text-xs">{error}</pre>
+        <pre className="mt-1 whitespace-pre-wrap text-xs">
+          {currentState.error}
+        </pre>
+        <pre className="mt-3 overflow-x-auto text-xs">
+          <code className="language-mermaid">{code}</code>
+        </pre>
       </div>
     );
   }
 
-  if (!svg) {
-    return <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />;
+  if (!currentState?.svg) {
+    return (
+      <pre
+        className={cn(
+          "overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)] p-3 text-sm text-[var(--foreground)]",
+          className,
+        )}
+      >
+        <code className="language-mermaid">{code}</code>
+      </pre>
+    );
   }
 
   return (
@@ -224,7 +260,7 @@ function MermaidDiagram(
         "overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)] p-3 [&_svg]:max-w-full",
         className,
       )}
-      dangerouslySetInnerHTML={{ __html: svg }}
+      dangerouslySetInnerHTML={{ __html: currentState.svg }}
     />
   );
 }
@@ -367,16 +403,26 @@ export interface CodeSurfaceProps {
 }
 
 /**
- * The code surface. Plain highlighted code is ALWAYS visible immediately —
- * shiki is progressive enhancement layered on top once it lazy-loads from
- * esm.sh (so a stalled/blocked network never leaves an empty "no code block").
+ * The code surface. Plain source is always visible immediately; Shiki is
+ * progressive enhancement layered on top once its package lazy-loads, so a
+ * stalled or blocked load never leaves an empty code block.
  */
 export function CodeSurface({
   code,
   language,
   resolvedMode,
 }: CodeSurfaceProps): React.ReactElement {
-  const [html, setHtml] = React.useState<string>("");
+  const [highlight, setHighlight] = React.useState<{
+    code: string;
+    language: string;
+    mode: CodeBlockMode;
+    html: string;
+  }>();
+  const currentHtml = highlight?.code === code &&
+      highlight.language === language &&
+      highlight.mode === resolvedMode
+    ? highlight.html
+    : "";
 
   React.useEffect(() => {
     if (!isBrowserEnvironment()) return;
@@ -393,16 +439,20 @@ export function CodeSurface({
         if (cancelled) return;
 
         const lang = loadedLangs.has(language) ? language : "text";
-        const rendered = hl.codeToHtml(code.trim(), { lang, theme });
+        const rendered = hl.codeToHtml(code, { lang, theme });
         if (cancelled) return;
-        setHtml(validateTrustedHtml(rendered, { strict: true }));
+        setHighlight({
+          code,
+          language,
+          mode: resolvedMode,
+          html: validateTrustedHtml(rendered, { strict: true }),
+        });
       } catch (_err) {
         // Graceful fallback — the plain <pre> below stays.
-        if (!cancelled) setHtml("");
+        if (!cancelled) setHighlight(undefined);
       }
     }
 
-    setHtml("");
     highlight();
 
     return () => {
@@ -411,7 +461,7 @@ export function CodeSurface({
   }, [code, language, resolvedMode]);
 
   // Highlighted surface, once shiki has produced HTML.
-  if (html && isBrowserEnvironment()) {
+  if (currentHtml && isBrowserEnvironment()) {
     return (
       <div
         className={cn(
@@ -419,7 +469,7 @@ export function CodeSurface({
           // Strip shiki's own <pre> chrome so it inherits our container.
           "[&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:!p-3 [&_.shiki]:!bg-transparent",
         )}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: currentHtml }}
       />
     );
   }
@@ -428,7 +478,7 @@ export function CodeSurface({
   return (
     <pre className="overflow-x-auto p-3 text-sm text-[var(--foreground)]">
       <code className={language ? `language-${language}` : undefined}>
-        {code.trim()}
+        {code}
       </code>
     </pre>
   );

@@ -38,7 +38,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `BREAKPOINT_SM` | Shared breakpoint sm value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/html.ts#L7) |
 | `BREAKPOINT_XL` | Shared breakpoint xl value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/html.ts#L13) |
 | `BYTES_PER_KB` | Shared bytes per kb value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/network.ts#L8) |
-| `DEFAULT_ALLOWED_CDN_HOSTS` | Default value for allowed cdn hosts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L77) |
+| `DEFAULT_ALLOWED_CDN_HOSTS` | Default value for allowed cdn hosts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L91) |
 | `DEFAULT_BUILD_CONCURRENCY` | Default value for build concurrency. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/build.ts#L2) |
 | `DEFAULT_DASHBOARD_PORT` | Default port for development dashboard (matches veryfront.config.ts default) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/server.ts#L11) |
 | `DEFAULT_LRU_MAX_ENTRIES` | Default value for lru max entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cache.ts#L77) |
@@ -82,7 +82,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `PREFETCH_DEFAULT_DELAY_MS` | Shared prefetch default delay ms value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L24) |
 | `PREFETCH_DEFAULT_TIMEOUT_MS` | Shared prefetch default timeout ms value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L22) |
 | `PREFETCH_MAX_SIZE_BYTES` | Shared prefetch max size bytes value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L20) |
-| `REACT_DEFAULT_VERSION` | Shared React default version value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L12) |
+| `REACT_DEFAULT_VERSION` | Shared React default version value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L21) |
 | `RESPONSIVE_IMAGE_WIDTH_LG` | Shared responsive image width lg value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/network.ts#L19) |
 | `RESPONSIVE_IMAGE_WIDTHS` | Shared responsive image widths value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/network.ts#L22) |
 | `RSC_MANIFEST_CACHE_TTL_MS` | Shared RSC manifest cache ttl ms value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cache.ts#L117) |
@@ -113,8 +113,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `fnv1aHash` | FNV-1a hash for strings - returns hex string | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L102) |
 | `getBaseLogger` | Get the base logger without request context awareness. Use this when you need to create a request-scoped logger in middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L834) |
 | `getBundleManifestStore` | Return bundle manifest store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/bundle-manifest.ts#L389) |
-| `getDenoStdNodeBase` | Return Deno std node base. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L82) |
-| `getReactImportMap` | Return React import map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L46) |
+| `getDenoStdNodeBase` | Return Deno std node base. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L96) |
+| `getReactImportMap` | Return React import map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L60) |
 | `hasBunRuntime` | Check whether Bun runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L53) |
 | `hasDenoRuntime` | Check whether Deno runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L31) |
 | `hasNodeProcess` | Check whether node process is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L42) |
