@@ -239,10 +239,12 @@ MessageAvatar.displayName = "Message.Avatar";
 // Message.Header — avatar + name + timestamp (Studio `ChatMessageHeader`)
 // ---------------------------------------------------------------------------
 
-interface MessageHeaderProps {
+interface MessageHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
   /** Compose the header's inner row yourself; omit for the default anatomy. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Format a timestamp as a short `HH:MM` label (matches Studio's meta line). */
@@ -254,10 +256,12 @@ function formatTimestamp(createdAt: ChatMessage["createdAt"]): string {
 }
 
 /** Props for `Message.Header.Name`. */
-export interface MessageHeaderNameProps {
+export interface MessageHeaderNameProps extends React.HTMLAttributes<HTMLSpanElement> {
   className?: string;
   /** Override the default agent/author label. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLSpanElement>;
 }
 
 /**
@@ -267,7 +271,7 @@ export interface MessageHeaderNameProps {
  * replace the text without losing the styling/position.
  */
 function MessageHeaderName(
-  { className, children }: MessageHeaderNameProps,
+  { className, children, ref, ...props }: MessageHeaderNameProps,
 ): React.ReactElement {
   const { message } = useMessageContext();
   const chat = useChatContextOptional();
@@ -278,7 +282,7 @@ function MessageHeaderName(
     metadataString(message.metadata, "agentId");
   const displayName = agentName ?? "Assistant";
   return (
-    <span className={cn("min-w-0 truncate font-medium", className)}>
+    <span {...props} ref={ref} className={cn("min-w-0 truncate font-medium", className)}>
       {children ?? displayName}
     </span>
   );
@@ -286,8 +290,10 @@ function MessageHeaderName(
 MessageHeaderName.displayName = "Message.Header.Name";
 
 /** Props for `Message.Header.Timestamp`. */
-export interface MessageHeaderTimestampProps {
+export interface MessageHeaderTimestampProps extends React.HTMLAttributes<HTMLSpanElement> {
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLSpanElement>;
 }
 
 /**
@@ -296,13 +302,15 @@ export interface MessageHeaderTimestampProps {
  * time — identical to the default header's inline behaviour.
  */
 function MessageHeaderTimestamp(
-  { className }: MessageHeaderTimestampProps,
+  { className, ref, ...props }: MessageHeaderTimestampProps,
 ): React.ReactElement | null {
   const { message } = useMessageContext();
   const timestamp = formatTimestamp(message.createdAt);
   if (!timestamp) return null;
   return (
     <span
+      {...props}
+      ref={ref}
       className={cn("ml-auto text-sm text-[var(--faint)]", className)}
       suppressHydrationWarning
     >
@@ -320,7 +328,7 @@ MessageHeaderTimestamp.displayName = "Message.Header.Timestamp";
  * the inner row from `Message.Header.Name` / `Message.Header.Timestamp`.
  */
 function MessageHeader(
-  { className, children }: MessageHeaderProps,
+  { className, children, ref, ...props }: MessageHeaderProps,
 ): React.ReactElement | null {
   const { message, role } = useMessageContext();
   const chat = useChatContextOptional();
@@ -339,7 +347,7 @@ function MessageHeader(
   return (
     // `w-full` so the timestamp's `ml-auto` reaches the right edge — the Root
     // is `items-start`, which would otherwise shrink the header to its content.
-    <div className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
+    <div {...props} ref={ref} className={cn("flex w-full items-center gap-2 pt-px pb-3", className)}>
       {children ?? (
         <>
           <AvatarImpl
@@ -396,6 +404,8 @@ export interface MessageContentProps {
    * `Message.Sources` where you want them.
    */
   children?: (part: PartGroup, index: number) => React.ReactNode;
+  /** React 19: ref is a regular prop, forwarded to the body column. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function MessageContent({
@@ -403,6 +413,7 @@ function MessageContent({
   codeBlock,
   markdownComponents,
   children,
+  ref,
 }: MessageContentProps): React.ReactElement {
   const { message, role, parts, textContent } = useMessageContext();
   const chat = useChatContextOptional();
@@ -411,6 +422,7 @@ function MessageContent({
     const fileParts = message.parts.filter((p) => p.type === "file");
     return (
       <div
+        ref={ref}
         className={cn(
           chat?.theme.message?.user ?? defaultChatTheme.message?.user,
           className,
@@ -449,6 +461,7 @@ function MessageContent({
 
   return (
     <div
+      ref={ref}
       className={cn(
         chat?.theme.message?.assistant ?? defaultChatTheme.message?.assistant,
         // `w-full` because `Message.Root` is `items-start`, which would
@@ -611,16 +624,19 @@ MessageEditAction.displayName = "Message.EditAction";
 export interface MessageActionsProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Compose your own bar; when omitted, the default cluster is rendered. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function MessageActionsWrapper(
-  { children, className, ...props }: MessageActionsProps,
+  { children, className, ref, ...props }: MessageActionsProps,
 ): React.ReactElement | null {
   const { textContent } = useMessageContext();
   if (!textContent) return null;
   return (
     <div
       {...props}
+      ref={ref}
       className={cn(
         "flex items-center gap-0.5 opacity-0 group-hover/msg:opacity-100 transition-all duration-200",
         className,
@@ -641,17 +657,21 @@ MessageActionsWrapper.displayName = "Message.Actions";
 // Message.Feedback
 // ---------------------------------------------------------------------------
 
-interface MessageFeedbackWrapperProps {
+interface MessageFeedbackWrapperProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
+  /** React 19: ref is a regular prop, forwarded to the feedback row. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 function MessageFeedbackWrapper(
-  { className }: MessageFeedbackWrapperProps,
+  { className, ref, ...props }: MessageFeedbackWrapperProps,
 ): React.ReactElement | null {
   const { message, onFeedback, feedback } = useMessageContext();
   if (!onFeedback) return null;
   return (
     <FeedbackImpl
+      {...props}
+      ref={ref}
       messageId={message.id}
       feedback={feedback}
       onFeedback={(_msgId, value) => onFeedback(value)}
@@ -805,12 +825,14 @@ MessageBranchPicker.displayName = "Message.BranchPicker";
 // ---------------------------------------------------------------------------
 
 function MessageContinuing(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.ReactElement | null {
   const { isStreaming } = useMessageContext();
   if (!isStreaming) return null;
   return (
-    <div className={cn("mt-3 text-sm", className)}>
+    <div {...props} ref={ref} className={cn("mt-3 text-sm", className)}>
       {children ?? <Shimmer duration={1}>Continuing...</Shimmer>}
     </div>
   );

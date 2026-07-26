@@ -141,11 +141,13 @@ export interface ReasoningTriggerProps {
   /** Override the two labels; each defaults to the current string. */
   labels?: { thinking?: string; thought?: string };
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The header row: a "Thinking…" / "Thought process" label + expand chevron. */
 function ReasoningTrigger(
-  { icon, labels, className }: ReasoningTriggerProps,
+  { icon, labels, className, ref }: ReasoningTriggerProps,
 ): React.JSX.Element {
   const { isStreaming, isOpen, toggle } = useReasoning();
   const thinkingLabel = labels?.thinking ?? "Thinking...";
@@ -154,6 +156,7 @@ function ReasoningTrigger(
 
   return (
     <button
+      ref={ref}
       type="button"
       onClick={toggle}
       className={cn(
@@ -177,12 +180,14 @@ ReasoningTrigger.displayName = "Reasoning.Trigger";
 
 /** The reasoning body. Renders when open; pass children to replace the markdown. */
 function ReasoningContent(
-  { className, children }: { className?: string; children?: React.ReactNode },
+  { className, children, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { text, isOpen } = useReasoning();
   if (!isOpen) return null;
   return (
-    <div className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
+    <div {...props} ref={ref} className={cn("mt-2 text-sm text-[var(--foreground)]", className)}>
       {children ?? (
         // `text-sm!` overrides Markdown's base `text-base` (cn does not tw-merge)
         // so reasoning renders at 14px like Studio's compact variant.

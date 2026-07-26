@@ -80,19 +80,25 @@ StepIndicatorRoot.displayName = "StepIndicator.Root";
 
 /** `StepIndicator.Rule` — one of the flanking horizontal rules. */
 function StepIndicatorRule(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & Omit<React.HTMLAttributes<HTMLDivElement>, "children">
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
-  return <div className={cn("flex-1 h-px bg-[var(--edge)]", className)} />;
+  return <div {...props} ref={ref} className={cn("flex-1 h-px bg-[var(--edge)]", className)} />;
 }
 StepIndicatorRule.displayName = "StepIndicator.Rule";
 
 /** `StepIndicator.Label` — the status glyph + `Step N` pill. */
 function StepIndicatorLabel(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & Omit<React.HTMLAttributes<HTMLDivElement>, "children">
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { stepIndex, isComplete, icon } = useStepIndicator();
   return (
     <div
+      {...props}
+      ref={ref}
       className={cn(
         "flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-[var(--outline-border)] bg-transparent",
         className,

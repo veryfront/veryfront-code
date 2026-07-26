@@ -85,15 +85,17 @@ export interface SourcesListProps {
   renderItem?: (options: { item: Source; index: number }) => React.ReactNode;
   /** Compose your own pills; when omitted, one `Sources.Pill` per source. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop, forwarded to the flex-wrap row. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** The flex-wrap row. Renders one `Sources.Pill` per source by default. */
 function SourcesList(
-  { className, renderItem, children }: SourcesListProps,
+  { className, renderItem, children, ref }: SourcesListProps,
 ): React.JSX.Element {
   const { sources, onSourceClick } = useSources();
   return (
-    <div className={cn("flex flex-wrap gap-2", className)}>
+    <div ref={ref} className={cn("flex flex-wrap gap-2", className)}>
       {children ?? sources.map((source, index) =>
         renderItem
           ? (
@@ -121,16 +123,18 @@ export interface SourcePillProps {
   index: number;
   onClick?: () => void;
   className?: string;
+  /** React 19: ref is a regular prop, forwarded to the pill's root wrapper. */
+  ref?: React.Ref<HTMLSpanElement>;
 }
 
 /** Render a single source pill with hover preview and score-color behaviour. */
 export function SourcePill(
-  { source, index, onClick, className }: SourcePillProps,
+  { source, index, onClick, className, ref }: SourcePillProps,
 ): React.ReactElement {
   const [showPreview, setShowPreview] = React.useState(false);
 
   return (
-    <span className="relative">
+    <span ref={ref} className="relative">
       <button
         type="button"
         onClick={onClick}
