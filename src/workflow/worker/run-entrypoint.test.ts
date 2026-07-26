@@ -202,6 +202,50 @@ describe("runWorkflowRun", () => {
     });
   });
 
+  it("fails the run without resuming when injected project env is malformed", async () => {
+    rememberEnv();
+
+    const backend = new MemoryBackend();
+    const run: WorkflowRun = {
+      id: "run-invalid-project-env",
+      workflowId: "test-workflow",
+      status: "pending",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    };
+    await backend.createRun(run);
+
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+    Deno.env.set("VERYFRONT_TASK_ENV_JSON", "not-json");
+    let resumed = false;
+
+    const exitCode = await runWorkflowRun({
+      backend,
+      executor: {
+        resume: () => {
+          resumed = true;
+          return Promise.resolve();
+        },
+      } as never,
+    });
+
+    const storedRun = await backend.getRun(run.id);
+    assertEquals(exitCode, EXIT_CODES.WORKFLOW_FAILED);
+    assertEquals(resumed, false);
+    assertExists(storedRun);
+    assertEquals(storedRun.status, "failed");
+    assertEquals(
+      storedRun.error?.message.includes("VERYFRONT_TASK_ENV_JSON"),
+      true,
+    );
+  });
+
   it("uses the stored tenant context when tenant env vars are absent", async () => {
     rememberEnv();
 

@@ -42,6 +42,41 @@ const runs = createRunsClient({
 If you are already running inside a Veryfront request context, the client can
 also pick up request-scoped auth and project context automatically.
 
+Client configuration is captured when the client is constructed. Later
+mutation of the configuration object does not change its URL, credentials,
+project, or retry policy. An explicit API URL must be an absolute HTTP(S) base
+URL without embedded credentials, a query, or a fragment.
+
+For an application that serves more than one project or credential, derive an
+isolated client instead of mutating one shared client:
+
+```ts
+const projectRuns = runs.withRequestContext({
+  authToken: requestCredential,
+  projectReference: requestProject,
+});
+
+const page = await projectRuns.list();
+```
+
+`setRequestToken()` and `setProjectReference()` remain available for backward
+compatibility, but they mutate the client and are deprecated for concurrent
+request handling.
+
+## Input guarantees
+
+The client validates request inputs before making a network call:
+
+- IDs, cursors, names, and targets must be non-empty canonical strings.
+- Pagination and retry-related counts must be safe integers in their valid
+  ranges.
+- `input` and `config` values must be bounded, acyclic, data-only JSON objects.
+- Knowledge ingest selections must be non-empty.
+- API response schemas validate timestamps, non-negative counters, and coherent
+  runtime-target fields.
+
+Invalid inputs fail locally and do not consume a retry attempt.
+
 ## Create a task run
 
 ```ts
@@ -54,6 +89,27 @@ const accepted = await runs.createTaskRun({
 
 console.log(accepted.run.run_id);
 console.log(accepted.run.status);
+```
+
+### Select a runtime target
+
+Runtime target fields are validated as one coherent tuple:
+
+| `runtimeTargetKind` | Required identifier          | Other identifier   |
+| ------------------- | ---------------------------- | ------------------ |
+| `main_branch`       | None                         | Must be absent     |
+| `environment`       | `runtimeTargetEnvironmentId` | Branch absent      |
+| `preview_branch`    | `runtimeTargetBranchId`      | Environment absent |
+
+For example:
+
+```ts
+await runs.createTaskRun({
+  projectId: "22222222-2222-4222-8222-222222222222",
+  target: "task:sync-data",
+  runtimeTargetKind: "environment",
+  runtimeTargetEnvironmentId: "44444444-4444-4444-8444-444444444444",
+});
 ```
 
 ## Create a workflow run

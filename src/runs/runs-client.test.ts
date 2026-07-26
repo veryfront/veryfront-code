@@ -9,7 +9,12 @@ import {
 } from "#veryfront/testing/assert";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
-import { createRunsClient, VeryfrontRunsClient } from "./runs-client.ts";
+import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
+import {
+  createRunsClient,
+  VeryfrontRunsClient,
+  type VeryfrontRunsClientConfig,
+} from "./runs-client.ts";
 
 const originalFetch = globalThis.fetch;
 let fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
@@ -163,6 +168,276 @@ describe("VeryfrontRunsClient", () => {
         },
       }),
     );
+  });
+
+  it("rejects unsafe API base URLs before issuing a request", () => {
+    for (
+      const apiUrl of [
+        "not-a-url",
+        "file:///tmp/runs",
+        "https://user:secret@api.test.com",
+        "https://api.test.com?token=secret",
+        "https://api.test.com#fragment",
+        "https://api.test.com/pa\nth",
+      ]
+    ) {
+      assertThrows(
+        () => new VeryfrontRunsClient({ apiUrl }),
+        TypeError,
+        "Runs API URL",
+      );
+    }
+
+    assertThrows(
+      () => new VeryfrontRunsClient({ authToken: " " }),
+      TypeError,
+      "authToken",
+    );
+    assertThrows(
+      () => new VeryfrontRunsClient({ projectReference: " " }),
+      TypeError,
+      "projectReference",
+    );
+  });
+
+  it("snapshots configuration and canonicalizes a trailing API URL slash", async () => {
+    mockFetch([
+      jsonResponse({
+        data: [makeRun()],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }),
+    ]);
+
+    const config: VeryfrontRunsClientConfig = {
+      apiUrl: "https://api.original.test/base/",
+      authToken: "original-token",
+      projectReference: "original-project",
+      retry: { maxRetries: 0 },
+    };
+    const client = new VeryfrontRunsClient(config);
+
+    config.apiUrl = "https://api.mutated.test";
+    config.authToken = "mutated-token";
+    config.projectReference = "mutated-project";
+
+    await client.list();
+
+    assertEquals(
+      call(0).url,
+      "https://api.original.test/base/projects/original-project/runs",
+    );
+    assertEquals(headerValue(0, "Authorization"), "Bearer original-token");
+  });
+
+  it("snapshots nested retry configuration", async () => {
+    mockFetch([jsonResponse({ error: "unavailable" }, 503)]);
+
+    const retry = { maxRetries: 0 };
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+      retry,
+    });
+    retry.maxRetries = MAX_VERYFRONT_API_RETRIES;
+
+    await assertRejects(
+      () => client.list(),
+      Error,
+      "API request failed",
+    );
+    assertEquals(fetchCalls.length, 1);
+  });
+
+  it("creates isolated request-context clients without mutating the base client", async () => {
+    mockFetch([
+      jsonResponse({
+        data: [],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }),
+      jsonResponse({
+        data: [],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }),
+    ]);
+
+    const base = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "base-token",
+      projectReference: "base-project",
+    });
+    const scoped = base.withRequestContext({
+      authToken: "scoped-token",
+      projectReference: "scoped-project",
+    });
+
+    await scoped.list();
+    await base.list();
+
+    assertStringIncludes(call(0).url, "/projects/scoped-project/runs");
+    assertEquals(headerValue(0, "Authorization"), "Bearer scoped-token");
+    assertStringIncludes(call(1).url, "/projects/base-project/runs");
+    assertEquals(headerValue(1, "Authorization"), "Bearer base-token");
+
+    assertThrows(
+      () => base.withRequestContext({ authToken: null as never }),
+      TypeError,
+      "request authToken",
+    );
+    assertThrows(
+      () => base.withRequestContext({ projectReference: null as never }),
+      TypeError,
+      "request projectReference",
+    );
+  });
+
+  it("fails fast for malformed identifiers, targets, and pagination", async () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    assertThrows(() => client.get(" "), TypeError, "runId");
+    assertThrows(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "workflow:not-a-task" as `task:${string}`,
+        }),
+      TypeError,
+      "task:",
+    );
+    assertThrows(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          timeoutSeconds: -1,
+        }),
+      RangeError,
+      "timeoutSeconds",
+    );
+    assertThrows(
+      () =>
+        client.createWorkflowRun({
+          projectId,
+          workflowId: "workflow-1",
+          target: "workflow:workflow-1",
+          runtimeTargetKind: "environment",
+        }),
+      TypeError,
+      "runtimeTargetEnvironmentId",
+    );
+    assertThrows(
+      () =>
+        client.events("run-1", {
+          afterEventId: 1.5,
+        }),
+      RangeError,
+      "afterEventId",
+    );
+    await assertRejects(
+      () => client.list({ limit: 0 }),
+      RangeError,
+      "limit",
+    );
+    await assertRejects(
+      () => client.list({ cursor: "x".repeat(MAX_OPAQUE_ID_CODE_UNITS + 1) }),
+      TypeError,
+      "cursor",
+    );
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("rejects empty knowledge selections and non-data-only request bodies", async () => {
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    assertThrows(
+      () => client.knowledge.ingestByUploadIds({ projectId, uploadIds: [] }),
+      TypeError,
+      "uploadIds",
+    );
+    assertThrows(
+      () => client.knowledge.ingestByUploadPrefix({ projectId, uploadPrefix: " " }),
+      TypeError,
+      "uploadPrefix",
+    );
+    assertThrows(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          config: [] as never,
+        }),
+      TypeError,
+      "config must be an object",
+    );
+
+    const cyclicConfig: Record<string, unknown> = {};
+    cyclicConfig.self = cyclicConfig;
+    await assertRejects(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          config: cyclicConfig,
+        }),
+      TypeError,
+      "data-only JSON",
+    );
+
+    let accessorInvoked = false;
+    const accessorConfig: Record<string, unknown> = {};
+    Object.defineProperty(accessorConfig, "secret", {
+      enumerable: true,
+      get() {
+        accessorInvoked = true;
+        return "secret";
+      },
+    });
+    await assertRejects(
+      () =>
+        client.createTaskRun({
+          projectId,
+          target: "task:sync-data",
+          config: accessorConfig,
+        }),
+      TypeError,
+      "data-only JSON",
+    );
+    assertEquals(accessorInvoked, false);
+    assertEquals(fetchCalls.length, 0);
+  });
+
+  it("snapshots request data before transport", async () => {
+    mockFetch([jsonResponse({ accepted: true, run: makeRun() }, 202)]);
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+    });
+    const config = { batchSize: 100 };
+
+    const pending = client.createTaskRun({
+      projectId,
+      target: "task:sync-data",
+      config,
+    });
+    config.batchSize = 999;
+    await pending;
+
+    assertEquals(jsonBody(0), {
+      kind: "task",
+      owner: { kind: "project", id: projectId },
+      request: {
+        target: "task:sync-data",
+        config: { batchSize: 100 },
+      },
+    });
   });
 
   it("creates task runs through canonical /runs", async () => {

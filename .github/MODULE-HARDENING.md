@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |     9 |      15.5% | Current formal closure evidence remains valid       |
+| Closed                         |    10 |      17.2% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
-| Pending current review         |    10 |      17.2% | No current authoritative-branch review delta exists |
+| Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
+| Pending current review         |     8 |      13.8% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 48/58 (82.8%). This is progress coverage, not a substitute for the
+coverage of 50/58 (86.2%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -44,6 +44,7 @@ stricter closure count.
 - `extensions`
 - `metrics`
 - `provider`
+- `runs`
 - `runtime`
 - `schemas`
 - `version.ts`
@@ -91,6 +92,7 @@ stricter closure count.
 - `types`
 - `utils`
 - `webhook`
+- `workflow`
 - `index.ts`
 
 ### Pending current review
@@ -101,10 +103,8 @@ stricter closure count.
 - `markdown`
 - `mdx`
 - `repositories`
-- `runs`
 - `sandbox`
 - `studio`
-- `workflow`
 
 ## Historical recovery context
 
@@ -121,17 +121,112 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `eval`,
-`extensions`, `metrics`, `provider`, `runtime`, `schemas`, and `version.ts`.
-The latest independent adversarial provider and runtime findings are remediated
-and revalidated. `prompt` and `resource` have now received deep current-state
-reviews and substantial remediation, but remain open while their documented
-cross-cutting findings are unresolved. Each closure requires a complete consumer map, deep
-module-level review, adversarial boundary tests, public-contract documentation,
-and repository-wide static verification. Cross-module consumers changed by a
-fix remain in revalidation; focused evidence for one boundary does not by
-itself close the consumer's top-level unit. The next target will be selected
-from the remaining dependency-adjacent units after this checkpoint is
-committed, pushed, and synchronized with `origin/main`.
+`extensions`, `metrics`, `provider`, `runs`, `runtime`, `schemas`, and
+`version.ts`. The latest independent adversarial provider, runs, and runtime
+findings are remediated and revalidated. `prompt` and `resource` have now
+received deep current-state reviews and substantial remediation, but remain
+open while their documented cross-cutting findings are unresolved. Each closure
+requires a complete consumer map, deep module-level review, adversarial boundary
+tests, public-contract documentation, and repository-wide static verification.
+Cross-module consumers changed by a fix remain in revalidation; focused
+evidence for one boundary does not by itself close the consumer's top-level
+unit. The next target will be selected from the remaining dependency-adjacent
+units after this checkpoint is committed, pushed, and synchronized with
+`origin/main`.
+
+### Runs closure checkpoint
+
+The `runs` unit owns the public canonical-runs HTTP client, durable-run and
+event response schemas, and the internal environment-injection boundary shared
+by local task and workflow execution. Its public contract is
+`veryfront/runs`: `createRunsClient`, `VeryfrontRunsClient`, task/workflow/eval
+creation, run listing/detail/events/cancellation, knowledge-ingest helpers, and
+the exported request/response types and schemas. It depends on the cloud
+bootstrap resolver, bounded retry transport, the schema adapter, shared opaque
+identifier limits, and the bounded data-only JSON snapshotter. Direct
+consumers are the task runner, workflow executor and worker hydration paths,
+the executable runs guide, and generated package declarations. Runtime paths
+cover explicit client configuration, request-scoped client derivation, cloud
+bootstrap fallback, request serialization and retry, response parsing, task
+context construction, and persisted workflow-context hydration.
+
+Material findings and remedies:
+
+- **Symptom:** Caller mutation, malformed targets and identifiers,
+  contradictory runtime-target fields, invalid pagination, and cyclic or
+  accessor-backed payloads could reach the retry boundary; legacy request
+  setters also made one shared client unsafe across concurrent requests.
+  **Source:** The client retained the caller's configuration object,
+  interpolated request fields directly, and delegated validation to
+  `JSON.stringify` or the remote API. **Consequence:** A request could change
+  after admission, consume retries for a local error, or use another request's
+  credential/project routing. **Remedy:** Construction now snapshots and
+  validates URL, credential, project, and retry configuration; request
+  identities, targets, counters, selections, and runtime-target tuples fail
+  locally; request bodies are bounded data-only snapshots; and
+  `withRequestContext()` creates an isolated client. The mutable setters remain
+  deprecated only for source compatibility.
+- **Symptom:** Structurally impossible or malformed API responses were accepted
+  as canonical runs. **Source:** IDs and timestamps were unconstrained strings,
+  counters and event IDs lacked integer/range checks, and runtime-target fields
+  were parsed independently. **Consequence:** Invalid upstream state could
+  propagate into scheduling, UI, or resume logic under trusted types.
+  **Remedy:** Response schemas require non-empty identities, ISO datetimes,
+  non-negative counters, non-negative integer event IDs, and coherent
+  main-branch/environment/preview-branch tuples.
+- **Symptom:** Platform and tenant secrets outside a small exact-name list could
+  enter task or persisted workflow environment, while malformed injected JSON
+  was silently treated as an empty environment. **Source:** Reserved-name
+  filtering was case-sensitive and incomplete, and parse/type failures used a
+  warn-and-continue fallback. **Consequence:** New framework credentials could
+  leak without updating the list, and corrupt control-plane payloads could run
+  tasks with silently missing configuration. **Remedy:** Every
+  `VERYFRONT_*` and `TENANT_*` name is reserved case-insensitively, isolated-run
+  identity names are withheld, and injected payloads have UTF-8 byte, entry,
+  portable-name, string-value, and NUL checks. Malformed payloads fail before a
+  task runs or a workflow resumes.
+- **Symptom:** The broad production-mode suite exposed executable OAuth guide
+  fixtures that depended on ambient token-store and application-URL fallback,
+  while typed test checking revealed stale consumer shapes. **Source:** The
+  examples omitted production-required dependencies and the typed-test
+  grandfather list hid contracts already clean or newly corrected.
+  **Consequence:** Parallel verification was environment-dependent and could
+  miss declaration drift despite behavioral success. **Remedy:** Executable
+  examples now inject a shared store and explicit origin, configuration suites
+  use the environment-isolating BDD adapter, three stale typed fixtures were
+  corrected, and the ratchet was reduced to 72 grandfathered files with zero
+  new exceptions.
+
+Reproducible closure evidence:
+
+- The typed `src/runs` suite passes three suites and 29 steps, including
+  construction snapshots, isolated contexts, malformed input, request
+  mutation, response coherence, reserved namespaces, payload limits, and
+  fail-closed injected environment behavior. `deno check src/runs/index.ts`
+  passes.
+- The typed task/workflow consumer surface passes four suites and 54 steps,
+  including rejection before task invocation and failure before workflow
+  resume.
+- The executable guide surface passes 13 suites and 47 steps even under
+  `DENO_ENV=production` with no ambient application URL.
+- Generated references cover all 38 public reference groups; 65 guides and 108
+  public documentation files validate, 45 executable/code-example suites pass
+  87 steps, and all 723 documentation links resolve.
+- `deno task verify:quick` passes manifests, formatting, lint, architecture and
+  boundary ratchets, documentation validation, and every configured entrypoint
+  typecheck. The typed-test ratchet reports 72 grandfathered files and zero new
+  exceptions.
+- `deno task typecheck:consumer` rebuilds the npm package and every first-party
+  extension, verifies root import lifecycle, and passes consumer composition
+  against generated declarations.
+- `deno task test` passes 3,540 tests and 28,045 steps with zero failures; one
+  intentional test with 36 steps remains ignored.
+
+Residual risk is explicit and low: `setRequestToken()` and
+`setProjectReference()` remain mutable for compatibility and must not be used
+on a client shared across concurrent requests. They are deprecated and the
+guide directs concurrent consumers to `withRequestContext()`. No unresolved
+critical or high-confidence `runs` production risk remains.
 
 ### Main integration checkpoint
 

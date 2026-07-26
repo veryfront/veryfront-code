@@ -124,7 +124,12 @@ Deno.test("prompt discovery derives an id for a valid literal prompt export", ()
       "/project/prompts/welcome-message.ts",
       "/project/prompts",
     );
-    const registered = promptHandler.register(id, literal as never);
+    const registered = promptHandler.register(
+      id,
+      literal as never,
+      "/project/prompts/welcome-message.ts",
+      "/project/prompts",
+    );
     assertEquals(registered.id, "welcomeMessage");
   } finally {
     promptRegistry.delete("welcomeMessage");

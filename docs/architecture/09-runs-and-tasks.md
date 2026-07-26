@@ -1,8 +1,8 @@
 # Runs and tasks
 
-This page describes run client operations, schedule surfaces, task
-definition discovery, and local task execution. It does not cover workflow DAG
-execution internals.
+This page describes run client operations, the boundary between runs and
+schedules, task definition discovery, and local task execution. It does not
+cover workflow DAG execution internals.
 
 ## Responsibility
 
@@ -33,10 +33,8 @@ flowchart TD
 
   client[Runs client] --> api[Runs API]
   api --> create[Create run]
-  api --> schedule[Create or update schedule]
   api --> events[List events and logs]
   create --> backing[Runtime adapter]
-  schedule --> backing
 ```
 
 1. Task discovery scans configured `tasks/` directories and imports supported
@@ -47,6 +45,27 @@ flowchart TD
    project runs, reading events, and cancelling execution.
 4. Public schemas validate run and event response shapes.
 5. Cloud execution is delegated to the configured runtime adapter.
+
+Schedule APIs live outside the runs client. A schedule eventually creates a
+canonical run, after which the same run detail, event, and cancellation
+contracts apply.
+
+## Boundary guarantees
+
+- Construction snapshots explicit URL, credential, project, and retry
+  configuration. `withRequestContext()` creates a separate client for
+  concurrent request handling; legacy mutation methods are not the
+  concurrency-safe path.
+- API base URLs are canonical HTTP(S) URLs without embedded credentials,
+  queries, or fragments.
+- Creation requests validate target prefixes, runtime-target tuples,
+  identifiers, counters, pagination, knowledge selections, and bounded
+  data-only JSON before transport.
+- Response schemas reject malformed timestamps, negative duration/backoff
+  counters, fractional event IDs, and contradictory runtime-target fields.
+- Project environment injection is bounded and fail-closed. Every
+  `VERYFRONT_*` and `TENANT_*` name is reserved case-insensitively so platform
+  credentials cannot enter task context or persisted workflow context.
 
 ## Canonical run model
 
@@ -79,6 +98,8 @@ schedule creates a workflow run.
 - Add schema tests when changing run, event, or schedule shapes.
 - Add discovery or runner tests when changing task file detection, import
   behavior, context construction, or env allowlisting.
+- Run the `src/runs` tests with type checking enabled; the repository's broad
+  behavioral suite intentionally uses `--no-check`.
 - Update [Runs](../guides/runs.md) and [Tasks](../guides/tasks.md)
   when public behavior changes.
 

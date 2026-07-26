@@ -1,27 +1,30 @@
-import { logger as baseLogger } from "#veryfront/utils";
-
-const logger = baseLogger.component("run-runtime-env");
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 export const INJECTED_TASK_ENV_JSON = "VERYFRONT_TASK_ENV_JSON";
+/** Maximum UTF-8 size accepted for the platform-injected project environment. */
+export const MAX_INJECTED_TASK_ENV_JSON_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
 
 const UNSAFE_INJECTED_ENV_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-
-const RESERVED_TASK_ENV_KEYS = new Set([
-  "VERYFRONT_API_TOKEN",
-  "VERYFRONT_API_URL",
-  "VERYFRONT_PROJECT_API_URL",
-  "VERYFRONT_API_BASE_URL",
-  "VERYFRONT_PROJECT_ID",
-  "VERYFRONT_PROJECT_SLUG",
-  "VERYFRONT_BRANCH_REF",
-  "VERYFRONT_API_USER",
-  "VERYFRONT_API_PASS",
-  "VERYFRONT_RUN_RESULT_PATH",
-  INJECTED_TASK_ENV_JSON,
-]);
+const RESERVED_TASK_ENV_KEYS = new Set(["RUN_EXECUTION_ID", "WORKFLOW_RUN_ID"]);
+const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MAX_INJECTED_TASK_ENV_ENTRIES = 4_096;
+const utf8Encoder = new TextEncoder();
 
 function isReservedTaskEnvKey(key: string): boolean {
-  return key.startsWith("TENANT_") || RESERVED_TASK_ENV_KEYS.has(key);
+  const normalized = key.toUpperCase();
+  return normalized.startsWith("VERYFRONT_") ||
+    normalized.startsWith("TENANT_") ||
+    RESERVED_TASK_ENV_KEYS.has(normalized);
+}
+
+function isSafeEnvEntry(key: string, value: unknown): value is string {
+  return (
+    !UNSAFE_INJECTED_ENV_KEYS.has(key) &&
+    !isReservedTaskEnvKey(key) &&
+    ENV_NAME_PATTERN.test(key) &&
+    typeof value === "string" &&
+    !value.includes("\0")
+  );
 }
 
 function filterSafeWorkflowEnv(
@@ -29,41 +32,66 @@ function filterSafeWorkflowEnv(
 ): Record<string, string> {
   const filtered: Record<string, string> = {};
   for (const [key, value] of Object.entries(env ?? {})) {
-    if (
-      UNSAFE_INJECTED_ENV_KEYS.has(key) ||
-      isReservedTaskEnvKey(key) ||
-      typeof value !== "string"
-    ) {
-      continue;
-    }
+    if (!isSafeEnvEntry(key, value)) continue;
     filtered[key] = value;
   }
   return filtered;
+}
+
+function parseInjectedProjectEnv(raw: string): Record<string, unknown> {
+  if (
+    raw.length > MAX_INJECTED_TASK_ENV_JSON_BYTES ||
+    utf8Encoder.encode(raw).byteLength > MAX_INJECTED_TASK_ENV_JSON_BYTES
+  ) {
+    throw new RangeError(
+      `${INJECTED_TASK_ENV_JSON} exceeds ${MAX_INJECTED_TASK_ENV_JSON_BYTES} UTF-8 bytes`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    throw new TypeError(`${INJECTED_TASK_ENV_JSON} must contain valid JSON`, { cause });
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TypeError(`${INJECTED_TASK_ENV_JSON} must contain a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 export function readInjectedProjectEnv(
   allEnv: Record<string, string>,
 ): Record<string, string> {
   const rawInjectedEnv = allEnv[INJECTED_TASK_ENV_JSON];
-  if (!rawInjectedEnv) {
-    return {};
+  if (rawInjectedEnv === undefined) return {};
+
+  const entries = Object.entries(parseInjectedProjectEnv(rawInjectedEnv));
+  if (entries.length > MAX_INJECTED_TASK_ENV_ENTRIES) {
+    throw new RangeError(
+      `${INJECTED_TASK_ENV_JSON} contains more than ${MAX_INJECTED_TASK_ENV_ENTRIES} entries`,
+    );
   }
 
-  try {
-    const parsedInjectedEnv = JSON.parse(rawInjectedEnv);
-    if (
-      !parsedInjectedEnv ||
-      typeof parsedInjectedEnv !== "object" ||
-      Array.isArray(parsedInjectedEnv)
-    ) {
-      return {};
+  const injectedEnv: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (UNSAFE_INJECTED_ENV_KEYS.has(key) || isReservedTaskEnvKey(key)) {
+      continue;
     }
-
-    return filterSafeWorkflowEnv(parsedInjectedEnv as Record<string, unknown>);
-  } catch {
-    logger.warn(`Ignoring invalid ${INJECTED_TASK_ENV_JSON}`);
-    return {};
+    if (!ENV_NAME_PATTERN.test(key)) {
+      throw new TypeError(
+        `${INJECTED_TASK_ENV_JSON} key ${JSON.stringify(key)} is not a portable environment name`,
+      );
+    }
+    if (typeof value !== "string" || value.includes("\0")) {
+      throw new TypeError(
+        `${INJECTED_TASK_ENV_JSON} value for ${JSON.stringify(key)} must be a NUL-free string`,
+      );
+    }
+    injectedEnv[key] = value;
   }
+  return injectedEnv;
 }
 
 export function buildTaskContextEnv(
@@ -74,9 +102,7 @@ export function buildTaskContextEnv(
   const taskContextEnv: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(allEnv)) {
-    if (isReservedTaskEnvKey(key)) {
-      continue;
-    }
+    if (!isSafeEnvEntry(key, value)) continue;
     if (allowedEnvKeys && !allowedEnvKeys.has(key)) {
       continue;
     }

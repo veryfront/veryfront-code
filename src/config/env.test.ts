@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import type { EnvironmentConfig } from "./environment-config.ts";
 import {
@@ -212,13 +212,15 @@ describe("config/env", () => {
 
   describe("getOpenAIEnvConfig", () => {
     const keys = ["OPENAI_API_KEY", "OPENAI_BASE_URL"];
-    afterEach(() => {
+    const clearKeys = () => {
       for (const k of keys) {
         try {
           deleteEnv(k);
         } catch { /* ignore */ }
       }
-    });
+    };
+    beforeEach(clearKeys);
+    afterEach(clearKeys);
 
     it("should return empty config by default", () => {
       const config = getOpenAIEnvConfig();

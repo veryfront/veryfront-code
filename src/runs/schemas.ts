@@ -1,6 +1,27 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
+interface RunRuntimeTargetFields {
+  runtime_target_kind: "main_branch" | "environment" | "preview_branch" | null;
+  runtime_target_environment_id: string | null;
+  runtime_target_branch_id: string | null;
+}
+
+function hasCoherentRuntimeTarget(fields: RunRuntimeTargetFields): boolean {
+  switch (fields.runtime_target_kind) {
+    case "environment":
+      return fields.runtime_target_environment_id !== null &&
+        fields.runtime_target_branch_id === null;
+    case "preview_branch":
+      return fields.runtime_target_environment_id === null &&
+        fields.runtime_target_branch_id !== null;
+    case "main_branch":
+    case null:
+      return fields.runtime_target_environment_id === null &&
+        fields.runtime_target_branch_id === null;
+  }
+}
+
 export const getRunKindSchema = defineSchema((v) =>
   v.enum(["agent", "workflow", "task", "eval"] as const)
 );
@@ -12,7 +33,7 @@ export const getRunStatusSchema = defineSchema((v) =>
 export const getRunOwnerSchema = defineSchema((v) =>
   v.object({
     kind: v.enum(["conversation", "project"] as const),
-    id: v.string(),
+    id: v.string().min(1),
   })
 );
 
@@ -26,48 +47,51 @@ export const getRunTriggerKindSchema = defineSchema((v) =>
 
 export const getRunExecutionErrorSchema = defineSchema((v) =>
   v.object({
-    message: v.string(),
-    code: v.string().optional(),
+    message: v.string().min(1),
+    code: v.string().min(1).optional(),
     detail: v.unknown().optional(),
   })
 );
 
 export const getRunSchema = defineSchema((v) =>
   v.object({
-    run_id: v.string(),
+    run_id: v.string().min(1),
     kind: getRunKindSchema(),
     status: getRunStatusSchema(),
     owner: getRunOwnerSchema(),
-    parent_run_id: v.string().nullable(),
-    root_run_id: v.string(),
+    parent_run_id: v.string().min(1).nullable(),
+    root_run_id: v.string().min(1),
     waiting_reason: v.string().nullable(),
     metadata: v.unknown().nullable(),
-    target: v.string().nullable(),
-    workflow_id: v.string().nullable(),
-    schedule_id: v.string().nullable(),
-    batch_id: v.string().nullable(),
+    target: v.string().min(1).nullable(),
+    workflow_id: v.string().min(1).nullable(),
+    schedule_id: v.string().min(1).nullable(),
+    batch_id: v.string().min(1).nullable(),
     runtime_target_kind: getRunRuntimeTargetKindSchema().nullable(),
-    runtime_target_environment_id: v.string().nullable(),
-    runtime_target_branch_id: v.string().nullable(),
+    runtime_target_environment_id: v.string().min(1).nullable(),
+    runtime_target_branch_id: v.string().min(1).nullable(),
     input: v.unknown().nullable(),
     config: v.unknown().nullable(),
     output: v.unknown().nullable(),
     error: getRunExecutionErrorSchema().nullable(),
     logs: v.string().nullable(),
     artifacts: v.array(v.unknown()),
-    duration_ms: v.number().int().nullable(),
+    duration_ms: v.number().int().nonnegative().nullable(),
     exit_code: v.number().int().nullable(),
-    start_mode: v.string().nullable(),
-    timeout_seconds: v.number().int().nullable(),
-    backoff_limit: v.number().int().nullable(),
+    start_mode: v.string().min(1).nullable(),
+    timeout_seconds: v.number().int().nonnegative().nullable(),
+    backoff_limit: v.number().int().nonnegative().nullable(),
     trigger_kind: getRunTriggerKindSchema().nullable(),
-    trigger_id: v.string().nullable(),
-    created_by: v.string().nullable(),
-    updated_at: v.string(),
-    created_at: v.string(),
-    started_at: v.string().nullable(),
-    completed_at: v.string().nullable(),
-  })
+    trigger_id: v.string().min(1).nullable(),
+    created_by: v.string().min(1).nullable(),
+    updated_at: v.string().datetime(),
+    created_at: v.string().datetime(),
+    started_at: v.string().datetime().nullable(),
+    completed_at: v.string().datetime().nullable(),
+  }).refine(
+    hasCoherentRuntimeTarget,
+    "Run runtime target kind and identifiers must be coherent",
+  )
 );
 
 export const getCreateRunResponseSchema = defineSchema((v) =>
@@ -87,10 +111,10 @@ export const getCancelRunResponseSchema = defineSchema((v) =>
 
 export const getRunEventSchema = defineSchema((v) =>
   v.object({
-    event_id: v.number(),
-    event_type: v.string(),
+    event_id: v.number().int().nonnegative(),
+    event_type: v.string().min(1),
     payload: v.unknown(),
-    created_at: v.string(),
+    created_at: v.string().datetime(),
   })
 );
 
@@ -136,7 +160,7 @@ export type RunKind = InferSchema<ReturnType<typeof getRunKindSchema>>;
 export type RunStatus = InferSchema<ReturnType<typeof getRunStatusSchema>>;
 /** Canonical durable run owner. */
 export type RunOwner = InferSchema<ReturnType<typeof getRunOwnerSchema>>;
-/** Runtime target kind recorded on task and workflow runs. */
+/** Runtime target kind recorded on task, workflow, and eval runs. */
 export type RunRuntimeTargetKind = InferSchema<ReturnType<typeof getRunRuntimeTargetKindSchema>>;
 /** Trigger kind recorded on scheduled or externally-started runs. */
 export type RunTriggerKind = InferSchema<ReturnType<typeof getRunTriggerKindSchema>>;

@@ -132,11 +132,9 @@ describe("runtime bridge boundary validation", () => {
         role: "assistant",
         content: [],
         providerToolCalls: [{
-          type: "tool-call",
           toolCallId: "replayed-overflow",
           toolName: "web_search",
           input: "1e999",
-          providerExecuted: true,
         }],
       }],
       tools: {

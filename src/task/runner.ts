@@ -75,17 +75,16 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
     logger.info(`Running task "${task.id}" (${task.name})`);
   }
 
-  const allEnv = getProcessEnv();
-  const env = buildTaskContextEnv(allEnv, envAllowlist);
-
-  const ctx: TaskContext = {
-    env,
-    config,
-    projectId,
-    environmentId,
-  };
-
   try {
+    const allEnv = getProcessEnv();
+    const env = buildTaskContextEnv(allEnv, envAllowlist);
+    const ctx: TaskContext = {
+      env,
+      config,
+      projectId,
+      environmentId,
+    };
+
     const result = await task.definition.run(ctx);
     const durationMs = Date.now() - start;
 

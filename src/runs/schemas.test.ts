@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getRunKindSchema, RunSchema } from "./schemas.ts";
+import { getRunKindSchema, RunEventSchema, RunSchema } from "./schemas.ts";
 
-function makeRun(overrides: Record<string, unknown> = {}) {
+function makeRun(overrides: Record<string, unknown> = {}): unknown {
   return {
     run_id: "run_11111111-1111-4111-8111-111111111111",
     kind: "task",
@@ -52,6 +52,59 @@ describe("runs/schemas", () => {
       metadata: { evalId: "eval:deep-research" },
     });
 
-    assertEquals(RunSchema.parse(run), run);
+    const parsed = RunSchema.parse(run);
+    assertEquals(parsed.kind, "eval");
+    assertEquals(parsed.target, "eval:deep-research");
+    assertEquals(parsed.metadata, { evalId: "eval:deep-research" });
+  });
+
+  it("rejects malformed timestamps and impossible counters at the API boundary", () => {
+    assertEquals(
+      RunSchema.safeParse(makeRun({ created_at: "yesterday" })).success,
+      false,
+    );
+    assertEquals(
+      RunSchema.safeParse(makeRun({ duration_ms: -1 })).success,
+      false,
+    );
+    assertEquals(
+      RunSchema.safeParse(makeRun({ backoff_limit: -1 })).success,
+      false,
+    );
+    assertEquals(
+      RunEventSchema.safeParse({
+        event_id: 1.5,
+        event_type: "RUN_STARTED",
+        payload: {},
+        created_at: "2026-06-20T08:00:00.000Z",
+      }).success,
+      false,
+    );
+  });
+
+  it("enforces coherent runtime-target response fields", () => {
+    assertEquals(
+      RunSchema.safeParse(makeRun({
+        runtime_target_kind: "environment",
+        runtime_target_environment_id: null,
+      })).success,
+      false,
+    );
+    assertEquals(
+      RunSchema.safeParse(makeRun({
+        runtime_target_kind: "preview_branch",
+        runtime_target_environment_id: "environment-id",
+        runtime_target_branch_id: "branch-id",
+      })).success,
+      false,
+    );
+    assertEquals(
+      RunSchema.safeParse(makeRun({
+        runtime_target_kind: "main_branch",
+        runtime_target_environment_id: null,
+        runtime_target_branch_id: null,
+      })).success,
+      true,
+    );
   });
 });

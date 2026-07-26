@@ -519,9 +519,7 @@ describe("Guide: memory-and-streaming.mdx", () => {
     await memory.add({ id: "2", role: "assistant", parts: [{ type: "text" }] });
 
     const messages = await memory.getMessages();
-    assertEquals(messages.length, 2);
-    assertEquals(messages[0].role, "user");
-    assertEquals(messages[1].role, "assistant");
+    assertEquals(messages.map((message) => message.role), ["user", "assistant"]);
   });
 
   it("should enforce buffer size limit", async () => {
@@ -532,8 +530,7 @@ describe("Guide: memory-and-streaming.mdx", () => {
     await memory.add({ id: "3", role: "user", parts: [{ type: "text" }] });
 
     const messages = await memory.getMessages();
-    assertEquals(messages.length, 2);
-    assertEquals(messages[0].id, "2"); // oldest dropped
+    assertEquals(messages.map((message) => message.id), ["2", "3"]);
   });
 
   it("should clear memory", async () => {
@@ -586,10 +583,23 @@ describe("Guide: oauth.mdx", () => {
     // Auth-scoped handlers require a getUserId resolver. In real apps the
     // resolver reads session/JWT; for docs purposes a simple stub suffices.
     const getUserId = () => "user-1";
-    const initHandler = createOAuthInitHandler(githubConfig, { getUserId });
-    const callbackHandler = createOAuthCallbackHandler(githubConfig);
-    const statusHandler = createOAuthStatusHandler(githubConfig, { getUserId });
-    const disconnectHandler = createOAuthDisconnectHandler(githubConfig, { getUserId });
+    const tokenStore = new MemoryTokenStore();
+    const baseUrl = "https://app.example.com";
+    const initHandler = createOAuthInitHandler(githubConfig, {
+      baseUrl,
+      getUserId,
+      tokenStore,
+    });
+    const callbackHandler = createOAuthCallbackHandler(githubConfig, { baseUrl, tokenStore });
+    const statusHandler = createOAuthStatusHandler(githubConfig, {
+      getUserId,
+      tokenStore,
+    });
+    const disconnectHandler = createOAuthDisconnectHandler(githubConfig, {
+      baseUrl,
+      getUserId,
+      tokenStore,
+    });
 
     assert(typeof initHandler === "function");
     assert(typeof callbackHandler === "function");
@@ -632,7 +642,11 @@ describe("Guide: oauth.mdx", () => {
       apiBaseUrl: "https://api.provider.com",
     };
 
-    const handler = createOAuthInitHandler(myProvider, { getUserId: () => "user-1" });
+    const handler = createOAuthInitHandler(myProvider, {
+      baseUrl: "https://app.example.com",
+      getUserId: () => "user-1",
+      tokenStore: new MemoryTokenStore(),
+    });
     assert(typeof handler === "function");
   });
 });

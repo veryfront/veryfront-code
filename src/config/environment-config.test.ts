@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module
  */
 
-import { afterEach, beforeEach, describe, it } from "#std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import {
   _resetEnvironmentConfig,

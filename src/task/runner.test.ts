@@ -75,6 +75,34 @@ describe("src/task/runner", () => {
       assertEquals(result.error, "async failure");
     });
 
+    it("should fail without invoking the task when injected project env is malformed", async () => {
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      let invoked = false;
+      const task = makeTask({
+        run: () => {
+          invoked = true;
+          return null;
+        },
+      });
+
+      const result = await (async () => {
+        try {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", "not-json");
+          return await runTask({ task });
+        } finally {
+          if (originalTaskEnvJson === undefined) {
+            Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+          } else {
+            Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+          }
+        }
+      })();
+
+      assertEquals(invoked, false);
+      assertEquals(result.success, false);
+      assertEquals(result.error?.includes("VERYFRONT_TASK_ENV_JSON"), true);
+    });
+
     it("should pass config to task context", async () => {
       let receivedConfig: Record<string, unknown> = {};
       const task = makeTask({

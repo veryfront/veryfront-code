@@ -78,6 +78,18 @@ interface TaskContext {
 - **`config`**: run configuration (passed when run in the cloud)
 - **`projectId`**: project identifier (available in cloud context)
 
+Framework and tenant control namespaces are never copied into `ctx.env`:
+matching is case-insensitive for `VERYFRONT_*` and `TENANT_*`, and isolated-run
+identity variables are also reserved. Cloud project variables are carried
+through a bounded platform payload and merged over visible host variables.
+That payload must be a JSON object of portable environment names and NUL-free
+string values. If it is malformed or oversized, execution fails before the
+task function runs instead of continuing with missing configuration.
+
+`envAllowlist` applies to both visible host variables and injected project
+variables. Without an allowlist, local tasks receive non-reserved host
+variables; use an allowlist when a task should see only a minimal set.
+
 ## Discovery
 
 Tasks are discovered automatically from the `tasks/` directory:

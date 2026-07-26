@@ -33,10 +33,12 @@ export {
   type ListRunEventsOptions,
   type ListRunsOptions,
   type ProjectScopedOptions,
+  type RunCreateBaseInput,
   type RunRuntimeTargetKind,
   type RunRuntimeTargetOptions,
   VeryfrontRunsClient,
   type VeryfrontRunsClientConfig,
+  type VeryfrontRunsRequestContext,
 } from "./runs-client.ts";
 export {
   type CancelRunResponse,
