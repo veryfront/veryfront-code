@@ -236,7 +236,6 @@ describe(
 
 describe(
   "createBareExternalPlugin \u2014 schedules background resolution when pinning is enabled and cache is cold",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     let originalFetch: typeof globalThis.fetch;
 
