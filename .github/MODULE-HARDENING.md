@@ -2901,6 +2901,46 @@ Current Deno verification evidence:
   all 739 documentation links, and every configured source and browser
   entrypoint typecheck.
 
+The residual compatibility-HTTP lifecycle is also complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the public Node
+  `HttpServer` reported the requested port instead of its native bound address,
+  opened an already-aborted listener, overwrote an active server on a second
+  `serve()`, discarded shutdown errors, and could strand a startup closed from
+  its own readiness callback. The source was a second partial Node transport
+  built around one mutable server slot instead of the canonical runtime
+  implementation. The consequence was false readiness, leaked or unreachable
+  listeners, and teardown that could not be retried. The compatibility facade
+  now delegates request transport and native lifecycle to the canonical Node
+  server while owning only its single-listener contract: explicit pending and
+  active states, pre-bind cancellation, fail-closed callback cleanup,
+  concurrent idempotent close, post-start signal shutdown, and successful
+  reuse only after the prior listener is retired.
+- **Symptom -> Source -> Consequence -> Remedy:** Node response streaming
+  ignored `write()` backpressure, collapsed distinct `Set-Cookie` headers,
+  omitted status text and request cancellation, and attempted a second 500
+  response even after headers were committed. A disconnected client could
+  therefore leave a response reader and handler running, while wire metadata
+  differed from the returned Fetch response. The bridge now waits for drain,
+  preserves native cookie multiplicity and status text, propagates disconnect
+  through the Fetch `AbortSignal`, cancels the response reader, and destroys a
+  committed failed response instead of writing an invalid second response.
+
+Current compatibility-HTTP verification evidence:
+
+- Regression-first tests reproduced the zero ephemeral port, pre-aborted
+  listener creation, and concurrent ownership loss before remediation.
+- The complete Deno compatibility-HTTP directory passes 19 suites and 94
+  nested steps with zero failures.
+- The supported Node harness passes all 21 Node-server and request-adapter
+  tests, plus all 13 canonical runtime server tests, including live lifecycle,
+  response metadata, backpressure, WebSocket, and disconnect contracts.
+- Bun 1.3.14 passes the same 21 compatibility tests with zero failures.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,349
+  configured files, lint across 4,256 configured source files, every style and
+  architecture ratchet, 66 public guides, all 739 documentation links, and
+  every configured source and browser entrypoint typecheck.
+
 Platform remains open. The next wave must complete the hosted-adapter and
 residual adapter review before formal closure. Agent and Server remain listed
 for their own module-level revalidation because this checkpoint verified only

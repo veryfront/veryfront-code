@@ -254,8 +254,10 @@ export async function createNodeServer(
 
   const server = createServer(async (_req, _res) => {
     const requestAbort = new AbortController();
+    let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const abortForDisconnect = () => {
       if (!requestAbort.signal.aborted) requestAbort.abort(clientDisconnectedError());
+      void responseReader?.cancel(requestAbort.signal.reason).catch(() => undefined);
     };
     const abortForPrematureResponseClose = () => {
       if (!_res.writableEnded) abortForDisconnect();
@@ -263,7 +265,6 @@ export async function createNodeServer(
     _req.once("aborted", abortForDisconnect);
     _res.once("close", abortForPrematureResponseClose);
 
-    let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       const url = new URL(_req.url ?? "/", `http://${_req.headers.host ?? hostname}`);
       const method = _req.method ?? "GET";

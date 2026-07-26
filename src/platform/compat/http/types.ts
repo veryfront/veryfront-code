@@ -8,7 +8,15 @@ export interface ServeOptions {
 export type Handler = (request: Request) => Response | Promise<Response>;
 
 export interface HttpServer {
+  /**
+   * Start one listener.
+   *
+   * `onListen` is the portable readiness boundary. Use `close()` as the
+   * portable, awaitable shutdown boundary.
+   */
   serve(handler: Handler, options?: ServeOptions): Promise<void>;
+
+  /** Stop the active or pending listener. Concurrent calls share teardown. */
   close(): Promise<void>;
 }
 

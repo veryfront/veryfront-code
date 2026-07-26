@@ -49,6 +49,12 @@ Primary source areas:
   preserves text and binary frame identity, and force-closes active HTTP and
   WebSocket transports during shutdown so a handler waiting on request abort
   cannot deadlock the server.
+- The public compatibility `HttpServer` uses `onListen` as its portable
+  readiness boundary and `close()` as its portable shutdown barrier. Its Node
+  facade delegates to the canonical runtime transport, which reports the native
+  ephemeral address, preserves distinct cookies, applies response backpressure,
+  propagates client disconnect through the Fetch signal, and gives concurrent
+  close calls one retryable teardown.
 - Deno rejects already-aborted starts before binding, reports the native bound
   address for ephemeral ports, and owns an internal abort signal even when a
   caller supplies one. This keeps direct stop, adapter shutdown, and startup

@@ -83,6 +83,11 @@ await kv.set(["users", "alice"], { name: "Alice" });
 const volatileKv = await createKVStore();
 ```
 
+Use `HttpServer`'s `onListen` callback as the portable readiness boundary and
+`close()` as its awaitable shutdown barrier. Startup rejects before binding
+when its signal is already aborted; ephemeral listeners report their actual
+native port.
+
 Local adapters can own more than one server. Each returned `Server.stop()`
 retires only that listener; `adapter.shutdown()` retires every server still
 owned by the adapter. Concurrent shutdown calls share one attempt, and a
