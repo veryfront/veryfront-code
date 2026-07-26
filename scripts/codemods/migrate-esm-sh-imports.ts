@@ -89,9 +89,10 @@ export interface EsmShFileResult {
   /**
    * Intra-file version conflicts: same package appeared at two different
    * versions within this file.  The first version seen wins; the second is
-   * recorded here rather than silently dropped.
+   * recorded here rather than silently dropped.  `specifier` is the original
+   * URL of the conflicting (second) import.
    */
-  conflicts: Array<{ pkg: string; existing: string; fromVersion: string }>;
+  conflicts: Array<{ pkg: string; existing: string; fromVersion: string; specifier: string }>;
 }
 
 /** Result of merging URL-derived pins with an existing package.json dependencies map. */
@@ -108,7 +109,20 @@ export interface EsmShReport {
   rewrites: Array<{ file: string; from: string; to: string }>;
   pins: Record<string, string>;
   needsResolution: string[];
-  conflicts: Array<{ pkg: string; existing: string; fromVersion: string }>;
+  /**
+   * Version conflicts encountered during the run.  These are informational:
+   * the migration completes and existing package.json entries win.  Each
+   * entry carries the source `file` and original `specifier` (URL) so the
+   * operator can locate and review the conflicting import.  Use
+   * `--fail-on-conflict` to exit non-zero when conflicts are present.
+   */
+  conflicts: Array<{
+    pkg: string;
+    existing: string;
+    fromVersion: string;
+    file: string;
+    specifier: string;
+  }>;
   /**
    * Errors encountered during the run.  May include a fatal abort reason (e.g.
    * corrupt or unreadable package.json): when a fatal error is present no source
@@ -213,7 +227,7 @@ function processStringLiteral(
   rewrites: Array<{ from: string; to: string }>,
   pins: Record<string, string>,
   needsResolution: Set<string>,
-  conflicts: Array<{ pkg: string; existing: string; fromVersion: string }>,
+  conflicts: Array<{ pkg: string; existing: string; fromVersion: string; specifier: string }>,
 ): boolean {
   const url = literal.value;
   if (!url.startsWith("https://esm.sh/")) return false;
@@ -232,6 +246,7 @@ function processStringLiteral(
           pkg: parsed.pkg,
           existing: pins[parsed.pkg]!,
           fromVersion: parsed.version,
+          specifier: url,
         });
       }
       // First version seen wins — do not overwrite.
@@ -271,7 +286,12 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
   // conflict hits or prototype corruption.
   const pins = Object.create(null) as Record<string, string>;
   const needsResolution = new Set<string>();
-  const conflicts: Array<{ pkg: string; existing: string; fromVersion: string }> = [];
+  const conflicts: Array<{
+    pkg: string;
+    existing: string;
+    fromVersion: string;
+    specifier: string;
+  }> = [];
   let changed = false;
 
   // Single AST walk handles both top-level and non-top-level import/export
@@ -464,19 +484,34 @@ export function filterNeedsResolution(
 interface CliOptions {
   projectDir: string;
   dryRun: boolean;
+  /** Exit non-zero when the run completes with any version conflicts. */
+  failOnConflict: boolean;
 }
 
 export function parseCliOptions(args: string[]): CliOptions {
   let projectDir: string | undefined;
   let dryRun = false;
+  let failOnConflict = false;
 
   for (const arg of args) {
     if (arg === "--") continue;
     if (arg === "--dry-run") {
       dryRun = true;
+    } else if (arg === "--fail-on-conflict") {
+      failOnConflict = true;
     } else if (arg === "--help" || arg === "-h") {
       console.log(
-        "Usage: deno task codemod:esm-sh -- [--dry-run] <project-directory>",
+        "Usage: deno task codemod:esm-sh -- [--dry-run] [--fail-on-conflict] <project-directory>\n" +
+          "\n" +
+          "Rewrites esm.sh import URLs in source files to bare specifiers and pins\n" +
+          "the extracted versions in package.json.\n" +
+          "\n" +
+          "Options:\n" +
+          "  --dry-run           Report changes without writing any files.\n" +
+          "  --fail-on-conflict  Exit non-zero when version conflicts are detected.\n" +
+          "                      By default conflicts are reported and the run succeeds:\n" +
+          "                      existing package.json entries win and the import is\n" +
+          "                      still rewritten to its bare specifier.",
       );
       Deno.exit(0);
     } else if (arg.startsWith("-")) {
@@ -490,7 +525,7 @@ export function parseCliOptions(args: string[]): CliOptions {
   }
 
   if (!projectDir) throw new Error("Provide a project directory.");
-  return { projectDir, dryRun };
+  return { projectDir, dryRun, failOnConflict };
 }
 
 async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
@@ -506,7 +541,7 @@ async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
 }
 
 async function main(args: string[]): Promise<void> {
-  const { projectDir, dryRun } = parseCliOptions(args);
+  const { projectDir, dryRun, failOnConflict } = parseCliOptions(args);
 
   const sourceFiles: string[] = [];
   await collectSourceFiles(projectDir, sourceFiles);
@@ -521,9 +556,9 @@ async function main(args: string[]): Promise<void> {
     errors: [],
   };
 
-  // Collect candidate pins across all files. Any disagreement aborts the run
-  // before a file is written.
-  const allPins = new Map<string, string>();
+  // Track the first-seen pin for each package across all files, including the
+  // source file path and original URL so conflicts carry full location context.
+  const allPins = new Map<string, { version: string; file: string; specifier: string }>();
   const allNeedsResolution = new Set<string>();
 
   // Defer writes so we only touch the filesystem once.
@@ -547,16 +582,32 @@ async function main(args: string[]): Promise<void> {
     for (const rw of result.rewrites) {
       report.rewrites.push({ file, from: rw.from, to: rw.to });
     }
-    // Intra-file version conflicts (same package, two different versions in one file).
-    report.conflicts.push(...result.conflicts);
+    // Intra-file version conflicts (same package, two different versions in one
+    // file).  Existing package.json entries win; these are informational.
+    for (const c of result.conflicts) {
+      report.conflicts.push({ ...c, file });
+    }
 
     for (const [pkg, version] of Object.entries(result.pins)) {
       const existing = allPins.get(pkg);
-      if (existing !== undefined && existing !== version) {
-        // Two different file-level URLs disagree; first file wins.
-        report.conflicts.push({ pkg, existing, fromVersion: version });
+      if (existing !== undefined && existing.version !== version) {
+        // Two different files disagree on the version; first file seen wins.
+        // Look up the URL that introduced the conflicting version in this file.
+        const specifier = result.rewrites.find(
+          (r) => r.to === pkg || r.to.startsWith(pkg + "/"),
+        )?.from ?? `${pkg}@${version}`;
+        report.conflicts.push({
+          pkg,
+          existing: existing.version,
+          fromVersion: version,
+          file,
+          specifier,
+        });
       } else if (existing === undefined) {
-        allPins.set(pkg, version);
+        const specifier = result.rewrites.find(
+          (r) => r.to === pkg || r.to.startsWith(pkg + "/"),
+        )?.from ?? `${pkg}@${version}`;
+        allPins.set(pkg, { version, file, specifier });
       }
     }
 
@@ -573,9 +624,20 @@ async function main(args: string[]): Promise<void> {
     parseError: pkgJsonParseError,
   } = await readProjectPackageJson(pkgJsonPath);
 
-  const newPinsRecord = Object.fromEntries(allPins.entries());
+  const newPinsRecord = Object.fromEntries(
+    [...allPins.entries()].map(([pkg, { version }]) => [pkg, version]),
+  );
   const { updatedDeps, conflicts: pinConflicts } = mergeEsmShPins(existingDeps, newPinsRecord);
-  report.conflicts.push(...pinConflicts);
+  // Enrich package.json merge conflicts with file + specifier from the allPins
+  // tracker (the source file that introduced the URL-derived version).
+  for (const c of pinConflicts) {
+    const meta = allPins.get(c.pkg);
+    report.conflicts.push({
+      ...c,
+      file: meta?.file ?? "",
+      specifier: meta?.specifier ?? `${c.pkg}@${c.fromVersion}`,
+    });
+  }
   report.pins = newPinsRecord;
   // Packages that appear as unversioned in some files but versioned in others
   // are resolved by the pin; exclude them from needsResolution.
@@ -594,20 +656,6 @@ async function main(args: string[]): Promise<void> {
     throw new Error(pkgJsonParseError);
   }
 
-  if (report.conflicts.length > 0) {
-    const count = report.conflicts.length;
-    const subject = count === 1
-      ? "1 dependency version conflict requires"
-      : `${count} dependency version conflicts require`;
-    const message =
-      `Migration aborted because ${subject} manual resolution. No files were changed.`;
-    report.errors.push(message);
-    report.filesChanged = 0;
-    report.rewrites = [];
-    console.log(JSON.stringify(report, null, 2));
-    throw new Error(message);
-  }
-
   if (!dryRun) {
     // Write package.json FIRST so that an interrupted run never leaves bare
     // specifiers in source files without a corresponding pin entry.
@@ -622,6 +670,17 @@ async function main(args: string[]): Promise<void> {
   }
 
   console.log(JSON.stringify(report, null, 2));
+
+  // --fail-on-conflict: opt-in strict mode.  Files have already been written;
+  // this only affects the exit code for callers that want to gate on conflicts.
+  if (failOnConflict && report.conflicts.length > 0) {
+    const n = report.conflicts.length;
+    throw new Error(
+      `${n} version conflict${
+        n === 1 ? "" : "s"
+      } detected. Review the conflicts field in the report above.`,
+    );
+  }
 }
 
 /** Export for integration testing. */

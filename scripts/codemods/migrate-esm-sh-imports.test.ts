@@ -17,6 +17,7 @@ Deno.test("esm-sh codemod accepts the deno task separator", () => {
   assertEquals(parseCliOptions(["--", "--dry-run", "./project"]), {
     projectDir: "./project",
     dryRun: true,
+    failOnConflict: false,
   });
 });
 
@@ -410,7 +411,12 @@ Deno.test("esm-sh codemod records an intra-file version conflict instead of sile
   assert(result.changed);
   assertStringIncludes(result.code, 'from "pkg"');
   assertEquals(result.pins, { pkg: "1.0.0" }); // first version wins
-  assertEquals(result.conflicts, [{ pkg: "pkg", existing: "1.0.0", fromVersion: "2.0.0" }]);
+  assertEquals(result.conflicts, [{
+    pkg: "pkg",
+    existing: "1.0.0",
+    fromVersion: "2.0.0",
+    specifier: "https://esm.sh/pkg@2.0.0",
+  }]);
   assertEquals(result.needsResolution, []);
 });
 
@@ -711,12 +717,16 @@ Deno.test(
 );
 
 // ---------------------------------------------------------------------------
-// main() integration: fail closed on version conflicts
+// main() integration: version conflicts are informational, run completes
 // ---------------------------------------------------------------------------
 
 Deno.test(
   "intra-file version conflict leaves source and package.json unchanged",
   async () => {
+    // Same package at two different versions in one file: an intra-file conflict.
+    // The migration COMPLETES (no abort). Both specifiers are rewritten to the
+    // bare form, the first version wins for the pin, and the conflict is reported
+    // with the source file path and the conflicting URL.
     const dir = await Deno.makeTempDir();
     const source = [
       'import first from "https://esm.sh/pkg@1.0.0";',
@@ -728,17 +738,12 @@ Deno.test(
       await Deno.writeTextFile(`${dir}/app.ts`, source);
       await Deno.writeTextFile(`${dir}/package.json`, manifest);
 
-      let thrown: unknown;
-      try {
-        await main(["--", dir]);
-      } catch (error) {
-        thrown = error;
-      }
+      await main(["--", dir]);
 
-      assert(thrown instanceof Error, "main() should reject conflicting versions");
-      assertStringIncludes(thrown.message, "version conflict");
-      assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
-      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+      // Both imports rewritten; package.json gets the first-seen version pinned.
+      assertStringIncludes(await Deno.readTextFile(`${dir}/app.ts`), 'from "pkg"');
+      // Manifest is updated: first-seen version wins.
+      assertStringIncludes(await Deno.readTextFile(`${dir}/package.json`), '"pkg": "1.0.0"');
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -746,8 +751,11 @@ Deno.test(
 );
 
 Deno.test(
-  "cross-file version conflict leaves all files unchanged",
+  "cross-file version conflict: migration completes, first file wins, conflict reported with file",
   async () => {
+    // Two files import the same package at different versions.  The run completes;
+    // the first file's version wins; the conflict entry includes the source file
+    // and the original URL so the operator can find and review the import.
     const dir = await Deno.makeTempDir();
     const firstSource = 'import first from "https://esm.sh/pkg@1.0.0";\n';
     const secondSource = 'import second from "https://esm.sh/pkg@2.0.0";\n';
@@ -757,18 +765,40 @@ Deno.test(
       await Deno.writeTextFile(`${dir}/second.ts`, secondSource);
       await Deno.writeTextFile(`${dir}/package.json`, manifest);
 
-      let thrown: unknown;
+      let report: unknown;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+        origLog(msg);
+      };
       try {
         await main(["--", dir]);
-      } catch (error) {
-        thrown = error;
+      } finally {
+        console.log = origLog;
       }
 
-      assert(thrown instanceof Error, "main() should reject conflicting versions");
-      assertStringIncludes(thrown.message, "version conflict");
-      assertEquals(await Deno.readTextFile(`${dir}/first.ts`), firstSource);
-      assertEquals(await Deno.readTextFile(`${dir}/second.ts`), secondSource);
-      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+      // Both files rewritten.
+      assertStringIncludes(await Deno.readTextFile(`${dir}/first.ts`), 'from "pkg"');
+      assertStringIncludes(await Deno.readTextFile(`${dir}/second.ts`), 'from "pkg"');
+      // First-seen version pinned in package.json.
+      assertStringIncludes(await Deno.readTextFile(`${dir}/package.json`), '"pkg": "1.0.0"');
+      // Conflict entry carries file path and original URL.
+      const conflicts = (report as { conflicts: unknown[] }).conflicts;
+      assert(conflicts.length >= 1, "expected at least one conflict entry");
+      const c = conflicts[0] as {
+        pkg: string;
+        existing: string;
+        fromVersion: string;
+        file: string;
+        specifier: string;
+      };
+      assertEquals(c.pkg, "pkg");
+      assertEquals(c.existing, "1.0.0");
+      assertEquals(c.fromVersion, "2.0.0");
+      assertStringIncludes(c.file, "second.ts");
+      assertEquals(c.specifier, "https://esm.sh/pkg@2.0.0");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -776,12 +806,17 @@ Deno.test(
 );
 
 Deno.test(
-  "package.json range conflict leaves source and manifest unchanged",
+  "package.json range conflict: migration completes with existing range preserved and conflict reported",
   async () => {
+    // A project has "lodash": "^4.17.0" in package.json and imports
+    // https://esm.sh/lodash@4.17.21.  The run COMPLETES: the import is rewritten
+    // to bare "lodash", package.json keeps its existing "^4.17.0" (existing entry
+    // wins), and the conflict is reported with file and specifier so the operator
+    // can review it.  This is the canonical "real project" scenario.
     const dir = await Deno.makeTempDir();
-    const source = 'import value from "https://esm.sh/pkg@2.0.0";\n';
+    const source = 'import value from "https://esm.sh/lodash@4.17.21";\n';
     const manifest = JSON.stringify(
-      { name: "test", dependencies: { pkg: "^1.0.0" } },
+      { name: "test", dependencies: { lodash: "^4.17.0" } },
       null,
       2,
     ) + "\n";
@@ -789,17 +824,39 @@ Deno.test(
       await Deno.writeTextFile(`${dir}/app.ts`, source);
       await Deno.writeTextFile(`${dir}/package.json`, manifest);
 
-      let thrown: unknown;
+      let report: unknown;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+        origLog(msg);
+      };
       try {
         await main(["--", dir]);
-      } catch (error) {
-        thrown = error;
+      } finally {
+        console.log = origLog;
       }
 
-      assert(thrown instanceof Error, "main() should reject conflicting versions");
-      assertStringIncludes(thrown.message, "version conflict");
-      assertEquals(await Deno.readTextFile(`${dir}/app.ts`), source);
-      assertEquals(await Deno.readTextFile(`${dir}/package.json`), manifest);
+      // Import rewritten to bare specifier.
+      assertStringIncludes(await Deno.readTextFile(`${dir}/app.ts`), 'from "lodash"');
+      // Existing range in package.json is preserved (not overwritten with exact version).
+      assertStringIncludes(await Deno.readTextFile(`${dir}/package.json`), '"lodash": "^4.17.0"');
+      // Conflict entry is in the report with file and specifier.
+      const conflicts = (report as { conflicts: unknown[] }).conflicts;
+      assert(conflicts.length >= 1, "expected at least one conflict entry");
+      const c = conflicts[0] as {
+        pkg: string;
+        existing: string;
+        fromVersion: string;
+        file: string;
+        specifier: string;
+      };
+      assertEquals(c.pkg, "lodash");
+      assertEquals(c.existing, "^4.17.0");
+      assertEquals(c.fromVersion, "4.17.21");
+      assertStringIncludes(c.file, "app.ts");
+      assertEquals(c.specifier, "https://esm.sh/lodash@4.17.21");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
