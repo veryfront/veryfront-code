@@ -11,6 +11,30 @@ function createMockAdapter() {
 }
 
 describe("SecureFs", () => {
+  it("rejects unknown contexts instead of falling through to internal policy", () => {
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/tmp",
+          adapter: createMockAdapter(),
+          context: "unknown" as never,
+        }),
+      VeryfrontError,
+      "valid security context",
+    );
+
+    const secureFs = createSecureFs({
+      baseDir: "/tmp",
+      adapter: createMockAdapter(),
+      context: "user-input",
+    });
+    assertThrows(
+      () => secureFs.setContext("unknown" as never),
+      VeryfrontError,
+      "valid security context",
+    );
+  });
+
   it("rejects a missing write target beneath a symlinked parent", async () => {
     if (Deno.build.os === "windows") return;
 

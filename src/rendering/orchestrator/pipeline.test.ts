@@ -3,7 +3,6 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
 import { isDotPath, isHiddenSegment } from "./path-helpers.ts";
-import { getPageCssCacheKey } from "./css-cache.ts";
 import { collectModulesToLoad, hasDataFetchingFunction } from "./module-collection.ts";
 import {
   extractRenderedCssHash,
@@ -11,21 +10,6 @@ import {
   serializeLayoutProps,
   serializeLayouts,
 } from "./pipeline-helpers.ts";
-
-const PAGE_CSS_CACHE_MAX_SIZE = 200;
-const pageCssCache = new Map<string, string>();
-
-function getCachedPageCss(cacheKey: string): string | undefined {
-  return pageCssCache.get(cacheKey);
-}
-
-function cachePageCss(cacheKey: string, css: string): void {
-  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
-    const firstKey = pageCssCache.keys().next().value as string | undefined;
-    if (firstKey) pageCssCache.delete(firstKey);
-  }
-  pageCssCache.set(cacheKey, css);
-}
 
 describe("RenderPipeline helpers", () => {
   describe("pipeline-helpers", () => {
@@ -129,58 +113,6 @@ describe("RenderPipeline helpers", () => {
     it("should handle '.' and '..' in paths without triggering", () => {
       assertEquals(isDotPath({ slug: "./relative", projectDir: "/project" }), false);
       assertEquals(isDotPath({ slug: "../parent", projectDir: "/project" }), false);
-    });
-  });
-
-  describe("getPageCssCacheKey", () => {
-    it("should build key from all parts", () => {
-      const key = getPageCssCacheKey("proj1", "production", "/about", "2024-01-01");
-      assertEquals(key, "proj1:production:/about:2024-01-01");
-    });
-
-    it("should use defaults for undefined values", () => {
-      const key = getPageCssCacheKey(undefined, undefined, "/home", undefined);
-      assertEquals(key, "default:preview:/home:draft");
-    });
-
-    it("should use defaults for partially undefined values", () => {
-      const key = getPageCssCacheKey("proj1", undefined, "/", undefined);
-      assertEquals(key, "proj1:preview:/:draft");
-    });
-  });
-
-  describe("pageCssCache (LRU eviction)", () => {
-    it("should store and retrieve cached CSS", () => {
-      pageCssCache.clear();
-      cachePageCss("key1", ".body { color: red; }");
-      assertEquals(getCachedPageCss("key1"), ".body { color: red; }");
-    });
-
-    it("should return undefined for missing keys", () => {
-      pageCssCache.clear();
-      assertEquals(getCachedPageCss("nonexistent"), undefined);
-    });
-
-    it("should update existing keys without eviction", () => {
-      pageCssCache.clear();
-      cachePageCss("key1", "old-css");
-      cachePageCss("key1", "new-css");
-      assertEquals(getCachedPageCss("key1"), "new-css");
-      assertEquals(pageCssCache.size, 1);
-    });
-
-    it("should evict oldest entry when at max capacity", () => {
-      pageCssCache.clear();
-
-      for (let i = 0; i < PAGE_CSS_CACHE_MAX_SIZE; i++) {
-        cachePageCss(`fill-${i}`, `css-${i}`);
-      }
-      assertEquals(pageCssCache.size, PAGE_CSS_CACHE_MAX_SIZE);
-
-      cachePageCss("overflow-key", "overflow-css");
-      assertEquals(pageCssCache.size, PAGE_CSS_CACHE_MAX_SIZE);
-      assertEquals(getCachedPageCss("fill-0"), undefined);
-      assertEquals(getCachedPageCss("overflow-key"), "overflow-css");
     });
   });
 

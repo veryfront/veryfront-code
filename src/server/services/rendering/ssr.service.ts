@@ -27,7 +27,6 @@ import {
   HTTP_REDIRECT_FOUND,
   HTTP_UNAVAILABLE,
 } from "#veryfront/utils/constants/index.ts";
-import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -226,14 +225,11 @@ function getAllReady(stream: ReadableStream | null | undefined): Promise<unknown
 }
 
 export class SSRService implements SSRServiceLike {
-  private readonly cacheRepo?: CacheRepository<string>;
   private readonly rendererProvider: RendererProvider;
 
   constructor(options?: {
-    cacheRepo?: CacheRepository<string>;
     rendererProvider?: RendererProvider;
   }) {
-    this.cacheRepo = options?.cacheRepo;
     this.rendererProvider = options?.rendererProvider ?? defaultRendererProvider;
   }
 

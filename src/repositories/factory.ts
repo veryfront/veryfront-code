@@ -10,6 +10,8 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HandlerContext } from "#veryfront/types";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { SecurityContext } from "#veryfront/security/secure-fs.ts";
 import type {
   CacheRepository,
@@ -22,6 +24,7 @@ import {
   createMemoryCacheRepository,
   createMultiTierCacheRepository,
 } from "./cache/cache-repository.ts";
+import { snapshotRepositoryContext } from "./context.ts";
 
 export interface RepositoryFactoryConfig {
   adapter: RuntimeAdapter;
@@ -30,15 +33,23 @@ export interface RepositoryFactoryConfig {
 }
 
 export class RepositoryFactory {
-  constructor(private readonly config: RepositoryFactoryConfig) {}
+  private readonly adapter: RuntimeAdapter;
+  private readonly baseDir: string;
+  readonly context: RepositoryContext;
+
+  constructor(config: RepositoryFactoryConfig) {
+    this.adapter = config.adapter;
+    this.baseDir = config.baseDir;
+    this.context = snapshotRepositoryContext(config.context);
+  }
 
   createFileSystemRepository(
-    securityContext?: SecurityContext,
+    securityContext: SecurityContext,
   ): FileSystemRepository {
     return createFileSystemRepository({
-      baseDir: this.config.baseDir,
-      adapter: this.config.adapter,
-      context: this.config.context,
+      baseDir: this.baseDir,
+      adapter: this.adapter,
+      context: this.context,
       securityContext,
     });
   }
@@ -47,28 +58,46 @@ export class RepositoryFactory {
     backend: CacheBackend,
     options?: CacheRepositoryOptions,
   ): CacheRepository<string> {
-    return createMultiTierCacheRepository(this.config.context, backend, options);
+    return createMultiTierCacheRepository(this.context, backend, options);
   }
 
   createMemoryCacheRepository<T = string>(
     options?: CacheRepositoryOptions,
   ): CacheRepository<T> {
-    return createMemoryCacheRepository<T>(this.config.context, options);
-  }
-
-  get context(): RepositoryContext {
-    return this.config.context;
+    return createMemoryCacheRepository<T>(this.context, options);
   }
 }
 
 export function extractRepositoryContext(ctx: HandlerContext): RepositoryContext {
-  const projectId = ctx.projectSlug ?? ctx.projectId ?? "unknown";
-  const environment = ctx.resolvedEnvironment ??
-    (ctx.requestContext?.mode === "production" ? "production" : "preview");
-  const versionId = ctx.releaseId ?? ctx.enriched?.contentSourceId ??
-    ctx.enriched?.releaseId ?? "draft";
+  if (ctx.enriched) {
+    return createRepositoryContext(
+      ctx.enriched.projectId,
+      ctx.enriched.environment,
+      ctx.enriched.contentSourceId,
+    );
+  }
 
-  return { projectId, environment, versionId };
+  const projectId = ctx.projectId ?? ctx.projectSlug;
+  if (!projectId) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Repository context requires projectId or projectSlug",
+    });
+  }
+
+  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
+  if (environment !== "preview" && environment !== "production") {
+    throw INVALID_ARGUMENT.create({
+      detail: "Repository context requires an explicit preview or production environment",
+    });
+  }
+  const versionId = computeContentSourceId(
+    ctx.isLocalProject === true,
+    environment,
+    ctx.requestContext?.branch,
+    ctx.releaseId,
+  );
+
+  return createRepositoryContext(projectId, environment, versionId);
 }
 
 export function createRepositoryFactory(ctx: HandlerContext): RepositoryFactory {
@@ -81,8 +110,8 @@ export function createRepositoryFactory(ctx: HandlerContext): RepositoryFactory 
 
 export function createRepositoryContext(
   projectId: string,
-  environment: "production" | "preview" = "preview",
-  versionId = "draft",
+  environment: "production" | "preview",
+  versionId: string,
 ): RepositoryContext {
-  return { projectId, environment, versionId };
+  return snapshotRepositoryContext({ projectId, environment, versionId });
 }

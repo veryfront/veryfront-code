@@ -1,10 +1,22 @@
 import type { DirEntry, FileInfo, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   createSecureFs,
+  isSecurityContext,
   type SecureFs,
   type SecurityContext,
 } from "#veryfront/security/secure-fs.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { FileSystemRepository, RepositoryContext } from "../types.ts";
+import { snapshotRepositoryContext } from "../context.ts";
+
+function requireSecurityContext(value: unknown): SecurityContext {
+  if (!isSecurityContext(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFsRepository requires a valid securityContext",
+    });
+  }
+  return value;
+}
 
 /**
  * Configuration for SecureFsRepository
@@ -16,10 +28,8 @@ export interface SecureFsRepositoryConfig {
   adapter: RuntimeAdapter;
   /** Repository context for key generation */
   context: RepositoryContext;
-  /** Security context for validation (default: "internal") */
-  securityContext?: SecurityContext;
-  /** Whether to throw on validation errors (default: true) */
-  throwOnError?: boolean;
+  /** Security policy applied to every path operation */
+  securityContext: SecurityContext;
 }
 
 /**
@@ -33,12 +43,12 @@ export class SecureFsRepository implements FileSystemRepository {
   readonly context: RepositoryContext;
 
   constructor(config: SecureFsRepositoryConfig) {
-    this.context = config.context;
+    this.context = snapshotRepositoryContext(config.context);
     this.secureFs = createSecureFs({
       baseDir: config.baseDir,
       adapter: config.adapter,
-      context: config.securityContext ?? "internal",
-      throwOnError: config.throwOnError ?? true,
+      context: requireSecurityContext(config.securityContext),
+      throwOnError: true,
     });
   }
 
@@ -50,11 +60,13 @@ export class SecureFsRepository implements FileSystemRepository {
     return this.secureFs.readFileBytes(path);
   }
 
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    await this.secureFs.writeFile(
-      path,
-      typeof content === "string" ? content : new TextDecoder().decode(content),
-    );
+  async writeFile(path: string, content: string): Promise<void> {
+    if (typeof content !== "string") {
+      throw INVALID_ARGUMENT.create({
+        detail: "FileSystemRepository.writeFile requires text content",
+      });
+    }
+    await this.secureFs.writeFile(path, content);
   }
 
   exists(path: string): Promise<boolean> {

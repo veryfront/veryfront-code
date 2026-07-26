@@ -124,16 +124,6 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(service instanceof SSRService, true);
       });
 
-      it("creates instance with cacheRepo option", () => {
-        const mockRepo = {
-          get: () => Promise.resolve(null),
-          set: () => Promise.resolve(),
-          delete: () => Promise.resolve(),
-        };
-        const service = new SSRService({ cacheRepo: mockRepo as any });
-        assertEquals(service instanceof SSRService, true);
-      });
-
       it("creates instance with custom rendererProvider", () => {
         const provider = createMockRendererProvider();
         const service = new SSRService({ rendererProvider: provider });

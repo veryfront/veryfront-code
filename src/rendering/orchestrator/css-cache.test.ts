@@ -1,8 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  __injectCssCacheForTests,
   __pageCssCacheForTests,
   cachePageCss,
   CSS_SSR_TIMEOUT_MS,
@@ -25,17 +24,36 @@ describe("css-cache", () => {
   describe("getPageCssCacheKey", () => {
     it("creates key with all parts", () => {
       const key = getPageCssCacheKey("proj-123", "production", "/home", "2024-01-01");
-      assertEquals(key, "proj-123:production:/home:2024-01-01");
+      assertEquals(
+        key,
+        'veryfront:page-css:v1:["proj-123","production","/home","2024-01-01"]',
+      );
     });
 
-    it("uses defaults for undefined values", () => {
-      const key = getPageCssCacheKey(undefined, undefined, "/page", undefined);
-      assertEquals(key, "default:preview:/page:draft");
+    it("fails closed when project identity is missing", () => {
+      assertThrows(
+        () =>
+          getPageCssCacheKey(
+            undefined as unknown as string,
+            undefined,
+            "/page",
+            undefined,
+          ),
+        Error,
+        "project identity",
+      );
     });
 
-    it("handles mixed defined/undefined values", () => {
+    it("preserves absent optional identity instead of inventing shared defaults", () => {
       const key = getPageCssCacheKey("proj", undefined, "/about", "v1");
-      assertEquals(key, "proj:preview:/about:v1");
+      assertEquals(key, 'veryfront:page-css:v1:["proj",null,"/about","v1"]');
+    });
+
+    it("does not alias delimiter-bearing route and version components", () => {
+      const left = getPageCssCacheKey("proj", "preview", "/a:b", "c");
+      const right = getPageCssCacheKey("proj", "preview", "/a", "b:c");
+
+      assertNotEquals(left, right);
     });
   });
 
@@ -85,37 +103,6 @@ describe("css-cache", () => {
       assertEquals(getCachedPageCss("lru-overflow"), "overflow-css");
 
       __pageCssCacheForTests.clear();
-    });
-  });
-
-  describe("__injectCssCacheForTests", () => {
-    it("bypasses internal cache when injected", async () => {
-      const injectedCache = new Map<string, string>();
-      const mockRepo = {
-        get: async (key: string) => injectedCache.get(key) ?? null,
-        set: async (key: string, value: string) => {
-          injectedCache.set(key, value);
-        },
-        delete: async (_key: string) => {},
-        clear: async () => {},
-        context: { projectId: "test", environment: "preview" as const, versionId: "v1" },
-      };
-
-      __injectCssCacheForTests(mockRepo);
-
-      // getCachedPageCss returns undefined when repo is injected (sync fallback)
-      const key = `injected-test-${Date.now()}`;
-      cachePageCss(key, "injected-css");
-
-      // Sync getter returns undefined when repo is injected
-      assertEquals(getCachedPageCss(key), undefined);
-
-      // But the mock repo should have it
-      await new Promise((r) => setTimeout(r, 10)); // Wait for fire-and-forget
-      assertEquals(injectedCache.get(key), "injected-css");
-
-      // Restore
-      __injectCssCacheForTests(null);
     });
   });
 });

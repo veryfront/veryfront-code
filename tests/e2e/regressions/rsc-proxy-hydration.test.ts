@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../_helpers/log-guard.ts";
 import { join } from "#veryfront/compat/path";
-import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { mkdir, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import {
   captureBrowserDiagnostics,
@@ -14,6 +14,7 @@ import {
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -25,6 +26,7 @@ const LOCAL_RSC_CONFIG_SOURCE = `export default { experimental: { rsc: true } };
 const PROXY_MODE_CONFIG_SOURCE = `export default {
             experimental: { rsc: true },
             fs: {
+              type: "veryfront-api",
               veryfront: {
                 proxyMode: true,
                 apiBaseUrl: "https://api.veryfront.com"
@@ -86,6 +88,25 @@ interface TestProjectContext {
   projectDir: string;
   projectId: string;
   allocatePort: () => Promise<number>;
+}
+
+interface ProxyBrowserFixture {
+  readonly environment: "preview" | "production";
+  readonly projectId: string;
+  readonly projectSlug: string;
+  readonly environmentId: string;
+  readonly releaseId: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
+interface ProxyApiFile {
+  readonly id: string;
+  readonly version_id: string;
+  readonly path: string;
+  readonly content: string;
+  readonly type: "file";
+  readonly size: number;
+  readonly updated_at: string;
 }
 
 async function waitForReady(port: number, timeoutMs = 5000): Promise<void> {
@@ -194,23 +215,325 @@ export default function Page() {
   );
 }
 
-function getProxyHeaders(
+function createProxyBrowserFixture(
   environment: "preview" | "production",
-): Record<string, string> {
+): ProxyBrowserFixture {
+  const projectSlug = environment === "preview"
+    ? "browser-preview-project"
+    : "browser-proxy-project";
+  // Hosted control-plane identities are UUIDs. Each test context represents an
+  // independent project, so fresh IDs prevent intentional tenant-cache sharing
+  // from looking like cache corruption while preserving the production shape.
+  const projectId = crypto.randomUUID();
+  const environmentId = crypto.randomUUID();
+  const releaseId = environment === "preview" ? "rel-browser-preview-test" : "rel-browser-test";
+
   return {
-    "x-environment": environment,
-    "x-project-slug": environment === "preview"
-      ? "browser-preview-project"
-      : "browser-proxy-project",
-    "x-release-id": environment === "preview" ? "rel-browser-preview-test" : "rel-browser-test",
-    "x-token": "test-token",
+    environment,
+    projectId,
+    projectSlug,
+    environmentId,
+    releaseId,
+    headers: {
+      "x-environment": environment,
+      "x-environment-id": environmentId,
+      "x-forwarded-host": `${projectSlug}.${environment}.veryfront.com`,
+      "x-project-slug": projectSlug,
+      "x-release-id": releaseId,
+      "x-token": "test-token",
+    },
   };
+}
+
+function createProxyProjectEnvFetch(
+  fixture: ProxyBrowserFixture,
+): typeof globalThis.fetch {
+  return (input) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const routingPrefix = "/projects/-/proxy-routing/";
+    const routingIndex = url.pathname.indexOf(routingPrefix);
+    if (routingIndex >= 0) {
+      const projectSlug = decodeURIComponent(
+        url.pathname.slice(routingIndex + routingPrefix.length),
+      );
+      if (projectSlug !== fixture.projectSlug) {
+        return Promise.resolve(new Response("Not Found", { status: 404 }));
+      }
+
+      return Promise.resolve(Response.json({
+        id: fixture.projectId,
+        slug: fixture.projectSlug,
+        name: "RSC proxy browser fixture",
+        environments: [{
+          id: fixture.environmentId,
+          name: fixture.environment,
+          active_release_id: fixture.environment === "production" ? fixture.releaseId : null,
+        }],
+      }));
+    }
+
+    if (url.pathname.endsWith("/environment-variables")) {
+      return Promise.resolve(Response.json({ data: [] }));
+    }
+
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+}
+
+async function loadProxyApiFiles(projectDir: string): Promise<ProxyApiFile[]> {
+  const paths = [
+    "veryfront.config.js",
+    "app/layout.tsx",
+    "app/page.tsx",
+  ] as const;
+
+  return await Promise.all(paths.map(async (path, index) => {
+    const content = await readTextFile(join(projectDir, path));
+    return {
+      id: `file-${index + 1}`,
+      version_id: `version-${index + 1}`,
+      path,
+      content,
+      type: "file" as const,
+      size: encoder.encode(content).byteLength,
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+  }));
+}
+
+function proxyApiPageInfo() {
+  return {
+    self: null,
+    first: null,
+    next: null,
+    prev: null,
+  };
+}
+
+function matchesProxyApiPattern(path: string, pattern: string): boolean {
+  const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/gu, "\\$&");
+  const source = escaped.replaceAll("*", ".*");
+  return new RegExp(`^${source}$`, "u").test(path);
+}
+
+function selectProxyApiFiles(files: readonly ProxyApiFile[], url: URL): ProxyApiFile[] {
+  const requestedPath = url.searchParams.get("path");
+  const pattern = url.searchParams.get("pattern");
+
+  return files.filter((file) => {
+    if (
+      requestedPath &&
+      file.path !== requestedPath &&
+      !file.path.startsWith(`${requestedPath.replace(/\/+$/u, "")}/`)
+    ) {
+      return false;
+    }
+    return !pattern || matchesProxyApiPattern(file.path, pattern);
+  });
+}
+
+function createProxyFilesystemFetch(
+  fixture: ProxyBrowserFixture,
+  files: readonly ProxyApiFile[],
+  passthroughFetch: typeof globalThis.fetch,
+): typeof globalThis.fetch {
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.origin !== "https://api.veryfront.com") {
+      return await passthroughFetch(input, init);
+    }
+
+    if (request.headers.get("authorization") !== "Bearer test-token") {
+      return Response.json({ detail: "Unauthorized" }, { status: 401 });
+    }
+
+    const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const projectRef = segments[1];
+    if (segments[0] !== "projects") {
+      return Response.json({ detail: "Not Found" }, { status: 404 });
+    }
+
+    if (
+      segments.length === 2 &&
+      (projectRef === fixture.projectId || projectRef === fixture.projectSlug)
+    ) {
+      return Response.json({
+        id: fixture.projectId,
+        name: "RSC proxy browser fixture",
+        slug: fixture.projectSlug,
+      });
+    }
+
+    if (projectRef !== fixture.projectSlug) {
+      return Response.json({ detail: "Not Found" }, { status: 404 });
+    }
+
+    const selectedFiles = selectProxyApiFiles(files, url);
+    const findFile = (pathOrId: string | undefined): ProxyApiFile | undefined =>
+      files.find((file) => file.path === pathOrId || file.id === pathOrId);
+
+    if (segments[2] === "files") {
+      if (segments.length === 3) {
+        return Response.json({
+          data: selectedFiles,
+          page_info: proxyApiPageInfo(),
+        });
+      }
+      const file = findFile(segments[3]);
+      return file ? Response.json(file) : Response.json({ detail: "Not Found" }, { status: 404 });
+    }
+
+    if (
+      (segments[2] === "releases" || segments[2] === "environments") &&
+      segments[4] === "files"
+    ) {
+      const releaseMetadata = {
+        release_id: fixture.releaseId,
+        release_version: null,
+      };
+      const environmentMetadata = segments[2] === "environments"
+        ? {
+          environment_id: fixture.environmentId,
+          environment_name: fixture.environment,
+        }
+        : {};
+
+      if (segments.length === 5) {
+        return Response.json({
+          data: selectedFiles,
+          page_info: proxyApiPageInfo(),
+          ...releaseMetadata,
+          ...environmentMetadata,
+        });
+      }
+      const file = findFile(segments[5]);
+      return file
+        ? Response.json({
+          ...file,
+          ...releaseMetadata,
+          ...environmentMetadata,
+        })
+        : Response.json({ detail: "Not Found" }, { status: 404 });
+    }
+
+    if (segments[2] === "style-artifacts" && segments[3] === "current") {
+      if (request.method === "GET") {
+        return Response.json({ status: "missing" });
+      }
+      if (request.method === "POST") {
+        return Response.json({
+          status: "building",
+          build_run_id: "rsc-proxy-browser-fixture",
+        });
+      }
+      if (request.method === "PUT") {
+        return Response.json({ status: "ready" });
+      }
+    }
+
+    if (
+      segments[2] === "releases" &&
+      segments[4] === "asset-manifest" &&
+      request.method === "GET"
+    ) {
+      return Response.json({
+        state: "ready",
+        manifest_version: 1,
+        manifest: null,
+      });
+    }
+
+    return Response.json({ detail: "Not Found" }, { status: 404 });
+  };
+}
+
+class ProxyFixtureWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  readonly url: string;
+  readonly protocol = "";
+  readonly extensions = "";
+  readonly bufferedAmount = 0;
+  binaryType: BinaryType = "blob";
+  readyState = ProxyFixtureWebSocket.CONNECTING;
+  onopen: ((this: WebSocket, event: Event) => unknown) | null = null;
+  onmessage: ((this: WebSocket, event: MessageEvent) => unknown) | null = null;
+  onerror: ((this: WebSocket, event: Event) => unknown) | null = null;
+  onclose: ((this: WebSocket, event: CloseEvent) => unknown) | null = null;
+
+  constructor(url: string | URL, _protocols?: string | string[]) {
+    this.url = String(url);
+    queueMicrotask(() => {
+      if (this.readyState !== ProxyFixtureWebSocket.CONNECTING) return;
+      this.readyState = ProxyFixtureWebSocket.OPEN;
+      this.onopen?.call(this as unknown as WebSocket, new Event("open"));
+    });
+  }
+
+  send(_data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    if (this.readyState !== ProxyFixtureWebSocket.OPEN) {
+      throw new DOMException("WebSocket is not open", "InvalidStateError");
+    }
+  }
+
+  close(): void {
+    this.readyState = ProxyFixtureWebSocket.CLOSED;
+  }
+}
+
+async function withProxyFixtureWebSocket<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+  let operationFailed = false;
+  let operationError: unknown;
+  let result: T | undefined;
+
+  Object.defineProperty(globalThis, "WebSocket", {
+    value: ProxyFixtureWebSocket as unknown as typeof WebSocket,
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    result = await operation();
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+
+  let restorationError: unknown;
+  try {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, "WebSocket", originalDescriptor);
+    } else if (!Reflect.deleteProperty(globalThis, "WebSocket")) {
+      throw new TypeError("Failed to remove the proxy fixture WebSocket");
+    }
+  } catch (error) {
+    restorationError = error;
+  }
+
+  if (restorationError !== undefined) {
+    if (operationFailed) {
+      throw new AggregateError(
+        [operationError, restorationError],
+        "Proxy fixture operation and WebSocket restoration both failed",
+      );
+    }
+    throw restorationError;
+  }
+  if (operationFailed) throw operationError;
+  return result as T;
 }
 
 async function withProxyBrowserPage(
   browser: import("npm:playwright").Browser,
   context: TestProjectContext,
-  headers: Record<string, string>,
+  fixture: ProxyBrowserFixture,
   run: (
     page: import("npm:playwright").Page,
     diagnostics: import("../../_helpers/playwright.ts").BrowserDiagnostics,
@@ -219,12 +542,16 @@ async function withProxyBrowserPage(
   const port = await context.allocatePort();
   const controller = new AbortController();
   const previousDispatchPublicKey = Deno.env.get(DISPATCH_PUBLIC_KEY_ENV);
-  await ensureTrustedProxyKeyMaterial();
-  Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, trustedPublicKeyPem!);
+  const proxyTrustEnv = "VERYFRONT_TRUST_FORWARDED_HEADERS";
+  const previousProxyTrust = Deno.env.get(proxyTrustEnv);
 
   let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
 
   try {
+    await ensureTrustedProxyKeyMaterial();
+    Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, trustedPublicKeyPem!);
+    Deno.env.set(proxyTrustEnv, "1");
+
     server = await startProductionServer({
       projectDir: context.projectDir,
       port,
@@ -232,29 +559,41 @@ async function withProxyBrowserPage(
       signal: controller.signal,
       defaultProjectSlug: context.projectId,
       defaultProjectId: context.projectId,
+      projectEnvFetch: createProxyProjectEnvFetch(fixture),
     });
     await server.ready;
     await registerTailwindExtension();
     await waitForReady(port);
 
-    const browserContext = await browser.newContext({
-      extraHTTPHeaders: {
-        ...headers,
-        "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
-      },
-    });
-    await installEsmShCorsShim(browserContext);
+    const files = await loadProxyApiFiles(context.projectDir);
+    const passthroughFetch = globalThis.fetch;
+    await withMockFetch(
+      createProxyFilesystemFetch(fixture, files, passthroughFetch),
+      () =>
+        withProxyFixtureWebSocket(async () => {
+          const browserContext = await browser.newContext({
+            extraHTTPHeaders: {
+              ...fixture.headers,
+              "x-project-id": fixture.projectId,
+              "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(
+                fixture.projectId,
+              ),
+            },
+          });
 
-    try {
-      const page = await browserContext.newPage();
-      const diagnostics = captureBrowserDiagnostics(page);
-      const response = await page.goto(`http://127.0.0.1:${port}/`);
-      assertEquals(response?.status(), 200);
-      await run(page, diagnostics);
-    } finally {
-      await browserContext.unrouteAll({ behavior: "ignoreErrors" });
-      await browserContext.close();
-    }
+          try {
+            await installEsmShCorsShim(browserContext);
+            const page = await browserContext.newPage();
+            const diagnostics = captureBrowserDiagnostics(page);
+            const response = await page.goto(`http://127.0.0.1:${port}/`);
+            assertEquals(response?.status(), 200);
+            await run(page, diagnostics);
+          } finally {
+            await browserContext.unrouteAll({ behavior: "ignoreErrors" });
+            await browserContext.close();
+          }
+        }),
+    );
   } finally {
     controller.abort();
     await server?.stop();
@@ -262,6 +601,11 @@ async function withProxyBrowserPage(
       Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
     } else {
       Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
+    }
+    if (previousProxyTrust === undefined) {
+      Deno.env.delete(proxyTrustEnv);
+    } else {
+      Deno.env.set(proxyTrustEnv, previousProxyTrust);
     }
   }
 }
@@ -496,7 +840,7 @@ describe(
           await withProxyBrowserPage(
             browser,
             context,
-            getProxyHeaders("production"),
+            createProxyBrowserFixture("production"),
             async (page, diagnostics) => {
               await assertCounterHydration(page, diagnostics, {
                 expectedStrategy: "rsc-module",
@@ -529,7 +873,7 @@ describe(
           await withProxyBrowserPage(
             browser,
             context,
-            getProxyHeaders("preview"),
+            createProxyBrowserFixture("preview"),
             async (page, diagnostics) => {
               // Preview pods hydrate via the RSC module endpoint, same as
               // production. The `fs` strategy + `/_veryfront/fs/` module
@@ -567,7 +911,7 @@ describe(
           await withProxyBrowserPage(
             browser,
             context,
-            getProxyHeaders("preview"),
+            createProxyBrowserFixture("preview"),
             async (page, diagnostics) => {
               await assertPreviewChatStyling(page);
 

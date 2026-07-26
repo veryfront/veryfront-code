@@ -14,18 +14,36 @@ import {
   type ValidationResult,
 } from "./path-validation.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const logger = baseLogger.component("secure-fs");
 
-export type SecurityContext =
-  | "user-input"
-  | "static-serving"
-  | "build"
-  | "internal"
-  | "route-discovery"
-  | "module-loading";
+export const SECURITY_CONTEXTS = [
+  "user-input",
+  "static-serving",
+  "build",
+  "internal",
+  "route-discovery",
+  "module-loading",
+] as const;
+
+export type SecurityContext = (typeof SECURITY_CONTEXTS)[number];
+
+const SECURITY_CONTEXT_SET = new Set<string>(SECURITY_CONTEXTS);
+
+export function isSecurityContext(value: unknown): value is SecurityContext {
+  return typeof value === "string" && SECURITY_CONTEXT_SET.has(value);
+}
+
+function requireSecurityContext(value: unknown): SecurityContext {
+  if (!isSecurityContext(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs requires a valid security context",
+    });
+  }
+  return value;
+}
 
 export interface SecureFsConfig {
   baseDir: string;
@@ -79,7 +97,6 @@ function getContextValidationOptions(
         allowAbsolute: true,
       };
     case "internal":
-    default:
       return ValidationPresets.internal(baseDir);
   }
 }
@@ -89,13 +106,14 @@ export class SecureFs {
   private validationOptions: ValidationOptions;
 
   constructor(config: SecureFsConfig) {
+    const context = requireSecurityContext(config.context ?? "internal");
     this.config = {
-      context: "internal",
       contextOptions: {},
       throwOnError: true,
       onSecurityEvent: () => {},
       validationOptions: {},
       ...config,
+      context,
     };
 
     this.validationOptions = this.buildValidationOptions(
@@ -301,8 +319,9 @@ export class SecureFs {
   }
 
   setContext(context: SecurityContext): void {
-    this.validationOptions = this.buildValidationOptions(context);
-    this.config.context = context;
+    const validatedContext = requireSecurityContext(context);
+    this.validationOptions = this.buildValidationOptions(validatedContext);
+    this.config.context = validatedContext;
   }
 }
 

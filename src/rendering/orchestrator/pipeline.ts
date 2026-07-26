@@ -85,7 +85,6 @@ import { toMDXFrontmatter } from "../frontmatter.ts";
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
 import {
-  __injectCssCacheForTests,
   cachePageCss,
   CSS_SSR_TIMEOUT_MS,
   getCachedPageCss,
@@ -106,8 +105,6 @@ import {
 const renderPageLog = logger.component("render-page");
 const renderPipelineLog = logger.component("render-pipeline");
 const resolvePageDataLog = logger.component("resolve-page-data");
-// Re-export test helper for backward compatibility
-export { __injectCssCacheForTests } from "./css-cache.ts";
 
 /**
  * Minimal cache interface used by RenderPipeline.
@@ -1102,10 +1099,10 @@ export class RenderPipeline {
     }
 
     const cssCacheKey = getPageCssCacheKey(
-      options?.projectId,
+      options?.projectId ?? this.config.projectId ?? this.config.projectDir,
       options?.environment,
       slug,
-      projectUpdatedAt,
+      projectUpdatedAt ?? options?.contentSourceId ?? this.config.contentSourceId,
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);

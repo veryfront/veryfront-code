@@ -1,8 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { FakeTime } from "#std/testing/time";
 import {
+  buildScopedKey,
   createMultiTierCacheRepository,
   MemoryCacheRepository,
   MultiTierCacheRepository,
@@ -13,21 +21,24 @@ import type { RepositoryContext } from "../types.ts";
 // stats/hitRate, has-expiry, buildScopedKey, memory factory) is already covered
 // by ../repositories.test.ts. This adjacent suite intentionally covers only the
 // gaps: MemoryCacheRepository TTL pruning + LRU eviction, and the entire
-// MultiTierCacheRepository (previously untested).
+// MultiTierCacheRepository.
 const CTX: RepositoryContext = {
   projectId: "proj",
   environment: "production",
   versionId: "v1",
 };
 
+function scopedKey(key: string): string {
+  return buildScopedKey(CTX, key);
+}
+
 describe("repositories/cache/cache-repository", () => {
-  describe("MemoryCacheRepository — TTL & eviction (untested paths)", () => {
-    it("get() treats an expired entry as a miss and prunes it", async () => {
+  describe("MemoryCacheRepository - TTL and eviction", () => {
+    it("does not store values whose TTL expires immediately", async () => {
       const cache = new MemoryCacheRepository<string>({ context: CTX });
-      // Negative TTL → already expired on read.
       await cache.set("k", "v", -1);
+
       assertEquals(await cache.get("k"), null);
-      // Expired entry is removed from the store.
       assertEquals(cache.size, 0);
       const stats = cache.getStats();
       assertEquals(stats.gets, 1);
@@ -35,27 +46,87 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(stats.hits, 0);
     });
 
-    it("evicts the oldest entry once maxEntries is exceeded", async () => {
+    it("treats a read as recent use when choosing an eviction victim", async () => {
       const cache = new MemoryCacheRepository<string>({ context: CTX, maxEntries: 2 });
       await cache.set("a", "1");
       await cache.set("b", "2");
-      await cache.set("c", "3"); // evicts "a" (oldest)
+      assertEquals(await cache.get("a"), "1");
+      await cache.set("c", "3");
 
       assertEquals(cache.size, 2);
-      assertEquals(await cache.get("a"), null);
-      assertEquals(await cache.get("b"), "2");
+      assertEquals(await cache.get("a"), "1");
+      assertEquals(await cache.get("b"), null);
       assertEquals(await cache.get("c"), "3");
     });
 
-    it("re-setting an existing key does not trigger eviction", async () => {
+    it("treats an update as recent use when choosing an eviction victim", async () => {
       const cache = new MemoryCacheRepository<string>({ context: CTX, maxEntries: 2 });
       await cache.set("a", "1");
       await cache.set("b", "2");
-      await cache.set("a", "1-updated"); // already present → no eviction
+      await cache.set("a", "1-updated");
+      await cache.set("c", "3");
 
       assertEquals(cache.size, 2);
       assertEquals(await cache.get("a"), "1-updated");
-      assertEquals(await cache.get("b"), "2");
+      assertEquals(await cache.get("b"), null);
+      assertEquals(await cache.get("c"), "3");
+    });
+
+    it("purges expired entries before evicting a live entry", async () => {
+      using time = new FakeTime();
+      const cache = new MemoryCacheRepository<string>({ context: CTX, maxEntries: 2 });
+      await cache.set("live", "1", 60);
+      await cache.set("expired", "2", 1);
+      time.tick(1_000);
+
+      await cache.set("new", "3", 60);
+
+      assertEquals(cache.size, 2);
+      assertEquals(await cache.get("live"), "1");
+      assertEquals(await cache.get("expired"), null);
+      assertEquals(await cache.get("new"), "3");
+    });
+
+    it("expires at the exact TTL boundary", async () => {
+      using time = new FakeTime();
+      const cache = new MemoryCacheRepository<string>({ context: CTX });
+      await cache.set("k", "v", 1);
+
+      time.tick(1_000);
+
+      assertEquals(await cache.get("k"), null);
+      assertEquals(cache.size, 0);
+    });
+
+    it("rejects invalid TTL and capacity configuration", async () => {
+      const cache = new MemoryCacheRepository<string>({ context: CTX });
+      await assertRejects(() => cache.set("nan", "value", Number.NaN), RangeError);
+      await assertRejects(() => cache.set("infinite", "value", Infinity), RangeError);
+
+      for (const maxEntries of [0, -1, 1.5, Number.NaN, Infinity]) {
+        assertThrows(
+          () => new MemoryCacheRepository({ context: CTX, maxEntries }),
+          RangeError,
+        );
+      }
+
+      for (const defaultTtlSeconds of [0, -1, 1.5, Number.NaN, Infinity]) {
+        assertThrows(
+          () => new MemoryCacheRepository({ context: CTX, defaultTtlSeconds }),
+          RangeError,
+        );
+      }
+
+      assertThrows(
+        () =>
+          new MultiTierCacheRepository({
+            context: CTX,
+            backend: new MemoryCacheBackend(),
+            name: " invalid-cache-name ",
+          }),
+        Error,
+        "cache name",
+      );
     });
 
     it("clear() empties the repository", async () => {
@@ -69,24 +140,34 @@ describe("repositories/cache/cache-repository", () => {
     });
   });
 
-  describe("MultiTierCacheRepository (previously untested)", () => {
+  describe("MultiTierCacheRepository", () => {
     function makeRepo() {
       const backend = new MemoryCacheBackend();
       const repo = new MultiTierCacheRepository({ context: CTX, backend, defaultTtlSeconds: 300 });
       return { backend, repo };
     }
 
-    // set() backfills tiers fire-and-forget (asyncBackfill); let the L1 write
-    // settle before asserting on it.
-    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    it("keeps runtime cache-name validation aligned with its schema", () => {
+      for (const name of ["", " padded", "bad\u0000name", "\uD800"]) {
+        assertThrows(
+          () =>
+            new MultiTierCacheRepository({
+              context: CTX,
+              backend: new MemoryCacheBackend(),
+              name,
+            }),
+          Error,
+          "cache name",
+        );
+      }
+    });
 
     it("set writes through to the backend under the scoped key, get reads it back", async () => {
       const { backend, repo } = makeRepo();
       await repo.set("page", "html");
 
       assertEquals(await repo.get("page"), "html");
-      // Stored under the project-scoped key in the distributed backend.
-      assertEquals(await backend.get("proj:production:v1:page"), "html");
+      assertEquals(await backend.get(scopedKey("page")), "html");
     });
 
     it("get returns null for a missing key", async () => {
@@ -95,12 +176,13 @@ describe("repositories/cache/cache-repository", () => {
     });
 
     it("preserves the L3 entry's remaining TTL when backfilling L1", async () => {
+      using time = new FakeTime();
       const { backend, repo } = makeRepo();
-      await backend.set("proj:production:v1:short", "value", 0.05);
+      await backend.set(scopedKey("short"), "value", 0.05);
 
       assertEquals(await repo.get("short"), "value");
-      await flush();
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      await time.tickAsync(0);
+      await time.tickAsync(50);
 
       assertEquals(await repo.get("short"), null);
     });
@@ -119,7 +201,6 @@ describe("repositories/cache/cache-repository", () => {
       const repo = new MultiTierCacheRepository({ context: CTX, backend });
 
       assertEquals(await repo.get("key"), "authoritative");
-      await flush();
 
       assertEquals(await repo.get("key"), "authoritative");
       assertEquals(backendGets, 1);
@@ -142,24 +223,18 @@ describe("repositories/cache/cache-repository", () => {
 
     it("deleteByPrefix removes matching scoped keys via the backend pattern", async () => {
       const { backend, repo } = makeRepo();
-      // deleteByPrefix operates on the L3 backend via delByPattern, so seed the
-      // backend directly and assert backend state — the cleanest unit of the
-      // method's contract.
-      await backend.set("proj:production:v1:pages/a", "1");
-      await backend.set("proj:production:v1:pages/b", "2");
-      await backend.set("proj:production:v1:assets/c", "3");
+      await backend.set(scopedKey("pages/a"), "1");
+      await backend.set(scopedKey("pages/b"), "2");
+      await backend.set(scopedKey("assets/c"), "3");
 
       const deleted = await repo.deleteByPrefix("pages/");
       assertEquals(deleted, 2);
-      assertEquals(await backend.get("proj:production:v1:pages/a"), null);
-      assertEquals(await backend.get("proj:production:v1:pages/b"), null);
-      // Non-matching key is left intact.
-      assertEquals(await backend.get("proj:production:v1:assets/c"), "3");
+      assertEquals(await backend.get(scopedKey("pages/a")), null);
+      assertEquals(await backend.get(scopedKey("pages/b")), null);
+      assertEquals(await backend.get(scopedKey("assets/c")), "3");
     });
 
-    it("deleteByPrefix returns 0 but still wipes L1 when backend has no delByPattern", async () => {
-      // Backend without delByPattern (the method is optional on CacheBackend).
-      // get always returns null, so any post-delete hit can only come from L1.
+    it("fails closed when prefix deletion is unsupported by the backend", async () => {
       const backend = {
         type: "memory" as const,
         get: () => Promise.resolve(null),
@@ -168,19 +243,91 @@ describe("repositories/cache/cache-repository", () => {
       };
       const repo = new MultiTierCacheRepository({ context: CTX, backend });
       await repo.set("pages/a", "1");
-      await flush();
       assertEquals(await repo.get("pages/a"), "1"); // served from L1
 
-      // L3 can't pattern-delete (returns 0), but L1 must still be invalidated.
-      assertEquals(await repo.deleteByPrefix("pages/"), 0);
-      assertEquals(await repo.get("pages/a"), null);
+      await assertRejects(
+        () => repo.deleteByPrefix("pages/"),
+        Error,
+        "does not support pattern deletion",
+      );
+      await assertRejects(
+        () => repo.clear(),
+        Error,
+        "does not support pattern deletion",
+      );
+      assertEquals(await repo.get("pages/a"), "1");
+    });
+
+    it("rejects an invalid deletion count from a custom backend", async () => {
+      const backend = {
+        type: "api" as const,
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+        delByPattern: () => Promise.resolve(-1),
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+
+      await assertRejects(
+        () => repo.deleteByPrefix("pages/"),
+        Error,
+        "invalid pattern-deletion count",
+      );
+    });
+
+    it("treats wildcard characters in a caller prefix as literals", async () => {
+      const { backend, repo } = makeRepo();
+      await backend.set(scopedKey("pages/*/literal"), "delete");
+      await backend.set(scopedKey("pages/other"), "keep");
+
+      assertEquals(await repo.deleteByPrefix("pages/*"), 1);
+      assertEquals(await backend.get(scopedKey("pages/*/literal")), null);
+      assertEquals(await backend.get(scopedKey("pages/other")), "keep");
+    });
+
+    it("isolates contexts that collide under delimiter concatenation", async () => {
+      const backend = new MemoryCacheBackend();
+      const left = new MultiTierCacheRepository({
+        context: {
+          projectId: "a:preview:b",
+          environment: "preview",
+          versionId: "c",
+        },
+        backend,
+      });
+      const right = new MultiTierCacheRepository({
+        context: {
+          projectId: "a",
+          environment: "preview",
+          versionId: "b:preview:c",
+        },
+        backend,
+      });
+
+      assertNotEquals(buildScopedKey(left.context, "d"), buildScopedKey(right.context, "d"));
+      await left.set("d", "left");
+      assertEquals(await right.get("d"), null);
+    });
+
+    it("snapshots context so caller mutation cannot move its cache namespace", async () => {
+      const context = { ...CTX };
+      const repo = new MultiTierCacheRepository({
+        context,
+        backend: new MemoryCacheBackend(),
+      });
+      await repo.set("key", "value");
+
+      context.projectId = "other";
+
+      assertEquals(repo.context.projectId, "proj");
+      assert(Object.isFrozen(repo.context));
+      assertEquals(await repo.get("key"), "value");
     });
 
     it("deleteByPrefix invalidates L1 so a deleted key is not served stale", async () => {
       const { repo } = makeRepo();
       await repo.set("pages/a", "1");
       await repo.set("assets/b", "2");
-      await flush();
       assertEquals(await repo.get("pages/a"), "1");
 
       await repo.deleteByPrefix("pages/");
@@ -191,17 +338,13 @@ describe("repositories/cache/cache-repository", () => {
     it("clear invalidates L1 so cleared keys are not served stale", async () => {
       const { repo } = makeRepo();
       await repo.set("k", "v");
-      await flush();
       assertEquals(await repo.get("k"), "v");
 
       await repo.clear();
       assertEquals(await repo.get("k"), null);
     });
 
-    it("deleteByPrefix wipes L1 AFTER L3 so a racing backfill cannot re-poison it", async () => {
-      // Wrap the backend so delByPattern blocks on a deferred. While it is
-      // in flight we fire a concurrent get() that would (pre-fix) backfill the
-      // still-present L3 value into L1. The post-delete L1 wipe must remove it.
+    it("does not serve a read racing with prefix invalidation", async () => {
       const inner = new MemoryCacheBackend();
       let release!: () => void;
       const gate = new Promise<void>((r) => (release = r));
@@ -217,29 +360,134 @@ describe("repositories/cache/cache-repository", () => {
       };
       const repo = new MultiTierCacheRepository({ context: CTX, backend });
       await repo.set("pages/a", "1");
-      await flush();
 
-      const deletePromise = repo.deleteByPrefix("pages/"); // wipes L1, then awaits L3
-      // Concurrent read during the L3-delete window: L1 was wiped, L3 still has
-      // the value, so this backfills "1" into L1.
-      assertEquals(await repo.get("pages/a"), "1");
-      release(); // let L3 delete complete; repo then wipes L1 again
+      const deletePromise = repo.deleteByPrefix("pages/");
+      let readSettled = false;
+      const readPromise = repo.get("pages/a").then((value) => {
+        readSettled = true;
+        return value;
+      });
+      await Promise.resolve();
+      assertEquals(readSettled, false);
+
+      release();
       await deletePromise;
-
-      // The racing backfill must have been cleared by the post-L3 L1 wipe.
-      assertEquals(await repo.get("pages/a"), null);
+      assertEquals(await readPromise, null);
     });
 
     it("clear removes only this scope's keys from the backend", async () => {
       const { backend, repo } = makeRepo();
-      // Seed both an in-scope key and an out-of-scope key directly.
-      await backend.set("proj:production:v1:k", "v");
-      await backend.set("other:env:ver:k", "keep");
+      const otherContext: RepositoryContext = {
+        projectId: "other",
+        environment: "preview",
+        versionId: "other-version",
+      };
+      await backend.set(scopedKey("k"), "v");
+      await backend.set(buildScopedKey(otherContext, "k"), "keep");
 
       await repo.clear();
-      assertEquals(await backend.get("proj:production:v1:k"), null);
-      // A key outside this repo's scope is untouched.
-      assertEquals(await backend.get("other:env:ver:k"), "keep");
+      assertEquals(await backend.get(scopedKey("k")), null);
+      assertEquals(await backend.get(buildScopedKey(otherContext, "k")), "keep");
+    });
+
+    it("orders a racing set before clear so the value cannot be resurrected", async () => {
+      const inner = new MemoryCacheBackend();
+      let releaseSet!: () => void;
+      let markSetStarted!: () => void;
+      const setGate = new Promise<void>((resolve) => (releaseSet = resolve));
+      const setStarted = new Promise<void>((resolve) => (markSetStarted = resolve));
+      const backend = {
+        type: "memory" as const,
+        get: (key: string) => inner.get(key),
+        set: async (key: string, value: string, ttl?: number) => {
+          markSetStarted();
+          await setGate;
+          await inner.set(key, value, ttl);
+        },
+        del: (key: string) => inner.del(key),
+        delByPattern: (pattern: string) => inner.delByPattern(pattern),
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+
+      const setPromise = repo.set("key", "value");
+      await setStarted;
+      const clearPromise = repo.clear();
+      let clearSettled = false;
+      void clearPromise.then(() => {
+        clearSettled = true;
+      });
+      await Promise.resolve();
+      assertEquals(clearSettled, false);
+
+      releaseSet();
+      await Promise.all([setPromise, clearPromise]);
+
+      assertEquals(await repo.get("key"), null);
+    });
+
+    it("does not let a later set bypass a queued clear", async () => {
+      const inner = new MemoryCacheBackend();
+      let releaseFirstSet!: () => void;
+      let markFirstSetStarted!: () => void;
+      let setCalls = 0;
+      const firstSetGate = new Promise<void>((resolve) => (releaseFirstSet = resolve));
+      const firstSetStarted = new Promise<void>((resolve) => (markFirstSetStarted = resolve));
+      const backend = {
+        type: "memory" as const,
+        get: (key: string) => inner.get(key),
+        set: async (key: string, value: string, ttl?: number) => {
+          setCalls++;
+          if (setCalls === 1) {
+            markFirstSetStarted();
+            await firstSetGate;
+          }
+          await inner.set(key, value, ttl);
+        },
+        del: (key: string) => inner.del(key),
+        delByPattern: (pattern: string) => inner.delByPattern(pattern),
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+
+      const staleSet = repo.set("key", "stale");
+      await firstSetStarted;
+      const clear = repo.clear();
+      const freshSet = repo.set("key", "fresh");
+
+      releaseFirstSet();
+      await Promise.all([staleSet, clear, freshSet]);
+
+      assertEquals(await repo.get("key"), "fresh");
+    });
+
+    it("allows independent point writes to run concurrently", async () => {
+      const inner = new MemoryCacheBackend();
+      let releaseSets!: () => void;
+      let enteredSets = 0;
+      let markBothEntered!: () => void;
+      const setsGate = new Promise<void>((resolve) => (releaseSets = resolve));
+      const bothEntered = new Promise<void>((resolve) => (markBothEntered = resolve));
+      const backend = {
+        type: "memory" as const,
+        get: (key: string) => inner.get(key),
+        set: async (key: string, value: string, ttl?: number) => {
+          enteredSets++;
+          if (enteredSets === 2) markBothEntered();
+          await setsGate;
+          await inner.set(key, value, ttl);
+        },
+        del: (key: string) => inner.del(key),
+        delByPattern: (pattern: string) => inner.delByPattern(pattern),
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+
+      const first = repo.set("a", "1");
+      const second = repo.set("b", "2");
+      await bothEntered;
+      releaseSets();
+      await Promise.all([first, second]);
+
+      assertEquals(await repo.get("a"), "1");
+      assertEquals(await repo.get("b"), "2");
     });
 
     it("getStats surfaces multi-tier hit/miss accounting", async () => {

@@ -14,7 +14,13 @@ import type {
   FileSystemRepository,
   RepositoryContext,
 } from "../types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { FILE_NOT_FOUND, INVALID_ARGUMENT } from "#veryfront/errors";
+import {
+  DEFAULT_CACHE_TTL_SECONDS,
+  requirePositiveIntegerCacheTtlSeconds,
+} from "#veryfront/cache/backends/ttl.ts";
+import { snapshotRepositoryContext } from "../context.ts";
+import { ExpiringLruStore } from "../cache/expiring-lru-store.ts";
 
 export interface TrackedCall {
   method: string;
@@ -33,6 +39,10 @@ function createEmptyCacheStats(): CacheStats {
   };
 }
 
+function cloneFileContent(content: string | Uint8Array): string | Uint8Array {
+  return content instanceof Uint8Array ? content.slice() : content;
+}
+
 export class MockFileSystemRepository implements FileSystemRepository {
   readonly context: RepositoryContext;
   private readonly files = new Map<string, string | Uint8Array>();
@@ -43,11 +53,36 @@ export class MockFileSystemRepository implements FileSystemRepository {
     context: RepositoryContext;
     files?: Record<string, string | Uint8Array>;
   }) {
-    this.context = options.context;
+    this.context = snapshotRepositoryContext(options.context);
 
     for (const [path, content] of Object.entries(options.files ?? {})) {
-      this.files.set(path, content);
+      this.files.set(path, cloneFileContent(content));
+      this.addParentDirectories(path);
     }
+  }
+
+  private addParentDirectories(path: string): void {
+    let separator = path.lastIndexOf("/");
+    while (separator > 0) {
+      this.directories.add(path.slice(0, separator));
+      separator = path.lastIndexOf("/", separator - 1);
+    }
+  }
+
+  private parentDirectory(path: string): string | null {
+    const separator = path.lastIndexOf("/");
+    if (separator < 0) return null;
+    return separator === 0 ? "/" : path.slice(0, separator);
+  }
+
+  private directoryExists(path: string | null): boolean {
+    return path === null || path === "" || path === "." || path === "/" ||
+      this.directories.has(path);
+  }
+
+  private pathError(code: string, detail: string, path: string): Error {
+    const definition = code === "ENOENT" ? FILE_NOT_FOUND : INVALID_ARGUMENT;
+    return definition.create({ detail: `${code}: ${detail}: ${path}` });
   }
 
   private track(method: string, ...args: unknown[]): void {
@@ -57,7 +92,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
   private getStoredContent(path: string): string | Uint8Array {
     const content = this.files.get(path);
     if (content !== undefined) return content;
-    throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file: ${path}` });
+    throw FILE_NOT_FOUND.create({ detail: `ENOENT: no such file: ${path}` });
   }
 
   async readFile(path: string): Promise<string> {
@@ -75,13 +110,24 @@ export class MockFileSystemRepository implements FileSystemRepository {
     this.track("readFileBytes", path);
     const content = this.getStoredContent(path);
 
-    if (content instanceof Uint8Array) return content;
+    if (content instanceof Uint8Array) return content.slice();
 
     return new TextEncoder().encode(content);
   }
 
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
+  async writeFile(path: string, content: string): Promise<void> {
     this.track("writeFile", path, content);
+    if (typeof content !== "string") {
+      throw INVALID_ARGUMENT.create({
+        detail: "MockFileSystemRepository.writeFile requires text content",
+      });
+    }
+    if (!this.directoryExists(this.parentDirectory(path))) {
+      throw this.pathError("ENOENT", "parent directory does not exist", path);
+    }
+    if (this.directories.has(path)) {
+      throw this.pathError("EISDIR", "path is a directory", path);
+    }
     this.files.set(path, content);
   }
 
@@ -97,11 +143,13 @@ export class MockFileSystemRepository implements FileSystemRepository {
     const isDirectory = this.directories.has(path);
 
     if (!isFile && !isDirectory) {
-      throw INVALID_ARGUMENT.create({ detail: `ENOENT: no such file or directory: ${path}` });
+      throw FILE_NOT_FOUND.create({ detail: `ENOENT: no such file or directory: ${path}` });
     }
 
     const content = this.files.get(path);
-    const size = content?.length ?? 0;
+    const size = typeof content === "string"
+      ? new TextEncoder().encode(content).byteLength
+      : content?.byteLength ?? 0;
 
     return {
       size,
@@ -114,8 +162,14 @@ export class MockFileSystemRepository implements FileSystemRepository {
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
     this.track("readDir", path);
+    if (this.files.has(path)) {
+      throw this.pathError("ENOTDIR", "path is not a directory", path);
+    }
+    if (!this.directoryExists(path)) {
+      throw this.pathError("ENOENT", "directory does not exist", path);
+    }
 
-    const prefix = path.endsWith("/") ? path : `${path}/`;
+    const prefix = path === "." || path === "" ? "" : path.endsWith("/") ? path : `${path}/`;
     const children = new Set<string>();
 
     for (const filePath of this.files.keys()) {
@@ -147,16 +201,31 @@ export class MockFileSystemRepository implements FileSystemRepository {
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     this.track("mkdir", path, options);
 
+    if (!path) throw this.pathError("EINVAL", "directory path is empty", path);
+    if (this.files.has(path)) {
+      throw this.pathError("EEXIST", "path already exists", path);
+    }
+    if (this.directories.has(path)) {
+      if (options?.recursive) return;
+      throw this.pathError("EEXIST", "path already exists", path);
+    }
+
     if (!options?.recursive) {
+      if (!this.directoryExists(this.parentDirectory(path))) {
+        throw this.pathError("ENOENT", "parent directory does not exist", path);
+      }
       this.directories.add(path);
       return;
     }
 
     const segments = path.split("/").filter(Boolean);
-    let current = "";
+    let current = path.startsWith("/") ? "/" : "";
 
     for (const segment of segments) {
-      current = current ? `${current}/${segment}` : segment;
+      current = current === "/" ? `/${segment}` : current ? `${current}/${segment}` : segment;
+      if (this.files.has(current)) {
+        throw this.pathError("ENOTDIR", "parent path is a file", current);
+      }
       this.directories.add(current);
     }
   }
@@ -164,29 +233,41 @@ export class MockFileSystemRepository implements FileSystemRepository {
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     this.track("remove", path, options);
 
-    if (!options?.recursive) {
+    if (this.files.has(path)) {
       this.files.delete(path);
-      this.directories.delete(path);
       return;
+    }
+    if (!this.directories.has(path)) {
+      throw this.pathError("ENOENT", "path does not exist", path);
     }
 
     const prefix = path.endsWith("/") ? path : `${path}/`;
-
-    for (const key of [...this.files.keys()]) {
-      if (key === path || key.startsWith(prefix)) this.files.delete(key);
+    const hasChildren = [...this.files.keys()].some((key) => key.startsWith(prefix)) ||
+      [...this.directories].some((directory) => directory.startsWith(prefix));
+    if (hasChildren && !options?.recursive) {
+      throw this.pathError("ENOTEMPTY", "directory is not empty", path);
     }
 
-    for (const dir of [...this.directories]) {
-      if (dir === path || dir.startsWith(prefix)) this.directories.delete(dir);
+    if (options?.recursive) {
+      for (const key of [...this.files.keys()]) {
+        if (key.startsWith(prefix)) this.files.delete(key);
+      }
+
+      for (const dir of [...this.directories]) {
+        if (dir.startsWith(prefix)) this.directories.delete(dir);
+      }
     }
+    this.directories.delete(path);
   }
 
   setFile(path: string, content: string | Uint8Array): void {
-    this.files.set(path, content);
+    this.files.set(path, cloneFileContent(content));
+    this.addParentDirectories(path);
   }
 
   addDirectory(path: string): void {
     this.directories.add(path);
+    this.addParentDirectories(path);
   }
 
   getAllCalls(): TrackedCall[] {
@@ -210,12 +291,20 @@ export class MockFileSystemRepository implements FileSystemRepository {
 
 export class MockCacheRepository<T = string> implements CacheRepository<T> {
   readonly context: RepositoryContext;
-  private readonly store = new Map<string, T>();
+  private readonly store = new ExpiringLruStore<T>(Number.MAX_SAFE_INTEGER);
+  private readonly defaultTtlSeconds: number;
   private readonly calls: TrackedCall[] = [];
   private stats: CacheStats = createEmptyCacheStats();
 
-  constructor(options: { context: RepositoryContext; initial?: Record<string, T> }) {
-    this.context = options.context;
+  constructor(options: {
+    context: RepositoryContext;
+    initial?: Record<string, T>;
+    defaultTtlSeconds?: number;
+  }) {
+    this.context = snapshotRepositoryContext(options.context);
+    this.defaultTtlSeconds = requirePositiveIntegerCacheTtlSeconds(
+      options.defaultTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS,
+    );
 
     for (const [key, value] of Object.entries(options.initial ?? {})) {
       this.store.set(key, value);
@@ -234,22 +323,22 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
     this.track("get", key);
     this.stats.gets++;
 
-    const value = this.store.get(key);
-    if (value === undefined) {
+    if (!this.store.has(key)) {
       this.stats.misses++;
       this.updateHitRate();
       return null;
     }
 
+    const value = this.store.get(key) as T;
     this.stats.hits++;
     this.updateHitRate();
     return value;
   }
 
-  async set(key: string, value: T, _ttlSeconds?: number): Promise<void> {
-    this.track("set", key, value, _ttlSeconds);
+  async set(key: string, value: T, ttlSeconds?: number): Promise<void> {
+    this.track("set", key, value, ttlSeconds);
     this.stats.sets++;
-    this.store.set(key, value);
+    this.store.set(key, value, ttlSeconds, this.defaultTtlSeconds);
   }
 
   async delete(key: string): Promise<void> {
@@ -260,17 +349,8 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
 
   async deleteByPrefix(prefix: string): Promise<number> {
     this.track("deleteByPrefix", prefix);
-
-    let deleted = 0;
-
-    for (const key of [...this.store.keys()]) {
-      if (!key.startsWith(prefix)) continue;
-
-      this.store.delete(key);
-      deleted++;
-      this.stats.deletes++;
-    }
-
+    const deleted = this.store.deleteByPrefix(prefix);
+    this.stats.deletes += deleted;
     return deleted;
   }
 
@@ -281,7 +361,7 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
 
   async clear(): Promise<void> {
     this.track("clear");
-    this.store.clear();
+    this.stats.deletes += this.store.clear();
   }
 
   getStats(): CacheStats {
@@ -305,7 +385,7 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
   }
 
   getStore(): Map<string, T> {
-    return new Map(this.store);
+    return this.store.snapshot();
   }
 
   get size(): number {
@@ -316,10 +396,10 @@ export class MockCacheRepository<T = string> implements CacheRepository<T> {
 export function createMockRepositoryContext(
   overrides?: Partial<RepositoryContext>,
 ): RepositoryContext {
-  return {
+  return snapshotRepositoryContext({
     projectId: "test-project",
     environment: "preview",
     versionId: "v1",
     ...overrides,
-  };
+  });
 }

@@ -5,20 +5,27 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { describe, it } from "#std/testing/bdd";
 import { expect } from "#std/expect";
+import { FakeTime } from "#std/testing/time";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 import {
   buildScopedKey,
   createMemoryCacheRepository,
   createRepositoryContext,
+  createRepositoryFactory,
   extractRepositoryContext,
   MemoryCacheRepository,
+  RepositoryFactory,
+  SecureFsRepository,
 } from "./index.ts";
+import { CacheRepositoryOptionsSchema, RepositoryContextSchema } from "./schemas/index.ts";
 import {
   createMockRepositoryContext,
   MockCacheRepository,
   MockFileSystemRepository,
 } from "./testing/index.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 
 describe("Repository Types", () => {
   describe("RepositoryContext", () => {
@@ -27,20 +34,73 @@ describe("Repository Types", () => {
       expect(ctx.projectId).toBe("my-project");
       expect(ctx.environment).toBe("preview");
       expect(ctx.versionId).toBe("v1");
+      expect(Object.isFrozen(ctx)).toBe(true);
     });
 
-    it("has sensible defaults", () => {
-      const ctx = createRepositoryContext("my-project");
-      expect(ctx.environment).toBe("preview");
-      expect(ctx.versionId).toBe("draft");
+    it("rejects missing, padded, and control-character identities", () => {
+      for (const projectId of ["", " project", "project ", "project\nother"]) {
+        expect(() => createRepositoryContext(projectId, "preview", "v1")).toThrow();
+      }
+
+      for (
+        const versionId of [
+          "",
+          " version",
+          "version ",
+          "version\u0000other",
+          "\uD800",
+        ]
+      ) {
+        expect(() => createRepositoryContext("project", "preview", versionId)).toThrow();
+      }
+    });
+
+    it("keeps exported schemas aligned with constructor invariants", () => {
+      expect(() =>
+        RepositoryContextSchema.parse({
+          projectId: "",
+          environment: "preview",
+          versionId: "v1",
+        })
+      ).toThrow();
+      expect(() =>
+        RepositoryContextSchema.parse({
+          projectId: "project",
+          environment: "preview",
+          versionId: "\uD800",
+        })
+      ).toThrow();
+      expect(() =>
+        CacheRepositoryOptionsSchema.parse({
+          defaultTtlSeconds: Number.NaN,
+          maxEntries: 0,
+        })
+      ).toThrow();
+      for (const name of ["", " padded", "bad\u0000name", "\uD800"]) {
+        expect(() => CacheRepositoryOptionsSchema.parse({ name })).toThrow();
+      }
     });
   });
 
   describe("buildScopedKey", () => {
-    it("builds project-scoped cache key", () => {
+    it("builds a versioned project-scoped cache key", () => {
       const ctx = createRepositoryContext("proj123", "preview", "v1");
       const key = buildScopedKey(ctx, "manifest.json");
-      expect(key).toBe("proj123:preview:v1:manifest.json");
+      expect(key).toBe("veryfront:repository:v1:proj123:preview:v1:manifest.json");
+    });
+
+    it("encodes every variable component without delimiter collisions", () => {
+      const left = createRepositoryContext("a:preview:b", "preview", "c");
+      const right = createRepositoryContext("a", "preview", "b:preview:c");
+
+      expect(buildScopedKey(left, "d")).not.toBe(buildScopedKey(right, "d"));
+      expect(buildScopedKey(left, "a*b?c")).toContain("a%2Ab%3Fc");
+    });
+
+    it("rejects malformed Unicode and overlong composed keys", () => {
+      const ctx = createRepositoryContext("project", "preview", "v1");
+      expect(() => buildScopedKey(ctx, "\uD800")).toThrow();
+      expect(() => buildScopedKey(ctx, "x".repeat(64 * 1024))).toThrow();
     });
   });
 });
@@ -107,6 +167,22 @@ describe("MemoryCacheRepository", () => {
     expect(await cache.get("key")).toBe("value");
   });
 
+  it("snapshots context instead of retaining caller-owned mutable state", async () => {
+    const context = {
+      projectId: "test",
+      environment: "preview" as const,
+      versionId: "v1",
+    };
+    const cache = new MemoryCacheRepository({ context });
+    await cache.set("key", "value");
+
+    context.projectId = "other";
+
+    expect(cache.context.projectId).toBe("test");
+    expect(Object.isFrozen(cache.context)).toBe(true);
+    expect(await cache.get("key")).toBe("value");
+  });
+
   it("expires entries for has checks", async () => {
     const cache = new MemoryCacheRepository({ context: createCtx() });
 
@@ -114,6 +190,119 @@ describe("MemoryCacheRepository", () => {
 
     expect(await cache.has!("key1")).toBe(false);
     expect(await cache.get("key1")).toBe(null);
+  });
+});
+
+describe("RepositoryFactory", () => {
+  it("snapshots repository identity at construction", () => {
+    const context = {
+      projectId: "project",
+      environment: "preview" as const,
+      versionId: "preview-main",
+    };
+    const factory = new RepositoryFactory({
+      adapter: createMockAdapter(),
+      baseDir: "/project",
+      context,
+    });
+
+    context.projectId = "other";
+
+    expect(factory.context.projectId).toBe("project");
+    expect(Object.isFrozen(factory.context)).toBe(true);
+  });
+
+  it("wires filesystem, memory, and distributed repositories to one context", async () => {
+    const adapter = createMockAdapter();
+    const factory = createRepositoryFactory({
+      adapter,
+      projectDir: "/project",
+      enriched: {
+        projectId: "project",
+        environment: "preview",
+        contentSourceId: "preview-main",
+      },
+    } as unknown as HandlerContext);
+
+    const filesystem = factory.createFileSystemRepository("internal");
+    await filesystem.writeFile("factory.txt", "factory");
+    expect(await filesystem.readFile("factory.txt")).toBe("factory");
+
+    const memory = factory.createMemoryCacheRepository<string>();
+    await memory.set("memory", "value");
+    expect(await memory.get("memory")).toBe("value");
+
+    const distributed = factory.createCacheRepository(new MemoryCacheBackend());
+    await distributed.set("distributed", "value");
+    expect(await distributed.get("distributed")).toBe("value");
+
+    expect(filesystem.context).toEqual(factory.context);
+    expect(memory.context).toEqual(factory.context);
+    expect(distributed.context).toEqual(factory.context);
+  });
+});
+
+describe("SecureFsRepository", () => {
+  it("rejects a missing or unknown security context at runtime", () => {
+    for (const securityContext of [undefined, "unknown"]) {
+      expect(() =>
+        new SecureFsRepository(
+          {
+            adapter: createMockAdapter(),
+            baseDir: "/project",
+            context: createMockRepositoryContext(),
+            securityContext,
+          } as unknown as ConstructorParameters<typeof SecureFsRepository>[0],
+        )
+      ).toThrow("securityContext");
+    }
+  });
+
+  it("forwards text without lossy binary coercion", async () => {
+    const adapter = createMockAdapter();
+    const repository = new SecureFsRepository({
+      adapter,
+      baseDir: "/project",
+      context: createMockRepositoryContext(),
+      securityContext: "internal",
+    });
+
+    await repository.writeFile("text.txt", "hello");
+
+    expect(adapter.fs.files.get("/project/text.txt")).toBe("hello");
+    await expect(
+      (repository.writeFile as unknown as (path: string, value: unknown) => Promise<void>)(
+        "binary.dat",
+        new Uint8Array([0xff, 0x00, 0x61]),
+      ),
+    ).rejects.toThrow("text content");
+    expect(adapter.fs.files.has("/project/binary.dat")).toBe(false);
+  });
+
+  it("delegates the complete text filesystem lifecycle through SecureFs", async () => {
+    const repository = new SecureFsRepository({
+      adapter: createMockAdapter(),
+      baseDir: "/project",
+      context: createMockRepositoryContext(),
+      securityContext: "internal",
+    });
+
+    await repository.mkdir("nested", { recursive: true });
+    await repository.writeFile("nested/file.txt", "héllo");
+
+    expect(await repository.readFile("nested/file.txt")).toBe("héllo");
+    expect(new TextDecoder().decode(await repository.readFileBytes("nested/file.txt"))).toBe(
+      "héllo",
+    );
+    expect(await repository.exists("nested/file.txt")).toBe(true);
+    expect((await repository.stat("nested/file.txt")).isFile).toBe(true);
+
+    const entries = [];
+    for await (const entry of repository.readDir("nested")) entries.push(entry);
+    expect(entries.map((entry) => entry.name)).toEqual(["file.txt"]);
+
+    await repository.remove("nested/file.txt");
+    expect(await repository.exists("nested/file.txt")).toBe(false);
   });
 });
 
@@ -155,17 +344,23 @@ describe("MockFileSystemRepository", () => {
   });
 
   it("converts between text and bytes without changing content", async () => {
+    const source = new TextEncoder().encode("hello");
     const mockFs = new MockFileSystemRepository({
       context: createMockRepositoryContext(),
       files: {
-        "bytes.txt": new TextEncoder().encode("hello"),
+        "bytes.txt": source,
       },
     });
 
+    source[0] = "j".charCodeAt(0);
     expect(await mockFs.readFile("bytes.txt")).toBe("hello");
 
     await mockFs.writeFile("text.txt", "world");
     expect(new TextDecoder().decode(await mockFs.readFileBytes("text.txt"))).toBe("world");
+
+    const firstRead = await mockFs.readFileBytes("bytes.txt");
+    firstRead[0] = "j".charCodeAt(0);
+    expect(new TextDecoder().decode(await mockFs.readFileBytes("bytes.txt"))).toBe("hello");
   });
 
   it("supports recursive directory lifecycle", async () => {
@@ -191,6 +386,50 @@ describe("MockFileSystemRepository", () => {
     await mockFs.remove("nested/subdir", { recursive: true });
     expect(await mockFs.exists("nested/subdir")).toBe(false);
     expect(await mockFs.exists("nested/subdir/grandchild.txt")).toBe(false);
+  });
+
+  it("lists relative root entries through the dot path", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: {
+        "root.txt": "root",
+        "nested/child.txt": "child",
+      },
+    });
+    const entries = [];
+
+    for await (const entry of mockFs.readDir(".")) entries.push(entry);
+
+    expect(entries.map((entry) => entry.name).sort()).toEqual(["nested", "root.txt"]);
+  });
+
+  it("reports byte size rather than UTF-16 string length", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: { "unicode.txt": "é" },
+    });
+
+    expect((await mockFs.stat("unicode.txt")).size).toBe(2);
+  });
+
+  it("models missing-parent, missing-path, and non-empty-directory failures", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: { "nested/file.txt": "value" },
+    });
+    const consumeDirectory = async (path: string): Promise<void> => {
+      for await (const _entry of mockFs.readDir(path)) {
+        // Iteration itself is the operation under test.
+      }
+    };
+
+    await expect(mockFs.writeFile("missing/file.txt", "value")).rejects.toThrow("ENOENT");
+    await expect(mockFs.mkdir("missing/child")).rejects.toThrow("ENOENT");
+    await expect(mockFs.remove("missing")).rejects.toThrow("ENOENT");
+    await expect(mockFs.remove("nested")).rejects.toThrow("ENOTEMPTY");
+    await expect(consumeDirectory("missing")).rejects.toThrow("ENOENT");
+
+    expect(await mockFs.readFile("nested/file.txt")).toBe("value");
   });
 });
 
@@ -224,6 +463,31 @@ describe("MockCacheRepository", () => {
 
     expect(await mockCache.get("key1")).toBe("value1");
     expect(await mockCache.get("key2")).toBe("value2");
+  });
+
+  it("honors TTL at the exact expiry boundary", async () => {
+    using time = new FakeTime();
+    const mockCache = new MockCacheRepository({
+      context: createMockRepositoryContext(),
+    });
+    await mockCache.set("key", "value", 1);
+
+    time.tick(1_000);
+
+    expect(await mockCache.has("key")).toBe(false);
+    expect(await mockCache.get("key")).toBe(null);
+    expect(mockCache.size).toBe(0);
+  });
+
+  it("distinguishes an explicitly stored undefined value from a miss", async () => {
+    const mockCache = new MockCacheRepository<string | undefined>({
+      context: createMockRepositoryContext(),
+    });
+
+    await mockCache.set("key", undefined);
+
+    expect(await mockCache.get("key")).toBe(undefined);
+    expect(await mockCache.has("key")).toBe(true);
   });
 
   it("deletes by prefix and resets tracked stats", async () => {
@@ -262,30 +526,45 @@ describe("extractRepositoryContext", () => {
     };
   }
 
-  it("extracts context from handler with projectSlug", () => {
+  it("derives preview identity from the request branch", () => {
     const handlerCtx: Partial<HandlerContext> = {
       ...createBaseHandlerCtx(),
       projectSlug: "my-project",
       resolvedEnvironment: "preview",
-      releaseId: "release-123",
+      requestContext: {
+        mode: "preview",
+        token: "",
+        slug: "my-project",
+        branch: "feature/cache",
+      },
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
     expect(ctx.projectId).toBe("my-project");
     expect(ctx.environment).toBe("preview");
-    expect(ctx.versionId).toBe("release-123");
+    expect(ctx.versionId).toBe("preview-feature/cache");
   });
 
-  it("uses defaults for missing fields", () => {
+  it("fails closed when project identity is missing", () => {
     const handlerCtx: Partial<HandlerContext> = createBaseHandlerCtx();
 
-    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.projectId).toBe("unknown");
-    expect(ctx.environment).toBe("preview");
-    expect(ctx.versionId).toBe("draft");
+    expect(() => extractRepositoryContext(handlerCtx as HandlerContext)).toThrow(
+      "projectId or projectSlug",
+    );
   });
 
-  it("extracts environment from requestContext.mode", () => {
+  it("fails closed when environment identity is missing", () => {
+    const handlerCtx: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "project",
+    };
+
+    expect(() => extractRepositoryContext(handlerCtx as HandlerContext)).toThrow(
+      "environment",
+    );
+  });
+
+  it("fails closed when production release identity is missing", () => {
     const handlerCtx: Partial<HandlerContext> = {
       ...createBaseHandlerCtx(),
       projectSlug: "my-project",
@@ -297,38 +576,66 @@ describe("extractRepositoryContext", () => {
       },
     };
 
-    const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.environment).toBe("production");
+    expect(() => extractRepositoryContext(handlerCtx as HandlerContext)).toThrow("releaseId");
   });
 
-  it("falls back to projectId and enriched release identifiers", () => {
+  it("uses enriched context as the authoritative identity snapshot", () => {
     const handlerCtx: Partial<HandlerContext> = {
       ...createBaseHandlerCtx(),
-      projectId: "project-from-id",
+      projectId: "stale-top-level-id",
+      projectSlug: "stale-top-level-slug",
       enriched: {
+        projectId: "project-from-enriched",
+        environment: "production",
         contentSourceId: "content-source-123",
       } as HandlerContext["enriched"],
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.projectId).toBe("project-from-id");
+    expect(ctx.projectId).toBe("project-from-enriched");
+    expect(ctx.environment).toBe("production");
     expect(ctx.versionId).toBe("content-source-123");
   });
 
-  it("prefers resolvedEnvironment over requestContext.mode", () => {
+  it("prefers stable projectId and resolved environment over request values", () => {
     const handlerCtx: Partial<HandlerContext> = {
       ...createBaseHandlerCtx(),
-      projectSlug: "my-project",
-      resolvedEnvironment: "preview",
+      projectId: "stable-id",
+      projectSlug: "mutable-slug",
+      resolvedEnvironment: "production",
+      releaseId: "release-123",
       requestContext: {
-        mode: "production",
+        mode: "preview",
         token: "",
-        slug: "",
-        branch: null,
+        slug: "mutable-slug",
+        branch: "feature",
       },
     };
 
     const ctx = extractRepositoryContext(handlerCtx as HandlerContext);
-    expect(ctx.environment).toBe("preview");
+    expect(ctx.projectId).toBe("stable-id");
+    expect(ctx.environment).toBe("production");
+    expect(ctx.versionId).toBe("release-release-123");
+  });
+
+  it("distinguishes local source identity from remote preview identity", () => {
+    const base: Partial<HandlerContext> = {
+      ...createBaseHandlerCtx(),
+      projectId: "project",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        mode: "preview",
+        token: "",
+        slug: "project",
+        branch: "feature",
+      },
+    };
+
+    expect(
+      extractRepositoryContext({ ...base, isLocalProject: true } as HandlerContext).versionId,
+    ).toBe("local-feature");
+    expect(
+      extractRepositoryContext({ ...base, isLocalProject: false } as HandlerContext).versionId,
+    ).toBe("preview-feature");
   });
 });

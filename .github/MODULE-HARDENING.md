@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    14 |      24.1% | Current formal closure evidence remains valid       |
+| Closed                         |    15 |      25.9% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     4 |       6.9% | No current authoritative-branch review delta exists |
+| Pending current review         |     3 |       5.2% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 54/58 (93.1%). This is progress coverage, not a substitute for the
+coverage of 55/58 (94.8%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -47,6 +47,7 @@ stricter closure count.
 - `mdx`
 - `metrics`
 - `provider`
+- `repositories`
 - `runs`
 - `runtime`
 - `sandbox`
@@ -103,7 +104,6 @@ stricter closure count.
 
 - `chat`
 - `issues`
-- `repositories`
 - `studio`
 
 ## Historical recovery context
@@ -121,19 +121,151 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `config`, `embedding`, `eval`,
-`extensions`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`, `runs`,
-`runtime`, `sandbox`, `schemas`, and `version.ts`. The latest independent
-adversarial knowledge, Markdown, MDX, provider, runs, runtime, and sandbox
-findings are remediated and revalidated. `prompt` and `resource` have now
-received deep current-state reviews and substantial remediation, but remain
-open while their documented cross-cutting findings are unresolved. Each
-closure requires a complete consumer map, deep module-level review,
-adversarial boundary tests, public-contract documentation, and repository-wide
-static verification. Cross-module consumers changed by a fix remain in
-revalidation; focused evidence for one boundary does not by itself close the
-consumer's top-level unit. `repositories` is the next pending current-state
-target after this checkpoint is committed, pushed, and synchronized with
-`origin/main`.
+`extensions`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
+`repositories`, `runs`, `runtime`, `sandbox`, `schemas`, and `version.ts`. The
+latest independent adversarial knowledge, Markdown, MDX, provider,
+repositories, runs, runtime, and sandbox findings are remediated and
+revalidated. `prompt` and `resource` have now received deep current-state
+reviews and substantial remediation, but remain open while their documented
+cross-cutting findings are unresolved. Each closure requires a complete
+consumer map, deep module-level review, adversarial boundary tests,
+public-contract documentation, and repository-wide static verification.
+Cross-module consumers changed by a fix remain in revalidation; focused
+evidence for one boundary does not by itself close the consumer's top-level
+unit. `issues` is the next pending current-state target after this checkpoint
+is committed, pushed, and synchronized with `origin/main`.
+
+### Repositories closure checkpoint
+
+The `repositories` audit unit owns the internal filesystem and cache repository
+contracts, their runtime schemas, project/content-source identity extraction,
+repository factories, in-memory and multi-tier cache implementations, and
+test doubles. Its direct dependencies are the platform filesystem adapter,
+`SecureFs`, cache backends and the shared multi-tier cache, canonical content
+source identity, the schema extension boundary, and structured framework
+errors. Current source consumers use the repository interfaces in domain
+lookup, RSC manifest handling, static-file resolution, and custom error-page
+caching. The concrete factory and implementations are internally exported but
+are not yet composed by a production runtime owner; that bounded residual is
+recorded below rather than mistaken for end-to-end adoption.
+
+The current repositories findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** scoped keys could alias when
+  identity or caller keys contained delimiters, and caller mutation could move
+  a live repository into another namespace. The source was raw colon
+  concatenation plus retained mutable context objects. The consequence was a
+  credible cross-project read or invalidation boundary failure. Repository
+  contexts are now validated, copied, frozen, and encoded into a versioned,
+  length-bounded RFC 3986 key format whose variable components are injective.
+- **Symptom -> Source -> Consequence -> Remedy:** memory entries expired one
+  tick late, reads did not refresh recency, expired entries could evict live
+  entries, and invalid capacities or TTLs were accepted. The source was an
+  insertion-ordered `Map` used as an incomplete LRU with ad hoc TTL arithmetic.
+  The consequence was stale reads, unstable eviction, and unbounded or
+  nonsensical configuration. One shared expiring LRU now enforces the cache TTL
+  contract, exact-boundary expiry, live-entry pruning, read/update recency, and
+  positive safe capacity.
+- **Symptom -> Source -> Consequence -> Remedy:** prefix deletion could race
+  with a read backfill or point write, while a backend without pattern deletion
+  silently reported success. The source was asynchronous backfill around two
+  best-effort L1 wipes and optional backend mutation. The consequence was stale
+  resurrection after `clear()` and false claims that a scope had been removed.
+  A fair FIFO shared/exclusive operation gate now orders point operations
+  against invalidation, backfill remains inside the shared permit, unsupported
+  deletion fails closed, backend counts are validated, and defensive L1 wipes
+  bracket partial backend failure.
+- **Symptom -> Source -> Consequence -> Remedy:** repository construction could
+  manufacture `"unknown"`/`"draft"` identities, or infer a production scope
+  without its release. The source was permissive fallback logic in handler
+  context extraction. The consequence was unrelated requests sharing a cache
+  namespace. Enriched request identity is now authoritative; fallback
+  extraction requires a stable project, explicit preview/production mode, and
+  canonical content-source computation that rejects a missing production
+  release.
+- **Symptom -> Source -> Consequence -> Remedy:** filesystem repositories
+  accepted byte arrays even though the underlying runtime contract only writes
+  text, and an omitted or malformed security context became the broad
+  `"internal"` policy. The source was lossy UTF-8 coercion, an optional wrapper
+  option, and a permissive `SecureFs` switch default. The consequence was
+  silent binary corruption and a fail-open path-policy downgrade. The contract
+  is now explicitly text-only, security context is required and checked at
+  runtime, and `SecureFs` owns one canonical context set that rejects unknown
+  values during construction and context changes.
+- **Symptom -> Source -> Consequence -> Remedy:** runtime constructors, schemas,
+  and test doubles accepted different context, cache-name, TTL, filesystem, and
+  statistics behavior. The source was duplicated validation and Map-based
+  mocks that did not model expiry, byte sizes, parent directories, or recursive
+  removal. The consequence was green tests for states production rejected, and
+  false failures for states production supported. Shared constraints now drive
+  schemas and runtime checks; the mocks snapshot identity, share TTL/LRU
+  semantics, preserve byte/text ownership, and model the directory lifecycle
+  and structured failure cases used by consumers.
+- **Symptom -> Source -> Consequence -> Remedy:** the adjacent page-CSS cache
+  used delimiter keys with shared `"default"`/`"draft"` fallbacks, and its
+  injected async repository seam made a synchronous API silently miss while a
+  fire-and-forget write raced teardown. The source was a test-only abstraction
+  embedded in runtime code. The consequence was cross-project collision,
+  nondeterministic tests, and unobserved write failures. The cache now uses a
+  versioned JSON tuple with explicit project identity and a registered bounded
+  LRU; the incoherent injection seam and the unused SSR-service repository
+  option were removed.
+- **Symptom -> Source -> Consequence -> Remedy:** three broad E2E groups encoded
+  obsolete contracts: route code could override authoritative security
+  headers, loaded skill assets were excluded from advertised support files,
+  and proxy RSC tests lacked trusted routing identity and depended on live
+  control-plane, filesystem, and event services. The consequence was a red
+  broad suite that did not distinguish product regressions from stale fixtures.
+  Assertions now match the authoritative header and skill contracts, while the
+  RSC fixture supplies signed dispatch identity, UUID project/environment
+  scopes, bounded offline API responses, and a lifecycle-safe event socket.
+  Independent preview projects no longer reuse one tenant cache namespace.
+
+Reproducible checkpoint evidence:
+
+- The two direct repository test files passed eight suites and 74 steps with
+  zero failures. Factory wiring and every filesystem repository operation are
+  exercised, not only the underlying helpers.
+- The repository, adjacent CSS/rendering/SSR, and canonical `SecureFs`
+  regression set passed 13 suites and 205 steps with zero failures.
+- Four direct server consumers passed four suites and 93 steps with zero
+  failures: domain lookup, RSC manifest handling, static-file service, and
+  custom error-page fallback.
+- The shared cache-backend contract passed 84 tests, including TTL, pattern
+  deletion, batch, byte-bound, API-auth, Redis scan, and fallback behavior.
+- Scoped repositories coverage is 87.3 percent branches, 90.2 percent
+  functions, and 87.5 percent lines. The concrete factory and filesystem
+  implementation each reached 100 percent function and line coverage.
+- The formerly failing response-header, skill-capability, and RSC hydration E2E
+  groups passed together: three groups, 19 steps, zero failures. The final RSC
+  fixture rerun passed all four browser scenarios with the unexpected-log guard
+  enabled and no cache-corruption warning.
+- `deno task verify:quick` passed generated-manifest freshness, formatting of
+  4,286 files, lint and static policy ratchets, dependency and module
+  boundaries, extension contracts, all 735 documentation links, public guide
+  validation, and every configured TypeScript entrypoint.
+- The 34-minute all-in-one test portfolio passed 3,500 tests and 28,258 steps,
+  with one intentional test/36 steps ignored. It did not produce a green
+  aggregate: three failed records across two timing surfaces occurred under
+  sustained load, an RSC request crossing the 10-second slow-request guard and
+  one starter dev server missing its readiness window. The exact RSC surface
+  then passed one suite/three steps in 365 ms, and the complete starter-template
+  smoke passed one suite/seven steps in seven seconds. This classifies the
+  failures as load-sensitive verification flakes for this checkpoint; it does
+  not claim that the repository-wide final production gate is green.
+
+No unresolved critical or high-confidence repositories production risk remains.
+The following bounded residuals are explicit:
+
+| Severity | Surface                          | Evidence and consequence                                                                                                                                                                                                                                       | Required resolution                                                                                                                                                      |
+| -------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Low      | Concrete repository composition  | Current production consumers import repository interfaces, but source search finds no runtime owner constructing `RepositoryFactory` or the concrete implementations. Unit and consumer gates can detect contract drift but cannot prove operational adoption. | Compose the layer through one production owner with end-to-end backend and filesystem tests, or remove the dormant abstraction through the normal compatibility process. |
+| Low      | Mock filesystem fidelity         | The test double models text/byte ownership and directory failures but deliberately reports no symlinks and does not reproduce every platform metadata or ordering detail.                                                                                      | Keep traversal and symlink claims on real-adapter `SecureFs` tests; extend the mock only when a consumer contract genuinely requires additional fidelity.                |
+| Low      | Aggregate-suite load sensitivity | The monolithic local run exceeded request/readiness timing guards after sustained compilation and server load, while both exact failures passed immediately in isolation.                                                                                      | Keep strict log guards; run the final broad gate on a stable runner or supported shards, and investigate if either exact surface repeats outside aggregate load.         |
+
+The `repositories` unit is closed. Adjacent edits keep `rendering`, `security`,
+`server`, `skill`, and their other top-level consumers in revalidation; this
+checkpoint does not certify those complete units.
 
 ### Sandbox closure checkpoint
 

@@ -9,25 +9,32 @@
  * @module repositories/cache/cache-repository
  */
 
-import { rendererLogger as logger } from "#veryfront/utils";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { type CacheTier, MultiTierCache } from "#veryfront/cache/multi-tier.ts";
+import {
+  DEFAULT_CACHE_TTL_SECONDS,
+  requirePositiveIntegerCacheTtlSeconds,
+} from "#veryfront/cache/backends/ttl.ts";
+import { CACHE_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type {
   CacheRepository,
   CacheRepositoryOptions,
   CacheStats,
   RepositoryContext,
 } from "../types.ts";
+import { AsyncOperationGate } from "./async-operation-gate.ts";
+import { ExpiringLruStore } from "./expiring-lru-store.ts";
+import { appendRepositoryCacheKey, createRepositoryCacheScope } from "./key-scope.ts";
+import { isRepositoryCacheName } from "../constraints.ts";
 
-export function buildScopedKey(context: RepositoryContext, key: string): string {
-  const { projectId, environment, versionId } = context;
-  return `${projectId}:${environment}:${versionId}:${key}`;
-}
+export { buildScopedKey } from "./key-scope.ts";
+
+const DEFAULT_REPOSITORY_CACHE_MAX_ENTRIES = 500;
 
 export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   readonly context: RepositoryContext;
-  private readonly store = new Map<string, { value: T; expiresAt: number }>();
-  private readonly maxEntries: number;
+  private readonly store: ExpiringLruStore<T>;
+  private readonly scopePrefix: string;
   private readonly defaultTtlSeconds: number;
   private stats: CacheStats = {
     gets: 0,
@@ -43,13 +50,19 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
     maxEntries?: number;
     defaultTtlSeconds?: number;
   }) {
-    this.context = options.context;
-    this.maxEntries = options.maxEntries ?? 500;
-    this.defaultTtlSeconds = options.defaultTtlSeconds ?? 300;
+    const scope = createRepositoryCacheScope(options.context);
+    this.context = scope.context;
+    this.scopePrefix = scope.prefix;
+    this.store = new ExpiringLruStore(
+      options.maxEntries ?? DEFAULT_REPOSITORY_CACHE_MAX_ENTRIES,
+    );
+    this.defaultTtlSeconds = requirePositiveIntegerCacheTtlSeconds(
+      options.defaultTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS,
+    );
   }
 
   private getScopedKey(key: string): string {
-    return buildScopedKey(this.context, key);
+    return appendRepositoryCacheKey(this.scopePrefix, key);
   }
 
   private updateHitRate(): void {
@@ -60,16 +73,9 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
     this.stats.gets++;
 
     const scopedKey = this.getScopedKey(key);
-    const entry = this.store.get(scopedKey);
+    const value = this.store.get(scopedKey);
 
-    if (!entry) {
-      this.stats.misses++;
-      this.updateHitRate();
-      return null;
-    }
-
-    if (Date.now() > entry.expiresAt) {
-      this.store.delete(scopedKey);
+    if (value === null) {
       this.stats.misses++;
       this.updateHitRate();
       return null;
@@ -77,22 +83,17 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
 
     this.stats.hits++;
     this.updateHitRate();
-    return entry.value;
+    return value;
   }
 
   async set(key: string, value: T, ttlSeconds?: number): Promise<void> {
     this.stats.sets++;
-
-    const scopedKey = this.getScopedKey(key);
-    const ttl = ttlSeconds ?? this.defaultTtlSeconds;
-
-    // LRU eviction: remove oldest entry if at capacity
-    if (this.store.size >= this.maxEntries && !this.store.has(scopedKey)) {
-      const oldest = this.store.keys().next().value;
-      if (oldest) this.store.delete(oldest);
-    }
-
-    this.store.set(scopedKey, { value, expiresAt: Date.now() + ttl * 1000 });
+    this.store.set(
+      this.getScopedKey(key),
+      value,
+      ttlSeconds,
+      this.defaultTtlSeconds,
+    );
   }
 
   async delete(key: string): Promise<void> {
@@ -101,49 +102,24 @@ export class MemoryCacheRepository<T = string> implements CacheRepository<T> {
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
-    const scopedPrefix = this.getScopedKey(prefix);
-    let deleted = 0;
-
-    for (const key of this.store.keys()) {
-      if (!key.startsWith(scopedPrefix)) continue;
-      this.store.delete(key);
-      deleted++;
-      this.stats.deletes++;
-    }
-
+    const deleted = this.store.deleteByPrefix(this.getScopedKey(prefix));
+    this.stats.deletes += deleted;
     return deleted;
   }
 
   async has(key: string): Promise<boolean> {
-    const scopedKey = this.getScopedKey(key);
-    const entry = this.store.get(scopedKey);
-
-    if (!entry) return false;
-
-    if (Date.now() > entry.expiresAt) {
-      this.store.delete(scopedKey);
-      return false;
-    }
-
-    return true;
+    return this.store.has(this.getScopedKey(key));
   }
 
   async clear(): Promise<void> {
-    const prefix =
-      `${this.context.projectId}:${this.context.environment}:${this.context.versionId}:`;
-
-    for (const key of this.store.keys()) {
-      if (!key.startsWith(prefix)) continue;
-      this.store.delete(key);
-      this.stats.deletes++;
-    }
+    this.stats.deletes += this.store.deleteByPrefix(this.scopePrefix);
   }
 
   getStats(): CacheStats {
     return { ...this.stats };
   }
 
-  /** Get raw store size (for testing) */
+  /** Get the number of live entries (for diagnostics and tests). */
   get size(): number {
     return this.store.size;
   }
@@ -179,7 +155,9 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
   private readonly cache: MultiTierCache<string>;
   private readonly backend: CacheBackend;
   private readonly l1: MemoryTier;
+  private readonly scopePrefix: string;
   private readonly name: string;
+  private readonly operationGate = new AsyncOperationGate();
   private localStats: { deletes: number } = { deletes: 0 };
 
   constructor(options: {
@@ -189,74 +167,100 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
     maxL1Entries?: number;
     name?: string;
   }) {
-    this.context = options.context;
+    const scope = createRepositoryCacheScope(options.context);
+    this.context = scope.context;
+    this.scopePrefix = scope.prefix;
     this.backend = options.backend;
     this.name = options.name ?? "multi-tier-cache";
+    if (!isRepositoryCacheName(this.name)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "Repository cache name must be a trimmed, well-formed 1-256 character string without control characters",
+      });
+    }
 
-    this.l1 = new MemoryTier(options.maxL1Entries ?? 500);
+    this.l1 = new MemoryTier(
+      options.maxL1Entries ?? DEFAULT_REPOSITORY_CACHE_MAX_ENTRIES,
+    );
     const l3 = new BackendTierAdapter("l3-distributed", options.backend);
 
     this.cache = new MultiTierCache({
       name: this.name,
       l1: this.l1,
       l3,
-      defaultTtlSeconds: options.defaultTtlSeconds ?? 300,
+      defaultTtlSeconds: requirePositiveIntegerCacheTtlSeconds(
+        options.defaultTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS,
+      ),
       backfillOnHit: true,
-      asyncBackfill: true,
+      // Prefix invalidation holds an exclusive operation gate. Waiting for L1
+      // backfill keeps the shared get operation inside that gate, so a stale
+      // backfill cannot finish after invalidation.
+      asyncBackfill: false,
     });
   }
 
   private getScopedKey(key: string): string {
-    return buildScopedKey(this.context, key);
+    return appendRepositoryCacheKey(this.scopePrefix, key);
   }
 
-  async get(key: string): Promise<string | null> {
-    return this.cache.get(this.getScopedKey(key));
+  get(key: string): Promise<string | null> {
+    return this.operationGate.runShared(() => this.cache.get(this.getScopedKey(key)));
   }
 
-  async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
-    await this.cache.set(this.getScopedKey(key), value, ttlSeconds);
+  set(key: string, value: string, ttlSeconds?: number): Promise<void> {
+    return this.operationGate.runShared(
+      () => this.cache.set(this.getScopedKey(key), value, ttlSeconds),
+    );
   }
 
-  async delete(key: string): Promise<void> {
-    this.localStats.deletes++;
-    await this.cache.delete(this.getScopedKey(key));
+  delete(key: string): Promise<void> {
+    return this.operationGate.runShared(async () => {
+      await this.cache.delete(this.getScopedKey(key));
+      this.localStats.deletes++;
+    });
   }
 
-  async deleteByPrefix(prefix: string): Promise<number> {
-    const scopedPrefix = this.getScopedKey(prefix);
-
-    // Wipe L1 up-front so concurrent reads during the (async) L3 delete miss
-    // L1 quickly. We wipe again after L3 resolves (below) to drop any entry a
-    // racing get() backfilled from a not-yet-deleted L3 value — otherwise that
-    // stale entry would survive in L1 until its TTL (the bug #1989 fixes).
-    this.l1.deleteByPrefix(scopedPrefix);
-
-    if (!this.backend.delByPattern) {
-      logger.debug(`[${this.name}] deleteByPrefix not supported by backend`, { prefix });
-      return 0;
+  private async deleteScopedPrefix(prefix: string): Promise<number> {
+    const deleteByPattern = this.backend.delByPattern;
+    if (!deleteByPattern) {
+      throw CACHE_ERROR.create({
+        detail: `Cache backend "${this.backend.type}" does not support pattern deletion`,
+        context: { cacheName: this.name, backendType: this.backend.type },
+      });
     }
 
-    const deleted = await this.backend.delByPattern(`${scopedPrefix}*`);
-    // Second wipe: L3 is now gone, so anything re-backfilled into L1 during the
-    // await window is removed and cannot be repopulated from L3.
+    const scopedPrefix = this.getScopedKey(prefix);
     this.l1.deleteByPrefix(scopedPrefix);
-    this.localStats.deletes += deleted;
-    return deleted;
+
+    try {
+      const deleted = await deleteByPattern.call(this.backend, `${scopedPrefix}*`);
+      if (!Number.isSafeInteger(deleted) || deleted < 0) {
+        throw CACHE_ERROR.create({
+          detail: "Cache backend returned an invalid pattern-deletion count",
+          context: { cacheName: this.name, backendType: this.backend.type },
+        });
+      }
+      this.localStats.deletes += deleted;
+      return deleted;
+    } finally {
+      // Defensive second wipe covers a backend that partially deletes before
+      // rejecting, even though normal reads are held outside the exclusive gate.
+      this.l1.deleteByPrefix(scopedPrefix);
+    }
+  }
+
+  deleteByPrefix(prefix: string): Promise<number> {
+    return this.operationGate.runExclusive(() => this.deleteScopedPrefix(prefix));
   }
 
   async has(key: string): Promise<boolean> {
     return (await this.get(key)) !== null;
   }
 
-  async clear(): Promise<void> {
-    const prefix =
-      `${this.context.projectId}:${this.context.environment}:${this.context.versionId}:`;
-    // Wipe L1 before and after the L3 delete (see deleteByPrefix) so racing
-    // backfills can't leave a stale entry in the in-memory tier.
-    this.l1.deleteByPrefix(prefix);
-    await this.backend.delByPattern?.(`${prefix}*`);
-    this.l1.deleteByPrefix(prefix);
+  clear(): Promise<void> {
+    return this.operationGate.runExclusive(async () => {
+      await this.deleteScopedPrefix("");
+    });
   }
 
   getStats(): CacheStats {
@@ -275,45 +279,26 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
 
 class MemoryTier implements CacheTier<string> {
   readonly name = "l1-memory";
-  private readonly store = new Map<string, { value: string; expiresAt: number }>();
-  private readonly maxEntries: number;
+  private readonly store: ExpiringLruStore<string>;
 
   constructor(maxEntries: number) {
-    this.maxEntries = maxEntries;
+    this.store = new ExpiringLruStore(maxEntries);
   }
 
   async get(key: string): Promise<string | null> {
-    const entry = this.store.get(key);
-    if (!entry) return null;
-
-    if (Date.now() > entry.expiresAt) {
-      this.store.delete(key);
-      return null;
-    }
-
-    return entry.value;
+    return this.store.get(key);
   }
 
   async getRemainingTtlSeconds(key: string): Promise<number | null> {
-    const entry = this.store.get(key);
-    if (!entry) return null;
-
-    const remainingMs = entry.expiresAt - Date.now();
-    if (remainingMs <= 0) {
-      this.store.delete(key);
-      return null;
-    }
-
-    return remainingMs / 1000;
+    return this.store.getRemainingTtlSeconds(key);
   }
 
-  async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
-    if (this.store.size >= this.maxEntries && !this.store.has(key)) {
-      const oldest = this.store.keys().next().value;
-      if (oldest) this.store.delete(oldest);
-    }
-
-    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+  async set(
+    key: string,
+    value: string,
+    ttlSeconds = DEFAULT_CACHE_TTL_SECONDS,
+  ): Promise<void> {
+    this.store.set(key, value, ttlSeconds, DEFAULT_CACHE_TTL_SECONDS);
   }
 
   async delete(key: string): Promise<void> {
@@ -323,9 +308,7 @@ class MemoryTier implements CacheTier<string> {
   /** Drop every entry whose key starts with `prefix` (tier-wide invalidation
    * for the repository's deleteByPrefix/clear). */
   deleteByPrefix(prefix: string): void {
-    for (const key of this.store.keys()) {
-      if (key.startsWith(prefix)) this.store.delete(key);
-    }
+    this.store.deleteByPrefix(prefix);
   }
 }
 

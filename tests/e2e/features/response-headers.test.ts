@@ -238,7 +238,7 @@ export function GET() {
   });
 
   describe("Security Headers", () => {
-    it("should set security headers", async () => {
+    it("should keep local security policy authoritative over route headers", async () => {
       const projectDir = await createProject(
         "headers-security",
         pages.basic,
@@ -249,10 +249,11 @@ export function GET() {
   return new Response(JSON.stringify({ secure: true }), {
     headers: {
       "Content-Type": "application/json",
-      "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "DENY",
-      "X-XSS-Protection": "1; mode=block",
-      "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
+      "X-Content-Type-Options": "off",
+      "X-Frame-Options": "SAMEORIGIN",
+      "X-XSS-Protection": "off",
+      "Strict-Transport-Security": "max-age=0",
+      "X-Project-Security-Marker": "preserved"
     }
   });
 }
@@ -266,7 +267,11 @@ export function GET() {
         const response = await fetch(url);
 
         assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
-        assertEquals(response.headers.get("X-Frame-Options"), "DENY");
+        assertEquals(response.headers.get("X-Frame-Options"), null);
+        assertEquals(response.headers.get("X-XSS-Protection"), "1; mode=block");
+        assertEquals(response.headers.get("Strict-Transport-Security"), null);
+        assertEquals(response.headers.get("Cross-Origin-Resource-Policy"), "same-origin");
+        assertEquals(response.headers.get("X-Project-Security-Marker"), "preserved");
       });
     });
   });
