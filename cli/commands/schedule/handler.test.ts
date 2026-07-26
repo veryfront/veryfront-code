@@ -3,7 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import type { Run, VeryfrontRunsClient } from "veryfront/runs";
+import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import { handleScheduleCommand, waitForRemoteScheduleRun } from "./handler.ts";
@@ -81,6 +81,17 @@ function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+function makeAcceptedScheduleRun(timeoutSeconds = 5): CreateScheduleRunFromSourceResult {
+  return {
+    scheduleRun: {
+      run_id: runId,
+      run_execution_id: runId,
+      schedule_id: scheduleId,
+    },
+    timeoutSeconds,
+  };
+}
+
 function restoreEnvironment(): void {
   for (const name of environmentNames) {
     const value = originalEnvironment[name];
@@ -114,6 +125,7 @@ describe("schedule command", () => {
           status: "active",
           definition_source: "source",
           source_trigger_id: "process-job-submissions",
+          timeout_seconds: 1800,
         }],
         source_schedules: [],
       }),
@@ -143,6 +155,7 @@ describe("schedule command", () => {
           '  timezone: "Europe/Berlin",',
           '  target: { kind: "agent", id: "job-submission-orchestrator" },',
           '  input: { prompt: "Process job submissions." },',
+          "  timeoutSeconds: 5,",
           "});",
           "",
         ].join("\n"),
@@ -231,6 +244,44 @@ describe("schedule command", () => {
 });
 
 describe("remote schedule polling", () => {
+  it("uses the accepted cloud schedule timeout instead of the local definition", async () => {
+    const runs = [
+      makeRun({ status: "pending", output: null, completed_at: null }),
+      makeRun({ status: "running", output: null, completed_at: null }),
+      makeRun(),
+    ];
+    const client = {
+      get: (requestedRunId: string) => {
+        assertEquals(requestedRunId, runId);
+        const run = runs.shift();
+        if (!run) throw new Error("Unexpected poll");
+        return Promise.resolve(run);
+      },
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+    let now = 0;
+
+    const run = await waitForRemoteScheduleRun(
+      client,
+      {
+        scheduleRun: {
+          run_id: runId,
+          run_execution_id: runId,
+          schedule_id: scheduleId,
+        },
+        timeoutSeconds: 1800,
+      },
+      {
+        now: () => now,
+        sleep: () => {
+          now += 36_000;
+          return Promise.resolve();
+        },
+      },
+    );
+
+    assertEquals(run.status, "completed");
+  });
+
   it("polls pending and running states until the run completes", async () => {
     const runs = [
       makeRun({ status: "pending", output: null, completed_at: null }),
@@ -246,7 +297,7 @@ describe("remote schedule polling", () => {
     } satisfies Pick<VeryfrontRunsClient, "get">;
     let now = 0;
 
-    const run = await waitForRemoteScheduleRun(client, runId, 5_000, {
+    const run = await waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(), {
       now: () => now,
       sleep: (delayMs) => {
         now += delayMs;
@@ -274,7 +325,7 @@ describe("remote schedule polling", () => {
         ),
     } satisfies Pick<VeryfrontRunsClient, "get">;
 
-    const run = await waitForRemoteScheduleRun(client, runId, 5_000);
+    const run = await waitForRemoteScheduleRun(client, makeAcceptedScheduleRun());
 
     assertEquals(run.status, "waiting");
     assertEquals(run.waiting_reason, "awaiting_human");
@@ -292,7 +343,7 @@ describe("remote schedule polling", () => {
     } satisfies Pick<VeryfrontRunsClient, "get">;
 
     await assertRejects(
-      () => waitForRemoteScheduleRun(client, runId, 5_000),
+      () => waitForRemoteScheduleRun(client, makeAcceptedScheduleRun()),
       Error,
       "Hosted agent execution failed",
     );
@@ -304,7 +355,7 @@ describe("remote schedule polling", () => {
     } satisfies Pick<VeryfrontRunsClient, "get">;
 
     await assertRejects(
-      () => waitForRemoteScheduleRun(client, runId, 5_000),
+      () => waitForRemoteScheduleRun(client, makeAcceptedScheduleRun()),
       Error,
       `Scheduled run was cancelled: ${runId}`,
     );
@@ -318,7 +369,7 @@ describe("remote schedule polling", () => {
 
     await assertRejects(
       () =>
-        waitForRemoteScheduleRun(client, runId, 1_500, {
+        waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1), {
           now: () => now,
           sleep: (delayMs) => {
             now += delayMs;

@@ -93,6 +93,12 @@ export interface CreateScheduleRunFromSourceInput extends ProjectScopedOptions {
   idempotencyKey?: string;
 }
 
+/** Cloud schedule metadata returned with an accepted source-triggered run. */
+export interface CreateScheduleRunFromSourceResult {
+  scheduleRun: ScheduleRunCreateResponse;
+  timeoutSeconds: number;
+}
+
 /** Input payload for knowledge ingest by upload IDs. */
 export interface KnowledgeIngestByUploadIdsInput
   extends Omit<CreateTaskRunInput, "target" | "config"> {
@@ -300,7 +306,7 @@ export class VeryfrontRunsClient {
 
   async createScheduleRunFromSource(
     input: CreateScheduleRunFromSourceInput,
-  ): Promise<ScheduleRunCreateResponse> {
+  ): Promise<CreateScheduleRunFromSourceResult> {
     const projectReference = this.resolveProjectReference(input.projectReference);
     const listed = await this.requestJson(
       withQuery(
@@ -325,12 +331,16 @@ export class VeryfrontRunsClient {
       });
     }
 
-    return await this.createScheduleRun({
+    const scheduleRun = await this.createScheduleRun({
       scheduleId: schedule.id,
       projectReference,
       runName: input.runName,
       idempotencyKey: input.idempotencyKey,
     });
+    return {
+      scheduleRun,
+      timeoutSeconds: schedule.timeout_seconds,
+    };
   }
 
   async list(options: ListRunsOptions = {}): Promise<RunList> {

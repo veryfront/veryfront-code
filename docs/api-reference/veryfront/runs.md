@@ -1,6 +1,6 @@
 ---
 title: "veryfront/runs"
-description: "Canonical durable runs for task, workflow, and eval execution."
+description: "Canonical durable runs for task, workflow, eval, and schedule-triggered execution."
 order: 26
 ---
 
@@ -8,9 +8,9 @@ order: 26
 
 ```ts
 import {
+  createRunsClient,
   CancelRunResponseSchema,
   CreateRunResponseSchema,
-  createRunsClient,
   RunEventListSchema,
   RunEventSchema,
   RunListSchema,
@@ -40,54 +40,55 @@ const events = await runs.events(accepted.run.run_id);
 
 ### Components
 
-| Name                              | Description                                              | Source                                                                                   |
-| --------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `CancelRunResponseSchema`         | Zod schema for a cancel-run response.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L150) |
-| `CreateRunResponseSchema`         | Zod schema for a create-run response.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L144) |
-| `RunEventListSchema`              | Zod schema for a paginated run-event response.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L154) |
-| `RunEventSchema`                  | Zod schema for a run event.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L152) |
-| `RunListSchema`                   | Zod schema for a paginated project-run response.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L156) |
-| `RunSchema`                       | Zod schema for a canonical durable run.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L142) |
-| `ScheduleRunCreateResponseSchema` | Zod schema for a schedule-triggered create-run response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L146) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `CancelRunResponseSchema` | Zod schema for a cancel-run response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L151) |
+| `CreateRunResponseSchema` | Zod schema for a create-run response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L145) |
+| `RunEventListSchema` | Zod schema for a paginated run-event response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L155) |
+| `RunEventSchema` | Zod schema for a run event. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L153) |
+| `RunListSchema` | Zod schema for a paginated project-run response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L157) |
+| `RunSchema` | Zod schema for a canonical durable run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L143) |
+| `ScheduleRunCreateResponseSchema` | Zod schema for a schedule-triggered create-run response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L147) |
 
 ### Functions
 
-| Name               | Description           | Source                                                                                       |
-| ------------------ | --------------------- | -------------------------------------------------------------------------------------------- |
-| `createRunsClient` | Create a runs client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L455) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `createRunsClient` | Create a runs client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L467) |
 
 ### Classes
 
-| Name                  | Description                               | Source                                                                                       |
-| --------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `VeryfrontRunsClient` | Public client for canonical durable runs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L148) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `VeryfrontRunsClient` | Public client for canonical durable runs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L156) |
 
 ### Types
 
-| Name                                 | Description                                                            | Source                                                                                       |
-| ------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `CancelRunResponse`                  | Response returned when a run is cancelled.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L179)     |
-| `CreateEvalRunInput`                 | Input payload for creating an eval run.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L75)  |
-| `CreateRunResponse`                  | Response returned when a run is accepted.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L173)     |
-| `CreateScheduleRunFromSourceInput`   | Input for resolving and triggering one pushed source-defined schedule. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L88)  |
-| `CreateScheduleRunInput`             | Input for triggering one persisted schedule by its canonical UUID.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L82)  |
-| `CreateTaskRunInput`                 |                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L58)  |
-| `CreateWorkflowRunInput`             |                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L67)  |
-| `KnowledgeIngestByUploadIdsInput`    | Input payload for knowledge ingest by upload IDs.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L95)  |
-| `KnowledgeIngestByUploadPathsInput`  | Input payload for knowledge ingest by upload paths.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L101) |
-| `KnowledgeIngestByUploadPrefixInput` | Input payload for knowledge ingest by upload prefix.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L107) |
-| `ListRunEventsOptions`               |                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L117) |
-| `ListRunsOptions`                    |                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L112) |
-| `ProjectScopedOptions`               | Options accepted by project-scoped run requests.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L38)  |
-| `Run`                                | Canonical durable run.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L171)     |
-| `RunEvent`                           | Event emitted by a run.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L181)     |
-| `RunExecutionError`                  | Error payload recorded for failed task and workflow runs.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L169)     |
-| `RunKind`                            | Canonical durable run kind.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L159)     |
-| `RunList`                            | Paginated project run response.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L185)     |
-| `RunOwner`                           | Canonical durable run owner.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L163)     |
-| `RunRuntimeTargetKind`               | Runtime target for a task, workflow, or eval run.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L43)  |
-| `RunRuntimeTargetOptions`            | Runtime target fields accepted by run creation APIs.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L46)  |
-| `RunStatus`                          | Canonical durable run status.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L161)     |
-| `RunTriggerKind`                     | Trigger kind recorded on scheduled or externally-started runs.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L167)     |
-| `ScheduleRunCreateResponse`          | Response returned when a schedule-triggered run is accepted.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L175)     |
-| `VeryfrontRunsClientConfig`          | Configuration used by the Veryfront runs client.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L30)  |
+| Name | Description | Source |
+|------|-------------|--------|
+| `CancelRunResponse` | Response returned when a run is cancelled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L180) |
+| `CreateEvalRunInput` | Input payload for creating an eval run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L75) |
+| `CreateRunResponse` | Response returned when a run is accepted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L174) |
+| `CreateScheduleRunFromSourceInput` | Input for resolving and triggering one pushed source-defined schedule. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L90) |
+| `CreateScheduleRunFromSourceResult` | Cloud schedule metadata returned with an accepted source-triggered run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L97) |
+| `CreateScheduleRunInput` | Input for triggering one persisted schedule by its canonical UUID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L83) |
+| `CreateTaskRunInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L58) |
+| `CreateWorkflowRunInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L67) |
+| `KnowledgeIngestByUploadIdsInput` | Input payload for knowledge ingest by upload IDs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L103) |
+| `KnowledgeIngestByUploadPathsInput` | Input payload for knowledge ingest by upload paths. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L109) |
+| `KnowledgeIngestByUploadPrefixInput` | Input payload for knowledge ingest by upload prefix. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L115) |
+| `ListRunEventsOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L125) |
+| `ListRunsOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L120) |
+| `ProjectScopedOptions` | Options accepted by project-scoped run requests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L38) |
+| `Run` | Canonical durable run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L172) |
+| `RunEvent` | Event emitted by a run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L182) |
+| `RunExecutionError` | Error payload recorded for failed task and workflow runs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L170) |
+| `RunKind` | Canonical durable run kind. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L160) |
+| `RunList` | Paginated project run response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L186) |
+| `RunOwner` | Canonical durable run owner. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L164) |
+| `RunRuntimeTargetKind` | Runtime target for a task, workflow, or eval run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L43) |
+| `RunRuntimeTargetOptions` | Runtime target fields accepted by run creation APIs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L46) |
+| `RunStatus` | Canonical durable run status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L162) |
+| `RunTriggerKind` | Trigger kind recorded on scheduled or externally-started runs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L168) |
+| `ScheduleRunCreateResponse` | Response returned when a schedule-triggered run is accepted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/schemas.ts#L176) |
+| `VeryfrontRunsClientConfig` | Configuration used by the Veryfront runs client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/runs/runs-client.ts#L30) |

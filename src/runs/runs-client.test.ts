@@ -319,9 +319,12 @@ describe("VeryfrontRunsClient", () => {
     });
 
     assertEquals(response, {
-      run_id: "run_11111111-1111-4111-8111-111111111111",
-      run_execution_id: "run_11111111-1111-4111-8111-111111111111",
-      schedule_id: scheduleId,
+      scheduleRun: {
+        run_id: "run_11111111-1111-4111-8111-111111111111",
+        run_execution_id: "run_11111111-1111-4111-8111-111111111111",
+        schedule_id: scheduleId,
+      },
+      timeoutSeconds: 1800,
     });
     assertEquals(
       call(0).url,

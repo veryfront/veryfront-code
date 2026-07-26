@@ -94,6 +94,7 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
         status: v.enum(["active", "paused", "deleting"] as const),
         definition_source: v.enum(["manual", "source"] as const),
         source_trigger_id: v.string().nullable(),
+        timeout_seconds: v.number().int(),
       }),
     ),
   })

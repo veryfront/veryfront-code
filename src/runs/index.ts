@@ -26,6 +26,7 @@ export {
   type CreateEvalRunInput,
   createRunsClient,
   type CreateScheduleRunFromSourceInput,
+  type CreateScheduleRunFromSourceResult,
   type CreateScheduleRunInput,
   type CreateTaskRunInput,
   type CreateWorkflowRunInput,

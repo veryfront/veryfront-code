@@ -4,7 +4,12 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess } from "#cli/utils";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { createRunsClient, type Run, type VeryfrontRunsClient } from "veryfront/runs";
+import {
+  createRunsClient,
+  type CreateScheduleRunFromSourceResult,
+  type Run,
+  type VeryfrontRunsClient,
+} from "veryfront/runs";
 import { discoverSchedules } from "veryfront/schedule";
 import { runTriggerTarget } from "veryfront/trigger";
 import { outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
@@ -41,14 +46,16 @@ interface RemoteSchedulePollOptions {
 
 export async function waitForRemoteScheduleRun(
   client: Pick<VeryfrontRunsClient, "get">,
-  runId: string,
-  timeoutMs: number,
+  accepted: CreateScheduleRunFromSourceResult,
   options: RemoteSchedulePollOptions = {},
 ): Promise<Run> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ??
     ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
-  const deadline = now() + timeoutMs;
+  const runId = accepted.scheduleRun.run_id;
+  const deadline = now() +
+    accepted.timeoutSeconds * 1_000 +
+    REMOTE_SCHEDULE_TIMEOUT_GRACE_MS;
   while (true) {
     const run = await client.get(runId);
     if (run.status === "completed" || run.status === "waiting") {
@@ -101,8 +108,7 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       });
       const remoteRun = await waitForRemoteScheduleRun(
         client,
-        accepted.run_id,
-        (schedule.timeoutSeconds ?? 300) * 1_000 + REMOTE_SCHEDULE_TIMEOUT_GRACE_MS,
+        accepted,
       );
       await outputTriggerRun({
         command: "schedule",
