@@ -2,8 +2,64 @@ export const ESM_CDN_BASE = "https://esm.sh";
 export const JSDELIVR_CDN_BASE = "https://cdn.jsdelivr.net";
 export const DENO_STD_BASE = "https://deno.land";
 
+/** esm.sh build-system release used by audited framework dependency URLs. */
+export const ESM_SH_BUILD_PIN = "v135";
+
+/** Audited package versions shared by CDN consumers and import rewriting. */
+export const MERMAID_VERSION = "11.16.0";
+export const TAILWIND_VERSION = "4.1.8";
+export const CSSTYPE_VERSION = "3.2.3";
+
+export interface EsmShUrlOptions {
+  external?: string[];
+  target?: string;
+  deps?: Record<string, string>;
+  pin?: string;
+}
+
+/** Build a canonical esm.sh package URL. */
+export function buildEsmShUrl(
+  pkg: string,
+  version?: string,
+  subpath?: string,
+  options?: EsmShUrlOptions,
+): string {
+  const params: string[] = [];
+
+  if (options?.external?.length) {
+    params.push(`external=${options.external.join(",")}`);
+  }
+
+  params.push(`target=${options?.target ?? "es2022"}`);
+
+  if (options?.deps) {
+    const deps = Object.entries(options.deps)
+      .map(([name, dependencyVersion]) => `${name}@${dependencyVersion}`)
+      .join(",");
+    params.push(`deps=${deps}`);
+  }
+
+  if (options?.pin) params.push(`pin=${options.pin}`);
+
+  const versionSegment = version ? `@${version}` : "";
+  const pathSegment = subpath ?? "";
+  return `${ESM_CDN_BASE}/${pkg}${versionSegment}${pathSegment}?${params.join("&")}`;
+}
+
+/** Build the shared React esm.sh URL used by SSR and browser rewriting. */
+export function buildReactUrl(
+  pkg: "react" | "react-dom",
+  version: string,
+  subpath?: string,
+  external = false,
+): string {
+  return buildEsmShUrl(pkg, version, subpath, {
+    external: external ? ["react"] : undefined,
+    deps: { csstype: CSSTYPE_VERSION },
+  });
+}
+
 /** Audited Mermaid release used by package and standalone preview renderers. */
-export const MERMAID_VERSION = FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS.mermaid;
 export const MERMAID_ESM_URL = buildEsmShUrl(
   "mermaid",
   MERMAID_VERSION,
@@ -19,17 +75,6 @@ export const REACT_VERSION_19 = "19.2.4";
 
 /** Shared React default version value. */
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
-
-import {
-  buildEsmShUrl,
-  buildReactUrl,
-  getReactImportMap as buildReactImportMap,
-  TAILWIND_VERSION,
-} from "#veryfront/transforms/import-rewriter/url-builder.ts";
-import {
-  ESM_SH_BUILD_PIN,
-  FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS,
-} from "#veryfront/transforms/import-rewriter/framework-dependencies.ts";
 
 export function esmShReact(
   pkg: string,
@@ -58,7 +103,10 @@ export function getReactUrls(version = REACT_DEFAULT_VERSION): Record<string, st
 
 /** Return React import map. */
 export function getReactImportMap(version = REACT_DEFAULT_VERSION): Record<string, string> {
-  return buildReactImportMap(version);
+  return {
+    ...getReactUrls(version),
+    "react/": buildReactUrl("react", version, "/", true),
+  };
 }
 
 export function getReactCDNUrl(version = REACT_DEFAULT_VERSION): string {
@@ -96,8 +144,6 @@ export const DENO_STD_VERSION = "0.220.0";
 export function getDenoStdNodeBase(): string {
   return `${DENO_STD_BASE}/std@${DENO_STD_VERSION}/node`;
 }
-
-export { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 export function getTailwindCSSUrl(): string {
   return `${ESM_CDN_BASE}/tailwindcss@${TAILWIND_VERSION}/index.css`;

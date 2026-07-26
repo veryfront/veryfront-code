@@ -8,7 +8,11 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import type { DirEntry, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+const DEFAULT_MAX_DISCOVERY_ENTRIES = 100_000;
+const MAX_DIRECTORY_ENTRY_NAME_LENGTH = 4_096;
+const MAX_DISCOVERY_FILTERS = 128;
+const MAX_DISCOVERY_FILTER_LENGTH = 1_024;
 
 async function getDefaultAdapter(): Promise<RuntimeAdapter> {
   if (isDeno) {
@@ -25,19 +29,21 @@ async function getDefaultAdapter(): Promise<RuntimeAdapter> {
   return nodeAdapter;
 }
 
-interface FileDiscoveryOptions {
+export interface FileDiscoveryOptions {
   baseDir: string;
   extensions?: string[];
   patterns?: string[];
   recursive?: boolean;
   maxDepth?: number;
+  /** Maximum directory entries inspected, including ignored entries. */
+  maxEntries?: number;
   ignorePatterns?: string[];
   includeDirs?: boolean;
   followSymlinks?: boolean;
   adapter?: RuntimeAdapter;
 }
 
-interface FileDiscoveryResult {
+export interface FileDiscoveryResult {
   path: string;
   name: string;
   isFile: boolean;
@@ -55,6 +61,31 @@ function matchesPatterns(fileName: string, patterns: string[] | undefined): bool
   return patterns.some((pattern) => fileName.includes(pattern));
 }
 
+function validateFilterList(
+  values: string[] | undefined,
+  optionName: "extensions" | "patterns" | "ignorePatterns",
+): void {
+  if (values === undefined) return;
+  if (!Array.isArray(values)) {
+    throw new TypeError(`File discovery ${optionName} must be an array of strings`);
+  }
+  if (values.length > MAX_DISCOVERY_FILTERS) {
+    throw new RangeError(
+      `File discovery ${optionName} may contain at most ${MAX_DISCOVERY_FILTERS} entries`,
+    );
+  }
+  for (const value of values) {
+    if (typeof value !== "string") {
+      throw new TypeError(`File discovery ${optionName} must contain only strings`);
+    }
+    if (value.length > MAX_DISCOVERY_FILTER_LENGTH) {
+      throw new RangeError(
+        `File discovery ${optionName} entries may contain at most ${MAX_DISCOVERY_FILTER_LENGTH} characters`,
+      );
+    }
+  }
+}
+
 /**
  * Match a glob against one directory-entry name without compiling caller input
  * as a regular expression. `*` matches zero or more characters and `?`
@@ -62,27 +93,33 @@ function matchesPatterns(fileName: string, patterns: string[] | undefined): bool
  */
 function matchesEntryGlob(name: string, pattern: string): boolean {
   const nameTokens = [...name];
-  let previous = new Uint8Array(nameTokens.length + 1);
-  previous[0] = 1;
+  const patternTokens = [...pattern];
+  let nameIndex = 0;
+  let patternIndex = 0;
+  let lastStarIndex = -1;
+  let lastStarMatchIndex = -1;
 
-  for (const token of pattern) {
-    const current = new Uint8Array(nameTokens.length + 1);
-    if (token === "*") {
-      current[0] = previous[0] ?? 0;
-      for (let index = 1; index <= nameTokens.length; index++) {
-        current[index] = (previous[index] || current[index - 1]) ? 1 : 0;
-      }
-    } else {
-      for (let index = 1; index <= nameTokens.length; index++) {
-        if (previous[index - 1] && (token === "?" || token === nameTokens[index - 1])) {
-          current[index] = 1;
-        }
-      }
+  while (nameIndex < nameTokens.length) {
+    const token = patternTokens[patternIndex];
+    if (token === "?" || token === nameTokens[nameIndex]) {
+      nameIndex++;
+      patternIndex++;
+      continue;
     }
-    previous = current;
+
+    if (token === "*") {
+      lastStarIndex = patternIndex++;
+      lastStarMatchIndex = nameIndex;
+      continue;
+    }
+
+    if (lastStarIndex === -1) return false;
+    patternIndex = lastStarIndex + 1;
+    nameIndex = ++lastStarMatchIndex;
   }
 
-  return previous[nameTokens.length] === 1;
+  while (patternTokens[patternIndex] === "*") patternIndex++;
+  return patternIndex === patternTokens.length;
 }
 
 function shouldIgnore(name: string, ignorePatterns: string[] | undefined): boolean {
@@ -142,6 +179,11 @@ function hasUnsafeDirectoryEntryCharacter(name: string): boolean {
 }
 
 function assertSafeDirectoryEntryName(name: string): void {
+  if (name.length > MAX_DIRECTORY_ENTRY_NAME_LENGTH) {
+    throw new RangeError(
+      `File discovery directory entry name exceeds ${MAX_DIRECTORY_ENTRY_NAME_LENGTH} characters`,
+    );
+  }
   if (
     name.length === 0 ||
     name === "." ||
@@ -173,6 +215,7 @@ export async function* discoverFiles(
     patterns,
     recursive = true,
     maxDepth = Infinity,
+    maxEntries = DEFAULT_MAX_DISCOVERY_ENTRIES,
     ignorePatterns,
     includeDirs = false,
     followSymlinks = false,
@@ -185,6 +228,12 @@ export async function* discoverFiles(
   ) {
     throw new RangeError("File discovery maxDepth must be a non-negative integer or Infinity");
   }
+  if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
+    throw new RangeError("File discovery maxEntries must be a positive safe integer");
+  }
+  validateFilterList(extensions, "extensions");
+  validateFilterList(patterns, "patterns");
+  validateFilterList(ignorePatterns, "ignorePatterns");
 
   const runtimeAdapter = adapter ?? (await getDefaultAdapter());
   let physicalBaseDir: string | undefined;
@@ -213,7 +262,13 @@ export async function* discoverFiles(
     adapter: runtimeAdapter,
     physicalBaseDir,
     visitedDirectories: new Set<string>(),
+    budget: { scannedEntries: 0, maxEntries },
   });
+}
+
+interface FileDiscoveryBudget {
+  scannedEntries: number;
+  readonly maxEntries: number;
 }
 
 interface WalkDirectoryOptions {
@@ -229,6 +284,7 @@ interface WalkDirectoryOptions {
   adapter: RuntimeAdapter;
   physicalBaseDir: string | undefined;
   visitedDirectories: Set<string>;
+  budget: FileDiscoveryBudget;
 }
 
 async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<FileDiscoveryResult> {
@@ -245,6 +301,7 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
     adapter,
     physicalBaseDir,
     visitedDirectories,
+    budget,
   } = options;
 
   if (currentDepth > maxDepth) return;
@@ -264,6 +321,12 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
   }
 
   for await (const entry of readDirectoryEntries(adapter, dir)) {
+    budget.scannedEntries++;
+    if (budget.scannedEntries > budget.maxEntries) {
+      throw new RangeError(
+        `File discovery entry limit of ${budget.maxEntries} exceeded`,
+      );
+    }
     assertSafeDirectoryEntryName(entry.name);
     if (shouldIgnore(entry.name, ignorePatterns)) continue;
 
@@ -339,40 +402,18 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
 }
 
 export async function collectFiles(options: FileDiscoveryOptions): Promise<FileDiscoveryResult[]> {
-  return await withSpan(
-    "utils.collectFiles",
-    async () => {
-      const results: FileDiscoveryResult[] = [];
-      for await (const file of discoverFiles(options)) results.push(file);
-      return results;
-    },
-    {
-      "discovery.recursive": options.recursive ?? true,
-      "discovery.extensions": options.extensions?.join(",") ?? "*",
-    },
-  );
+  const results: FileDiscoveryResult[] = [];
+  for await (const file of discoverFiles(options)) results.push(file);
+  return results;
 }
 
 export async function hasMatchingFiles(options: FileDiscoveryOptions): Promise<boolean> {
-  return await withSpan(
-    "utils.hasMatchingFiles",
-    async () => {
-      for await (const _file of discoverFiles(options)) return true;
-      return false;
-    },
-    {
-      "discovery.patterns": options.patterns?.join(",") ?? "*",
-    },
-  );
+  for await (const _file of discoverFiles(options)) return true;
+  return false;
 }
 
 export async function countFiles(options: FileDiscoveryOptions): Promise<number> {
-  return await withSpan(
-    "utils.countFiles",
-    async () => {
-      let count = 0;
-      for await (const _file of discoverFiles(options)) count++;
-      return count;
-    },
-  );
+  let count = 0;
+  for await (const _file of discoverFiles(options)) count++;
+  return count;
 }

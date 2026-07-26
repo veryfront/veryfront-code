@@ -6,6 +6,7 @@ import {
   type RedisClient,
   type RedisClientFactoryOptions,
 } from "./redis-client.ts";
+import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
 
 interface FakeRedisClient extends RedisClient {
   disconnectCalls: number;
@@ -375,7 +376,16 @@ describe("redis-client", () => {
       loadFactory: () => Promise.resolve(() => createFakeClient()),
     });
 
-    for (const timeout of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (
+      const timeout of [
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+      ]
+    ) {
       await assertRejects(
         () => manager.getClient({ connectTimeout: timeout }),
         RangeError,

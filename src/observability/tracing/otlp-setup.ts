@@ -13,7 +13,7 @@
  **************************/
 
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
-import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { __registerTraceContextGetter, serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   type AttributeValue,
@@ -502,3 +502,8 @@ export function getTraceContext(): { traceId?: string; spanId?: string } {
     return {};
   }
 }
+
+// The higher observability layer owns this adapter registration. Keeping the
+// dependency direction here prevents generic logging utilities from importing
+// OpenTelemetry implementation code.
+__registerTraceContextGetter(getTraceContext);

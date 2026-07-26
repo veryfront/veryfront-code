@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
@@ -92,8 +92,32 @@ describe("memoize", () => {
       assertEquals(await memoized(5), 10);
       assertEquals(callCount.value, 1);
 
-      assertEquals(await memoized(5), 10);
+      const cached = memoized(5);
+      assertEquals(cached instanceof Promise, true);
+      assertEquals(await cached, 10);
       assertEquals(callCount.value, 1);
+    });
+
+    it("does not cache rejected cross-realm-compatible thenables", async () => {
+      let callCount = 0;
+      const memoized = memoizeAsync(
+        () => {
+          callCount++;
+          return {
+            then(
+              _resolve: (value: number) => void,
+              reject: (reason: unknown) => void,
+            ) {
+              reject(new Error("thenable failed"));
+            },
+          } as Promise<number>;
+        },
+        () => "shared",
+      );
+
+      await assertRejects(() => memoized(), Error, "thenable failed");
+      await assertRejects(() => memoized(), Error, "thenable failed");
+      assertEquals(callCount, 2);
     });
 
     it("should call async function for different arguments", async () => {

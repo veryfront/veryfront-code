@@ -24,6 +24,7 @@ const DEFAULT_SUCCESS_THRESHOLD = 3;
 
 /** Maximum concurrent attempts allowed while the circuit is HALF_OPEN */
 const MAX_HALF_OPEN_ATTEMPTS = 3;
+const MAX_BREAKER_NAME_LENGTH = 256;
 
 type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
@@ -53,6 +54,54 @@ function requireIntegerOption(value: number, option: string, minimum: number): n
     throw new RangeError(`${option} must be ${requirement}`);
   }
   return value;
+}
+
+function requireBreakerName(value: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_BREAKER_NAME_LENGTH ||
+    value.trim().length === 0 ||
+    /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)
+  ) {
+    throw new RangeError(
+      `Circuit breaker name must contain 1-${MAX_BREAKER_NAME_LENGTH} log-safe characters`,
+    );
+  }
+  return value;
+}
+
+interface ResolvedCircuitBreakerOptions {
+  failureThreshold: number;
+  resetTimeoutMs: number;
+  successThreshold: number;
+  now: () => number;
+}
+
+function resolveCircuitBreakerOptions(
+  options: Omit<CircuitBreakerOptions, "name"> = {},
+): ResolvedCircuitBreakerOptions {
+  if (options.now !== undefined && typeof options.now !== "function") {
+    throw new TypeError("now must be a function");
+  }
+  return {
+    failureThreshold: requireIntegerOption(
+      options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD,
+      "failureThreshold",
+      1,
+    ),
+    resetTimeoutMs: requireIntegerOption(
+      options.resetTimeoutMs ?? DEFAULT_RESET_TIMEOUT_MS,
+      "resetTimeoutMs",
+      0,
+    ),
+    successThreshold: requireIntegerOption(
+      options.successThreshold ?? DEFAULT_SUCCESS_THRESHOLD,
+      "successThreshold",
+      1,
+    ),
+    now: options.now ?? Date.now,
+  };
 }
 
 /**
@@ -99,26 +148,12 @@ export class CircuitBreaker {
   private readonly now: () => number;
 
   constructor(options: CircuitBreakerOptions = {}) {
-    this.failureThreshold = requireIntegerOption(
-      options.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD,
-      "failureThreshold",
-      1,
-    );
-    this.resetTimeoutMs = requireIntegerOption(
-      options.resetTimeoutMs ?? DEFAULT_RESET_TIMEOUT_MS,
-      "resetTimeoutMs",
-      0,
-    );
-    this.successThreshold = requireIntegerOption(
-      options.successThreshold ?? DEFAULT_SUCCESS_THRESHOLD,
-      "successThreshold",
-      1,
-    );
-    this.breakerName = options.name ?? "default";
-    if (options.now !== undefined && typeof options.now !== "function") {
-      throw new TypeError("now must be a function");
-    }
-    this.now = options.now ?? Date.now;
+    const resolved = resolveCircuitBreakerOptions(options);
+    this.failureThreshold = resolved.failureThreshold;
+    this.resetTimeoutMs = resolved.resetTimeoutMs;
+    this.successThreshold = resolved.successThreshold;
+    this.breakerName = requireBreakerName(options.name ?? "default");
+    this.now = resolved.now;
   }
 
   /** Execute operation through circuit breaker. Throws CircuitBreakerOpen if open. */
@@ -137,7 +172,12 @@ export class CircuitBreaker {
 
     let halfOpenProbe = false;
     if (this.state === "HALF_OPEN") {
-      if (this.halfOpenAttempts >= MAX_HALF_OPEN_ATTEMPTS) {
+      const remainingSuccesses = this.successThreshold - this.successCount;
+      const admissionLimit = Math.min(
+        MAX_HALF_OPEN_ATTEMPTS,
+        Math.max(1, remainingSuccesses),
+      );
+      if (this.halfOpenAttempts >= admissionLimit) {
         throw new CircuitBreakerOpen(this.breakerName, 0);
       }
       this.halfOpenAttempts++;
@@ -271,7 +311,18 @@ const MAX_BREAKERS = 1_000;
 
 interface BreakerEntry {
   breaker: CircuitBreaker;
+  configuration: ResolvedCircuitBreakerOptions;
   lastUsed: number;
+}
+
+function sameBreakerConfiguration(
+  left: ResolvedCircuitBreakerOptions,
+  right: ResolvedCircuitBreakerOptions,
+): boolean {
+  return left.failureThreshold === right.failureThreshold &&
+    left.resetTimeoutMs === right.resetTimeoutMs &&
+    left.successThreshold === right.successThreshold &&
+    left.now === right.now;
 }
 
 export interface CircuitBreakerRegistry {
@@ -312,12 +363,25 @@ export function createCircuitBreakerRegistry(maxBreakers = MAX_BREAKERS): Circui
     name: string,
     options?: Omit<CircuitBreakerOptions, "name">,
   ): CircuitBreaker {
+    requireBreakerName(name);
     const existing = entries.get(name);
     if (existing) {
+      if (
+        options !== undefined &&
+        !sameBreakerConfiguration(
+          existing.configuration,
+          resolveCircuitBreakerOptions(options),
+        )
+      ) {
+        throw new TypeError(
+          `Circuit breaker "${name}" is already registered with a different configuration`,
+        );
+      }
       existing.lastUsed = ++accessSequence;
       return existing.breaker;
     }
 
+    const configuration = resolveCircuitBreakerOptions(options);
     if (entries.size >= maxBreakers && !evictClosedBreaker()) {
       logger.warn("Circuit breaker registry is full of active protections", {
         maxBreakers,
@@ -326,8 +390,8 @@ export function createCircuitBreakerRegistry(maxBreakers = MAX_BREAKERS): Circui
       throw new CircuitBreakerOpen(name, DEFAULT_RESET_TIMEOUT_MS);
     }
 
-    const breaker = new CircuitBreaker({ ...options, name });
-    entries.set(name, { breaker, lastUsed: ++accessSequence });
+    const breaker = new CircuitBreaker({ ...configuration, name });
+    entries.set(name, { breaker, configuration, lastUsed: ++accessSequence });
     return breaker;
   }
 

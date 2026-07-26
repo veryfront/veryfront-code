@@ -4,7 +4,7 @@ import { LRUNode } from "./lru-node.ts";
 import { LRUListManager } from "./lru-list-manager.ts";
 import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
-import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/utils/constants/cache.ts";
 
 const logger = serverLogger.component("cache");
 

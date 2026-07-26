@@ -180,6 +180,46 @@ describe("CircuitBreaker", () => {
     assertEquals(cb.getState(), "CLOSED");
   });
 
+  it("admits no more recovery probes than the remaining success threshold", async () => {
+    const cb = new CircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 0,
+      successThreshold: 1,
+      name: "single-recovery-probe",
+    });
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("open"))));
+
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted = false;
+    const first = cb.execute(async () => {
+      firstStarted = true;
+      await firstGate;
+      return "first";
+    });
+    let secondStarted = false;
+    const second = cb.execute(() => {
+      secondStarted = true;
+      return Promise.resolve("second");
+    });
+
+    await Promise.resolve();
+    releaseFirst?.();
+    const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+    assertEquals(firstStarted, true);
+    assertEquals(secondStarted, false);
+    assertEquals(firstResult.status, "fulfilled");
+    assertEquals(secondResult.status, "rejected");
+    assertEquals(
+      secondResult.status === "rejected" && secondResult.reason instanceof CircuitBreakerOpen,
+      true,
+    );
+    assertEquals(cb.getState(), "CLOSED");
+  });
+
   it("should transition from HALF_OPEN back to OPEN on failure", async () => {
     const cb = new CircuitBreaker({
       failureThreshold: 1,
@@ -241,6 +281,25 @@ describe("circuit breaker registry capacity", () => {
   it("rejects unsafe capacities", () => {
     for (const capacity of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       assertThrows(() => createCircuitBreakerRegistry(capacity), RangeError);
+    }
+  });
+
+  it("rejects conflicting configuration for an existing breaker name", () => {
+    const registry = createCircuitBreakerRegistry(2);
+    const first = registry.get("shared", { failureThreshold: 2 });
+
+    assertEquals(registry.get("shared", { failureThreshold: 2 }), first);
+    assertThrows(
+      () => registry.get("shared", { failureThreshold: 3 }),
+      TypeError,
+      "different configuration",
+    );
+  });
+
+  it("rejects names that cannot be retained or logged safely", () => {
+    const registry = createCircuitBreakerRegistry(2);
+    for (const name of ["", "x".repeat(257), "unsafe\nname"]) {
+      assertThrows(() => registry.get(name), RangeError);
     }
   });
 

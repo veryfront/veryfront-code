@@ -7,6 +7,7 @@
 
 import { rendererLogger } from "#veryfront/utils/logger/index.ts";
 import { getArgs, getEnv, memoryUsage, unrefTimer } from "#veryfront/platform/compat/process.ts";
+import { MAX_TIMER_DELAY_MS } from "../timer.ts";
 
 const logger = rendererLogger.component("memory-profiler");
 
@@ -231,7 +232,9 @@ export function getMemoryMonitoringConfig(env: MemoryMonitoringEnv): MemoryMonit
   const enabled = env.get("ENABLE_MEMORY_MONITORING") === "true";
   const rawInterval = env.get("MEMORY_MONITORING_INTERVAL_MS");
   const parsedInterval = Number(rawInterval ?? DEFAULT_MEMORY_MONITORING_INTERVAL_MS);
-  const intervalMs = Number.isInteger(parsedInterval) && parsedInterval > 0
+  const intervalMs = Number.isInteger(parsedInterval) &&
+      parsedInterval > 0 &&
+      parsedInterval <= MAX_TIMER_DELAY_MS
     ? parsedInterval
     : DEFAULT_MEMORY_MONITORING_INTERVAL_MS;
 
@@ -316,8 +319,14 @@ export async function forceGC(): Promise<boolean> {
 }
 
 export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INTERVAL_MS): void {
-  if (!Number.isInteger(intervalMs) || intervalMs <= 0) {
-    throw new RangeError("Memory monitoring interval must be a positive integer");
+  if (
+    !Number.isInteger(intervalMs) ||
+    intervalMs <= 0 ||
+    intervalMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `Memory monitoring interval must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`,
+    );
   }
 
   if (memoryCheckInterval) clearInterval(memoryCheckInterval);

@@ -18,6 +18,7 @@ import {
   stopMemoryMonitoring,
   unregisterCache,
 } from "./profiler.ts";
+import { MAX_TIMER_DELAY_MS } from "../timer.ts";
 
 describe("memory/profiler", () => {
   afterEach(() => {
@@ -156,6 +157,20 @@ describe("memory/profiler", () => {
       assertEquals(config.enabled, true);
       assertEquals(config.intervalMs, 30_000);
     });
+
+    it("rejects configured intervals outside the portable timer domain", () => {
+      const config = getMemoryMonitoringConfig({
+        get(key) {
+          if (key === "ENABLE_MEMORY_MONITORING") return "true";
+          if (key === "MEMORY_MONITORING_INTERVAL_MS") {
+            return String(MAX_TIMER_DELAY_MS + 1);
+          }
+          return undefined;
+        },
+      });
+
+      assertEquals(config.intervalMs, 30_000);
+    });
   });
 
   describe("forceGC", () => {
@@ -283,7 +298,16 @@ describe("memory/profiler", () => {
 
   describe("startMemoryMonitoring / stopMemoryMonitoring", () => {
     it("should reject invalid intervals", () => {
-      for (const interval of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (
+        const interval of [
+          0,
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          MAX_TIMER_DELAY_MS + 1,
+        ]
+      ) {
         assertThrows(() => startMemoryMonitoring(interval), RangeError);
       }
     });

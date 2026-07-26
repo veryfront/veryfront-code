@@ -601,6 +601,31 @@ describe("import-lockfile", () => {
       assertEquals(await mgr.read(), original);
     });
 
+    it("persists an empty lockfile when the adapter cannot remove files", async () => {
+      const original = {
+        version: 1 as const,
+        imports: {
+          "https://cdn.com/original.ts": {
+            resolved: "https://cdn.com/original.ts",
+            integrity: "sha256-original",
+          },
+        },
+      };
+      const fs = createMockFS({
+        "/project/veryfront.lock": JSON.stringify(original),
+      });
+      delete fs.remove;
+      const mgr = createLockfileManager("/project", fs);
+
+      await mgr.clear();
+
+      assertEquals(
+        JSON.parse(await fs.readFile("/project/veryfront.lock")),
+        createEmptyLockfile(),
+      );
+      assertEquals(await mgr.read(), createEmptyLockfile());
+    });
+
     it("preserves earlier pending entries when clear fails beside a concurrent set", async () => {
       const lockfilePath = "/project/veryfront.lock";
       const store = new Map<string, string>([
@@ -1124,6 +1149,35 @@ describe("import-lockfile", () => {
         Error,
         "timed out",
       );
+    });
+
+    it("enforces the timeout when a fetch implementation ignores its signal", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+      const fallback = new Promise<"hung">((resolve) => {
+        fallbackTimer = setTimeout(() => resolve("hung"), 100);
+      });
+      let outcome: Error | "hung" | "unexpected-success";
+      try {
+        outcome = await Promise.race([
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            timeoutMs: 5,
+            fetchFn: (() => new Promise<Response>(() => {})) as typeof fetch,
+          }).then(
+            () => "unexpected-success" as const,
+            (error: unknown) => error as Error,
+          ),
+          fallback,
+        ]);
+      } finally {
+        if (fallbackTimer !== undefined) clearTimeout(fallbackTimer);
+      }
+
+      assertEquals(outcome === "hung", false);
+      assertEquals(outcome instanceof Error, true);
+      assertEquals((outcome as Error).message.includes("timed out"), true);
     });
 
     it("aborts stalled response bodies within the same timeout", async () => {

@@ -149,6 +149,36 @@ describe("rendering/layouts/utils/discovery", () => {
       assertEquals(stats.size >= 1, true);
     });
 
+    it("does not alias distinct layout identities when their legacy hashes collide", async () => {
+      const firstProject = "/project-1282ds3";
+      const secondProject = "/project-wkck55";
+      const adapter = createMockAdapter(
+        new Set([
+          `${firstProject}/layout.mdx`,
+          `${secondProject}/layout.tsx`,
+        ]),
+      );
+      clearLayoutDiscoveryCache();
+
+      const first = await discoverNestedLayouts(
+        `${firstProject}/pages/index.mdx`,
+        firstProject,
+        firstProject,
+        adapter,
+      );
+      const second = await discoverNestedLayouts(
+        `${secondProject}/pages/index.mdx`,
+        secondProject,
+        secondProject,
+        adapter,
+      );
+
+      assertEquals(first[0]?.kind, "mdx");
+      assertEquals(first[0]?.path, `${firstProject}/layout.mdx`);
+      assertEquals(second[0]?.kind, "tsx");
+      assertEquals(second[0]?.path, `${secondProject}/layout.tsx`);
+    });
+
     it("should handle deeply nested page paths", async () => {
       const adapter = createMockAdapter(new Set());
       clearLayoutDiscoveryCache();

@@ -4,7 +4,7 @@ import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
 import { assertThrows } from "#veryfront/testing/assert.ts";
 import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
-import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/utils/constants/cache.ts";
 
 describe("LRUCacheAdapter", () => {
   let cache: LRUCacheAdapter;

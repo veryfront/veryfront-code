@@ -30,6 +30,14 @@ const MAX_CONFIGURED_CONCURRENCY = 10_000;
 const MAX_CONFIGURED_TTL_SECONDS = 365 * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
 const BYTES_PER_MB = 1024 * 1024;
 
+/**
+ * Protocol-safe cache TTL upper bound (signed 32-bit seconds, roughly
+ * 68 years). Its millisecond form can be added to a contemporary epoch
+ * timestamp without exceeding Number.MAX_SAFE_INTEGER or the Date range.
+ */
+export const MAX_CACHE_TTL_SECONDS = 2_147_483_647;
+export const MAX_CACHE_TTL_MILLISECONDS = MAX_CACHE_TTL_SECONDS * MS_PER_SECOND;
+
 interface EnvIntegerOptions {
   min?: number;
   max: number;

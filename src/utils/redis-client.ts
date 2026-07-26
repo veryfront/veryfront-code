@@ -1,6 +1,8 @@
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { logger as baseLogger } from "./logger/logger.ts";
-import { DEPENDENCY_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
+import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry/general.ts";
+import { DEPENDENCY_MISSING } from "#veryfront/errors/error-registry/module.ts";
+import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
 
 const logger = baseLogger.component("redis");
 
@@ -85,9 +87,13 @@ function resolveClientOptions(
 ): ResolvedRedisClientOptions {
   if (
     options.connectTimeout !== undefined &&
-    (!Number.isInteger(options.connectTimeout) || options.connectTimeout <= 0)
+    (!Number.isInteger(options.connectTimeout) ||
+      options.connectTimeout <= 0 ||
+      options.connectTimeout > MAX_TIMER_DELAY_MS)
   ) {
-    throw new RangeError("Redis connectTimeout must be a positive integer");
+    throw new RangeError(
+      `Redis connectTimeout must be a positive integer no greater than ${MAX_TIMER_DELAY_MS}`,
+    );
   }
 
   const url = options.url ?? readEnv("REDIS_URL");

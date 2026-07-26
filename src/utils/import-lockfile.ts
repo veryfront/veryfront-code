@@ -9,6 +9,7 @@ import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "./constants/buffers.ts";
 import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "./constants/http.ts";
 import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
 import { readResponseTextPrefix } from "./response-body.ts";
+import { awaitAbortable } from "./abort.ts";
 
 const logger = serverLogger.component("lockfile");
 
@@ -438,7 +439,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     let persisted = false;
     try {
       await mutateFile(async () => {
-        if (fs.remove) await removeIfPresent(lockfilePath);
+        if (fs.remove) {
+          await removeIfPresent(lockfilePath);
+        } else {
+          await writeAtomically(createEmptyLockfile());
+        }
         persisted = true;
       });
     } catch (error) {
@@ -633,11 +638,22 @@ async function fetchRemoteModule(
   try {
     let currentUrl = url;
     for (let redirectCount = 0;; redirectCount++) {
-      const response = await options.fetchFn(currentUrl.toString(), {
-        headers: USER_AGENT_HEADERS,
-        redirect: "manual",
-        signal: controller.signal,
-      });
+      const fetchPromise = Promise.resolve().then(() =>
+        options.fetchFn(currentUrl.toString(), {
+          headers: USER_AGENT_HEADERS,
+          redirect: "manual",
+          signal: controller.signal,
+        })
+      );
+      let response: Response;
+      try {
+        response = await awaitAbortable(fetchPromise, controller.signal);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          void fetchPromise.then(cancelResponseBody, () => undefined);
+        }
+        throw error;
+      }
 
       if (REDIRECT_STATUSES.has(response.status)) {
         const location = response.headers.get("location");

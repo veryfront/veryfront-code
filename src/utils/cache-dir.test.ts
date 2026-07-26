@@ -1,15 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  ensureNodeModulesLink,
   getCacheBaseDir,
   getCacheDirFromContext,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
   runWithCacheDir,
 } from "./cache-dir.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { lstatSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 
 const MANAGED_ENV_KEYS = [
   "HOME",
@@ -22,6 +25,7 @@ const MANAGED_ENV_KEYS = [
 const originalEnv = new Map<string, string | undefined>(
   MANAGED_ENV_KEYS.map((key) => [key, getEnv(key)]),
 );
+const temporaryDirectories: string[] = [];
 
 function restoreManagedEnv(): void {
   for (const [key, value] of originalEnv) {
@@ -34,8 +38,11 @@ function restoreManagedEnv(): void {
 }
 
 describe("cache-dir", () => {
-  afterEach(() => {
+  afterEach(async () => {
     restoreManagedEnv();
+    while (temporaryDirectories.length > 0) {
+      await Deno.remove(temporaryDirectories.pop()!, { recursive: true });
+    }
   });
 
   describe("getCacheDirFromContext", () => {
@@ -156,6 +163,62 @@ describe("cache-dir", () => {
       const result = runWithCacheDir("/tmp/test", getHttpBundleCacheDir);
       assert(result.startsWith("/tmp/test"));
       assert(result.endsWith("veryfront-http-bundle"));
+    });
+  });
+
+  describe("ensureNodeModulesLink", () => {
+    const operations = {
+      joinPath: join,
+      lstatSync,
+      realpathSync,
+      mkdirSync,
+      symlinkSync,
+    };
+
+    it("creates an idempotent link to the resolved framework dependency root", async () => {
+      const root = await Deno.makeTempDir();
+      temporaryDirectories.push(root);
+      const source = join(root, "framework-node-modules");
+      const cache = join(root, "cache");
+      mkdirSync(source, { recursive: true });
+
+      ensureNodeModulesLink(cache, source, operations);
+      ensureNodeModulesLink(cache, source, operations);
+
+      assertEquals(
+        realpathSync(join(cache, "node_modules")),
+        realpathSync(source),
+      );
+    });
+
+    it("rejects a pre-existing node_modules path that targets another dependency root", async () => {
+      const root = await Deno.makeTempDir();
+      temporaryDirectories.push(root);
+      const source = join(root, "framework-node-modules");
+      const cache = join(root, "cache");
+      mkdirSync(source, { recursive: true });
+      mkdirSync(join(cache, "node_modules"), { recursive: true });
+
+      assertThrows(
+        () => ensureNodeModulesLink(cache, source, operations),
+        Error,
+        "different dependency root",
+      );
+    });
+
+    it("propagates missing or inaccessible dependency roots", async () => {
+      const root = await Deno.makeTempDir();
+      temporaryDirectories.push(root);
+
+      assertThrows(
+        () =>
+          ensureNodeModulesLink(
+            join(root, "cache"),
+            join(root, "missing-node-modules"),
+            operations,
+          ),
+        Error,
+      );
     });
   });
 });

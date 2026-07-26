@@ -3,6 +3,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { LRUCache } from "./lru-wrapper.ts";
+import { MAX_TIMER_DELAY_MS } from "./timer.ts";
 
 describe("LRUCache", () => {
   const caches: LRUCache<unknown, unknown>[] = [];
@@ -203,6 +204,26 @@ describe("LRUCache", () => {
         assertThrows(() => createCache({ ttlMs: value }), RangeError);
         assertThrows(() => createCache({ cleanupIntervalMs: value }), RangeError);
       }
+    });
+
+    it("normalizes cleanup intervals to the portable timer domain", () => {
+      const cache = createCache({
+        ttlMs: 1_000,
+        cleanupIntervalMs: 0.1,
+      });
+      assertEquals(
+        (cache as unknown as { cleanupIntervalMs: number }).cleanupIntervalMs,
+        1,
+      );
+
+      assertThrows(
+        () =>
+          createCache({
+            ttlMs: 1_000,
+            cleanupIntervalMs: MAX_TIMER_DELAY_MS + 0.1,
+          }),
+        RangeError,
+      );
     });
 
     it("default options", (): void => {

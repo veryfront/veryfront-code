@@ -7,6 +7,8 @@ import { collectFiles, countFiles, discoverFiles, hasMatchingFiles } from "./fil
 import { cwd } from "../platform/compat/process.ts";
 
 const TEST_DIR = join(cwd(), "src/utils");
+const MAX_DIRECTORY_ENTRY_NAME_LENGTH = 4096;
+const MAX_FILE_DISCOVERY_FILTERS = 128;
 
 describe("file-discovery", () => {
   it("discovers files with extension filter", async () => {
@@ -238,6 +240,78 @@ describe("file-discovery", () => {
     }
   });
 
+  it("rejects directory entry names outside the bounded path domain", async () => {
+    const adapter = {
+      fs: {
+        async *readDir() {
+          yield {
+            name: "a".repeat(MAX_DIRECTORY_ENTRY_NAME_LENGTH + 1),
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+          };
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () => collectFiles({ baseDir: "/root", adapter }),
+      RangeError,
+      "directory entry name",
+    );
+  });
+
+  it("bounds scanned entries even when every entry is ignored", async () => {
+    const adapter = {
+      fs: {
+        async *readDir() {
+          for (const name of ["ignore-1", "ignore-2", "ignore-3"]) {
+            yield { name, isFile: true, isDirectory: false, isSymlink: false };
+          }
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () =>
+        collectFiles({
+          baseDir: "/root",
+          ignorePatterns: ["ignore"],
+          maxEntries: 2,
+          adapter,
+        }),
+      RangeError,
+      "entry limit",
+    );
+  });
+
+  it("rejects unbounded filter lists before traversing", async () => {
+    let readStarted = false;
+    const adapter = {
+      fs: {
+        readDir() {
+          readStarted = true;
+          return [];
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    await assertRejects(
+      () =>
+        collectFiles({
+          baseDir: "/root",
+          ignorePatterns: Array.from(
+            { length: MAX_FILE_DISCOVERY_FILTERS + 1 },
+            () => "*",
+          ),
+          adapter,
+        }),
+      RangeError,
+      "ignorePatterns",
+    );
+    assertEquals(readStarted, false);
+  });
+
   it("does not revisit a directory through a symlink cycle", async () => {
     const entries = new Map<
       string,
@@ -333,6 +407,15 @@ describe("file-discovery", () => {
     for (const maxDepth of [-1, 1.5, Number.NaN]) {
       await assertRejects(
         () => collectFiles({ baseDir: TEST_DIR, maxDepth }),
+        RangeError,
+      );
+    }
+  });
+
+  it("rejects invalid entry limits", async () => {
+    for (const maxEntries of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assertRejects(
+        () => collectFiles({ baseDir: TEST_DIR, maxEntries }),
         RangeError,
       );
     }

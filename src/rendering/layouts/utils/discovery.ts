@@ -1,4 +1,4 @@
-import { memoizeHash as simpleHash, rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { dirname, extname, join } from "#veryfront/compat/path";
@@ -58,7 +58,9 @@ export async function discoverNestedLayouts(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<LayoutItem[]> {
-  const key = simpleHash(projectDir, pageFilePath, rootDir);
+  // The tuple is collision-free for string inputs. A short non-cryptographic
+  // digest is not sufficient here: a collision can cross project boundaries.
+  const key = JSON.stringify([projectDir, pageFilePath, rootDir]);
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();

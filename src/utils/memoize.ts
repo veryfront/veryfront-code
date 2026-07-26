@@ -26,53 +26,44 @@ export class MemoCache<V> {
   }
 }
 
-function memoizeWithCache<Args extends unknown[], Result>(
-  fn: (...args: Args) => Result | Promise<Result>,
-  keyHasher: (...args: Args) => string,
-): (...args: Args) => Result | Promise<Result> {
-  const cache = new MemoCache<Result>();
-  const inflight = new Map<string, Promise<Result>>();
-
-  return (...args: Args): Result | Promise<Result> => {
-    const key = keyHasher(...args);
-
-    if (cache.has(key)) {
-      return cache.get(key)!;
-    }
-
-    const existing = inflight.get(key);
-    if (existing) return existing;
-
-    const result = fn(...args);
-
-    if (!(result instanceof Promise)) {
-      cache.set(key, result);
-      return result;
-    }
-
-    const promise = result.then(
-      (resolved) => {
-        cache.set(key, resolved);
-        inflight.delete(key);
-        return resolved;
-      },
-      (error) => {
-        inflight.delete(key);
-        throw error;
-      },
-    );
-
-    inflight.set(key, promise);
-    return promise;
-  };
-}
-
 /** Memoize async. */
 export function memoizeAsync<Args extends unknown[], Result>(
   fn: (...args: Args) => Promise<Result>,
   keyHasher: (...args: Args) => string,
 ): (...args: Args) => Promise<Result> {
-  return memoizeWithCache(fn, keyHasher) as (...args: Args) => Promise<Result>;
+  const cache = new MemoCache<Promise<Result>>();
+  const inflight = new Map<string, Promise<Result>>();
+
+  return (...args: Args): Promise<Result> => {
+    const key = keyHasher(...args);
+    const cached = cache.get(key);
+    if (cached) return cached;
+
+    const existing = inflight.get(key);
+    if (existing) return existing;
+
+    let operation: Promise<Result>;
+    try {
+      operation = Promise.resolve(fn(...args));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    const tracked = operation.then(
+      (resolved) => {
+        cache.set(key, tracked);
+        if (inflight.get(key) === tracked) inflight.delete(key);
+        return resolved;
+      },
+      (error) => {
+        if (inflight.get(key) === tracked) inflight.delete(key);
+        throw error;
+      },
+    );
+
+    inflight.set(key, tracked);
+    return tracked;
+  };
 }
 
 /** Memoize. */
@@ -80,7 +71,16 @@ export function memoize<Args extends unknown[], Result>(
   fn: (...args: Args) => Result,
   keyHasher: (...args: Args) => string,
 ): (...args: Args) => Result {
-  return memoizeWithCache(fn, keyHasher) as (...args: Args) => Result;
+  const cache = new MemoCache<Result>();
+
+  return (...args: Args): Result => {
+    const key = keyHasher(...args);
+    if (cache.has(key)) return cache.get(key)!;
+
+    const result = fn(...args);
+    cache.set(key, result);
+    return result;
+  };
 }
 
 /**

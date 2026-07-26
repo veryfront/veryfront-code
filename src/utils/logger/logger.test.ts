@@ -1149,6 +1149,29 @@ describe("logger", () => {
       }
     });
 
+    it("keeps logging available when the trace bridge fails", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        __registerTraceContextGetter(() => {
+          throw new Error("trace provider unavailable");
+        });
+
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Still logged");
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.message, "Still logged");
+          assertEquals(entry.traceId, undefined);
+          assertEquals(entry.spanId, undefined);
+        });
+      } finally {
+        __resetTraceContextGetterForTests();
+        restore();
+      }
+    });
+
     it("should not inject when getter is not registered", () => {
       const { getOutput, restore } = captureConsoleLog();
 

@@ -10,10 +10,13 @@ import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import {
   type BundleCode,
+  type BundleManifestStore,
   type BundleMetadata,
   computeCodeHash,
   computeHash,
+  getBundleManifestStore,
   InMemoryBundleManifestStore,
+  setBundleManifestStore,
 } from "./bundle-manifest.ts";
 
 function createMetadata(id: string, codeHash = `code-${id}`): BundleMetadata {
@@ -451,6 +454,33 @@ describe("InMemoryBundleManifestStore", () => {
       "ttlMs",
     );
     assertEquals(await store.getBundleCode("invalid"), undefined);
+  });
+});
+
+describe("setBundleManifestStore", () => {
+  it("accepts a structurally valid store without a constructor prototype", () => {
+    const previous = getBundleManifestStore();
+    const custom = Object.setPrototypeOf(
+      {
+        getBundleMetadata: () => Promise.resolve(undefined),
+        setBundleMetadata: () => Promise.resolve(),
+        getBundleCode: () => Promise.resolve(undefined),
+        setBundleCode: () => Promise.resolve(),
+        deleteBundle: () => Promise.resolve(),
+        invalidateSource: () => Promise.resolve(0),
+        clear: () => Promise.resolve(),
+        isAvailable: () => Promise.resolve(true),
+        getStats: () => Promise.resolve({ totalBundles: 0, totalSize: 0 }),
+      },
+      null,
+    ) as BundleManifestStore;
+
+    try {
+      setBundleManifestStore(custom);
+      assertEquals(getBundleManifestStore(), custom);
+    } finally {
+      setBundleManifestStore(previous);
+    }
   });
 });
 

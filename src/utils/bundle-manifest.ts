@@ -379,10 +379,11 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
 let manifestStore: BundleManifestStore = new InMemoryBundleManifestStore();
 
 export function setBundleManifestStore(store: BundleManifestStore): void {
+  if ((typeof store !== "object" && typeof store !== "function") || store === null) {
+    throw new TypeError("Bundle manifest store must be an object");
+  }
   manifestStore = store;
-  logger.info("Bundle manifest store configured", {
-    type: store.constructor.name,
-  });
+  logger.info("Bundle manifest store configured");
 }
 
 /** Return bundle manifest store. */

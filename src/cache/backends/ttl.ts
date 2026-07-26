@@ -1,3 +1,13 @@
+import {
+  MAX_CACHE_TTL_MILLISECONDS,
+  MAX_CACHE_TTL_SECONDS,
+} from "#veryfront/utils/constants/cache.ts";
+
+export {
+  MAX_CACHE_TTL_MILLISECONDS,
+  MAX_CACHE_TTL_SECONDS,
+} from "#veryfront/utils/constants/cache.ts";
+
 /**
  * Resolve and validate a cache TTL using the contract shared by every backend.
  * Values at or below zero mean immediate expiry: remove any existing value and
@@ -69,12 +79,3 @@ export function requirePositiveIntegerCacheTtlSeconds(ttlSeconds: number): numbe
 }
 /** Shared default used when a CacheBackend caller omits a TTL. */
 export const DEFAULT_CACHE_TTL_SECONDS = 300;
-
-/**
- * Protocol-safe upper bound (signed 32-bit seconds, roughly 68 years). Besides
- * fitting Redis-style integer TTLs, its millisecond form can be added to a
- * contemporary epoch timestamp without exceeding Number.MAX_SAFE_INTEGER or
- * the JavaScript Date range.
- */
-export const MAX_CACHE_TTL_SECONDS = 2_147_483_647;
-export const MAX_CACHE_TTL_MILLISECONDS = MAX_CACHE_TTL_SECONDS * 1_000;

@@ -5,7 +5,7 @@
  * to ensure consistent, robust file handling across all cache code paths.
  */
 
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger as logger } from "#veryfront/utils/logger/index.ts";
 
 /**
@@ -65,7 +65,8 @@ export async function writeCacheFile(
       path: path.slice(-80),
       error: verifyError instanceof Error ? verifyError.message : String(verifyError),
     });
-    return false;
+    if (isNotFoundError(verifyError)) return false;
+    throw verifyError;
   }
 
   return true;
@@ -78,14 +79,18 @@ export async function writeCacheFile(
 export async function verifyCacheFileExists(
   fs: FileSystem,
   path: string,
-  _label = "cache",
+  label = "cache",
 ): Promise<boolean> {
   try {
     const stat = await fs.stat(path);
     return !!stat?.isFile;
-  } catch (_) {
-    /* expected: file may not exist */
-    return false;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    logger.debug(`[${label}] Cache file existence check failed`, {
+      path: path.slice(-80),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
 }
 
@@ -94,18 +99,5 @@ export async function verifyCacheFileExists(
  * (directory removed between mkdir and write).
  */
 export function isCacheWriteRaceError(error: unknown): boolean {
-  if (error == null || typeof error !== "object") return false;
-
-  if ("code" in error && (error as Record<string, unknown>).code === "ENOENT") return true;
-
-  // Deno-specific NotFound
-  if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) return true;
-
-  // EINVAL (os error 22) on some platforms when a path component is gone.
-  // Prefer a structured errno code when present; the string match is brittle
-  // and kept only as a fallback for runtimes that don't expose `code`.
-  if ("code" in error && (error as Record<string, unknown>).code === "EINVAL") return true;
-  if (error instanceof TypeError && error.message.includes("os error 22")) return true;
-
-  return false;
+  return isNotFoundError(error);
 }

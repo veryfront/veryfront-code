@@ -98,6 +98,26 @@ describe("parallel", () => {
 
       assertEquals(maxConcurrent, 2);
     });
+
+    it("bounds admission work instead of queueing the complete input", async () => {
+      const semaphore = new Semaphore(1);
+      await semaphore.tryAcquire();
+
+      const pending = parallelMap(
+        Array.from({ length: 100 }, (_, index) => index),
+        async (value) => value,
+        {
+          concurrency: 3,
+          semaphore,
+          timeoutMs: 1_000,
+        },
+      );
+
+      await Promise.resolve();
+      assertEquals(semaphore.waiting, 3);
+      semaphore.release();
+      assertEquals(await pending, Array.from({ length: 100 }, (_, index) => index));
+    });
   });
 
   describe("parallelAll", () => {

@@ -2,11 +2,17 @@
 
 const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const MAX_UNBIASED_BYTE = Math.floor(256 / ALPHABET.length) * ALPHABET.length;
+const MAX_ID_SIZE = 1_024;
+
+function requireIdSize(size: number): number {
+  if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_ID_SIZE) {
+    throw new RangeError(`ID size must be an integer between 1 and ${MAX_ID_SIZE}`);
+  }
+  return size;
+}
 
 function randomString(length: number): string {
-  if (!Number.isInteger(length) || length <= 0) {
-    throw new RangeError("ID size must be a positive integer");
-  }
+  requireIdSize(length);
 
   let result = "";
   while (result.length < length) {
@@ -70,9 +76,7 @@ export function createIdGenerator(options: {
   size?: number;
 }): () => string {
   const { prefix, separator = "-", size = 16 } = options;
-  if (!Number.isInteger(size) || size <= 0) {
-    throw new RangeError("ID size must be a positive integer");
-  }
+  requireIdSize(size);
 
   return function generate(): string {
     const id = randomString(size);

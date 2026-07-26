@@ -9,10 +9,14 @@
  * @module transforms/import-rewriter/framework-dependencies
  */
 
-import { buildEsmShUrl } from "./url-builder.ts";
+import {
+  buildEsmShUrl,
+  ESM_SH_BUILD_PIN,
+  MERMAID_VERSION,
+} from "#veryfront/utils/constants/cdn.ts";
 
 /** esm.sh build-system release used by audited framework dependency URLs. */
-export const ESM_SH_BUILD_PIN = "v135";
+export { ESM_SH_BUILD_PIN };
 
 /** Exact npm releases owned by framework runtime modules. */
 export const FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS = Object.freeze(
@@ -20,7 +24,7 @@ export const FRAMEWORK_BROWSER_DEPENDENCY_VERSIONS = Object.freeze(
     "react-markdown": "9.0.3",
     "remark-gfm": "4.0.1",
     "shiki": "1.24.0",
-    "mermaid": "11.16.0",
+    "mermaid": MERMAID_VERSION,
   } as const,
 );
 

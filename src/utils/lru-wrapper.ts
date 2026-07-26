@@ -3,6 +3,7 @@ import type { LRUCacheOptions } from "./cache/stores/memory/types.ts";
 import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { normalizeTimerDurationMs } from "./timer.ts";
 
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
@@ -22,6 +23,14 @@ function requirePositiveFinite(value: number, option: string): number {
   return value;
 }
 
+function requirePositiveTimerDuration(value: number, option: string): number {
+  const normalized = normalizeTimerDurationMs(value, option);
+  if (normalized === 0) {
+    throw new RangeError(`${option} must be greater than 0`);
+  }
+  return normalized;
+}
+
 export class LRUCache<K, V> {
   private adapter: LRUCacheAdapter;
   private readonly internalKeys = new Map<K, string>();
@@ -35,7 +44,7 @@ export class LRUCache<K, V> {
     const ttlMs = options.ttlMs === undefined
       ? undefined
       : requirePositiveFinite(options.ttlMs, "ttlMs");
-    const cleanupIntervalMs = requirePositiveFinite(
+    const cleanupIntervalMs = requirePositiveTimerDuration(
       options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS,
       "cleanupIntervalMs",
     );

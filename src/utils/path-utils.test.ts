@@ -10,6 +10,7 @@ import {
   getExtensionName,
   hasHashedFilename,
   isAbsolutePath,
+  isFrameworkSourcePath,
   isWithinDirectory,
   joinPath,
   normalizePath,
@@ -232,6 +233,25 @@ describe("path-utils", () => {
 
     it("should return false for bare names", () => {
       assertEquals(isAbsolutePath("file.ts"), false);
+    });
+  });
+
+  describe("isFrameworkSourcePath", () => {
+    it("recognizes every current top-level framework source module", async () => {
+      const sourceRoot = new URL("../", import.meta.url);
+      const moduleNames: string[] = [];
+      for await (const entry of Deno.readDir(sourceRoot)) {
+        if (entry.isDirectory) moduleNames.push(entry.name);
+      }
+
+      for (const moduleName of moduleNames) {
+        assertEquals(
+          isFrameworkSourcePath(`src/${moduleName}/index.ts`),
+          true,
+          `Expected src/${moduleName} to be classified as framework source`,
+        );
+      }
+      assertEquals(isFrameworkSourcePath("src/application/index.ts"), false);
     });
   });
 

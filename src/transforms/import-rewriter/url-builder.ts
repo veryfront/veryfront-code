@@ -5,6 +5,17 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
+import {
+  buildEsmShUrl,
+  buildReactUrl,
+  CSSTYPE_VERSION,
+  getReactImportMap as getSharedReactImportMap,
+  REACT_DEFAULT_VERSION,
+  TAILWIND_VERSION,
+} from "#veryfront/utils/constants/cdn.ts";
+
+export { buildEsmShUrl, buildReactUrl, CSSTYPE_VERSION, TAILWIND_VERSION };
+
 /**
  * Default React version - used when not specified.
  *
@@ -13,91 +24,13 @@
  * version and references its named exports. A drift guard in
  * `src/utils/constants/cdn.test.ts` enforces this.
  */
-export const DEFAULT_REACT_VERSION = "19.2.4";
-
-/** Tailwind CSS version */
-export const TAILWIND_VERSION = "4.1.8";
-
-/** csstype version - must match deno.json for type consistency */
-export const CSSTYPE_VERSION = "3.2.3";
-
-type EsmShOptions = {
-  external?: string[];
-  target?: string;
-  deps?: Record<string, string>;
-  pin?: string;
-};
-
-/**
- * Build esm.sh URL with proper configuration.
- *
- * @param pkg - Package name (e.g., "react", "lodash")
- * @param version - Package version (optional)
- * @param subpath - Subpath (e.g., "/jsx-runtime")
- * @param options - URL options
- */
-export function buildEsmShUrl(
-  pkg: string,
-  version?: string,
-  subpath?: string,
-  options?: EsmShOptions,
-): string {
-  const params: string[] = [];
-
-  if (options?.external?.length) {
-    params.push(`external=${options.external.join(",")}`);
-  }
-
-  params.push(`target=${options?.target ?? "es2022"}`);
-
-  if (options?.deps) {
-    const depsStr = Object.entries(options.deps)
-      .map(([k, v]) => `${k}@${v}`)
-      .join(",");
-    params.push(`deps=${depsStr}`);
-  }
-
-  if (options?.pin) {
-    params.push(`pin=${options.pin}`);
-  }
-
-  const versionStr = version ? `@${version}` : "";
-  const pathStr = subpath ?? "";
-  const queryStr = params.length ? `?${params.join("&")}` : "";
-
-  return `https://esm.sh/${pkg}${versionStr}${pathStr}${queryStr}`;
-}
-
-/**
- * Build React esm.sh URL.
- * Uses deps=csstype for type consistency.
- */
-export function buildReactUrl(
-  pkg: "react" | "react-dom",
-  version: string,
-  subpath?: string,
-  external = false,
-): string {
-  return buildEsmShUrl(pkg, version, subpath, {
-    external: external ? ["react"] : undefined,
-    deps: { csstype: CSSTYPE_VERSION },
-  });
-}
+export const DEFAULT_REACT_VERSION = REACT_DEFAULT_VERSION;
 
 /**
  * Get complete React import map for a specific version.
  */
 export function getReactImportMap(version: string): Record<string, string> {
-  return {
-    react: buildReactUrl("react", version),
-    "react-dom": buildReactUrl("react-dom", version, undefined, true),
-    "react-dom/client": buildReactUrl("react-dom", version, "/client", true),
-    "react-dom/server": buildReactUrl("react-dom", version, "/server", true),
-    "react/jsx-runtime": buildReactUrl("react", version, "/jsx-runtime", true),
-    "react/jsx-dev-runtime": buildReactUrl("react", version, "/jsx-dev-runtime", true),
-    // Prefix match for any react/* subpath imports
-    "react/": buildReactUrl("react", version, "/", true),
-  };
+  return getSharedReactImportMap(version);
 }
 
 /**

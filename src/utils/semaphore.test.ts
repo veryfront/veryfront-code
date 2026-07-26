@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getSemaphore, Semaphore, SemaphoreTimeoutError } from "./semaphore.ts";
+import {
+  createSemaphoreRegistry,
+  getSemaphore,
+  Semaphore,
+  SemaphoreQueueFullError,
+  SemaphoreTimeoutError,
+} from "./semaphore.ts";
 
 describe("Semaphore", () => {
   it("should reject invalid permit counts", () => {
@@ -27,6 +33,12 @@ describe("Semaphore", () => {
     }
 
     new Semaphore(1, { acquireTimeoutMs: 0 });
+  });
+
+  it("rejects invalid queue capacities", () => {
+    for (const maxQueueSize of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new Semaphore(1, { maxQueueSize }), RangeError);
+    }
   });
 
   it("should execute operation and return result", async () => {
@@ -128,6 +140,25 @@ describe("Semaphore", () => {
     resolveBlock?.();
     await blocking;
   });
+
+  it("rejects admission immediately when the bounded wait queue is full", async () => {
+    const sem = new Semaphore(1, { maxQueueSize: 0 });
+    let release: (() => void) | undefined;
+    const blocking = sem.acquire(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    await assertRejects(
+      () => sem.acquire(() => Promise.resolve()),
+      SemaphoreQueueFullError,
+    );
+
+    release?.();
+    await blocking;
+  });
 });
 
 describe("getSemaphore", () => {
@@ -141,5 +172,34 @@ describe("getSemaphore", () => {
     const s1 = getSemaphore("name-a", 5);
     const s2 = getSemaphore("name-b", 5);
     assertEquals(s1 !== s2, true);
+  });
+
+  it("rejects conflicting configuration for an existing name", () => {
+    const registry = createSemaphoreRegistry(2);
+    registry.get("shared", 1, { acquireTimeoutMs: 10 });
+
+    assertThrows(
+      () => registry.get("shared", 2, { acquireTimeoutMs: 10 }),
+      Error,
+      "different configuration",
+    );
+    assertThrows(
+      () => registry.get("shared", 1, { acquireTimeoutMs: 20 }),
+      Error,
+      "different configuration",
+    );
+  });
+
+  it("fails closed when the named registry reaches capacity", () => {
+    const registry = createSemaphoreRegistry(2);
+    registry.get("first", 1);
+    registry.get("second", 1);
+
+    assertThrows(
+      () => registry.get("third", 1),
+      Error,
+      "capacity",
+    );
+    assertEquals(registry.size, 2);
   });
 });

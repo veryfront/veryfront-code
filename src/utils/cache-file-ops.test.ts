@@ -21,6 +21,10 @@ const DIR_STAT: FileInfo = {
   mtime: null,
 };
 
+function filesystemError(message: string, code: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
 function createMockFs(overrides: Partial<FileSystem> = {}): FileSystem {
   return {
     readTextFile: () => Promise.resolve(""),
@@ -101,13 +105,25 @@ describe("cache-file-ops", () => {
       );
     });
 
-    it("returns false when post-write verification fails", async () => {
+    it("returns false when the file disappears before post-write verification", async () => {
       const fs = createMockFs({
-        stat: () => Promise.reject(new Error("file gone")),
+        stat: () => Promise.reject(filesystemError("file gone", "ENOENT")),
       });
 
       const result = await writeCacheFile(fs, "/cache/dir/file.js", "content", "TEST");
       assertEquals(result, false);
+    });
+
+    it("propagates operational post-write verification failures", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("permission denied", "EACCES")),
+      });
+
+      await assertRejects(
+        () => writeCacheFile(fs, "/cache/dir/file.js", "content", "TEST"),
+        Error,
+        "permission denied",
+      );
     });
 
     it("returns false when stat says not a file", async () => {
@@ -132,11 +148,23 @@ describe("cache-file-ops", () => {
 
     it("returns false when file does not exist", async () => {
       const fs = createMockFs({
-        stat: () => Promise.reject(new Error("not found")),
+        stat: () => Promise.reject(filesystemError("not found", "ENOENT")),
       });
 
       const result = await verifyCacheFileExists(fs, "/cache/file.js", "TEST");
       assertEquals(result, false);
+    });
+
+    it("propagates operational existence-check failures", async () => {
+      const fs = createMockFs({
+        stat: () => Promise.reject(filesystemError("permission denied", "EACCES")),
+      });
+
+      await assertRejects(
+        () => verifyCacheFileExists(fs, "/cache/file.js", "TEST"),
+        Error,
+        "permission denied",
+      );
     });
 
     it("returns false when path is a directory", async () => {
@@ -156,9 +184,12 @@ describe("cache-file-ops", () => {
       assertEquals(isCacheWriteRaceError(err), true);
     });
 
-    it("returns true for os error 22 TypeError", () => {
-      const err = new TypeError("os error 22");
-      assertEquals(isCacheWriteRaceError(err), true);
+    it("does not classify generic EINVAL errors or messages as missing paths", () => {
+      assertEquals(
+        isCacheWriteRaceError(filesystemError("invalid argument", "EINVAL")),
+        false,
+      );
+      assertEquals(isCacheWriteRaceError(new TypeError("os error 22")), false);
     });
 
     it("returns false for generic errors", () => {

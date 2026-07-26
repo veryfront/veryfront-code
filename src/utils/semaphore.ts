@@ -37,35 +37,93 @@ interface WaitingTask {
   timeoutId?: ReturnType<typeof setTimeout>;
 }
 
+export interface SemaphoreOptions {
+  acquireTimeoutMs?: number;
+  name?: string;
+  maxQueueSize?: number;
+}
+
+interface NormalizedSemaphoreConfig {
+  maxPermits: number;
+  acquireTimeoutMs: number;
+  maxQueueSize: number;
+}
+
+const DEFAULT_MAX_QUEUE_SIZE = 10_000;
+const DEFAULT_MAX_NAMED_SEMAPHORES = 1_000;
+const MAX_SEMAPHORE_NAME_LENGTH = 256;
+
+function normalizeSemaphoreConfig(
+  maxPermits: number,
+  options: SemaphoreOptions,
+): NormalizedSemaphoreConfig {
+  if (!Number.isSafeInteger(maxPermits) || maxPermits <= 0) {
+    throw new RangeError("Semaphore maxPermits must be a positive safe integer");
+  }
+  const acquireTimeoutMs = options.acquireTimeoutMs ?? 0;
+  if (
+    !Number.isSafeInteger(acquireTimeoutMs) ||
+    acquireTimeoutMs < 0 ||
+    acquireTimeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `Semaphore acquireTimeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+  const maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
+  if (!Number.isSafeInteger(maxQueueSize) || maxQueueSize < 0) {
+    throw new RangeError("Semaphore maxQueueSize must be a non-negative safe integer");
+  }
+  return { maxPermits, acquireTimeoutMs, maxQueueSize };
+}
+
+function validateSemaphoreName(name: string): string {
+  if (
+    typeof name !== "string" ||
+    name.length === 0 ||
+    name.length > MAX_SEMAPHORE_NAME_LENGTH ||
+    /[\p{Cc}]/u.test(name)
+  ) {
+    throw new RangeError(
+      `Semaphore name must contain 1-${MAX_SEMAPHORE_NAME_LENGTH} characters without controls`,
+    );
+  }
+  return name;
+}
+
+/** Raised when bounded semaphore admission has no queue capacity remaining. */
+export class SemaphoreQueueFullError extends VeryfrontError {
+  constructor(name: string, maxQueueSize: number) {
+    super(`Semaphore '${name}' wait queue is full (${maxQueueSize})`, {
+      slug: SEMAPHORE_TIMEOUT.slug,
+      category: SEMAPHORE_TIMEOUT.category,
+      status: SEMAPHORE_TIMEOUT.status,
+      title: SEMAPHORE_TIMEOUT.title,
+      suggestion: SEMAPHORE_TIMEOUT.suggestion,
+      context: { name, maxQueueSize },
+    });
+    this.name = "SemaphoreQueueFullError";
+  }
+}
+
 export class Semaphore {
   private permits: number;
   private readonly maxPermits: number;
   private readonly waiting: WaitingTask[] = [];
   private readonly acquireTimeoutMs: number;
   private readonly semaphoreName: string;
+  private readonly maxQueueSize: number;
 
   constructor(
     maxPermits: number,
-    options: { acquireTimeoutMs?: number; name?: string } = {},
+    options: SemaphoreOptions = {},
   ) {
-    if (!Number.isInteger(maxPermits) || maxPermits <= 0) {
-      throw new RangeError("Semaphore maxPermits must be a positive integer");
-    }
-    const acquireTimeoutMs = options.acquireTimeoutMs ?? 0;
-    if (
-      !Number.isInteger(acquireTimeoutMs) ||
-      acquireTimeoutMs < 0 ||
-      acquireTimeoutMs > MAX_TIMER_DELAY_MS
-    ) {
-      throw new RangeError(
-        `Semaphore acquireTimeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
-      );
-    }
-
-    this.maxPermits = maxPermits;
-    this.permits = maxPermits;
-    this.acquireTimeoutMs = acquireTimeoutMs;
-    this.semaphoreName = options.name ?? "default";
+    const config = normalizeSemaphoreConfig(maxPermits, options);
+    this.maxPermits = config.maxPermits;
+    this.permits = config.maxPermits;
+    this.acquireTimeoutMs = config.acquireTimeoutMs;
+    this.maxQueueSize = config.maxQueueSize;
+    this.semaphoreName = validateSemaphoreName(options.name ?? "default");
   }
 
   /** Acquire permit, execute operation, release automatically */
@@ -82,6 +140,11 @@ export class Semaphore {
     if (this.permits > 0) {
       this.permits--;
       return Promise.resolve();
+    }
+    if (this.waiting.length >= this.maxQueueSize) {
+      return Promise.reject(
+        new SemaphoreQueueFullError(this.semaphoreName, this.maxQueueSize),
+      );
     }
 
     return new Promise<void>((resolve, reject) => {
@@ -121,17 +184,74 @@ export class Semaphore {
   }
 }
 
-const semaphores = new Map<string, Semaphore>();
+interface SemaphoreRegistryEntry {
+  semaphore: Semaphore;
+  config: NormalizedSemaphoreConfig;
+}
+
+export interface SemaphoreRegistry {
+  readonly size: number;
+  get(
+    name: string,
+    maxPermits: number,
+    options?: Omit<SemaphoreOptions, "name">,
+  ): Semaphore;
+  clear(): void;
+}
+
+export function createSemaphoreRegistry(
+  maxSemaphores = DEFAULT_MAX_NAMED_SEMAPHORES,
+): SemaphoreRegistry {
+  if (!Number.isSafeInteger(maxSemaphores) || maxSemaphores <= 0) {
+    throw new RangeError("Semaphore registry capacity must be a positive safe integer");
+  }
+  const entries = new Map<string, SemaphoreRegistryEntry>();
+
+  return {
+    get size() {
+      return entries.size;
+    },
+    get(name, maxPermits, options = {}) {
+      const validatedName = validateSemaphoreName(name);
+      const config = normalizeSemaphoreConfig(maxPermits, options);
+      const existing = entries.get(validatedName);
+      if (existing) {
+        if (
+          existing.config.maxPermits !== config.maxPermits ||
+          existing.config.acquireTimeoutMs !== config.acquireTimeoutMs ||
+          existing.config.maxQueueSize !== config.maxQueueSize
+        ) {
+          throw new Error(
+            `Semaphore '${validatedName}' was requested with different configuration`,
+          );
+        }
+        return existing.semaphore;
+      }
+
+      if (entries.size >= maxSemaphores) {
+        throw new Error(
+          `Semaphore registry capacity of ${maxSemaphores} has been reached`,
+        );
+      }
+      const semaphore = new Semaphore(maxPermits, {
+        ...options,
+        name: validatedName,
+      });
+      entries.set(validatedName, { semaphore, config });
+      return semaphore;
+    },
+    clear() {
+      entries.clear();
+    },
+  };
+}
+
+const defaultRegistry = createSemaphoreRegistry();
 
 export function getSemaphore(
   name: string,
   maxPermits: number,
-  options?: { acquireTimeoutMs?: number },
+  options?: Omit<SemaphoreOptions, "name">,
 ): Semaphore {
-  const existing = semaphores.get(name);
-  if (existing) return existing;
-
-  const sem = new Semaphore(maxPermits, { ...options, name });
-  semaphores.set(name, sem);
-  return sem;
+  return defaultRegistry.get(name, maxPermits, options);
 }

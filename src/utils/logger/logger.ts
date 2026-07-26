@@ -501,10 +501,15 @@ class ConsoleLogger implements Logger {
 
     // Auto-inject trace context from OTel when not already set
     if ((this.options.injectTraceContext ?? true) && traceContextGetter && !entry.traceId) {
-      const traceCtx = traceContextGetter();
-      if (traceCtx.traceId) {
-        entry.traceId = traceCtx.traceId;
-        entry.spanId = traceCtx.spanId;
+      try {
+        const traceCtx = traceContextGetter();
+        if (traceCtx.traceId) {
+          entry.traceId = traceCtx.traceId;
+          entry.spanId = traceCtx.spanId;
+        }
+      } catch {
+        // Observability adapters are optional infrastructure. A failed bridge
+        // must never suppress the application log that would diagnose it.
       }
     }
 
@@ -720,15 +725,15 @@ export function __registerRequestContextGetter(
 }
 
 /**
- * Trace context getter - set by trace-bridge.ts to avoid importing OTel
- * directly in the logger module. Returns the active span's traceId/spanId
- * when OTel is initialized.
+ * Trace context getter registered by the observability layer. Returns the
+ * active span's traceId/spanId when OTel is initialized without making this
+ * low-level logger depend on OpenTelemetry implementation code.
  */
 let traceContextGetter: (() => { traceId?: string; spanId?: string }) | null = null;
 
 /**
  * Register the trace context getter.
- * Called by trace-bridge.ts after OTLP initialization.
+ * Called by the active observability adapter.
  * @internal
  */
 export function __registerTraceContextGetter(

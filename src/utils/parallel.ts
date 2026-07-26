@@ -4,30 +4,38 @@
  * Provides utilities for parallel execution with concurrency control.
  * Uses a semaphore to limit the number of concurrent operations.
  *
- * @module core/utils/parallel
+ * @module utils/parallel
  *******************************/
 
-import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { MAX_TIMER_DELAY_MS } from "./constants/limits.ts";
+import { PermitSemaphore } from "./permit-semaphore.ts";
 
 const DEFAULT_CONCURRENCY = 20;
 const ACQUIRE_TIMEOUT_MS = 30_000;
+const MAX_CONCURRENCY = 10_000;
+const MAX_GLOBAL_WAITERS = 1_000;
 
-// No maxQueueSize — parallelMap schedules all items via Promise.all,
-// so a queue cap would reject items in large batches instead of letting
-// them progress under the concurrency limit with timeout-based backpressure.
-const apiSemaphore = new Semaphore(DEFAULT_CONCURRENCY);
+const apiSemaphore = new PermitSemaphore(DEFAULT_CONCURRENCY, {
+  maxQueueSize: MAX_GLOBAL_WAITERS,
+});
 
-type ParallelOptions = {
+export interface ParallelSemaphore {
+  tryAcquire(timeoutMs?: number): Promise<boolean>;
+  release(): void;
+  readonly available: number;
+  readonly waiting: number;
+  readonly capacity?: number;
+}
+
+export type ParallelOptions = {
   concurrency?: number;
-  semaphore?: Semaphore;
+  semaphore?: ParallelSemaphore;
   timeoutMs?: number;
 };
 
 async function acquireOrThrow(
-  semaphore: Semaphore,
+  semaphore: ParallelSemaphore,
   timeoutMs: number,
   label: string,
 ): Promise<void> {
@@ -40,57 +48,86 @@ async function acquireOrThrow(
   });
 }
 
+function requireConcurrency(concurrency: number | undefined): number | undefined {
+  if (concurrency === undefined) return undefined;
+  if (
+    !Number.isSafeInteger(concurrency) ||
+    concurrency <= 0 ||
+    concurrency > MAX_CONCURRENCY
+  ) {
+    throw new RangeError(
+      `parallelMap concurrency must be an integer between 1 and ${MAX_CONCURRENCY}`,
+    );
+  }
+  return concurrency;
+}
+
+function getWorkerCount(
+  itemCount: number,
+  concurrency: number | undefined,
+  semaphore: ParallelSemaphore,
+): number {
+  const semaphoreCapacity = semaphore.capacity;
+  const requested = concurrency ??
+    (
+      Number.isSafeInteger(semaphoreCapacity) &&
+        semaphoreCapacity !== undefined &&
+        semaphoreCapacity > 0
+        ? semaphoreCapacity
+        : DEFAULT_CONCURRENCY
+    );
+  return Math.min(itemCount, requested, MAX_CONCURRENCY);
+}
+
 /** Run parallel map. */
-export function parallelMap<T, R>(
+export async function parallelMap<T, R>(
   items: T[],
   fn: (item: T, index: number) => Promise<R>,
   options: ParallelOptions = {},
 ): Promise<R[]> {
-  return withSpan(
-    "utils.parallelMap",
-    async () => {
-      if (
-        options.semaphore === undefined &&
-        options.concurrency !== undefined &&
-        (!Number.isInteger(options.concurrency) || options.concurrency <= 0)
-      ) {
-        throw new RangeError("parallelMap concurrency must be a positive integer");
+  const concurrency = requireConcurrency(options.concurrency);
+  const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 0 ||
+    timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `parallelMap timeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+  if (items.length === 0) return [];
+
+  const semaphore = options.semaphore ??
+    (concurrency === undefined ? apiSemaphore : new PermitSemaphore(concurrency));
+  const workerCount = getWorkerCount(items.length, concurrency, semaphore);
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  let failed = false;
+
+  async function worker(): Promise<void> {
+    while (!failed) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+
+      try {
+        await acquireOrThrow(semaphore, timeoutMs, "parallelMap");
+        try {
+          results[index] = await fn(items[index]!, index);
+        } finally {
+          semaphore.release();
+        }
+      } catch (error) {
+        failed = true;
+        throw error;
       }
+    }
+  }
 
-      const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
-      if (
-        !Number.isInteger(timeoutMs) ||
-        timeoutMs < 0 ||
-        timeoutMs > MAX_TIMER_DELAY_MS
-      ) {
-        throw new RangeError(
-          `parallelMap timeoutMs must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
-        );
-      }
-      if (items.length === 0) return [];
-
-      const semaphore = options.semaphore ??
-        (options.concurrency === undefined ? apiSemaphore : new Semaphore(options.concurrency));
-      const results: R[] = new Array(items.length);
-
-      await Promise.all(
-        items.map(async (item, index) => {
-          await acquireOrThrow(semaphore, timeoutMs, "parallelMap");
-          try {
-            results[index] = await fn(item, index);
-          } finally {
-            semaphore.release();
-          }
-        }),
-      );
-
-      return results;
-    },
-    {
-      "parallel.itemCount": items.length,
-      "parallel.timeoutMs": options.timeoutMs ?? ACQUIRE_TIMEOUT_MS,
-    },
+  await Promise.all(
+    Array.from({ length: workerCount }, () => worker()),
   );
+  return results;
 }
 
 export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
