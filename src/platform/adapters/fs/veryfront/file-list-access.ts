@@ -104,6 +104,6 @@ export async function loadAllProjectFiles({
     `getAllFilesRaw (${operationLabel})`,
   );
 
-  cache.set(cacheKey, files);
+  await cache.setAsync(cacheKey, files);
   return files;
 }

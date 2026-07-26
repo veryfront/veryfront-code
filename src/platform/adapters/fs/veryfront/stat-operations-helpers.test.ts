@@ -45,6 +45,7 @@ describe("veryfront/stat-operations-helpers", () => {
     const order = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
     assertEquals(stripKnownExtension("pages/index.tsx", order), "pages/index");
     assertEquals(stripKnownExtension("pages/index.unknown", order), "pages/index.unknown");
+    assertEquals(stripKnownExtension("data/index.json", [".json"]), "data/index");
   });
 
   it("resolves direct and index matches by extension priority", () => {

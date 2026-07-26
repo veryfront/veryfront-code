@@ -33,9 +33,8 @@ export function collectParentDirectories(path: string): string[] {
 }
 
 export function stripKnownExtension(path: string, extensionPriority: readonly string[]): string {
-  const hasExtension = extensionPriority.some((ext) => path.endsWith(ext));
-  if (!hasExtension) return path;
-  return path.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
+  const extension = extensionPriority.find((candidate) => path.endsWith(candidate));
+  return extension === undefined ? path : path.slice(0, -extension.length);
 }
 
 export function resolveByExtensionPriority(
