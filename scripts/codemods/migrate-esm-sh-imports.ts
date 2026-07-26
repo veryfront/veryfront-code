@@ -90,7 +90,7 @@ export interface EsmShReport {
 export interface PackageJsonReadResult {
   data: Record<string, unknown>;
   existingDeps: Record<string, string>;
-  /** Set when the file exists but could not be parsed; the file must not be overwritten. */
+  /** Set when the file exists but could not be read or parsed; the file must not be overwritten. */
   parseError: string | null;
 }
 
@@ -261,7 +261,7 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
     changed: true,
     rewrites,
     pins,
-    needsResolution: [...needsResolution],
+    needsResolution: filterNeedsResolution(needsResolution, pins),
     conflicts,
   };
 }
@@ -305,8 +305,8 @@ export function mergeEsmShPins(
  * Read and parse the project's package.json.
  *
  * Returns `parseError: null` when the file is absent (treat as empty).
- * Returns a non-null `parseError` when the file exists but is corrupt — the
- * caller must NOT overwrite the file in that case.
+ * Returns a non-null `parseError` when the file exists but cannot be read or
+ * parsed — the caller must NOT overwrite the file in that case.
  */
 export async function readProjectPackageJson(path: string): Promise<PackageJsonReadResult> {
   let text: string;

@@ -101,6 +101,18 @@ Deno.test("esm-sh codemod rewrites an unversioned URL to bare and records needs-
   assertEquals(result.needsResolution, ["some-pkg"]);
 });
 
+Deno.test("esm-sh codemod does not request resolution when the same file provides a pin", () => {
+  const source = [
+    'import { a } from "https://esm.sh/some-pkg";',
+    'import { b } from "https://esm.sh/some-pkg@1.2.3/subpath";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assertEquals(result.pins, { "some-pkg": "1.2.3" });
+  assertEquals(result.needsResolution, []);
+});
+
 // ---------------------------------------------------------------------------
 // Scoped package with subpath and query params
 // ---------------------------------------------------------------------------
