@@ -55,13 +55,13 @@ await server.serve(async (req) => {
   port: 3000,
 });
 
-// File watching
-if (adapter.watcher) {
-  const watcher = adapter.watcher.watch("/src");
-  for await (const event of watcher) {
-    console.log(`Files changed: ${event.paths.join(", ")}`);
-  }
+// File watching is part of the filesystem adapter on local runtimes.
+const watcher = adapter.fs.watch("/src");
+for await (const event of watcher) {
+  console.log(`Files changed: ${event.paths.join(", ")}`);
+  if (event.paths.some((path) => path.endsWith("veryfront.config.ts"))) break;
 }
+await watcher.done;
 
 // File cache
 import { createFileCache } from "#veryfront/platform/adapters/fs/cache/index.ts";
@@ -202,9 +202,9 @@ const adapter = new DenoAdapter();
 ### Node.js
 
 ```typescript
-import { NodeAdapter } from "#veryfront/platform/adapters/runtime/node";
+import { NodeAdapter } from "#veryfront/platform/adapters/runtime/node/index.ts";
 
-const adapter = await NodeAdapter.create();
+const adapter = new NodeAdapter();
 // Uses fs, path, http modules
 // Process management
 // Native module support
@@ -213,13 +213,19 @@ const adapter = await NodeAdapter.create();
 ### Bun
 
 ```typescript
-import { BunAdapter } from "#veryfront/platform/adapters/runtime/bun";
+import { BunAdapter } from "#veryfront/platform/adapters/runtime/bun/index.ts";
 
 const adapter = new BunAdapter();
-// Ultra-fast file operations
-// Native transpilation
-// Web API compatibility
+// Bun-native file-content fast paths plus documented node:fs operations
+// Bun.serve HTTP and WebSocket lifecycle integration
+// Native TypeScript, JSX, workers, and HTTP/2 runtime capabilities
 ```
+
+Bun can complete `server.upgrade()` synchronously. Code that sends an initial
+message must send immediately when `socket.readyState === WebSocket.OPEN` and
+otherwise register a one-shot `open` listener. Bun configures WebSocket idle
+timeouts per server, so the portable adapter accepts `idleTimeout: 0` and
+rejects unsupported nonzero per-connection values.
 
 ### Cloudflare Workers
 

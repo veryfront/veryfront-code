@@ -14,17 +14,17 @@ export class BunAdapter implements RuntimeAdapter {
   readonly server = new BunServerAdapter();
   readonly shell = new NodeBasedShellAdapter();
 
-  readonly capabilities: RuntimeCapabilities = {
+  readonly capabilities: RuntimeCapabilities = Object.freeze({
     typescript: true,
     jsx: true,
-    http2: false,
+    http2: true,
     websocket: true,
     workers: true,
     fileWatching: true,
     shell: true,
     kvStore: false,
     writableFs: true,
-  };
+  });
 
   private activeServer: Server | null = null;
   readonly serve = createServeHandler(

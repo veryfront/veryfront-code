@@ -52,7 +52,7 @@ import { runtime } from "veryfront/platform";
 const adapter = await runtime.get();
 
 // Check which runtime
-console.log(adapter.name); // 'deno' | 'node' | 'bun' | 'cloudflare-workers'
+console.log(adapter.name); // 'deno' | 'node' | 'bun' | 'cloudflare'
 
 // Use adapter APIs
 const config = await adapter.fs.readFile("./config.json");
@@ -65,15 +65,12 @@ import { BunAdapter, DenoAdapter, NodeAdapter } from "#veryfront/platform/adapte
 
 // Deno
 const denoAdapter = new DenoAdapter();
-await denoAdapter.initialize();
 
 // Node.js
 const nodeAdapter = new NodeAdapter();
-await nodeAdapter.initialize();
 
 // Bun
 const bunAdapter = new BunAdapter();
-await bunAdapter.initialize();
 ```
 
 ### Filesystem Abstraction
@@ -129,6 +126,7 @@ interface RuntimeAdapter {
     readDir(path: string): AsyncIterable<DirEntry>;
     mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
     remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+    watch(paths: string | string[], options?: WatchOptions): FileWatcher;
   };
 
   // Environment
@@ -143,10 +141,18 @@ interface RuntimeAdapter {
     options: ServeOptions,
   ): Promise<Server>;
 
-  // File watching (optional)
-  watcher?: FileWatcherAdapter;
+  // Runtime-specific WebSocket upgrade transport
+  server: ServerAdapter;
 }
 ```
+
+`FileWatcher.close()` is idempotent. Breaking out of a `for await` loop closes
+the underlying watcher automatically. Callers that mutate files immediately
+after calling `watch()` should await `watcher.ready`; callers that need a
+shutdown barrier should await `watcher.done`. Node.js 18 on platforms without
+native recursive watch uses a managed non-recursive directory tree, while Bun
+uses its documented Node-compatible `node:fs.watch` implementation rather than
+a fictional `Bun.watch` global.
 
 ## Compatibility Layer
 
@@ -351,7 +357,8 @@ const exists = await testFS.exists("/test.txt"); // true
 - Enable caching for remote filesystem operations
 - Batch filesystem reads when possible
 - Use async iterators for directory traversal (memory efficient)
-- Choose the right adapter: local > Bun > Deno > Node for performance
+- Benchmark the target runtime and workload instead of assuming a universal
+  adapter performance order
 
 ## Related Modules
 

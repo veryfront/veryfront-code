@@ -241,6 +241,10 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     let closed = false;
     const eventQueue: FileChangeEvent[] = [];
     let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
 
     const iterator = createWatcherIterator(
       eventQueue,
@@ -254,17 +258,24 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     const cleanup = (): void => {
       if (closed) return;
       closed = true;
+      signal?.removeEventListener("abort", cleanup);
 
       resolver?.({ done: true, value: undefined });
       resolver = null;
     };
 
     const pollLoop = async (): Promise<void> => {
+      if (closed || signal?.aborted) {
+        resolveReady();
+        return;
+      }
       let snapshot = new Map<string, FileSnapshotEntry>();
       try {
         snapshot = await collectFileSnapshot(pathArray, recursive);
       } catch (error) {
         logger.debug("Initial file snapshot failed", { error });
+      } finally {
+        resolveReady();
       }
 
       while (!closed && !signal?.aborted) {
@@ -296,13 +307,15 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       }
     };
 
-    signal?.addEventListener("abort", cleanup, { once: true });
+    if (signal?.aborted) cleanup();
+    else signal?.addEventListener("abort", cleanup, { once: true });
     // Keep the loop promise so callers can await full termination: close()
     // only flips the flag, while an in-flight snapshot (Deno.readDir) keeps
     // running and would otherwise trip test op-sanitizers or delay shutdown.
     const done = pollLoop();
 
     const watcher = createFileWatcher(iterator, cleanup);
+    watcher.ready = ready;
     watcher.done = done;
     return watcher;
   }

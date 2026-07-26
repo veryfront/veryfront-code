@@ -31,6 +31,16 @@ Primary source areas:
   normalization.
 - Security checks for paths and sandbox behavior belong in dedicated security
   modules.
+- A WebSocket upgrade is authorized by the normal request handler before the
+  transport commits it. Node and Bun use an explicit non-DOM upgrade signal;
+  Cloudflare and Deno return their runtime-native upgrade responses.
+- Bun upgrades must use the original `Request` received by `Bun.serve`.
+  `server.upgrade()` may invoke the native open callback synchronously, so
+  consumers inspect `readyState` before waiting for `open`.
+- Bun exposes filesystem watching through its Node-compatible `node:fs` API.
+  Shared Node/Bun watchers own native handles, close on iterator return or
+  abort, expose `ready` as the installation barrier, and expose `done` as the
+  teardown barrier.
 
 ## Change checks
 

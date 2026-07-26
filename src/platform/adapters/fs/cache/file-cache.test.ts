@@ -6,9 +6,8 @@ import {
   initializeFileCacheBackend,
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
-
-type FileCacheModule = typeof import("./file-cache.ts");
+import { type CacheBackend, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { FileCacheBackendCoordinator } from "./backend-coordinator.ts";
 
 function createDistributedBackend(): CacheBackend {
   return {
@@ -17,12 +16,6 @@ function createDistributedBackend(): CacheBackend {
     set: () => Promise.resolve(),
     del: () => Promise.resolve(),
   };
-}
-
-async function importFreshFileCacheModule(label: string): Promise<FileCacheModule> {
-  return await import(
-    new URL(`./file-cache.ts?${label}-${crypto.randomUUID()}`, import.meta.url).href
-  ) as FileCacheModule;
 }
 
 describe("FileCache", () => {
@@ -382,63 +375,49 @@ describe("Distributed cache functions", () => {
     });
 
     it("retries an auto-selected memory backend after the retry interval", async () => {
-      const mutableBackends = CacheBackends as {
-        file: () => Promise<CacheBackend>;
-      };
-      const originalFactory = mutableBackends.file;
-      const originalDateNow = Date.now;
-      let now = originalDateNow();
+      let now = 1_000;
       let calls = 0;
-      Date.now = () => now;
-      mutableBackends.file = () => {
-        calls++;
-        return Promise.resolve(
-          calls === 1 ? new MemoryCacheBackend() : createDistributedBackend(),
-        );
-      };
+      const coordinator = new FileCacheBackendCoordinator({
+        createBackend: () => {
+          calls++;
+          return Promise.resolve(
+            calls === 1 ? new MemoryCacheBackend() : createDistributedBackend(),
+          );
+        },
+        now: () => now,
+        retryMilliseconds: 30_000,
+      });
 
-      try {
-        const fresh = await importFreshFileCacheModule("memory-retry");
-        assertEquals(await fresh.initializeFileCacheBackend(), false);
-        assertEquals(await fresh.initializeFileCacheBackend(), false);
-        assertEquals(calls, 1);
+      assertEquals(await coordinator.initialize(), false);
+      assertEquals(await coordinator.initialize(), false);
+      assertEquals(calls, 1);
 
-        now += 30_001;
-        assertEquals(await fresh.initializeFileCacheBackend(), true);
-        assertEquals(calls, 2);
-      } finally {
-        mutableBackends.file = originalFactory;
-        Date.now = originalDateNow;
-      }
+      now += 30_001;
+      assertEquals(await coordinator.initialize(), true);
+      assertEquals(calls, 2);
     });
 
     it("shares one backend construction across concurrent initialization", async () => {
-      const mutableBackends = CacheBackends as {
-        file: () => Promise<CacheBackend>;
-      };
-      const originalFactory = mutableBackends.file;
       let calls = 0;
       let resolveBackend!: (backend: CacheBackend) => void;
       const pendingBackend = new Promise<CacheBackend>((resolve) => {
         resolveBackend = resolve;
       });
-      mutableBackends.file = () => {
-        calls++;
-        return pendingBackend;
-      };
+      const coordinator = new FileCacheBackendCoordinator({
+        createBackend: () => {
+          calls++;
+          return pendingBackend;
+        },
+        retryMilliseconds: 30_000,
+      });
 
-      try {
-        const fresh = await importFreshFileCacheModule("concurrent-init");
-        const first = fresh.initializeFileCacheBackend();
-        const second = fresh.initializeFileCacheBackend();
-        assertEquals(calls, 1);
+      const first = coordinator.initialize();
+      const second = coordinator.initialize();
+      assertEquals(calls, 1);
 
-        resolveBackend(createDistributedBackend());
-        assertEquals(await Promise.all([first, second]), [true, true]);
-        assertEquals(calls, 1);
-      } finally {
-        mutableBackends.file = originalFactory;
-      }
+      resolveBackend(createDistributedBackend());
+      assertEquals(await Promise.all([first, second]), [true, true]);
+      assertEquals(calls, 1);
     });
   });
 

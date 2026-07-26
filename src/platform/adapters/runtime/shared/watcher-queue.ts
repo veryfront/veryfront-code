@@ -6,6 +6,8 @@ export function createWatcherIterator(
   isClosed: () => boolean,
   isAborted: () => boolean,
 ): AsyncIterator<FileChangeEvent> {
+  let pendingResolve: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
+
   function isDone(): boolean {
     return isClosed() || isAborted();
   }
@@ -18,17 +20,29 @@ export function createWatcherIterator(
 
       const event = eventQueue.shift();
       if (event) return Promise.resolve({ done: false, value: event });
+      if (pendingResolve) {
+        return Promise.reject(
+          new TypeError("FileWatcher does not support concurrent next() calls"),
+        );
+      }
 
       return new Promise((resolve) => {
         if (isDone()) {
           resolve(doneResult);
           return;
         }
-        setResolver(resolve);
+        pendingResolve = resolve;
+        setResolver((result) => {
+          pendingResolve = null;
+          resolve(result);
+        });
       });
     },
 
     return(): Promise<IteratorResult<FileChangeEvent>> {
+      setResolver(null);
+      pendingResolve?.(doneResult);
+      pendingResolve = null;
       return Promise.resolve(doneResult);
     },
   };
@@ -46,18 +60,38 @@ export function enqueueWatchEvent(
     return;
   }
 
-  resolver({ done: false, value: event });
   setResolver(null);
+  resolver({ done: false, value: event });
 }
 
 export function createFileWatcher(
   iterator: AsyncIterator<FileChangeEvent>,
   cleanup: () => void,
 ): FileWatcher {
+  let closed = false;
+  const cleanupOnce = (): void => {
+    if (closed) return;
+    closed = true;
+    cleanup();
+  };
+  const wrappedIterator: AsyncIterator<FileChangeEvent> = {
+    next: () => iterator.next(),
+    async return(value?: unknown): Promise<IteratorResult<FileChangeEvent>> {
+      cleanupOnce();
+      if (iterator.return) return await iterator.return(value);
+      return { done: true, value: undefined };
+    },
+    async throw(error?: unknown): Promise<IteratorResult<FileChangeEvent>> {
+      cleanupOnce();
+      if (iterator.throw) return await iterator.throw(error);
+      throw error;
+    },
+  };
+
   return {
     [Symbol.asyncIterator](): AsyncIterator<FileChangeEvent> {
-      return iterator;
+      return wrappedIterator;
     },
-    close: cleanup,
+    close: cleanupOnce,
   };
 }

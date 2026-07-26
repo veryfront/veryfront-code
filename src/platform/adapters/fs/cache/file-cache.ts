@@ -25,17 +25,9 @@ import {
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { FileCacheBackendCoordinator } from "./backend-coordinator.ts";
 
 const logger = baseLogger.component("file-cache");
-
-// Register with memory profiler
-// Note: entries shows backend size when available, -1 for distributed backends
-registerCache("file-cache", () => ({
-  name: "file-cache",
-  entries: cacheBackend?.size ?? -1,
-  maxEntries: FALLBACK_MAX_ENTRIES,
-  backend: cacheBackend?.type ?? "uninitialized",
-}));
 
 /** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;
@@ -49,72 +41,55 @@ const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
 /** Avoid hot-looping backend construction after a transient startup failure. */
 const BACKEND_INIT_RETRY_MS = 30_000;
 
-// Shared backend state across all FileCache instances
-let cacheBackend: CacheBackend | null = null;
-let backendInitialized = false;
-let backendInitPromise: Promise<void> | null = null;
-let lastBackendInitFailureTime: number | undefined;
+const backendCoordinator = new FileCacheBackendCoordinator({
+  createBackend: () => CacheBackends.file(),
+  retryMilliseconds: BACKEND_INIT_RETRY_MS,
+});
+
+function getDistributedBackend(): CacheBackend | null {
+  return backendCoordinator.backend;
+}
+
+// Register with memory profiler
+// Note: entries shows backend size when available, -1 for distributed backends
+registerCache("file-cache", () => {
+  const backend = getDistributedBackend();
+  return {
+    name: "file-cache",
+    entries: backend?.size ?? -1,
+    maxEntries: FALLBACK_MAX_ENTRIES,
+    backend: backend?.type ?? "uninitialized",
+  };
+});
 
 /**
  * Initialize file cache backend.
  * Call this at startup if you want to enable distributed caching.
  */
 export async function initializeFileCacheBackend(): Promise<boolean> {
-  if (backendInitialized) return cacheBackend !== null && cacheBackend.type !== "memory";
-
-  if (
-    lastBackendInitFailureTime !== undefined &&
-    Date.now() - lastBackendInitFailureTime < BACKEND_INIT_RETRY_MS
-  ) {
-    return false;
+  const enabled = await withSpan(
+    "platform.fs.cache.initializeBackend",
+    () => backendCoordinator.initialize(),
+  );
+  if (enabled) {
+    logger.debug("Backend initialized", {
+      type: getDistributedBackend()?.type,
+    });
+  } else if (backendCoordinator.lastFailureError !== undefined) {
+    logger.warn("Backend init failed; instance-local caches remain active", {
+      error: backendCoordinator.lastFailureError,
+    });
+  } else {
+    logger.debug("Distributed backend unavailable; retry scheduled");
   }
-
-  if (backendInitPromise) {
-    await backendInitPromise;
-    return cacheBackend !== null && cacheBackend.type !== "memory";
-  }
-
-  const initialization = withSpan("platform.fs.cache.initializeBackend", async () => {
-    try {
-      const candidate = await CacheBackends.file();
-      if (candidate.type === "memory") {
-        // The factory's memory result is a safe per-call degradation, not proof
-        // that a distributed backend can never become available. Retain the
-        // instance-local fallback and allow a bounded later retry.
-        cacheBackend = null;
-        backendInitialized = false;
-        lastBackendInitFailureTime = Date.now();
-        logger.debug("Distributed backend unavailable; retry scheduled");
-        return;
-      }
-
-      cacheBackend = candidate;
-      backendInitialized = true;
-      lastBackendInitFailureTime = undefined;
-      logger.debug("Backend initialized", { type: candidate.type });
-    } catch (error) {
-      logger.warn("Backend init failed; instance-local caches remain active", { error });
-      cacheBackend = null;
-      backendInitialized = false;
-      lastBackendInitFailureTime = Date.now();
-    }
-  }) as Promise<void>;
-  backendInitPromise = initialization;
-
-  try {
-    await initialization;
-  } finally {
-    if (backendInitPromise === initialization) backendInitPromise = null;
-  }
-
-  return cacheBackend !== null && cacheBackend.type !== "memory";
+  return enabled;
 }
 
 /**
  * Check if distributed caching is enabled for file cache.
  */
 export function isFileCacheDistributedEnabled(): boolean {
-  return cacheBackend !== null && cacheBackend.type !== "memory";
+  return backendCoordinator.isDistributedEnabled();
 }
 
 /**
@@ -142,13 +117,12 @@ export class FileCache {
     validateOptions(this.options);
     this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
 
-    const mode = cacheBackend?.type ?? "memory";
+    const mode = getDistributedBackend()?.type ?? "memory";
     logger.debug("Initialized", { ...this.options, mode });
   }
 
   private getBackend(): CacheBackend | null {
-    if (!cacheBackend || cacheBackend.type === "memory") return null;
-    return cacheBackend;
+    return getDistributedBackend();
   }
 
   /**
@@ -368,7 +342,7 @@ export class FileCache {
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
     // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    cacheBackend?.delByPattern?.(`${prefix}*`).catch((error) => {
+    getDistributedBackend()?.delByPattern?.(`${prefix}*`).catch((error) => {
       logger.warn("Backend invalidation failed", { prefix, error });
     });
 
@@ -386,8 +360,9 @@ export class FileCache {
 
         // Await backend deletion for cross-pod consistency
         // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-        if (cacheBackend?.delByPattern) {
-          await cacheBackend.delByPattern(`${prefix}*`);
+        const backend = getDistributedBackend();
+        if (backend?.delByPattern) {
+          await backend.delByPattern(`${prefix}*`);
         }
 
         return count;
@@ -402,7 +377,7 @@ export class FileCache {
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
     // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
+    getDistributedBackend()?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
       logger.warn("Backend invalidation failed", { prefix, suffix, error });
     });
 
@@ -420,8 +395,9 @@ export class FileCache {
 
         // Await backend deletion for cross-pod consistency
         // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-        if (cacheBackend?.delByPattern) {
-          await cacheBackend.delByPattern(`${prefix}*:${suffix}`);
+        const backend = getDistributedBackend();
+        if (backend?.delByPattern) {
+          await backend.delByPattern(`${prefix}*:${suffix}`);
         }
 
         return count;
@@ -446,7 +422,7 @@ export class FileCache {
       hits: this.hits,
       misses: this.misses,
       hitRate: total > 0 ? this.hits / total : 0,
-      backend: cacheBackend?.type ?? "uninitialized",
+      backend: getDistributedBackend()?.type ?? "uninitialized",
     };
   }
 

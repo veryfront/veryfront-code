@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isWebSocketUpgradeResponse } from "../../base.ts";
 import { EventEmitter } from "node:events";
@@ -262,7 +267,11 @@ describe("NodeWebSocket EventTarget compatibility", () => {
     };
     let openCalls = 0;
     socket.addEventListener("open", () => openCalls++);
-    socket.send("queued-before-close");
+    assertThrows(
+      () => socket.send("before-open"),
+      DOMException,
+      "not open",
+    );
 
     socket.close(1000, "done");
     socket._attachRealSocket(ws);

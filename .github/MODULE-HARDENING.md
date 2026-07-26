@@ -2697,10 +2697,89 @@ Current-wave verification evidence:
   validation and all 739 documentation links, and every configured source and
   browser entrypoint typecheck.
 
+The Bun and shared-runtime wave is also complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** Bun WebSocket upgrades called
+  a nonexistent global upgrade API, returned a fabricated status-101
+  `Response`, and did not connect the portable socket to Bun's native lifecycle.
+  The source was a placeholder modeled after another runtime rather than
+  `Bun.serve`. The consequence was an adapter that could report success without
+  completing a handshake or carrying data. Upgrades now require the exact
+  active request, use the bound server's native `upgrade()` call, install one
+  typed native WebSocket handler, bridge synchronous open/send/message/error/
+  close transitions, reject duplicate or fabricated commits, and surface
+  dropped sends instead of silently losing data.
+- **Symptom -> Source -> Consequence -> Remedy:** Bun HTTP lifecycle reporting
+  used requested rather than bound addresses, shutdown did not provide one
+  retryable concurrency-safe barrier, abort and listener-failure paths leaked,
+  and WebSockets were not wired into the server. The consequence was false
+  readiness, nondeterministic teardown, and open listener/socket resources.
+  Server creation now validates the actual bound TCP address, supports port
+  zero, installs the native WebSocket bridge, force-closes active work on
+  abort, shares concurrent stop calls while allowing a failed stop to retry,
+  and cleans up when startup callbacks fail.
+- **Symptom -> Source -> Consequence -> Remedy:** the Bun filesystem adapter
+  declared a nonexistent `Bun.watch`, duplicated most of the Node adapter, and
+  left watcher installation, recursive fallback, iterator return, abort, and
+  concurrent reads vulnerable to races or leaked handles. The source was
+  fictional runtime typing plus two drifting implementations. Bun now uses
+  only documented native content fast paths and the shared Node-compatible
+  filesystem implementation; Node 18 recursive fallback manages a
+  symlink-safe directory watcher tree; watcher `ready` and `done` promises
+  define installation and teardown barriers; return, close, and abort are
+  idempotent; and concurrent `next()` fails explicitly instead of orphaning a
+  waiter.
+- **Symptom -> Source -> Consequence -> Remedy:** a deferred WebSocket buffered
+  pre-open sends without a bound and duplicated event semantics in Node and
+  Bun. The consequence was hidden memory growth and cross-runtime drift. One
+  shared deferred transport now implements EventTarget-compatible listeners,
+  close-before-attach behavior, binary normalization, structured transport
+  failures, and the standard invalid-state failure for sends before open.
+- **Symptom -> Source -> Consequence -> Remedy:** file-cache retry tests mutated
+  global factories and clocks and depended on query-string module reloading.
+  Bun either reused the module or separated dependency identity, so the tests
+  could not prove the production concurrency contract. Backend ownership now
+  lives in a factory- and clock-injected coordinator with a bounded retry
+  cooldown, one shared in-flight initialization, runtime backend validation,
+  and deterministic failure state. The same tests execute unchanged on Deno,
+  Node, and Bun.
+- **Symptom -> Source -> Consequence -> Remedy:** Bun source tests could not
+  resolve vendored JSR packages or Deno workspace packages, while the preload
+  duplicated native project-alias resolution and had computed the repository
+  root one directory too high. The consequence was accidental resolution,
+  malformed `file:/` paths in large graphs, and missing first-party extension
+  peers. Test preparation now derives JSR and built workspace links from the
+  authoritative Deno/npm manifests, links the built core peer, and leaves
+  project aliases to Bun's native import-map owner. No application dependency
+  version or runtime YAML behavior is duplicated in the harness.
+
+Current Bun/shared verification evidence:
+
+- The complete Deno Platform suite passes 186 suites and 2,460 nested steps
+  with zero failures.
+- Every supported Node Platform harness shard passes with zero failures.
+- Bun 1.3.14 passes all four Platform shards: 1,629 tests total, 1,628 passed,
+  one intentional Deno-only skip, and zero failures.
+- Native Bun integration covers ephemeral-port HTTP serving, subprotocol
+  negotiation, synchronous WebSocket open, bidirectional frames, forced
+  shutdown, native file reads/writes, and real `node:fs.watch` delivery.
+- The focused file-cache lifecycle contract passes 45 tests independently on
+  Deno, Node, and Bun. Focused watcher, filesystem, HTTP, and WebSocket tests
+  pass 13 suites and 80 nested steps under Deno in addition to the native Bun
+  integrations.
+- Module and dependency boundaries pass. Five obsolete broad-import baseline
+  entries were removed, leaving 70 baselined broad imports and two baselined
+  cyclic edges.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,339
+  configured files, lint across 4,246 configured source files, every style and
+  architecture ratchet, extension contracts, 66 public guides, all 739
+  documentation links, and every configured source and browser entrypoint
+  typecheck.
+
 Platform remains open. The next wave must complete the remaining Node, Deno,
-Bun, shared runtime, hosted-adapter, and residual adapter-documentation review
-before formal closure. Agent remains listed for its own module-level
-revalidation because this checkpoint verified only the execution-policy
-consumer changed by Platform.
+hosted-adapter, and residual adapter-documentation review before formal
+closure. Agent remains listed for its own module-level revalidation because
+this checkpoint verified only the execution-policy consumer changed by
+Platform.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
