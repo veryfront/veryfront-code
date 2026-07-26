@@ -482,6 +482,29 @@ describe("cli/router helpers", () => {
         restoreAll();
       }
     });
+
+    it("reports incompatible remote schedule input as a usage error", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit({
+          _: ["schedule", "run", "process-job-submissions"],
+          remote: true,
+          input: "input.json",
+          json: true,
+        } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "schedule");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+      } finally {
+        restoreAll();
+      }
+    });
   });
 
   describe("command extraction from args", () => {

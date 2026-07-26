@@ -88,7 +88,7 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const projectDir = Deno.cwd();
   if (opts.remote && opts.input) {
     throw new Error(
-      "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
+      "Invalid schedule arguments: remote runs use the source already pushed to Veryfront and do not accept --input.",
     );
   }
   const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
