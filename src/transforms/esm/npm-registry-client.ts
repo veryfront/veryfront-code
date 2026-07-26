@@ -21,6 +21,9 @@ const SEMVER_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
 const EXACT_SEMVER_RE = new RegExp(
   `^\\d+\\.\\d+\\.\\d+(?:-${SEMVER_IDENTIFIER})?(?:\\+${SEMVER_IDENTIFIER})?$`,
 );
+// Avoid one registry request per render during an outage while still recovering
+// automatically after a short, bounded interval.
+const NPM_VERSION_FAILURE_BACKOFF_MS = 60_000;
 
 /**
  * Maximum number of distinct project directories held in the version cache.
@@ -35,6 +38,7 @@ const VERSION_CACHE_MAX_PROJECTS = 256;
 interface CachedEntry {
   version: string | undefined;
   hint: string | undefined;
+  retryAfter: number | undefined;
 }
 
 /** Per-project cache: projectDir -> packageName -> CachedEntry */
@@ -96,7 +100,7 @@ function setCurrentResolution(
     projectCache = new Map();
     versionCache.set(projectDir, projectCache);
   }
-  projectCache.set(packageName, { version, hint });
+  projectCache.set(packageName, { version, hint, retryAfter: undefined });
 }
 
 /**
@@ -110,7 +114,8 @@ function setCurrentResolution(
  *   The result is stored in the cache and onResolved is called when it completes.
  * - Duplicate in-flight fetches for the same package, project, and declaration
  *   are suppressed.
- * - Any failure is silently ignored; the cache stays cold for this call.
+ * - Any failure keeps the version unresolved and suppresses another attempt for
+ *   a bounded retry window.
  *
  * @param packageName - npm package name
  * @param rangeHint   - raw semver string from package.json (may have ^ ~ >= etc.)
@@ -127,8 +132,13 @@ export function scheduleNpmVersionResolution(
   if (
     cached !== undefined &&
     cached.hint === rangeHint &&
-    cached.version !== undefined
-  ) return;
+    (
+      cached.version !== undefined ||
+      (cached.retryAfter !== undefined && cached.retryAfter > Date.now())
+    )
+  ) {
+    return;
+  }
 
   // Exact version from package.json: use it immediately without a network fetch.
   // Only short-circuit when the raw hint is already an exact semver — never strip
@@ -170,10 +180,14 @@ export function scheduleNpmVersionResolution(
   // fully initialized — no temporal dead zone issue.
   const resolution: Promise<void> = fetchLatestNpmVersion(packageName)
     .then((version) => {
-      if (!version) return;
       const current = versionCache.get(projectDir)?.get(packageName);
       if (current === undefined || current.hint !== rangeHint) return;
+      if (!version) {
+        current.retryAfter = Date.now() + NPM_VERSION_FAILURE_BACKOFF_MS;
+        return;
+      }
       current.version = version;
+      current.retryAfter = undefined;
       onResolved?.(version, packageName, projectDir);
     })
     .catch(() => {

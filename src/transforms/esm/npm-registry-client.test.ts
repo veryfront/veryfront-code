@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { FakeTime } from "#std/testing/time";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
   _clearNpmVersionCache,
@@ -274,6 +275,31 @@ describe("scheduleNpmVersionResolution", () => {
         getCachedNpmVersion("nonexistent-pkg", PROJECT_DIR, undefined),
         undefined,
       );
+    });
+
+    it("backs off failed lookups and retries after the negative-cache window", async () => {
+      using time = new FakeTime();
+      let fetchCalls = 0;
+      globalThis.fetch = () => {
+        fetchCalls++;
+        return Promise.resolve(new Response(null, { status: 503 }));
+      };
+
+      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      assertEquals(fetchCalls, 1);
+
+      await time.tickAsync(59_999);
+      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      assertEquals(fetchCalls, 1);
+
+      await time.tickAsync(1);
+      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      assertEquals(fetchCalls, 2);
     });
 
     it("leaves the cache cold when fetch throws a network error", async () => {
