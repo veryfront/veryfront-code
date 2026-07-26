@@ -66,7 +66,7 @@ export class GitHubStatOperations {
 
   private async doBuildIndex(generation: number): Promise<void> {
     const cacheKey = buildGitHubTreeCacheKey(this.client.repoId, this.config.ref);
-    const cached = this.cache.get<GitHubTreeEntry[]>(cacheKey);
+    const cached = await this.cache.getAsync<GitHubTreeEntry[]>(cacheKey);
 
     if (cached) {
       logger.debug(`${LOG_PREFIX} Using cached tree`);
@@ -82,7 +82,8 @@ export class GitHubStatOperations {
     const tree = await this.client.getTree();
     const snapshot = this.createIndexSnapshot(tree.tree);
     this.assertCurrentGeneration(generation);
-    this.cache.set(cacheKey, tree.tree);
+    await this.cache.setAsync(cacheKey, tree.tree);
+    this.assertCurrentGeneration(generation);
     this.commitIndex(snapshot, generation);
 
     logger.debug(`${LOG_PREFIX} Index built`, {
@@ -177,7 +178,7 @@ export class GitHubStatOperations {
       buildGitHubCacheRef(this.config),
       normalizedPath,
     );
-    const cached = this.cache.get<FileInfo>(cacheKey);
+    const cached = await this.cache.getAsync<FileInfo>(cacheKey);
     if (cached) return cached;
 
     const fileEntry = this.fileIndex.get(normalizedPath);
@@ -189,7 +190,7 @@ export class GitHubStatOperations {
         size: fileEntry.size,
         mtime: null,
       };
-      this.cache.set(cacheKey, info);
+      await this.cache.setAsync(cacheKey, info);
       return info;
     }
 
@@ -201,7 +202,7 @@ export class GitHubStatOperations {
         size: 0,
         mtime: null,
       };
-      this.cache.set(cacheKey, info);
+      await this.cache.setAsync(cacheKey, info);
       return info;
     }
 
@@ -240,13 +241,13 @@ export class GitHubStatOperations {
         normalizedPath,
       )
     }:${allowPagesPrefix ? "with-pages" : "without-pages"}`;
-    const cached = this.cache.get<string | null>(cacheKey);
+    const cached = await this.cache.getAsync<string | null>(cacheKey);
     if (cached !== undefined) return cached;
 
     const resolved = this.tryResolve(normalizedPath) ??
       (allowPagesPrefix ? this.tryResolveWithPagesPrefix(normalizedPath) : null);
 
-    this.cache.set(cacheKey, resolved);
+    await this.cache.setAsync(cacheKey, resolved);
     return resolved;
   }
 

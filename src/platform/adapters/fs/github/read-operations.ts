@@ -40,7 +40,7 @@ export class GitHubReadOperations {
       buildGitHubCacheRef(this.config),
       normalizedPath,
     );
-    const cached = this.cache.get<string>(cacheKey);
+    const cached = await this.cache.getAsync<string>(cacheKey);
     if (cached !== undefined) return cached;
 
     logger.debug(`${LOG_PREFIX} Reading file`, { path: normalizedPath });
@@ -50,7 +50,7 @@ export class GitHubReadOperations {
       ? await this.readLargeFile(fileEntry.sha)
       : await this.readContentsFile(normalizedPath);
 
-    this.cache.set(cacheKey, content);
+    await this.cache.setAsync(cacheKey, content);
     return content;
   }
 
@@ -60,7 +60,7 @@ export class GitHubReadOperations {
       buildGitHubCacheRef(this.config),
       normalizedPath,
     );
-    const cached = this.cache.get<Uint8Array>(cacheKey);
+    const cached = await this.cache.getAsync<Uint8Array>(cacheKey);
     if (cached !== undefined) return cached;
 
     logger.debug(`${LOG_PREFIX} Reading file as bytes`, { path: normalizedPath });
@@ -70,7 +70,7 @@ export class GitHubReadOperations {
       ? await this.readLargeFileBytes(fileEntry.sha)
       : await this.readContentsFileBytes(normalizedPath);
 
-    this.cache.set(cacheKey, bytes);
+    await this.cache.setAsync(cacheKey, bytes);
     return bytes;
   }
 
@@ -137,7 +137,7 @@ export class GitHubReadOperations {
 
   private async readLargeFile(sha: string): Promise<string> {
     const blobCacheKey = `github:blob:${sha}`;
-    const cachedBlob = this.cache.get<string>(blobCacheKey);
+    const cachedBlob = await this.cache.getAsync<string>(blobCacheKey);
     if (cachedBlob !== undefined) return cachedBlob;
 
     logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
@@ -145,13 +145,13 @@ export class GitHubReadOperations {
     const blob = await this.client.getBlob(sha);
     const content = blob.encoding === "base64" ? this.decodeBase64(blob.content) : blob.content;
 
-    this.cache.set(blobCacheKey, content);
+    await this.cache.setAsync(blobCacheKey, content);
     return content;
   }
 
   private async readLargeFileBytes(sha: string): Promise<Uint8Array> {
     const blobCacheKey = `github:blob:bytes:${sha}`;
-    const cachedBlob = this.cache.get<Uint8Array>(blobCacheKey);
+    const cachedBlob = await this.cache.getAsync<Uint8Array>(blobCacheKey);
     if (cachedBlob !== undefined) return cachedBlob;
 
     logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
@@ -161,7 +161,7 @@ export class GitHubReadOperations {
       ? this.decodeBase64ToBytes(blob.content)
       : new TextEncoder().encode(blob.content);
 
-    this.cache.set(blobCacheKey, bytes);
+    await this.cache.setAsync(blobCacheKey, bytes);
     return bytes;
   }
 

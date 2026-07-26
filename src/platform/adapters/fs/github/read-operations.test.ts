@@ -30,10 +30,23 @@ describe("GitHubReadOperations", () => {
   }
 
   function createMockCache(overrides: Record<string, unknown> = {}) {
+    const get = (overrides.get as ((key: string) => unknown) | undefined) ??
+      (() => undefined);
+    const set = (overrides.set as
+      | ((key: string, value: unknown) => void)
+      | undefined) ??
+      (() => {});
     return {
-      get: () => undefined,
-      set: () => {},
       ...overrides,
+      get,
+      set,
+      getAsync: overrides.getAsync ??
+        ((key: string) => Promise.resolve(get(key))),
+      setAsync: overrides.setAsync ??
+        ((key: string, value: unknown) => {
+          set(key, value);
+          return Promise.resolve();
+        }),
     };
   }
 

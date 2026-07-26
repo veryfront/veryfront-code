@@ -931,12 +931,18 @@ describe("ReadOperations", () => {
 
       deferred.get("pages/fast.ts")?.resolve("fast ts content");
 
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const settled = await Promise.race([
         readPromise.then((value) => ({ status: "resolved" as const, value })),
-        new Promise<{ status: "pending" }>((resolve) =>
-          setTimeout(() => resolve({ status: "pending" }), 100)
-        ),
-      ]);
+        new Promise<{ status: "pending" }>((resolve) => {
+          timeoutId = setTimeout(
+            () => resolve({ status: "pending" }),
+            100,
+          );
+        }),
+      ]).finally(() => {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      });
 
       assertEquals(settled, { status: "resolved", value: "fast ts content" });
     });
@@ -1452,7 +1458,7 @@ describe("ReadOperations", () => {
       assertEquals(fetchCount, 2);
     });
 
-    it("should evict oldest in-flight request when cap is exceeded", async () => {
+    it("should immediately evict the oldest in-flight request when capped", async () => {
       const fetchCountByPath = new Map<string, number>();
       const client = createMockClient({
         getFileContent: (path: string) => {
@@ -1471,7 +1477,6 @@ describe("ReadOperations", () => {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 25));
-      await new Promise((resolve) => setTimeout(resolve, 1100));
 
       void readOps.readTextFile(oldestPath);
       await new Promise((resolve) => setTimeout(resolve, 25));

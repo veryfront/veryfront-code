@@ -256,7 +256,8 @@ export class ReadOperations {
     });
 
     const fetchStartTime = performance.now();
-    const fetchPromise = (async () => {
+    const fetchIdentity = Symbol(cacheKey);
+    const fetchPromise = Promise.resolve().then(async () => {
       try {
         const result = isPublished
           ? await this.fetchPublishedContent(
@@ -282,11 +283,22 @@ export class ReadOperations {
 
         return result;
       } finally {
-        this.inFlightRequests.delete(cacheKey);
+        this.inFlightRequests.delete(cacheKey, fetchIdentity);
       }
-    })();
+    });
 
-    this.inFlightRequests.set(cacheKey, fetchPromise, Date.now());
+    const evictedCount = this.inFlightRequests.set(
+      cacheKey,
+      fetchPromise,
+      Date.now(),
+      fetchIdentity,
+    );
+    if (evictedCount > 0) {
+      logger.warn("Evicted oldest in-flight requests at capacity", {
+        evictedCount,
+        maxEntries: MAX_IN_FLIGHT_REQUESTS,
+      });
+    }
     return fetchPromise;
   }
 

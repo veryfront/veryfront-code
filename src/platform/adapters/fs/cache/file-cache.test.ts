@@ -261,6 +261,46 @@ describe("FileCache", () => {
       assertEquals(tinyCache.has("key1"), false);
       tinyCache.clear();
     });
+
+    it("skips cyclic values without throwing or bypassing memory limits", async () => {
+      const cyclic: { self?: unknown } = {};
+      cyclic.self = cyclic;
+
+      cache.set("cyclic-sync", cyclic);
+      await cache.setAsync("cyclic-async", cyclic);
+
+      assertEquals(cache.has("cyclic-sync"), false);
+      assertEquals(cache.has("cyclic-async"), false);
+      assertEquals(cache.stats().memoryUsed, 0);
+    });
+
+    it("skips BigInt-containing values without throwing", async () => {
+      const value = { count: 1n };
+
+      cache.set("bigint-sync", value);
+      await cache.setAsync("bigint-async", value);
+
+      assertEquals(cache.has("bigint-sync"), false);
+      assertEquals(cache.has("bigint-async"), false);
+    });
+
+    it("skips top-level values that JSON cannot round-trip", async () => {
+      for (
+        const [key, value] of [
+          ["undefined", undefined],
+          ["bigint", 1n],
+          ["symbol", Symbol("value")],
+          ["function", () => "value"],
+          ["nan", Number.NaN],
+          ["infinity", Number.POSITIVE_INFINITY],
+        ] as const
+      ) {
+        cache.set(`${key}-sync`, value);
+        await cache.setAsync(`${key}-async`, value);
+        assertEquals(cache.has(`${key}-sync`), false);
+        assertEquals(cache.has(`${key}-async`), false);
+      }
+    });
   });
 
   describe("deleteByPrefix with no matches", () => {

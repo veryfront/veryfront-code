@@ -18,6 +18,7 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
+import { decodeCacheEntry, encodeCacheEntry } from "./entry-codec.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
 import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
 import {
@@ -48,6 +49,14 @@ const backendCoordinator = new FileCacheBackendCoordinator({
 
 function getDistributedBackend(): CacheBackend | null {
   return backendCoordinator.backend;
+}
+
+function isUnsupportedCacheValue(value: unknown): boolean {
+  if (typeof value === "number") return !Number.isFinite(value);
+  return value === undefined ||
+    typeof value === "bigint" ||
+    typeof value === "function" ||
+    typeof value === "symbol";
 }
 
 // Register with memory profiler
@@ -179,7 +188,7 @@ export class FileCache {
           // The backend will add its own namespace prefix, so we pass the key as-is
           const raw = await getCachedWithBatching(backend, key);
           if (raw) {
-            const entry = JSON.parse(raw) as CacheEntry<T>;
+            const entry = decodeCacheEntry<T>(raw);
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
             this.hits++;
@@ -203,14 +212,36 @@ export class FileCache {
   set<T>(key: string, value: T): void {
     if (!this.options.enabled) return;
 
+    if (isUnsupportedCacheValue(value)) {
+      logger.warn("Value is not cache-serializable; skipping cache admission", {
+        key,
+        valueType: typeof value,
+      });
+      return;
+    }
     const size = estimateSize(value);
+    if (size === Number.MAX_SAFE_INTEGER) {
+      logger.warn("Value cannot be safely serialized; skipping cache admission", {
+        key,
+      });
+      return;
+    }
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
     // In distributed mode, fire-and-forget to backend
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
     const backend = this.getBackend();
     if (backend) {
-      const serialized = JSON.stringify(entry);
+      let serialized: string;
+      try {
+        serialized = encodeCacheEntry(entry);
+      } catch (error) {
+        logger.warn("Value serialization failed; skipping cache admission", {
+          key,
+          error,
+        });
+        return;
+      }
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(backend, key, serialized);
       backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
@@ -228,7 +259,20 @@ export class FileCache {
   setAsync<T>(key: string, value: T): Promise<void> {
     if (!this.options.enabled) return Promise.resolve();
 
+    if (isUnsupportedCacheValue(value)) {
+      logger.warn("Value is not cache-serializable; skipping cache admission", {
+        key,
+        valueType: typeof value,
+      });
+      return Promise.resolve();
+    }
     const size = estimateSize(value);
+    if (size === Number.MAX_SAFE_INTEGER) {
+      logger.warn("Value cannot be safely serialized; skipping cache admission", {
+        key,
+      });
+      return Promise.resolve();
+    }
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
     // Try backend first
@@ -243,7 +287,7 @@ export class FileCache {
       "platform.fs.cache.setAsync",
       async () => {
         try {
-          const serialized = JSON.stringify(entry);
+          const serialized = encodeCacheEntry(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
           setInRequestCache(backend, key, serialized);
           await backend.set(key, serialized, this.backendTtlSeconds);
