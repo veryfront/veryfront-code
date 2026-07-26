@@ -42,8 +42,8 @@ import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
 import {
   pinSameOriginSSRModuleImports,
+  rewriteMdxRootDependencyImports,
   rewriteProjectAliasImports,
-  transformImports,
   transformJsxImports,
   transformReactToLocalPaths,
 } from "./import-transformer.ts";
@@ -174,11 +174,24 @@ export async function doLoadModuleESM(
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
     };
+    if (!effectiveContext.projectId) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Missing projectId for MDX module cache (projectSlug: ${effectiveContext.projectSlug})`,
+      });
+    }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap START`, { projectSlug });
     const importMap = await loadImportMap(projectDir, adapter);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap DONE`, { projectSlug });
 
-    rewritten = transformImports(rewritten, importMap);
+    rewritten = await rewriteMdxRootDependencyImports(rewritten, importMap, {
+      projectDir,
+      projectId: effectiveContext.projectId,
+      reactVersion: effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    });
     rewritten = await pinSameOriginSSRModuleImports(
       rewritten,
       dependencySnapshot.cacheKey,
@@ -227,13 +240,6 @@ export async function doLoadModuleESM(
     });
     rewritten = await transformReactToLocalPaths(rewritten);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
-
-    if (!effectiveContext.projectId) {
-      throw INVALID_ARGUMENT.create({
-        detail:
-          `Missing projectId for MDX module cache (projectSlug: ${effectiveContext.projectSlug})`,
-      });
-    }
 
     const effectiveReactVersion = effectiveContext.reactVersion ?? REACT_DEFAULT_VERSION;
     const cacheIdentity = await buildMdxModuleCacheIdentity(

@@ -25,6 +25,35 @@ import { rewriteDntImports } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import { appendSameOriginSSRDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  bareStrategy,
+  UnifiedImportRewriter,
+} from "#veryfront/transforms/import-rewriter/index.ts";
+import type { ImportRewriteStrategy } from "#veryfront/transforms/import-rewriter/index.ts";
+import type { DependencyResolutionObservation } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { isNodeBuiltinSpecifier } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
+
+const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
+
+const mdxRootBareDependencyStrategy: ImportRewriteStrategy = {
+  name: "mdx-root-bare-dependency",
+  priority: bareStrategy.priority,
+  matches(specifier, ctx) {
+    const hasNonNpmScheme = URI_SCHEME_PATTERN.test(specifier) &&
+      !specifier.startsWith("npm:");
+    return !hasNonNpmScheme &&
+      !isNodeBuiltinSpecifier(specifier) &&
+      bareStrategy.matches(specifier, ctx);
+  },
+  rewrite(info, ctx) {
+    return bareStrategy.rewrite(info, ctx);
+  },
+};
+
+const mdxRootDependencyRewriter = new UnifiedImportRewriter({
+  strategies: [mdxRootBareDependencyStrategy],
+});
 
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
@@ -80,6 +109,45 @@ function stripReactFromImportMap(importMap: ImportMapConfig): ImportMapConfig {
 export function transformImports(code: string, importMap: ImportMapConfig): string {
   return transformImportsWithMap(code, stripReactFromImportMap(importMap), undefined, {
     resolveBare: true,
+  });
+}
+
+export interface MdxRootDependencyRewriteOptions {
+  projectDir: string;
+  projectId: string;
+  reactVersion: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
+}
+
+/**
+ * Apply the existing MDX import-map behavior first, then pin remaining bare
+ * dependencies with the parser-backed import rewriter. Flag-off code keeps
+ * its pre-pinning identity and React remains owned by the existing MDX path.
+ */
+export async function rewriteMdxRootDependencyImports(
+  code: string,
+  importMap: ImportMapConfig,
+  options: MdxRootDependencyRewriteOptions,
+): Promise<string> {
+  const importMapped = transformImports(code, importMap);
+  if (!options.dependencyPinningCacheKey?.startsWith("on:")) return importMapped;
+
+  return await mdxRootDependencyRewriter.rewrite(importMapped, {
+    filePath: `${options.projectDir}/__veryfront_mdx_root__.mjs`,
+    projectDir: options.projectDir,
+    projectId: options.projectId,
+    target: "browser",
+    dev: false,
+    reactVersion: options.reactVersion,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningSource: options.dependencyPinningSource,
+    onDependencyResolutionObserved: options.onDependencyResolutionObserved,
   });
 }
 
