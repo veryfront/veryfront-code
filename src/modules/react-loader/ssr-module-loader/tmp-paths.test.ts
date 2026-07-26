@@ -62,6 +62,21 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
     );
   });
 
+  it("builds hashed JavaScript paths for compiled framework .src files", () => {
+    const tempPath = buildTempModulePath(
+      "/cache/mdx/v0-1-1154/project/source",
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src",
+      "/project",
+      "0.1.1154",
+      "deadbeefcafebabe",
+    );
+
+    assertEquals(
+      tempPath,
+      "/cache/mdx/v0-1-1154/project/source/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.v0-1-1154.deadbeef.js",
+    );
+  });
+
   it("keeps absolute path structure when file is outside project dir", () => {
     const projectHash = hashCodeHex("my/project");
     const tempPath = buildTempModulePath(
