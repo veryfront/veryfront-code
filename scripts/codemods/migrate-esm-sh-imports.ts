@@ -65,6 +65,7 @@ const EXACT_SEMVER_RE =
 
 // React-family specifiers are managed by the Veryfront import map; leave them alone.
 const REACT_SKIP_PACKAGES = new Set(["react", "react-dom"]);
+const NO_SKIPPED_PACKAGES: ReadonlySet<string> = new Set();
 
 // Directory names skipped during source-file collection.
 const SKIP_DIRS = new Set(["node_modules", ".veryfront", "dist", ".git"]);
@@ -110,11 +111,11 @@ export interface EsmShReport {
   pins: Record<string, string>;
   needsResolution: string[];
   /**
-   * Version conflicts encountered during the run.  These are informational:
-   * the migration completes and existing package.json entries win.  Each
-   * entry carries the source `file` and original `specifier` (URL) so the
-   * operator can locate and review the conflicting import.  Use
-   * `--fail-on-conflict` to exit non-zero when conflicts are present.
+   * Version conflicts encountered during preflight. The default migration
+   * skips every rewrite for a conflicting package and continues with
+   * independent packages. Each entry carries the source `file` and original
+   * `specifier` (URL) so the operator can locate and review the conflict. Use
+   * `--fail-on-conflict` to exit non-zero without writing any files.
    */
   conflicts: Array<{
     pkg: string;
@@ -228,6 +229,7 @@ function processStringLiteral(
   pins: Record<string, string>,
   needsResolution: Set<string>,
   conflicts: Array<{ pkg: string; existing: string; fromVersion: string; specifier: string }>,
+  skippedPackages: ReadonlySet<string>,
 ): boolean {
   const url = literal.value;
   if (!url.startsWith("https://esm.sh/")) return false;
@@ -235,6 +237,7 @@ function processStringLiteral(
   const parsed = parseEsmShUrl(url);
   if (!parsed) return false;
   if (REACT_SKIP_PACKAGES.has(parsed.pkg)) return false;
+  if (skippedPackages.has(parsed.pkg)) return false;
 
   const bare = parsed.pkg + (parsed.subpath ?? "");
 
@@ -272,8 +275,10 @@ function processStringLiteral(
 // Core transform — pure function, no I/O
 // ---------------------------------------------------------------------------
 
-/** Rewrite esm.sh import/export/dynamic-import specifiers in a single source file. */
-export function migrateEsmShImports(source: string): EsmShFileResult {
+function transformEsmShImports(
+  source: string,
+  skippedPackages: ReadonlySet<string>,
+): EsmShFileResult {
   const ast = parse(source, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
@@ -306,7 +311,16 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
         t.isExportAllDeclaration(node)) &&
       node.source
     ) {
-      if (processStringLiteral(node.source, rewrites, pins, needsResolution, conflicts)) {
+      if (
+        processStringLiteral(
+          node.source,
+          rewrites,
+          pins,
+          needsResolution,
+          conflicts,
+          skippedPackages,
+        )
+      ) {
         changed = true;
       }
     } else if (
@@ -322,6 +336,7 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
           pins,
           needsResolution,
           conflicts,
+          skippedPackages,
         )
       ) {
         changed = true;
@@ -352,6 +367,11 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
     needsResolution: filterNeedsResolution(needsResolution, pins),
     conflicts,
   };
+}
+
+/** Rewrite esm.sh import/export/dynamic-import specifiers in a single source file. */
+export function migrateEsmShImports(source: string): EsmShFileResult {
+  return transformEsmShImports(source, NO_SKIPPED_PACKAGES);
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +504,7 @@ export function filterNeedsResolution(
 interface CliOptions {
   projectDir: string;
   dryRun: boolean;
-  /** Exit non-zero when the run completes with any version conflicts. */
+  /** Exit before the write phase when preflight finds any version conflicts. */
   failOnConflict: boolean;
 }
 
@@ -508,10 +528,9 @@ export function parseCliOptions(args: string[]): CliOptions {
           "\n" +
           "Options:\n" +
           "  --dry-run           Report changes without writing any files.\n" +
-          "  --fail-on-conflict  Exit non-zero when version conflicts are detected.\n" +
-          "                      By default conflicts are reported and the run succeeds:\n" +
-          "                      existing package.json entries win and the import is\n" +
-          "                      still rewritten to its bare specifier.",
+          "  --fail-on-conflict  Exit non-zero without writing any files when version\n" +
+          "                      conflicts are detected. By default, conflicting\n" +
+          "                      packages are skipped and independent imports migrate.",
       );
       Deno.exit(0);
     } else if (arg.startsWith("-")) {
@@ -579,10 +598,7 @@ async function main(args: string[]): Promise<void> {
   // Track the first-seen pin for each package across all files, including the
   // source file path and original URL so conflicts carry full location context.
   const allPins = new Map<string, { version: string; file: string; specifier: string }>();
-  const allNeedsResolution = new Set<string>();
-
-  // Defer writes so we only touch the filesystem once.
-  const fileResults: Array<{ file: string; code: string }> = [];
+  const analyzedFiles: Array<{ file: string; source: string; result: EsmShFileResult }> = [];
 
   for (const file of sourceFiles) {
     const source = await Deno.readTextFile(file);
@@ -597,13 +613,8 @@ async function main(args: string[]): Promise<void> {
     }
     if (!result.changed) continue;
 
-    fileResults.push({ file, code: result.code });
-    report.filesChanged++;
-    for (const rw of result.rewrites) {
-      report.rewrites.push({ file, from: rw.from, to: rw.to });
-    }
-    // Intra-file version conflicts (same package, two different versions in one
-    // file).  Existing package.json entries win; these are informational.
+    analyzedFiles.push({ file, source, result });
+    // Collect every conflict before deciding which transformations are safe.
     for (const c of result.conflicts) {
       report.conflicts.push({ ...c, file });
     }
@@ -628,10 +639,6 @@ async function main(args: string[]): Promise<void> {
         allPins.set(pkg, { version, file, specifier });
       }
     }
-
-    for (const pkg of result.needsResolution) {
-      allNeedsResolution.add(pkg);
-    }
   }
 
   // Read existing package.json.  A corrupt file must not be overwritten.
@@ -642,10 +649,10 @@ async function main(args: string[]): Promise<void> {
     parseError: pkgJsonParseError,
   } = await readProjectPackageJson(pkgJsonPath);
 
-  const newPinsRecord = Object.fromEntries(
+  const candidatePins = Object.fromEntries(
     [...allPins.entries()].map(([pkg, { version }]) => [pkg, version]),
   );
-  const { updatedDeps, conflicts: pinConflicts } = mergeEsmShPins(existingDeps, newPinsRecord);
+  const { conflicts: pinConflicts } = mergeEsmShPins(existingDeps, candidatePins);
   // Enrich package.json merge conflicts with file + specifier from the allPins
   // tracker (the source file that introduced the URL-derived version).
   for (const c of pinConflicts) {
@@ -656,10 +663,7 @@ async function main(args: string[]): Promise<void> {
       specifier: meta?.specifier ?? `${c.pkg}@${c.fromVersion}`,
     });
   }
-  report.pins = newPinsRecord;
-  // Packages that appear as unversioned in some files but versioned in others
-  // are resolved by the pin; exclude them from needsResolution.
-  report.needsResolution = filterNeedsResolution(allNeedsResolution, newPinsRecord);
+  report.pins = candidatePins;
 
   if (pkgJsonParseError) {
     // Abort without touching any source files: rewriting sources without
@@ -672,6 +676,49 @@ async function main(args: string[]): Promise<void> {
     report.rewrites = [];
     console.log(JSON.stringify(report, null, 2));
     throw new Error(pkgJsonParseError);
+  }
+
+  // A package with any version disagreement is unsafe to collapse to a single
+  // bare specifier. Skip it everywhere in the project, including unversioned
+  // imports, while allowing independent packages to migrate.
+  const conflictedPackages = new Set(report.conflicts.map(({ pkg }) => pkg));
+  const safePins = Object.fromEntries(
+    Object.entries(candidatePins).filter(([pkg]) => !conflictedPackages.has(pkg)),
+  );
+  const { updatedDeps } = mergeEsmShPins(existingDeps, safePins);
+  report.pins = safePins;
+
+  const allNeedsResolution = new Set<string>();
+  // Defer every write until analysis, manifest validation, conflict filtering,
+  // and strict-mode gating have completed.
+  const fileResults: Array<{ file: string; code: string }> = [];
+  for (const { file, source, result: analyzedResult } of analyzedFiles) {
+    const result = conflictedPackages.size === 0
+      ? analyzedResult
+      : transformEsmShImports(source, conflictedPackages);
+    if (!result.changed) continue;
+
+    fileResults.push({ file, code: result.code });
+    report.filesChanged++;
+    for (const rw of result.rewrites) {
+      report.rewrites.push({ file, from: rw.from, to: rw.to });
+    }
+    for (const pkg of result.needsResolution) {
+      allNeedsResolution.add(pkg);
+    }
+  }
+  // Packages that appear as unversioned in some files but versioned in others
+  // are resolved by the pin; exclude them from needsResolution.
+  report.needsResolution = filterNeedsResolution(allNeedsResolution, safePins);
+
+  if (failOnConflict && report.conflicts.length > 0) {
+    console.log(JSON.stringify(report, null, 2));
+    const n = report.conflicts.length;
+    throw new Error(
+      `${n} version conflict${
+        n === 1 ? "" : "s"
+      } detected. No files were written. Review the conflicts field in the report above.`,
+    );
   }
 
   if (!dryRun) {
@@ -688,17 +735,6 @@ async function main(args: string[]): Promise<void> {
   }
 
   console.log(JSON.stringify(report, null, 2));
-
-  // --fail-on-conflict: opt-in strict mode.  Files have already been written;
-  // this only affects the exit code for callers that want to gate on conflicts.
-  if (failOnConflict && report.conflicts.length > 0) {
-    const n = report.conflicts.length;
-    throw new Error(
-      `${n} version conflict${
-        n === 1 ? "" : "s"
-      } detected. Review the conflicts field in the report above.`,
-    );
-  }
 }
 
 /** Export for integration testing. */
