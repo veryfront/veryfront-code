@@ -354,13 +354,13 @@ function ChatActionsRoot({
 ChatActionsRoot.displayName = "ChatActions.Root";
 
 /** Props for `ChatActions.Trigger` — the menu's trigger button. */
-export interface ChatActionsTriggerProps {
+export interface ChatActionsTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   /**
    * Custom trigger element, rendered via `asChild`. Defaults to the `+` Button.
    * (Back-compat: `ChatActions`'s `trigger` prop maps here.)
    */
   children?: React.ReactNode;
-  className?: string;
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /**
@@ -369,10 +369,10 @@ export interface ChatActionsTriggerProps {
  * focusable element. `className` merges onto the default `+` Button.
  */
 function ChatActionsTrigger(
-  { children, className }: ChatActionsTriggerProps,
+  { children, className, ref, ...props }: ChatActionsTriggerProps,
 ): React.ReactElement {
   return (
-    <DropdownMenuTrigger asChild>
+    <DropdownMenuTrigger asChild ref={ref} {...props}>
       {children ?? (
         <Button
           type="button"
@@ -395,6 +395,7 @@ export interface ChatActionsContentProps {
   /** Horizontal alignment relative to the trigger. @default "start" */
   align?: "start" | "end";
   className?: string;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -402,10 +403,10 @@ export interface ChatActionsContentProps {
  * children (or your own rows). `className` merges onto the menu surface.
  */
 function ChatActionsContent(
-  { children, align = "start", className }: ChatActionsContentProps,
+  { children, align = "start", className, ref }: ChatActionsContentProps,
 ): React.ReactElement {
   return (
-    <DropdownMenuContent align={align} className={className}>
+    <DropdownMenuContent align={align} className={className} ref={ref}>
       {children}
     </DropdownMenuContent>
   );
@@ -423,6 +424,7 @@ export interface ChatActionsItemProps {
   title?: string;
   disabled?: boolean;
   className?: string;
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /**
@@ -430,7 +432,7 @@ export interface ChatActionsItemProps {
  * closes the menu on select). `className` merges onto the row.
  */
 function ChatActionsItem(
-  { children, icon, onSelect, title, disabled, className }: ChatActionsItemProps,
+  { children, icon, onSelect, title, disabled, className, ref }: ChatActionsItemProps,
 ): React.ReactElement {
   return (
     <DropdownMenuItem
@@ -438,6 +440,7 @@ function ChatActionsItem(
       title={title}
       disabled={disabled}
       className={className}
+      ref={ref}
     >
       {icon}
       {children}

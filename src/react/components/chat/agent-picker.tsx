@@ -170,11 +170,12 @@ export interface AgentPickerTriggerProps {
   /** Override the trigger contents; defaults to the selected agent's row. */
   children?: React.ReactNode;
   className?: string;
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The pill (or input-style) combobox trigger. Toggles the popover. */
 function AgentPickerTrigger(
-  { inputStyle = false, invalid = false, icon, children, className }: AgentPickerTriggerProps,
+  { inputStyle = false, invalid = false, icon, children, className, ref }: AgentPickerTriggerProps,
 ): React.ReactElement {
   const { value } = useAgentPicker();
   const sections = React.useContext(AgentDataContext);
@@ -219,7 +220,7 @@ function AgentPickerTrigger(
       </Pill>
     );
 
-  return <PopoverTrigger asChild>{trigger}</PopoverTrigger>;
+  return <PopoverTrigger asChild ref={ref}>{trigger}</PopoverTrigger>;
 }
 AgentPickerTrigger.displayName = "AgentPicker.Trigger";
 
@@ -228,6 +229,7 @@ export interface AgentPickerSearchProps {
   /** Search input placeholder. */
   placeholder?: string;
   className?: string;
+  ref?: React.Ref<HTMLInputElement>;
 }
 
 /**
@@ -238,26 +240,27 @@ export interface AgentPickerSearchProps {
  * its default (search-gated) anatomy.
  */
 function AgentPickerSearch(
-  { placeholder = "Search agents...", className }: AgentPickerSearchProps,
+  { placeholder = "Search agents...", className, ref }: AgentPickerSearchProps,
 ): React.ReactElement {
-  return <CommandInput placeholder={placeholder} className={className} />;
+  return <CommandInput placeholder={placeholder} className={className} ref={ref} />;
 }
 AgentPickerSearch.displayName = "AgentPicker.Search";
 
 /** Props for `AgentPicker.Content` — the popover surface + `Command` shell. */
-export interface AgentPickerContentProps {
-  children?: React.ReactNode;
-  className?: string;
+export interface AgentPickerContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** The popover surface wrapping a `Command` (search + list region). */
 function AgentPickerContent(
-  { children, className }: AgentPickerContentProps,
+  { children, className, ref, ...props }: AgentPickerContentProps,
 ): React.ReactElement {
   return (
     <PopoverContent
       align="start"
       className={cn("min-w-[280px] p-0! rounded-lg", className)}
+      ref={ref}
+      {...props}
     >
       <Command className="bg-transparent">
         {children}
@@ -269,10 +272,12 @@ AgentPickerContent.displayName = "AgentPicker.Content";
 
 /** The scrollable `Command` list region. */
 function AgentPickerList(
-  { children, className }: { children?: React.ReactNode; className?: string },
+  { children, className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.ReactElement {
   return (
-    <CommandList className={cn("max-h-[320px]", className)}>
+    <CommandList className={cn("max-h-[320px]", className)} ref={ref} {...props}>
       {children}
     </CommandList>
   );
@@ -288,11 +293,12 @@ export interface AgentPickerItemProps {
   /** Override the selection-check glyph. */
   icon?: React.ReactNode;
   className?: string;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** A single agent row (Avatar + name + selection check). */
 function AgentPickerItem(
-  { agent, selected, icon, className }: AgentPickerItemProps,
+  { agent, selected, icon, className, ref }: AgentPickerItemProps,
 ): React.ReactElement {
   const { value, onSelect } = useAgentPicker();
   const isSelected = selected ?? agent.id === value;
@@ -302,6 +308,7 @@ function AgentPickerItem(
       disabled={agent.disabled}
       onSelect={() => onSelect(agent.id)}
       className={className}
+      ref={ref}
     >
       <Avatar
         name={agent.name}
