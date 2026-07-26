@@ -21,10 +21,6 @@ const SEMVER_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
 const EXACT_SEMVER_RE = new RegExp(
   `^\\d+\\.\\d+\\.\\d+(?:-${SEMVER_IDENTIFIER})?(?:\\+${SEMVER_IDENTIFIER})?$`,
 );
-// Avoid one registry request per render during an outage while still recovering
-// automatically after a short, bounded interval.
-const NPM_VERSION_FAILURE_BACKOFF_MS = 60_000;
-
 /**
  * Maximum number of distinct project directories held in the version cache.
  * When exceeded, the oldest entry is evicted (Maps preserve insertion order).
@@ -32,17 +28,36 @@ const NPM_VERSION_FAILURE_BACKOFF_MS = 60_000;
  */
 const VERSION_CACHE_MAX_PROJECTS = 256;
 
+/** Base backoff TTL (ms) after a registry lookup failure. Exported for tests. */
+export const NEGATIVE_CACHE_BASE_TTL_MS = 60_000;
+
+/** Maximum backoff TTL (ms) after repeated failures. Exported for tests. */
+export const NEGATIVE_CACHE_MAX_TTL_MS = 600_000;
+
 /** Resolved version paired with the range hint that produced it.
  * Storing the hint lets scheduleNpmVersionResolution detect when
  * package.json changes (e.g. "^1" → "^2") and re-resolve accordingly. */
 interface CachedEntry {
   version: string | undefined;
   hint: string | undefined;
-  retryAfter: number | undefined;
+}
+
+/** Records the timestamp and consecutive failure count for a package+hint pair.
+ * Used to implement exponential backoff so a persistently unresolvable package
+ * (typo, private, network-restricted) does not continuously allocate timers. */
+interface NegativeEntry {
+  failedAt: number;
+  count: number;
 }
 
 /** Per-project cache: projectDir -> packageName -> CachedEntry */
 const versionCache = new Map<string, Map<string, CachedEntry>>();
+
+/**
+ * Per-project negative cache: projectDir -> `${packageName}\0${hint}` -> NegativeEntry.
+ * Bounded by VERSION_CACHE_MAX_PROJECTS and cleared alongside versionCache.
+ */
+const negativeCache = new Map<string, Map<string, NegativeEntry>>();
 
 /** Deduplicates concurrent fetches for the same package, project, and declaration. */
 const pendingFetches = new Set<string>();
@@ -54,8 +69,46 @@ const pendingFetches = new Set<string>();
  */
 const pendingResolutionPromises = new Set<Promise<void>>();
 
+/**
+ * Overridable clock for tests. Wraps Date.now so FakeTime can intercept it.
+ * Replace with a synthetic function via _setClockForTest; restore in afterEach.
+ */
+let _nowFn: () => number = () => Date.now();
+
+/** Override the clock used by the negative-cache backoff. For tests only. */
+export function _setClockForTest(fn: () => number): void {
+  _nowFn = fn;
+}
+
 function pendingKey(projectDir: string, packageName: string, hint: string | undefined): string {
   return `${projectDir}\0${packageName}\0${hint ?? ""}`;
+}
+
+function negativeKey(packageName: string, hint: string | undefined): string {
+  return `${packageName}\0${hint ?? ""}`;
+}
+
+/** Exponential backoff: base * 2^(count-1), capped at NEGATIVE_CACHE_MAX_TTL_MS. */
+function computeCooldownMs(count: number): number {
+  return Math.min(
+    NEGATIVE_CACHE_BASE_TTL_MS * Math.pow(2, count - 1),
+    NEGATIVE_CACHE_MAX_TTL_MS,
+  );
+}
+
+/** Record a fetch failure for (projectDir, negKey) and update the backoff window. */
+function recordNegativeEntry(projectDir: string, negKey: string): void {
+  let projectNeg = negativeCache.get(projectDir);
+  if (!projectNeg) {
+    if (negativeCache.size >= VERSION_CACHE_MAX_PROJECTS) {
+      const oldest = negativeCache.keys().next().value;
+      if (oldest !== undefined) negativeCache.delete(oldest);
+    }
+    projectNeg = new Map();
+    negativeCache.set(projectDir, projectNeg);
+  }
+  const prev = projectNeg.get(negKey);
+  projectNeg.set(negKey, { failedAt: _nowFn(), count: (prev?.count ?? 0) + 1 });
 }
 
 /** True when the string is a bare three-part semver version (no range prefix). */
@@ -100,7 +153,7 @@ function setCurrentResolution(
     projectCache = new Map();
     versionCache.set(projectDir, projectCache);
   }
-  projectCache.set(packageName, { version, hint, retryAfter: undefined });
+  projectCache.set(packageName, { version, hint });
 }
 
 /**
@@ -129,14 +182,7 @@ export function scheduleNpmVersionResolution(
   onResolved?: (version: string, packageName: string, projectDir: string) => void,
 ): void {
   const cached = versionCache.get(projectDir)?.get(packageName);
-  if (
-    cached !== undefined &&
-    cached.hint === rangeHint &&
-    (
-      cached.version !== undefined ||
-      (cached.retryAfter !== undefined && cached.retryAfter > Date.now())
-    )
-  ) {
+  if (cached !== undefined && cached.hint === rangeHint && cached.version !== undefined) {
     return;
   }
 
@@ -173,6 +219,15 @@ export function scheduleNpmVersionResolution(
   const key = pendingKey(projectDir, packageName, rangeHint);
   if (pendingFetches.has(key)) return;
 
+  // Negative cache: skip re-fetching while within the exponential backoff window.
+  // Once the window expires the next call proceeds normally; a success clears the
+  // entry so the backoff counter resets. The package is never permanently blocked.
+  const negKey = negativeKey(packageName, rangeHint);
+  const negEntry = negativeCache.get(projectDir)?.get(negKey);
+  if (negEntry !== undefined && _nowFn() - negEntry.failedAt < computeCooldownMs(negEntry.count)) {
+    return;
+  }
+
   pendingFetches.add(key);
 
   // The finally closure captures `resolution` by reference. By the time it
@@ -182,16 +237,17 @@ export function scheduleNpmVersionResolution(
     .then((version) => {
       const current = versionCache.get(projectDir)?.get(packageName);
       if (current === undefined || current.hint !== rangeHint) return;
-      if (!version) {
-        current.retryAfter = Date.now() + NPM_VERSION_FAILURE_BACKOFF_MS;
-        return;
+      if (version) {
+        current.version = version;
+        onResolved?.(version, packageName, projectDir);
+        // Clear any stale negative entry — package is resolving successfully again.
+        negativeCache.get(projectDir)?.delete(negKey);
+      } else {
+        recordNegativeEntry(projectDir, negKey);
       }
-      current.version = version;
-      current.retryAfter = undefined;
-      onResolved?.(version, packageName, projectDir);
     })
     .catch(() => {
-      // Silently ignored — unversioned fallback remains in effect.
+      recordNegativeEntry(projectDir, negKey);
     })
     .finally(() => {
       pendingFetches.delete(key);
@@ -314,6 +370,20 @@ export async function postDependencyResolution(
  */
 export function _clearNpmVersionCache(): void {
   versionCache.clear();
+  negativeCache.clear();
+  _nowFn = () => Date.now();
+}
+
+/**
+ * True when a negative-cache entry exists for the given package+hint.
+ * For use in tests only — verifies that failure is recorded / cleared.
+ */
+export function _hasNegativeCacheEntry(
+  projectDir: string,
+  packageName: string,
+  rangeHint: string | undefined,
+): boolean {
+  return negativeCache.get(projectDir)?.has(negativeKey(packageName, rangeHint)) ?? false;
 }
 
 /**

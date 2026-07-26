@@ -6,10 +6,13 @@ import { FakeTime } from "#std/testing/time";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
   _clearNpmVersionCache,
+  _hasNegativeCacheEntry,
   _pendingResolutions,
+  _setClockForTest,
   getCachedNpmVersion,
   isDependencyPinningEnabled,
   isExactSemver,
+  NEGATIVE_CACHE_BASE_TTL_MS,
   scheduleNpmVersionResolution,
 } from "./npm-registry-client.ts";
 
@@ -359,6 +362,54 @@ describe("scheduleNpmVersionResolution", () => {
         undefined,
       );
       assertEquals(resolvedVersions, []);
+    });
+
+    it("clears the negative entry after a successful resolution", async () => {
+      let now = 0;
+      _setClockForTest(() => now);
+
+      // First attempt fails — negative entry should be recorded.
+      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+      scheduleNpmVersionResolution("recovering-pkg", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "recovering-pkg", undefined), true);
+
+      // Advance past the backoff window so the next call actually fetches.
+      now = NEGATIVE_CACHE_BASE_TTL_MS;
+
+      // Second attempt succeeds — negative entry should be cleared.
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "2.0.0" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      scheduleNpmVersionResolution("recovering-pkg", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+
+      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "recovering-pkg", undefined), false);
+      assertStrictEquals(getCachedNpmVersion("recovering-pkg", PROJECT_DIR, undefined), "2.0.0");
+    });
+
+    it("_clearNpmVersionCache clears negative entries and allows an immediate retry", async () => {
+      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+      scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "some-pkg", undefined), true);
+
+      _clearNpmVersionCache();
+      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "some-pkg", undefined), false);
+
+      // After clearing, the next call should schedule a fresh fetch (no backoff).
+      let fetchCalls = 0;
+      globalThis.fetch = () => {
+        fetchCalls++;
+        return Promise.resolve(new Response(null, { status: 503 }));
+      };
+      scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+      assertEquals(fetchCalls, 1);
     });
   });
 });
