@@ -1772,11 +1772,13 @@ const METHOD_DESCRIPTIONS: Record<
       },
     },
     executeCommand: {
-      desc: "Execute a command and return buffered stdout/stderr + exit code.",
+      desc:
+        "Execute a bash command in the sandbox and return buffered stdout/stderr plus the exit code.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     executeStream: {
-      desc: "Execute a command and stream output events as they arrive.",
+      desc:
+        "Execute a bash command and stream newline-delimited JSON (NDJSON) output events as they arrive.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     readFile: {
