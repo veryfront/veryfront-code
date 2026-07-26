@@ -10,12 +10,13 @@ import {
 } from "#veryfront/extensions/observability/index.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
 } from "#veryfront/skill/tools.ts";
-import { agentRegistry } from "../composition/index.ts";
+import { agentRegistryInternal } from "../composition/composition.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
   getDiscoveredHostTools,
@@ -43,8 +44,8 @@ async function withTempDir(
   } finally {
     await stopEsbuild();
     Deno.removeSync(dir, { recursive: true });
-    agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    agentRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
     unregister(SandboxShellToolsProviderName);
   }
 }
@@ -261,9 +262,9 @@ Deno.test("cloud provider bootstrap preserves a provider registered by default c
 
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
   try {
-    toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-    toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+    toolRegistryInternal.registerShared(
       "shared_echo",
       tool({
         id: "shared_echo",
@@ -279,7 +280,7 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
     assertEquals("load_skill_reference" in tools, false);
     assertEquals("execute_skill_script" in tools, false);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

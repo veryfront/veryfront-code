@@ -41,9 +41,10 @@ consumer's own `@types/react`. This gate is the regression guard.
   `<Chat>`, the `<Chat.Root>` compound, `Message`, `ChatSidebar`, via
   `veryfront/chat`.
 - [`fixtures/mcp-primitives.ts`](./fixtures/mcp-primitives.ts) — prompt
-  generators, resource schemas, and their emitted callback contracts via
+  generators, resource schemas, package-facing registry capabilities, and
+  their emitted callback contracts via
   `veryfront/mcp`, `veryfront/prompt`, `veryfront/resource`, and
-  `veryfront/schemas`.
+  the related primitive entry points.
 
 Add a fixture whenever a new public compound ships; keep them importing the
 published specifiers (not relative `src` paths) so they exercise the real

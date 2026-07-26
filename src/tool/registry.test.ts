@@ -3,14 +3,14 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
-import { toolRegistry, toolToProviderDefinition } from "./registry.ts";
+import { toolRegistry, toolRegistryInternal, toolToProviderDefinition } from "./registry.ts";
 import type { Tool } from "./types.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 describe("tool registry", () => {
   afterEach(() => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("should prefer pre-converted schemas for provider definitions", () => {
@@ -169,7 +169,7 @@ describe("tool registry", () => {
         execute: async () => null,
       });
 
-      toolRegistry.registerShared("shadowed-tool", sharedTool);
+      toolRegistryInternal.registerShared("shadowed-tool", sharedTool);
       // Project-scoped registration with a different definition must NOT
       // conflict with the shared entry — projects shadow shared tools.
       toolRegistry.register("shadowed-tool", projectTool);
@@ -186,7 +186,11 @@ describe("tool registry", () => {
       });
 
       assertThrows(
-        () => toolRegistry.registerShared(localIntegrationShadow.id, localIntegrationShadow),
+        () =>
+          toolRegistryInternal.registerShared(
+            localIntegrationShadow.id,
+            localIntegrationShadow,
+          ),
         VeryfrontError,
         "reserved integration tool namespace",
       );

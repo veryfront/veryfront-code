@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { getAllSkills, getSkill, registerSkill, skillRegistry } from "./registry.ts";
+import {
+  getAllSkills,
+  getSkill,
+  registerSkill,
+  skillRegistry,
+  skillRegistryInternal,
+} from "./registry.ts";
 import type { Skill } from "./types.ts";
 
 function createTestSkill(id: string): Skill {
@@ -14,7 +20,7 @@ function createTestSkill(id: string): Skill {
 
 describe("src/skill/registry", () => {
   beforeEach(() => {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   describe("registerSkill / getSkill", () => {

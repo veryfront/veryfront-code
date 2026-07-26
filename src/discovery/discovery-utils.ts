@@ -1,7 +1,7 @@
 /**
  * Discovery Utilities
  *
- * Helper functions for ID generation, path manipulation, and agent tracking.
+ * Helper functions for ID generation and path manipulation.
  */
 
 import { fromFileUrl } from "#veryfront/compat/path";
@@ -14,9 +14,50 @@ export function filenameToId(filePath: string): string {
     .split("/")
     .pop()
     ?.replace(/\.(ts|tsx|js|jsx)$/, "") ?? "";
-  return filename
+  return discoveryPathSegmentToId(filename);
+}
+
+function discoveryPathSegmentToId(segment: string): string {
+  return segment
     .replace(/[-_](.)/g, (_, char) => char.toUpperCase())
     .replace(/^[A-Z]/, (char) => char.toLowerCase());
+}
+
+/** Return a safe discovery path relative to its configured root. */
+export function getRelativeDiscoveryPath(filePath: string, baseDir: string): string {
+  const cleanPath = normalizeDiscoveryPath(filePath);
+  const normalizedBaseDir = normalizeDiscoveryPath(baseDir).replace(/\/+$/, "");
+  const relativePath = cleanPath.startsWith(`${normalizedBaseDir}/`)
+    ? cleanPath.slice(normalizedBaseDir.length + 1)
+    : undefined;
+
+  if (relativePath === undefined) {
+    throw new Error(
+      `Discovery file "${filePath}" is outside discovery directory "${baseDir}"`,
+    );
+  }
+
+  assertSafeRelativeDiscoveryPath(relativePath, filePath);
+  return relativePath;
+}
+
+/**
+ * Convert a discovery file path to a stable ID relative to its configured root.
+ *
+ * Nested path segments are retained to prevent same-basename files from
+ * colliding. Directory index modules use their directory as the ID, while a
+ * root index module remains `index`.
+ */
+export function filePathToId(filePath: string, baseDir: string): string {
+  const segments = getRelativeDiscoveryPath(filePath, baseDir)
+    .replace(/\.(ts|tsx|js|jsx)$/, "")
+    .split("/");
+
+  if (segments.length > 1 && segments.at(-1) === "index") {
+    segments.pop();
+  }
+
+  return segments.map(discoveryPathSegmentToId).join("/");
 }
 
 /**
@@ -85,21 +126,4 @@ function normalizeDiscoveryPath(value: string): string {
   // A Windows file URL is written as file:///C:/..., while a native Windows
   // path starts C:/.... Normalize both to the latter for safe prefix checks.
   return normalized.replace(/^\/([A-Za-z]:\/)/, "$1");
-}
-
-// Track discovered agent paths for index generation
-const discoveredAgentPaths = new Map<string, string>();
-
-/**
- * Track an agent's file path for index generation
- */
-export function trackAgentPath(id: string, filePath: string): void {
-  discoveredAgentPaths.set(id, filePath);
-}
-
-/**
- * Clear tracked agent paths
- */
-export function clearTrackedAgents(): void {
-  discoveredAgentPaths.clear();
 }

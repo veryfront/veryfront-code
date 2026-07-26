@@ -20,6 +20,13 @@
  * ```
  */
 
-export type { Prompt, PromptConfig, PromptGenerateFn } from "./types.ts";
+export type {
+  Prompt,
+  PromptArgument,
+  PromptConfig,
+  PromptGenerateFn,
+  PromptMCPConfig,
+  PromptRenderContext,
+} from "./types.ts";
 export { prompt } from "./factory.ts";
 export { promptRegistry } from "./registry.ts";

@@ -13,7 +13,10 @@
  */
 
 import type { Skill } from "./types.ts";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 const skillManager = new ProjectScopedRegistryManager<Skill>("skill");
@@ -29,7 +32,7 @@ export function isSkillVisibleTo(skill: Skill, scope?: AgentCapabilityScope): bo
   return skill.ownerAgentId === undefined || skill.ownerAgentId === scope?.agentId;
 }
 
-class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
+class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
   /**
    * Resolve skills for an agent configuration.
    *
@@ -104,7 +107,39 @@ class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
   }
 }
 
-export const skillRegistry = new SkillRegistryClass(skillManager);
+/** Framework-only skill registry with process-wide maintenance capabilities. */
+export const skillRegistryInternal = new SkillRegistryInternal(skillManager);
+
+/** Project-scoped skill registry API safe for application code. */
+class SkillRegistry extends ScopedRegistryView<Skill> {
+  readonly #registry: SkillRegistryInternal;
+
+  constructor(registry: SkillRegistryInternal) {
+    super(registry);
+    this.#registry = registry;
+  }
+
+  resolveForAgent(
+    skillsConfig: true | string[],
+    scope?: AgentCapabilityScope,
+  ): Map<string, Skill> {
+    return this.#registry.resolveForAgent(skillsConfig, scope);
+  }
+
+  resolveVisibleSkill(requested: string, scope?: AgentCapabilityScope): Skill | undefined {
+    return this.#registry.resolveVisibleSkill(requested, scope);
+  }
+
+  getVisibleSkillIds(scope?: AgentCapabilityScope): string[] {
+    return this.#registry.getVisibleSkillIds(scope);
+  }
+
+  hasVisibleSkills(scope?: AgentCapabilityScope): boolean {
+    return this.#registry.hasVisibleSkills(scope);
+  }
+}
+
+export const skillRegistry = new SkillRegistry(skillRegistryInternal);
 
 export function registerSkill(id: string, skill: Skill): void {
   skillRegistry.register(id, skill);

@@ -7,6 +7,7 @@ import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
@@ -207,7 +208,7 @@ describe("WorkflowClient", () => {
         type: "function",
         description: "Capture workflow tool context",
         inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-        execute: (_input, context) => {
+        execute: async (_input, context) => {
           capturedContext = context;
           return {
             projectSlug: context?.projectSlug,
@@ -320,7 +321,7 @@ describe("WorkflowClient", () => {
         assertEquals(completedRun?.status, "completed");
         assertEquals(completedRun?.output, { "tenant-step": { result: "ok" } });
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
         await scopedClient.destroy();
       }
     });

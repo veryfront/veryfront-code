@@ -595,6 +595,39 @@ describe("ProjectScopedRegistryManager transactions", () => {
       assertEquals(manager.get("late-skill"), "late");
     });
   });
+
+  it("rejects detached registry access after its request context is finalized", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("skill");
+    const releaseDetachedWork = Promise.withResolvers<void>();
+    let detachedWork: Promise<void> | undefined;
+
+    manager.register("default-skill", "default");
+
+    await runWithRequestContext(
+      {
+        projectSlug: "detached-project",
+        projectId: "detached-project-id",
+        token: "detached-token",
+      },
+      async () => {
+        manager.register("request-skill", "request");
+        detachedWork = (async () => {
+          await releaseDetachedWork.promise;
+          manager.register("escaped-skill", "escaped");
+        })();
+      },
+    );
+
+    releaseDetachedWork.resolve();
+    await assertRejects(
+      () => detachedWork!,
+      Error,
+      "Registry access attempted from a finalized request context",
+    );
+
+    assertEquals(manager.get("default-skill"), "default");
+    assertEquals(manager.get("escaped-skill"), undefined);
+  });
 });
 
 // Hardening identified while investigating veryfront/veryfront-api#3952.

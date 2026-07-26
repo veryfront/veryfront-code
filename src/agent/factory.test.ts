@@ -7,20 +7,21 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
-import { agentRegistry } from "./composition/index.ts";
+import { agentRegistryInternal } from "./composition/composition.ts";
 import { agent } from "./factory.ts";
 import type { AgentConfig } from "./types.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 
 describe("agent factory", () => {
   beforeEach(() => {
-    agentRegistry.clearAll();
-    skillRegistry.clearAll();
-    toolRegistry.clearAll();
+    agentRegistryInternal.clearAll();
+    skillRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("bootstraps schema validation before registering universal skill tools", () => {

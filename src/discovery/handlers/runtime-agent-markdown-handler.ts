@@ -6,7 +6,6 @@ import {
 import { agentRegistry, registerAgent } from "../../agent/composition/index.ts";
 import { ensureError } from "#veryfront/errors";
 import type { DiscoveryResult, FileDiscoveryContext } from "../types.ts";
-import { trackAgentPath } from "../discovery-utils.ts";
 import {
   discoveryFileExists,
   listDiscoveryDirectoryEntries,
@@ -139,7 +138,6 @@ async function registerMarkdownAgent(
     agentRegistry.delete(runtimeAgent.id);
   }
   registerAgent(definition.id, runtimeAgent);
-  trackAgentPath(definition.id, file);
   result.agents.set(definition.id, runtimeAgent);
 }
 

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { agent } from "../index.ts";
 
 function toolNamesFromGenerateOptions(options: unknown): string[] {
@@ -47,7 +48,7 @@ function makeLookupTool(source: string) {
 
 describe("request-scoped tool replacement for generate()", () => {
   it("advertises only the request replacement tools and lets same-name replacements win", async () => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     const controller = new AbortController();
     const observedToolNames: string[][] = [];
     let observedAbortSignal: AbortSignal | undefined;
@@ -98,11 +99,11 @@ describe("request-scoped tool replacement for generate()", () => {
 
     assertEquals(observedToolNames, [["lookup"]]);
     assertEquals(observedAbortSignal, controller.signal);
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("does not fall through to configured, registry, remote, integration, or provider-native tools", async () => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     const observedToolNames: string[][] = [];
     const model: ModelRuntime = {
       provider: "anthropic",
@@ -163,7 +164,7 @@ describe("request-scoped tool replacement for generate()", () => {
       result.toolCalls[0]?.error,
       'Tool "configured_only" is not available in request-scoped replacement tools',
     );
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("does not accept provider-executed tool results outside the replacement map", async () => {

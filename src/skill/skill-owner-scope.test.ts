@@ -8,7 +8,7 @@
 
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { registerSkill, skillRegistry } from "./registry.ts";
+import { registerSkill, skillRegistry, skillRegistryInternal } from "./registry.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -32,7 +32,7 @@ function makeSkill(input: {
 }
 
 function setupRegistry(): void {
-  skillRegistry.clearAll();
+  skillRegistryInternal.clearAll();
   registerSkill("global-howto", makeSkill({ id: "global-howto" }));
   registerSkill(
     "researcher--cite",
@@ -53,7 +53,7 @@ Deno.test("skills: true resolves to unowned skills plus the caller's own only", 
     const writer = skillRegistry.resolveForAgent(true, { agentId: "writer" });
     assertEquals([...writer.keys()].sort(), ["global-howto", "writer--style"]);
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -63,7 +63,7 @@ Deno.test("skills: true without an agent scope resolves to unowned skills only",
     const projectLevel = skillRegistry.resolveForAgent(true);
     assertEquals([...projectLevel.keys()], ["global-howto"]);
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -79,7 +79,7 @@ Deno.test("explicit selector resolves own short name before an exact global id",
     const other = skillRegistry.resolveForAgent(["cite"], { agentId: "writer" });
     assertEquals([...other.keys()], ["cite"]);
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -89,7 +89,7 @@ Deno.test("explicit selector cannot reach another agent's owned skill by full id
     const resolved = skillRegistry.resolveForAgent(["researcher--cite"], { agentId: "writer" });
     assertEquals(resolved.size, 0);
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -102,7 +102,7 @@ Deno.test("getVisibleSkillIds excludes other agents' owned skills", () => {
     );
     assertEquals(skillRegistry.getVisibleSkillIds(), ["global-howto"]);
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -112,7 +112,7 @@ Deno.test("hasVisibleSkills applies owner scope without building a catalog", () 
     assertEquals(skillRegistry.hasVisibleSkills({ agentId: "researcher" }), true);
     assertEquals(skillRegistry.hasVisibleSkills({ agentId: "writer" }), true);
 
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
     registerSkill(
       "researcher--cite",
       makeSkill({ id: "researcher--cite", ownerAgentId: "researcher", shortName: "cite" }),
@@ -122,7 +122,7 @@ Deno.test("hasVisibleSkills applies owner scope without building a catalog", () 
     assertEquals(skillRegistry.hasVisibleSkills({ agentId: "writer" }), false);
     assertEquals(skillRegistry.hasVisibleSkills(), false);
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -152,7 +152,7 @@ Deno.test("load_skill rejects another agent's owned skill and enumerates only vi
       assertEquals(message.includes("writer--style"), true);
     }
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -166,7 +166,7 @@ Deno.test("load_skill without agent context cannot reach any owned skill", async
       'Skill "researcher--cite" not found',
     );
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -184,7 +184,7 @@ Deno.test("load_skill_reference rejects another agent's owned skill", async () =
       'Skill "researcher--cite" not found',
     );
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -202,7 +202,7 @@ Deno.test("execute_skill_script rejects another agent's owned skill", async () =
       'Skill "researcher--cite" not found',
     );
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
@@ -214,7 +214,7 @@ Deno.test("load_skill loads the caller's own skill via its short name", async ()
       `---\nname: cite\ndescription: Cite sources properly\n---\n\nAlways cite primary sources.\n`,
     );
 
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
     registerSkill(
       "researcher--cite",
       makeSkill({
@@ -234,7 +234,7 @@ Deno.test("load_skill loads the caller's own skill via its short name", async ()
     assertEquals(content.skillId, "researcher--cite");
     assertEquals(content.instructions.trim(), "Always cite primary sources.");
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
     await Deno.remove(tempDir, { recursive: true });
   }
 });

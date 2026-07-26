@@ -13,16 +13,20 @@ import "../../_helpers/contract-init.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "../../../src/schemas/define.ts";
-import { agentRegistry } from "../../../src/agent/composition/composition.ts";
+import {
+  agentRegistry,
+  agentRegistryInternal,
+} from "../../../src/agent/composition/composition.ts";
 import { runWithCacheKeyContext } from "../../../src/cache/cache-key-builder.ts";
-import { promptRegistry } from "../../../src/prompt/registry.ts";
+import { promptRegistry, promptRegistryInternal } from "../../../src/prompt/registry.ts";
 import type { Prompt } from "../../../src/prompt/types.ts";
 import { clearModelProviders } from "../../../src/provider/model-registry.ts";
-import { resourceRegistry } from "../../../src/resource/registry.ts";
+import { resourceRegistry, resourceRegistryInternal } from "../../../src/resource/registry.ts";
 import type { Resource } from "../../../src/resource/types.ts";
-import { toolRegistry } from "../../../src/tool/registry.ts";
+import { skillRegistry, skillRegistryInternal } from "../../../src/skill/registry.ts";
+import { toolRegistry, toolRegistryInternal } from "../../../src/tool/registry.ts";
 import type { Tool } from "../../../src/tool/types.ts";
-import { workflowRegistry } from "../../../src/workflow/registry.ts";
+import { workflowRegistry, workflowRegistryInternal } from "../../../src/workflow/registry.ts";
 
 function createMockTool(id: string, projectMarker: string): Tool {
   return {
@@ -65,11 +69,12 @@ const projectBContext = {
 };
 
 function clearAllRegistries(): void {
-  toolRegistry.clearAll();
-  promptRegistry.clearAll();
-  agentRegistry.clearAll();
-  workflowRegistry.clearAll();
-  resourceRegistry.clearAll();
+  toolRegistryInternal.clearAll();
+  promptRegistryInternal.clearAll();
+  agentRegistryInternal.clearAll();
+  workflowRegistryInternal.clearAll();
+  resourceRegistryInternal.clearAll();
+  skillRegistryInternal.clearAll();
   clearModelProviders();
 }
 
@@ -80,6 +85,25 @@ describe("002.5 Registry Isolation", () => {
 
   afterEach(() => {
     clearAllRegistries();
+  });
+
+  it("package-facing registries omit process-wide maintenance capabilities", () => {
+    for (
+      const registry of [
+        agentRegistry,
+        promptRegistry,
+        resourceRegistry,
+        skillRegistry,
+        toolRegistry,
+        workflowRegistry,
+      ]
+    ) {
+      const publicRegistry = registry as unknown as Record<string, unknown>;
+      assertEquals("registerShared" in publicRegistry, false);
+      assertEquals("clearAll" in publicRegistry, false);
+      assertEquals("getRegistryStats" in publicRegistry, false);
+      assertEquals("getStats" in publicRegistry && registry !== workflowRegistry, false);
+    }
   });
 
   describe("Tool Registry Isolation", () => {
@@ -110,7 +134,7 @@ describe("002.5 Registry Isolation", () => {
     });
 
     it("shared tools are available to all projects", () => {
-      toolRegistry.registerShared(
+      toolRegistryInternal.registerShared(
         "veryfront-search",
         createMockTool("veryfront-search", "Framework"),
       );
@@ -129,7 +153,10 @@ describe("002.5 Registry Isolation", () => {
     });
 
     it("getAllIds only returns current project's tools + shared", () => {
-      toolRegistry.registerShared("shared-tool", createMockTool("shared-tool", "Framework"));
+      toolRegistryInternal.registerShared(
+        "shared-tool",
+        createMockTool("shared-tool", "Framework"),
+      );
 
       runWithCacheKeyContext(projectAContext, () => {
         toolRegistry.register("tool-a1", createMockTool("tool-a1", "A"));

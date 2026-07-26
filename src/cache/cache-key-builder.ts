@@ -26,9 +26,34 @@ type MultiProjectRequestContextType = {
   environmentName?: string | null;
 };
 
-type MultiProjectRequestContextProvider = () => MultiProjectRequestContextType | null;
+type RevokedMultiProjectRequestContext = {
+  readonly revoked: true;
+};
+
+type MultiProjectRequestContextSnapshot =
+  | MultiProjectRequestContextType
+  | RevokedMultiProjectRequestContext;
+
+type MultiProjectRequestContextProvider = () => MultiProjectRequestContextSnapshot | null;
 
 let getCurrentRequestContextProvider: MultiProjectRequestContextProvider | undefined;
+
+function isRevokedRequestContext(
+  context: MultiProjectRequestContextSnapshot | null | undefined,
+): context is RevokedMultiProjectRequestContext {
+  return context !== null && context !== undefined && "revoked" in context &&
+    context.revoked === true;
+}
+
+function getMultiProjectRequestContextSnapshot(): MultiProjectRequestContextSnapshot | null {
+  return getCurrentRequestContextProvider?.() ?? null;
+}
+
+function throwFinalizedRequestContextInvariant(): never {
+  throw CACHE_INVARIANT_VIOLATION.create({
+    detail: "[CacheKeyBuilder] Registry access attempted from a finalized request context",
+  });
+}
 
 /**
  * Installs the platform-owned ambient request-context bridge exactly once.
@@ -214,10 +239,12 @@ function extractCacheKeyContextFromMultiProjectContext(
 }
 
 export function tryGetCacheKeyContext(): CacheKeyContext | null {
+  const reqCtx = getMultiProjectRequestContextSnapshot();
+  if (isRevokedRequestContext(reqCtx)) return null;
+
   const explicitCtx = getCacheKeyContextStore();
   if (explicitCtx) return explicitCtx;
 
-  const reqCtx = getCurrentRequestContextProvider?.();
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
@@ -239,6 +266,11 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
  * fall back to DEFAULT_SCOPE_ID.
  */
 export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
+  const reqCtx = getMultiProjectRequestContextSnapshot();
+  if (isRevokedRequestContext(reqCtx)) {
+    throwFinalizedRequestContextInvariant();
+  }
+
   // Explicit contexts are authoritative for workflows and other callers that
   // intentionally override ambient filesystem tenancy.
   const cacheCtx = getCacheKeyContextStore();
@@ -250,7 +282,6 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     };
   }
 
-  const reqCtx = getCurrentRequestContextProvider?.();
   if (reqCtx) {
     const projectId = reqCtx.projectId || reqCtx.projectSlug;
     if (!projectId) return null;

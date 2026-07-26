@@ -58,7 +58,7 @@ Create mcpserver.
 | `buildFormElicitation` | Builds form elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L21) |
 | `buildUrlElicitation` | Builds URL elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L35) |
 | `clearMCPRegistry` | Clear MCP registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L46) |
-| `createMCPServer` | Create mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L908) |
+| `createMCPServer` | Create mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L1023) |
 | `formatSSEEvent` | Stateless SSE formatting utilities per the Server-Sent Events standard. Used by the Streamable HTTP transport for MCP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L6) |
 | `formatSSEPrimingEvent` | Event emitted for format ssepriming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L19) |
 | `formatSSERetry` | Formats sseretry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L14) |
@@ -72,7 +72,7 @@ Create mcpserver.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MCPServer` | Implement mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L115) |
+| `MCPServer` | Implement mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L175) |
 | `SessionManager` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/session.ts#L21) |
 | `TaskStore` | Implement task store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/task-store.ts#L20) |
 
@@ -82,8 +82,8 @@ Create mcpserver.
 |------|-------------|--------|
 | `ElicitationRequest` | Request payload for elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L15) |
 | `FormElicitationOptions` | Options accepted by form elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L2) |
-| `MCPServerConfig` | Configuration used by mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L59) |
-| `MCPStats` | Public API contract for MCP stats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L61) |
+| `MCPServerConfig` | Configuration used by mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L68) |
+| `MCPStats` | Public API contract for MCP stats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L70) |
 | `MCPTool` | Generic MCP tool definition | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/types.ts#L12) |
 | `Task` | Public API contract for task. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/task-store.ts#L2) |
 | `ToolAnnotations` | Behavioral hints for MCP clients (MCP 2025-11-25). Guides auto-approval, confirmation prompts, and caching. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/annotations.ts#L5) |

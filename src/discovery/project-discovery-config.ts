@@ -40,6 +40,32 @@ export type ProjectDiscoveryConfig = DiscoveryConfig & {
   evalDirs: string[];
 };
 
+const PROJECT_DISCOVERY_DIRECTORY_KEYS = [
+  "toolDirs",
+  "agentDirs",
+  "skillDirs",
+  "resourceDirs",
+  "promptDirs",
+  "workflowDirs",
+  "taskDirs",
+  "scheduleDirs",
+  "webhookDirs",
+  "evalDirs",
+] as const satisfies readonly (keyof ProjectDiscoveryConfig)[];
+
+/** Return every enabled discovery directory once, preserving config order. */
+export function getProjectDiscoveryDirectories(
+  config: ProjectDiscoveryConfig,
+): string[] {
+  const directories = new Set<string>();
+  for (const key of PROJECT_DISCOVERY_DIRECTORY_KEYS) {
+    for (const directory of config[key]) {
+      if (directory.length > 0) directories.add(directory);
+    }
+  }
+  return Array.from(directories);
+}
+
 function isDiscoveryEnabled(discovery: DiscoverySettings | undefined): boolean {
   return discovery?.enabled ?? true;
 }

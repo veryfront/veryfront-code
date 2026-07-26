@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    18 |      31.0% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
+| Closed                         |    19 |      32.8% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -49,6 +49,7 @@ stricter closure count.
 - `mdx`
 - `metrics`
 - `provider`
+- `prompt`
 - `repositories`
 - `runs`
 - `runtime`
@@ -59,7 +60,6 @@ stricter closure count.
 
 ### Deep reviewed, fixes pending
 
-- `prompt`
 - `resource`
 
 ### Touched, revalidation required
@@ -123,20 +123,22 @@ every affected unit.
 
 The current closed review chain covers `chat`, `config`, `embedding`, `eval`,
 `extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
-`repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, and
+`prompt`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, and
 `version.ts`. The latest Chat findings and the independent adversarial
 knowledge, Markdown, MDX, provider, repositories, runs, runtime, and sandbox
-findings are remediated and revalidated. `prompt` and `resource` have now
-received deep current-state reviews and substantial remediation, but remain
-open while their documented cross-cutting findings are unresolved. Each
+findings are remediated and revalidated. `prompt` is now closed after its
+cross-cutting registry, discovery, HMR, request-lifecycle, and MCP findings
+were remediated and revalidated. `resource` has received a deep current-state
+review and substantial remediation, but remains open while its documented
+transport and cache-policy decisions are unresolved. Each
 closure requires a complete consumer map, deep module-level review,
 adversarial boundary tests, public-contract documentation, and repository-wide
 static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
-dependency-ordered work revalidates the touched units and closes the two
-reviewed units with pending cross-cutting fixes.
+dependency-ordered work closes the remaining reviewed unit and revalidates the
+touched units.
 
 ### Issues closure checkpoint
 
@@ -1012,85 +1014,107 @@ with zero failures; one 36-step group remains intentionally ignored.
   unauthenticated skill request context, and a production-realistic Redis
   acknowledgement budget instead of wall-clock or ambient-state assumptions.
 
-### Prompt and resource remediation checkpoint
+### Prompt closure and resource remediation checkpoint
 
-The current prompt/resource slice removes confirmed runtime lies and
-fail-open behavior while keeping unresolved design work visible:
+The Prompt audit unit owns prompt construction and validation, interpolation
+and generated content, project-scoped registration, discovery identity, MCP
+exposure, and its published types and guidance. Its cross-cutting consumers
+include discovery, request-time project runtimes, development HMR, hosted
+streaming, the MCP server, starter agents, and the package build. The current
+Prompt findings are remediated:
 
-- Prompt configs now require static content or a generator in both the
-  published TypeScript contract and runtime schema. Empty static content is
-  preserved, async generators have a precise string contract, and invalid
-  generator output is rejected at runtime.
-- Static interpolation reads only caller-owned properties and preserves input
-  verbatim. The bypassable, mutable regex blacklist was removed rather than
-  being represented as a security boundary.
-- Auto-discovery preserves explicit prompt IDs and resource URI patterns while
-  replacing only factory-generated placeholders. Discovery paths are portable,
-  encoded safely, and reject outside-root, traversal, NUL, and malformed
-  percent-encoding inputs.
-- Resource patterns use one validated grammar for registration, lookup,
-  parameter extraction, and URI-template rendering. Duplicate parameters,
-  ambiguous patterns, derived-ID collisions, regex metacharacter drift, and
-  registration-order shadowing fail deterministically.
-- Resource load and direct subscription paths both validate and pass transformed
-  parameters. Same-millisecond generated patterns are unique.
-- MCP hides resources with `mcp.enabled: false`, separates concrete resources
-  from templates, does not advertise unsupported subscriptions, maps malformed
-  parameters to stable protocol errors, emits normalized telemetry, and rejects
-  non-bounded-JSON output.
-- MCP and the local dashboard validate prompt arguments and unknown IDs, return
-  configured descriptions, and redact generator failures. The starter agent
-  template now awaits its registered prompt instead of always selecting a
-  synchronous fallback.
-- Request-time rediscovery atomically clears stale prompt and resource entries,
-  and hard source-read failures preserve the previous live generation.
-- The MCP how-to, prompt/resource explanations, generated API reference, and
-  published-package type fixture now match the implemented contracts.
+- Prompt configs require exactly one usable content source at runtime and in
+  the public contract. Validation no longer depends on prior schema-extension
+  bootstrap, configs and MCP metadata are snapshotted, duplicate argument names
+  fail deterministically, generated IDs use captured time primitives, and a
+  generator must resolve to text.
+- Static interpolation reads only caller-owned properties through captured
+  primitives and preserves input verbatim. The mutable blacklist that implied
+  a security boundary was removed.
+- Generators accept an additive, immutable cancellation context with an abort
+  signal and absolute deadline. Pre-aborted work, in-flight cancellation,
+  expired and non-finite deadlines, generators that ignore cancellation, and
+  timers beyond the platform delay limit have deterministic behavior and
+  cleanup.
+- MCP prompt metadata now declares title and string arguments, required and
+  unknown arguments are enforced, `mcp.enabled: false` is private, cancellation
+  reaches rendering, generator failures remain undisclosed, and initialization
+  advertises only capabilities implemented by the built-in Streamable HTTP
+  transport. Custom transports retain explicit notification hooks and own
+  their capability negotiation.
+- Package-facing Agent, Prompt, Resource, Skill, Tool, and Workflow registries
+  expose only current-scope operations. Shared registration, process-wide
+  reset, and cross-scope aggregate access moved behind internal facades used by
+  framework owners; runtime and generated-package fixtures prove project code
+  cannot recover those capabilities.
+- Finalized AsyncLocalStorage descendants receive a credential-free revoked
+  sentinel and cannot fall back to the default registry scope. An explicitly
+  returned streaming response leases its exact request context until the body
+  closes, errors, or is cancelled, preserving legitimate hosted work without
+  reopening detached access.
+- Prompt discovery derives collision-free IDs from safe relative nested paths,
+  preserves explicit IDs, treats named index re-exports as aliases, reports
+  invalid exports and real duplicates as structured errors, and excludes
+  directory-agent capability subtrees from the agent-definition pass.
+- Request-time discovery, startup discovery, and HMR use one strict atomic
+  project-primitive replacement. A generation containing errors rolls back to
+  the last complete registry state, retries remain possible, configured
+  discovery roots also drive file watching, and HMR never publishes a partial
+  generation. One-shot agent and task runtimes preserve their documented
+  tolerant mode by explicitly publishing the valid subset as one atomic
+  generation and returning every structured error; strict task callers reject
+  that same result.
+- Resource patterns retain one validated grammar for registration, lookup,
+  parameter extraction, and URI-template rendering. Resource load and direct
+  subscription paths validate transformed parameters, while MCP hides disabled
+  resources, separates resources from templates, rejects unbounded JSON, and
+  does not advertise unsupported subscriptions.
+- The Prompt concept page, MCP how-to, Resource explanation, README transport
+  wording, generated API reference, and published-package consumer fixtures
+  match the implemented contracts.
 
-Reproducible evidence for this open checkpoint:
+Reproducible evidence for this checkpoint:
 
-- The focused prompt, resource, MCP, discovery, and dashboard boundary surface
-  passed 31 suites and 263 steps with zero behavioral failures.
-- Four isolation-sensitive discovery and hosted-agent suites passed 71 steps
-  serially with zero failures.
-- The published-package consumer fixture, generated documentation, public-doc
-  validation, and all 723 documentation links pass.
-- `deno task verify:quick` passes generated-manifest checks, formatting, lint
-  and architecture ratchets, documentation validation, and every configured
+- The complete changed-test surface passes 122 test groups and 566 nested steps
+  with zero failures. This includes prompt and registry contracts, MCP
+  protocol behavior, discovery/HMR rollback, hosted streaming lifecycle,
+  request-scope revocation, and all changed cross-module consumers.
+- A complete default-parallel repository run reached 3,666 passing tests and
+  28,399 passing nested steps, with one intentionally ignored 36-step group.
+  It exposed two deterministic task-discovery compatibility failures, which
+  are fixed and pass with the atomic replacement regression suite (2 suites,
+  24 steps). Its seven other failures were load-threshold and readiness guards
+  under host saturation; all affected files pass sequentially in 8 suites and
+  53 steps, including the blast-radius, production server, RSC, template,
+  static-asset, and renderer performance coverage.
+- The request-context lease tests run with operation and resource sanitizers
+  enabled and cover body completion, cancellation, and failure. The discovery
+  rollback test also runs without a sanitizer exemption.
+- `deno task docs` regenerates all 38 public API groups. The documentation gate
+  validates 109 public files, executable guide contracts and examples, and all
+  736 links.
+- `deno task verify:quick` passes generated manifests, formatting, lint and
+  architecture ratchets, dependency and module boundaries, extension
+  contracts, documentation validation, and every configured source and browser
   entrypoint typecheck.
-- The corrected test-server adapter passes the full lifecycle, dev-server, and
-  production-health suites: 47 steps pass, with one intentional dev-server
-  virtual-module step ignored. It wraps readonly runtime handles and reports
-  the actual ephemeral port instead of mutating production objects.
+- `deno task typecheck:consumer` rebuilds the npm package and every first-party
+  extension, verifies root import lifecycle, and passes external TypeScript
+  composition against the emitted Prompt, Resource, Skill, and Tool registry
+  declarations.
 
-The repository-wide test gate now passes after the cross-module remediation
-checkpoint below: 3,540 tests and 28,031 steps passed with zero failures; one
-intentional test with 36 steps remains ignored. This broad result resolves the
-previous cache, config, and production-server regressions, but it does not
-close the prompt/resource design findings listed below.
+The `prompt` unit is closed. Adjacent `agent`, `cache`, `discovery`, `mcp`,
+`platform`, `registry`, `resource`, `server`, `skill`, `tool`, and `workflow`
+units remain in their stricter ledger states because focused Prompt closure
+does not substitute for a full top-level review of those consumers.
 
-The following findings deliberately keep both modules in
+The following findings keep `resource` in
 `Deep reviewed, fixes pending`:
 
-- Public registry facades still expose process-wide shared registration,
-  global reset, and aggregate statistics to evaluated project code. That
-  registry-wide capability split must cover prompts, resources, tools, skills,
-  agents, and workflows together.
-- Finalized detached request work can still fall back to the default registry
-  scope. A revoked-context sentinel must fail closed without retaining request
-  credentials.
-- Dev-server HMR still needs one atomic discovery replacement, shared
-  configured paths, and rollback on partial discovery errors.
-- Prompt generators still need an additive cancellation/deadline context.
-  MCP prompt argument metadata, private-prompt exposure, and automatic
-  list-change notification semantics require an explicit public contract.
 - Resource `mcp.cachePolicy` remains a reserved but unenforced setting. Cache
   key, TTL, invalidation, and failure semantics require a deliberate API
   decision; no behavior was invented for an existing no-op knob.
-- Discovery still needs a deterministic relative-path fallback and structured
-  duplicate/invalid-export diagnostics for nested prompt names.
-- Resource canonicalization for query/fragment variants and non-JSON content
-  modes remains an explicit transport-design decision.
+- Resource canonicalization for query and fragment variants, plus non-JSON
+  content modes, remains an explicit transport-design decision.
 
 ### Cross-module cache, routing, and production-server remediation checkpoint
 

@@ -189,4 +189,4 @@ Create a typed tool definition.
 | Name | Description | Source |
 |------|-------------|--------|
 | `sleepTool` | Default sleep tool (max 60 s) exposed as a property accessor so the underlying `tool({...})` materialization is deferred until first use. Preserves the existing `sleepTool.execute(...)` call shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L91) |
-| `toolRegistry` | Shared tool registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/registry.ts#L67) |
+| `toolRegistry` | Project-scoped tool registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/registry.ts#L80) |

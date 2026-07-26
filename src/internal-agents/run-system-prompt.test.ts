@@ -1,9 +1,9 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type Agent, agent } from "#veryfront/agent";
-import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
-import { toolRegistry } from "#veryfront/tool";
+import { agentRegistryInternal } from "#veryfront/agent/composition/composition.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import {
   composeInternalAgentRunSystemPrompt,
   getInternalAgentStudioRunContext,
@@ -41,9 +41,9 @@ function createStudioContextItem(data: Record<string, unknown>): unknown {
 
 describe("internal-agents/run-system-prompt", () => {
   afterEach(() => {
-    agentRegistry.clearAll();
-    skillRegistry.clearAll();
-    toolRegistry.clearAll();
+    agentRegistryInternal.clearAll();
+    skillRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   describe("getInternalAgentStudioRunContext", () => {

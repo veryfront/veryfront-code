@@ -13,7 +13,10 @@ import {
   extractResourcePatternParams,
   resourceTemplatePatternsOverlap,
 } from "./pattern.ts";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 function assertEquivalentResourceId(
@@ -32,7 +35,7 @@ const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("reso
   validateRegistration: assertEquivalentResourceId,
 });
 
-class ResourceRegistry extends ScopedRegistryFacade<Resource> {
+class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
   override register<TParams, TData>(
     id: string,
     resource: Resource<TParams, TData>,
@@ -118,5 +121,49 @@ class ResourceRegistry extends ScopedRegistryFacade<Resource> {
   }
 }
 
-/** Shared resource registry value. */
-export const resourceRegistry = new ResourceRegistry(resourceRegistryManager);
+/** Framework-only resource registry with process-wide maintenance capabilities. */
+export const resourceRegistryInternal = new ResourceRegistryInternal(resourceRegistryManager);
+
+/** Project-scoped resource registry API safe for application code. */
+class ResourceRegistry extends ScopedRegistryView<Resource> {
+  readonly #registry: ResourceRegistryInternal;
+
+  constructor(registry: ResourceRegistryInternal) {
+    super(registry);
+    this.#registry = registry;
+  }
+
+  override register<TParams, TData>(
+    id: string,
+    resource: Resource<TParams, TData>,
+  ): void {
+    this.#registry.register(id, resource);
+  }
+
+  findEntryByPattern(uri: string): readonly [string, Resource] | undefined {
+    return this.#registry.findEntryByPattern(uri);
+  }
+
+  findByPattern(uri: string): Resource | undefined {
+    return this.#registry.findByPattern(uri);
+  }
+
+  isTemplatePattern(pattern: string): boolean {
+    return this.#registry.isTemplatePattern(pattern);
+  }
+
+  toUriTemplate(pattern: string): string {
+    return this.#registry.toUriTemplate(pattern);
+  }
+
+  extractParams(uri: string, pattern: string): Record<string, string> {
+    return this.#registry.extractParams(uri, pattern);
+  }
+
+  list(): string[] {
+    return this.#registry.list();
+  }
+}
+
+/** Project-scoped resource registry value. */
+export const resourceRegistry = new ResourceRegistry(resourceRegistryInternal);

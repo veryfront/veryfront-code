@@ -1,9 +1,35 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { filenameToId, filePathToPattern } from "./discovery-utils.ts";
+import { filenameToId, filePathToId, filePathToPattern } from "./discovery-utils.ts";
 
 Deno.test("filenameToId handles POSIX and Windows discovery paths", () => {
   assertEquals(filenameToId("file:///project/prompts/welcome-message.ts"), "welcomeMessage");
   assertEquals(filenameToId("C:\\project\\prompts\\welcome-message.ts"), "welcomeMessage");
+});
+
+Deno.test("filePathToId retains nested prompt paths and collapses directory indexes", () => {
+  assertEquals(
+    filePathToId(
+      "file:///project/prompts/admin-tools/review-message.ts",
+      "/project/prompts",
+    ),
+    "adminTools/reviewMessage",
+  );
+  assertEquals(
+    filePathToId("/project/prompts/admin/index.ts", "/project/prompts"),
+    "admin",
+  );
+  assertEquals(
+    filePathToId("/project/prompts/index.ts", "/project/prompts"),
+    "index",
+  );
+});
+
+Deno.test("filePathToId rejects files outside the discovery root", () => {
+  assertThrows(
+    () => filePathToId("/other/review.ts", "/project/prompts"),
+    Error,
+    "outside discovery directory",
+  );
 });
 
 Deno.test("filePathToPattern normalizes POSIX and Windows resource paths", () => {

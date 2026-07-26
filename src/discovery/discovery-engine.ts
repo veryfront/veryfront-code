@@ -30,7 +30,7 @@ import {
   workflowHandler,
 } from "./handlers/index.ts";
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
-import { filenameToId } from "./discovery-utils.ts";
+import { filenameToId, filePathToId } from "./discovery-utils.ts";
 
 const logger = agentLogger.component("discovery");
 
@@ -83,10 +83,12 @@ function getCandidateId<T>(
   useExportNameFallback: boolean,
 ): string {
   const derivedId = handler.getId(candidate.item, file, dir);
+  if (candidate.exportName === "default") return derivedId;
   if (!useExportNameFallback) return derivedId;
 
   const fileId = filenameToId(file);
-  if (derivedId !== fileId) return derivedId;
+  const relativeFileId = filePathToId(file, dir);
+  if (derivedId !== fileId && derivedId !== relativeFileId) return derivedId;
   return candidate.exportName;
 }
 
@@ -108,10 +110,20 @@ async function discoverItems<T>(
   }
 
   for (const file of files) {
+    if (handler.shouldDiscover && !handler.shouldDiscover(file, dir)) {
+      continue;
+    }
+
     try {
       const module = await importModule(file, context);
       const candidates = collectDiscoveryCandidates(module, handler);
       if (candidates.length === 0) {
+        result.errors.push({
+          file,
+          error: new Error(`${file} does not export a valid ${handler.typeName}`),
+          code: "invalid_export",
+          sourceKind: handler.typeName,
+        });
         if (verbose) {
           logger.warn(`${file} does not export a valid ${handler.typeName}`);
         }
@@ -129,6 +141,23 @@ async function discoverItems<T>(
         );
 
         if (resultMap.has(id)) {
+          // Named exports from an index module are treated as a conventional
+          // barrel. Concrete files are ordered first, so the barrel can expose
+          // them without turning one source definition into a duplicate error.
+          // A default index export remains a real definition and conflicts.
+          if (isIndexModule(file) && candidate.exportName !== "default") {
+            continue;
+          }
+          result.errors.push({
+            file,
+            error: new Error(
+              `Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`,
+            ),
+            code: "duplicate_id",
+            sourceKind: handler.typeName,
+            sourceId: id,
+            exportName: candidate.exportName,
+          });
           if (verbose) {
             logger.warn(`Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`);
           }
@@ -152,7 +181,12 @@ async function discoverItems<T>(
         }
       }
     } catch (error) {
-      result.errors.push({ file, error: ensureError(error) });
+      result.errors.push({
+        file,
+        error: ensureError(error),
+        code: "load_error",
+        sourceKind: handler.typeName,
+      });
 
       if (verbose) {
         logger.error(`Error loading ${file}:`, error);

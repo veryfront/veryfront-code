@@ -3,7 +3,7 @@ import type { Agent, Suggestions } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
@@ -464,7 +464,7 @@ describe("channels/control-plane", () => {
     });
 
     it("includes resolved skill metadata for agents with an omitted selector", async () => {
-      skillRegistry.clearAll();
+      skillRegistryInternal.clearAll();
       registerSkill("writer-helper", {
         id: "writer-helper",
         metadata: {
@@ -499,7 +499,7 @@ describe("channels/control-plane", () => {
           }),
         );
       } finally {
-        skillRegistry.clearAll();
+        skillRegistryInternal.clearAll();
       }
     });
 
@@ -703,7 +703,7 @@ describe("channels/control-plane", () => {
 
 describe("resolveAgentSkills", () => {
   it("includes the agent's own skills and excludes others'", () => {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
     try {
       registerSkill("global-howto", {
         id: "global-howto",
@@ -732,7 +732,7 @@ describe("resolveAgentSkills", () => {
       const emptyWriter = { id: "writer", config: { skills: [] } } as unknown as Agent;
       assertEquals(resolveAgentSkills(emptyWriter), []);
     } finally {
-      skillRegistry.clearAll();
+      skillRegistryInternal.clearAll();
     }
   });
 });

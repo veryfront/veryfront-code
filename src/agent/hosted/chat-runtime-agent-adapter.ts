@@ -11,9 +11,9 @@ import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/so
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
 /** Public API contract for hosted chat runtime agent adapter runner. */
-export type HostedChatRuntimeAgentAdapterRunner = <TResult>(
-  operation: () => Promise<TResult>,
-) => Promise<TResult>;
+export type HostedChatRuntimeAgentAdapterRunner = (
+  operation: () => Promise<Response>,
+) => Promise<Response>;
 
 /** Public API contract for hosted chat runtime agent adapter warning. */
 export type HostedChatRuntimeAgentAdapterWarning = {

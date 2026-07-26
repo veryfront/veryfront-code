@@ -4,7 +4,7 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithRequestContextResponse as runWithProjectRequestContextResponse } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -305,13 +305,13 @@ function createCloudContext(input: {
   };
 }
 
-function runWithDefaultHostedRequestContext<TResult>(
+function runWithDefaultHostedRequestContext(
   input: {
     taskContext: DefaultHostedChatRuntimeTaskContext;
     cloudContext: VeryfrontCloudContext;
-    operation: () => Promise<TResult>;
+    operation: () => Promise<Response>;
   },
-): Promise<TResult> {
+): Promise<Response> {
   const requestContext = {
     logger: serverLogger.child({
       project_id: input.taskContext.projectId || undefined,
@@ -333,7 +333,7 @@ function runWithDefaultHostedRequestContext<TResult>(
       if (!input.taskContext.projectSlug) {
         return runWithCloudContext();
       }
-      return runWithProjectRequestContext(
+      return runWithProjectRequestContextResponse(
         {
           projectSlug: input.taskContext.projectSlug,
           projectId: input.taskContext.projectId || undefined,

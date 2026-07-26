@@ -200,7 +200,7 @@ const workflowDefinitionManager = new ProjectScopedRegistryManager<WorkflowDefin
 const workflowMetadataRegistry = new ScopedRegistryFacade(workflowMetadataManager);
 const workflowDefinitionRegistry = new ScopedRegistryFacade(workflowDefinitionManager);
 
-class WorkflowRegistryClass {
+class WorkflowRegistryInternal {
   private storeWorkflow(workflow: Workflow | WorkflowDefinition, shared: boolean): void {
     const definition = getWorkflowDefinition(workflow);
     const metadata = extractMetadata(definition);
@@ -294,9 +294,59 @@ class WorkflowRegistryClass {
   }
 }
 
-export const workflowRegistry = new WorkflowRegistryClass();
+/** Framework-only workflow registry with process-wide maintenance capabilities. */
+export const workflowRegistryInternal = new WorkflowRegistryInternal();
 
-export { WorkflowRegistryClass };
+/** Project-scoped workflow registry API safe for application code. */
+export class WorkflowRegistryClass {
+  readonly #registry: WorkflowRegistryInternal;
+
+  constructor(registry: WorkflowRegistryInternal = workflowRegistryInternal) {
+    this.#registry = registry;
+  }
+
+  register(workflow: Workflow | WorkflowDefinition): void {
+    this.#registry.register(workflow);
+  }
+
+  get(id: string): WorkflowMetadata | undefined {
+    return this.#registry.get(id);
+  }
+
+  getDefinition(id: string): WorkflowDefinition | undefined {
+    return this.#registry.getDefinition(id);
+  }
+
+  has(id: string): boolean {
+    return this.#registry.has(id);
+  }
+
+  getAllIds(): string[] {
+    return this.#registry.getAllIds();
+  }
+
+  getAll(): Map<string, WorkflowMetadata> {
+    return this.#registry.getAll();
+  }
+
+  getAllAsArray(): WorkflowMetadata[] {
+    return this.#registry.getAllAsArray();
+  }
+
+  getStats(): ReturnType<WorkflowRegistryInternal["getStats"]> {
+    return this.#registry.getStats();
+  }
+
+  unregister(id: string): boolean {
+    return this.#registry.unregister(id);
+  }
+
+  clear(): void {
+    this.#registry.clear();
+  }
+}
+
+export const workflowRegistry = new WorkflowRegistryClass();
 
 export function registerWorkflow(workflow: Workflow | WorkflowDefinition): void {
   workflowRegistry.register(workflow);

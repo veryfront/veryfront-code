@@ -4,6 +4,7 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
+import type { Prompt } from "#veryfront/prompt";
 import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -92,6 +93,65 @@ function pendingRequestKey(requestId: string | number, sessionId?: string): stri
   return JSON.stringify([sessionId ?? null, typeof requestId, requestId]);
 }
 
+function normalizePromptArguments(
+  prompt: Prompt,
+  args: unknown,
+): Record<string, string> | undefined {
+  if (args === undefined) {
+    for (const argument of prompt.mcp?.arguments ?? []) {
+      if (argument.required === true) {
+        throw new JsonRpcError(
+          -32602,
+          `Missing required prompt argument: "${argument.name}"`,
+        );
+      }
+    }
+    return undefined;
+  }
+
+  if (args === null || typeof args !== "object" || Array.isArray(args)) {
+    throw new JsonRpcError(-32602, "Prompt arguments must be an object");
+  }
+
+  const snapshot = snapshotBoundedJsonValue(args);
+  if (
+    !snapshot.success ||
+    snapshot.value === null ||
+    typeof snapshot.value !== "object" ||
+    Array.isArray(snapshot.value)
+  ) {
+    throw new JsonRpcError(-32602, "Prompt arguments must be an object");
+  }
+
+  const entries = Object.entries(snapshot.value);
+  for (const [name, value] of entries) {
+    if (typeof value !== "string") {
+      throw new JsonRpcError(-32602, `Prompt argument "${name}" must be a string`);
+    }
+  }
+
+  const declaredArguments = prompt.mcp?.arguments;
+  if (declaredArguments !== undefined) {
+    const declaredNames = new Set(declaredArguments.map(({ name }) => name));
+    for (const [name] of entries) {
+      if (!declaredNames.has(name)) {
+        throw new JsonRpcError(-32602, `Unknown prompt argument: "${name}"`);
+      }
+    }
+    const providedNames = new Set(entries.map(([name]) => name));
+    for (const argument of declaredArguments) {
+      if (argument.required === true && !providedNames.has(argument.name)) {
+        throw new JsonRpcError(
+          -32602,
+          `Missing required prompt argument: "${argument.name}"`,
+        );
+      }
+    }
+  }
+
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
 /**
  * Whether an Origin header points at the local loopback interface (any port).
  * Used as the default Origin allowlist when none is configured.
@@ -132,7 +192,11 @@ export class MCPServer {
   private clientCapabilities: Record<string, unknown> = {};
   private sessionCapabilities = new Map<string, Record<string, unknown>>();
 
-  /** Callback for server-initiated notifications. Set by transport layer. */
+  /**
+   * Callback for custom transports that can deliver server-initiated
+   * notifications. The built-in Streamable HTTP transport does not install
+   * one and therefore does not advertise list-change support.
+   */
   onNotification?: (notification: { jsonrpc: "2.0"; method: string; params?: unknown }) => void;
 
   constructor(config: MCPServerConfig) {
@@ -189,6 +253,12 @@ export class MCPServer {
     }
 
     if (type === "bearer") {
+      const validate = (auth as { validate?: unknown }).validate;
+      if (validate !== undefined && typeof validate !== "function") {
+        throw CONFIG_INVALID.create({
+          detail: "MCP bearer auth validate must be a function when provided.",
+        });
+      }
       return;
     }
 
@@ -199,14 +269,17 @@ export class MCPServer {
     });
   }
 
+  /** Emit on an explicitly wired notification-capable custom transport. */
   notifyToolsChanged(): void {
     this.onNotification?.({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
   }
 
+  /** Emit on an explicitly wired notification-capable custom transport. */
   notifyResourcesChanged(): void {
     this.onNotification?.({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
   }
 
+  /** Emit on an explicitly wired notification-capable custom transport. */
   notifyPromptsChanged(): void {
     this.onNotification?.({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
   }
@@ -273,7 +346,7 @@ export class MCPServer {
       case "prompts/list":
         return this.listPrompts(params);
       case "prompts/get":
-        return this.getPrompt(params);
+        return this.getPrompt(params, context, requestId, sessionId);
       case "initialize":
         return this.initialize(params);
       case "notifications/initialized":
@@ -322,9 +395,9 @@ export class MCPServer {
           "Veryfront development server tools for real-time errors, route preview, HMR control, and scaffolding",
       },
       capabilities: {
-        tools: { listChanged: true },
-        resources: { listChanged: true },
-        prompts: { listChanged: true },
+        tools: {},
+        resources: {},
+        prompts: {},
         completions: {},
         logging: {},
         tasks: { list: {}, cancel: {}, requests: { tools: { call: {} } } },
@@ -460,46 +533,67 @@ export class MCPServer {
 
     return withSpan(
       "mcp.callTool",
-      async () => {
-        const abortController = requestId === undefined ? undefined : new AbortController();
-        const outerAbortSignal = toolContext?.abortSignal;
-        const abortFromOuterSignal = () => abortController?.abort();
-        if (abortController) {
-          if (outerAbortSignal?.aborted) {
-            abortController.abort();
-          } else {
-            outerAbortSignal?.addEventListener("abort", abortFromOuterSignal, { once: true });
-          }
-          this.pendingRequestAbortControllers.set(
-            pendingRequestKey(requestId!, sessionId),
-            abortController,
-          );
-        }
-        const foregroundToolContext: ToolExecutionContext | undefined = abortController
-          ? { ...toolContext, abortSignal: abortController.signal }
-          : toolContext;
+      () =>
+        this.withForegroundRequestSignal(
+          requestId,
+          sessionId,
+          toolContext?.abortSignal,
+          async (abortSignal) => {
+            const foregroundToolContext: ToolExecutionContext | undefined = abortSignal
+              ? { ...toolContext, abortSignal }
+              : toolContext;
 
-        try {
-          const result = await executeTool(toolName, args, foregroundToolContext);
-          return {
-            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-            isError: false,
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: "text", text: message }],
-            isError: true,
-          };
-        } finally {
-          if (requestId !== undefined) {
-            this.pendingRequestAbortControllers.delete(pendingRequestKey(requestId, sessionId));
-          }
-          outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
-        }
-      },
+            try {
+              const result = await executeTool(toolName, args, foregroundToolContext);
+              return {
+                content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+                isError: false,
+              };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return {
+                content: [{ type: "text", text: message }],
+                isError: true,
+              };
+            }
+          },
+        ),
       { "mcp.tool.name": toolName },
     );
+  }
+
+  private async withForegroundRequestSignal<T>(
+    requestId: string | number | undefined,
+    sessionId: string | undefined,
+    outerAbortSignal: AbortSignal | undefined,
+    operation: (abortSignal: AbortSignal | undefined) => Promise<T>,
+  ): Promise<T> {
+    const abortController = requestId === undefined ? undefined : new AbortController();
+    const abortFromOuterSignal = () => abortController?.abort();
+    const requestKey = requestId === undefined
+      ? undefined
+      : pendingRequestKey(requestId, sessionId);
+
+    if (abortController) {
+      if (outerAbortSignal?.aborted) {
+        abortController.abort();
+      } else {
+        outerAbortSignal?.addEventListener("abort", abortFromOuterSignal, { once: true });
+      }
+      this.pendingRequestAbortControllers.set(requestKey!, abortController);
+    }
+
+    try {
+      return await operation(abortController?.signal ?? outerAbortSignal);
+    } finally {
+      if (
+        requestKey !== undefined &&
+        this.pendingRequestAbortControllers.get(requestKey) === abortController
+      ) {
+        this.pendingRequestAbortControllers.delete(requestKey);
+      }
+      outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
+    }
   }
 
   private listResourceTemplates(
@@ -633,67 +727,90 @@ export class MCPServer {
     const prompts: Array<Record<string, unknown>> = [];
 
     for (const [id, promptInstance] of registry.prompts.entries()) {
-      prompts.push({
+      if (promptInstance.mcp?.enabled === false) continue;
+
+      const entry: Record<string, unknown> = {
         name: id,
         description: promptInstance.description,
-      });
+      };
+      if (promptInstance.mcp?.title !== undefined) {
+        entry.title = promptInstance.mcp.title;
+      }
+      if (promptInstance.mcp?.arguments !== undefined) {
+        entry.arguments = promptInstance.mcp.arguments.map((argument) => {
+          const listedArgument: Record<string, unknown> = { name: argument.name };
+          if (argument.title !== undefined) listedArgument.title = argument.title;
+          if (argument.description !== undefined) {
+            listedArgument.description = argument.description;
+          }
+          if (argument.required !== undefined) listedArgument.required = argument.required;
+          return listedArgument;
+        });
+      }
+      prompts.push(entry);
     }
 
     return Promise.resolve({ prompts });
   }
 
-  private getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private getPrompt(
+    params: JSONRPCParams | undefined,
+    context?: ToolExecutionContext,
+    requestId?: string | number,
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
     const { name, arguments: args } = toParamsRecord(params);
 
     if (typeof name !== "string" || name.length === 0) {
       throw new JsonRpcError(-32602, "Prompt name must be a non-empty string");
     }
 
-    if (
-      args !== undefined &&
-      (args === null || typeof args !== "object" || Array.isArray(args))
-    ) {
-      throw new JsonRpcError(-32602, "Prompt arguments must be an object");
-    }
-
     const promptName = name;
     const registeredPrompt = promptRegistry.get(promptName);
-    if (!registeredPrompt) {
+    if (!registeredPrompt || registeredPrompt.mcp?.enabled === false) {
       throw new JsonRpcError(-32602, `Unknown prompt: ${promptName}`);
     }
+    const promptArguments = normalizePromptArguments(registeredPrompt, args);
 
     return withSpan(
       "mcp.getPrompt",
-      async () => {
-        let content: string;
-        try {
-          content = await registeredPrompt.getContent(
-            args as Record<string, unknown> | undefined,
-          );
-        } catch (error) {
-          logger.warn("Prompt rendering failed", {
-            prompt: promptName,
-            errorType: error instanceof Error ? error.name : typeof error,
-          });
-          throw new JsonRpcError(
-            -32603,
-            `Prompt "${promptName}" could not be rendered`,
-          );
-        }
+      () =>
+        this.withForegroundRequestSignal(
+          requestId,
+          sessionId,
+          context?.abortSignal,
+          async (abortSignal) => {
+            let content: string;
+            try {
+              content = await registeredPrompt.getContent(
+                promptArguments,
+                abortSignal ? { abortSignal } : undefined,
+              );
+            } catch (error) {
+              logger.warn("Prompt rendering failed", {
+                prompt: promptName,
+                errorType: error instanceof Error ? error.name : typeof error,
+              });
+              throw new JsonRpcError(
+                -32603,
+                `Prompt "${promptName}" could not be rendered`,
+              );
+            }
 
-        return {
-          description: registeredPrompt.description,
-          messages: [
-            {
-              role: "user",
-              content: {
-                type: "text",
-                text: content,
-              },
-            },
-          ],
-        };
-      },
+            return {
+              description: registeredPrompt.description,
+              messages: [
+                {
+                  role: "user",
+                  content: {
+                    type: "text",
+                    text: content,
+                  },
+                },
+              ],
+            };
+          },
+        ),
       { "mcp.prompt.name": promptName },
     );
   }
@@ -877,9 +994,7 @@ export class MCPServer {
       return false;
     }
 
-    // z.function() in v4 doesn't carry arg/return types — cast to expected signature
-    const validate = auth.validate as (token: string) => Promise<boolean>;
-    return await validate(token);
+    return await auth.validate(token);
   }
 
   private getCORSHeaders(requestOrigin?: string | null): Record<string, string> {

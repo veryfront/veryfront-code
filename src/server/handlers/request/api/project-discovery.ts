@@ -1,10 +1,13 @@
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import {
+  createProjectDiscoveryConfig,
+  DiscoveryGenerationError,
+  replaceDiscoveredProjectPrimitives,
+} from "#veryfront/discovery";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import { serverLogger } from "#veryfront/utils";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
-import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
 import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
-import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -86,15 +89,17 @@ function summarizeDiscoveryFailures(
   errors: DiscoveryResult["errors"],
   projectDir: string,
 ): Array<{ file: string; sourceKind: string; message: string }> {
-  return errors.slice(0, MAX_DISCOVERY_FAILURES_TO_LOG).map(({ file, error }) => {
-    const relativeFile = projectRelativeDiscoveryFile(file, projectDir);
-    const topLevelDir = relativeFile.split("/", 1)[0] ?? "";
-    return {
-      file: relativeFile,
-      sourceKind: DISCOVERY_SOURCE_KINDS[topLevelDir] ?? "unknown",
-      message: sanitizeDiscoveryErrorMessage(error.message, file, projectDir, relativeFile),
-    };
-  });
+  return errors.slice(0, MAX_DISCOVERY_FAILURES_TO_LOG).map(
+    ({ file, error, sourceKind }) => {
+      const relativeFile = projectRelativeDiscoveryFile(file, projectDir);
+      const topLevelDir = relativeFile.split("/", 1)[0] ?? "";
+      return {
+        file: relativeFile,
+        sourceKind: sourceKind ?? DISCOVERY_SOURCE_KINDS[topLevelDir] ?? "unknown",
+        message: sanitizeDiscoveryErrorMessage(error.message, file, projectDir, relativeFile),
+      };
+    },
+  );
 }
 
 /** Build a discovery cache key that incorporates the release/version. */
@@ -155,49 +160,25 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   const discovery = {
     sourceSnapshotVersion,
     promise: (async () => {
-      return await runWithRegistryTransaction(async () => {
-        const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
-        const { agentRegistry } = await import(
-          "#veryfront/agent/composition/composition.ts"
-        );
-        const { toolRegistry } = await import("#veryfront/tool/registry.ts");
-        const { promptRegistry } = await import("#veryfront/prompt/registry.ts");
-        const { resourceRegistry } = await import("#veryfront/resource/registry.ts");
+      const discoveryOptions = createProjectDiscoveryConfig({
+        projectDir: ctx.projectDir,
+        config: ctx.config,
+        fsAdapter: ctx.adapter.fs,
+      });
+      const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
+        discoveryOptions.agentDirs.length > 0;
 
-        // Clear stale entries in a transaction-local copy. Concurrent runs keep
-        // using the prior live registry until discovery succeeds and the staged
-        // replacement is committed atomically.
-        clearTrackedAgents();
-        clearTranspileCache();
-        agentRegistry.clear();
-        toolRegistry.clear();
-        promptRegistry.clear();
-        resourceRegistry.clear();
-
-        const discoveryOptions = createProjectDiscoveryConfig({
-          projectDir: ctx.projectDir,
-          config: ctx.config,
-          fsAdapter: ctx.adapter.fs,
-        });
-        const result = await discoverAll(discoveryOptions);
-        const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
-          discoveryOptions.agentDirs.length > 0;
-
+      try {
+        const result = await replaceDiscoveredProjectPrimitives(discoveryOptions);
         const logData = {
           projectSlug: ctx.projectSlug,
           releaseId: ctx.releaseId,
           agents: result.agents.size,
           tools: result.tools.size,
-          errors: result.errors.length,
+          errors: 0,
         };
 
-        if (result.errors.length > 0) {
-          logger.warn("Primitive discovery completed with errors", {
-            ...logData,
-            failures: summarizeDiscoveryFailures(result.errors, ctx.projectDir),
-            omittedErrors: Math.max(0, result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG),
-          });
-        } else if (
+        if (
           result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
         ) {
           logger.info("Primitive discovery found 0 agents and 0 tools", logData);
@@ -206,21 +187,31 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         }
 
         return result;
-      });
+      } catch (error) {
+        if (error instanceof DiscoveryGenerationError) {
+          const result = error.result;
+          logger.warn("Primitive discovery rejected; retaining previous generation", {
+            projectSlug: ctx.projectSlug,
+            releaseId: ctx.releaseId,
+            agents: result.agents.size,
+            tools: result.tools.size,
+            errors: result.errors.length,
+            failures: summarizeDiscoveryFailures(result.errors, ctx.projectDir),
+            omittedErrors: Math.max(
+              0,
+              result.errors.length - MAX_DISCOVERY_FAILURES_TO_LOG,
+            ),
+          });
+        }
+        throw error;
+      }
     })(),
   };
 
   discoveredProjects.set(key, discovery);
 
   try {
-    const result = await discovery.promise;
-    if (result.errors.length > 0) {
-      const current = discoveredProjects.get<DiscoveryRecord>(key);
-      if (current === discovery) {
-        discoveredProjects.delete(key);
-      }
-    }
-    return result;
+    return await discovery.promise;
   } catch (error) {
     // A superseded generation may already own this key. Delete only our own
     // record so the newer discovery remains reusable after it completes.
@@ -228,11 +219,14 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     if (current === discovery) {
       discoveredProjects.delete(key);
     }
-    logger.warn("Primitive discovery failed (will retry)", {
-      projectSlug: ctx.projectSlug,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    if (!(error instanceof DiscoveryGenerationError)) {
+      logger.warn("Primitive discovery failed (will retry)", {
+        projectSlug: ctx.projectSlug,
+        error: sanitizeUrlCredentials(
+          error instanceof Error ? error.message : String(error),
+        ),
+      });
+    }
     throw INITIALIZATION_ERROR.create({
       detail: `Runtime discovery failed: ${error instanceof Error ? error.message : String(error)}`,
       cause: error,

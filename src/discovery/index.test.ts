@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { clearTrackedAgents, clearTranspileCache } from "./index.ts";
+import {
+  clearTranspileCache,
+  createProjectDiscoveryConfig,
+  getProjectDiscoveryDirectories,
+} from "./index.ts";
 import type { DiscoveryConfig, DiscoveryResult } from "./index.ts";
 
 describe("src/discovery/index", () => {
@@ -13,17 +17,6 @@ describe("src/discovery/index", () => {
     it("should be callable multiple times", () => {
       clearTranspileCache();
       clearTranspileCache();
-    });
-  });
-
-  describe("clearTrackedAgents", () => {
-    it("should not throw when clearing empty tracked agents", () => {
-      clearTrackedAgents();
-    });
-
-    it("should be callable multiple times", () => {
-      clearTrackedAgents();
-      clearTrackedAgents();
     });
   });
 
@@ -80,6 +73,43 @@ describe("src/discovery/index", () => {
       assertEquals(result.webhooks.size, 0);
       assertEquals(result.evals.size, 0);
       assertEquals(result.errors.length, 0);
+    });
+  });
+
+  describe("project discovery configuration", () => {
+    it("uses one enabled-path set for discovery and file watching", () => {
+      const config = createProjectDiscoveryConfig({
+        projectDir: "/project",
+        config: {
+          ai: {
+            prompts: {
+              discovery: { paths: ["src/ai/prompts", "shared/primitives"] },
+            },
+            resources: {
+              discovery: { paths: ["content/resources", "shared/primitives"] },
+            },
+            workflows: {
+              discovery: { enabled: false },
+            },
+          },
+        },
+      });
+
+      assertEquals(config.promptDirs, ["src/ai/prompts", "shared/primitives"]);
+      assertEquals(config.resourceDirs, ["content/resources", "shared/primitives"]);
+      assertEquals(config.workflowDirs, []);
+      assertEquals(getProjectDiscoveryDirectories(config), [
+        "tools",
+        "agents",
+        "skills",
+        "content/resources",
+        "shared/primitives",
+        "src/ai/prompts",
+        "tasks",
+        "schedules",
+        "webhooks",
+        "evals",
+      ]);
     });
   });
 });

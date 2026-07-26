@@ -12,6 +12,8 @@
 // Re-export types
 export type {
   DiscoveryConfig,
+  DiscoveryError,
+  DiscoveryErrorCode,
   DiscoveryHandler,
   DiscoveryResult,
   FileDiscoveryContext,
@@ -20,12 +22,17 @@ export type {
 // Re-export main discovery function
 export { discoverAll } from "./discovery-engine.ts";
 export {
+  DiscoveryGenerationError,
+  replaceDiscoveredProjectPrimitives,
+} from "./registry-replacement.ts";
+export {
   createProjectDiscoveryConfig,
   DEFAULT_PROJECT_DISCOVERY_DIRS,
+  getProjectDiscoveryDirectories,
 } from "./project-discovery-config.ts";
 
 // Re-export utilities
-export { clearTrackedAgents, filenameToId, filePathToPattern } from "./discovery-utils.ts";
+export { filenameToId, filePathToId, filePathToPattern } from "./discovery-utils.ts";
 
 // Re-export transpiler utilities
 export { clearTranspileCache } from "./transpiler.ts";

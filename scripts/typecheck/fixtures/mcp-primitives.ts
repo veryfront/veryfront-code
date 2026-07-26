@@ -1,7 +1,13 @@
-import { prompt, type PromptGenerateFn } from "veryfront/prompt";
+import {
+  prompt,
+  type PromptGenerateFn,
+  promptRegistry,
+} from "veryfront/prompt";
 import { resource, resourceRegistry } from "veryfront/resource";
 import { defineSchema } from "veryfront/schemas";
 import { registerResource } from "veryfront/mcp";
+import { skillRegistry } from "veryfront/skill";
+import { toolRegistry } from "veryfront/tool";
 
 const generate: PromptGenerateFn = (variables) => `Hello ${String(variables.name)}`;
 
@@ -32,3 +38,17 @@ prompt({
 
 // @ts-expect-error Published prompt configs require static content or a generator.
 prompt({ id: "missing-content-source", description: "Invalid prompt" });
+
+// Project code may mutate only its current registry scope.
+// @ts-expect-error Process-wide shared registration is framework-internal.
+promptRegistry.registerShared("welcome", welcome);
+// @ts-expect-error Process-wide reset is framework-internal.
+promptRegistry.clearAll();
+// @ts-expect-error Aggregate cross-scope statistics are framework-internal.
+promptRegistry.getStats();
+// @ts-expect-error Process-wide shared registration is framework-internal.
+resourceRegistry.registerShared(docs.id, docs);
+// @ts-expect-error Process-wide reset is framework-internal.
+toolRegistry.clearAll();
+// @ts-expect-error Aggregate cross-scope statistics are framework-internal.
+skillRegistry.getStats();

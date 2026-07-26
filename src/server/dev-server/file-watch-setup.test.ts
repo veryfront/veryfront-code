@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { expect } from "#std/expect.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isIgnoredOutputDir, shouldIgnorePath } from "./file-watch-setup.ts";
+import {
+  isConfiguredPrimitivePath,
+  isIgnoredOutputDir,
+  shouldIgnorePath,
+} from "./file-watch-setup.ts";
 
 describe("shouldIgnorePath", () => {
   it("ignores paths inside generated/output directories", () => {
@@ -74,5 +78,21 @@ describe("isIgnoredOutputDir", () => {
   it("does not match legitimate source files", () => {
     expect(isIgnoredOutputDir(projectDir, "/proj/pages/index.tsx")).toBe(false);
     expect(isIgnoredOutputDir(projectDir, "/proj/styles/app.css")).toBe(false);
+  });
+});
+
+describe("isConfiguredPrimitivePath", () => {
+  it("matches default and nested custom discovery roots without prefix aliases", () => {
+    const roots = ["tools", "src/ai/prompts", "content/resources"];
+
+    expect(isConfiguredPrimitivePath("/proj", roots, "/proj/tools/search.ts")).toBe(true);
+    expect(isConfiguredPrimitivePath("/proj", roots, "/proj/src/ai/prompts/review.ts")).toBe(
+      true,
+    );
+    expect(isConfiguredPrimitivePath("/proj", roots, "/proj/content/resources/docs.ts")).toBe(
+      true,
+    );
+    expect(isConfiguredPrimitivePath("/proj", roots, "/proj/toolsmith/search.ts")).toBe(false);
+    expect(isConfiguredPrimitivePath("/proj", roots, "/proj/src/ai/other.ts")).toBe(false);
   });
 });

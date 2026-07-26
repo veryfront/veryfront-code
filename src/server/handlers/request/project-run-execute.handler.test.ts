@@ -4,6 +4,7 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { agentRegistryInternal } from "#veryfront/agent/composition/composition.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
@@ -12,7 +13,7 @@ import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -1198,8 +1199,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
-    agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    agentRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
 
     try {
       const adapter = createMockAdapter();
@@ -1298,8 +1299,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(response.error, undefined);
       assertEquals(response.artifacts, undefined);
     } finally {
-      agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      agentRegistryInternal.clearAll();
+      toolRegistryInternal.clearAll();
       await stopEsbuild();
     }
   });

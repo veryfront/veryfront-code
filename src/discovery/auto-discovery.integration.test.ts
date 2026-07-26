@@ -136,6 +136,115 @@ describe(
       assertEquals(result.prompts.size >= 1, true);
     });
 
+    it("derives collision-free nested prompt ids and preserves default index ids", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-nested-prompts-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/prompts/admin`, { recursive: true });
+        await Deno.mkdir(`${tempDir}/prompts/support`, { recursive: true });
+        const source = (description: string) =>
+          [
+            'import { prompt } from "veryfront/prompt";',
+            `export default prompt({ description: "${description}", content: "ok" });`,
+          ].join("\n");
+        await Deno.writeTextFile(
+          `${tempDir}/prompts/admin/review-message.ts`,
+          source("Admin review"),
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/prompts/support/review-message.ts`,
+          source("Support review"),
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/prompts/admin/index.ts`,
+          source("Admin index"),
+        );
+        await Deno.writeTextFile(
+          `${tempDir}/prompts/index.ts`,
+          source("Root index"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          toolDirs: [],
+          agentDirs: [],
+          skillDirs: [],
+          resourceDirs: [],
+          workflowDirs: [],
+          taskDirs: [],
+          scheduleDirs: [],
+          webhookDirs: [],
+          evalDirs: [],
+        });
+
+        assertEquals(
+          Array.from(result.prompts.keys()).sort(),
+          ["admin", "admin/reviewMessage", "index", "support/reviewMessage"],
+        );
+        assertEquals(result.errors, []);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("reports invalid prompt exports and duplicate ids as structured errors", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-prompt-errors-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/prompts`, { recursive: true });
+        const duplicate = (description: string) =>
+          [
+            'import { prompt } from "veryfront/prompt";',
+            `export default prompt({ id: "same", description: "${description}", content: "ok" });`,
+          ].join("\n");
+        await Deno.writeTextFile(`${tempDir}/prompts/first.ts`, duplicate("First"));
+        await Deno.writeTextFile(`${tempDir}/prompts/second.ts`, duplicate("Second"));
+        await Deno.writeTextFile(
+          `${tempDir}/prompts/invalid.ts`,
+          "export default { description: 'missing getContent' };",
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          toolDirs: [],
+          agentDirs: [],
+          skillDirs: [],
+          resourceDirs: [],
+          workflowDirs: [],
+          taskDirs: [],
+          scheduleDirs: [],
+          webhookDirs: [],
+          evalDirs: [],
+        });
+
+        assertEquals(result.prompts.get("same")?.description, "First");
+        assertEquals(
+          result.errors.map(({ code, sourceKind, sourceId, exportName }) => ({
+            code,
+            sourceKind,
+            sourceId,
+            exportName,
+          })),
+          [
+            {
+              code: "invalid_export",
+              sourceKind: "prompt",
+              sourceId: undefined,
+              exportName: undefined,
+            },
+            {
+              code: "duplicate_id",
+              sourceKind: "prompt",
+              sourceId: "same",
+              exportName: "default",
+            },
+          ],
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("should register discovered tools in registry", async () => {
       await discoverAll({
         baseDir: getFixturePath(),
@@ -460,7 +569,7 @@ describe(
       }
     });
 
-    it("rejects project modules that claim the reserved namespace through registerShared", async () => {
+    it("does not expose shared-registry mutation to project modules", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-reserved-shared-tool-id-" });
 
       try {
@@ -490,9 +599,11 @@ describe(
         assertEquals(result.tools.has("gmail__list_emails"), false);
         assertEquals(toolRegistry.has("gmail__list_emails"), false);
         assertEquals(result.errors.length, 1);
+        assertEquals(result.errors[0]?.code, "load_error");
+        assertEquals(result.errors[0]?.sourceKind, "tool");
         assertStringIncludes(
           result.errors[0]?.error.message ?? "",
-          'Local tool "gmail__list_emails" cannot use the reserved integration tool namespace',
+          "registerShared",
         );
       } finally {
         await Deno.remove(tempDir, { recursive: true });
@@ -596,6 +707,7 @@ describe(
 
         assertEquals(Array.from(result.tools.keys()).sort(), ["bar", "foo"]);
         assertEquals(toolRegistry.getAllIds().sort(), ["bar", "foo"]);
+        assertEquals(result.errors, []);
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }

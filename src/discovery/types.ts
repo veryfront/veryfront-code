@@ -53,6 +53,20 @@ export interface DiscoveryConfig {
 /**
  * Result of the discovery process
  */
+export type DiscoveryErrorCode =
+  | "invalid_export"
+  | "duplicate_id"
+  | "load_error";
+
+export interface DiscoveryError {
+  file: string;
+  error: Error;
+  code?: DiscoveryErrorCode;
+  sourceKind?: string;
+  sourceId?: string;
+  exportName?: string;
+}
+
 export interface DiscoveryResult {
   tools: Map<string, Tool>;
   agents: Map<string, Agent>;
@@ -64,7 +78,7 @@ export interface DiscoveryResult {
   schedules: Map<string, ScheduleDefinition>;
   webhooks: Map<string, WebhookDefinition>;
   evals: Map<string, EvalDefinition>;
-  errors: Array<{ file: string; error: Error }>;
+  errors: DiscoveryError[];
 }
 
 /**
@@ -72,6 +86,7 @@ export interface DiscoveryResult {
  */
 export interface DiscoveryHandler<T> {
   typeName: string;
+  shouldDiscover?: (file: string, dir: string) => boolean;
   validate: (item: unknown) => item is T;
   getId: (item: T, file: string, dir: string) => string;
   register: (id: string, item: T, file: string, dir: string, exportName?: string) => T;

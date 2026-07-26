@@ -16,8 +16,9 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { buildMergedTools, createRuntimeAgentStreamResponse } from "./run-stream.ts";
@@ -127,11 +128,11 @@ async function withJsonDebugLogFormat<T>(fn: () => Promise<T>): Promise<T> {
 describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
     try {
       const runtimeAgent = createAgent({
         id: "universal-skill-agent",
@@ -156,7 +157,7 @@ describe("internal-agents/run-stream", () => {
         "load_skill_reference",
       ]);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   });
 

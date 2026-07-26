@@ -3,15 +3,15 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
-import { resourceRegistry } from "./registry.ts";
+import { resourceRegistry, resourceRegistryInternal } from "./registry.ts";
 
 describe("resource registry", () => {
   beforeEach(() => {
-    resourceRegistry.clearAll();
+    resourceRegistryInternal.clearAll();
   });
 
   afterEach(() => {
-    resourceRegistry.clearAll();
+    resourceRegistryInternal.clearAll();
   });
 
   describe("findByPattern()", () => {

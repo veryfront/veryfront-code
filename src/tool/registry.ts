@@ -1,7 +1,10 @@
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { INVALID_ARGUMENT, TOOL_ID_CONFLICT } from "#veryfront/errors";
 
@@ -37,7 +40,7 @@ const toolManager = new ProjectScopedRegistryManager<Tool>("tool", {
   validateRegistration: validateToolRegistration,
 });
 
-class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
+class ToolRegistryInternal extends ScopedRegistryFacade<Tool> {
   override register(id: string, item: Tool): void {
     assertLocalToolId(id);
     if (item.id !== id) assertLocalToolId(item.id);
@@ -63,8 +66,18 @@ class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
   }
 }
 
-/** Shared tool registry value. */
-export const toolRegistry = new ToolRegistryClass(toolManager);
+/** Framework-only tool registry with process-wide maintenance capabilities. */
+export const toolRegistryInternal = new ToolRegistryInternal(toolManager);
+
+/** Project-scoped tool registry API safe for application code. */
+class ToolRegistry extends ScopedRegistryView<Tool> {
+  getToolsForProvider(): ToolDefinition[] {
+    return [...this.getAll().values()].map(toolToProviderDefinition);
+  }
+}
+
+/** Project-scoped tool registry value. */
+export const toolRegistry = new ToolRegistry(toolRegistryInternal);
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   const hasPreConvertedSchema = tool.inputSchemaJson != null;

@@ -43,7 +43,9 @@
       "veryfront/mcp": ["./npm/esm/src/mcp/index.d.ts"],
       "veryfront/prompt": ["./npm/esm/src/prompt/index.d.ts"],
       "veryfront/resource": ["./npm/esm/src/resource/index.d.ts"],
-      "veryfront/schemas": ["./npm/esm/src/schemas/index.d.ts"]
+      "veryfront/schemas": ["./npm/esm/src/schemas/index.d.ts"],
+      "veryfront/skill": ["./npm/esm/src/skill/index.d.ts"],
+      "veryfront/tool": ["./npm/esm/src/tool/index.d.ts"]
     }
   },
   "include": [

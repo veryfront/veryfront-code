@@ -1,4 +1,12 @@
-export type { PromptConfig, PromptGenerateFn } from "./schemas/prompt.schema.ts";
+export type {
+  PromptArgument,
+  PromptConfig,
+  PromptGenerateFn,
+  PromptMCPConfig,
+  PromptRenderContext,
+} from "./schemas/prompt.schema.ts";
+
+import type { PromptMCPConfig, PromptRenderContext } from "./schemas/prompt.schema.ts";
 
 /** Public API contract for prompt. */
 export interface Prompt {
@@ -8,5 +16,10 @@ export interface Prompt {
   description: string;
   /** Example message text to use as a chat suggestion */
   suggestion?: string;
-  getContent: (variables?: Record<string, unknown>) => Promise<string>;
+  /** MCP exposure and argument metadata. */
+  mcp?: PromptMCPConfig;
+  getContent: (
+    variables?: Record<string, unknown>,
+    context?: Readonly<PromptRenderContext>,
+  ) => Promise<string>;
 }

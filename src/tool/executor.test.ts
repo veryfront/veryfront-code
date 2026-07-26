@@ -3,12 +3,12 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
-import { toolRegistry } from "./registry.ts";
+import { toolRegistry, toolRegistryInternal } from "./registry.ts";
 import { executeTool } from "./executor.ts";
 
 describe("executeTool", () => {
   afterEach(() => {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("should execute a registered tool", async () => {

@@ -109,6 +109,14 @@ Deno.test("prompt discovery validates description and optional suggestion", () =
     }),
     false,
   );
+  assertEquals(
+    promptHandler.validate({
+      description: "Welcome",
+      getContent: () => Promise.resolve("Hello"),
+      mcp: { arguments: [{ name: "topic" }, { name: "topic" }] },
+    }),
+    false,
+  );
 });
 
 Deno.test("prompt discovery derives an id for a valid literal prompt export", () => {

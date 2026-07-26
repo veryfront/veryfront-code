@@ -14,7 +14,7 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
-import { assertLocalToolId, toolRegistry } from "#veryfront/tool/registry.ts";
+import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
 import {
@@ -135,7 +135,7 @@ export function agent(config: AgentConfig): Agent {
   ensureBuiltinSchemaValidator();
   for (const registration of SKILL_TOOL_REGISTRATIONS) {
     if (!toolRegistry.has(registration.id)) {
-      toolRegistry.registerShared(registration.id, registration.create());
+      toolRegistryInternal.registerShared(registration.id, registration.create());
     }
   }
 

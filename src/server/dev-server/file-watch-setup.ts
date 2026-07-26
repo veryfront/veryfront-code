@@ -118,12 +118,31 @@ export function isIgnoredOutputDir(projectDir: string, fullPath: string): boolea
   return rel.split(sep).some((segment) => IGNORED_OUTPUT_DIRS.has(segment));
 }
 
+function normalizeRelativeDirectory(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+/** Whether a changed file belongs to one of the configured discovery roots. */
+export function isConfiguredPrimitivePath(
+  projectDir: string,
+  primitiveDirs: readonly string[],
+  fullPath: string,
+): boolean {
+  const projectRelativePath = normalizeRelativeDirectory(relative(projectDir, fullPath));
+  return primitiveDirs.some((directory) => {
+    const normalizedDirectory = normalizeRelativeDirectory(directory);
+    return normalizedDirectory.length > 0 &&
+      (projectRelativePath === normalizedDirectory ||
+        projectRelativePath.startsWith(`${normalizedDirectory}/`));
+  });
+}
+
 export class FileWatchSetup {
   private fileWatcher?: { close(): void };
   private watcherController?: AbortController;
   private optimizedWatcher?: OptimizedFileWatcher;
   private batchCount = 0;
-  private primitiveDirs: Set<string>;
+  private primitiveDirs: string[];
   /** Content hashes to skip re-renders when file content is unchanged */
   private contentHashes = new Map<string, number>();
 
@@ -137,7 +156,7 @@ export class FileWatchSetup {
     primitiveDirNames?: string[],
     private reloadProject?: ReloadProjectInfo,
   ) {
-    this.primitiveDirs = new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS);
+    this.primitiveDirs = Array.from(new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS));
   }
 
   async setup(): Promise<void> {
@@ -179,7 +198,7 @@ export class FileWatchSetup {
       join(this.projectDir, "public"),
       join(this.projectDir, "app"),
       // Agent/chat primitive directories (from config or defaults)
-      ...Array.from(this.primitiveDirs).map((dir) => join(this.projectDir, dir)),
+      ...this.primitiveDirs.map((dir) => join(this.projectDir, dir)),
     ];
 
     const watchPaths: string[] = [];
@@ -253,9 +272,7 @@ export class FileWatchSetup {
    * Uses path segment matching to avoid false positives from substrings.
    */
   private isPrimitivePath(fullPath: string): boolean {
-    const rel = relative(this.projectDir, fullPath);
-    const firstSegment = rel.split(sep)[0] ?? "";
-    return this.primitiveDirs.has(firstSegment);
+    return isConfiguredPrimitivePath(this.projectDir, this.primitiveDirs, fullPath);
   }
 
   /**

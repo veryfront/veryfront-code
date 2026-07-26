@@ -111,6 +111,15 @@ import { prompt } from "veryfront/prompt";
 
 export default prompt({
   description: "Review code for quality issues",
+  mcp: {
+    title: "Code review",
+    arguments: [{
+      name: "code",
+      title: "Source code",
+      description: "Code to review",
+      required: true,
+    }],
+  },
   content: `Review the following code for:
 - Security vulnerabilities
 - Performance issues
@@ -120,6 +129,32 @@ Code to review:
 {code}`,
 });
 ```
+
+MCP prompt argument values are strings. If `arguments` metadata is present,
+the server rejects undeclared arguments and enforces every required argument.
+Application code calling `getContent()` directly is not limited to strings.
+
+Set `mcp: { enabled: false }` to keep a prompt available to application code
+without listing or serving it over MCP. Nested prompt files retain their
+relative namespace: `prompts/admin/review.ts` is listed as `admin/review`.
+
+Generated prompts receive MCP cancellation through the optional render
+context:
+
+```ts
+export default prompt({
+  description: "Build a report",
+  generate: async ({ topic }, context) => {
+    const response = await fetchReport(String(topic), {
+      signal: context?.abortSignal,
+    });
+    return response.text();
+  },
+});
+```
+
+The server returns promptly after a cancellation notification. The generator
+must still honor the signal to stop its own I/O and side effects.
 
 ## Resources
 
@@ -172,6 +207,14 @@ registerTool(
 This guide is about the application-facing MCP server from `veryfront/mcp`.
 
 It is not the same surface as the CLI development server started with `veryfront mcp`, which exposes Veryfront development/runtime tools rather than your app's MCP route.
+
+The built-in Streamable HTTP transport does not advertise
+`tools.listChanged`, `resources.listChanged`, or `prompts.listChanged`.
+Registry mutations are not pushed as server-initiated notifications on that
+transport; reconnect or list again after an application reload. The
+`notifyToolsChanged()`, `notifyResourcesChanged()`, and
+`notifyPromptsChanged()` methods are available only for custom transports that
+explicitly wire a notification callback.
 
 ## Verify it worked
 

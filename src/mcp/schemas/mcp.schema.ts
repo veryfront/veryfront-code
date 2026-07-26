@@ -8,10 +8,19 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
  *   unauthenticated server. Required for local dev/testing; prevents accidental
  *   exposure of the JSON-RPC surface in production (VULN-SRV-5).
  */
+export type MCPBearerTokenValidator = (
+  token: string,
+) => boolean | Promise<boolean>;
+
 const getAuthValidatedSchema = defineSchema((v) =>
   v.object({
     type: v.literal("bearer"),
-    validate: v.function().optional(),
+    validate: v
+      .custom<MCPBearerTokenValidator>(
+        (value) => typeof value === "function",
+        "Expected a bearer token validator function",
+      )
+      .optional(),
   })
 );
 

@@ -29,8 +29,12 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
-import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
-import type { DiscoveryConfig } from "#veryfront/discovery";
+import {
+  createProjectDiscoveryConfig,
+  getProjectDiscoveryDirectories,
+  replaceDiscoveredProjectPrimitives,
+} from "#veryfront/discovery";
+import type { ProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { ServerStartupCleanupError } from "../startup-cleanup-error.ts";
 
 const rscLog = logger.component("rsc");
@@ -383,40 +387,27 @@ export class DevServer {
     return this._handler;
   }
 
-  private buildDiscoveryConfig(): DiscoveryConfig {
-    const discoveryConfig = this.appConfig?.ai;
-    const skillDiscoveryEnabled = discoveryConfig?.skills?.discovery?.enabled ?? true;
-    return {
-      baseDir: this.options.projectDir,
-      toolDirs: discoveryConfig?.tools?.discovery?.paths ?? ["tools"],
-      agentDirs: discoveryConfig?.agents?.discovery?.paths ?? ["agents"],
-      skillDirs: skillDiscoveryEnabled
-        ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"])
-        : [],
-      resourceDirs: ["resources"],
-      promptDirs: ["prompts"],
-      workflowDirs: ["workflows"],
+  private buildDiscoveryConfig(): ProjectDiscoveryConfig {
+    return createProjectDiscoveryConfig({
+      projectDir: this.options.projectDir,
+      config: this.appConfig,
       fsAdapter: this.adapter.fs,
       verbose: this.isDebug(),
-    };
+    });
   }
 
   private async runPrimitiveDiscovery(): Promise<void> {
-    try {
-      const config = this.buildDiscoveryConfig();
-      const result = await discoverAll(config);
-      const total = result.tools.size + result.agents.size + result.skills.size +
-        result.workflows.size + result.prompts.size +
-        result.resources.size;
-      if (total > 0) {
-        logger.debug(
-          `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
-            `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
-            `${result.prompts.size} prompts, ${result.resources.size} resources`,
-        );
-      }
-    } catch (error) {
-      devServerLog.debug("Primitive discovery skipped:", error);
+    const config = this.buildDiscoveryConfig();
+    const result = await replaceDiscoveredProjectPrimitives(config);
+    const total = result.tools.size + result.agents.size + result.skills.size +
+      result.workflows.size + result.prompts.size +
+      result.resources.size;
+    if (total > 0) {
+      logger.debug(
+        `[Discovery] Registered ${result.tools.size} tools, ${result.agents.size} agents, ` +
+          `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
+          `${result.prompts.size} prompts, ${result.resources.size} resources`,
+      );
     }
   }
 
@@ -510,16 +501,18 @@ export class DevServer {
 
   async rediscoverPrimitives(): Promise<void> {
     try {
-      clearTranspileCache();
       const config = this.buildDiscoveryConfig();
-      const result = await discoverAll(config);
+      const result = await replaceDiscoveredProjectPrimitives(config);
       logger.info(
         `[HMR] Re-discovered: ${result.tools.size} tools, ${result.agents.size} agents, ` +
           `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
           `${result.prompts.size} prompts, ${result.resources.size} resources`,
       );
     } catch (error) {
-      hmrLog.warn("Primitive re-discovery failed:", error);
+      hmrLog.warn("Primitive re-discovery failed; retaining the previous generation", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
@@ -545,16 +538,7 @@ export class DevServer {
     );
 
     const debounceMs = this.options.fileWatcherDebounceMs ?? 100;
-    const discoveryConfig = this.appConfig?.ai;
-    const skillDiscoveryEnabled = discoveryConfig?.skills?.discovery?.enabled ?? true;
-    const primitiveDirNames = [
-      ...(discoveryConfig?.tools?.discovery?.paths ?? ["tools"]),
-      ...(discoveryConfig?.agents?.discovery?.paths ?? ["agents"]),
-      ...(skillDiscoveryEnabled ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"]) : []),
-      "resources",
-      "prompts",
-      "workflows",
-    ];
+    const primitiveDirNames = getProjectDiscoveryDirectories(this.buildDiscoveryConfig());
     this.fileWatchSetup = new FileWatchSetup(
       this.options.projectDir,
       this.adapter,

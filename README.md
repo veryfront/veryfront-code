@@ -76,7 +76,7 @@ Purpose-built for TypeScript and React, Veryfront Code gives you everything you 
 
 - [**Runs**](https://veryfront.com/docs/code/guides/runs) - Execute durable task, workflow, and agent work through project-scoped run records.
 
-- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) - Expose tools, prompts, and resources through MCP with SSE transport, sessions, and elicitation.
+- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) - Expose tools, prompts, and resources through MCP with Streamable HTTP sessions and elicitation.
 
 - [**Sandbox**](https://veryfront.com/docs/code/guides/sandbox) - Run isolated code in ephemeral compute environments with shell tools and agent-service integration.
 

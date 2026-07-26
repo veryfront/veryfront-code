@@ -83,12 +83,17 @@ if (typeof MapSizeDescriptor?.get !== "function") {
 const MapSizeGetter = MapSizeDescriptor.get;
 
 function getStore(): RequestContext | undefined {
+  const context = getRawStore();
+  return context && !weakSetHas(finalizedRequestContexts, context) ? context : undefined;
+}
+
+function getRawStore(): RequestContext | undefined {
   const context = ReflectApply(
     AsyncLocalStoragePrototypeGetStore,
     asyncLocalStorage,
     [],
   ) as RequestContext | undefined;
-  return context && !weakSetHas(finalizedRequestContexts, context) ? context : undefined;
+  return context;
 }
 
 function runInContext<T>(context: RequestContext, fn: () => T): T {
@@ -156,9 +161,27 @@ const requestContextFinalizers = new IntrinsicWeakMap<
   Set<RequestContextFinalizer>
 >();
 const finalizedRequestContexts = new IntrinsicWeakSet<RequestContext>();
+const revokedRequestContextSnapshot = freezeObject({ revoked: true as const });
 
 export function getCurrentRequestContext(): RequestContext | null {
   return getStore() ?? null;
+}
+
+/**
+ * Returns ambient tenancy without exposing credentials after request teardown.
+ *
+ * Detached async descendants retain their AsyncLocalStorage store. Returning
+ * `null` for a finalized store would make downstream registry code mistake the
+ * descendant for ordinary local/CLI work and fall back to the default scope.
+ * The credential-free sentinel lets those boundaries fail closed instead.
+ */
+function getRequestContextSnapshotForScoping():
+  | RequestContext
+  | Readonly<{ revoked: true }>
+  | null {
+  const context = getRawStore();
+  if (!context) return null;
+  return weakSetHas(finalizedRequestContexts, context) ? revokedRequestContextSnapshot : context;
 }
 
 /**
@@ -208,6 +231,73 @@ function throwCleanupErrors(cleanupErrors: unknown[]): void {
     cleanupErrors,
     "Multiple request-context finalizers failed",
   );
+}
+
+type StreamingResponseLease = {
+  response: Response;
+  completion: Promise<void>;
+};
+
+function leaseStreamingResponse(response: Response): StreamingResponseLease | null {
+  const source = response.body;
+  if (!source) return null;
+
+  const reader = source.getReader();
+  let leaseSettled = false;
+  let resolveLease = () => {};
+  let rejectLease = (_error: unknown) => {};
+  const completion = new Promise<void>((resolve, reject) => {
+    resolveLease = resolve;
+    rejectLease = reject;
+  });
+
+  const completeLease = (): void => {
+    if (leaseSettled) return;
+    leaseSettled = true;
+    resolveLease();
+  };
+  const failLease = (error: unknown): void => {
+    if (leaseSettled) return;
+    leaseSettled = true;
+    rejectLease(error);
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          controller.close();
+          reader.releaseLock();
+          completeLease();
+          return;
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        controller.error(error);
+        failLease(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+        reader.releaseLock();
+        completeLease();
+      } catch (error) {
+        failLease(error);
+        throw error;
+      }
+    },
+  });
+
+  return {
+    response: new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+    completion,
+  };
 }
 
 /**
@@ -308,8 +398,45 @@ export function runWithRequestContext<T>(
 }
 
 /**
+ * Runs a streaming response within one request context.
+ *
+ * A response body is lazy: returning the `Response` does not mean its producer
+ * has finished using request-scoped registries, credentials, or adapters. This
+ * helper returns the response as soon as it is ready, but finalizes the context
+ * only after the body closes, errors, or is cancelled by its consumer.
+ */
+export function runWithRequestContextResponse(
+  options: RequestContextOptions,
+  fn: () => Promise<Response>,
+): Promise<Response> {
+  let responseReadySettled = false;
+  let resolveResponse = (_response: Response) => {};
+  let rejectResponse = (_error: unknown) => {};
+  const responseReady = new Promise<Response>((resolve, reject) => {
+    resolveResponse = resolve;
+    rejectResponse = reject;
+  });
+
+  const lifecycle = runWithRequestContext(options, async () => {
+    const response = await fn();
+    const lease = leaseStreamingResponse(response);
+    responseReadySettled = true;
+    resolveResponse(lease?.response ?? response);
+    await lease?.completion;
+  });
+
+  void lifecycle.catch((error) => {
+    if (responseReadySettled) return;
+    responseReadySettled = true;
+    rejectResponse(error);
+  });
+
+  return responseReady;
+}
+
+/**
  * Register the platform-owned request provider in module-private cache state.
  * A writable global bridge would let evaluated project code redirect ambient
  * cache and registry scope before the first lazy lookup.
  */
-registerMultiProjectRequestContextProvider(getCurrentRequestContext);
+registerMultiProjectRequestContextProvider(getRequestContextSnapshotForScoping);

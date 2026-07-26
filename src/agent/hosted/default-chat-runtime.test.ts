@@ -9,6 +9,7 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { executeRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
@@ -200,7 +201,7 @@ Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integr
     assertEquals(authorizationHeader, "Bearer user-scoped-token");
     assertEquals(projectSlugHeader, "authorized-project");
   } finally {
-    await toolRegistry.clearAll();
+    await toolRegistryInternal.clearAll();
     clearModelProviders();
     restoreEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
     restoreEnv("VERYFRONT_API_TOKEN", previousApiToken);
@@ -440,7 +441,7 @@ Deno.test(
       assertEquals(integrationCallAuthorization, "Bearer project-two-token");
       assertEquals(integrationCallProjectSlug, "project-two");
     } finally {
-      await toolRegistry.clearAll();
+      await toolRegistryInternal.clearAll();
       clearModelProviders();
       restoreEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
       restoreEnv("VERYFRONT_API_TOKEN", previousApiToken);
@@ -481,7 +482,7 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
 
     assertEquals(toolRegistry.getOwn("load_skill"), undefined);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

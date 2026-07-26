@@ -127,7 +127,9 @@ describe("mcp/server", () => {
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
     });
-    let capturedContext: { endUserId?: string; projectId?: string } | undefined;
+    let capturedContext:
+      | { abortSignal?: AbortSignal; endUserId?: string; projectId?: string }
+      | undefined;
 
     registerTool(
       "test:context",
@@ -531,7 +533,7 @@ describe("mcp/server", () => {
       assertExists(result.instructions);
     });
 
-    it("capabilities include listChanged", async () => {
+    it("does not advertise listChanged without a notification-capable transport", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
@@ -544,9 +546,9 @@ describe("mcp/server", () => {
       });
       const result = res.result as Record<string, unknown>;
       const caps = result.capabilities as Record<string, Record<string, unknown>>;
-      assertEquals(caps.tools.listChanged, true);
-      assertEquals(caps.resources.listChanged, true);
-      assertEquals(caps.prompts.listChanged, true);
+      assertEquals(caps.tools?.listChanged, undefined);
+      assertEquals(caps.resources?.listChanged, undefined);
+      assertEquals(caps.prompts?.listChanged, undefined);
     });
   });
 
@@ -772,8 +774,10 @@ describe("mcp/server", () => {
         isError: boolean;
       };
       assertEquals(result.isError, false);
-      assertEquals(result.content[0].type, "text");
-      assertEquals(JSON.parse(result.content[0].text).hello, "world");
+      const content = result.content[0];
+      assertExists(content);
+      assertEquals(content.type, "text");
+      assertEquals(JSON.parse(content.text).hello, "world");
     });
 
     it("returns isError true when tool execution throws", async () => {
@@ -807,7 +811,9 @@ describe("mcp/server", () => {
         isError: boolean;
       };
       assertEquals(result.isError, true);
-      assertEquals(result.content[0].text, "tool broke");
+      const content = result.content[0];
+      assertExists(content);
+      assertEquals(content.text, "tool broke");
     });
 
     it("returns JSON-RPC error with code -32602 for unknown tool", async () => {
@@ -1261,6 +1267,82 @@ describe("mcp/server", () => {
   });
 
   describe("prompt retrieval", () => {
+    it("lists MCP prompt title and argument metadata", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "welcome",
+        prompt({
+          id: "welcome",
+          description: "Welcome a named user",
+          content: "Hello {name}",
+          mcp: {
+            title: "Welcome",
+            arguments: [{
+              name: "name",
+              title: "Display name",
+              description: "Name to greet",
+              required: true,
+            }],
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/list",
+      });
+
+      assertEquals(response.result, {
+        prompts: [{
+          name: "welcome",
+          title: "Welcome",
+          description: "Welcome a named user",
+          arguments: [{
+            name: "name",
+            title: "Display name",
+            description: "Name to greet",
+            required: true,
+          }],
+        }],
+      });
+    });
+
+    it("hides MCP-disabled prompts from list and direct retrieval", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "private",
+        prompt({
+          id: "private",
+          description: "Private prompt",
+          content: "secret",
+          mcp: { enabled: false },
+        }),
+      );
+
+      const listed = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/list",
+      });
+      const retrieved = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "prompts/get",
+        params: { name: "private" },
+      });
+
+      assertEquals(listed.result, { prompts: [] });
+      assertEquals(retrieved.error?.code, -32602);
+      assertEquals(retrieved.error?.message, "Unknown prompt: private");
+    });
+
     it("returns the configured prompt description", async () => {
       const server = createMCPServer({
         enabled: true,
@@ -1288,6 +1370,122 @@ describe("mcp/server", () => {
       };
       assertEquals(result.description, "Welcome a named user");
       assertEquals(result.messages[0]?.content.text, "Hello Ada");
+    });
+
+    it("enforces declared required prompt arguments", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "welcome",
+        prompt({
+          id: "welcome",
+          description: "Welcome",
+          content: "Hello {name}",
+          mcp: { arguments: [{ name: "name", required: true }] },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "welcome", arguments: {} },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(response.error?.message, 'Missing required prompt argument: "name"');
+    });
+
+    it("rejects undeclared prompt arguments when metadata declares the contract", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "welcome",
+        prompt({
+          id: "welcome",
+          description: "Welcome",
+          content: "Hello {name}",
+          mcp: { arguments: [{ name: "name" }] },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "welcome", arguments: { unexpected: "value" } },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(response.error?.message, 'Unknown prompt argument: "unexpected"');
+    });
+
+    it("rejects non-string prompt argument values required by MCP", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "welcome",
+        prompt({
+          id: "welcome",
+          description: "Welcome",
+          content: "Hello {name}",
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/get",
+        params: { name: "welcome", arguments: { name: 42 } },
+      });
+
+      assertEquals(response.error?.code, -32602);
+      assertEquals(response.error?.message, 'Prompt argument "name" must be a string');
+    });
+
+    it("propagates MCP cancellation to a pending prompt generator", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const started = Promise.withResolvers<void>();
+      let receivedSignal: AbortSignal | undefined;
+      registerPrompt(
+        "pending",
+        prompt({
+          id: "pending",
+          description: "Pending",
+          generate: (_variables, context) => {
+            receivedSignal = context?.abortSignal;
+            started.resolve();
+            return new Promise<string>(() => {});
+          },
+        }),
+      );
+
+      const pending = server.handleRequest({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "prompts/get",
+        params: { name: "pending" },
+      });
+      await started.promise;
+      await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: { requestId: 42 },
+      });
+      const response = await pending;
+
+      assertEquals(receivedSignal?.aborted, true);
+      assertEquals(response.error?.code, -32603);
+      assertEquals(response.error?.message, 'Prompt "pending" could not be rendered');
     });
 
     it("rejects non-object prompt arguments", async () => {
@@ -1403,7 +1601,7 @@ describe("mcp/server", () => {
       capabilities: { resources: Record<string, unknown> };
     }).capabilities;
     assertEquals(capabilities.resources.subscribe, undefined);
-    assertEquals(capabilities.resources.listChanged, true);
+    assertEquals(capabilities.resources.listChanged, undefined);
   });
 
   it("completion/complete returns empty values for unknown ref", async () => {
@@ -2488,7 +2686,7 @@ describe("mcp/server", () => {
       };
       server.notifyToolsChanged();
       assertEquals(notifications.length, 1);
-      assertEquals(notifications[0].method, "notifications/tools/list_changed");
+      assertEquals(notifications[0]!.method, "notifications/tools/list_changed");
     });
 
     it("calls onNotification for resources list changes", () => {
@@ -2502,7 +2700,7 @@ describe("mcp/server", () => {
       };
       server.notifyResourcesChanged();
       assertEquals(notifications.length, 1);
-      assertEquals(notifications[0].method, "notifications/resources/list_changed");
+      assertEquals(notifications[0]!.method, "notifications/resources/list_changed");
     });
 
     it("calls onNotification for prompts list changes", () => {
@@ -2516,7 +2714,7 @@ describe("mcp/server", () => {
       };
       server.notifyPromptsChanged();
       assertEquals(notifications.length, 1);
-      assertEquals(notifications[0].method, "notifications/prompts/list_changed");
+      assertEquals(notifications[0]!.method, "notifications/prompts/list_changed");
     });
 
     it("does not throw when onNotification is not set", () => {
@@ -2632,6 +2830,18 @@ describe("mcp/server", () => {
         auth: { type: "bearer", validate: async (t: string) => t === "ok" },
       });
       assertExists(server);
+    });
+
+    it("rejects a non-function bearer validator at construction", () => {
+      assertThrows(
+        () =>
+          createMCPServer({
+            enabled: true,
+            auth: { type: "bearer", validate: "yes" },
+          } as never),
+        Error,
+        "MCP bearer auth validate must be a function",
+      );
     });
 
     it("http-transport: bearer rejects missing token", async () => {

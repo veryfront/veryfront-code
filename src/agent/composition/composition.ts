@@ -12,7 +12,10 @@ import type { Tool } from "#veryfront/tool";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
 import { getRuntimeSourceIntegrationPolicyFromContext } from "../runtime/runtime-tool-config.ts";
@@ -179,12 +182,15 @@ export function createWorkflow(
 
 const agentManager = new ProjectScopedRegistryManager<Agent>("agent");
 
-class AgentRegistryClass extends ScopedRegistryFacade<Agent> {}
+class AgentRegistryInternal extends ScopedRegistryFacade<Agent> {}
 
-// Singleton instance - maintains same interface but now project-scoped internally
-export const agentRegistry = new AgentRegistryClass(agentManager);
+/** Framework-only agent registry with process-wide maintenance capabilities. */
+export const agentRegistryInternal = new AgentRegistryInternal(agentManager);
 
-export { AgentRegistryClass };
+/** Project-scoped agent registry API safe for application code. */
+export class AgentRegistryClass extends ScopedRegistryView<Agent> {}
+
+export const agentRegistry = new AgentRegistryClass(agentRegistryInternal);
 
 const GET_AGENT_BRIDGE_KEY = "__vfGetAgent";
 const REGISTER_AGENT_BRIDGE_KEY = "__vfRegisterAgent";
