@@ -26,7 +26,9 @@ export interface RSCServerHandlerOptions {
   contentSourceId?: string;
   releaseId?: string;
   branch?: string | null;
-  /** Enabled request snapshot used only to scope pin-on handler identities. */
+  /** Canonical feature state used to scope pin-on handler identities. */
+  dependencyPinningEnabled?: boolean;
+  /** Validated request snapshot for snapshot-bound transports. */
   dependencyPinningCacheKey?: string;
   dependencyPinningSource?: DependencyPinningSourceInput;
 }

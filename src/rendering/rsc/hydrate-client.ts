@@ -19,6 +19,10 @@ import {
 } from "./client-boundary-payload.ts";
 import type { RSCNode } from "./types.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
+import {
+  recoverFromDependencySnapshotConflict,
+  recoverFromSnapshotBoundModuleFailure,
+} from "./dependency-snapshot-recovery.ts";
 export type HydrationManifest = {
   version: number;
   hash?: string;
@@ -34,6 +38,11 @@ export type HydrationManifest = {
 interface ClientModule {
   default?: ReactTypes.ComponentType<unknown>;
   [exportName: string]: ReactTypes.ComponentType<unknown> | unknown;
+}
+
+interface ClientModuleImportOptions {
+  importModule?: (moduleUrl: string) => Promise<ClientModule>;
+  recoverSnapshotFailure?: (moduleUrl: string) => Promise<boolean>;
 }
 
 interface ReactRoot {
@@ -125,7 +134,10 @@ async function fetchManifest(doc: Document = document): Promise<HydrationManifes
     const res = await fetch(buildHydrationManifestUrl(hydrationData), {
       headers: buildHydrationManifestHeaders(hydrationData),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      await recoverFromDependencySnapshotConflict(res);
+      return null;
+    }
     return (await res.json()) as HydrationManifest;
   } catch (_) {
     /* expected: manifest fetch may fail when RSC is not configured */
@@ -133,10 +145,11 @@ async function fetchManifest(doc: Document = document): Promise<HydrationManifes
   }
 }
 
-async function importClientModule(
+export async function importClientModule(
   manifest: HydrationManifest,
   reference: ParsedClientRef,
   strategy: ClientModuleStrategy,
+  options: ClientModuleImportOptions = {},
 ): Promise<ClientModule | null> {
   const moduleUrl = resolveClientBoundaryModuleUrl(manifest, reference, strategy);
   const cacheIdentity = reference.moduleUrl ?? reference.rel;
@@ -153,7 +166,9 @@ async function importClientModule(
   if (!moduleUrl) return null;
 
   try {
-    const mod = (await import(moduleUrl)) as ClientModule;
+    const mod = await (options.importModule ?? ((url) => import(url) as Promise<ClientModule>))(
+      moduleUrl,
+    );
 
     try {
       setClientModCache(cacheKey, mod);
@@ -164,6 +179,7 @@ async function importClientModule(
     return mod;
   } catch (e) {
     rscLogger.debug("hydrate: failed to import module", { moduleUrl, error: e });
+    await (options.recoverSnapshotFailure ?? recoverFromSnapshotBoundModuleFailure)(moduleUrl);
     return null;
   }
 }

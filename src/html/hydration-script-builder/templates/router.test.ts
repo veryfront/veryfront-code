@@ -7,6 +7,57 @@ function assertIncludes(haystack: string, needle: string): void {
   assertEquals(haystack.includes(needle), true);
 }
 
+function extractGeneratedFunction(declaration: string): string {
+  const script = getRouterScript();
+  const start = script.indexOf(declaration);
+  assertEquals(start >= 0, true, declaration + " not found in router script");
+  const end = script.indexOf("\n    }", start);
+  assertEquals(end > start, true, "could not find end of " + declaration);
+  return script.slice(start, end + "\n    }".length);
+}
+
+type ImportModule = (moduleUrl: string) => Promise<unknown>;
+
+function importSnapshotBoundModule(
+  moduleUrl: string,
+  importModule: ImportModule,
+  fetchModule: typeof fetch,
+  reloadDocument: () => void,
+  recoveryState: Record<string, unknown>,
+): Promise<unknown> {
+  const source = [
+    extractGeneratedFunction("async function isDependencySnapshotConflictResponse("),
+    extractGeneratedFunction("async function recoverFromSnapshotBoundModuleFailure("),
+    extractGeneratedFunction("async function importSnapshotBoundModule("),
+  ].join("\n");
+
+  return new Function(
+    "moduleUrl",
+    "importModule",
+    "fetchModule",
+    "reloadDocument",
+    "recoveryState",
+    source +
+      "\nreturn importSnapshotBoundModule(" +
+      "moduleUrl, importModule, fetchModule, reloadDocument, recoveryState);",
+  )(
+    moduleUrl,
+    importModule,
+    fetchModule,
+    reloadDocument,
+    recoveryState,
+  ) as Promise<unknown>;
+}
+
+async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the generated module import to reject");
+}
+
 describe("hydration-script-builder/templates/router", () => {
   describe("getRouterScript", () => {
     it("should return a non-empty string", () => {
@@ -261,10 +312,147 @@ describe("hydration-script-builder/templates/router", () => {
       );
       assertIncludes(result, "moduleData.dependencyPinningCacheKey");
       assertIncludes(result, "moduleUrl += '&pins=' + encodeURIComponent(pinKey);");
-      assertIncludes(result, "const module = await import(moduleUrl);");
+      assertIncludes(result, "const module = await importSnapshotBoundModule(moduleUrl);");
       assertIncludes(
         result,
         "allPaths.map((path) => loadPageDataComponent(pageData, path))",
+      );
+    });
+
+    it("reloads once when pinned page, layout, app, and error imports hit snapshot eviction", async () => {
+      const importedUrls: string[] = [];
+      const probedUrls: string[] = [];
+      const cacheModes: (RequestCache | undefined)[] = [];
+      const recoveryState: Record<string, unknown> = {};
+      let reloads = 0;
+
+      for (
+        const path of [
+          "app/page.tsx",
+          "app/layout.tsx",
+          "components/app.tsx",
+          "app/error.tsx",
+        ]
+      ) {
+        const moduleUrl = `/_veryfront/rsc/module?rel=${
+          encodeURIComponent(path)
+        }&pins=on%3Asnapshot-a`;
+        const importError = new TypeError(`dynamic import failed: ${path}`);
+        const thrown = await captureRejection(
+          importSnapshotBoundModule(
+            moduleUrl,
+            (url) => {
+              importedUrls.push(url);
+              return Promise.reject(importError);
+            },
+            (input, init) => {
+              probedUrls.push(String(input));
+              cacheModes.push((init as { cache?: RequestCache } | undefined)?.cache);
+              return Promise.resolve(
+                new Response("export default null; // Unknown dependency snapshot", {
+                  status: 409,
+                  headers: { "content-type": "application/javascript" },
+                }),
+              );
+            },
+            () => {
+              reloads++;
+            },
+            recoveryState,
+          ),
+        );
+
+        assertEquals(thrown, importError);
+      }
+
+      assertEquals(importedUrls.length, 4);
+      assertEquals(probedUrls, importedUrls);
+      assertEquals(cacheModes, ["no-store", "no-store", "no-store", "no-store"]);
+      assertEquals(reloads, 1);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        true,
+      );
+    });
+
+    it("recovers module-server path-pinned imports used by the shared component loader", async () => {
+      const moduleUrl = "/_vf_modules/_pins/on%3Asnapshot-a/app/layout.js";
+      const importError = new TypeError("dynamic import failed");
+      const probedUrls: string[] = [];
+      let reloads = 0;
+
+      const thrown = await captureRejection(
+        importSnapshotBoundModule(
+          moduleUrl,
+          () => Promise.reject(importError),
+          (input, init) => {
+            probedUrls.push(String(input));
+            assertEquals(
+              (init as { cache?: RequestCache } | undefined)?.cache,
+              "no-store",
+            );
+            return Promise.resolve(
+              new Response("Unknown dependency snapshot", { status: 409 }),
+            );
+          },
+          () => {
+            reloads++;
+          },
+          {},
+        ),
+      );
+
+      assertEquals(thrown, importError);
+      assertEquals(probedUrls, [moduleUrl]);
+      assertEquals(reloads, 1);
+    });
+
+    it("preserves arbitrary import failures without probing or reloading them", async () => {
+      const importError = new SyntaxError("module evaluation failed");
+      let probes = 0;
+      let reloads = 0;
+      const recoveryState: Record<string, unknown> = {};
+
+      const unpinnedThrown = await captureRejection(
+        importSnapshotBoundModule(
+          "/_veryfront/rsc/module?rel=app%2Fpage.tsx",
+          () => Promise.reject(importError),
+          () => {
+            probes++;
+            return Promise.resolve(
+              new Response("Unknown dependency snapshot", { status: 409 }),
+            );
+          },
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+      );
+      const applicationConflictThrown = await captureRejection(
+        importSnapshotBoundModule(
+          "/_veryfront/rsc/module?rel=app%2Fpage.tsx&pins=on%3Asnapshot-a",
+          () => Promise.reject(importError),
+          () => {
+            probes++;
+            return Promise.resolve(
+              new Response("Application conflict", { status: 409 }),
+            );
+          },
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+      );
+
+      assertEquals(unpinnedThrown, importError);
+      assertEquals(applicationConflictThrown, importError);
+      assertEquals(probes, 1);
+      assertEquals(reloads, 0);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        undefined,
       );
     });
 

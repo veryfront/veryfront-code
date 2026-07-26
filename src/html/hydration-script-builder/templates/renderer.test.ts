@@ -51,6 +51,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
       assertIncludes(result, "buildPinnedRscModuleUrl(data.pagePath, data)");
       assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
+      assertIncludes(result, "pageModule = await importSnapshotBoundModule(moduleUrl)");
     });
 
     it("uses the configured App Router root for pages and layouts", () => {
@@ -97,6 +98,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "layouts[i].path");
       assertIncludes(result, "shouldRenderRscClientPage");
       assertIncludes(result, "buildPinnedRscModuleUrl(path, data)");
+      assertIncludes(result, "const module = await importSnapshotBoundModule(moduleUrl)");
     });
 
     it("should recreate initial layouts with their serialized props", () => {

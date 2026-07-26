@@ -75,6 +75,36 @@ describe("hydration-script-builder/templates/loader", () => {
     }
   }
 
+  async function runGeneratedLoadComponent(
+    path: string,
+    moduleData: { dependencyPinningCacheKey?: string },
+    importSnapshotBoundModule: (moduleUrl: string) => Promise<unknown>,
+  ): Promise<unknown> {
+    const globalRecord = globalThis as MutableTestGlobal;
+    const previousWindow = globalRecord.window;
+    globalRecord.window = globalThis;
+
+    try {
+      return await new Function(
+        "path",
+        "moduleData",
+        "importSnapshotBoundModule",
+        `const MODULE_SERVER_URL = '/_vf_modules';
+        const DEBUG = false;
+        const log = () => {};
+        const logError = () => {};
+        ${getLoaderScript()}
+        return loadComponent(path, moduleData);`,
+      )(path, moduleData, importSnapshotBoundModule) as unknown;
+    } finally {
+      if (previousWindow === undefined) {
+        delete globalRecord.window;
+      } else {
+        globalRecord.window = previousWindow;
+      }
+    }
+  }
+
   describe("getLoaderScript", () => {
     function getResult(): string {
       return getLoaderScript();
@@ -158,6 +188,25 @@ describe("hydration-script-builder/templates/loader", () => {
     it("should define async loadComponent function", () => {
       const result = getResult();
       assertEquals(result.includes("async function loadComponent(path, moduleData)"), true);
+    });
+
+    it("loads pinned components through snapshot recovery", async () => {
+      const importedUrls: string[] = [];
+      const component = { name: "PinnedLayout" };
+
+      const loaded = await runGeneratedLoadComponent(
+        "app/layout.tsx",
+        { dependencyPinningCacheKey: "on:sha-a" },
+        (moduleUrl) => {
+          importedUrls.push(moduleUrl);
+          return Promise.resolve({ default: component });
+        },
+      );
+
+      assertEquals(loaded, component);
+      assertEquals(importedUrls, [
+        "/_vf_modules/_pins/on%3Asha-a/app/layout.js",
+      ]);
     });
 
     it("should return null for empty path in loadComponent", () => {

@@ -80,7 +80,7 @@ export function getRSCHandler(
   const appDir = options.config?.directories?.app ?? "app";
   const mode = options.mode ?? "production";
   const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
-  const pinningEnabled = options.dependencyPinningCacheKey?.startsWith("on:") === true;
+  const pinningEnabled = options.dependencyPinningEnabled === true;
   const cacheKey = JSON.stringify([
     baseKey,
     options.isLocalProject === true,

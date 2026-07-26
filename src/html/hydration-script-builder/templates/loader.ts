@@ -199,7 +199,7 @@ export const getLoaderScript = (): string => `
           const start = DEBUG ? performance.now() : 0;
 
           log('Loading component:', moduleUrl);
-          const module = await import(moduleUrl);
+          const module = await importSnapshotBoundModule(moduleUrl);
 
           // Prefer MDXLayout/MainLayout over default for MDX files
           // MDXContent (default export) has a bug where it overwrites children prop

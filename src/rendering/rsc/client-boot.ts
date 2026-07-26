@@ -19,6 +19,10 @@ import { hydrateAllClientBoundaries } from "./hydrate-client.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
 import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 import { rscLogger } from "../client/browser-logger.ts";
+import {
+  recoverFromDependencySnapshotConflict,
+  recoverFromSnapshotBoundModuleFailure,
+} from "./dependency-snapshot-recovery.ts";
 
 /**
  * Import React using the page's import map when available.
@@ -151,24 +155,29 @@ export function buildPageHydrationModuleUrl(
   });
 }
 
+type RSCTransportResult = "success" | "snapshot-conflict" | "failure";
+
 async function tryStream(
   q: string,
   hydrationData: ClientRuntimeHydrationData | null,
-): Promise<boolean> {
+): Promise<RSCTransportResult> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q, {
       headers: buildRSCTransportHeaders(hydrationData),
     });
-    if (!res.ok || !res.body) return false;
+    if (!res.ok) {
+      return await recoverFromDependencySnapshotConflict(res) ? "snapshot-conflict" : "failure";
+    }
+    if (!res.body) return "failure";
 
     const ctrl = new AbortController();
     addEventListener("pagehide", () => ctrl.abort(), { once: true });
 
     await consumeNdjsonStream(res, document, ctrl.signal);
-    return true;
+    return "success";
   } catch (e) {
     rscLogger.debug("tryStream failed", e);
-    return false;
+    return "failure";
   }
 }
 
@@ -191,7 +200,13 @@ async function hydratePageComponent(
     if (!moduleUrl) return false;
     rscLogger.debug("Loading component from:", moduleUrl);
 
-    const mod = await import(moduleUrl);
+    let mod;
+    try {
+      mod = await import(moduleUrl);
+    } catch (error) {
+      await recoverFromSnapshotBoundModuleFailure(moduleUrl);
+      throw error;
+    }
     const Component = mod.default;
 
     if (typeof Component !== "function") {
@@ -229,12 +244,14 @@ async function hydratePageComponent(
 async function applyPayload(
   q: string,
   hydrationData: ClientRuntimeHydrationData | null,
-): Promise<boolean> {
+): Promise<RSCTransportResult> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "payload" + q, {
       headers: buildRSCTransportHeaders(hydrationData),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      return await recoverFromDependencySnapshotConflict(res) ? "snapshot-conflict" : "failure";
+    }
 
     const data = await res.json();
     seedHydrationDependencyPins(document, data?.dependencyPinningCacheKey);
@@ -243,14 +260,14 @@ async function applyPayload(
       for (const [id, html] of Object.entries(data.slots)) {
         getContainer(document, id).innerHTML = validateTrustedHtml(String(html || ""));
       }
-      return true;
+      return "success";
     }
 
     getContainer(document, RSC_ROOT_ID).innerHTML = validateTrustedHtml(String(data?.html || ""));
-    return true;
+    return "success";
   } catch (e) {
     rscLogger.debug("payload fetch failed", e);
-    return false;
+    return "failure";
   }
 }
 
@@ -290,12 +307,16 @@ export async function boot(): Promise<void> {
       return;
     }
 
-    if (await tryStream(q, hydrationData)) {
+    const streamResult = await tryStream(q, hydrationData);
+    if (streamResult === "snapshot-conflict") return;
+    if (streamResult === "success") {
       await hydrateMarkers();
       return;
     }
 
-    if (await applyPayload(q, hydrationData)) {
+    const payloadResult = await applyPayload(q, hydrationData);
+    if (payloadResult === "snapshot-conflict") return;
+    if (payloadResult === "success") {
       await hydrateMarkers();
       return;
     }

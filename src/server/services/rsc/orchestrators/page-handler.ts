@@ -37,9 +37,15 @@ export class PageHandler {
 
   handle(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
     const html = this.buildHtml(pathname, searchParams, nonce);
+    const headers: Record<string, string> = {
+      "content-type": "text/html; charset=utf-8",
+    };
+    if (this.dependencyPinningCacheKey?.startsWith("on:")) {
+      headers["cache-control"] = "no-store";
+    }
 
     return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
+      headers,
     });
   }
 

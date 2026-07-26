@@ -21,6 +21,7 @@ import {
   resetBrowserModuleEndpointStateForTesting,
   setBrowserModuleBuilderForTesting,
 } from "./endpoint-router.ts";
+import { __resetRSCHandlerForTests } from "./handler-registry.ts";
 import {
   createMockAdapter,
   makeParams,
@@ -1701,6 +1702,121 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
         await localProduction!.text(),
         "window.__VERYFRONT_DEV__ = false",
       );
+    });
+
+    it("keeps page and render dependency snapshots isolated across branches", async () => {
+      const projectDir = "/virtual/branch-isolation";
+      const packageJsonPath = `${projectDir}/package.json`;
+      const pagePath = `${projectDir}/app/page.tsx`;
+      const appDir = `${projectDir}/app`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const createBranchAdapter = (reactVersion: string) =>
+        createMockAdapter({
+          knownFiles: [packageJsonPath, pagePath],
+          exists: (path) =>
+            Promise.resolve(
+              path === packageJsonPath || path === pagePath || path === appDir,
+            ),
+          readFile: (path) =>
+            Promise.resolve(
+              path === packageJsonPath
+                ? JSON.stringify({ dependencies: { react: reactVersion } })
+                : "export default function Page() { return null; }",
+            ),
+          stat: (path) => {
+            if (path === appDir) {
+              return Promise.resolve({
+                isFile: false,
+                isDirectory: true,
+                size: 0,
+                mtime: null,
+              });
+            }
+            if (path === packageJsonPath || path === pagePath) {
+              return Promise.resolve({
+                isFile: true,
+                isDirectory: false,
+                size: 1,
+                mtime: null,
+              });
+            }
+            return Promise.reject(new Deno.errors.NotFound("not found"));
+          },
+        });
+      const branchAAdapter = createBranchAdapter("18.3.1");
+      const branchBAdapter = createBranchAdapter("19.1.1");
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        __resetRSCHandlerForTests();
+
+        const pageA = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/page",
+            projectDir,
+            projectId: "branch-isolation-project",
+            projectSlug: "branch-isolation-project",
+            branch: "feature-a",
+            adapter: branchAAdapter,
+            config: rscEnabledConfig,
+            isLocalProject: false,
+            mode: "development",
+          }),
+        );
+        const pageB = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/page",
+            projectDir,
+            projectId: "branch-isolation-project",
+            projectSlug: "branch-isolation-project",
+            branch: "feature-b",
+            adapter: branchBAdapter,
+            config: rscEnabledConfig,
+            isLocalProject: false,
+            mode: "development",
+          }),
+        );
+        const htmlA = await pageA!.text();
+        const htmlB = await pageB!.text();
+        const snapshotA = htmlA.match(
+          /"dependencyPinningCacheKey":"(on:[^"]+)"/,
+        )?.[1];
+        const snapshotB = htmlB.match(
+          /"dependencyPinningCacheKey":"(on:[^"]+)"/,
+        )?.[1];
+
+        assertEquals(typeof snapshotA, "string");
+        assertEquals(typeof snapshotB, "string");
+        assertEquals(snapshotA !== snapshotB, true);
+        assertStringIncludes(htmlA, '"reactVersion":"18.3.1"');
+        assertStringIncludes(htmlB, '"reactVersion":"19.1.1"');
+
+        const renderB = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/render",
+            req: new Request("http://localhost/_veryfront/rsc/render", {
+              headers: {
+                [RSC_DEPENDENCY_PINNING_HEADER]: snapshotB!,
+              },
+            }),
+            projectDir,
+            projectId: "branch-isolation-project",
+            projectSlug: "branch-isolation-project",
+            branch: "feature-b",
+            adapter: branchBAdapter,
+            config: rscEnabledConfig,
+            isLocalProject: false,
+            mode: "development",
+          }),
+        );
+
+        assertEquals(renderB?.status, 200);
+      } finally {
+        __resetRSCHandlerForTests();
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+      }
     });
   });
 

@@ -200,7 +200,7 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       assertEquals(cache.size, 2);
     });
 
-    it("preserves the legacy handler identity for branches when pinning is off", () => {
+    it("preserves the legacy handler identity for branches when pinning is disabled", () => {
       const cache = createStubCache();
       __injectCacheForTests(cache);
 
@@ -212,25 +212,32 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
         mode: "development",
         branch: "feature-b",
         dependencyPinningCacheKey: "off",
+        dependencyPinningEnabled: false,
+      });
+      const branchAWithUntrustedPinKey = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+        dependencyPinningCacheKey: "on:snapshot",
       });
 
       assertEquals(branchA, branchB);
+      assertEquals(branchAWithUntrustedPinKey, branchA);
       assertEquals(cache.size, 1);
     });
 
-    it("isolates pin-on preview handlers by canonical branch", () => {
+    it("isolates enabled preview page handlers by canonical branch without a pin header", () => {
       const cache = createStubCache();
       __injectCacheForTests(cache);
 
       const branchA = getRSCHandler("/dir", "project", {
         mode: "development",
         branch: "feature-a",
-        dependencyPinningCacheKey: "on:snapshot",
+        dependencyPinningEnabled: true,
       });
       const branchB = getRSCHandler("/dir", "project", {
         mode: "development",
         branch: "feature-b",
-        dependencyPinningCacheKey: "on:snapshot",
+        dependencyPinningEnabled: true,
       });
 
       assertEquals(branchA !== branchB, true);

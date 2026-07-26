@@ -116,6 +116,7 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
         html.includes('"x-veryfront-dependency-pins":"on:pins-a"'),
         true,
       );
+      assertEquals(response.headers.get("cache-control"), "no-store");
     });
 
     it("preserves application pins without a transport header when pinning is off", async () => {
@@ -132,6 +133,7 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       );
       assertEquals(html.includes("x-veryfront-dependency-pins"), false);
       assertEquals(html.includes('"dependencyPinningCacheKey"'), false);
+      assertEquals(response.headers.get("cache-control"), null);
     });
 
     it("should not include legacy hydrate.js import", async () => {

@@ -776,11 +776,86 @@ export const getRouterScript = () => `
       return moduleUrl;
     }
 
+    async function isDependencySnapshotConflictResponse(response) {
+      if (!response || response.status !== 409) return false;
+
+      try {
+        const body = (await response.clone().text()).trim();
+        return body === 'Unknown dependency snapshot' ||
+          body === 'export default null; // Unknown dependency snapshot';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function recoverFromSnapshotBoundModuleFailure(
+      moduleUrl,
+      fetchModule = (url, init) => fetch(url, init),
+      reloadDocument = () => window.location.reload(),
+      recoveryState = window,
+    ) {
+      try {
+        const parsedUrl = new URL(moduleUrl, 'http://veryfront.local');
+        const snapshotKeys = parsedUrl.searchParams.getAll('pins');
+        const pathMatch = parsedUrl.pathname.match(
+          /^\\/_vf_modules\\/_pins\\/([^/]+)(?:\\/|$)/,
+        );
+        if (pathMatch) {
+          try {
+            snapshotKeys.push(decodeURIComponent(pathMatch[1]));
+          } catch (_) {
+            return false;
+          }
+        }
+        if (
+          snapshotKeys.length !== 1 ||
+          !/^on:[A-Za-z0-9._-]+$/.test(snapshotKeys[0])
+        ) return false;
+
+        const response = await fetchModule(moduleUrl, { cache: 'no-store' });
+        if (!(await isDependencySnapshotConflictResponse(response))) return false;
+
+        const recoveryKey = '__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__';
+        if (recoveryState[recoveryKey] === true) return true;
+
+        recoveryState[recoveryKey] = true;
+        try {
+          reloadDocument();
+        } catch (_) {
+          delete recoveryState[recoveryKey];
+          return false;
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function importSnapshotBoundModule(
+      moduleUrl,
+      importModule = (url) => import(url),
+      fetchModule = (url, init) => fetch(url, init),
+      reloadDocument = () => window.location.reload(),
+      recoveryState = window,
+    ) {
+      try {
+        return await importModule(moduleUrl);
+      } catch (error) {
+        await recoverFromSnapshotBoundModuleFailure(
+          moduleUrl,
+          fetchModule,
+          reloadDocument,
+          recoveryState,
+        );
+        throw error;
+      }
+    }
+
     async function loadPageDataComponent(pageData, path) {
       if (!pageData.isolatedClientPage) return loadComponent(path, pageData);
 
       const moduleUrl = buildPinnedRscModuleUrl(path, pageData);
-      const module = await import(moduleUrl);
+      const module = await importSnapshotBoundModule(moduleUrl);
       return module.MDXLayout || module.MainLayout || module.default || module;
     }
 

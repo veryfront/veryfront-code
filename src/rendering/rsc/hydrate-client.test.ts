@@ -1,16 +1,25 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildHydrationManifestHeaders,
   buildHydrationManifestUrl,
+  importClientModule,
   parseClientRef,
   readClientBoundaryChildren,
   readClientBoundaryProps,
   resolveClientBoundaryModuleUrl,
   selectTopLevelClientBoundaries,
 } from "./hydrate-client.ts";
+import {
+  __resetDependencySnapshotRecoveryForTests,
+  recoverFromSnapshotBoundModuleFailure,
+} from "./dependency-snapshot-recovery.ts";
 
 describe("rendering/rsc/hydrate-client", () => {
+  afterEach(() => {
+    __resetDependencySnapshotRecoveryForTests();
+  });
+
   it("requests the manifest snapshot by header without changing its URL", () => {
     assertEquals(
       buildHydrationManifestUrl({
@@ -161,5 +170,87 @@ describe("rendering/rsc/hydrate-client", () => {
       ),
       "/_veryfront/rsc/module?rel=app%2FCounter.tsx&pins=on%3Apins-a",
     );
+  });
+
+  it("recovers a snapshot-bound client boundary after its dynamic import fails", async () => {
+    const importedUrls: string[] = [];
+    const probedUrls: string[] = [];
+    const cacheModes: (RequestCache | undefined)[] = [];
+    let reloads = 0;
+    const reference = parseClientRef(
+      "/_veryfront/rsc/module?rel=app%2FCounter.tsx#default",
+    )!;
+    const manifest = {
+      version: 1,
+      hash: "boundary-recovery",
+      dependencyPinningCacheKey: "on:pins-a",
+      modules: [],
+    };
+    const fetchModule: typeof fetch = (input, init) => {
+      probedUrls.push(String(input));
+      cacheModes.push((init as { cache?: RequestCache } | undefined)?.cache);
+      return Promise.resolve(
+        new Response("Unknown dependency snapshot", { status: 409 }),
+      );
+    };
+
+    const module = await importClientModule(manifest, reference, "rsc-module", {
+      importModule(moduleUrl) {
+        importedUrls.push(moduleUrl);
+        return Promise.reject(new TypeError("dynamic import failed"));
+      },
+      recoverSnapshotFailure: (moduleUrl) =>
+        recoverFromSnapshotBoundModuleFailure(
+          moduleUrl,
+          fetchModule,
+          () => {
+            reloads++;
+          },
+        ),
+    });
+
+    const expectedUrl = "/_veryfront/rsc/module?rel=app%2FCounter.tsx&pins=on%3Apins-a";
+    assertEquals(module, null);
+    assertEquals(importedUrls, [expectedUrl]);
+    assertEquals(probedUrls, [expectedUrl]);
+    assertEquals(cacheModes, ["no-store"]);
+    assertEquals(reloads, 1);
+  });
+
+  it("does not probe an unpinned client-boundary import failure", async () => {
+    let probes = 0;
+    let reloads = 0;
+
+    const module = await importClientModule(
+      {
+        version: 1,
+        hash: "boundary-unpinned",
+        modules: [],
+      },
+      parseClientRef(
+        "/_veryfront/rsc/module?rel=app%2FCounter.tsx#default",
+      )!,
+      "rsc-module",
+      {
+        importModule: () => Promise.reject(new TypeError("dynamic import failed")),
+        recoverSnapshotFailure: (moduleUrl) =>
+          recoverFromSnapshotBoundModuleFailure(
+            moduleUrl,
+            () => {
+              probes++;
+              return Promise.resolve(
+                new Response("Unknown dependency snapshot", { status: 409 }),
+              );
+            },
+            () => {
+              reloads++;
+            },
+          ),
+      },
+    );
+
+    assertEquals(module, null);
+    assertEquals(probes, 0);
+    assertEquals(reloads, 0);
   });
 });

@@ -26,6 +26,7 @@ import {
   type DependencyPinningSourceInput,
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
@@ -171,6 +172,7 @@ export async function handleRSCEndpoint(
       projectSlug,
       releaseId,
       branch,
+      dependencyPinningEnabled: isDependencyPinningEnabled(),
       dependencyPinningCacheKey: validatedDependencyPinningCacheKey,
       dependencyPinningSource,
     });

@@ -126,7 +126,7 @@ export const getRendererScript = () => `
           if (preferRscModule && isAppRouterPath(normalizedPath)) {
             const moduleUrl = buildPinnedRscModuleUrl(path, data);
             log('Loading App Router component from RSC module:', moduleUrl);
-            const module = await import(moduleUrl);
+            const module = await importSnapshotBoundModule(moduleUrl);
             return module.default || module;
           }
 
@@ -156,7 +156,7 @@ export const getRendererScript = () => `
           log('Loading page from hydration data:', moduleUrl);
 
           try {
-            pageModule = await import(moduleUrl);
+            pageModule = await importSnapshotBoundModule(moduleUrl);
           } catch (error) {
             pageModuleError = error;
             logError('Failed to load page from hydration data:', error);
@@ -174,7 +174,8 @@ export const getRendererScript = () => `
             basePath,
             pageSlug,
             pageModuleError,
-            (moduleUrl) => import(appendDependencyPinningVersion(moduleUrl, data)),
+            (moduleUrl) =>
+              importSnapshotBoundModule(appendDependencyPinningVersion(moduleUrl, data)),
           );
         }
 
