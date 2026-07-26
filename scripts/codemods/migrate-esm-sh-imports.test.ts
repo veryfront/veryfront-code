@@ -570,3 +570,53 @@ Deno.test(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// Prototype-key collision safety (Fix 1)
+// ---------------------------------------------------------------------------
+
+Deno.test("esm-sh codemod handles a package name that collides with Object.prototype key", () => {
+  // "hasOwnProperty", "toString", "constructor" etc. are inherited from
+  // Object.prototype.  The `in` operator would report them as present on any
+  // plain object, causing a spurious conflict even on first encounter.
+  // With Object.hasOwn and a null-prototype pins map, the first version seen
+  // is recorded correctly and no conflict is raised.
+  const source = [
+    'import { x } from "https://esm.sh/hasOwnProperty@1.0.0";',
+    'import { y } from "https://esm.sh/toString@2.0.0";',
+    "",
+  ].join("\n");
+  const result = migrateEsmShImports(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, 'from "hasOwnProperty"');
+  assertStringIncludes(result.code, 'from "toString"');
+  assertEquals(result.pins, { hasOwnProperty: "1.0.0", toString: "2.0.0" });
+  // No spurious conflict — these are first-time pins, not duplicates.
+  assertEquals(result.conflicts, []);
+});
+
+// ---------------------------------------------------------------------------
+// Non-top-level import declaration (Fix 2)
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  "esm-sh codemod rewrites an import declaration in a non-top-level position",
+  () => {
+    // allowImportExportEverywhere lets the parser accept import declarations
+    // inside blocks.  The single-pass walkAst must find and rewrite them.
+    const source = [
+      "if (DEV) {",
+      '  import { debug } from "https://esm.sh/debug-pkg@4.3.4";',
+      "}",
+      "",
+    ].join("\n");
+    const result = migrateEsmShImports(source);
+
+    assert(result.changed, "non-top-level import must be rewritten");
+    assertStringIncludes(result.code, 'from "debug-pkg"');
+    assert(!result.code.includes("esm.sh"));
+    assertEquals(result.pins, { "debug-pkg": "4.3.4" });
+    assertEquals(result.needsResolution, []);
+  },
+);

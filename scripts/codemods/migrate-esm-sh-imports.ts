@@ -153,7 +153,7 @@ function processStringLiteral(
   const bare = parsed.pkg + (parsed.subpath ?? "");
 
   if (parsed.version) {
-    if (parsed.pkg in pins) {
+    if (Object.hasOwn(pins, parsed.pkg)) {
       // Same package appeared at a different version earlier in this file.
       if (pins[parsed.pkg] !== parsed.version) {
         conflicts.push({
@@ -198,30 +198,30 @@ export function migrateEsmShImports(source: string): EsmShFileResult {
   });
 
   const rewrites: Array<{ from: string; to: string }> = [];
-  const pins: Record<string, string> = {};
+  // Use a null-prototype object so package names that match Object.prototype
+  // keys ("toString", "hasOwnProperty", "__proto__", …) cannot cause spurious
+  // conflict hits or prototype corruption.
+  const pins = Object.create(null) as Record<string, string>;
   const needsResolution = new Set<string>();
   const conflicts: Array<{ pkg: string; existing: string; fromVersion: string }> = [];
   let changed = false;
 
-  // Static import / export-from declarations at the top level.
-  for (const stmt of ast.program.body) {
-    if (
-      (t.isImportDeclaration(stmt) ||
-        t.isExportNamedDeclaration(stmt) ||
-        t.isExportAllDeclaration(stmt)) &&
-      stmt.source
-    ) {
-      if (processStringLiteral(stmt.source, rewrites, pins, needsResolution, conflicts)) {
-        changed = true;
-      }
-    }
-  }
-
-  // Dynamic import() expressions anywhere in the AST.
-  // After the static pass above, already-rewritten import declarations no longer
-  // start with "https://esm.sh/", so they are harmless no-ops if visited again.
+  // Single AST walk handles both top-level and non-top-level import/export
+  // declarations (allowImportExportEverywhere permits either), plus dynamic
+  // import() expressions anywhere in the tree.  processStringLiteral is
+  // idempotent: already-rewritten values no longer start with
+  // "https://esm.sh/", so any node visited more than once is a safe no-op.
   walkAst(ast.program as unknown as t.Node, (node) => {
     if (
+      (t.isImportDeclaration(node) ||
+        t.isExportNamedDeclaration(node) ||
+        t.isExportAllDeclaration(node)) &&
+      node.source
+    ) {
+      if (processStringLiteral(node.source, rewrites, pins, needsResolution, conflicts)) {
+        changed = true;
+      }
+    } else if (
       t.isCallExpression(node) &&
       t.isImport(node.callee) &&
       node.arguments.length > 0 &&
@@ -284,7 +284,7 @@ export function mergeEsmShPins(
   const conflicts: Array<{ pkg: string; existing: string; fromVersion: string }> = [];
 
   for (const [pkg, version] of Object.entries(newPins)) {
-    if (pkg in existingDeps) {
+    if (Object.hasOwn(existingDeps, pkg)) {
       if (existingDeps[pkg] !== version) {
         conflicts.push({ pkg, existing: existingDeps[pkg]!, fromVersion: version });
       }
@@ -352,7 +352,7 @@ export function filterNeedsResolution(
   needsResolution: Iterable<string>,
   pins: Record<string, string>,
 ): string[] {
-  return [...needsResolution].filter((pkg) => !(pkg in pins)).sort();
+  return [...needsResolution].filter((pkg) => !Object.hasOwn(pins, pkg)).sort();
 }
 
 // ---------------------------------------------------------------------------
