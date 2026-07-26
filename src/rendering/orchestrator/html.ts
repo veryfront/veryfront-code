@@ -279,6 +279,10 @@ export class HTMLGenerator {
     const importMapJson = await buildImportMapJson({
       projectDir: this.config.projectDir,
       config: this.config.config,
+      moduleServerOrigin: context.options?.url?.origin,
+      dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+      dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+      dependencyPinningSource: context.options?.dependencyPinningSource,
       releaseAssetManifest,
     });
 
@@ -311,6 +315,7 @@ export class HTMLGenerator {
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
+      dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
@@ -461,6 +466,9 @@ export class HTMLGenerator {
       const reactVersion = await resolveProjectReactVersion({
         projectDir: this.config.projectDir,
         config: this.config.config,
+        dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { getProjectReact } = await import(
         "#veryfront/react/compat/ssr-adapter/index.ts"
@@ -506,6 +514,9 @@ export class HTMLGenerator {
       const reactVersion = await resolveProjectReactVersion({
         projectDir: this.config.projectDir,
         config: this.config.config,
+        dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
+        dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
       const contentSourceId = computeContentSourceId(
@@ -523,6 +534,10 @@ export class HTMLGenerator {
         context.options?.projectId,
         contentSourceId,
         reactVersion,
+        context.options?.dependencyPinningCacheKey,
+        context.options?.dependencyPinningDependencies,
+        context.options?.dependencyPinningSource,
+        context.options?.url?.origin,
       );
       if (!loaded) return null;
 
@@ -624,6 +639,7 @@ export class HTMLGenerator {
       mode: this.config.mode,
       config: this.config.config,
       projectDir: this.config.projectDir,
+      moduleServerOrigin: context.options?.url?.origin,
       nestedLayouts: hydrationLayouts.map((l) => ({
         kind: l.kind,
         path: l.path,
@@ -655,6 +671,8 @@ export class HTMLGenerator {
       isLocalProject: this.config.isLocalProject === true,
       noHmr: context.options?.noHmr,
       forceProductionScripts: context.options?.forceProductionScripts,
+      dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
+      dependencyPinningDependencies: context.options?.dependencyPinningDependencies,
       ...(context.options?.releaseAssetManifest !== undefined
         ? { releaseAssetManifest: context.options.releaseAssetManifest }
         : {}),

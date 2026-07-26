@@ -11,6 +11,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
@@ -22,7 +23,16 @@ interface TransformCrossProjectImportFlowOptions {
   crossProjectImport: CrossProjectImport;
   options: Pick<
     SSRModuleLoaderOptions,
-    "projectId" | "projectDir" | "dev" | "apiBaseUrl" | "reactVersion" | "adapter"
+    | "projectId"
+    | "projectDir"
+    | "dev"
+    | "apiBaseUrl"
+    | "moduleServerOrigin"
+    | "reactVersion"
+    | "dependencyPinningCacheKey"
+    | "dependencyPinningDependencies"
+    | "dependencyPinningSource"
+    | "adapter"
   >;
   cache: CrossProjectImportCache;
   withTransformCapacity: <T>(
@@ -58,7 +68,12 @@ export async function transformCrossProjectImportFlow(
 
   const { specifier, projectSlug, version, path } = crossProjectImport;
   const reactVersion = options.reactVersion ?? "default";
-  const cacheKey = `${specifier}:${options.projectId}:${reactVersion}`;
+  const legacyCacheKey = `${specifier}:${options.projectId}:${reactVersion}`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+  const cacheKey = cacheVariant ? `${legacyCacheKey}:${cacheVariant}` : legacyCacheKey;
 
   const cachedEntry = globalCrossProjectCache.get(cacheKey);
   if (cachedEntry) return cachedEntry.tempPath;
@@ -104,7 +119,11 @@ export async function transformCrossProjectImportFlow(
         dev: options.dev,
         ssr: true,
         apiBaseUrl: options.apiBaseUrl,
+        moduleServerOrigin: options.moduleServerOrigin,
         reactVersion: options.reactVersion,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        dependencyPinningDependencies: options.dependencyPinningDependencies,
+        dependencyPinningSource: options.dependencyPinningSource,
       };
 
       const filePathWithExt = syntheticFilePath.endsWith(ext)

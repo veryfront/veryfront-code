@@ -19,7 +19,15 @@
  *   return document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))?.[1];
  * }
  *
- * const res = await fetch("/_veryfront/rsc/action", {
+ * const hydration = JSON.parse(
+ *   document.getElementById("veryfront-hydration-data")?.textContent || "{}",
+ * );
+ * const actionUrl = new URL("/_veryfront/rsc/action", location.origin);
+ * if (hydration.dependencyPinningCacheKey?.startsWith("on:")) {
+ *   actionUrl.searchParams.set("pins", hydration.dependencyPinningCacheKey);
+ * }
+ *
+ * const res = await fetch(actionUrl, {
  *   method: "POST",
  *   headers: { "x-csrf-token": getCookie("__Host-vf_csrf") ?? "" },
  *   body: actionPayload,

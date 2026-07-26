@@ -108,6 +108,27 @@ describe("release module response cache", () => {
     assertEquals(a === b, false);
   });
 
+  it("isolates responses by dependency pinning flag and package map state", () => {
+    const unkeyed = buildReleaseModuleResponseCacheKey(
+      baseKeyOptions("@vite/env"),
+    );
+    const flagOff = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: "off",
+    });
+    const firstPins = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: "on:first",
+    });
+    const changedPins = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      dependencyPinningCacheKey: "on:second",
+    });
+
+    assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+    assertEquals(flagOff, unkeyed);
+  });
+
   it("does not use disk cache backends for release module responses", async () => {
     const diskCache = new FakeDistributedCache();
     Object.defineProperty(diskCache, "type", { value: "disk" });

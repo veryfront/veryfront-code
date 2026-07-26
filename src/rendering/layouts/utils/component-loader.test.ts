@@ -5,6 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createLayoutComponentCache,
   loadMDXLayout,
+  loadTSXComponent,
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
@@ -298,8 +299,12 @@ describe("rendering/layouts/utils/component-loader", () => {
       loadModuleESM: typeof mdxRenderer.loadModuleESM;
     };
     let moduleReactVersion: unknown;
+    let modulePinKey: unknown;
+    let moduleDependencies: unknown;
     mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
       moduleReactVersion = args[6];
+      modulePinKey = args[7];
+      moduleDependencies = args[8];
       return Promise.resolve({ default: () => null });
     }) as typeof mdxRenderer.loadModuleESM;
 
@@ -313,11 +318,90 @@ describe("rendering/layouts/utils/component-loader", () => {
         "preview-main",
         { imports: {} },
         "18.3.1",
+        "on:snapshot-a",
+        { zod: "3.0.0" },
       );
 
       assertEquals(moduleReactVersion, "18.3.1");
+      assertEquals(modulePinKey, "on:snapshot-a");
+      assertEquals(moduleDependencies, { zod: "3.0.0" });
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
+  });
+
+  it("uses the request snapshot in the TSX layout cache key", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    let requestedCacheKey = "";
+    const cache = {
+      get(key: string) {
+        requestedCacheKey = key;
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const loaded = await loadTSXComponent(
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+      "on:snapshot-a",
+      { zod: "3.0.0" },
+    );
+
+    assertEquals(loaded, CachedLayout);
+    assertEquals(requestedCacheKey.endsWith(":19.1.1:pins:on:snapshot-a"), true);
+  });
+
+  it("preserves the legacy TSX layout cache key when pinning is off", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    const requestedKeys: string[] = [];
+    const cache = {
+      get(key: string) {
+        requestedKeys.push(key);
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+    const common = [
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+    ] as const;
+
+    await loadTSXComponent(...common);
+    await loadTSXComponent(...common, "off", undefined, undefined, "https://app.example");
+
+    assertEquals(requestedKeys.length, 2);
+    assertEquals(requestedKeys[1], requestedKeys[0]);
+    assertEquals(requestedKeys[0]?.includes(":pins:"), false);
   });
 });

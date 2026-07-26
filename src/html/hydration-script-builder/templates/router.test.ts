@@ -113,8 +113,20 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "const pendingPageDataFetches = new Map()");
       assertIncludes(result, "function startPageDataFetch(path, signal, options = {})");
       assertIncludes(result, "function refreshPageDataInBackground(path)");
-      assertIncludes(result, "pendingPageDataFetches.set(path, request)");
+      assertIncludes(result, "pendingPageDataFetches.set(cacheIdentity, request)");
       assertIncludes(result, "refreshPageDataInBackground(path)");
+    });
+
+    it("binds page-data requests and cache identities to the document dependency snapshot", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "const DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY =");
+      assertIncludes(result, "function pageDataCacheIdentity(path)");
+      assertIncludes(result, "function buildPageDataEndpoint(path)");
+      assertIncludes(
+        result,
+        "headers['X-Veryfront-Dependency-Pins'] = DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY",
+      );
+      assertIncludes(result, "assertPageDataMatchesDocumentSnapshot(path, await response.json())");
     });
 
     it("should reuse pending page-data fetches for first-hit navigation", () => {
@@ -245,8 +257,10 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "async function loadPageDataComponent(pageData, path)");
       assertIncludes(
         result,
-        "const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);",
+        "const moduleUrl = buildPinnedRscModuleUrl(path, pageData);",
       );
+      assertIncludes(result, "moduleData.dependencyPinningCacheKey");
+      assertIncludes(result, "moduleUrl += '&pins=' + encodeURIComponent(pinKey);");
       assertIncludes(result, "const module = await import(moduleUrl);");
       assertIncludes(
         result,
@@ -440,7 +454,7 @@ describe("hydration-script-builder/templates/router", () => {
       origin: string;
       pathname: string;
       search: string;
-      readonly href: string;
+      href: string;
     }
     interface RuntimeRouter {
       params: Record<string, string>;
@@ -486,6 +500,7 @@ describe("hydration-script-builder/templates/router", () => {
         pathname?: string;
         search?: string;
         hydrationParams?: Record<string, string | string[]>;
+        hydrationDependencyPinningCacheKey?: string;
         fetchImpl?: (
           url: string,
           options: { headers?: Record<string, string>; signal?: AbortSignal },
@@ -493,7 +508,12 @@ describe("hydration-script-builder/templates/router", () => {
         debug?: boolean;
       } = {},
     ): RuntimeHandle {
-      const hydrationJson = JSON.stringify({ params: opts.hydrationParams ?? {} });
+      const hydrationJson = JSON.stringify({
+        params: opts.hydrationParams ?? {},
+        ...(opts.hydrationDependencyPinningCacheKey
+          ? { dependencyPinningCacheKey: opts.hydrationDependencyPinningCacheKey }
+          : {}),
+      });
       const listeners: Record<string, Array<(e: unknown) => void>> = {};
       const addEventListener = (type: string, fn: (e: unknown) => void) => {
         (listeners[type] ??= []).push(fn);
@@ -528,15 +548,20 @@ describe("hydration-script-builder/templates/router", () => {
         addEventListener,
       };
 
-      const win: RuntimeWindow = {
-        location: {
-          origin: "https://veryfront.test",
-          pathname: opts.pathname ?? "/",
-          search: opts.search ?? "",
-          get href() {
-            return "https://veryfront.test" + this.pathname + this.search;
-          },
+      let assignedHref: string | undefined;
+      const location: RuntimeLocation = {
+        origin: "https://veryfront.test",
+        pathname: opts.pathname ?? "/",
+        search: opts.search ?? "",
+        get href() {
+          return assignedHref ?? "https://veryfront.test" + this.pathname + this.search;
         },
+        set href(value: string) {
+          assignedHref = value;
+        },
+      };
+      const win: RuntimeWindow = {
+        location,
         history: { pushState() {}, back() {}, forward() {} },
         addEventListener,
         dispatchEvent() {
@@ -547,7 +572,13 @@ describe("hydration-script-builder/templates/router", () => {
         __VERYFRONT_DEBUG__: opts.debug,
       };
 
-      let nextPageData: unknown = { pagePath: "page", params: {} };
+      let nextPageData: unknown = {
+        pagePath: "page",
+        params: {},
+        ...(opts.hydrationDependencyPinningCacheKey
+          ? { dependencyPinningCacheKey: opts.hydrationDependencyPinningCacheKey }
+          : {}),
+      };
       const fetchCalls: RuntimeFetchCall[] = [];
       const fetchStub = (
         url: string,
@@ -657,6 +688,61 @@ describe("hydration-script-builder/templates/router", () => {
         hydrationParams: { slug: ["guides", "intro"], lang: "en" },
       });
       assertEquals(router.params, { slug: "guides/intro", lang: "en" });
+    });
+
+    it("preserves route queries and binds page-data requests to the document snapshot", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA("/search?pins=customer-value&q=one", true);
+
+      assertEquals(
+        runtime.fetchCalls[0]?.url,
+        "/_veryfront/page-data/search.json?pins=customer-value&q=one",
+      );
+      assertEquals(runtime.fetchCalls[0]?.options.headers, {
+        "X-Veryfront-Navigation": "spa",
+        "X-Veryfront-Dependency-Pins": "on:snapshot-a",
+      });
+    });
+
+    it("falls back to a document navigation when page data returns another snapshot", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+      runtime.setNextPageData({
+        pagePath: "page",
+        params: {},
+        dependencyPinningCacheKey: "on:snapshot-b",
+      });
+
+      await runtime.navigateSPA("/target", true);
+
+      assertEquals(runtime.win.location.href, "/target");
+      assertEquals(runtime.getRenderedParams(), null);
+    });
+
+    it("falls back to a document navigation when the pinned snapshot is unavailable", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+        fetchImpl: () =>
+          Promise.resolve({
+            ok: false,
+            status: 409,
+            url: "/_veryfront/page-data/target.json?pins=on%3Asnapshot-a",
+            headers: { get: () => null },
+            json: () => Promise.resolve({}),
+          }),
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA("/target", true);
+
+      assertEquals(runtime.win.location.href, "/target");
+      assertEquals(runtime.getRenderedParams(), null);
     });
 
     it("replaces stale params with new page data on SPA navigation", async () => {

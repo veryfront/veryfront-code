@@ -113,6 +113,34 @@ describe("html shell release asset manifest consumption", () => {
     assert(!result.start.includes("/_vf/assets/"));
   });
 
+  it("preserves release params when pinning fallback page and import-map modules", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(undefined);
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      prodOptions({
+        releaseId: "rel-1",
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+      }),
+    );
+    const imports = extractImportMap(result.start);
+
+    assertStringIncludes(
+      result.start,
+      `/_vf_modules/_pins/on%3Asnapshot-a/pages/index.js?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
+    );
+    assertEquals(
+      imports["veryfront/router"],
+      "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+    );
+    assertEquals(imports["@/"], "/_vf_modules/_pins/on%3Asnapshot-a/");
+  });
+
   it("uses manifest route closure preloads for index routes", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>

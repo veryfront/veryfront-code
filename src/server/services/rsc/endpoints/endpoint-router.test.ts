@@ -2,14 +2,24 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  clearReactVersionCache,
+  type DependencyPinningSource,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import { refreshLoggerConfig } from "#veryfront/utils";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
+  buildBrowserModuleCacheKey,
   getBrowserModuleEndpointStatsForTesting,
   handleRSCEndpoint,
   resetBrowserModuleEndpointStateForTesting,
+  setBrowserModuleBuilderForTesting,
 } from "./endpoint-router.ts";
 import {
   createMockAdapter,
@@ -24,6 +34,36 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     resetBrowserModuleEndpointStateForTesting();
     const esbuild = await import("veryfront/extensions/bundler");
     await esbuild.stop();
+  });
+
+  it("preserves the legacy browser-module cache identity when pinning is off", () => {
+    const base = {
+      adapterId: 1,
+      projectKey: "project",
+      contentSourceId: "preview-main",
+      releaseId: "release",
+      configHash: "config",
+      modulePath: "/project/app/Counter.tsx",
+    };
+    const expected = [
+      1,
+      "project",
+      "preview-main",
+      "release",
+      "config",
+      "/project/app/Counter.tsx",
+    ].join("\0");
+
+    assertEquals(buildBrowserModuleCacheKey(base), expected);
+    assertEquals(
+      buildBrowserModuleCacheKey({
+        ...base,
+        branch: "other-branch",
+        moduleServerOrigin: "https://app.example",
+        dependencyPinningCacheKey: "off",
+      }),
+      expected,
+    );
   });
 
   describe("non-RSC paths", () => {
@@ -262,6 +302,64 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result!.status, 400);
       const body = await result!.text();
       assertStringIncludes(body, "Missing rel query parameter");
+    });
+
+    it("requires exactly one dependency snapshot query token when pinning is enabled", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-rsc-module-missing-pins-",
+      });
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        );
+        const snapshot = await getDependencyPinningSnapshot(projectDir);
+        const encodedSnapshot = encodeURIComponent(snapshot.cacheKey);
+
+        for (
+          const query of [
+            "rel=app%2FCounter.client.ts",
+            `rel=app%2FCounter.client.ts&pins=${encodedSnapshot}&pins=${encodedSnapshot}`,
+            "rel=app%2FCounter.client.ts&pins=",
+          ]
+        ) {
+          const response = await handleRSCEndpoint(
+            makeParams({
+              pathname: "/_veryfront/rsc/module",
+              projectDir,
+              projectId: projectDir,
+              isLocalProject: true,
+              config: rscEnabledConfig,
+              req: new Request(`http://localhost/_veryfront/rsc/module?${query}`),
+            }),
+          );
+
+          assertEquals(response?.status, 409);
+          assertEquals(response?.headers.get("cache-control"), "no-store");
+        }
+
+        const validResponse = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/module",
+            projectDir,
+            projectId: projectDir,
+            isLocalProject: true,
+            config: rscEnabledConfig,
+            req: new Request(
+              `http://localhost/_veryfront/rsc/module?rel=app%2FCounter.client.ts&pins=${encodedSnapshot}`,
+            ),
+          }),
+        );
+        assertEquals(validResponse?.status, 404);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("rejects unsupported hybrid CommonJS and ESM JSX suffixes", async () => {
@@ -1335,6 +1433,214 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       );
       assertEquals(result instanceof Response, true);
     });
+
+    it("fails closed for tokenless fetch subresources after pinning is enabled", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-rsc-fetch-missing-pins-",
+      });
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        );
+
+        for (const endpoint of ["render", "manifest", "payload", "stream"]) {
+          const response = await handleRSCEndpoint(
+            makeParams({
+              pathname: `/_veryfront/rsc/${endpoint}`,
+              projectDir,
+              projectId: projectDir,
+              isLocalProject: true,
+              config: rscEnabledConfig,
+              req: new Request(`http://localhost/_veryfront/rsc/${endpoint}?pins=application`),
+            }),
+          );
+
+          assertEquals(response?.status, 409);
+          assertEquals(response?.headers.get("cache-control"), "no-store");
+          assertEquals(
+            response?.headers.get("vary"),
+            RSC_DEPENDENCY_PINNING_HEADER,
+          );
+        }
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("fails closed for an unknown requested dependency snapshot", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/manifest",
+          config: rscEnabledConfig,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/manifest?pins=application-value",
+            {
+              headers: {
+                [RSC_DEPENDENCY_PINNING_HEADER]: "on:unknown",
+              },
+            },
+          ),
+        }),
+      );
+
+      assertEquals(result?.status, 409);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+      assertEquals(result?.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
+    });
+
+    it("treats query pins as application state even when they look like a snapshot", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/manifest",
+          config: rscEnabledConfig,
+          req: new Request(
+            "http://localhost/_veryfront/rsc/manifest?pins=on%3Aunknown",
+          ),
+        }),
+      );
+
+      assertEquals(result?.status, 200);
+      assertEquals(result?.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
+    });
+
+    it("accepts the current dependency snapshot on a fresh worker", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-rsc-endpoint-current-pins-",
+      });
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        );
+        const currentSnapshot = await getDependencyPinningSnapshot(projectDir);
+
+        // A load-balanced worker receives only the URL token and project files;
+        // its in-process historical snapshot registry starts empty.
+        clearReactVersionCache();
+        const response = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/manifest",
+            projectDir,
+            projectId: projectDir,
+            config: rscEnabledConfig,
+            req: new Request(
+              "http://localhost/_veryfront/rsc/manifest?pins=application-value",
+              {
+                headers: {
+                  [RSC_DEPENDENCY_PINNING_HEADER]: currentSnapshot.cacheKey,
+                },
+              },
+            ),
+          }),
+        );
+        const manifest = await response!.json();
+
+        assertEquals(response?.status, 200);
+        assertEquals(
+          manifest.dependencyPinningCacheKey,
+          currentSnapshot.cacheKey,
+        );
+        assertEquals(
+          response?.headers.get("vary"),
+          RSC_DEPENDENCY_PINNING_HEADER,
+        );
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("accepts remembered snapshot A after B is current and keeps manifest and stream on A", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-rsc-endpoint-historical-pins-",
+      });
+      const packageJsonPath = `${projectDir}/package.json`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        );
+        const snapshotA = await getDependencyPinningSnapshot(projectDir);
+
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { react: "19.2.4" } }),
+        );
+        const future = new Date(Date.now() + 2_000);
+        await Deno.utime(packageJsonPath, future, future);
+        const snapshotB = await getDependencyPinningSnapshot(projectDir);
+        assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+
+        const manifestResponse = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/manifest",
+            projectDir,
+            projectId: projectDir,
+            config: rscEnabledConfig,
+            req: new Request(
+              "http://localhost/_veryfront/rsc/manifest?pins=application-value",
+              {
+                headers: {
+                  [RSC_DEPENDENCY_PINNING_HEADER]: snapshotA.cacheKey,
+                },
+              },
+            ),
+          }),
+        );
+        const manifest = await manifestResponse!.json();
+        assertEquals(manifestResponse?.status, 200);
+        assertEquals(
+          manifest.dependencyPinningCacheKey,
+          snapshotA.cacheKey,
+        );
+
+        const streamResponse = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/stream",
+            projectDir,
+            projectId: projectDir,
+            config: rscEnabledConfig,
+            req: new Request(
+              "http://localhost/_veryfront/rsc/stream?pins=application-value",
+              {
+                headers: {
+                  [RSC_DEPENDENCY_PINNING_HEADER]: snapshotA.cacheKey,
+                },
+              },
+            ),
+          }),
+        );
+        assertEquals(streamResponse?.status, 200);
+        assertEquals(
+          streamResponse?.headers.get(RSC_DEPENDENCY_PINNING_HEADER),
+          snapshotA.cacheKey,
+        );
+        assertEquals(
+          streamResponse?.headers.get("vary"),
+          RSC_DEPENDENCY_PINNING_HEADER,
+        );
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("removed hydrator script endpoints", () => {
@@ -1517,4 +1823,76 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result, null);
     });
   });
+});
+
+Deno.test("RSC module endpoint preserves the exact proxy dependency source", async () => {
+  const projectDir = "/proxy/shared-project";
+  const entryPath = `${projectDir}/app/Counter.tsx`;
+  const packageJsonPath = `${projectDir}/package.json`;
+  const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+  const adapter = createMockAdapter({
+    knownFiles: [entryPath, packageJsonPath],
+    exists: (path) => Promise.resolve(path === entryPath || path === packageJsonPath),
+    readFile: (path) =>
+      Promise.resolve(
+        path === packageJsonPath
+          ? JSON.stringify({ dependencies: { zod: "^4" } })
+          : '"use client"; export default null;',
+      ),
+  });
+  const dependencyPinningSource: DependencyPinningSource = {
+    projectDir,
+    fs: adapter.fs,
+    cacheNamespace: '["project-a","preview-main"]',
+    branch: "main",
+    dependencyWritebackTarget: { kind: "main" },
+  };
+  let observedSource: unknown;
+
+  try {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+    const snapshot = await getDependencyPinningSnapshot(
+      dependencyPinningSource,
+    );
+    setBrowserModuleBuilderForTesting(async (_modulePath, options) => {
+      observedSource = options.dependencyPinningSource;
+      return {
+        source: "export default null;",
+        contentHash: "proxy-source-test",
+        importMapHash: await computeHash(options.importMapJson ?? ""),
+        dependencies: [],
+        resolutionProbes: [],
+      };
+    });
+
+    const result = await handleRSCEndpoint(
+      makeParams({
+        pathname: "/_veryfront/rsc/module",
+        projectDir,
+        projectId: "project-a",
+        projectSlug: "project-a",
+        contentSourceId: "preview-main",
+        branch: "main",
+        dependencyPinningSource,
+        isLocalProject: false,
+        mode: "development",
+        config: rscDisabledConfig,
+        adapter,
+        req: new Request(
+          `http://localhost/_veryfront/rsc/module?rel=app%2FCounter.tsx&pins=${
+            encodeURIComponent(snapshot.cacheKey)
+          }`,
+        ),
+      }),
+    );
+
+    assertEquals(result?.status, 200);
+    assertEquals(observedSource, dependencyPinningSource);
+  } finally {
+    setBrowserModuleBuilderForTesting();
+    resetBrowserModuleEndpointStateForTesting();
+    clearReactVersionCache();
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+  }
 });

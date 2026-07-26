@@ -34,6 +34,7 @@ export function handlePageModule(
         const { pageModule } = await renderer.renderPage(slug, {
           params: undefined,
           props: undefined,
+          url: new URL(req.url),
         });
 
         const code = pageModule?.code;

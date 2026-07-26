@@ -387,6 +387,7 @@ export class SSRModuleLoader {
       this.options.projectDir,
       this.options.reactVersion,
       mdxCacheDirs,
+      this.options.dependencyPinningCacheKey,
     );
   }
 
@@ -613,6 +614,7 @@ export class SSRModuleLoader {
           contentSourceId: this.options.contentSourceId,
         },
         this.options.reactVersion,
+        this.options.dependencyPinningCacheKey,
       );
 
       if (mdxCacheResult.status === "hit") {
@@ -781,8 +783,12 @@ export class SSRModuleLoader {
           dev: this.options.dev,
           ssr: true,
           apiBaseUrl: this.options.apiBaseUrl,
+          moduleServerOrigin: this.options.moduleServerOrigin,
           reactVersion: this.options.reactVersion,
           dependencyHashCache,
+          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningSource: this.options.dependencyPinningSource,
         };
 
         let transformed = await withSpan(
@@ -816,6 +822,10 @@ export class SSRModuleLoader {
           adapter: this.options.adapter,
           projectDir: this.options.projectDir,
           reactVersion: this.options.reactVersion,
+          moduleServerOrigin: this.options.moduleServerOrigin,
+          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningSource: this.options.dependencyPinningSource,
         });
 
         // Ensure HTTP bundles exist for this transform (handles nested bundle deps)

@@ -9,10 +9,12 @@ import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../../release-assets/constant
 import {
   _clearNpmVersionCache,
   _pendingResolutions,
-  getCachedNpmVersion,
+  _setDependencyResolutionPosterForTest,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import {
   clearReactVersionCache,
+  type DependencyPinningSource,
+  getDependencyPinningSnapshot,
   getProjectDependenciesSync,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import {
@@ -20,6 +22,29 @@ import {
   createHttpExternalPlugin,
   createRelativeFsPlugin,
 } from "./esbuild-plugins.ts";
+
+function writableDependencySource(
+  cacheNamespace: string,
+  dependencies: Readonly<Record<string, string>>,
+): DependencyPinningSource {
+  const content = JSON.stringify({ dependencies });
+  return {
+    projectDir: "/project",
+    cacheNamespace,
+    dependencyWritebackTarget: { kind: "main" },
+    fs: {
+      readFile: () => Promise.resolve(content),
+      stat: () =>
+        Promise.resolve({
+          size: content.length,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: new Date(1_000),
+        }),
+    },
+  };
+}
 
 async function bundleWithPlugin(
   contents: string,
@@ -259,17 +284,18 @@ describe(
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
     });
 
-    it("warms the npm version cache via background fetch when caches are cold and pinning is enabled", async () => {
+    it("queues an undeclared bare package for platform resolution", async () => {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
-      // Mock fetch: npm registry returns a version; the plugin marks bare imports
-      // as external (no module content fetch needed) so only the registry path runs.
-      globalThis.fetch = () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ "dist-tags": { latest: "4.17.21" } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
-        );
+      const dependencyPinningSource = writableDependencySource(
+        "esbuild-undeclared-resolution",
+        {},
+      );
+      const snapshot = await getDependencyPinningSnapshot(dependencyPinningSource);
+      const requests: Array<{ projectId: string; specifiers: string[] }> = [];
+      _setDependencyResolutionPosterForTest((projectId, specifiers) => {
+        requests.push({ projectId, specifiers });
+        return Promise.resolve();
+      });
 
       const { build } = await import("veryfront/extensions/bundler");
       await build({
@@ -286,15 +312,130 @@ describe(
         },
         // opts.bundle defaults to false: bare imports become { external: true },
         // so esbuild never fetches the esm.sh URL content.
-        plugins: [createBareExternalPlugin({ projectDir: "/project" })],
+        plugins: [
+          createBareExternalPlugin({
+            projectDir: "/project",
+            projectId: "project-ref",
+            dependencyPinningCacheKey: snapshot.cacheKey,
+            dependencyPinningDependencies: snapshot.dependencies,
+            dependencyPinningSource,
+          }),
+        ],
       });
 
-      // Wait for the background registry fetch (fired inside onResolve) to settle.
+      await _pendingResolutions();
+      assertEquals(requests, [{
+        projectId: "project-ref",
+        specifiers: ["lodash"],
+      }]);
+    });
+
+    it("queues independently declared React and Veryfront imports owned by the import map", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const dependencyPinningSource = writableDependencySource(
+        "esbuild-declared-resolution",
+        {
+          react: "^19.0.0",
+          "react-dom": "next",
+          veryfront: "~0.1.1150",
+        },
+      );
+      const snapshot = await getDependencyPinningSnapshot(dependencyPinningSource);
+      const requests: Array<{ projectId: string; specifiers: string[] }> = [];
+      _setDependencyResolutionPosterForTest((projectId, specifiers) => {
+        requests.push({ projectId, specifiers });
+        return Promise.resolve();
+      });
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        external: [
+          "react",
+          "react-dom",
+          "react-dom/client",
+          "react/jsx-runtime",
+        ],
+        stdin: {
+          contents: [
+            'import React from "react";',
+            'import { createRoot } from "react-dom/client";',
+            'import { Head } from "veryfront/head";',
+            "console.log(React, createRoot, Head);",
+          ].join("\n"),
+          loader: "js",
+          sourcefile: "/project/app/page.js",
+          resolveDir: "/project/app",
+        },
+        plugins: [
+          createBareExternalPlugin({
+            projectDir: "/project",
+            projectId: "project-ref",
+            dependencyPinningCacheKey: snapshot.cacheKey,
+            dependencyPinningDependencies: snapshot.dependencies,
+            dependencyPinningSource,
+            importMapImports: { "veryfront/": "" },
+          }),
+        ],
+      });
+
       await _pendingResolutions();
       assertEquals(
-        getCachedNpmVersion("lodash", "/project", undefined),
-        "4.17.21",
+        requests.flatMap(({ specifiers }) => specifiers).sort(),
+        [
+          "react-dom@next",
+          "react@^19.0.0",
+          "veryfront@~0.1.1150",
+        ],
       );
+    });
+
+    it("does not queue exact import-map-owned dependency pins", async () => {
+      const requests: string[] = [];
+      _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+        requests.push(...specifiers);
+        return Promise.resolve();
+      });
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        stdin: {
+          contents: [
+            'import React from "react";',
+            'import { createRoot } from "react-dom/client";',
+            'import { Head } from "veryfront/head";',
+            "console.log(React, createRoot, Head);",
+          ].join("\n"),
+          loader: "js",
+          sourcefile: "/project/app/page.js",
+          resolveDir: "/project/app",
+        },
+        plugins: [
+          createBareExternalPlugin({
+            projectDir: "/project",
+            projectId: "project-ref",
+            dependencyPinningCacheKey: "on:snapshot-exact",
+            dependencyPinningDependencies: {
+              react: "19.1.1",
+              "react-dom": "19.1.1",
+              veryfront: "v0.1.1150",
+            },
+            importMapImports: { "veryfront/": "" },
+          }),
+        ],
+      });
+
+      await _pendingResolutions();
+      assertEquals(requests, []);
     });
   },
 );

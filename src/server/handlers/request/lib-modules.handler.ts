@@ -8,6 +8,16 @@ import {
   HTTP_OK,
   PRIORITY_MEDIUM_LIB_MODULES,
 } from "#veryfront/utils/constants/index.ts";
+import { HttpStatus } from "#veryfront/http/responses";
+import {
+  type DependencyPinningSnapshot,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  isDependencyPinningEnabled,
+  isExactSemver,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 export const LIB_MODULE_PATHS = {
   "chat.js": "esm/src/chat/index.js",
@@ -18,6 +28,47 @@ export const LIB_MODULE_PATHS = {
 
 const ALLOWED_MODULES = new Set(Object.keys(LIB_MODULE_PATHS));
 const LIB_PREFIX = "/_veryfront/lib/";
+const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
+
+function authoritativeVeryfrontVersion(
+  snapshot: DependencyPinningSnapshot,
+): string | undefined {
+  const configured = snapshot.configuredVersions?.veryfront;
+  const declaration = configured?.declaration ??
+    snapshot.dependencies?.veryfront;
+  const effective = configured?.effective ?? declaration;
+  if (
+    declaration === undefined ||
+    effective === undefined ||
+    !isExactSemver(declaration) ||
+    !isExactSemver(effective)
+  ) {
+    return undefined;
+  }
+  return effective.replace(/^v/, "");
+}
+
+async function readInstalledVeryfrontVersion(
+  ctx: HandlerContext,
+): Promise<string | undefined> {
+  try {
+    const packageJsonPath = joinPath(
+      joinPath(ctx.projectDir, "node_modules"),
+      "veryfront/package.json",
+    );
+    const raw = await ctx.adapter.fs.readFile(packageJsonPath);
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const version = (parsed as Record<string, unknown>).version;
+    return typeof version === "string" && isExactSemver(version)
+      ? version.replace(/^v/, "")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export class LibModulesHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -33,7 +84,8 @@ export class LibModulesHandler extends BaseHandler {
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") return this.continue();
 
-    const pathname = new URL(req.url).pathname;
+    const requestUrl = new URL(req.url);
+    const pathname = requestUrl.pathname;
     if (!pathname.startsWith(LIB_PREFIX)) return this.continue();
 
     const moduleResolution = ctx.config?.client?.moduleResolution ?? "cdn";
@@ -54,6 +106,38 @@ export class LibModulesHandler extends BaseHandler {
         ctx,
       );
       return this.respondNotFound(req, ctx, method);
+    }
+
+    if (isDependencyPinningEnabled()) {
+      const requestedPinKeys = requestUrl.searchParams.getAll("pins");
+      const requestedPinKey = requestedPinKeys[0];
+      const source = createHandlerDependencyPinningSource(ctx);
+      if (
+        requestedPinKeys.length !== 1 ||
+        requestedPinKey === undefined ||
+        !DEPENDENCY_PIN_PATTERN.test(requestedPinKey)
+      ) {
+        return this.respondDependencyConflict(req, ctx, method);
+      }
+
+      try {
+        const snapshot = await resolveRequestedDependencyPinningSnapshot(
+          source,
+          requestedPinKey,
+        );
+        const authoritativeVersion = snapshot ? authoritativeVeryfrontVersion(snapshot) : undefined;
+        const installedVersion = await readInstalledVeryfrontVersion(ctx);
+        if (
+          !snapshot ||
+          authoritativeVersion === undefined ||
+          installedVersion === undefined ||
+          installedVersion !== authoritativeVersion
+        ) {
+          return this.respondDependencyConflict(req, ctx, method);
+        }
+      } catch {
+        return this.respondDependencyConflict(req, ctx, method);
+      }
     }
 
     const filePath = this.resolveModulePath(modulePath, ctx.projectDir);
@@ -118,6 +202,24 @@ export class LibModulesHandler extends BaseHandler {
           "text/plain; charset=utf-8",
           method === "HEAD" ? null : "Module not found",
           HTTP_NOT_FOUND,
+        ),
+    );
+  }
+
+  private respondDependencyConflict(
+    req: Request,
+    ctx: HandlerContext,
+    method: string,
+  ): HandlerResult {
+    return this.respond(
+      this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withContentType(
+          "text/plain; charset=utf-8",
+          method === "HEAD" ? null : "Dependency snapshot conflict",
+          HttpStatus.CONFLICT,
         ),
     );
   }

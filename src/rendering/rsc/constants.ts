@@ -4,3 +4,4 @@ export const RSC_PATH_PREFIX = INTERNAL_PATH_PREFIXES.RSC;
 export const FS_PATH_PREFIX = INTERNAL_PATH_PREFIXES.FS;
 export const HYDRATION_DATA_ID = "veryfront-hydration-data";
 export const RSC_ROOT_ID = "rsc-root";
+export const RSC_DEPENDENCY_PINNING_HEADER = "x-veryfront-dependency-pins";

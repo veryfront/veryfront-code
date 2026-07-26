@@ -10,7 +10,6 @@ import {
 import {
   _clearNpmVersionCache,
   _pendingResolutions,
-  scheduleNpmVersionResolution,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { bareStrategy } from "./bare-strategy.ts";
@@ -51,6 +50,8 @@ describe("BareStrategy", () => {
 
     it("should not match http URLs", () => {
       assertEquals(bareStrategy.matches("https://esm.sh/react", makeCtx()), false);
+      assertEquals(bareStrategy.matches("HTTPS://esm.sh/react", makeCtx()), false);
+      assertEquals(bareStrategy.matches("//esm.sh/react", makeCtx()), false);
     });
 
     it("should not match relative imports", () => {
@@ -238,7 +239,7 @@ describe("BareStrategy", () => {
       globalThis.fetch = originalFetch;
     });
 
-    it("uses a version warmed for a dependency without a package.json hint", async () => {
+    it("keeps transform output stable after a registry lookup warms", async () => {
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
@@ -246,10 +247,21 @@ describe("BareStrategy", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      scheduleNpmVersionResolution("lodash", undefined, "/project");
+
+      const ctx = makeCtx({
+        target: "browser",
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: {},
+      });
+      const before = bareStrategy.rewrite(makeInfo("lodash"), ctx);
       await _pendingResolutions();
-      const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
+      const after = bareStrategy.rewrite(makeInfo("lodash"), ctx);
+
+      assertEquals(
+        before.specifier,
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
+      assertEquals(after.specifier, before.specifier);
     });
 
     it("falls back to unversioned URL when both caches are cold", async () => {
@@ -263,18 +275,28 @@ describe("BareStrategy", () => {
       );
     });
 
-    it("uses the inline version even when a registry cache entry exists", () => {
-      scheduleNpmVersionResolution("lodash", "3.0.0", "/project");
-      // Inline version (4.17.21) must win over the cached 3.0.0.
+    it("uses the inline version", () => {
       const result = bareStrategy.rewrite(
         makeInfo("lodash@4.17.21"),
         makeCtx({ target: "browser" }),
       );
       assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
-      assertEquals(result.specifier?.includes("3.0.0"), false);
     });
 
-    it("produces a versioned URL for a scoped package from npm cache", async () => {
+    it("preserves a declared v-prefixed exact version byte-for-byte", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("lodash"),
+        makeCtx({
+          target: "browser",
+          dependencyPinningCacheKey: "on:snapshot-v",
+          dependencyPinningDependencies: { lodash: "v4.17.21+build.7" },
+        }),
+      );
+
+      assertEquals(result.specifier?.includes("lodash@v4.17.21+build.7"), true);
+    });
+
+    it("keeps an undeclared scoped package unversioned after registry warmup", async () => {
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
@@ -282,13 +304,16 @@ describe("BareStrategy", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      scheduleNpmVersionResolution("@tanstack/react-query", undefined, "/project");
+      const ctx = makeCtx({
+        target: "browser",
+        dependencyPinningCacheKey: "on:snapshot-b",
+        dependencyPinningDependencies: {},
+      });
+      const before = bareStrategy.rewrite(makeInfo("@tanstack/react-query"), ctx);
       await _pendingResolutions();
-      const result = bareStrategy.rewrite(
-        makeInfo("@tanstack/react-query"),
-        makeCtx({ target: "browser" }),
-      );
-      assertEquals(result.specifier?.includes("@tanstack/react-query@5.28.0"), true);
+      const after = bareStrategy.rewrite(makeInfo("@tanstack/react-query"), ctx);
+      assertEquals(after.specifier, before.specifier);
+      assertEquals(after.specifier?.includes("@tanstack/react-query@5.28.0"), false);
     });
 
     it("does not replace a declared package range with registry latest", async () => {
@@ -323,24 +348,17 @@ describe("BareStrategy", () => {
     });
 
     it("SSR target is not affected by the pin flag", () => {
-      scheduleNpmVersionResolution("lodash", "4.17.21", "/project");
       // SSR always returns null for bare specifiers with no inline version.
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "ssr" }));
       assertEquals(result.specifier, null);
     });
 
-    it("preserves a dist-tag specifier (pkg@next) and does not override it with a numeric pin", () => {
-      // pkg@next has a version specifier (the dist-tag "next"); the pin ladder
-      // must not treat it as unversioned and inject a cached numeric version.
-      scheduleNpmVersionResolution("some-pkg", "4.0.0", "/project");
+    it("preserves a dist-tag specifier (pkg@next)", () => {
       const result = bareStrategy.rewrite(
         makeInfo("some-pkg@next"),
         makeCtx({ target: "browser" }),
       );
-      // The specifier already has a version (@next); it should be passed through
-      // to the esm.sh URL builder as-is.
       assertEquals(result.specifier?.includes("some-pkg@next"), true);
-      assertEquals(result.specifier?.includes("4.0.0"), false);
     });
 
     it("leaves a compound package range on the current unversioned fallback", () => {

@@ -19,12 +19,17 @@ describe("module-fetcher/http-fetcher", () => {
     } as RuntimeAdapter;
 
     try {
-      globalThis.fetch = async () =>
-        new Response([
-          `// Previous example: from "./local.js"`,
-          `import local from "./local.js";`,
-          `export { local };`,
-        ].join("\n"));
+      let requestedUrl = "";
+      globalThis.fetch = async (input) => {
+        requestedUrl = String(input);
+        return await Promise.resolve(
+          new Response([
+            `// Previous example: from "./local.js"`,
+            `import local from "./local.js";`,
+            `export { local };`,
+          ].join("\n")),
+        );
+      };
 
       const result = await fetchModuleViaHTTP(
         "_vf_modules/pages/index.js",
@@ -33,6 +38,7 @@ describe("module-fetcher/http-fetcher", () => {
         logger,
         "docs",
         true,
+        "on:pins-a",
       );
 
       assertEquals(
@@ -42,6 +48,10 @@ describe("module-fetcher/http-fetcher", () => {
           `import local from "file:///cache/.__local.js.mjs";`,
           `export { local };`,
         ].join("\n"),
+      );
+      assertEquals(
+        requestedUrl,
+        "http://docs.lvh.me:3001/_vf_modules/pages/index.js?ssr=true&pins=on%3Apins-a",
       );
     } finally {
       globalThis.fetch = originalFetch;

@@ -7,10 +7,26 @@
 
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { stripJsonImportAttributes } from "../../esm/import-attributes.ts";
+import type { DependencyResolutionObservation } from "../../import-rewriter/dependency-resolution.ts";
 import { type RewriteContext, rewriteImports } from "../../import-rewriter/index.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
+const DEPENDENCY_RESOLUTION_OBSERVATIONS = "dependencyResolutionObservations";
+
+export function getDependencyResolutionObservations(
+  ctx: TransformContext,
+): readonly DependencyResolutionObservation[] {
+  const observations = ctx.metadata.get(DEPENDENCY_RESOLUTION_OBSERVATIONS);
+  if (!(observations instanceof Map)) return [];
+  return [...observations.values()].sort((left, right) =>
+    left.packageName.localeCompare(right.packageName)
+  );
+}
+
 async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContext> {
+  const observations = new Map<string, DependencyResolutionObservation>();
+  ctx.metadata.set(DEPENDENCY_RESOLUTION_OBSERVATIONS, observations);
+
   const rewriteCtx: RewriteContext = {
     filePath: ctx.filePath,
     projectDir: ctx.projectDir,
@@ -18,9 +34,17 @@ async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContex
     target: ctx.target,
     dev: ctx.dev,
     moduleServerUrl: ctx.moduleServerUrl,
+    moduleServerOrigin: ctx.moduleServerOrigin,
     vendorBundleHash: ctx.vendorBundleHash,
     apiBaseUrl: ctx.apiBaseUrl,
     reactVersion: ctx.reactVersion,
+    dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
+    dependencyPinningDependencies: ctx.dependencyPinningDependencies,
+    dependencyPinningSource: ctx.dependencyPinningSource,
+    onDependencyResolutionObserved: (observation) => {
+      observations.set(observation.packageName, observation);
+      ctx.onDependencyResolutionObserved?.(observation);
+    },
   };
 
   if (ctx.target !== "ssr") return rewriteCtx;
@@ -47,7 +71,9 @@ export const resolveImportsPlugin: TransformPlugin = {
     const code = await rewriteImports(ctx.code, rewriteCtx);
     return stripJsonImportAttributes(
       code,
-      (specifier) => specifier === "/_vf_modules/_veryfront/_deno-config.js",
+      (specifier) =>
+        specifier === "/_vf_modules/_veryfront/_deno-config.js" ||
+        specifier.startsWith("/_vf_modules/_veryfront/_deno-config.js?"),
     );
   },
 };

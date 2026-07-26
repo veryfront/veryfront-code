@@ -1,22 +1,32 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
   _clearNpmVersionCache,
   _pendingResolutions,
+  _setDependencyResolutionPosterForTest,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import { rewriteSSRImportsCompat } from "../import-rewriter/ssr-adapter.ts";
 import {
+  _getDependencyVersionReadOperationsForTest,
+  _primeDependenciesCache,
   clearReactVersionCache,
+  createDependencyPinningSource,
   DEFAULT_REACT_VERSION,
+  type DependencyPinningSource,
   ensureProjectDependenciesLoaded,
+  getDependencyPinningCacheKey,
+  getDependencyPinningSnapshot,
   getProjectDependenciesSync,
   isValidReactVersion,
   normalizeReactVersion,
   readProjectDependencyVersions,
+  resolveDependencyPinningSnapshot,
+  resolveProjectPackageVersions,
   resolveProjectReactVersion,
+  resolveRequestedDependencyPinningSnapshot,
   stripSemverRange,
 } from "./package-registry.ts";
 
@@ -44,8 +54,11 @@ describe("package-registry", () => {
   });
 
   describe("isValidReactVersion", () => {
-    it("should accept X.Y.Z format", () => {
+    it("accepts stable, v-prefixed, prerelease, and build exact SemVer", () => {
       assertEquals(isValidReactVersion("19.1.1"), true);
+      assertEquals(isValidReactVersion("v19.1.1"), true);
+      assertEquals(isValidReactVersion("19.2.0-rc.1"), true);
+      assertEquals(isValidReactVersion("19.2.0-rc.1+build.7"), true);
     });
 
     it("should reject range prefixes", () => {
@@ -60,6 +73,15 @@ describe("package-registry", () => {
   describe("normalizeReactVersion", () => {
     it("should return valid version unchanged", () => {
       assertEquals(normalizeReactVersion("19.0.0"), "19.0.0");
+    });
+
+    it("preserves exact v-prefixed, prerelease, and build versions", () => {
+      assertEquals(normalizeReactVersion("v19.1.1"), "v19.1.1");
+      assertEquals(normalizeReactVersion("19.2.0-rc.1"), "19.2.0-rc.1");
+      assertEquals(
+        normalizeReactVersion("19.2.0-rc.1+build.7"),
+        "19.2.0-rc.1+build.7",
+      );
     });
 
     it("should fallback to default for undefined", () => {
@@ -163,6 +185,120 @@ describe("package-registry", () => {
       assertEquals(version, DEFAULT_REACT_VERSION);
     });
 
+    it("uses the captured dependency snapshot instead of the current package state", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-snapshot-react-version-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${dir}/package.json`,
+          JSON.stringify({ dependencies: { react: "^19.1.1" } }),
+        );
+
+        const version = await resolveProjectReactVersion({
+          projectDir: dir,
+          dependencyPinningCacheKey: "on:snapshot-a",
+          dependencyPinningDependencies: { react: "^18.3.1" },
+        });
+
+        assertEquals(version, "18.3.1");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("preserves an exact prerelease React version from the captured snapshot", async () => {
+      const version = await resolveProjectReactVersion({
+        dependencyPinningCacheKey: "on:snapshot-prerelease",
+        dependencyPinningDependencies: {
+          react: "19.2.0-rc.1+build.7",
+        },
+      });
+
+      assertEquals(version, "19.2.0-rc.1+build.7");
+    });
+
+    it("keeps a captured dependency snapshot authoritative over current config", async () => {
+      const snapshot = {
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: { react: "^18.2.0" },
+      };
+
+      assertEquals(
+        await resolveProjectReactVersion({
+          ...snapshot,
+          config: { react: { version: "^19.1.1" } },
+        }),
+        "18.2.0",
+      );
+      assertEquals(
+        await resolveProjectReactVersion({
+          ...snapshot,
+          config: {
+            client: {
+              cdn: { versions: { react: "^19.0.0" } },
+            },
+          },
+        }),
+        "18.2.0",
+      );
+    });
+
+    it("resolves React and Veryfront from one captured map with config overrides first", async () => {
+      const snapshot = {
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: {
+          react: "^18.3.1",
+          veryfront: "^0.1.10",
+        },
+      };
+
+      assertEquals(await resolveProjectPackageVersions(snapshot), {
+        react: "18.3.1",
+        veryfront: "0.1.10",
+      });
+      assertEquals(
+        await resolveProjectPackageVersions({
+          ...snapshot,
+          config: {
+            react: { version: "^19.1.1" },
+            client: {
+              cdn: {
+                versions: {
+                  react: "^19.0.0",
+                  veryfront: "^0.2.0",
+                },
+              },
+            },
+          },
+        }),
+        {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+      );
+    });
+
+    it("does not consult current package state when an enabled snapshot omits React", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-snapshot-without-react-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${dir}/package.json`,
+          JSON.stringify({ dependencies: { react: "^19.1.1" } }),
+        );
+
+        const version = await resolveProjectReactVersion({
+          projectDir: dir,
+          dependencyPinningCacheKey: "on:snapshot-without-react",
+          dependencyPinningDependencies: {},
+        });
+
+        assertEquals(version, DEFAULT_REACT_VERSION);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
     it("invalidates cached package versions when package.json changes", async () => {
       const dir = await Deno.makeTempDir({ prefix: "vf-react-version-cache-" });
 
@@ -194,6 +330,221 @@ describe("package-registry", () => {
         await Deno.remove(dir, { recursive: true });
       }
     });
+  });
+});
+
+describe("package-registry adapter-backed snapshot sources", () => {
+  let originalFlag: string | undefined;
+
+  beforeEach(() => {
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+  });
+
+  afterEach(() => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+    clearReactVersionCache();
+  });
+
+  function memorySource(
+    cacheNamespace: string,
+    state: { content: string; mtime: Date },
+    config?: DependencyPinningSource["config"],
+  ): DependencyPinningSource {
+    return {
+      projectDir: "/shared/proxy-project",
+      cacheNamespace,
+      config,
+      fs: {
+        readFile: () => Promise.resolve(state.content),
+        stat: () =>
+          Promise.resolve({
+            size: state.content.length,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: state.mtime,
+          }),
+      },
+    };
+  }
+
+  it("tags project and content identity kinds to prevent namespace collisions", () => {
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("{}"),
+        stat: () =>
+          Promise.resolve({
+            size: 2,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(1),
+          }),
+      },
+    } as unknown as Parameters<typeof createDependencyPinningSource>[0]["adapter"];
+    const base = {
+      projectDir: "/shared/proxy-project",
+      adapter,
+      isLocalProject: false,
+    };
+
+    const byId = createDependencyPinningSource({
+      ...base,
+      projectId: "project",
+      releaseId: "source",
+    });
+    const bySlug = createDependencyPinningSource({
+      ...base,
+      projectSlug: "project",
+      releaseId: "source",
+    });
+    const byContent = createDependencyPinningSource({
+      ...base,
+      projectId: "project",
+      contentSourceId: "release:source",
+    });
+
+    assertEquals(byId.cacheNamespace === bySlug.cacheNamespace, false);
+    assertEquals(byId.cacheNamespace === byContent.cacheNamespace, false);
+  });
+
+  it("isolates two proxy projects that share the same projectDir", async () => {
+    const mtime = new Date(1_000);
+    const stateA = {
+      content: JSON.stringify({ dependencies: { tenant: "1.0.0" } }),
+      mtime,
+    };
+    const stateB = {
+      content: JSON.stringify({ dependencies: { tenant: "2.0.0" } }),
+      mtime,
+    };
+    const sourceA = memorySource('["project-a","release-a"]', stateA);
+    const sourceB = memorySource('["project-b","release-a"]', stateB);
+
+    const [snapshotA, snapshotB] = await Promise.all([
+      getDependencyPinningSnapshot(sourceA),
+      getDependencyPinningSnapshot(sourceB),
+    ]);
+
+    assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+    assertEquals(snapshotA.dependencies?.tenant, "1.0.0");
+    assertEquals(snapshotB.dependencies?.tenant, "2.0.0");
+    assertEquals(
+      getProjectDependenciesSync(sourceA, snapshotA.cacheKey)?.tenant,
+      "1.0.0",
+    );
+    assertEquals(
+      getProjectDependenciesSync(sourceB, snapshotB.cacheKey)?.tenant,
+      "2.0.0",
+    );
+  });
+
+  it("detects same-mtime, same-size remote package.json changes", async () => {
+    const state = {
+      content: JSON.stringify({ dependencies: { tenant: "1.0.0" } }),
+      mtime: new Date(2_000),
+    };
+    const source = memorySource('["project-a","preview-main"]', state);
+    const snapshotA = await getDependencyPinningSnapshot(source);
+
+    state.content = JSON.stringify({ dependencies: { tenant: "2.0.0" } });
+    const snapshotB = await getDependencyPinningSnapshot(source);
+
+    assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+    assertEquals(snapshotA.dependencies?.tenant, "1.0.0");
+    assertEquals(snapshotB.dependencies?.tenant, "2.0.0");
+    assertEquals(
+      (await resolveRequestedDependencyPinningSnapshot(
+        source,
+        snapshotA.cacheKey,
+      ))?.dependencies?.tenant,
+      "1.0.0",
+    );
+  });
+
+  it("captures config versions in the token and keeps historical config authoritative", async () => {
+    const state = {
+      content: JSON.stringify({ dependencies: { tenant: "1.0.0" } }),
+      mtime: new Date(3_000),
+    };
+    const sourceA = memorySource('["project-a","release-a"]', state, {
+      react: { version: "^18.3.1" },
+      client: {
+        cdn: {
+          versions: {
+            veryfront: "^0.1.10",
+          },
+        },
+      },
+    });
+    const snapshotA = await getDependencyPinningSnapshot(sourceA);
+    const sourceB = memorySource('["project-a","release-a"]', state, {
+      react: { version: "19.1.1" },
+      client: {
+        cdn: {
+          versions: {
+            veryfront: "0.2.0",
+          },
+        },
+      },
+    });
+    const snapshotB = await getDependencyPinningSnapshot(sourceB);
+
+    assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+    assertEquals(snapshotA.dependencies?.react, "18.3.1");
+    assertEquals(snapshotA.dependencies?.veryfront, "0.1.10");
+    assertEquals(snapshotA.configuredVersions?.react?.declaration, "^18.3.1");
+    assertEquals(snapshotA.configuredVersions?.veryfront?.declaration, "^0.1.10");
+    assertEquals(
+      (await resolveRequestedDependencyPinningSnapshot(
+        sourceB,
+        snapshotA.cacheKey,
+      ))?.dependencies?.react,
+      "18.3.1",
+    );
+    assertEquals(
+      await resolveProjectReactVersion({
+        config: sourceB.config,
+        dependencyPinningCacheKey: snapshotA.cacheKey,
+        dependencyPinningDependencies: snapshotA.dependencies,
+      }),
+      "18.3.1",
+    );
+  });
+
+  it("bounds adapter-backed live dependency maps with least-recently-used eviction", async () => {
+    const sources: DependencyPinningSource[] = [];
+    for (let index = 0; index < 256; index++) {
+      const source = memorySource(
+        `["project-${index}","release-a"]`,
+        {
+          content: JSON.stringify({
+            dependencies: { tenant: `${index}.0.0` },
+          }),
+          mtime: new Date(4_000),
+        },
+      );
+      sources.push(source);
+      await getDependencyPinningSnapshot(source);
+    }
+
+    assertEquals(getProjectDependenciesSync(sources[0])?.tenant, "0.0.0");
+    const overflowSource = memorySource(
+      '["project-overflow","release-a"]',
+      {
+        content: JSON.stringify({
+          dependencies: { tenant: "overflow" },
+        }),
+        mtime: new Date(4_000),
+      },
+    );
+    await getDependencyPinningSnapshot(overflowSource);
+
+    assertEquals(getProjectDependenciesSync(sources[0])?.tenant, "0.0.0");
+    assertEquals(getProjectDependenciesSync(sources[1]), undefined);
+    assertEquals(getProjectDependenciesSync(overflowSource)?.tenant, "overflow");
   });
 });
 
@@ -234,6 +585,24 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
     assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.21");
   });
 
+  it("coalesces concurrent package.json refreshes", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const before = _getDependencyVersionReadOperationsForTest();
+
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => readProjectDependencyVersions(tmpDir)),
+    );
+
+    assertEquals(
+      _getDependencyVersionReadOperationsForTest() - before,
+      1,
+    );
+    assertEquals(
+      results.every((result) => result.dependencies?.lodash === "4.17.21"),
+      true,
+    );
+  });
+
   it("upgrades a flag-off cache entry when the flag is later turned on", async () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
     await readProjectDependencyVersions(tmpDir);
@@ -242,6 +611,217 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     await readProjectDependencyVersions(tmpDir);
     assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.21");
+  });
+
+  it("keys caches by flag state and a sorted dependency map", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+    assertEquals(await getDependencyPinningCacheKey(tmpDir), "off");
+
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const first = await getDependencyPinningCacheKey(tmpDir);
+    assertEquals(first.startsWith("on:"), true);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await Deno.writeTextFile(
+      `${tmpDir}/package.json`,
+      JSON.stringify({ dependencies: { react: "^18.3.1", lodash: "4.17.21" } }),
+    );
+    const reordered = await getDependencyPinningCacheKey(tmpDir);
+    assertEquals(reordered, first);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await Deno.writeTextFile(
+      `${tmpDir}/package.json`,
+      JSON.stringify({ dependencies: { react: "^18.3.1", lodash: "4.17.20" } }),
+    );
+    const changed = await getDependencyPinningCacheKey(tmpDir);
+    assertEquals(changed === first, false);
+  });
+
+  it("captures an immutable key and dependency map pair", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const snapshot = await getDependencyPinningSnapshot(tmpDir);
+
+    assertEquals(snapshot.cacheKey.startsWith("on:"), true);
+    assertEquals(snapshot.dependencies?.lodash, "4.17.21");
+    assertEquals(Object.isFrozen(snapshot), true);
+    assertEquals(Object.isFrozen(snapshot.dependencies), true);
+  });
+
+  it("keeps the request-local dependency map when the shared cache changes after its read", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+
+    const initialRead = readProjectDependencyVersions(tmpDir);
+    const overwriteSharedCache = initialRead.then(() => {
+      _primeDependenciesCache(tmpDir, {
+        lodash: "5.0.0",
+        react: "^19.1.1",
+      });
+    });
+    const snapshotPromise = getDependencyPinningSnapshot(tmpDir);
+
+    await overwriteSharedCache;
+    const snapshot = await snapshotPromise;
+
+    assertEquals(snapshot.dependencies?.lodash, "4.17.21");
+    assertEquals(snapshot.dependencies?.react, "^18.3.1");
+    assertEquals(getProjectDependenciesSync(tmpDir)?.lodash, "5.0.0");
+  });
+
+  it("resolves a remembered request snapshot without another package.json read", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const snapshot = await getDependencyPinningSnapshot(tmpDir);
+    const before = _getDependencyVersionReadOperationsForTest();
+
+    const resolved = await Promise.all(
+      Array.from(
+        { length: 50 },
+        () =>
+          resolveRequestedDependencyPinningSnapshot(
+            tmpDir,
+            snapshot.cacheKey,
+          ),
+      ),
+    );
+
+    assertEquals(
+      _getDependencyVersionReadOperationsForTest() - before,
+      0,
+    );
+    assertEquals(resolved.every((value) => value === snapshot), true);
+  });
+
+  it("clones supplied maps and fails closed when an on snapshot is unavailable", async () => {
+    const dependencies = { lodash: "4.17.21" };
+    const snapshot = await resolveDependencyPinningSnapshot(
+      tmpDir,
+      "on:caller-snapshot",
+      dependencies,
+    );
+    dependencies.lodash = "5.0.0";
+
+    assertEquals(snapshot.dependencies?.lodash, "4.17.21");
+    assertEquals(Object.isFrozen(snapshot), true);
+    assertEquals(Object.isFrozen(snapshot.dependencies), true);
+    await assertRejects(
+      () => resolveDependencyPinningSnapshot(tmpDir, "on:missing-snapshot"),
+      Error,
+      "snapshot is unavailable",
+    );
+    await assertRejects(
+      () => resolveDependencyPinningSnapshot(tmpDir, "malformed", {}),
+      Error,
+      "Invalid dependency pinning snapshot key",
+    );
+  });
+
+  it("drops stale pins when package.json is deleted", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const validKey = await getDependencyPinningCacheKey(tmpDir);
+    assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.21");
+
+    await Deno.remove(`${tmpDir}/package.json`);
+    const missingKey = await getDependencyPinningCacheKey(tmpDir);
+
+    assertEquals(missingKey === validKey, false);
+    assertEquals(getProjectDependenciesSync(tmpDir), undefined);
+  });
+
+  it("drops stale pins when package.json becomes malformed", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    const validKey = await getDependencyPinningCacheKey(tmpDir);
+    assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.21");
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await Deno.writeTextFile(`${tmpDir}/package.json`, "{ malformed");
+    const malformedSnapshot = await getDependencyPinningSnapshot(tmpDir);
+
+    assertEquals(malformedSnapshot.cacheKey, "on:unknown");
+    assertEquals(malformedSnapshot.cacheKey === validKey, false);
+    assertEquals(malformedSnapshot.dependencies, undefined);
+    assertEquals(getProjectDependenciesSync(tmpDir), undefined);
+  });
+
+  it("does not write back latest when package declarations are malformed", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await Deno.writeTextFile(`${tmpDir}/package.json`, "{ malformed");
+    const snapshot = await getDependencyPinningSnapshot(tmpDir);
+    let posts = 0;
+    _setDependencyResolutionPosterForTest(() => {
+      posts++;
+      return Promise.resolve();
+    });
+
+    try {
+      rewriteSSRImportsCompat(`import value from "undeclared";`, {
+        projectDir: tmpDir,
+        projectId: "project-id",
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
+      });
+      await _pendingResolutions();
+      assertEquals(posts, 0);
+    } finally {
+      _setDependencyResolutionPosterForTest();
+    }
+  });
+
+  it("does not write back latest when package.json is unreadable", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    await Deno.remove(`${tmpDir}/package.json`);
+    await Deno.mkdir(`${tmpDir}/package.json`);
+    const snapshot = await getDependencyPinningSnapshot(tmpDir);
+    let posts = 0;
+    _setDependencyResolutionPosterForTest(() => {
+      posts++;
+      return Promise.resolve();
+    });
+
+    try {
+      rewriteSSRImportsCompat(`import value from "undeclared";`, {
+        projectDir: tmpDir,
+        projectId: "project-id",
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
+      });
+      await _pendingResolutions();
+      assertEquals(snapshot.cacheKey, "on:unknown");
+      assertEquals(snapshot.dependencies, undefined);
+      assertEquals(posts, 0);
+    } finally {
+      _setDependencyResolutionPosterForTest();
+    }
+  });
+
+  it("does not treat invalid dependency section shapes as verified absence", async () => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    await Deno.writeTextFile(
+      `${tmpDir}/package.json`,
+      JSON.stringify({ dependencies: ["lodash@4.17.21"] }),
+    );
+    const snapshot = await getDependencyPinningSnapshot(tmpDir);
+    let posts = 0;
+    _setDependencyResolutionPosterForTest(() => {
+      posts++;
+      return Promise.resolve();
+    });
+
+    try {
+      rewriteSSRImportsCompat(`import value from "undeclared";`, {
+        projectDir: tmpDir,
+        projectId: "project-id",
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
+      });
+      await _pendingResolutions();
+      assertEquals(snapshot.cacheKey, "on:unknown");
+      assertEquals(snapshot.dependencies, undefined);
+      assertEquals(posts, 0);
+    } finally {
+      _setDependencyResolutionPosterForTest();
+    }
   });
 });
 

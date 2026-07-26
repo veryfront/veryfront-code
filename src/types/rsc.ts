@@ -16,6 +16,8 @@ export interface RSCChildrenPayload {
 export interface RSCPayload {
   html: string;
   clientRefs: Record<string, string>;
+  /** Dependency snapshot captured before loading and rendering this payload. */
+  dependencyPinningCacheKey?: string;
   assets?: {
     css?: string[];
     js?: string[];

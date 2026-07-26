@@ -14,6 +14,7 @@ import {
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -69,6 +70,8 @@ export interface PersistTransformedModuleInput {
   cacheKey: string;
   contentSourceId?: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   /**
    * True when a dynamic import elsewhere closes a cycle back onto this module.
    * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
@@ -177,7 +180,14 @@ export async function persistTransformedModule(
 
   if (input.contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = buildMdxEsmPathCacheKey(normalizedPath, input.reactVersion);
+    const mdxCacheKey = buildMdxEsmPathCacheKey(
+      normalizedPath,
+      input.reactVersion,
+      buildModuleTransformCacheVariant(
+        input.dependencyPinningCacheKey,
+        input.moduleServerOrigin,
+      ),
+    );
     const cache = await getModulePathCache(input.tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
 

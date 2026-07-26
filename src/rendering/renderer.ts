@@ -87,6 +87,11 @@ import {
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  createDependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+  resolveDependencyWritebackTarget,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -307,9 +312,35 @@ export class Renderer {
 
         const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
         const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+        const dependencyPinningSource = options?.dependencyPinningSource ??
+          createDependencyPinningSource({
+            projectDir: effectiveCtx.projectDir,
+            adapter: effectiveCtx.adapter,
+            isLocalProject: effectiveCtx.isLocalProject,
+            projectId: effectiveCtx.projectId,
+            projectSlug: effectiveCtx.projectSlug,
+            contentSourceId: effectiveCtx.contentSourceId,
+            releaseId: effectiveCtx.releaseId,
+            branch: effectiveCtx.branch,
+            config: effectiveCtx.config,
+            dependencyWritebackTarget: resolveDependencyWritebackTarget({
+              environment: effectiveCtx.environment,
+              isLocalProject: effectiveCtx.isLocalProject,
+              releaseId: effectiveCtx.releaseId,
+              branch: effectiveCtx.branch,
+            }),
+          });
+        const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+          dependencyPinningSource,
+          options?.dependencyPinningCacheKey,
+          options?.dependencyPinningDependencies,
+        );
         const effectiveOptions = {
           ...options,
           releaseAssetManifest: releaseManifest,
+          dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningSource,
         };
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
         const cacheResult = cacheKey !== null
@@ -406,7 +437,13 @@ export class Renderer {
     ctx: RenderContext,
     options?: RenderOptions,
   ): string | null {
-    if (options?.cacheKey) return options.cacheKey;
+    if (options?.cacheKey) {
+      return this.withDependencyPinningCacheKey(
+        options.cacheKey,
+        options.dependencyPinningCacheKey,
+        options.url?.origin,
+      );
+    }
 
     const req = options?.request;
     if (req) {
@@ -416,7 +453,23 @@ export class Renderer {
     // Get query param handling options from config
     const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
 
-    return buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
+    return this.withDependencyPinningCacheKey(
+      buildQueryAwareCacheKey(slug, options?.url, queryParamOptions),
+      options?.dependencyPinningCacheKey,
+      options?.url?.origin,
+    );
+  }
+
+  private withDependencyPinningCacheKey(
+    cacheKey: string,
+    dependencyPinningCacheKey: string | undefined,
+    moduleServerOrigin?: string,
+  ): string {
+    if (!dependencyPinningCacheKey?.startsWith("on:")) return cacheKey;
+    const pinnedKey = `${cacheKey}:pins:${dependencyPinningCacheKey}`;
+    return moduleServerOrigin
+      ? `${pinnedKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
+      : pinnedKey;
   }
 
   private scheduleProductionRenderPrewarm(
@@ -427,7 +480,7 @@ export class Renderer {
   ): void {
     if (!this.shouldScheduleProductionPrewarm(ctx, options, cacheKey)) return;
 
-    const prewarmKey = this.getProductionPrewarmKey(ctx);
+    const prewarmKey = this.getProductionPrewarmKey(ctx, options);
     if (this.productionPrewarmContexts.has(prewarmKey)) return;
 
     const prewarmOptions = this.buildCanonicalPrewarmOptions(ctx, options);
@@ -477,8 +530,14 @@ export class Renderer {
     return true;
   }
 
-  private getProductionPrewarmKey(ctx: RenderContext): string {
-    return `${ctx.cachePrefix}:canonical`;
+  private getProductionPrewarmKey(
+    ctx: RenderContext,
+    options?: RenderOptions,
+  ): string {
+    return this.withDependencyPinningCacheKey(
+      `${ctx.cachePrefix}:canonical`,
+      options?.dependencyPinningCacheKey,
+    );
   }
 
   private rememberProductionPrewarm(key: string, promise: Promise<void>): void {
@@ -505,6 +564,8 @@ export class Renderer {
       contentSourceId: ctx.contentSourceId,
       releaseId: ctx.releaseId,
       releaseAssetManifest: options?.releaseAssetManifest ?? null,
+      dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options?.dependencyPinningDependencies,
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
       url: canonicalUrl,
@@ -902,6 +963,29 @@ export class Renderer {
     return withSpan("renderer.resolvePageData", async () => {
       const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
       const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+      const dependencyPinningSource = options?.dependencyPinningSource ??
+        createDependencyPinningSource({
+          projectDir: effectiveCtx.projectDir,
+          adapter: effectiveCtx.adapter,
+          isLocalProject: effectiveCtx.isLocalProject,
+          projectId: effectiveCtx.projectId,
+          projectSlug: effectiveCtx.projectSlug,
+          contentSourceId: effectiveCtx.contentSourceId,
+          releaseId: effectiveCtx.releaseId,
+          branch: effectiveCtx.branch,
+          config: effectiveCtx.config,
+          dependencyWritebackTarget: resolveDependencyWritebackTarget({
+            environment: effectiveCtx.environment,
+            isLocalProject: effectiveCtx.isLocalProject,
+            releaseId: effectiveCtx.releaseId,
+            branch: effectiveCtx.branch,
+          }),
+        });
+      const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+        dependencyPinningSource,
+        options?.dependencyPinningCacheKey,
+        options?.dependencyPinningDependencies,
+      );
       const services = this.createServicesForContext(effectiveCtx);
 
       return services.pipeline.resolvePageData(slug, {
@@ -912,6 +996,9 @@ export class Renderer {
         contentSourceId: effectiveCtx.contentSourceId,
         releaseId: effectiveCtx.releaseId,
         releaseAssetManifest: releaseManifest,
+        dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+        dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+        dependencyPinningSource,
       });
     }, {
       "renderer.slug": slug,
@@ -1029,7 +1116,7 @@ export class Renderer {
       layoutCollector,
       layoutCompiler,
       layoutCache: this.layoutComponentCache,
-      componentRegistry: componentRegistry.getAllAsComponents(),
+      componentRegistry,
     });
 
     const htmlGenerator = new HTMLGenerator({

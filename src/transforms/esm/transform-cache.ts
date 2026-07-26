@@ -14,6 +14,7 @@ import type {
   TransformProgressEvent,
   TransformProgressListener,
 } from "#veryfront/transforms/progress.ts";
+import type { DependencyResolutionObservation } from "../import-rewriter/dependency-resolution.ts";
 
 const logger = baseLogger.component("transform-cache");
 
@@ -37,6 +38,12 @@ interface TransformCacheEntry {
   timestamp: number;
   /** ID of the bundle manifest tracking HTTP bundles for this transform */
   bundleManifestId?: string;
+  /**
+   * Inert unresolved imports observed while producing this entry. Presence is
+   * mandatory for dependency-pinning cache entries so legacy entries cannot
+   * bypass retry replay.
+   */
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>;
 }
 
 let cacheGateway: TokenizingCacheGateway | null = null;
@@ -325,8 +332,19 @@ export async function setCachedTransformAsync(
   hash: string,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
   bundleManifestId?: string,
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>,
 ): Promise<void> {
-  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now(), bundleManifestId };
+  const entry: TransformCacheEntry = {
+    code,
+    hash,
+    timestamp: Date.now(),
+    bundleManifestId,
+    ...(dependencyResolutionObservations === undefined ? {} : {
+      dependencyResolutionObservations: dependencyResolutionObservations.map(
+        (observation) => ({ ...observation }),
+      ),
+    }),
+  };
   const gateway = getEffectiveCacheGateway();
 
   if (gateway) {
@@ -405,6 +423,8 @@ interface TransformCacheResult {
   code: string;
   /** Bundle manifest ID if the cached entry has one (for manifest-based validation) */
   bundleManifestId?: string;
+  /** Inert unresolved dependency metadata used for authority-gated retries. */
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>;
   /** Whether this was a cache hit */
   cacheHit: boolean;
 }
@@ -418,13 +438,21 @@ function publishComputedTransform(
   key: string,
   code: string,
   ttlSeconds: number,
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>,
 ): void {
   const previousPublication = transformCachePublications.get(key) ?? Promise.resolve();
   const publication = previousPublication
     .catch(() => {})
     .then(async () => {
       const hash = hashCodeHex(code).slice(0, 16);
-      await setCachedTransformAsync(key, code, hash, ttlSeconds);
+      await setCachedTransformAsync(
+        key,
+        code,
+        hash,
+        ttlSeconds,
+        undefined,
+        dependencyResolutionObservations,
+      );
     })
     .finally(() => {
       if (transformCachePublications.get(key) === publication) {
@@ -445,6 +473,7 @@ export async function getOrComputeTransform(
   onProgress?: TransformProgressListener,
   signal?: AbortSignal,
   validateCachedEntry?: TransformCachedEntryValidator,
+  getDependencyResolutionObservations?: () => ReadonlyArray<DependencyResolutionObservation>,
 ): Promise<TransformCacheResult> {
   signal?.throwIfAborted();
   const flightRegistry = transformFlight;
@@ -477,6 +506,9 @@ export async function getOrComputeTransform(
               const cacheEntry = {
                 code: cached.code,
                 bundleManifestId: cached.bundleManifestId,
+                ...(cached.dependencyResolutionObservations === undefined ? {} : {
+                  dependencyResolutionObservations: cached.dependencyResolutionObservations,
+                }),
                 cacheHit: true,
               };
               if (validateCachedEntry) {
@@ -508,20 +540,34 @@ export async function getOrComputeTransform(
           logger.debug("Cache miss, computing", { key });
           reportProgress({ phase: "transform-cache:miss" });
           const code = await computeFn(reportProgress);
+          const dependencyResolutionObservations = getDependencyResolutionObservations?.().map(
+            (observation) => ({ ...observation }),
+          );
           reportProgress({ phase: "transform-cache:computed" });
 
           if (transformFlight === flightRegistry && control.isCurrent()) {
             // Serialize publications for one key. If this generation is reset
             // after this synchronous identity check, a replacement publication
             // queues behind it and therefore commits last.
-            publishComputedTransform(key, code, ttlSeconds);
+            publishComputedTransform(
+              key,
+              code,
+              ttlSeconds,
+              dependencyResolutionObservations,
+            );
           } else {
             logger.debug("Skipped cache write from stale transform flight", {
               key: key.slice(-60),
             });
           }
 
-          return { code, cacheHit: false };
+          return {
+            code,
+            cacheHit: false,
+            ...(dependencyResolutionObservations === undefined
+              ? {}
+              : { dependencyResolutionObservations }),
+          };
         } finally {
           progressFlight.end();
         }

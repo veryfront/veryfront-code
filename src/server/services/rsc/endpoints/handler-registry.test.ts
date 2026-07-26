@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __destroyRSCHandlerForTests,
+  __getTrackedRSCHandlerKeyCountForTests,
   __injectCacheForTests,
   __resetRSCHandlerForTests,
   getRSCHandler,
@@ -197,6 +198,55 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       assertEquals(releaseA !== releaseB, true);
       assertEquals(cache.size, 2);
+    });
+
+    it("preserves the legacy handler identity for branches when pinning is off", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const branchA = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+      });
+      const branchB = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-b",
+        dependencyPinningCacheKey: "off",
+      });
+
+      assertEquals(branchA, branchB);
+      assertEquals(cache.size, 1);
+    });
+
+    it("isolates pin-on preview handlers by canonical branch", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const branchA = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+        dependencyPinningCacheKey: "on:snapshot",
+      });
+      const branchB = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-b",
+        dependencyPinningCacheKey: "on:snapshot",
+      });
+
+      assertEquals(branchA !== branchB, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("bounds release-source bookkeeping with the handler LRU", () => {
+      for (let index = 0; index <= 50; index++) {
+        getRSCHandler("/dir", "project", {
+          mode: "production",
+          releaseId: `release-${index}`,
+          contentSourceId: `release-source-${index}`,
+        });
+      }
+
+      assertEquals(__getTrackedRSCHandlerKeyCountForTests(), 50);
     });
   });
 

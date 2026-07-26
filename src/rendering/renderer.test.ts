@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  DEPENDENCY_PINNING_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
@@ -13,6 +16,7 @@ import { stub } from "#std/testing/mock";
 import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
+import type { RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
 import {
   acquireProjectSlot,
@@ -22,6 +26,7 @@ import {
   RENDER_PER_PROJECT_LIMIT,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
+import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -1806,6 +1811,81 @@ describe("Renderer release asset cache isolation", () => {
     await rejected;
     assertEquals(observedSignal?.aborted, true);
     assertEquals(observedSignal?.reason, reason);
+  });
+});
+
+describe("Renderer dependency pin cache isolation", () => {
+  it("misses the outer render cache when the package map changes", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-renderer-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let renders = 0;
+    const observedPinKeys: string[] = [];
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renders++;
+          observedPinKeys.push(options?.dependencyPinningCacheKey ?? "");
+          return Promise.resolve({
+            html: `<html>${options?.dependencyPinningCacheKey}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      projectDir,
+      environment: "preview",
+      contentSourceId: "preview-main",
+      releaseId: undefined,
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main"),
+    } as RenderContext;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { zod: "3.0.0" } }),
+      );
+      const first = await renderer.renderPage("/pins", ctx);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { zod: "4.0.0" } }),
+      );
+      const second = await renderer.renderPage("/pins", ctx);
+      const cachedSecond = await renderer.renderPage("/pins", ctx);
+
+      assertEquals(renders, 2);
+      assertEquals(new Set(observedPinKeys).size, 2);
+      assertEquals(first.html === second.html, false);
+      assertEquals(cachedSecond.html, second.html);
+      assertEquals(store.data.size, 2);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      await renderer.destroy();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 

@@ -16,14 +16,8 @@ import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
 import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
-import { getProjectDependenciesSync } from "#veryfront/transforms/esm/package-registry.ts";
-import {
-  getCachedNpmVersion,
-  isDependencyPinningEnabled,
-  isExactSemver,
-  postDependencyResolution,
-  scheduleNpmVersionResolution,
-} from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { resolveDependencyPinForImport } from "../dependency-resolution.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -34,6 +28,12 @@ function hasVersionSpecifier(specifier: string): boolean {
   // @canary) are recognised as version specifiers and are never overridden by
   // a cached numeric pin.
   return parseBarePackageSpecifier(specifier)?.version != null;
+}
+
+function isPinningEnabledForRewrite(ctx: RewriteContext): boolean {
+  return ctx.dependencyPinningCacheKey
+    ? ctx.dependencyPinningCacheKey.startsWith("on:")
+    : isDependencyPinningEnabled();
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
@@ -56,34 +56,15 @@ function warnUnversionedImport(specifier: string, projectId: string): void {
 
 /**
  * Resolve a pinned version for a bare package when the flag is on.
- * Priority: package.json pin -> npm registry cache -> undefined (fallback).
- * Schedules a background latest-version fetch only when the project has no
- * declaration for the package. Non-exact declarations retain the fallback
- * until the platform resolver normalizes them to an exact pin.
+ * Exact declarations are returned immediately. Ranges, tags, and verified
+ * undeclared imports retain the unversioned fallback while the platform
+ * resolver normalizes and persists an exact declaration.
  */
 function resolvePinnedVersion(
   packageName: string,
   ctx: RewriteContext,
 ): string | undefined {
-  // 1. package.json exact version pin (the raw value must already be an exact
-  //    semver — never strip range prefixes to manufacture a pin that the file
-  //    didn't literally contain).
-  const allDeps = getProjectDependenciesSync(ctx.projectDir);
-  const rawPin = allDeps?.[packageName];
-  if (rawPin && isExactSemver(rawPin)) return rawPin;
-
-  // 2. npm registry cache (populated by a prior background fetch).
-  const registryVersion = getCachedNpmVersion(packageName, ctx.projectDir, rawPin);
-  if (registryVersion) return registryVersion;
-
-  // 3. Cache cold: schedule a background resolution for the next render only
-  // when no package declaration exists. The client rejects non-exact hints so
-  // a declared range can never be replaced by registry latest.
-  scheduleNpmVersionResolution(packageName, rawPin, ctx.projectDir, (version) => {
-    void postDependencyResolution(ctx.projectId, [`${packageName}@${version}`]);
-  });
-
-  return undefined;
+  return resolveDependencyPinForImport(packageName, ctx);
 }
 
 export class BareStrategy implements ImportRewriteStrategy {
@@ -92,8 +73,8 @@ export class BareStrategy implements ImportRewriteStrategy {
 
   matches(specifier: string, _ctx: RewriteContext): boolean {
     if (
-      specifier.startsWith("http://") ||
-      specifier.startsWith("https://") ||
+      /^https?:\/\//i.test(specifier) ||
+      specifier.startsWith("//") ||
       specifier.startsWith("./") ||
       specifier.startsWith("../") ||
       specifier.startsWith("/") ||
@@ -120,6 +101,21 @@ export class BareStrategy implements ImportRewriteStrategy {
     const isNpmScheme = info.specifier.startsWith("npm:");
     const bareSpecifier = isNpmScheme ? info.specifier.slice("npm:".length) : info.specifier;
     const parsed = parseBarePackageSpecifier(bareSpecifier);
+
+    if (
+      ctx.target === "ssr" &&
+      parsed &&
+      !parsed.version &&
+      isPinningEnabledForRewrite(ctx)
+    ) {
+      // The post-pipeline SSR adapter owns the live resolution/scheduling.
+      // Record the same unresolved declaration here so pipeline/outer caches
+      // can replay it without introducing a second fresh-miss write.
+      resolveDependencyPinForImport(parsed.packageName, {
+        ...ctx,
+        dependencyResolutionObservationOnly: true,
+      });
+    }
 
     // Known server-only packages (`redis`, `pg`, …), including their explicit
     // `npm:` form, must never be routed through esm.sh — they only run
@@ -158,10 +154,10 @@ export class BareStrategy implements ImportRewriteStrategy {
     if (packageName === "tailwindcss") {
       version = TAILWIND_VERSION;
     } else if (!hasVersionSpecifier(bareSpecifier)) {
-      if (isDependencyPinningEnabled()) {
+      if (isPinningEnabledForRewrite(ctx)) {
         // Version-selection ladder (flag ON):
         // 1. inline version in specifier (already captured above as version)
-        // 2. package.json pin or npm registry cache -> resolved here
+        // 2. exact package.json pin -> resolved here
         // 3. current unversioned fallback (warn as before)
         const pinned = resolvePinnedVersion(packageName, ctx);
         if (pinned) {

@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert";
 import {
+  buildComponentCacheKey,
   buildConfigCacheKey,
   buildProxyManagerCacheKey,
   buildQueryAwareCacheKey,
@@ -27,6 +28,38 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 describe("cache/keys", () => {
+  describe("buildComponentCacheKey", () => {
+    it("isolates pin-on hydration transforms by request origin", () => {
+      const base = ["project", "/app/page.tsx", "content-hash", "on:snapshot"] as const;
+      const originA = buildComponentCacheKey(...base, "https://a.example");
+      const originB = buildComponentCacheKey(...base, "https://b.example");
+
+      assertNotEquals(originA, originB);
+    });
+
+    it("preserves the flag-off component identity when an origin is supplied", () => {
+      const legacy = "component:project:/app/page.tsx:hash";
+      assertEquals(
+        buildComponentCacheKey("project", "/app/page.tsx", "hash", "off"),
+        buildComponentCacheKey(
+          "project",
+          "/app/page.tsx",
+          "hash",
+          "off",
+          "https://a.example",
+        ),
+      );
+      assertEquals(
+        buildComponentCacheKey("project", "/app/page.tsx", "hash"),
+        legacy,
+      );
+      assertEquals(
+        buildComponentCacheKey("project", "/app/page.tsx", "hash", "off"),
+        legacy,
+      );
+    });
+  });
+
   describe("CacheKeyPrefix", () => {
     it("should have SSR_MODULE prefix", () => {
       assertEquals(CacheKeyPrefix.SSR_MODULE, "veryfront:ssr-module:");

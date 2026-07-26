@@ -83,6 +83,57 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(html.includes('"dev":false'), true);
     });
 
+    it("preserves application pins and sends the page snapshot as a render header", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:pins-a",
+      );
+      const response = handler.handle(
+        "/",
+        new URLSearchParams({ name: "Ada", pins: "on:stale" }),
+      );
+      const html = await response.text();
+
+      assertEquals(
+        html.includes(
+          "/_veryfront/rsc/render/?name=Ada\\u0026pins=on%3Apins-a",
+        ),
+        false,
+      );
+      assertEquals(
+        html.includes(
+          "/_veryfront/rsc/render/?name=Ada\\u0026pins=on%3Astale",
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes('"dependencyPinningCacheKey":"on:pins-a"'),
+        true,
+      );
+      assertEquals(
+        html.includes('"x-veryfront-dependency-pins":"on:pins-a"'),
+        true,
+      );
+    });
+
+    it("preserves application pins without a transport header when pinning is off", async () => {
+      const handler = new PageHandler(false, "18.3.1", "rsc-module", "off");
+      const response = handler.handle(
+        "/",
+        new URLSearchParams({ pins: "application-value" }),
+      );
+      const html = await response.text();
+
+      assertEquals(
+        html.includes("/_veryfront/rsc/render/?pins=application-value"),
+        true,
+      );
+      assertEquals(html.includes("x-veryfront-dependency-pins"), false);
+      assertEquals(html.includes('"dependencyPinningCacheKey"'), false);
+    });
+
     it("should not include legacy hydrate.js import", async () => {
       const handler = new PageHandler();
       const response = handler.handle("/", new URLSearchParams());
@@ -95,6 +146,26 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       const response = handler.handle("/", new URLSearchParams());
       const html = await response.text();
       assertEquals(html.includes("import('/_veryfront/rsc/client.js?hydrate=1')"), true);
+    });
+
+    it("seeds hydration with the dependency snapshot captured by the render payload", async () => {
+      const handler = new PageHandler();
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(
+        html.includes("const pinKey = payload?.dependencyPinningCacheKey"),
+        true,
+      );
+      assertEquals(
+        html.includes("hydrationState.dependencyPinningCacheKey = pinKey"),
+        true,
+      );
+      assertEquals(
+        html.indexOf("seedDependencySnapshot(payload)") <
+          html.indexOf("import('/_veryfront/rsc/client.js?hydrate=1')"),
+        true,
+      );
     });
 
     it("should add nonce attributes to inline scripts when provided", async () => {

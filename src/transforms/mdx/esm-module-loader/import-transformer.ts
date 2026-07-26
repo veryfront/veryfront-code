@@ -24,6 +24,7 @@ import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { appendSameOriginSSRDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
@@ -79,6 +80,23 @@ function stripReactFromImportMap(importMap: ImportMapConfig): ImportMapConfig {
 export function transformImports(code: string, importMap: ImportMapConfig): string {
   return transformImportsWithMap(code, stripReactFromImportMap(importMap), undefined, {
     resolveBare: true,
+  });
+}
+
+export async function pinSameOriginSSRModuleImports(
+  code: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): Promise<string> {
+  if (!dependencyPinningCacheKey?.startsWith("on:") || !moduleServerOrigin) return code;
+
+  return await replaceSpecifiers(code, (specifier) => {
+    const pinned = appendSameOriginSSRDependencyPinningKey(
+      specifier,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+    );
+    return pinned === specifier ? null : pinned;
   });
 }
 

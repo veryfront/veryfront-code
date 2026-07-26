@@ -1,73 +1,117 @@
 /**
- * npm registry client for dependency version resolution.
+ * Platform dependency-resolution scheduler.
  *
- * Fetches package metadata from the npm registry to resolve bare specifiers
- * to pinned versions. Results are cached in-process per project. All lookups
- * are non-blocking: callers receive a cached result or undefined while a
- * background fetch warms the cache for the next render.
- *
- * MUST NOT block or fail a render. All network errors fall back silently.
+ * Transform paths enqueue raw package declarations without blocking rendering.
+ * The platform owns semver selection and package.json persistence.
  *
  * @module transforms/esm/npm-registry-client
  */
 
 import { rendererLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import type { DependencyWritebackTarget } from "./package-registry.ts";
 
 const logger = rendererLogger.component("npm-registry-client");
-const SEMVER_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
+const SEMVER_NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
+const SEMVER_PRERELEASE_IDENTIFIER =
+  `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
+const SEMVER_PRERELEASE = `${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*`;
+const SEMVER_BUILD_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
 const EXACT_SEMVER_RE = new RegExp(
-  `^\\d+\\.\\d+\\.\\d+(?:-${SEMVER_IDENTIFIER})?(?:\\+${SEMVER_IDENTIFIER})?$`,
+  `^v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE})?(?:\\+${SEMVER_BUILD_IDENTIFIER})?$`,
 );
 /**
- * Maximum number of distinct project directories held in the version cache.
- * When exceeded, the oldest entry is evicted (Maps preserve insertion order).
- * Bounds memory in long-running server processes that serve many projects.
+ * Best-effort platform resolver attempts, keyed by project/package/declaration.
+ * A short retry window deduplicates repeated transforms while still allowing a
+ * transient API failure to recover without blocking rendering.
  */
-const VERSION_CACHE_MAX_PROJECTS = 256;
+const platformResolutionAttempts = new Map<string, number>();
+const pendingPlatformResolutionAttempts = new Set<string>();
+const pendingPlatformResolutionPromises = new Set<Promise<void>>();
+export type DependencyResolutionEligibility = () => boolean;
+export interface DependencyResolutionScheduleOptions {
+  target: DependencyWritebackTarget;
+  isEligible?: DependencyResolutionEligibility;
+}
+interface QueuedPlatformResolution {
+  packageName: string;
+  rawSpecifier: string;
+  expectedDeclaration: string | null;
+  attemptKey: string;
+  isEligible: DependencyResolutionEligibility;
+}
+interface QueuedPlatformResolutionBatch {
+  projectId: string;
+  target: DependencyWritebackTarget;
+  resolutions: Map<string, QueuedPlatformResolution>;
+}
+const queuedPlatformResolutions = new Map<string, QueuedPlatformResolutionBatch>();
+const activePlatformFlushes = new Map<string, Promise<void>>();
+const PLATFORM_RESOLUTION_RETRY_TTL_MS = 60_000;
+const PLATFORM_RESOLUTION_MAX_ATTEMPTS = 4_096;
+export const PLATFORM_RESOLUTION_MAX_PENDING = PLATFORM_RESOLUTION_MAX_ATTEMPTS;
+const PLATFORM_RESOLUTION_BATCH_SIZE = 100;
+export const PLATFORM_RESOLUTION_MAX_CONCURRENCY = 4;
+type DependencyResolutionPoster = (
+  projectId: string,
+  specifiers: string[],
+  target: DependencyWritebackTarget,
+  expectedDeclarations: Readonly<Record<string, string | null>>,
+) => Promise<void>;
+let postDependencyResolutionImpl: DependencyResolutionPoster = postDependencyResolution;
+const ALWAYS_ELIGIBLE: DependencyResolutionEligibility = () => true;
 
-/** Base backoff TTL (ms) after a registry lookup failure. Exported for tests. */
-export const NEGATIVE_CACHE_BASE_TTL_MS = 60_000;
-
-/** Maximum backoff TTL (ms) after repeated failures. Exported for tests. */
-export const NEGATIVE_CACHE_MAX_TTL_MS = 600_000;
-
-/** Resolved version paired with the range hint that produced it.
- * Storing the hint lets scheduleNpmVersionResolution detect when
- * package.json changes (e.g. "^1" → "^2") and re-resolve accordingly. */
-interface CachedEntry {
-  version: string | undefined;
-  hint: string | undefined;
+function isResolutionEligible(
+  predicate: DependencyResolutionEligibility,
+): boolean {
+  try {
+    return predicate();
+  } catch {
+    // Authority checks are fail-closed: transform output remains usable, but a
+    // broken predicate must never authorize persistent project mutation.
+    return false;
+  }
 }
 
-/** Records the timestamp and consecutive failure count for a package+hint pair.
- * Used to implement exponential backoff so a persistently unresolvable package
- * (typo, private, network-restricted) does not continuously allocate timers. */
-interface NegativeEntry {
-  failedAt: number;
-  count: number;
+class AsyncConcurrencyLimiter {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(operation: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await operation();
+    } finally {
+      this.release();
+    }
+  }
+
+  private acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active++;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  private release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      // Hand the occupied permit directly to the queued waiter. Keeping
+      // `active` unchanged prevents a newly arriving caller from barging in.
+      next();
+      return;
+    }
+    this.active--;
+  }
 }
 
-/** Per-project cache: projectDir -> packageName -> CachedEntry */
-const versionCache = new Map<string, Map<string, CachedEntry>>();
-
-/**
- * Per-project negative cache: projectDir -> `${packageName}\0${hint}` -> NegativeEntry.
- * Bounded by VERSION_CACHE_MAX_PROJECTS and cleared alongside versionCache.
- */
-const negativeCache = new Map<string, Map<string, NegativeEntry>>();
-
-/** Deduplicates concurrent fetches for the same package, project, and declaration. */
-const pendingFetches = new Set<string>();
-
-/**
- * Tracks in-flight background resolution promises so tests can await
- * _pendingResolutions() to drain all open fetch handles and timers before
- * the Deno leak sanitizer runs.
- */
-const pendingResolutionPromises = new Set<Promise<void>>();
+const platformResolutionLimiter = new AsyncConcurrencyLimiter(
+  PLATFORM_RESOLUTION_MAX_CONCURRENCY,
+);
 
 /**
  * Overridable clock for tests. Wraps Date.now so FakeTime can intercept it.
@@ -75,40 +119,51 @@ const pendingResolutionPromises = new Set<Promise<void>>();
  */
 let _nowFn: () => number = () => Date.now();
 
-/** Override the clock used by the negative-cache backoff. For tests only. */
+/** Override the clock used by retry deduplication. For tests only. */
 export function _setClockForTest(fn: () => number): void {
   _nowFn = fn;
 }
 
-function pendingKey(projectDir: string, packageName: string, hint: string | undefined): string {
-  return `${projectDir}\0${packageName}\0${hint ?? ""}`;
+function platformResolutionKey(
+  projectId: string,
+  target: DependencyWritebackTarget,
+  packageName: string,
+  rangeHint: string | undefined,
+): string {
+  return `${platformResolutionQueueKey(projectId, target)}\0${packageName}\0${rangeHint ?? ""}`;
 }
 
-function negativeKey(packageName: string, hint: string | undefined): string {
-  return `${packageName}\0${hint ?? ""}`;
+function dependencyWritebackTargetKey(
+  target: DependencyWritebackTarget,
+): string {
+  return target.kind === "main" ? "main" : `branch:${JSON.stringify(target.branch)}`;
 }
 
-/** Exponential backoff: base * 2^(count-1), capped at NEGATIVE_CACHE_MAX_TTL_MS. */
-function computeCooldownMs(count: number): number {
-  return Math.min(
-    NEGATIVE_CACHE_BASE_TTL_MS * Math.pow(2, count - 1),
-    NEGATIVE_CACHE_MAX_TTL_MS,
-  );
+function isCanonicalDependencyWritebackTarget(
+  target: DependencyWritebackTarget,
+): boolean {
+  if (target.kind === "main") return true;
+  return typeof target.branch === "string" &&
+    target.branch.length > 0 &&
+    target.branch === target.branch.trim();
 }
 
-/** Record a fetch failure for (projectDir, negKey) and update the backoff window. */
-function recordNegativeEntry(projectDir: string, negKey: string): void {
-  let projectNeg = negativeCache.get(projectDir);
-  if (!projectNeg) {
-    if (negativeCache.size >= VERSION_CACHE_MAX_PROJECTS) {
-      const oldest = negativeCache.keys().next().value;
-      if (oldest !== undefined) negativeCache.delete(oldest);
+function platformResolutionQueueKey(
+  projectId: string,
+  target: DependencyWritebackTarget,
+): string {
+  return `${projectId}\0${dependencyWritebackTargetKey(target)}`;
+}
+
+function pruneExpiredPlatformResolutionAttempts(now: number): void {
+  for (const [key, attemptedAt] of platformResolutionAttempts) {
+    if (
+      now - attemptedAt >= PLATFORM_RESOLUTION_RETRY_TTL_MS &&
+      !pendingPlatformResolutionAttempts.has(key)
+    ) {
+      platformResolutionAttempts.delete(key);
     }
-    projectNeg = new Map();
-    negativeCache.set(projectDir, projectNeg);
   }
-  const prev = projectNeg.get(negKey);
-  projectNeg.set(negKey, { failedAt: _nowFn(), count: (prev?.count ?? 0) + 1 });
 }
 
 /** True when the string is a bare three-part semver version (no range prefix). */
@@ -124,199 +179,211 @@ export function isDependencyPinningEnabled(): boolean {
 }
 
 /**
- * Return a previously resolved version from the in-process cache, or undefined
- * when the cache is cold. Use scheduleNpmVersionResolution to warm it.
+ * Schedule a non-blocking platform resolution. Declared ranges/tags are sent
+ * verbatim as `package@declaration`; undeclared dependencies are sent as the
+ * raw bare package name so the platform can resolve and persist latest.
  */
-export function getCachedNpmVersion(
+export function schedulePlatformDependencyResolution(
+  projectId: string,
   packageName: string,
-  projectDir: string,
-  rangeHint: string | undefined,
-): string | undefined {
-  const entry = versionCache.get(projectDir)?.get(packageName);
-  return entry !== undefined && entry.hint === rangeHint ? entry.version : undefined;
-}
-
-function setCurrentResolution(
-  projectDir: string,
-  packageName: string,
-  hint: string | undefined,
-  version?: string,
+  rangeHint?: string,
+  options?: DependencyResolutionScheduleOptions,
 ): void {
-  let projectCache = versionCache.get(projectDir);
-  if (!projectCache) {
-    // Evict the oldest project entry when the cap is reached. JavaScript Maps
-    // preserve insertion order, so keys().next().value is the oldest key.
-    if (versionCache.size >= VERSION_CACHE_MAX_PROJECTS) {
-      const oldest = versionCache.keys().next().value;
-      if (oldest !== undefined) versionCache.delete(oldest);
-    }
-    projectCache = new Map();
-    versionCache.set(projectDir, projectCache);
+  if (!projectId || !packageName || !options) return;
+  const isEligible = options.isEligible ?? ALWAYS_ELIGIBLE;
+  if (!isResolutionEligible(isEligible)) return;
+  if (!isCanonicalDependencyWritebackTarget(options.target)) return;
+
+  const target: DependencyWritebackTarget = Object.freeze({
+    ...options.target,
+  });
+  const key = platformResolutionKey(
+    projectId,
+    target,
+    packageName,
+    rangeHint,
+  );
+  const now = _nowFn();
+  const lastAttempt = platformResolutionAttempts.get(key);
+  if (
+    lastAttempt !== undefined &&
+    now - lastAttempt < PLATFORM_RESOLUTION_RETRY_TTL_MS
+  ) return;
+
+  const rawSpecifier = rangeHint === undefined ? packageName : `${packageName}@${rangeHint}`;
+  const queueKey = platformResolutionQueueKey(projectId, target);
+  let queuedBatch = queuedPlatformResolutions.get(queueKey);
+  const replaced = queuedBatch?.resolutions.get(packageName);
+
+  // An expired dedupe entry may still be queued behind the global concurrency
+  // limiter. It remains active work and must not be admitted a second time.
+  if (pendingPlatformResolutionAttempts.has(key)) return;
+
+  if (platformResolutionAttempts.size >= PLATFORM_RESOLUTION_MAX_ATTEMPTS) {
+    pruneExpiredPlatformResolutionAttempts(now);
   }
-  projectCache.set(packageName, { version, hint });
+  const replacesPendingAttempt = replaced !== undefined &&
+    replaced.attemptKey !== key;
+  if (
+    !replacesPendingAttempt &&
+    pendingPlatformResolutionAttempts.size >= PLATFORM_RESOLUTION_MAX_PENDING
+  ) return;
+  if (
+    !platformResolutionAttempts.has(key) &&
+    platformResolutionAttempts.size >= PLATFORM_RESOLUTION_MAX_ATTEMPTS &&
+    !replacesPendingAttempt
+  ) return;
+
+  if (replacesPendingAttempt) {
+    // The replaced declaration never reached the platform, so it must not
+    // consume either a backlog slot or the retry window.
+    pendingPlatformResolutionAttempts.delete(replaced.attemptKey);
+    platformResolutionAttempts.delete(replaced.attemptKey);
+  }
+  platformResolutionAttempts.set(key, now);
+  pendingPlatformResolutionAttempts.add(key);
+
+  if (!queuedBatch) {
+    queuedBatch = {
+      projectId,
+      target,
+      resolutions: new Map(),
+    };
+    queuedPlatformResolutions.set(queueKey, queuedBatch);
+  }
+  queuedBatch.resolutions.set(packageName, {
+    packageName,
+    rawSpecifier,
+    expectedDeclaration: rangeHint ?? null,
+    attemptKey: key,
+    isEligible,
+  });
+  schedulePlatformResolutionFlush(queueKey);
 }
 
 /**
- * Schedule a non-blocking npm registry lookup for the package.
- *
- * - If rangeHint is already an exact semver literal (no range prefix stripped),
- *   it is stored directly without a network fetch and onResolved fires synchronously.
- * - A non-exact package declaration is left unresolved. Resolving it to the
- *   registry's global latest could violate the project's declared constraint.
- * - When no declaration exists, a background latest-version fetch is started.
- *   The result is stored in the cache and onResolved is called when it completes.
- * - Duplicate in-flight fetches for the same package, project, and declaration
- *   are suppressed.
- * - Any failure keeps the version unresolved and suppresses another attempt for
- *   a bounded retry window.
- *
- * @param packageName - npm package name
- * @param rangeHint   - raw semver string from package.json (may have ^ ~ >= etc.)
- * @param projectDir  - project root (used as cache scope)
- * @param onResolved  - optional callback with the resolved version string
+ * Queue a bare undeclared dependency for platform-owned latest resolution.
+ * No local registry lookup is involved, so transform output cannot depend on
+ * mutable process-local npm state.
  */
-export function scheduleNpmVersionResolution(
+export function scheduleUndeclaredDependencyResolution(
+  projectId: string,
   packageName: string,
-  rangeHint: string | undefined,
-  projectDir: string,
-  onResolved?: (version: string, packageName: string, projectDir: string) => void,
+  options?: DependencyResolutionScheduleOptions,
 ): void {
-  const cached = versionCache.get(projectDir)?.get(packageName);
-  if (cached !== undefined && cached.hint === rangeHint && cached.version !== undefined) {
-    return;
-  }
+  schedulePlatformDependencyResolution(
+    projectId,
+    packageName,
+    undefined,
+    options,
+  );
+}
 
-  // Exact version from package.json: use it immediately without a network fetch.
-  // Only short-circuit when the raw hint is already an exact semver — never strip
-  // range prefixes (^, ~, >=) to manufacture a pin that package.json didn't contain.
-  if (rangeHint && isExactSemver(rangeHint)) {
-    setCurrentResolution(projectDir, packageName, rangeHint, rangeHint);
-    onResolved?.(rangeHint, packageName, projectDir);
-    return;
-  }
+function schedulePlatformResolutionFlush(queueKey: string): void {
+  if (activePlatformFlushes.has(queueKey)) return;
 
-  // Do not coerce a declared range, dist-tag, alias, workspace reference, or
-  // other non-exact package specifier to dist-tags.latest. Until the platform
-  // resolver normalizes that declaration to an exact version, callers retain
-  // the existing unversioned fallback rather than silently crossing its bounds.
-  if (rangeHint !== undefined) {
-    // Record the declaration even without a resolved version. This invalidates
-    // both an older cached latest and any unversioned fetch that is still in
-    // flight, preventing its late result from crossing the new constraint.
-    if (cached === undefined || cached.hint !== rangeHint) {
-      setCurrentResolution(projectDir, packageName, rangeHint);
-    }
-    return;
-  }
+  // Deliberately yield one microtask so all bare imports discovered in the same
+  // transform fanout are coalesced into bounded platform requests.
+  const flush = Promise.resolve()
+    .then(async () => {
+      const queued = queuedPlatformResolutions.get(queueKey);
+      if (!queued || queued.resolutions.size === 0) return;
+      queuedPlatformResolutions.delete(queueKey);
 
-  // Mark the absence of a declaration as current before consulting the
-  // in-flight registry. A late fetch from an older state will then be ignored.
-  if (cached === undefined || cached.hint !== rangeHint) {
-    setCurrentResolution(projectDir, packageName, rangeHint);
-  }
-
-  // In-flight deduplication.
-  const key = pendingKey(projectDir, packageName, rangeHint);
-  if (pendingFetches.has(key)) return;
-
-  // Negative cache: skip re-fetching while within the exponential backoff window.
-  // Once the window expires the next call proceeds normally; a success clears the
-  // entry so the backoff counter resets. The package is never permanently blocked.
-  const negKey = negativeKey(packageName, rangeHint);
-  const negEntry = negativeCache.get(projectDir)?.get(negKey);
-  if (negEntry !== undefined && _nowFn() - negEntry.failedAt < computeCooldownMs(negEntry.count)) {
-    return;
-  }
-
-  pendingFetches.add(key);
-
-  // The finally closure captures `resolution` by reference. By the time it
-  // executes (asynchronously after the promise settles), the const is
-  // fully initialized — no temporal dead zone issue.
-  const resolution: Promise<void> = fetchLatestNpmVersion(packageName)
-    .then((version) => {
-      const current = versionCache.get(projectDir)?.get(packageName);
-      if (current === undefined || current.hint !== rangeHint) return;
-      if (version) {
-        current.version = version;
-        onResolved?.(version, packageName, projectDir);
-        // Clear any stale negative entry — package is resolving successfully again.
-        negativeCache.get(projectDir)?.delete(negKey);
-      } else {
-        recordNegativeEntry(projectDir, negKey);
+      const resolutions = [...queued.resolutions.values()];
+      for (
+        let offset = 0;
+        offset < resolutions.length;
+        offset += PLATFORM_RESOLUTION_BATCH_SIZE
+      ) {
+        const batch = resolutions.slice(
+          offset,
+          offset + PLATFORM_RESOLUTION_BATCH_SIZE,
+        );
+        try {
+          await platformResolutionLimiter.run(
+            () => {
+              // Re-check after coalescing and after waiting for a concurrency
+              // permit. The snapshot may have become historical meanwhile.
+              const eligibleResolutions: QueuedPlatformResolution[] = [];
+              for (const resolution of batch) {
+                if (isResolutionEligible(resolution.isEligible)) {
+                  eligibleResolutions.push(resolution);
+                } else {
+                  platformResolutionAttempts.delete(resolution.attemptKey);
+                }
+              }
+              if (eligibleResolutions.length === 0) return Promise.resolve();
+              return postDependencyResolutionImpl(
+                queued.projectId,
+                eligibleResolutions.map((resolution) => resolution.rawSpecifier),
+                queued.target,
+                Object.fromEntries(
+                  eligibleResolutions.map((resolution) => [
+                    resolution.packageName,
+                    resolution.expectedDeclaration,
+                  ]),
+                ),
+              );
+            },
+          );
+        } catch (error) {
+          logger.debug("Scheduled platform dependency resolution failed", {
+            projectId: queued.projectId,
+            target: dependencyWritebackTargetKey(queued.target),
+            specifierCount: batch.length,
+            error: String(error),
+          });
+        } finally {
+          for (const resolution of batch) {
+            pendingPlatformResolutionAttempts.delete(resolution.attemptKey);
+          }
+        }
       }
     })
-    .catch(() => {
-      recordNegativeEntry(projectDir, negKey);
-    })
     .finally(() => {
-      pendingFetches.delete(key);
-      pendingResolutionPromises.delete(resolution);
+      activePlatformFlushes.delete(queueKey);
+      pendingPlatformResolutionPromises.delete(flush);
+      if (
+        (queuedPlatformResolutions.get(queueKey)?.resolutions.size ?? 0) > 0
+      ) {
+        schedulePlatformResolutionFlush(queueKey);
+      }
     });
-  pendingResolutionPromises.add(resolution);
+
+  activePlatformFlushes.set(queueKey, flush);
+  pendingPlatformResolutionPromises.add(flush);
+}
+
+/** Override the platform write-back transport. For tests only. */
+export function _setDependencyResolutionPosterForTest(
+  poster?: DependencyResolutionPoster,
+): void {
+  postDependencyResolutionImpl = poster ?? postDependencyResolution;
 }
 
 /**
- * Fetch the latest published version of a package with no project declaration
- * from the npm registry.
- * Uses the lighter install-metadata Accept header.
- * Returns null on any failure (network, timeout, unexpected response shape).
- */
-async function fetchLatestNpmVersion(packageName: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
-
-  // Scoped package names like @tanstack/react-query need the / encoded in the
-  // path segment but the @ left as-is so the registry recognizes the scope.
-  // Preserve malformed inputs so they produce an ordinary registry miss
-  // instead of synthesizing a different package name.
-  const scopedPackage = /^(@[^/]+)\/([^/]+)$/.exec(packageName);
-  const encodedName = scopedPackage ? `${scopedPackage[1]}%2F${scopedPackage[2]}` : packageName;
-
-  try {
-    const res = await fetch(`https://registry.npmjs.org/${encodedName}`, {
-      headers: { Accept: "application/vnd.npm.install-v1+json" },
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      logger.debug("npm registry lookup returned non-OK status", {
-        packageName,
-        status: res.status,
-      });
-      return null;
-    }
-
-    const data = await res.json() as { "dist-tags"?: Record<string, string> };
-    const latest = data["dist-tags"]?.latest ?? null;
-    if (latest) logger.debug("npm registry resolved version", { packageName, version: latest });
-    return latest;
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      logger.debug("npm registry lookup timed out", { packageName });
-    } else {
-      logger.debug("npm registry lookup failed", { packageName, error: String(err) });
-    }
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/**
- * Fire-and-forget POST to the platform API to record a resolved dependency pin.
+ * Fire-and-forget POST to the platform API to resolve and persist dependency
+ * declarations.
  *
  * Follows the same auth pattern as the Veryfront API transport: Bearer token
  * from the environment config. Silently ignores all failures including 404
  * (endpoint may not exist yet while the API track is built in parallel).
  *
  * @param projectId  - project identifier from the render context
- * @param specifiers - resolved specifiers in the form "pkg@version"
+ * @param specifiers - raw bare names or package declarations such as
+ *                     "pkg", "pkg@^1", "pkg@next", or "pkg@1.2.3"
+ * @param expectedDeclarations - package declarations observed in the immutable
+ *                               caller snapshot; null means the package was absent
  */
 export async function postDependencyResolution(
   projectId: string,
   specifiers: string[],
+  target: DependencyWritebackTarget,
+  expectedDeclarations: Readonly<Record<string, string | null>>,
 ): Promise<void> {
+  if (!isCanonicalDependencyWritebackTarget(target)) return;
+
   const { getEnvironmentConfig } = await import(
     "../../config/environment-config.ts"
   );
@@ -340,7 +407,15 @@ export async function postDependencyResolution(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiToken}`,
       },
-      body: JSON.stringify({ specifiers }),
+      body: JSON.stringify(
+        target.kind === "branch"
+          ? {
+            specifiers,
+            branch: target.branch,
+            expected_declarations: expectedDeclarations,
+          }
+          : { specifiers, expected_declarations: expectedDeclarations },
+      ),
       signal: controller.signal,
     });
 
@@ -349,6 +424,11 @@ export async function postDependencyResolution(
         projectId,
         status: res.status,
       });
+    }
+    try {
+      await res.body?.cancel();
+    } catch {
+      // The response status is all this best-effort transport consumes.
     }
   } catch (err) {
     logger.debug("Dependency resolution write-back failed", {
@@ -369,21 +449,11 @@ export async function postDependencyResolution(
  * await _pendingResolutions() before calling this helper.
  */
 export function _clearNpmVersionCache(): void {
-  versionCache.clear();
-  negativeCache.clear();
+  platformResolutionAttempts.clear();
+  pendingPlatformResolutionAttempts.clear();
+  queuedPlatformResolutions.clear();
+  postDependencyResolutionImpl = postDependencyResolution;
   _nowFn = () => Date.now();
-}
-
-/**
- * True when a negative-cache entry exists for the given package+hint.
- * For use in tests only — verifies that failure is recorded / cleared.
- */
-export function _hasNegativeCacheEntry(
-  projectDir: string,
-  packageName: string,
-  rangeHint: string | undefined,
-): boolean {
-  return negativeCache.get(projectDir)?.has(negativeKey(packageName, rangeHint)) ?? false;
 }
 
 /**
@@ -394,7 +464,16 @@ export function _hasNegativeCacheEntry(
  * no open fetch handles or AbortController timers remain when the Deno leak
  * sanitizer inspects test teardown.
  */
-export function _pendingResolutions(): Promise<void> {
-  if (pendingResolutionPromises.size === 0) return Promise.resolve();
-  return Promise.allSettled([...pendingResolutionPromises]).then(() => {});
+export async function _pendingResolutions(): Promise<void> {
+  while (
+    pendingPlatformResolutionPromises.size > 0 ||
+    queuedPlatformResolutions.size > 0
+  ) {
+    const pending = [...pendingPlatformResolutionPromises];
+    if (pending.length === 0) {
+      await Promise.resolve();
+      continue;
+    }
+    await Promise.allSettled(pending);
+  }
 }

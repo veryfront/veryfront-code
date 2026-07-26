@@ -5,7 +5,9 @@ import { rscLogger } from "../client/browser-logger.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 import type * as ReactTypes from "react";
 import {
+  appendClientModuleDependencyPins,
   buildClientModuleUrl,
+  buildRSCTransportHeaders,
   type ClientModuleStrategy,
   getHydrationReactImportSpecifiers,
   readHydrationData,
@@ -20,6 +22,7 @@ import { wrapWithRouterProvider } from "./hydration-router.ts";
 export type HydrationManifest = {
   version: number;
   hash?: string;
+  dependencyPinningCacheKey?: string;
   components?: Record<string, string>;
   modules: { id: string; clientRef: string; exports: string[] }[];
   graphIds?: {
@@ -104,9 +107,24 @@ export function readClientBoundaryChildren(el: HTMLElement): RSCNode[] {
 
 export const base64url = base64urlEncode;
 
-async function fetchManifest(): Promise<HydrationManifest | null> {
+export function buildHydrationManifestUrl(
+  _hydrationData: ReturnType<typeof readHydrationData>,
+): string {
+  return "/_veryfront/rsc/manifest";
+}
+
+export function buildHydrationManifestHeaders(
+  hydrationData: ReturnType<typeof readHydrationData>,
+): Record<string, string> {
+  return buildRSCTransportHeaders(hydrationData);
+}
+
+async function fetchManifest(doc: Document = document): Promise<HydrationManifest | null> {
   try {
-    const res = await fetch("/_veryfront/rsc/manifest");
+    const hydrationData = readHydrationData(doc);
+    const res = await fetch(buildHydrationManifestUrl(hydrationData), {
+      headers: buildHydrationManifestHeaders(hydrationData),
+    });
     if (!res.ok) return null;
     return (await res.json()) as HydrationManifest;
   } catch (_) {
@@ -155,7 +173,12 @@ export function resolveClientBoundaryModuleUrl(
   reference: ParsedClientRef,
   strategy: ClientModuleStrategy,
 ): string | null {
-  if (reference.moduleUrl) return reference.moduleUrl;
+  if (reference.moduleUrl) {
+    return appendClientModuleDependencyPins(
+      reference.moduleUrl,
+      manifest.dependencyPinningCacheKey,
+    );
+  }
   if (!reference.rel) return null;
 
   const absPath = manifest.graphIds?.client.find((entry) => entry.rel === reference.rel)?.path;
@@ -164,6 +187,7 @@ export function resolveClientBoundaryModuleUrl(
     rel: reference.rel,
     absPath,
     version: manifest.hash,
+    dependencyPinningCacheKey: manifest.dependencyPinningCacheKey,
   });
 }
 
@@ -187,7 +211,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   let manifest: HydrationManifest | null = null;
 
   try {
-    manifest = await fetchManifest();
+    manifest = await fetchManifest(doc);
   } catch (e) {
     rscLogger.debug("hydrate: fetch manifest failed", e);
   }

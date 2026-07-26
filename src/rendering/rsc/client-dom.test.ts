@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { RSC_ROOT_ID } from "./constants.ts";
+import { HYDRATION_DATA_ID, RSC_DEPENDENCY_PINNING_HEADER, RSC_ROOT_ID } from "./constants.ts";
 import { consumeNdjsonStream } from "./client-dom.ts";
 
 class MockElement {
   id = "";
+  textContent = "";
   dataset: Record<string, string> = {};
   children: MockElement[] = [];
   private rawInnerHtml = "";
@@ -109,6 +110,31 @@ function toDatasetKey(value: string): string {
 }
 
 describe("rendering/rsc/client-dom", () => {
+  it("seeds the render snapshot from a stream before applying its chunks", async () => {
+    const doc = createDocument();
+    const hydrationData = doc.createElement("script") as unknown as MockElement;
+    hydrationData.id = HYDRATION_DATA_ID;
+    hydrationData.textContent = JSON.stringify({ reactVersion: "19.2.4" });
+    (doc.body as unknown as MockElement).appendChild(hydrationData);
+
+    await consumeNdjsonStream(
+      new Response(
+        '{"type":"slot","id":"root","html":"<div>Ready</div>"}\n',
+        {
+          headers: {
+            [RSC_DEPENDENCY_PINNING_HEADER]: "on:pins-a",
+          },
+        },
+      ),
+      doc,
+    );
+
+    assertEquals(JSON.parse(hydrationData.textContent), {
+      reactVersion: "19.2.4",
+      dependencyPinningCacheKey: "on:pins-a",
+    });
+  });
+
   it("applies streamed slot HTML and marks client boundaries as hydrated", async () => {
     const doc = createDocument();
 

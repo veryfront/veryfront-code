@@ -15,14 +15,82 @@ export const getLoaderScript = (): string => `
         return;
       }
 
-      componentCache.delete(path);
-      loadingPromises.delete(path);
+      for (const key of componentCache.keys()) {
+        if (key === path || key.startsWith(path + '|vf_pins|')) {
+          componentCache.delete(key);
+        }
+      }
+      for (const key of loadingPromises.keys()) {
+        if (key === path || key.startsWith(path + '|vf_pins|')) {
+          loadingPromises.delete(key);
+        }
+      }
       log('Cleared component cache for:', path);
     }
     window.__veryfrontClearComponentCache = clearComponentCache;
 
     function appendQueryParam(url, key, value) {
       return url + (url.includes('?') ? '&' : '?') + key + '=' + value;
+    }
+
+    function appendDependencyPinningVersion(url, moduleData) {
+      const pinKey = moduleData && moduleData.dependencyPinningCacheKey;
+      if (typeof pinKey !== 'string' || !pinKey.startsWith('on:')) return url;
+
+      const hashIndex = url.indexOf('#');
+      const hash = hashIndex >= 0 ? url.slice(hashIndex) : '';
+      const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+      const queryIndex = withoutHash.indexOf('?');
+      const base = queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash;
+      const params = new URLSearchParams(queryIndex >= 0 ? withoutHash.slice(queryIndex + 1) : '');
+
+      const modulePrefix = '/_vf_modules/';
+      const prefixIndex = base.indexOf(modulePrefix);
+      const origin = prefixIndex >= 0 ? base.slice(0, prefixIndex) : '';
+      if (
+        prefixIndex >= 0 &&
+        (origin === '' || /^https?:\\/\\/[^/]+$/i.test(origin))
+      ) {
+        const pathStart = prefixIndex + modulePrefix.length;
+        let modulePath = base.slice(pathStart);
+        if (modulePath.startsWith('_pins/')) {
+          const existingKeyEnd = modulePath.indexOf('/', '_pins/'.length);
+          const encodedExistingKey = existingKeyEnd < 0
+            ? modulePath.slice('_pins/'.length)
+            : modulePath.slice('_pins/'.length, existingKeyEnd);
+          let existingKey;
+          try {
+            existingKey = decodeURIComponent(encodedExistingKey);
+          } catch {
+            existingKey = undefined;
+          }
+          if (existingKey && /^on:[A-Za-z0-9._-]+$/.test(existingKey)) {
+            if (existingKeyEnd < 0) return url;
+            modulePath = modulePath.slice(existingKeyEnd + 1);
+          }
+        }
+        params.delete('pins');
+        const query = params.toString();
+        return (
+          base.slice(0, pathStart) +
+          '_pins/' +
+          encodeURIComponent(pinKey) +
+          '/' +
+          modulePath +
+          (query ? '?' + query : '') +
+          hash
+        );
+      }
+
+      params.set('pins', pinKey);
+      return base + '?' + params.toString() + hash;
+    }
+
+    function componentCacheKey(path, moduleData) {
+      const pinKey = moduleData && moduleData.dependencyPinningCacheKey;
+      return typeof pinKey === 'string' && pinKey.startsWith('on:')
+        ? path + '|vf_pins|' + pinKey
+        : path;
     }
 
     let __releaseId = null;
@@ -70,7 +138,7 @@ export const getLoaderScript = (): string => `
       return null;
     }
 
-    function pathToModuleUrl(path, studioEmbed) {
+    function pathToModuleUrl(path, studioEmbed, moduleData) {
       const releaseAssetUrl = resolveReleaseAssetModuleUrl(path);
       if (releaseAssetUrl) return releaseAssetUrl;
 
@@ -94,6 +162,7 @@ export const getLoaderScript = (): string => `
       if (studioEmbed) url = appendQueryParam(url, 'studio_embed', 'true');
       if (__hmrRefreshTimestamp) url = appendQueryParam(url, 't', __hmrRefreshTimestamp);
       if (!studioEmbed && !__hmrRefreshTimestamp) url = appendReleaseModuleVersion(url);
+      url = appendDependencyPinningVersion(url, moduleData);
 
       return url;
     }
@@ -112,20 +181,21 @@ export const getLoaderScript = (): string => `
     }
     window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 
-    async function loadComponent(path) {
+    async function loadComponent(path, moduleData) {
       if (!path) return null;
 
-      if (componentCache.has(path)) {
+      const cacheKey = componentCacheKey(path, moduleData);
+      if (componentCache.has(cacheKey)) {
         log('Component cached:', path);
-        return componentCache.get(path);
+        return componentCache.get(cacheKey);
       }
 
-      const existingPromise = loadingPromises.get(path);
+      const existingPromise = loadingPromises.get(cacheKey);
       if (existingPromise) return existingPromise;
 
       const loadPromise = (async () => {
         try {
-          const moduleUrl = pathToModuleUrl(path, __studioEmbed);
+          const moduleUrl = pathToModuleUrl(path, __studioEmbed, moduleData);
           const start = DEBUG ? performance.now() : 0;
 
           log('Loading component:', moduleUrl);
@@ -145,17 +215,17 @@ export const getLoaderScript = (): string => `
             );
           }
 
-          componentCache.set(path, component);
+          componentCache.set(cacheKey, component);
           return component;
         } catch (error) {
           logError('Failed to load component:', path, error);
           return null;
         } finally {
-          loadingPromises.delete(path);
+          loadingPromises.delete(cacheKey);
         }
       })();
 
-      loadingPromises.set(path, loadPromise);
+      loadingPromises.set(cacheKey, loadPromise);
       return loadPromise;
     }
 `;

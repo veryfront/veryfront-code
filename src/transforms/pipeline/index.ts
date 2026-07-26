@@ -36,6 +36,13 @@ import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
 import { findMissingFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
+import { resolveDependencyPinningSnapshot } from "../esm/package-registry.ts";
+import {
+  type DependencyResolutionObservation,
+  resolveDependencyPinForImport,
+  validateDependencyResolutionObservations,
+} from "../import-rewriter/dependency-resolution.ts";
+import { getDependencyResolutionObservations } from "./stages/resolve-imports.ts";
 
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
@@ -135,6 +142,39 @@ async function validateCachedBundles(
   return false;
 }
 
+/**
+ * Pin-on entries created before observation metadata existed are deliberately
+ * invalid. Recomputing once records the unresolved imports needed for future
+ * scheduler retries without rerunning every transform stage.
+ */
+function validateCachedDependencyResolutionObservations(
+  cached: Awaited<ReturnType<typeof getCachedTransformAsync>>,
+  ctx: Awaited<ReturnType<typeof createTransformContext>>,
+): readonly DependencyResolutionObservation[] | null {
+  if (!ctx.dependencyPinningCacheKey?.startsWith("on:")) return [];
+
+  return validateDependencyResolutionObservations(
+    cached?.dependencyResolutionObservations,
+    ctx.dependencyPinningDependencies,
+  );
+}
+
+function replayDependencyResolutionObservations(
+  observations: readonly DependencyResolutionObservation[],
+  ctx: Awaited<ReturnType<typeof createTransformContext>>,
+): void {
+  for (const observation of observations) {
+    // The cached value is inert evidence only. The shared resolver re-evaluates
+    // current source authority and scheduler retry TTLs before any write-back.
+    resolveDependencyPinForImport(observation.packageName, {
+      ...ctx,
+      // SSR scheduling belongs to the post-pipeline adapter. Still replay the
+      // observation callback so an outer cache can persist the inner hit.
+      dependencyResolutionObservationOnly: ctx.target === "ssr",
+    });
+  }
+}
+
 export function runPipeline(
   source: string,
   filePath: string,
@@ -149,36 +189,64 @@ export function runPipeline(
     async () => {
       const transformStart = performance.now();
 
-      const ctx = await createTransformContext(source, filePath, projectDir, options);
+      const dependencySnapshot = await resolveDependencyPinningSnapshot(
+        options.dependencyPinningSource ?? projectDir,
+        options.dependencyPinningCacheKey,
+        options.dependencyPinningDependencies,
+      );
+      const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+      // Keep the cache key and dependency map atomic for every later stage and
+      // post-transform rewrite in this request without mutating caller-owned
+      // options (which may be frozen or shared by concurrent transforms).
+      const effectiveOptions: TransformOptions = {
+        ...options,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+      };
+
+      const ctx = await createTransformContext(source, filePath, projectDir, effectiveOptions);
       ctx.debug = config?.debug ?? false;
       ctx.onProgress?.({ phase: "pipeline:context", filePath });
 
       const configHash = await computeConfigHash({
         reactVersion: ctx.reactVersion,
         jsxImportSource: ctx.jsxImportSource,
+        moduleServerUrl: ctx.moduleServerUrl,
+        moduleServerOrigin: ctx.moduleServerOrigin,
+        vendorBundleHash: ctx.vendorBundleHash,
         studioEmbed: ctx.studioEmbed,
         dev: ctx.dev,
+        dependencyPinningCacheKey,
       });
 
       const depsHash = await computeDepsHashSafe(
         filePath,
         projectDir,
-        options.readFile,
-        options.dependencyHashCache,
+        effectiveOptions.readFile,
+        effectiveOptions.dependencyHashCache,
       );
 
       const cacheKey = generateCacheKey(
         filePath,
         ctx.contentHash,
-        options.ssr ?? false,
-        options.studioEmbed ?? false,
-        { depsHash, configHash, projectId: options.projectId },
+        effectiveOptions.ssr ?? false,
+        effectiveOptions.studioEmbed ?? false,
+        { depsHash, configHash, projectId: effectiveOptions.projectId },
       );
 
       const cached = await getCachedTransformAsync(cacheKey);
       if (cached) {
-        // For SSR transforms, validate bundles exist before returning cached code
-        if (options.ssr) {
+        const dependencyResolutionObservations = validateCachedDependencyResolutionObservations(
+          cached,
+          ctx,
+        );
+        if (dependencyResolutionObservations === null) {
+          logger.debug("Cache invalidated due to missing or inconsistent dependency metadata", {
+            file: filePath.slice(-60),
+          });
+          // Fall through to re-run the pipeline.
+        } else if (effectiveOptions.ssr) {
+          // For SSR transforms, validate bundles exist before returning cached code.
           const httpBundlesValid = await validateCachedBundles(
             cached.code,
             cached.bundleManifestId,
@@ -203,6 +271,10 @@ export function runPipeline(
             });
             // Fall through to re-run the pipeline
           } else {
+            replayDependencyResolutionObservations(
+              dependencyResolutionObservations,
+              ctx,
+            );
             ctx.onProgress?.({ phase: "pipeline:cache-hit", filePath });
             return {
               code: cached.code,
@@ -213,6 +285,10 @@ export function runPipeline(
             };
           }
         } else {
+          replayDependencyResolutionObservations(
+            dependencyResolutionObservations,
+            ctx,
+          );
           ctx.onProgress?.({ phase: "pipeline:cache-hit", filePath });
           return {
             code: cached.code,
@@ -224,7 +300,7 @@ export function runPipeline(
         }
       }
 
-      const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
+      const basePipeline = effectiveOptions.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
       const pipeline = config?.plugins
         ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
         : basePipeline;
@@ -255,7 +331,15 @@ export function runPipeline(
 
       // Store the bundleManifestId from ssrHttpCachePlugin for future cache validation
       const bundleManifestId = ctx.metadata.get("bundleManifestId") as string | undefined;
-      setCachedTransformAsync(cacheKey, ctx.code, ctx.contentHash, undefined, bundleManifestId)
+      const dependencyResolutionObservations = getDependencyResolutionObservations(ctx);
+      setCachedTransformAsync(
+        cacheKey,
+        ctx.code,
+        ctx.contentHash,
+        undefined,
+        bundleManifestId,
+        dependencyResolutionObservations,
+      )
         .catch(
           (error) => {
             logger.debug("Failed to cache transform", { error });

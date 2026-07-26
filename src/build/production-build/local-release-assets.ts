@@ -33,6 +33,8 @@ export interface LocalReleaseAssetOptions {
   releaseId?: string;
   vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
   frameworkTransform?: ReleaseAssetTransform;
+  /** React version derived from the build-wide dependency snapshot. */
+  reactVersion?: string;
 }
 
 function shouldBuildLocalDependencyAssets(): boolean {
@@ -62,10 +64,11 @@ export async function generateLocalReleaseAssetManifest(
 
   try {
     try {
-      const reactVersion = await resolveProjectReactVersion({
-        projectDir: options.projectDir,
-        config: options.config,
-      });
+      const reactVersion = options.reactVersion ??
+        await resolveProjectReactVersion({
+          projectDir: options.projectDir,
+          config: options.config,
+        });
       const built = await buildReactImportMapDependencyAssets({
         tempDir,
         reactVersion,

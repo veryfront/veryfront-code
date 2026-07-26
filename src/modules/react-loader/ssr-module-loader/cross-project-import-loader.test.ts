@@ -56,6 +56,8 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         projectId: "project-a",
         projectDir: "/project",
         dev: true,
+        moduleServerOrigin: "https://app.example",
+        dependencyPinningCacheKey: "off",
         adapter: denoAdapter,
       },
       cache: {

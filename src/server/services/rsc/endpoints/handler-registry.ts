@@ -36,6 +36,17 @@ let cacheRegistered = false;
 /** Injected cache for testing (overrides default LRUCache) */
 let injectedCache: HandlerCache<RSCDevServerHandler> | null = null;
 const handlerKeysByProject = new Map<string, Set<string>>();
+const handlerProjectByCacheKey = new Map<string, string>();
+
+function untrackHandlerCacheKey(cacheKey: string): void {
+  const projectKey = handlerProjectByCacheKey.get(cacheKey);
+  if (!projectKey) return;
+
+  handlerProjectByCacheKey.delete(cacheKey);
+  const projectKeys = handlerKeysByProject.get(projectKey);
+  projectKeys?.delete(cacheKey);
+  if (projectKeys?.size === 0) handlerKeysByProject.delete(projectKey);
+}
 
 function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
   if (injectedCache) return injectedCache;
@@ -45,6 +56,7 @@ function getHandlersCache(): HandlerCache<RSCDevServerHandler> {
     maxEntries: RSC_HANDLERS_MAX_ENTRIES,
     ttlMs: RSC_HANDLERS_TTL_MS,
     cleanupIntervalMs: RSC_HANDLERS_CLEANUP_INTERVAL_MS,
+    onEvict: (cacheKey) => untrackHandlerCacheKey(cacheKey),
   });
 
   if (!cacheRegistered) {
@@ -68,6 +80,7 @@ export function getRSCHandler(
   const appDir = options.config?.directories?.app ?? "app";
   const mode = options.mode ?? "production";
   const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
+  const pinningEnabled = options.dependencyPinningCacheKey?.startsWith("on:") === true;
   const cacheKey = JSON.stringify([
     baseKey,
     options.isLocalProject === true,
@@ -77,6 +90,7 @@ export function getRSCHandler(
     ...(options.contentSourceId || options.releaseId
       ? [options.releaseId ?? null, options.contentSourceId ?? null]
       : []),
+    ...(pinningEnabled && options.branch ? [options.branch] : []),
   ]);
   const cache = getHandlersCache();
   const existing = cache.get(cacheKey);
@@ -87,6 +101,7 @@ export function getRSCHandler(
   const projectKeys = handlerKeysByProject.get(baseKey) ?? new Set<string>();
   projectKeys.add(cacheKey);
   handlerKeysByProject.set(baseKey, projectKeys);
+  handlerProjectByCacheKey.set(cacheKey, baseKey);
   return handler;
 }
 
@@ -99,7 +114,10 @@ export function invalidateRSCHandlersForProject(
   if (!cacheKeys) return;
 
   const cache = getHandlersCache();
-  for (const cacheKey of cacheKeys) cache.delete(cacheKey);
+  for (const cacheKey of [...cacheKeys]) {
+    cache.delete(cacheKey);
+    untrackHandlerCacheKey(cacheKey);
+  }
   handlerKeysByProject.delete(projectKey);
 }
 
@@ -113,6 +131,7 @@ export function __resetRSCHandlerForTests(): void {
   const cache = injectedCache ?? rscHandlersByProject;
   cache?.clear();
   handlerKeysByProject.clear();
+  handlerProjectByCacheKey.clear();
 }
 
 export function __destroyRSCHandlerForTests(): void {
@@ -120,4 +139,9 @@ export function __destroyRSCHandlerForTests(): void {
   rscHandlersByProject?.destroy();
   rscHandlersByProject = null;
   handlerKeysByProject.clear();
+  handlerProjectByCacheKey.clear();
+}
+
+export function __getTrackedRSCHandlerKeyCountForTests(): number {
+  return handlerProjectByCacheKey.size;
 }

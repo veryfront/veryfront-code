@@ -11,7 +11,28 @@ import {
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import * as esbuild from "veryfront/extensions/bundler";
-import { transformToESM } from "./index.ts";
+import { runPipeline, transformToESM } from "./index.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import {
+  clearReactVersionCache,
+  createDependencyPinningSource,
+  getDependencyPinningCacheKey,
+  getDependencyPinningSnapshot,
+} from "../esm/package-registry.ts";
+import {
+  destroyTransformCache,
+  generateCacheKey,
+  setCachedTransformAsync,
+} from "../esm/transform-cache.ts";
+import {
+  _clearNpmVersionCache,
+  _pendingResolutions,
+  _setClockForTest,
+  _setDependencyResolutionPosterForTest,
+} from "../esm/npm-registry-client.ts";
+import { computeConfigHash } from "../../cache/config-hash.ts";
+import { computeShortContentHash } from "../esm/transform-utils.ts";
 
 describe(
   "transformToESM readFile routing",
@@ -59,6 +80,379 @@ export default function App() { return dep; }`;
       } finally {
         await remove(projectDir, { recursive: true });
         await remove(externalDir, { recursive: true });
+      }
+    });
+
+    it("isolates module-server URL output in both sequential cache orders", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-module-base-" });
+      const mainFile = join(projectDir, "main.ts");
+      const source = `import "./dep.ts"; export const value = 1;`;
+      const moduleServerUrl = "https://modules.example.test/_vf_modules";
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+        clearReactVersionCache();
+        await writeTextFile(mainFile, source);
+
+        for (
+          const [firstBase, secondBase] of [
+            [undefined, moduleServerUrl],
+            [moduleServerUrl, undefined],
+          ] as const
+        ) {
+          destroyTransformCache();
+          const first = await runPipeline(source, mainFile, projectDir, {
+            projectId: "module-base-cache-project",
+            dev: false,
+            ssr: false,
+            moduleServerUrl: firstBase,
+          });
+          const second = await runPipeline(source, mainFile, projectDir, {
+            projectId: "module-base-cache-project",
+            dev: false,
+            ssr: false,
+            moduleServerUrl: secondBase,
+          });
+
+          assertEquals(first.cached, false);
+          assertEquals(second.cached, false);
+          assertEquals(
+            first.code.includes(`${moduleServerUrl}/dep.js`),
+            firstBase !== undefined,
+          );
+          assertEquals(
+            second.code.includes(`${moduleServerUrl}/dep.js`),
+            secondBase !== undefined,
+          );
+          assertEquals(first.code.includes("./dep.js"), firstBase === undefined);
+          assertEquals(second.code.includes("./dep.js"), secondBase === undefined);
+        }
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("replays cached unresolved dependencies through TTL and current-snapshot gates", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-retry-replay-" });
+      const mainFile = join(projectDir, "main.ts");
+      const packageJsonPath = join(projectDir, "package.json");
+      const source = `import value from "retry-dependency"; export default value;`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const attempts: string[][] = [];
+      let now = 0;
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        destroyTransformCache();
+        _clearNpmVersionCache();
+        _setClockForTest(() => now);
+        _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+          attempts.push([...specifiers]);
+          return Promise.reject(new Error("platform unavailable"));
+        });
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "retry-dependency": "^1.0.0" } }),
+        );
+
+        const dependencyPinningSource = createDependencyPinningSource({
+          projectDir,
+          projectId: "retry-cache-project",
+          isLocalProject: false,
+          dependencyWritebackTarget: { kind: "main" },
+        });
+        const snapshotA = await getDependencyPinningSnapshot(dependencyPinningSource);
+        const transformOptions = {
+          projectId: "retry-cache-project",
+          dev: false,
+          ssr: false,
+          dependencyPinningSource,
+          dependencyPinningCacheKey: snapshotA.cacheKey,
+          dependencyPinningDependencies: snapshotA.dependencies,
+        };
+
+        const initial = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          transformOptions,
+        );
+        await _pendingResolutions();
+        assertEquals(initial.cached, false);
+        assertEquals(attempts, [["retry-dependency@^1.0.0"]]);
+
+        const beforeTtl = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          transformOptions,
+        );
+        await _pendingResolutions();
+        assertEquals(beforeTtl.cached, true);
+        assertEquals(attempts.length, 1);
+
+        now = 60_000;
+        const afterTtl = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          transformOptions,
+        );
+        await _pendingResolutions();
+        assertEquals(afterTtl.cached, true);
+        assertEquals(attempts.length, 2);
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "retry-dependency": "^2.0.0" } }),
+        );
+        const snapshotB = await getDependencyPinningSnapshot(dependencyPinningSource);
+        assertEquals(snapshotB.cacheKey === snapshotA.cacheKey, false);
+
+        now = 120_000;
+        const historical = await runPipeline(
+          source,
+          mainFile,
+          projectDir,
+          transformOptions,
+        );
+        await _pendingResolutions();
+        assertEquals(historical.cached, true);
+        assertEquals(attempts.length, 2);
+      } finally {
+        await _pendingResolutions();
+        _clearNpmVersionCache();
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("recomputes a legacy pin-on cache entry without dependency observations", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-legacy-pin-cache-" });
+      const mainFile = join(projectDir, "main.ts");
+      const packageJsonPath = join(projectDir, "package.json");
+      const source = `import value from "legacy-dependency"; export default value;`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const reactVersion = "19.2.4";
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "legacy-dependency": "1.2.3" } }),
+        );
+        const snapshot = await getDependencyPinningSnapshot(projectDir);
+        const [contentHash, configHash] = await Promise.all([
+          computeShortContentHash(source),
+          computeConfigHash({
+            reactVersion,
+            jsxImportSource: "react",
+            studioEmbed: false,
+            dev: false,
+            dependencyPinningCacheKey: snapshot.cacheKey,
+          }),
+        ]);
+        const cacheKey = generateCacheKey(mainFile, contentHash, false, false, {
+          configHash,
+          projectId: "legacy-pin-cache-project",
+        });
+
+        // The old entry shape has no dependencyResolutionObservations field.
+        await setCachedTransformAsync(
+          cacheKey,
+          "export const staleLegacyCacheEntry = true;",
+          "legacy-hash",
+        );
+
+        const result = await runPipeline(source, mainFile, projectDir, {
+          projectId: "legacy-pin-cache-project",
+          dev: false,
+          ssr: false,
+          reactVersion,
+          dependencyPinningCacheKey: snapshot.cacheKey,
+          dependencyPinningDependencies: snapshot.dependencies,
+        });
+
+        assertEquals(result.cached, false);
+        assertEquals(result.code.includes("legacy-dependency@1.2.3"), true);
+        assertEquals(result.code.includes("staleLegacyCacheEntry"), false);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("warms dependency pins centrally and invalidates cached transforms on pin or flag changes", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-pins-" });
+      const mainFile = join(projectDir, "main.ts");
+      const packageJsonPath = join(projectDir, "package.json");
+      const source = `import value from "demo-dependency"; export default value;`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const adapter = {
+        fs: {
+          readFile: (path: string) => readTextFile(path),
+        },
+      };
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "demo-dependency": "1.2.3" } }),
+        );
+
+        const first = await transformToESM(source, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: false,
+          projectId: "pin-cache-project",
+        });
+        assertEquals(first.includes("demo-dependency@1.2.3"), true);
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "demo-dependency": "2.0.0" } }),
+        );
+        const changedPin = await transformToESM(source, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: false,
+          projectId: "pin-cache-project",
+        });
+        assertEquals(changedPin.includes("demo-dependency@2.0.0"), true);
+        assertEquals(changedPin.includes("demo-dependency@1.2.3"), false);
+
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+        const flagOff = await transformToESM(source, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: false,
+          projectId: "pin-cache-project",
+        });
+        assertEquals(flagOff.includes("https://esm.sh/demo-dependency?"), true);
+        assertEquals(flagOff.includes("demo-dependency@2.0.0"), false);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("keeps the dependency map atomic with its cache key across interleaved warm-ups", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-pin-snapshot-" });
+      const mainFile = join(projectDir, "main.ts");
+      const packageJsonPath = join(projectDir, "package.json");
+      const source = `import value from "snapshot-dependency"; export default value;`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const adapter = { fs: { readFile: (path: string) => readTextFile(path) } };
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await writeTextFile(mainFile, source);
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "snapshot-dependency": "1.0.0" } }),
+        );
+        const stateA = await getDependencyPinningCacheKey(projectDir);
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "snapshot-dependency": "2.0.0" } }),
+        );
+        const stateB = await getDependencyPinningCacheKey(projectDir);
+        assertEquals(stateA === stateB, false);
+
+        const oldSnapshot = await transformToESM(source, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: false,
+          projectId: "pin-snapshot-project",
+          dependencyPinningCacheKey: stateA,
+        });
+        const newSnapshot = await transformToESM(source, mainFile, projectDir, adapter, {
+          ssr: false,
+          dev: false,
+          projectId: "pin-snapshot-project",
+          dependencyPinningCacheKey: stateB,
+        });
+
+        assertEquals(oldSnapshot.includes("snapshot-dependency@1.0.0"), true);
+        assertEquals(oldSnapshot.includes("snapshot-dependency@2.0.0"), false);
+        assertEquals(newSnapshot.includes("snapshot-dependency@2.0.0"), true);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not mutate frozen options shared by concurrent transforms", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-frozen-options-" });
+      const firstFile = join(projectDir, "first.ts");
+      const secondFile = join(projectDir, "second.ts");
+      const packageJsonPath = join(projectDir, "package.json");
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const sharedOptions = Object.freeze({
+        ssr: false,
+        dev: false,
+        projectId: "frozen-options-project",
+        readFile: (path: string) => readTextFile(path),
+      });
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { "snapshot-dependency": "1.2.3" } }),
+        );
+
+        const [first, second] = await Promise.all([
+          transformToESM(
+            `import value from "snapshot-dependency"; export default value;`,
+            firstFile,
+            projectDir,
+            null,
+            sharedOptions,
+          ),
+          transformToESM(
+            `import value from "snapshot-dependency"; export const second = value;`,
+            secondFile,
+            projectDir,
+            null,
+            sharedOptions,
+          ),
+        ]);
+
+        assertEquals(first.includes("snapshot-dependency@1.2.3"), true);
+        assertEquals(second.includes("snapshot-dependency@1.2.3"), true);
+        assertEquals("dependencyPinningCacheKey" in sharedOptions, false);
+        assertEquals("dependencyPinningDependencies" in sharedOptions, false);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        destroyTransformCache();
+        await remove(projectDir, { recursive: true });
       }
     });
   },

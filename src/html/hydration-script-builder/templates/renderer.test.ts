@@ -49,7 +49,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
       assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
-      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)");
+      assertIncludes(result, "buildPinnedRscModuleUrl(data.pagePath, data)");
       assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
     });
 
@@ -96,7 +96,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "loadHydrationComponent");
       assertIncludes(result, "layouts[i].path");
       assertIncludes(result, "shouldRenderRscClientPage");
-      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(path)");
+      assertIncludes(result, "buildPinnedRscModuleUrl(path, data)");
     });
 
     it("should recreate initial layouts with their serialized props", () => {

@@ -20,7 +20,10 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import {
+  createHandlerDependencyPinningSource,
+  getHandlerDependencyPinningIdentity,
+} from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -56,22 +59,15 @@ export class RSCHandler extends BaseHandler {
 
         const nonce = generateNonce();
         const isLocalProject = ctx.isLocalProject === true;
-        const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
-        const contentSourceId = ctx.enriched?.contentSourceId ?? computeContentSourceId(
-          isLocalProject,
-          environment,
-          ctx.requestContext?.branch ?? null,
-          ctx.releaseId,
-        );
+        const dependencyPinningIdentity = getHandlerDependencyPinningIdentity(ctx);
+        const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
         const execute = () =>
           handleRSCEndpoint({
             req,
             pathname,
             projectDir: ctx.projectDir,
-            projectId: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            contentSourceId,
-            releaseId: ctx.releaseId,
+            ...dependencyPinningIdentity,
+            dependencyPinningSource,
             adapter: ctx.adapter,
             config: ctx.config,
             isLocalProject,
@@ -79,22 +75,20 @@ export class RSCHandler extends BaseHandler {
             nonce,
           });
         const fsAdapter = ctx.adapter.fs;
-        const isMultiProject = ctx.projectSlug &&
+        const isMultiProject = dependencyPinningIdentity.projectSlug &&
           isExtendedFSAdapter(fsAdapter) &&
           fsAdapter.isMultiProjectMode();
 
         const res = isMultiProject
           ? await fsAdapter.runWithContext(
-            ctx.projectSlug!,
+            dependencyPinningIdentity.projectSlug!,
             ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "",
             execute,
-            ctx.projectId,
+            dependencyPinningIdentity.projectId,
             {
               productionMode: isRSCProductionMode(ctx),
-              releaseId: ctx.releaseId,
-              branch: ctx.resolvedEnvironment === "production"
-                ? null
-                : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+              releaseId: dependencyPinningIdentity.releaseId,
+              branch: dependencyPinningIdentity.branch ?? null,
               environmentName: ctx.environmentName,
             },
           )

@@ -2,6 +2,7 @@ import { serverLogger, sleep } from "#veryfront/utils";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
 const logger = serverLogger.component("rsc");
 
@@ -11,30 +12,47 @@ const FALLBACK_HTML = "<div>OK</div>";
 export class StreamHandler {
   constructor(private renderHandler: RenderHandler) {}
 
-  async handle(pathname: string, searchParams: URLSearchParams): Promise<Response> {
-    const finalHtml = await this.getFinalHtml(pathname, searchParams);
-    const stream = this.createStream(finalHtml, searchParams);
+  async handle(
+    pathname: string,
+    searchParams: URLSearchParams,
+    request?: Request,
+  ): Promise<Response> {
+    const finalPayload = await this.getFinalPayload(pathname, searchParams, request);
+    const stream = this.createStream(finalPayload.html, searchParams);
 
     return new Response(stream, {
       headers: {
         "content-type": "application/x-ndjson; charset=utf-8",
         "cache-control": "no-cache",
+        vary: RSC_DEPENDENCY_PINNING_HEADER,
+        ...(finalPayload.dependencyPinningCacheKey
+          ? {
+            [RSC_DEPENDENCY_PINNING_HEADER]: finalPayload.dependencyPinningCacheKey,
+          }
+          : {}),
       },
     });
   }
 
-  private async getFinalHtml(pathname: string, searchParams: URLSearchParams): Promise<string> {
+  private async getFinalPayload(
+    pathname: string,
+    searchParams: URLSearchParams,
+    request?: Request,
+  ): Promise<Pick<RSCPayload, "html" | "dependencyPinningCacheKey">> {
     const pageParam = searchParams.get("page") ?? pathname ?? "/";
-    const response = await this.renderHandler.handle(pageParam, searchParams);
+    const response = await this.renderHandler.handle(pageParam, searchParams, request);
 
-    if (!response.ok) return FALLBACK_HTML;
+    if (!response.ok) return { html: FALLBACK_HTML };
 
     try {
       const payload = (await response.json()) as RSCPayload;
-      return payload.html ?? FALLBACK_HTML;
+      return {
+        html: payload.html ?? FALLBACK_HTML,
+        dependencyPinningCacheKey: payload.dependencyPinningCacheKey,
+      };
     } catch (error) {
       logger.warn("[dev] failed to parse final HTML payload", error);
-      return FALLBACK_HTML;
+      return { html: FALLBACK_HTML };
     }
   }
 

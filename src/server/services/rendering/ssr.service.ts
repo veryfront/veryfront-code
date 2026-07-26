@@ -28,6 +28,7 @@ import {
   HTTP_UNAVAILABLE,
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -75,6 +76,8 @@ export interface SSRRenderResult {
   showDevOverlay?: boolean;
   redirectLocation?: string;
   slug: string;
+  /** Dependency snapshot identity rendered into this document. */
+  dependencyPinningCacheKey?: string;
 }
 
 export interface SSRRenderOptions {
@@ -88,6 +91,12 @@ export interface SSRRenderOptions {
   noHmr: boolean;
   forceProductionScripts?: boolean;
   useNoCache: boolean;
+  /** Immutable dependency snapshot selected at the HTTP request boundary. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace paired with the immutable snapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 export interface MemoryStatus {
@@ -276,6 +285,9 @@ export class SSRService implements SSRServiceLike {
                 noHmr,
                 forceProductionScripts: options.forceProductionScripts,
                 renderSessionId,
+                dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+                dependencyPinningDependencies: options.dependencyPinningDependencies,
+                dependencyPinningSource: options.dependencyPinningSource,
               })),
         ));
 
@@ -330,6 +342,7 @@ export class SSRService implements SSRServiceLike {
         etag,
         cacheStrategy,
         slug,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       };
     } catch (error) {
       if (hasRenderSession(renderSessionId)) {

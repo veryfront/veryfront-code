@@ -129,6 +129,46 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
     });
 
+    it("injects a minimal dependency snapshot for non-client full documents", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        },
+      );
+
+      assertEquals(extractHydrationData(html), {
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+    });
+
+    it("keeps non-client full documents byte-identical when pinning is off", () => {
+      const unkeyed = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        { mode: "production", slug: "test" },
+      );
+      const flagOff = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          dependencyPinningCacheKey: "off",
+        },
+      );
+
+      assertEquals(flagOff, unkeyed);
+      assertEquals(flagOff.includes("veryfront-hydration-data"), false);
+    });
+
     it("seeds route params into client-page hydration data (issue #2741)", () => {
       const html = injectHTMLContent(
         baseTemplate,

@@ -292,6 +292,20 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.clientModuleStrategy, "rsc-module");
     });
 
+    it("serializes dependency pin state for RSC module cache identity", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "on:pins-a",
+      }) as { dependencyPinningCacheKey?: unknown };
+      const flagOff = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "off",
+      }) as { dependencyPinningCacheKey?: unknown };
+
+      assertEquals(parsed.dependencyPinningCacheKey, "on:pins-a");
+      assertEquals(flagOff.dependencyPinningCacheKey, undefined);
+    });
+
     it("should include frontmatter when provided", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,

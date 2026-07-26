@@ -368,6 +368,47 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
     });
 
+    it("keeps the import map and hydration payload on historical snapshot A after B", async () => {
+      const generator = createHTMLGenerator({
+        readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+      });
+      const renderSnapshot = (
+        key: string,
+        react: string,
+      ) =>
+        generator.generateFullHTML(createHTMLContext({
+          options: {
+            environment: "production",
+            dependencyPinningCacheKey: key,
+            dependencyPinningDependencies: { react },
+          },
+        }));
+
+      const snapshotBHtml = await renderSnapshot("on:snapshot-b", "^19.0.0");
+      const snapshotAHtml = await renderSnapshot("on:snapshot-a", "^18.3.1");
+      const parseImportMap = (html: string) => {
+        const json = html.match(
+          /<script type="importmap"[^>]*>([\s\S]*?)<\/script>/,
+        )?.[1];
+        assertExists(json);
+        return JSON.parse(json).imports as Record<string, string>;
+      };
+      const parseHydrationData = (html: string) => {
+        const json = html.match(
+          /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
+        )?.[1];
+        assertExists(json);
+        return JSON.parse(json) as { dependencyPinningCacheKey?: string };
+      };
+
+      assertStringIncludes(parseImportMap(snapshotBHtml).react!, "react@19.0.0");
+      assertStringIncludes(parseImportMap(snapshotAHtml).react!, "react@18.3.1");
+      assertEquals(
+        parseHydrationData(snapshotAHtml).dependencyPinningCacheKey,
+        "on:snapshot-a",
+      );
+    });
+
     it("treats an undefined manifest option as absent for full HTML import maps", async () => {
       setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
       setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");

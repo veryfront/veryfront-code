@@ -4,6 +4,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
+import { resolveDependencyPinForImport } from "../dependency-resolution.ts";
 import { getReactImportMap } from "../url-builder.ts";
 
 export class ReactStrategy implements ImportRewriteStrategy {
@@ -22,6 +23,12 @@ export class ReactStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
+    const packageName = info.specifier === "react-dom" ||
+        info.specifier.startsWith("react-dom/")
+      ? "react-dom"
+      : "react";
+    resolveDependencyPinForImport(packageName, ctx);
+
     const importMap = this.getImportMap(ctx.reactVersion);
     const mapped = importMap[info.specifier];
 

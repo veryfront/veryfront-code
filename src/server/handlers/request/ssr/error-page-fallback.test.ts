@@ -6,7 +6,11 @@ import { join } from "#veryfront/compat/path";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { __injectCacheForTests, tryErrorPageFallback } from "./error-page-fallback.ts";
+import {
+  __injectCacheForTests,
+  __setComponentSourceLoaderForTests,
+  tryErrorPageFallback,
+} from "./error-page-fallback.ts";
 import { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -21,6 +25,17 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function createMockAdapter(
   overrides: {
@@ -80,6 +95,7 @@ afterEach(() => {
   __resetLogRecordEmitterForTests();
   resetReactCache();
   __setServerModuleLoaderForTests(null);
+  __setComponentSourceLoaderForTests(null);
 });
 
 describe("server/handlers/request/ssr/error-page-fallback", () => {
@@ -110,6 +126,49 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
         statusCode: 404,
       });
       assertEquals(result, null);
+    });
+
+    it("fails closed before fallback loading when package.json is malformed", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-error-fallback-malformed-",
+      });
+      let statCalls = 0;
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{ malformed");
+        const adapter = createMockAdapter({
+          stat: () => {
+            statCalls++;
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          },
+        });
+
+        const result = await tryErrorPageFallback(
+          new Request("http://localhost/missing"),
+          makeCtx({ projectDir, adapter, isLocalProject: true }),
+          new ResponseBuilder(),
+          { statusCode: 500 },
+        );
+
+        assertEquals(result, null);
+        assertEquals(statCalls, 0);
+      } finally {
+        if (originalFlag === undefined) {
+          deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        } else {
+          setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        }
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("returns null when no error page files exist", async () => {
@@ -229,6 +288,125 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
         assertEquals(statPaths.includes(pagesDir), true);
         assertEquals(statPaths.includes(join(context.projectDir, "pages")), false);
       });
+    });
+
+    it("keeps component loading and React rendering on snapshot A after package state B", async () => {
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-error-fallback-snapshot-",
+      });
+      const snapshotCaptured = deferred();
+      const continueFallback = deferred();
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          join(projectDir, "package.json"),
+          JSON.stringify({
+            dependencies: { react: "^18.3.1", "example-package": "1.0.0" },
+          }),
+        );
+
+        const adapter = createMockAdapter({
+          stat: async (path: string) => {
+            if (path === join(projectDir, "pages")) {
+              snapshotCaptured.resolve();
+              await continueFallback.promise;
+              return {
+                isFile: false,
+                isDirectory: true,
+                size: 0,
+                mtime: null,
+              };
+            }
+            throw new Error("not found");
+          },
+          readFile: () =>
+            Promise.resolve(
+              "export default function ErrorPage() { return null; }",
+            ),
+          resolveFile: (path: string) =>
+            Promise.resolve(
+              path.endsWith("/404") ? "pages/404.tsx" : null,
+            ),
+        });
+        let observed:
+          | {
+            reactVersion?: string;
+            cacheKey?: string;
+            dependencies?: Readonly<Record<string, string>>;
+            source?: unknown;
+            moduleServerOrigin?: string;
+          }
+          | undefined;
+        __setComponentSourceLoaderForTests(
+          (_source, _filePath, _projectDir, _adapter, options) => {
+            observed = {
+              reactVersion: options?.reactVersion,
+              cacheKey: options?.dependencyPinningCacheKey,
+              dependencies: options?.dependencyPinningDependencies,
+              source: options?.dependencyPinningSource,
+              moduleServerOrigin: options?.moduleServerOrigin,
+            };
+            return Promise.resolve(() => null);
+          },
+        );
+        __setServerModuleLoaderForTests((_url, label) => {
+          if (label === "React") return Promise.resolve({ default: React });
+          throw new Error(`Unexpected module load: ${label}`);
+        });
+        __injectReactDOMServerForTests({
+          renderToString: () => "<p>react-18</p>",
+          renderToStaticMarkup: () => "<p>react-18</p>",
+        }, "18.3.1");
+
+        const responsePromise = tryErrorPageFallback(
+          new Request("http://localhost/missing"),
+          makeCtx({
+            projectDir,
+            projectId: projectDir,
+            adapter,
+            isLocalProject: true,
+          }),
+          new ResponseBuilder(),
+          { statusCode: 404, pathname: "/missing" },
+        );
+
+        await snapshotCaptured.promise;
+        await Deno.writeTextFile(
+          join(projectDir, "package.json"),
+          JSON.stringify({
+            dependencies: { react: "^19.0.0", "example-package": "2.0.0" },
+          }),
+        );
+        continueFallback.resolve();
+
+        const response = await responsePromise;
+        assertExists(response);
+        assertStringIncludes(await response.text(), "react-18");
+        assertEquals(observed?.reactVersion, "18.3.1");
+        assertEquals(observed?.cacheKey?.startsWith("on:"), true);
+        assertEquals(observed?.dependencies, {
+          react: "^18.3.1",
+          "example-package": "1.0.0",
+        });
+        assertEquals(
+          (observed?.source as { projectDir?: string } | undefined)?.projectDir,
+          projectDir,
+        );
+        assertEquals(observed?.moduleServerOrigin, "http://localhost");
+      } finally {
+        continueFallback.resolve();
+        __setComponentSourceLoaderForTests(null);
+        if (originalFlag === undefined) {
+          deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        } else {
+          setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        }
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 

@@ -13,6 +13,7 @@ import type { QueryParamCacheOptions } from "../prefixes.ts";
 import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity } from "../source-identity.ts";
+import { buildDependencyPinningCacheVariant } from "../dependency-pinning.ts";
 
 export function buildRenderCachePrefix(
   projectId: string,
@@ -73,8 +74,15 @@ export function buildComponentCacheKey(
   projectId: string,
   filePath: string,
   contentHash: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
-  return `${CacheKeyPrefix.COMPONENT}:${projectId}:${filePath}:${contentHash}`;
+  const legacyCacheKey = `${CacheKeyPrefix.COMPONENT}:${projectId}:${filePath}:${contentHash}`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  return cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
 }
 
 export function buildLayoutComponentCacheKey(

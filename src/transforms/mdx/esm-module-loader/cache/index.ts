@@ -407,8 +407,9 @@ function invalidateMdxEsmModuleFromCache(
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
   expectedCachedPath?: string,
+  cacheVariant?: string,
 ): boolean {
-  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion, cacheVariant);
   const cachedPath = cache.get(cacheKey);
   if (cachedPath === undefined) {
     if (expectedCachedPath) verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
@@ -436,11 +437,20 @@ export function invalidateMdxEsmModule(
   filePath: string,
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
+  cacheVariant?: string,
 ): boolean {
   const cache = modulePathCaches.get(cacheDir);
   if (!cache) return false;
 
-  return invalidateMdxEsmModuleFromCache(cacheDir, cache, filePath, projectDir, reactVersion);
+  return invalidateMdxEsmModuleFromCache(
+    cacheDir,
+    cache,
+    filePath,
+    projectDir,
+    reactVersion,
+    undefined,
+    cacheVariant,
+  );
 }
 
 export async function invalidateMdxEsmModuleForCachedPath(
@@ -449,6 +459,7 @@ export async function invalidateMdxEsmModuleForCachedPath(
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
   cacheDirs: string | string[] | null = getMdxEsmCacheDirForCachedPath(cachedPath),
+  cacheVariant?: string,
 ): Promise<boolean> {
   const derivedCacheDir = getMdxEsmCacheDirForCachedPath(cachedPath);
   const configuredDirs = Array.isArray(cacheDirs) ? cacheDirs : cacheDirs ? [cacheDirs] : [];
@@ -467,6 +478,7 @@ export async function invalidateMdxEsmModuleForCachedPath(
       projectDir,
       reactVersion,
       cachedPath,
+      cacheVariant,
     );
     if (invalidated) return true;
   }
@@ -597,6 +609,7 @@ function toMdxEsmCacheKey(
   filePath: string,
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
+  cacheVariant?: string,
 ): string {
   let relativePath = filePath;
 
@@ -607,7 +620,7 @@ function toMdxEsmCacheKey(
   relativePath = relativePath.replace(/^\/+/, "");
   const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
 
-  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`, reactVersion);
+  return buildMdxEsmPathCacheKey(`_vf_modules/${jsPath}`, reactVersion, cacheVariant);
 }
 
 export async function lookupMdxEsmCache(
@@ -622,9 +635,10 @@ export async function lookupMdxEsmCache(
   _contentHash?: string,
   recoveryOptions?: { projectId: string; contentSourceId: string },
   reactVersion = REACT_DEFAULT_VERSION,
+  cacheVariant?: string,
 ): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
-  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion, cacheVariant);
 
   const cachedPath = cache.get(cacheKey);
   if (!cachedPath) return { status: "miss" };

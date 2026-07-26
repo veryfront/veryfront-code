@@ -1,415 +1,373 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { FakeTime } from "#std/testing/time";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import { refreshEnvironmentConfig } from "../../config/environment-config.ts";
 import {
   _clearNpmVersionCache,
-  _hasNegativeCacheEntry,
   _pendingResolutions,
   _setClockForTest,
-  getCachedNpmVersion,
+  _setDependencyResolutionPosterForTest,
   isDependencyPinningEnabled,
   isExactSemver,
-  NEGATIVE_CACHE_BASE_TTL_MS,
-  scheduleNpmVersionResolution,
+  PLATFORM_RESOLUTION_MAX_CONCURRENCY,
+  PLATFORM_RESOLUTION_MAX_PENDING,
+  schedulePlatformDependencyResolution,
+  scheduleUndeclaredDependencyResolution,
 } from "./npm-registry-client.ts";
 
-const PROJECT_DIR = "/test-project";
+const MAIN_SCHEDULE = { target: { kind: "main" as const } };
 
-describe("isDependencyPinningEnabled", () => {
+describe("npm-registry-client dependency contracts", () => {
   let originalFlag: string | undefined;
 
   beforeEach(() => {
     originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await _pendingResolutions();
+    _clearNpmVersionCache();
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
   });
 
-  it("returns false when flag is unset", () => {
+  it("reads the dependency-pinning feature flag", () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
     assertEquals(isDependencyPinningEnabled(), false);
-  });
-
-  it("returns false when flag is '0'", () => {
-    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
-    assertEquals(isDependencyPinningEnabled(), false);
-  });
-
-  it("returns true when flag is '1'", () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     assertEquals(isDependencyPinningEnabled(), true);
   });
-});
 
-describe("isExactSemver", () => {
-  it("accepts a plain three-part version", () => {
+  it("recognizes exact SemVer without normalizing API-preserved bytes", () => {
     assertEquals(isExactSemver("1.2.3"), true);
-  });
-
-  it("accepts a prerelease with a hyphen-separated identifier", () => {
+    assertEquals(isExactSemver("v1.2.3+build.7"), true);
     assertEquals(isExactSemver("1.2.3-alpha-beta.1"), true);
-  });
-
-  it("accepts a prerelease with a single hyphen-separated label", () => {
-    assertEquals(isExactSemver("1.0.0-rc-1"), true);
-  });
-
-  it("accepts a build-metadata identifier containing a hyphen", () => {
-    assertEquals(isExactSemver("1.0.0+build-2"), true);
-  });
-
-  it("rejects invalid separators inside prerelease and build identifiers", () => {
-    assertEquals(isExactSemver("1.0.0-alpha..beta"), false);
-    assertEquals(isExactSemver("1.0.0+build_linux"), false);
-  });
-
-  it("rejects a caret range", () => {
+    assertEquals(isExactSemver("1.2.3-RC.0+001"), true);
     assertEquals(isExactSemver("^1.2.3"), false);
-  });
-
-  it("rejects a tilde range", () => {
     assertEquals(isExactSemver("~1.2"), false);
-  });
-
-  it("rejects a compound range", () => {
     assertEquals(isExactSemver(">=1 <2"), false);
-  });
-
-  it("rejects a bare two-part version", () => {
     assertEquals(isExactSemver("1.2"), false);
-  });
-});
-
-describe("getCachedNpmVersion", () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    // Mock fetch so tests that resolve a truly unversioned dependency do not
-    // open real network connections or leave long-lived timers behind.
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+    assertEquals(isExactSemver("01.2.3"), false);
+    assertEquals(isExactSemver("1.02.3"), false);
+    assertEquals(isExactSemver("1.2.03"), false);
+    assertEquals(isExactSemver("1.0.0-01"), false);
+    assertEquals(isExactSemver("1.0.0-alpha.01"), false);
   });
 
-  afterEach(async () => {
-    // Drain all in-flight background fetches before the Deno leak sanitizer runs.
-    await _pendingResolutions();
-    globalThis.fetch = originalFetch;
-    _clearNpmVersionCache();
-  });
+  it("deduplicates and forwards a scoped package raw range", async () => {
+    const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+    const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+    const originalFetch = globalThis.fetch;
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    setEnv("VERYFRONT_API_TOKEN", "test-token");
+    refreshEnvironmentConfig();
 
-  it("returns undefined for a cold cache", () => {
-    assertEquals(getCachedNpmVersion("lodash", PROJECT_DIR, undefined), undefined);
-  });
-
-  it("returns a version after scheduleNpmVersionResolution receives an exact version", () => {
-    scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
-    // Exact version is stored synchronously (no fetch needed).
-    assertStrictEquals(
-      getCachedNpmVersion("lodash", PROJECT_DIR, "4.17.21"),
-      "4.17.21",
-    );
-    assertEquals(
-      getCachedNpmVersion("lodash", PROJECT_DIR, "4.17.20"),
-      undefined,
-    );
-  });
-
-  it("leaves cache cold without fetching latest when the hint is a caret range", () => {
     let fetchCalls = 0;
-    globalThis.fetch = () => {
+    let requestUrl = "";
+    let requestBody = "";
+    globalThis.fetch = (input, init) => {
       fetchCalls++;
-      return Promise.resolve(new Response(null, { status: 503 }));
+      requestUrl = String(input);
+      requestBody = String(init?.body ?? "");
+      return Promise.resolve(new Response("{}", { status: 200 }));
     };
 
-    scheduleNpmVersionResolution("zod", "^3.22.4", PROJECT_DIR);
-
-    assertEquals(fetchCalls, 0);
-    assertEquals(getCachedNpmVersion("zod", PROJECT_DIR, "^3.22.4"), undefined);
-  });
-
-  it("keeps caches scoped per project directory", () => {
-    const otherDir = "/other-project";
-    scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
-    assertEquals(
-      getCachedNpmVersion("lodash", otherDir, "4.17.21"),
-      undefined,
-    );
-    assertStrictEquals(
-      getCachedNpmVersion("lodash", PROJECT_DIR, "4.17.21"),
-      "4.17.21",
-    );
-  });
-});
-
-describe("scheduleNpmVersionResolution", () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    // Default mock for the whole suite: fast non-OK response so cold-cache
-    // background fetches resolve quickly and clean up their timers.
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
-  });
-
-  afterEach(async () => {
-    // Drain all in-flight background fetches so no open handles remain.
-    await _pendingResolutions();
-    globalThis.fetch = originalFetch;
-    _clearNpmVersionCache();
-  });
-
-  it("calls onResolved synchronously when rangeHint is an exact version", () => {
-    let called = false;
-    let resolvedVersion = "";
-    scheduleNpmVersionResolution("react-query", "5.0.0", PROJECT_DIR, (v) => {
-      called = true;
-      resolvedVersion = v;
-    });
-    assertEquals(called, true);
-    assertEquals(resolvedVersion, "5.0.0");
-  });
-
-  it("does not replace a declared range with registry latest", async () => {
-    let fetchCalls = 0;
-    globalThis.fetch = () => {
-      fetchCalls++;
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({ "dist-tags": { latest: "4.0.0" } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+    try {
+      schedulePlatformDependencyResolution(
+        "project-ref",
+        "@scope/pkg",
+        "^1.2.3",
+        MAIN_SCHEDULE,
       );
+      schedulePlatformDependencyResolution(
+        "project-ref",
+        "@scope/pkg",
+        "^1.2.3",
+        MAIN_SCHEDULE,
+      );
+      await _pendingResolutions();
+
+      assertEquals(fetchCalls, 1);
+      assertEquals(
+        requestUrl,
+        "https://api.example.test/projects/project-ref/dependencies/resolve",
+      );
+      assertEquals(JSON.parse(requestBody), {
+        specifiers: ["@scope/pkg@^1.2.3"],
+        expected_declarations: { "@scope/pkg": "^1.2.3" },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      refreshEnvironmentConfig();
+    }
+  });
+
+  it("posts branch and caller-observed declarations, including absence", async () => {
+    const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+    const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+    const originalFetch = globalThis.fetch;
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    setEnv("VERYFRONT_API_TOKEN", "test-token");
+    refreshEnvironmentConfig();
+
+    let requestBody = "";
+    globalThis.fetch = (_input, init) => {
+      requestBody = String(init?.body ?? "");
+      return Promise.resolve(new Response("{}", { status: 200 }));
     };
 
-    let resolved = "";
-    scheduleNpmVersionResolution("date-fns", "^3.6.0", PROJECT_DIR, (v) => {
-      resolved = v;
+    const branchSchedule = {
+      target: { kind: "branch" as const, branch: "feature-a" },
+    };
+    try {
+      schedulePlatformDependencyResolution(
+        "project-ref",
+        "zod",
+        "next",
+        branchSchedule,
+      );
+      scheduleUndeclaredDependencyResolution(
+        "project-ref",
+        "lodash",
+        branchSchedule,
+      );
+      await _pendingResolutions();
+
+      assertEquals(JSON.parse(requestBody), {
+        specifiers: ["zod@next", "lodash"],
+        branch: "feature-a",
+        expected_declarations: {
+          zod: "next",
+          lodash: null,
+        },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      refreshEnvironmentConfig();
+    }
+  });
+
+  it("coalesces ranges and undeclared bare names in one project batch", async () => {
+    const requests: Array<{ projectId: string; specifiers: string[] }> = [];
+    _setDependencyResolutionPosterForTest((projectId, specifiers) => {
+      requests.push({ projectId, specifiers });
+      return Promise.resolve();
     });
 
+    schedulePlatformDependencyResolution("project-ref", "zod", "^3", MAIN_SCHEDULE);
+    schedulePlatformDependencyResolution(
+      "project-ref",
+      "date-fns",
+      "~4.0.0",
+      MAIN_SCHEDULE,
+    );
+    scheduleUndeclaredDependencyResolution("project-ref", "lodash", MAIN_SCHEDULE);
     await _pendingResolutions();
 
-    assertEquals(fetchCalls, 0);
-    assertEquals(resolved, "");
-    assertEquals(
-      getCachedNpmVersion("date-fns", PROJECT_DIR, "^3.6.0"),
-      undefined,
+    assertEquals(requests, [{
+      projectId: "project-ref",
+      specifiers: ["zod@^3", "date-fns@~4.0.0", "lodash"],
+    }]);
+  });
+
+  it("keeps only the newest queued declaration for one package", async () => {
+    const requests: string[][] = [];
+    _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+      requests.push(specifiers);
+      return Promise.resolve();
+    });
+
+    schedulePlatformDependencyResolution("project-ref", "zod", "^3", MAIN_SCHEDULE);
+    schedulePlatformDependencyResolution("project-ref", "zod", "^4", MAIN_SCHEDULE);
+    await _pendingResolutions();
+
+    assertEquals(requests, [["zod@^4"]]);
+  });
+
+  it("isolates main and branch queues for the same project and package", async () => {
+    const requests: Array<{ target: string; specifiers: string[] }> = [];
+    _setDependencyResolutionPosterForTest((_projectId, specifiers, target) => {
+      requests.push({
+        target: target.kind === "main" ? "main" : `branch:${target.branch}`,
+        specifiers,
+      });
+      return Promise.resolve();
+    });
+
+    schedulePlatformDependencyResolution(
+      "project-ref",
+      "zod",
+      "^4",
+      MAIN_SCHEDULE,
     );
-  });
-
-  it("does not double-schedule a fetch when called twice for the same package+project", () => {
-    // Both calls see a cold cache. Only one background fetch should be started.
-    // The second call is deduplicated via the pendingFetches set.
-    // No assertions beyond "does not throw" — deduplication is internal state.
-    scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
-    scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
-  });
-
-  it("does not re-resolve when called again with the same hint", () => {
-    scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
-    scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
-    assertStrictEquals(
-      getCachedNpmVersion("lodash", PROJECT_DIR, "4.17.21"),
-      "4.17.21",
+    schedulePlatformDependencyResolution(
+      "project-ref",
+      "zod",
+      "^3",
+      { target: { kind: "branch", branch: "feature" } },
     );
+    await _pendingResolutions();
+
+    assertEquals(requests, [
+      { target: "main", specifiers: ["zod@^4"] },
+      { target: "branch:feature", specifiers: ["zod@^3"] },
+    ]);
   });
 
-  it("keeps tracking a live resolution when the value cache is reset", async () => {
-    let resolveFetch: ((response: Response) => void) | undefined;
-    globalThis.fetch = () =>
-      new Promise<Response>((resolve) => {
-        resolveFetch = resolve;
-      });
-
-    scheduleNpmVersionResolution("reset-during-fetch", undefined, PROJECT_DIR);
-    _clearNpmVersionCache();
-
-    let drained = false;
-    const drain = _pendingResolutions().then(() => {
-      drained = true;
+  it("does not enqueue a write without an explicit canonical target", async () => {
+    let posts = 0;
+    _setDependencyResolutionPosterForTest(() => {
+      posts++;
+      return Promise.resolve();
     });
-    await Promise.resolve();
-    assertEquals(drained, false);
 
-    resolveFetch!(
-      new Response(null, { status: 503 }),
+    schedulePlatformDependencyResolution("project-ref", "zod", "^4");
+    schedulePlatformDependencyResolution(
+      "project-ref",
+      "zod",
+      "^4",
+      { target: { kind: "branch", branch: "" } },
     );
-    await drain;
-    assertEquals(drained, true);
+    schedulePlatformDependencyResolution(
+      "project-ref",
+      "zod",
+      "^4",
+      { target: { kind: "branch", branch: " feature" } },
+    );
+    schedulePlatformDependencyResolution(
+      "project-ref",
+      "zod",
+      "^4",
+      { target: { kind: "branch", branch: "feature " } },
+    );
+    await _pendingResolutions();
+
+    assertEquals(posts, 0);
   });
 
-  describe("mocked fetch — background resolution", () => {
-    // Each nested test overrides globalThis.fetch in its own beforeEach.
+  it("splits large project batches into bounded requests", async () => {
+    const requests: string[][] = [];
+    _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+      requests.push(specifiers);
+      return Promise.resolve();
+    });
 
-    it("stores the resolved version after a successful registry fetch", async () => {
-      globalThis.fetch = (_url: string | URL | Request) =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ "dist-tags": { latest: "4.17.21" } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
-        );
-
-      let resolvedVersion = "";
-      scheduleNpmVersionResolution("lodash", undefined, PROJECT_DIR, (v) => {
-        resolvedVersion = v;
-      });
-
-      // Yield to allow the background microtask to settle.
-      await new Promise((r) => setTimeout(r, 0));
-
-      assertStrictEquals(
-        getCachedNpmVersion("lodash", PROJECT_DIR, undefined),
-        "4.17.21",
+    for (let i = 0; i < 205; i++) {
+      scheduleUndeclaredDependencyResolution(
+        "project-ref",
+        `package-${i}`,
+        MAIN_SCHEDULE,
       );
-      assertStrictEquals(resolvedVersion, "4.17.21");
+    }
+    await _pendingResolutions();
+
+    assertEquals(requests.map((request) => request.length), [100, 100, 5]);
+  });
+
+  it("fails closed when the global pending backlog reaches its bound", async () => {
+    let now = 0;
+    let postedSpecifiers = 0;
+    _setClockForTest(() => now);
+    _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+      postedSpecifiers += specifiers.length;
+      return Promise.resolve();
     });
 
-    it("leaves the cache cold when the registry returns a non-OK response", async () => {
-      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 404 }));
-
-      scheduleNpmVersionResolution("nonexistent-pkg", undefined, PROJECT_DIR);
-      await new Promise((r) => setTimeout(r, 0));
-
-      assertEquals(
-        getCachedNpmVersion("nonexistent-pkg", PROJECT_DIR, undefined),
-        undefined,
+    for (let i = 0; i < PLATFORM_RESOLUTION_MAX_PENDING + 17; i++) {
+      scheduleUndeclaredDependencyResolution(
+        "project-ref",
+        `package-${i}`,
+        MAIN_SCHEDULE,
       );
+    }
+    await _pendingResolutions();
+
+    assertEquals(postedSpecifiers, PLATFORM_RESOLUTION_MAX_PENDING);
+
+    now = 60_000;
+    scheduleUndeclaredDependencyResolution(
+      "project-ref",
+      "package-after-ttl",
+      MAIN_SCHEDULE,
+    );
+    await _pendingResolutions();
+    assertEquals(postedSpecifiers, PLATFORM_RESOLUTION_MAX_PENDING + 1);
+  });
+
+  it("settles rejected platform writes without an unhandled rejection", async () => {
+    let attempts = 0;
+    _setDependencyResolutionPosterForTest(() => {
+      attempts++;
+      return Promise.reject(new Error("platform unavailable"));
     });
 
-    it("does not corrupt an incomplete scoped package name", async () => {
-      let requestUrl = "";
-      globalThis.fetch = (input: string | URL | Request) => {
-        requestUrl = String(input);
-        return Promise.resolve(new Response(null, { status: 404 }));
-      };
+    schedulePlatformDependencyResolution("project-ref", "zod", "^3", MAIN_SCHEDULE);
+    await _pendingResolutions();
+    assertEquals(attempts, 1);
+  });
 
-      scheduleNpmVersionResolution("@scope", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-
-      assertEquals(requestUrl, "https://registry.npmjs.org/@scope");
+  it("allows a retry after the dedupe TTL", async () => {
+    let now = 0;
+    let attempts = 0;
+    _setClockForTest(() => now);
+    _setDependencyResolutionPosterForTest(() => {
+      attempts++;
+      return Promise.resolve();
     });
 
-    it("backs off failed lookups and retries after the negative-cache window", async () => {
-      using time = new FakeTime();
-      let fetchCalls = 0;
-      globalThis.fetch = () => {
-        fetchCalls++;
-        return Promise.resolve(new Response(null, { status: 503 }));
-      };
+    scheduleUndeclaredDependencyResolution("project-ref", "zod", MAIN_SCHEDULE);
+    await _pendingResolutions();
+    scheduleUndeclaredDependencyResolution("project-ref", "zod", MAIN_SCHEDULE);
+    await _pendingResolutions();
+    assertEquals(attempts, 1);
 
-      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      assertEquals(fetchCalls, 1);
+    now = 60_000;
+    scheduleUndeclaredDependencyResolution("project-ref", "zod", MAIN_SCHEDULE);
+    await _pendingResolutions();
+    assertEquals(attempts, 2);
+  });
 
-      await time.tickAsync(59_999);
-      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      assertEquals(fetchCalls, 1);
-
-      await time.tickAsync(1);
-      scheduleNpmVersionResolution("temporarily-unavailable", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      assertEquals(fetchCalls, 2);
+  it("bounds platform write concurrency across projects without barging", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    _setDependencyResolutionPosterForTest(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active--;
     });
 
-    it("leaves the cache cold when fetch throws a network error", async () => {
-      globalThis.fetch = () => Promise.reject(new Error("network error"));
-
-      scheduleNpmVersionResolution("failing-pkg", undefined, PROJECT_DIR);
-      await new Promise((r) => setTimeout(r, 0));
-
-      assertEquals(
-        getCachedNpmVersion("failing-pkg", PROJECT_DIR, undefined),
-        undefined,
+    const total = PLATFORM_RESOLUTION_MAX_CONCURRENCY * 3;
+    for (let i = 0; i < total; i++) {
+      scheduleUndeclaredDependencyResolution(
+        `project-${i}`,
+        `package-${i}`,
+        MAIN_SCHEDULE,
       );
-    });
+    }
 
-    it("ignores an unversioned resolution that finishes after a range appears", async () => {
-      const responseResolvers: Array<(response: Response) => void> = [];
-      const resolvedVersions: string[] = [];
-      globalThis.fetch = () =>
-        new Promise<Response>((resolve) => {
-          responseResolvers.push(resolve);
-        });
+    while (releases.length < PLATFORM_RESOLUTION_MAX_CONCURRENCY) {
+      await Promise.resolve();
+    }
+    assertEquals(maxActive, PLATFORM_RESOLUTION_MAX_CONCURRENCY);
 
-      scheduleNpmVersionResolution("racing-range", undefined, PROJECT_DIR, (version) => {
-        resolvedVersions.push(version);
-      });
-      scheduleNpmVersionResolution("racing-range", "^2", PROJECT_DIR, (version) => {
-        resolvedVersions.push(version);
-      });
-
-      responseResolvers[0]!(
-        new Response(
-          JSON.stringify({ "dist-tags": { latest: "1.9.0" } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
-      await _pendingResolutions();
-
-      assertEquals(
-        getCachedNpmVersion("racing-range", PROJECT_DIR, undefined),
-        undefined,
-      );
-      assertStrictEquals(
-        getCachedNpmVersion("racing-range", PROJECT_DIR, "^2"),
-        undefined,
-      );
-      assertEquals(resolvedVersions, []);
-    });
-
-    it("clears the negative entry after a successful resolution", async () => {
-      let now = 0;
-      _setClockForTest(() => now);
-
-      // First attempt fails — negative entry should be recorded.
-      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
-      scheduleNpmVersionResolution("recovering-pkg", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "recovering-pkg", undefined), true);
-
-      // Advance past the backoff window so the next call actually fetches.
-      now = NEGATIVE_CACHE_BASE_TTL_MS;
-
-      // Second attempt succeeds — negative entry should be cleared.
-      globalThis.fetch = () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ "dist-tags": { latest: "2.0.0" } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
-        );
-      scheduleNpmVersionResolution("recovering-pkg", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-
-      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "recovering-pkg", undefined), false);
-      assertStrictEquals(getCachedNpmVersion("recovering-pkg", PROJECT_DIR, undefined), "2.0.0");
-    });
-
-    it("_clearNpmVersionCache clears negative entries and allows an immediate retry", async () => {
-      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
-      scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "some-pkg", undefined), true);
-
-      _clearNpmVersionCache();
-      assertEquals(_hasNegativeCacheEntry(PROJECT_DIR, "some-pkg", undefined), false);
-
-      // After clearing, the next call should schedule a fresh fetch (no backoff).
-      let fetchCalls = 0;
-      globalThis.fetch = () => {
-        fetchCalls++;
-        return Promise.resolve(new Response(null, { status: 503 }));
-      };
-      scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
-      await _pendingResolutions();
-      assertEquals(fetchCalls, 1);
-    });
+    // Release every started request, including later waves that begin after a
+    // limiter permit is handed off. Checking only `active` can observe the
+    // handoff microtask between waves and exit with queued requests unreleased.
+    for (let released = 0; released < total; released++) {
+      while (releases.length === 0) {
+        await Promise.resolve();
+      }
+      releases.shift()!();
+      await Promise.resolve();
+    }
+    await _pendingResolutions();
+    assertEquals(maxActive, PLATFORM_RESOLUTION_MAX_CONCURRENCY);
   });
 });

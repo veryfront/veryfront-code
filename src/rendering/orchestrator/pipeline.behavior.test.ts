@@ -185,6 +185,41 @@ describe("RenderPipeline behavior", () => {
     }
   });
 
+  it("keeps a historical request on React A after a newer snapshot uses React B", async () => {
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    const observedVersions: string[] = [];
+    (pipeline as any).loadModule = async (
+      _path: string,
+      config: { reactVersion?: string },
+    ) => {
+      observedVersions.push(config.reactVersion ?? "");
+      return {};
+    };
+    const requestOptions = {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    };
+
+    await pipeline.resolvePageData("/", {
+      ...requestOptions,
+      dependencyPinningCacheKey: "on:snapshot-b",
+      dependencyPinningDependencies: { react: "^19.0.0" },
+    });
+    const afterSnapshotB = observedVersions.slice();
+    observedVersions.length = 0;
+
+    await pipeline.resolvePageData("/", {
+      ...requestOptions,
+      dependencyPinningCacheKey: "on:snapshot-a",
+      dependencyPinningDependencies: { react: "^18.3.1" },
+    });
+
+    assert(afterSnapshotB.length > 0);
+    assertEquals(afterSnapshotB.every((version) => version === "19.0.0"), true);
+    assert(observedVersions.length > 0);
+    assertEquals(observedVersions.every((version) => version === "18.3.1"), true);
+  });
+
   it("keeps a cold module graph alive while distinct transforms keep completing", async () => {
     using time = new FakeTime();
     const pipeline = createPipeline("/project/pages/large-cold-graph.tsx");

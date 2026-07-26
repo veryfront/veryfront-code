@@ -16,6 +16,36 @@ import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes, type CollectedRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+
+interface BuildDependencySnapshotOptions {
+  projectDir: string;
+  adapter: RuntimeAdapter;
+  isLocalProject: boolean;
+  config: VeryfrontConfig;
+}
+
+/** Capture the immutable package/config state shared by one production build. */
+export function captureBuildDependencySnapshot(
+  options: BuildDependencySnapshotOptions,
+): Promise<DependencyPinningSnapshot> {
+  return resolveDependencyPinningSnapshot(
+    createDependencyPinningSource({
+      projectDir: options.projectDir,
+      adapter: options.adapter,
+      isLocalProject: options.isLocalProject,
+      contentSourceId: "production-build",
+      config: options.config,
+    }),
+  );
+}
 
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
@@ -47,6 +77,18 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       );
 
       try {
+        const dependencySnapshot = await captureBuildDependencySnapshot({
+          projectDir: normalizedOptions.projectDir,
+          adapter: context.adapter,
+          isLocalProject: true,
+          config: context.config,
+        });
+        const buildReactVersion = await resolveProjectReactVersion({
+          projectDir: normalizedOptions.projectDir,
+          config: context.config,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+        });
         const outputDir = normalizedOptions.outputDir ?? "";
         const dryRun = normalizedOptions.dryRun ?? false;
         const enableSplitting = normalizedOptions.enableSplitting ?? true;
@@ -74,6 +116,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               outputDir,
               dryRun,
               config: context.config,
+              reactVersion: buildReactVersion,
             }),
           {},
         );
@@ -120,6 +163,9 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               baseUrl: "",
               dryRun,
               releaseAssetManifest,
+              isLocalProject: true,
+              dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+              dependencyPinningDependencies: dependencySnapshot.dependencies,
             }),
           {},
         );

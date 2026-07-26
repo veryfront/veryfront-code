@@ -6,10 +6,12 @@
 import type { ClientModuleStrategy } from "./client-module-strategy.ts";
 import {
   buildClientModuleUrl,
+  buildRSCTransportHeaders,
   type ClientRuntimeHydrationData,
   getHydrationReactImportSpecifiers,
   readHydrationData,
   resolveClientModuleStrategy,
+  seedHydrationDependencyPins,
 } from "./client-module-strategy.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
@@ -129,9 +131,34 @@ export function shouldRenderPageComponent(strategy: ClientModuleStrategy): boole
   return strategy === "rsc-module";
 }
 
-async function tryStream(q: string): Promise<boolean> {
+export function buildRSCTransportQuery(
+  search: string,
+  _dependencyPinningCacheKey?: string,
+): string {
+  if (!search) return "";
+  return search.startsWith("?") ? search : `?${search}`;
+}
+
+export function buildPageHydrationModuleUrl(
+  pagePath: string,
+  strategy: ClientModuleStrategy,
+  hydrationData: ClientRuntimeHydrationData | null,
+): string | null {
+  return buildClientModuleUrl({
+    strategy,
+    rel: pagePath,
+    dependencyPinningCacheKey: hydrationData?.dependencyPinningCacheKey,
+  });
+}
+
+async function tryStream(
+  q: string,
+  hydrationData: ClientRuntimeHydrationData | null,
+): Promise<boolean> {
   try {
-    const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
+    const res = await fetch(RSC_PATH_PREFIX + "stream" + q, {
+      headers: buildRSCTransportHeaders(hydrationData),
+    });
     if (!res.ok || !res.body) return false;
 
     const ctrl = new AbortController();
@@ -156,13 +183,11 @@ async function hydrateMarkers(): Promise<void> {
 async function hydratePageComponent(
   pagePath: string,
   strategy: ClientModuleStrategy,
+  hydrationData: ClientRuntimeHydrationData | null,
 ): Promise<boolean> {
   try {
     const { React, ReactDOM } = await importReact();
-    const moduleUrl = buildClientModuleUrl({
-      strategy,
-      rel: pagePath,
-    });
+    const moduleUrl = buildPageHydrationModuleUrl(pagePath, strategy, hydrationData);
     if (!moduleUrl) return false;
     rscLogger.debug("Loading component from:", moduleUrl);
 
@@ -181,7 +206,7 @@ async function hydratePageComponent(
       : root;
     const component = await wrapWithRouterProvider(
       React.createElement(Component, {}),
-      readHydrationData(document),
+      hydrationData,
     );
 
     if (shouldRenderPageComponent(strategy)) {
@@ -201,12 +226,18 @@ async function hydratePageComponent(
   }
 }
 
-async function applyPayload(q: string): Promise<boolean> {
+async function applyPayload(
+  q: string,
+  hydrationData: ClientRuntimeHydrationData | null,
+): Promise<boolean> {
   try {
-    const res = await fetch(RSC_PATH_PREFIX + "payload" + q);
+    const res = await fetch(RSC_PATH_PREFIX + "payload" + q, {
+      headers: buildRSCTransportHeaders(hydrationData),
+    });
     if (!res.ok) return false;
 
     const data = await res.json();
+    seedHydrationDependencyPins(document, data?.dependencyPinningCacheKey);
 
     if (data?.slots) {
       for (const [id, html] of Object.entries(data.slots)) {
@@ -225,8 +256,11 @@ async function applyPayload(q: string): Promise<boolean> {
 
 export async function boot(): Promise<void> {
   try {
-    const q = globalThis.window?.location.search ?? "";
     const hydrationData = readHydrationData(document);
+    const q = buildRSCTransportQuery(
+      globalThis.window?.location.search ?? "",
+      hydrationData?.dependencyPinningCacheKey,
+    );
     if (shouldHydrateOnly()) {
       await hydrateMarkers();
       return;
@@ -246,7 +280,7 @@ export async function boot(): Promise<void> {
         return;
       }
       rscLogger.debug("Found page component in hydration data:", pagePath);
-      if (await hydratePageComponent(pagePath, clientModuleStrategy)) {
+      if (await hydratePageComponent(pagePath, clientModuleStrategy, hydrationData)) {
         rscLogger.debug("Client component hydrated successfully");
       }
       return;
@@ -256,12 +290,12 @@ export async function boot(): Promise<void> {
       return;
     }
 
-    if (await tryStream(q)) {
+    if (await tryStream(q, hydrationData)) {
       await hydrateMarkers();
       return;
     }
 
-    if (await applyPayload(q)) {
+    if (await applyPayload(q, hydrationData)) {
       await hydrateMarkers();
       return;
     }

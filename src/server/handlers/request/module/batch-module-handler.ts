@@ -1,9 +1,12 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { handleModuleBatch } from "#veryfront/modules/server/module-batch-handler.ts";
-import { ensureProjectDependenciesLoaded } from "#veryfront/transforms/esm/package-registry.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  createHandlerDependencyPinningSource,
+  getHandlerDependencyPinningIdentity,
+} from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 const logger = serverLogger.component("batch-module-handler");
 
@@ -21,18 +24,21 @@ export function handleBatchModuleEndpoint(
         url: req.url,
       });
 
-      // Warm the dep-pin cache before module transforms run. The batch handler
-      // has no resolveProjectReactVersion call so this is the only warm-up point.
-      await ensureProjectDependenciesLoaded(ctx.projectDir);
+      const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
+      const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
       const response = await handleModuleBatch(req, {
         projectDir: ctx.projectDir,
         adapter: ctx.adapter,
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        branch: ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
-        releaseId: ctx.releaseId ?? null,
+        projectSlug: dependencyIdentity.projectSlug,
+        projectId: dependencyIdentity.projectId,
+        branch: dependencyIdentity.branch ?? null,
+        releaseId: dependencyIdentity.releaseId ?? null,
+        contentSourceId: dependencyIdentity.contentSourceId,
+        dependencyPinningSource,
+        isLocalProject: ctx.isLocalProject,
         dev: !!ctx.isLocalProject,
         allowedImportDirs: ctx.config?.security?.allowedImportDirs,
+        config: ctx.config,
       });
 
       return respond(response);

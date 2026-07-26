@@ -57,6 +57,8 @@ export interface InjectHTMLContentOptions {
   importMapJson?: string;
   /** Framework-generated project stylesheet for production shells */
   projectStylesheetHref?: string;
+  /** Request-scoped dependency snapshot used to version RSC module imports. */
+  dependencyPinningCacheKey?: string;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -127,21 +129,33 @@ export function injectHTMLContent(
 
   const hasBodyClose = /<\/body>/i.test(html);
 
-  // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
-  if (options.pagePath && options.isClientPage && hasBodyClose) {
+  const clientPagePath = options.isClientPage === true ? options.pagePath : undefined;
+  const dependencyPinningCacheKey = options.dependencyPinningCacheKey?.startsWith("on:")
+    ? options.dependencyPinningCacheKey
+    : undefined;
+
+  // Client pages need the full hydration payload. Other full documents still
+  // need the immutable dependency token before client.js boots so any RSC
+  // transport it starts remains on the document's snapshot.
+  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyClose) {
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
     // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
     const hydrationData = jsonForInlineScript({
-      pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
-      slug: options.slug,
-      isClientPage: true,
-      params: options.params ?? {},
-      clientModuleStrategy: determineClientModuleStrategy({
-        isLocalProject: options.isLocalProject ?? options.mode === "development",
-        environment: options.environment,
-      }),
+      ...(clientPagePath
+        ? {
+          pagePath: toProjectRelativePath(clientPagePath, options.projectDir),
+          slug: options.slug,
+          isClientPage: true,
+          params: options.params ?? {},
+          clientModuleStrategy: determineClientModuleStrategy({
+            isLocalProject: options.isLocalProject ?? options.mode === "development",
+            environment: options.environment,
+          }),
+        }
+        : {}),
+      ...(dependencyPinningCacheKey ? { dependencyPinningCacheKey } : {}),
     });
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =

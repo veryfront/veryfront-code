@@ -2,6 +2,7 @@ import { registerLRUCache } from "#veryfront/cache";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 
@@ -23,6 +24,7 @@ export interface ReleaseModuleResponseCacheKeyOptions {
   releaseId: string;
   runtimeVersion: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
   releaseDependencyManifestVersion?: number | null;
   modulePath: string;
 }
@@ -108,12 +110,16 @@ export function buildReleaseModuleResponseCacheKey(
 
   // Fields are joined with `:` (an allowed key character) rather than a NUL
   // byte, which the distributed cache backend's key validator also rejects.
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+  );
   return [
     "module-server-release-response",
     hashString(projectScope),
     options.releaseId,
     options.runtimeVersion,
     options.reactVersion ?? "",
+    ...(cacheVariant ? [`pins:${cacheVariant}`] : []),
     options.releaseDependencyManifestVersion == null
       ? ""
       : `release-dependency-manifest:${options.releaseDependencyManifestVersion}`,

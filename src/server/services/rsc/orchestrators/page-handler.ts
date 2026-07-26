@@ -1,7 +1,10 @@
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
 import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
-import { HYDRATION_DATA_ID } from "#veryfront/rendering/rsc/constants.ts";
+import {
+  HYDRATION_DATA_ID,
+  RSC_DEPENDENCY_PINNING_HEADER,
+} from "#veryfront/rendering/rsc/constants.ts";
 
 /**
  * Serialize a value as a JSON string literal that is safe to embed inside an
@@ -29,6 +32,7 @@ export class PageHandler {
     private readonly isDevelopment: boolean = false,
     private readonly reactVersion?: string,
     private readonly clientModuleStrategy?: ClientModuleStrategy,
+    private readonly dependencyPinningCacheKey?: string,
   ) {}
 
   handle(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
@@ -44,11 +48,19 @@ export class PageHandler {
     const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
     const nonceAttr = buildNonceAttribute(nonce);
     const renderUrlJs = jsonForScript(renderUrl);
+    const transportHeadersJs = jsonForScript(
+      this.dependencyPinningCacheKey?.startsWith("on:")
+        ? { [RSC_DEPENDENCY_PINNING_HEADER]: this.dependencyPinningCacheKey }
+        : {},
+    );
     const trustedHtmlValidatorScript = buildTrustedHtmlValidatorScript();
     const hydrationData = jsonForScript({
       clientModuleStrategy: this.clientModuleStrategy,
       dev: this.isDevelopment,
       reactVersion: this.reactVersion,
+      ...(this.dependencyPinningCacheKey?.startsWith("on:")
+        ? { dependencyPinningCacheKey: this.dependencyPinningCacheKey }
+        : {}),
     });
 
     return `<!DOCTYPE html>
@@ -63,9 +75,9 @@ export class PageHandler {
 <body>
   <div id="rsc-root"></div>
   <script type="module"${nonceAttr}>
-    async function fetchPayload(url) {
+    async function fetchPayload(url, headers) {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { headers });
         if (!res.ok) return null;
         return await res.json();
       } catch (_) {
@@ -74,14 +86,32 @@ export class PageHandler {
       }
     }
 
+    function seedDependencySnapshot(payload) {
+      const pinKey = payload?.dependencyPinningCacheKey;
+      if (typeof pinKey !== 'string' || !pinKey.startsWith('on:')) return;
+
+      const hydrationDataElement = document.getElementById('${HYDRATION_DATA_ID}');
+      if (!hydrationDataElement) return;
+
+      try {
+        const hydrationState = JSON.parse(hydrationDataElement.textContent || '{}');
+        hydrationState.dependencyPinningCacheKey = pinKey;
+        hydrationDataElement.textContent = JSON.stringify(hydrationState);
+      } catch (_) {
+        // Ignore malformed hydration state; the client will fail closed on pins.
+      }
+    }
+
     ${trustedHtmlValidatorScript}
 
     (async () => {
       const renderUrl = ${renderUrlJs};
+      const transportHeaders = ${transportHeadersJs};
       const payload =
-        (await fetchPayload(renderUrl)) ??
+        (await fetchPayload(renderUrl, transportHeaders)) ??
         { html: '<p>RSC unavailable</p>', clientRefs: [] };
 
+      seedDependencySnapshot(payload);
       const safeHtml = validateTrustedHtml(String(payload.html || ''));
       document.getElementById('rsc-root').innerHTML = safeHtml;
       window.__RSC_CLIENT_REFS__ = payload.clientRefs;

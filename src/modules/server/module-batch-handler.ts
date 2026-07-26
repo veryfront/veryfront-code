@@ -9,6 +9,7 @@
  * Query params:
  * - paths: Comma-separated module paths (e.g., "pages/index.js,layouts/MainLayout.js")
  * - project: Project slug (optional, inferred from host)
+ * - pins: Required dependency-snapshot key while dependency pinning is enabled
  *
  * Response format:
  * A JavaScript module that re-exports all requested modules.
@@ -39,6 +40,7 @@ import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framewo
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { sha256Short } from "#veryfront/cache/hash.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import {
   buildSourceMissCacheKey,
   clearSourceMissCache,
@@ -46,8 +48,16 @@ import {
   rememberSourceMiss,
 } from "./module-source-resolution-cache.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 const logger = serverLogger.component("module-batch");
+const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
 /** Slow request threshold in milliseconds */
 
@@ -83,6 +93,51 @@ const FRAMEWORK_EXTENSIONS = [
   ".js", // Regular sources for dev mode
 ] as const;
 
+export function buildBatchTransformCacheKey(
+  projectKey: string,
+  modulePath: string,
+  isSSR: boolean,
+  dependencyPinningCacheKey: string,
+  contentSourceIdentity: string,
+  sourceContentHash: string,
+  moduleServerOrigin: string,
+): string {
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  if (!cacheVariant) {
+    return buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
+  }
+
+  return buildModuleTransformCacheKey(
+    `${projectKey}:source:${
+      encodeURIComponent(contentSourceIdentity)
+    }:pins:${cacheVariant}:content:${sourceContentHash}`,
+    modulePath,
+    isSSR,
+  );
+}
+
+function resolveBatchContentSourceIdentity(
+  options: Pick<
+    BatchHandlerOptions,
+    "contentSourceId" | "releaseId" | "branch" | "isLocalProject"
+  >,
+): string {
+  if (options.contentSourceId) return options.contentSourceId;
+  if (options.releaseId) return `release-${options.releaseId}`;
+  const branch = options.branch ?? "main";
+  return options.isLocalProject ? `local-${branch}` : `preview-${branch}`;
+}
+
+function isImmutableBatchContentSource(
+  options: Pick<BatchHandlerOptions, "contentSourceId" | "releaseId">,
+): boolean {
+  return !!options.releaseId ||
+    options.contentSourceId?.startsWith("release-") === true;
+}
+
 export interface BatchHandlerOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -90,6 +145,10 @@ export interface BatchHandlerOptions {
   projectId?: string;
   branch?: string | null;
   releaseId?: string | null;
+  contentSourceId?: string;
+  /** Exact request-scoped package source paired with the requested snapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  isLocalProject?: boolean;
   dev?: boolean;
   /**
    * Restrict module imports to specific directories (opt-in security).
@@ -98,6 +157,8 @@ export interface BatchHandlerOptions {
   allowedImportDirs?: string[];
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Project config whose explicit React override wins over dependency detection. */
+  config?: VeryfrontConfig;
 }
 
 /**
@@ -147,10 +208,65 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         releaseId,
         dev = false,
         allowedImportDirs,
-        reactVersion,
+        reactVersion: explicitReactVersion,
+        config,
       } = options;
 
       const projectKey = projectId || projectSlug || "default";
+      const pinValues = url.searchParams.getAll("pins");
+      const requestedPinKey = pinValues[0];
+      const hasRequestedPinKey = pinValues.length > 0;
+      const dependencySource = options.dependencyPinningSource ??
+        createDependencyPinningSource({
+          projectDir,
+          adapter,
+          isLocalProject: options.isLocalProject,
+          projectId,
+          projectSlug,
+          contentSourceId: options.contentSourceId,
+          releaseId,
+          branch,
+          config,
+        });
+      const dependencySnapshot = pinValues.length > 1 ||
+          (hasRequestedPinKey &&
+            (!requestedPinKey || !DEPENDENCY_PIN_PATTERN.test(requestedPinKey)))
+        ? undefined
+        : await resolveRequestedDependencyPinningSnapshot(
+          dependencySource,
+          requestedPinKey,
+        );
+      if (
+        !requestedPinKey &&
+        dependencySnapshot?.cacheKey.startsWith("on:")
+      ) {
+        return new Response("Dependency snapshot is required", {
+          status: 409,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+      if (!dependencySnapshot) {
+        return new Response("Unknown dependency snapshot", {
+          status: 409,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+      const dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+      const snapshotReactVersion = await resolveProjectReactVersion({
+        projectDir,
+        config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+      });
+      const reactVersion = dependencyPinningCacheKey.startsWith("on:")
+        ? snapshotReactVersion
+        : explicitReactVersion ?? snapshotReactVersion;
+      const contentSourceIdentity = resolveBatchContentSourceIdentity(options);
+      // SSR transforms embed cache busters for imported child modules. Root
+      // bytes cannot validate those transitive hashes in a mutable preview,
+      // so only immutable release sources may reuse transformed code.
+      const canUseTransformCache = !dev &&
+        isImmutableBatchContentSource(options);
 
       const userAgent = req.headers.get("user-agent") ?? "";
       const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
@@ -172,38 +288,67 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
       const results = await Promise.all(
         paths.map(async (modulePath) => {
           const moduleStart = performance.now();
-          const cacheKey = buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
-
-          if (!dev) {
-            const cachedCode = transformCache.get(cacheKey);
-            if (cachedCode != null) {
-              return {
-                path: modulePath,
-                code: cachedCode,
-                cached: true,
-                transformDurationMs: 0,
-              };
-            }
-          }
 
           try {
-            const code = await loadAndTransformModule(modulePath, projectDir, adapter, secureFs, {
-              dev,
-              ssr: isSSR,
+            // Production cache lookup deliberately happens after source
+            // resolution and reading. A path and dependency token can remain
+            // stable while release content changes underneath them.
+            const resolvedSource = await loadModuleSource(modulePath, projectDir, secureFs, {
               projectSlug,
               branch,
               projectId,
               releaseId,
               reactVersion,
             });
-
-            const transformDurationMs = performance.now() - moduleStart;
-
-            if (!code) {
+            if (!resolvedSource) {
+              const transformDurationMs = performance.now() - moduleStart;
               return { path: modulePath, code: null, error: "Not found", transformDurationMs };
             }
 
-            if (!dev) transformCache.set(cacheKey, code);
+            const sourceContentHash = await sha256Short(resolvedSource.source);
+            const cacheKey = buildBatchTransformCacheKey(
+              projectKey,
+              modulePath,
+              isSSR,
+              dependencyPinningCacheKey,
+              contentSourceIdentity,
+              sourceContentHash,
+              url.origin,
+            );
+            if (canUseTransformCache) {
+              const cachedCode = transformCache.get(cacheKey);
+              if (cachedCode != null) {
+                return {
+                  path: modulePath,
+                  code: cachedCode,
+                  cached: true,
+                  transformDurationMs: 0,
+                };
+              }
+            }
+
+            const code = await transformModule(
+              resolvedSource.source,
+              resolvedSource.sourceFile,
+              modulePath,
+              projectDir,
+              adapter,
+              secureFs,
+              {
+                dev,
+                ssr: isSSR,
+                projectSlug,
+                branch,
+                projectId,
+                reactVersion,
+                dependencyPinningCacheKey,
+                dependencyPinningDependencies: dependencySnapshot.dependencies,
+                dependencyPinningSource: dependencySource,
+                moduleServerOrigin: url.origin,
+              },
+            );
+            const transformDurationMs = performance.now() - moduleStart;
+            if (canUseTransformCache) transformCache.set(cacheKey, code);
 
             return { path: modulePath, code, cached: false, transformDurationMs };
           } catch (error) {
@@ -264,7 +409,9 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         status: HTTP_OK,
         headers: {
           "Content-Type": "application/javascript; charset=utf-8",
-          "Cache-Control": `public, max-age=${IMMUTABLE_CACHE_MAX_AGE_SECONDS}, immutable`,
+          "Cache-Control": dependencyPinningCacheKey === "off"
+            ? `public, max-age=${IMMUTABLE_CACHE_MAX_AGE_SECONDS}, immutable`
+            : "private, no-cache, max-age=0, must-revalidate",
           "X-Batch-Modules": String(successes.length),
           "X-Batch-Duration": String(Math.round(duration)),
           "X-Batch-Slow": isSlow ? "true" : "false",
@@ -281,21 +428,18 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
 /**
  * Load and transform a single module
  */
-async function loadAndTransformModule(
+async function loadModuleSource(
   modulePath: string,
   projectDir: string,
-  adapter: RuntimeAdapter,
   secureFs: ReturnType<typeof createSecureFs>,
   options: {
-    dev: boolean;
-    ssr: boolean;
     projectSlug?: string;
     branch?: string | null;
     projectId?: string;
     releaseId?: string | null;
     reactVersion?: string;
   },
-): Promise<string | null> {
+): Promise<{ source: string; sourceFile: string } | null> {
   const basePath = modulePath.replace(/\.js$/, "");
   const missCacheKey = buildSourceMissCacheKey({
     resolver: "module-batch",
@@ -314,8 +458,10 @@ async function loadAndTransformModule(
     EXTENSIONS.map((ext) => join(projectDir, basePath + ext)),
   );
   if (sourcePath) {
-    const source = await secureFs.readFile(sourcePath);
-    return transformModule(source, sourcePath, modulePath, projectDir, adapter, secureFs, options);
+    return {
+      source: await secureFs.readFile(sourcePath),
+      sourceFile: sourcePath,
+    };
   }
 
   if (!basePath.startsWith("lib/")) {
@@ -332,16 +478,10 @@ async function loadAndTransformModule(
       FRAMEWORK_EXTENSIONS.map((ext) => join(lookupDir, basePath + ext)),
     );
     if (frameworkPath) {
-      const source = await platformFs.readTextFile(frameworkPath);
-      return transformModule(
-        source,
-        frameworkPath,
-        modulePath,
-        projectDir,
-        adapter,
-        secureFs,
-        options,
-      );
+      return {
+        source: await platformFs.readTextFile(frameworkPath),
+        sourceFile: frameworkPath,
+      };
     }
   }
 
@@ -363,6 +503,10 @@ async function transformModule(
     branch?: string | null;
     projectId?: string;
     reactVersion?: string;
+    dependencyPinningCacheKey?: string;
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningSource?: DependencyPinningSourceInput;
+    moduleServerOrigin: string;
   },
 ): Promise<string> {
   return transformModuleToServable({
@@ -374,7 +518,15 @@ async function transformModule(
       projectId: options.projectId ?? projectDir,
       dev: options.dev,
       ssr: options.ssr,
+      moduleServerUrl: !options.ssr &&
+          options.dependencyPinningCacheKey?.startsWith("on:")
+        ? "/_vf_modules"
+        : undefined,
+      moduleServerOrigin: options.moduleServerOrigin,
       reactVersion: options.reactVersion,
+      dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningSource: options.dependencyPinningSource,
     },
     isSSR: options.ssr,
     ssrRewriteOptions: options.ssr
@@ -382,6 +534,7 @@ async function transformModule(
         projectSlug: options.projectSlug,
         branch: options.branch,
         projectDir,
+        projectId: options.projectId ?? options.projectSlug,
         resolveCacheBuster: createBatchSSRTargetCacheBusterResolver({
           projectDir,
           secureFs,

@@ -11,6 +11,7 @@ import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { FakeTime } from "#std/testing/time";
 
 describe("html-generation/html-shell-generator", () => {
   const mockConfig = {
@@ -288,6 +289,78 @@ describe("html-generation/html-shell-generator", () => {
         result,
         '<link rel="modulepreload" href="/_vf_modules/app/layout.js">',
       );
+    });
+
+    it("binds page and layout fallback preloads to historical snapshot A after B", async () => {
+      const common = createOptions({
+        projectDir: "/project",
+        pagePath: "/project/pages/dashboard.tsx",
+        nestedLayouts: [
+          { kind: "tsx", path: "/project/app/layout.tsx" },
+        ],
+      });
+      const snapshotB = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        {
+          ...common,
+          dependencyPinningCacheKey: "on:snapshot-b",
+          dependencyPinningDependencies: {
+            react: "19.0.0",
+            veryfront: "0.2.0",
+          },
+        },
+      );
+      const snapshotA = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        {
+          ...common,
+          dependencyPinningCacheKey: "on:snapshot-a",
+          dependencyPinningDependencies: {
+            react: "18.3.1",
+            veryfront: "0.1.10",
+          },
+        },
+      );
+
+      assertStringIncludes(
+        snapshotB,
+        '<link rel="modulepreload" href="/_vf_modules/_pins/on%3Asnapshot-b/pages/dashboard.js">',
+      );
+      assertStringIncludes(
+        snapshotA,
+        '<link rel="modulepreload" href="/_vf_modules/_pins/on%3Asnapshot-a/pages/dashboard.js">',
+      );
+      assertStringIncludes(
+        snapshotA,
+        '<link rel="modulepreload" href="/_vf_modules/_pins/on%3Asnapshot-a/app/layout.js">',
+      );
+      assertEquals(snapshotA.includes("on%3Asnapshot-b"), false);
+    });
+
+    it("keeps flag-off fallback preload output byte-identical", async () => {
+      using _time = new FakeTime(new Date("2026-07-26T00:00:00.000Z"));
+      const common = createOptions({
+        projectDir: "/project",
+        pagePath: "/project/pages/dashboard.tsx",
+        nestedLayouts: [
+          { kind: "tsx", path: "/project/app/layout.tsx" },
+        ],
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+      });
+
+      const unkeyed = await wrapInHTMLShell("<div>Content</div>", createMeta(), common);
+      const flagOff = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        { ...common, dependencyPinningCacheKey: "off" },
+      );
+
+      assertEquals(flagOff, unkeyed);
     });
 
     it("escapes in-project filenames in modulepreload attributes", async () => {

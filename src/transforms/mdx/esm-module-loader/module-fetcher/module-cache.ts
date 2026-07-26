@@ -18,6 +18,7 @@ import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-for
 import { hasUnresolvedImports } from "./nested-imports.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
+import { getMdxModuleCacheVariant } from "./cache-keys.ts";
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
@@ -51,6 +52,8 @@ export async function cacheModule(
   pathCache: Map<string, string>,
   log: Logger,
   reactVersion = REACT_DEFAULT_VERSION,
+  dependencyPinningCacheKey = "off",
+  moduleServerOrigin?: string,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
 
@@ -65,7 +68,11 @@ export async function cacheModule(
 
   const contentHash = hashString(normalizedPath + moduleCode);
   const cachePath = join(esmCacheDir, buildMdxEsmModuleFileName(contentHash));
-  const pathCacheKey = buildMdxEsmPathCacheKey(normalizedPath, reactVersion);
+  const pathCacheKey = buildMdxEsmPathCacheKey(
+    normalizedPath,
+    reactVersion,
+    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
+  );
 
   const localFs = getLocalFs();
   try {

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
+  buildImportMap,
   buildImportMapJson,
   buildRootAttributes,
   clearImportMapCache,
@@ -131,6 +132,168 @@ describe("html-generation/utils", () => {
       assertStringIncludes(result, "esm.sh");
     });
 
+    it("keeps React and Veryfront imports on historical snapshot A after B", async () => {
+      const config = { client: { cdn: { provider: "unpkg" as const } } };
+      const snapshotB = await buildImportMapJson({
+        projectDir: "/project",
+        config,
+        dependencyPinningCacheKey: "on:snapshot-b",
+        dependencyPinningDependencies: {
+          react: "^19.0.0",
+          veryfront: "^0.2.0",
+        },
+      });
+      const snapshotA = await buildImportMapJson({
+        projectDir: "/project",
+        config,
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: {
+          react: "^18.3.1",
+          veryfront: "^0.1.10",
+        },
+      });
+      const importsB = JSON.parse(snapshotB).imports as Record<string, string>;
+      const importsA = JSON.parse(snapshotA).imports as Record<string, string>;
+
+      assertStringIncludes(importsB.react!, "react@19.0.0");
+      assertStringIncludes(importsB["veryfront/chat"]!, "veryfront@0.2.0");
+      assertStringIncludes(importsA.react!, "react@18.3.1");
+      assertStringIncludes(importsA["react-dom"]!, "react-dom@18.3.1");
+      assertStringIncludes(importsA["veryfront/chat"]!, "veryfront@0.1.10");
+    });
+
+    it("binds local import-map modules to historical snapshot A after B", async () => {
+      const common = {
+        projectDir: "/project",
+        config: { client: { cdn: { provider: "unpkg" as const } } },
+        customImports: {
+          "custom-local": "/_vf_modules/custom/widget.js?mode=browser#entry",
+          "custom-absolute": "https://app.example/_vf_modules/custom/absolute.js?pins=on%3Astale",
+          "custom-protocol": "//app.example/_vf_modules/custom/protocol.js",
+          "foreign-module": "https://cdn.example/_vf_modules/custom/foreign.js",
+          "custom-remote": "https://cdn.example.com/widget.js",
+          "@/": "/_vf_modules/custom-root/",
+          "custom-prefix/": "/_vf_modules/custom-prefix/",
+          "legacy-prefix/": "/_veryfront/modules/legacy/",
+        },
+        moduleServerOrigin: "https://app.example",
+        pretty: false,
+      };
+      const snapshotB = JSON.parse(
+        await buildImportMapJson({
+          ...common,
+          dependencyPinningCacheKey: "on:snapshot-b",
+          dependencyPinningDependencies: {
+            react: "19.0.0",
+            veryfront: "0.2.0",
+          },
+        }),
+      ).imports as Record<string, string>;
+      const snapshotA = JSON.parse(
+        await buildImportMapJson({
+          ...common,
+          dependencyPinningCacheKey: "on:snapshot-a",
+          dependencyPinningDependencies: {
+            react: "18.3.1",
+            veryfront: "0.1.10",
+          },
+        }),
+      ).imports as Record<string, string>;
+
+      assertEquals(
+        snapshotB["veryfront/router"],
+        "/_vf_modules/_pins/on%3Asnapshot-b/_veryfront/react/runtime/core.js",
+      );
+      assertEquals(
+        snapshotA["veryfront/router"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js",
+      );
+      assertEquals(
+        snapshotA["custom-local"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/custom/widget.js?mode=browser#entry",
+      );
+      assertEquals(snapshotA["custom-remote"], "https://cdn.example.com/widget.js");
+      assertEquals(
+        snapshotA["custom-absolute"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/custom/absolute.js",
+      );
+      assertEquals(
+        snapshotA["custom-protocol"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/custom/protocol.js",
+      );
+      assertEquals(
+        snapshotA["foreign-module"],
+        "https://cdn.example/_vf_modules/custom/foreign.js",
+      );
+      assertEquals(
+        snapshotB["@/"],
+        "/_vf_modules/_pins/on%3Asnapshot-b/custom-root/",
+      );
+      assertEquals(
+        snapshotA["@/"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/custom-root/",
+      );
+      assertEquals(
+        snapshotA["custom-prefix/"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/custom-prefix/",
+      );
+      assertEquals(
+        snapshotA["legacy-prefix/"],
+        "/_veryfront/modules/legacy/",
+      );
+      assertEquals(snapshotA["@/"]!.endsWith("/"), true);
+      assertEquals(snapshotA["custom-prefix/"]!.endsWith("/"), true);
+    });
+
+    it("keeps flag-off local import-map URLs byte-identical", async () => {
+      const common = {
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+        customImports: {
+          "custom-local": "/_vf_modules/custom/widget.js?mode=browser#entry",
+          "@/": "/_vf_modules/custom-root/",
+          "custom-prefix/": "/_vf_modules/custom-prefix/",
+          "legacy-prefix/": "/_veryfront/modules/legacy/",
+        },
+        pretty: false,
+      };
+
+      const unkeyed = await buildImportMapJson(common);
+      const flagOff = await buildImportMapJson({
+        ...common,
+        dependencyPinningCacheKey: "off",
+      });
+      const unkeyedCacheKey = (await buildImportMap(common)).cacheKey;
+      const flagOffCacheKey = (await buildImportMap({
+        ...common,
+        moduleServerOrigin: "https://app.example",
+        dependencyPinningCacheKey: "off",
+      })).cacheKey;
+
+      assertEquals(flagOff, unkeyed);
+      assertEquals(flagOffCacheKey, unkeyedCacheKey);
+    });
+
+    it("pins custom local modules in bundled import maps", async () => {
+      const result = await buildImportMapJson({
+        config: { client: { moduleResolution: "bundled" } },
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: { react: "18.3.1" },
+        customImports: {
+          "custom-local": "/_vf_modules/custom/widget.js",
+        },
+        pretty: false,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(
+        imports["custom-local"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/custom/widget.js",
+      );
+    });
+
     it("should collapse head/router/context onto one core runtime module", async () => {
       const result = await buildImportMapJson();
       const imports = JSON.parse(result).imports as Record<string, string>;
@@ -160,6 +323,28 @@ describe("html-generation/utils", () => {
       assertEquals(imports["veryfront/markdown"], "/_veryfront/lib/markdown.js");
       assertEquals(imports["veryfront/mdx"], "/_veryfront/lib/mdx.js");
       assertEquals(imports["veryfront/workflow"], "/_veryfront/lib/workflow.js");
+    });
+
+    it("binds self-hosted library modules to the document snapshot", async () => {
+      const result = await buildImportMapJson({
+        config: { client: { moduleResolution: "self-hosted" } },
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+        pretty: false,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(
+        imports["veryfront/chat"],
+        "/_veryfront/lib/chat.js?pins=on%3Asnapshot-a",
+      );
+      assertEquals(
+        imports["veryfront/workflow"],
+        "/_veryfront/lib/workflow.js?pins=on%3Asnapshot-a",
+      );
     });
 
     it("should map non-default CDN providers to published npm ESM files", async () => {
@@ -375,6 +560,45 @@ describe("html-generation/utils", () => {
         `/_vf_modules/_veryfront/react/runtime/core.js?vf_release=release-id&vf_runtime=${VERYFRONT_VERSION}`,
       );
       assertEquals(imports["@/"], "/_vf_modules/");
+    });
+
+    it("preserves release query params when pinning local import-map aliases", async () => {
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "0.1.810",
+        sourceContentHash: "source",
+        createdAt: "2026-06-15T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {},
+        css: [],
+        routes: {},
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+
+      const result = await buildImportMapJson({
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+        pretty: false,
+        releaseAssetManifest: manifest,
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(
+        imports["veryfront/router"],
+        `/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js?vf_release=release-id&vf_runtime=${VERYFRONT_VERSION}`,
+      );
+      assertEquals(
+        imports["@/"],
+        "/_vf_modules/_pins/on%3Asnapshot-a/",
+      );
     });
 
     it("refreshes cached import maps when project package versions change", async () => {

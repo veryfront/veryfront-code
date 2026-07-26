@@ -13,6 +13,8 @@ interface LRUOptions {
   maxSizeBytes?: number;
   ttlMs?: number;
   cleanupIntervalMs?: number;
+  /** Called whenever an entry leaves the cache, including delete/clear/expiry. */
+  onEvict?: LRUCacheOptions["onEvict"];
 }
 
 export class LRUCache<K, V> {
@@ -26,6 +28,7 @@ export class LRUCache<K, V> {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
       maxSizeBytes: options.maxSizeBytes,
       ttlMs: options.ttlMs,
+      onEvict: options.onEvict,
     };
 
     this.adapter = new LRUCacheAdapter(adapterOptions);

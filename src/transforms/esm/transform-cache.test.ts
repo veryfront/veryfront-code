@@ -226,6 +226,22 @@ describe("transforms/esm/transform-cache", () => {
       const result = await getCachedTransformAsync("manifest-key");
       assertEquals(result?.bundleManifestId, "manifest-abc");
     });
+
+    it("stores unresolved dependency observations for cache-hit replay", async () => {
+      await setCachedTransformAsync(
+        "dependency-observation-key",
+        "const x = 1;",
+        "hash1",
+        300,
+        undefined,
+        [{ packageName: "zod", declaration: "^4" }],
+      );
+
+      const result = await getCachedTransformAsync("dependency-observation-key");
+      assertEquals(result?.dependencyResolutionObservations, [
+        { packageName: "zod", declaration: "^4" },
+      ]);
+    });
   });
 
   describe("getOrComputeTransform", () => {
@@ -263,6 +279,27 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(computed, false);
       assertEquals(result.code, "first-value");
       assertEquals(result.cacheHit, true);
+    });
+
+    it("publishes and returns dependency observations across cache hits", async () => {
+      const observations = [{ packageName: "zod", declaration: "^4" }];
+      const first = await getOrComputeTransform(
+        "observation-hit-key",
+        async () => "first-value",
+        300,
+        undefined,
+        undefined,
+        undefined,
+        () => observations,
+      );
+      assertEquals(first.dependencyResolutionObservations, observations);
+
+      const second = await getOrComputeTransform(
+        "observation-hit-key",
+        async () => "unexpected-value",
+      );
+      assertEquals(second.cacheHit, true);
+      assertEquals(second.dependencyResolutionObservations, observations);
     });
 
     it("recomputes when the cached entry validator rejects a cache hit", async () => {

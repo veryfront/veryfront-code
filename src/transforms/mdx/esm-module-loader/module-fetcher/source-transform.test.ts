@@ -24,6 +24,8 @@ describe("module-fetcher/source-transform", () => {
       normalizedPath: "_vf_modules/app/page.tsx",
       projectSlug: "docs",
       reactVersion: "19.1.1",
+      moduleServerOrigin: "https://preview.example",
+      dependencyPinningCacheKey: "on:pins",
       adapter,
       log: noopLog,
       transformToEsm: (source, actualFilePath, projectDir, receivedAdapter, options) => {
@@ -41,6 +43,8 @@ describe("module-fetcher/source-transform", () => {
           dev: true,
           ssr: true,
           reactVersion: "19.1.1",
+          moduleServerOrigin: "https://preview.example",
+          dependencyPinningCacheKey: "on:pins",
         });
         return Promise.resolve(`import React from "https://esm.sh/react";\nexport default React;`);
       },
