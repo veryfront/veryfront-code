@@ -27,8 +27,8 @@ Generated-only changes do not count as module review evidence.
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
 | Closed                         |    24 |      41.4% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    33 |      56.9% | Substantive recovered or current work exists        |
+| Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
+| Touched, revalidation required |    32 |      55.2% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -66,6 +66,7 @@ stricter closure count.
 ### Deep reviewed, fixes pending
 
 - `resource`
+- `utils`
 
 ### Touched, revalidation required
 
@@ -98,7 +99,6 @@ stricter closure count.
 - `tool`
 - `transforms`
 - `trigger`
-- `utils`
 - `webhook`
 - `workflow`
 - `index.ts`
@@ -141,11 +141,13 @@ temporary allocation, path/cwd dependencies, package declarations, and direct
 consumers were remediated and revalidated. `types` is closed after its shared
 server and RSC contracts, runtime consumers, package surface, dependency
 direction, and type-level regressions were remediated and revalidated.
-`resource` has received a deep
-current-state review and substantial remediation, but remains open while its
-cache-policy breaking-change decision is unresolved. Each closure requires a
-complete consumer map, deep module-level review, adversarial boundary tests,
-public-contract documentation, and repository-wide static verification.
+`resource` and `utils` have received deep current-state reviews and substantial
+remediation. Resource remains open while its cache-policy breaking-change
+decision is unresolved. Utils remains open while its future-lockfile,
+malformed-import-map, and default-memoization compatibility decisions are
+unresolved. Each closure requires a complete consumer map, deep module-level
+review, adversarial boundary tests, public-contract documentation, and
+repository-wide static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
@@ -2352,5 +2354,107 @@ Reproducible checkpoint evidence:
   every configured source and browser entrypoint typecheck.
 
 No unresolved critical or high-confidence Types production risk remains.
+
+### Utils review checkpoint
+
+The `utils` audit unit owns the published `veryfront/utils` foundation surface
+and its internal runtime helpers: logging and redaction, bounded caches,
+concurrency primitives, environment and lockfile loading, hashing and IDs,
+bundle-manifest persistence, memory diagnostics, path and response helpers,
+runtime detection, and shared constants. Its consumers span nearly every
+top-level unit, so the review covered public contracts, browser/server
+separation, timer and memory domains, error semantics, lifecycle cleanup,
+dependency direction, and the directly affected MDX, rendering, cache, and
+module-loader integrations.
+
+The current non-breaking Utils findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** file, environment, import-map,
+  lockfile, and remote-module helpers accepted unbounded or partially parsed
+  input. The source was trusting upstream size checks and permissive numeric or
+  structural parsing. The consequence was memory amplification, traversal
+  through environment mode names, corrupt cached state, and truthy
+  authorization callbacks bypassing fail-closed intent. Fixed character,
+  entry, dependency, timer, and response budgets now apply before expensive
+  work; parsing is complete and atomic; URL policy accepts only literal
+  `true`; failed mutations restore the previous in-memory state.
+- **Symptom -> Source -> Consequence -> Remedy:** queue, singleflight, named
+  semaphore, circuit-breaker, and worker-pool registries could grow without a
+  finite admission boundary, and `parallelMap` rejected while sibling work from
+  the same call continued in the background. The source was unbounded defaults
+  and `Promise.all` early rejection. The consequence was process memory growth,
+  cross-request work after caller settlement, and configuration aliasing.
+  Registries and queues now have validated finite budgets, same-key followers
+  retain singleflight semantics, breaker configuration is identity-safe, and
+  parallel workers settle as one structured operation before the first
+  observed error is rethrown.
+- **Symptom -> Source -> Consequence -> Remedy:** the in-memory bundle manifest
+  bounded only entry counts and accepted malformed runtime values or incomplete
+  replacement stores. The source was count-only LRU enforcement and
+  compile-time interface trust. The consequence was tens of gigabytes of
+  retained code/metadata, corrupt aggregate statistics, dangling reverse
+  indexes, and late failures after a global store swap. Configurable aggregate
+  UTF-8 budgets, bounded metadata snapshots, exact code-byte accounting,
+  transactional replacement, coordinated index eviction, saturated statistics,
+  and structural store validation now fail before global state changes.
+- **Symptom -> Source -> Consequence -> Remedy:** cache and timer utilities
+  mixed incompatible clock domains, accepted JavaScript timer overflow, or
+  silently clamped invalid thresholds. The consequence was premature expiry,
+  hot-loop timers, misleading memory alerts, and hard-to-reproduce cache
+  behavior. TTL arithmetic now uses one clock domain, timer inputs are
+  normalized against the portable runtime maximum, profiler thresholds are
+  parsed as one coherent pair, and invalid programmatic thresholds reject
+  instead of being rewritten.
+- **Symptom -> Source -> Consequence -> Remedy:** lower-level Utils code owned
+  CDN policy and reached upward through a logger trace bridge, while generated
+  framework-source classification omitted current modules. The consequence was
+  inverted dependency ownership, initialization coupling, and incomplete
+  source-boundary decisions. CDN ownership moved to the correct constants
+  layer, tracing now registers through the logger's lower-level hook, the
+  bridge was removed, and framework-source classification derives from the
+  complete current module set.
+- **Symptom -> Source -> Consequence -> Remedy:** request IDs, generated IDs,
+  layout cache identities, Redis delays, terminal line-width scans, and memory
+  cache telemetry trusted values that were ambiguous, oversized, or unsafe to
+  aggregate. The consequence was collisions, log injection, timer overflow,
+  argument-limit crashes, and corrupted diagnostics. Inputs and output sizes
+  now have explicit bounds, layout identities use collision-resistant hashes,
+  large scans iterate without variadic spread, and telemetry callbacks are
+  snapshotted and validated behind a bounded registry.
+
+Three compatibility decisions remain before formal closure:
+
+- A lockfile written by a future Veryfront version currently warns and is
+  treated as empty. A subsequent old binary can therefore overwrite data it
+  does not understand. The recommended change is to reject reads and mutations
+  until a compatible binary or explicit migration handles the file.
+- A malformed browser import map currently warns and becomes an empty map,
+  silently switching client-module ownership and CDN resolution. The
+  recommended change is to throw before strategy selection.
+- Published `MemoCache`, `memoize`, and `memoizeAsync` retain results without a
+  default eviction budget. The recommended change is a finite LRU default plus
+  bounded distinct in-flight async keys, with explicit options for callers that
+  need a different budget.
+
+Reproducible checkpoint evidence:
+
+- The complete Utils gate passes 76 suites and 1,105 nested steps with zero
+  failures. The Utils, module-loader semaphore, and MDX cache-adapter matrix
+  passes 78 suites and 1,171 nested steps with zero failures.
+- The bundle-manifest initializer, store, MDX cache adapter, and renderer
+  integration matrix passes 8 suites and 99 nested steps with zero failures.
+- Changed entrypoints pass `deno check`; repository lint and formatting pass
+  across 4,230 and 4,323 files respectively.
+- Core dependencies and dependency boundaries report zero violations. The
+  module-boundary ratchet passes without growth beyond 75 baselined broad
+  imports and two baselined cycle edges.
+- `deno task docs` regenerates all 39 API-reference groups.
+  `deno task docs:validate` validates 66 guides, all configured guide examples,
+  and all 739 documentation links.
+
+No additional unresolved critical or high-confidence Utils risk is known. The
+three listed changes alter observable published behavior and therefore remain
+explicit decisions rather than being hidden inside an otherwise
+backward-compatible hardening checkpoint.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
