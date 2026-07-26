@@ -118,6 +118,31 @@ export function resolveRemoteScheduleTarget(run: Run, fallback: TriggerTarget): 
   return { kind, id };
 }
 
+async function runRemoteSchedule(projectDir: string, opts: ScheduleArgs): Promise<void> {
+  const startedAt = Date.now();
+  const cliConfig = await resolveConfigWithAuth(projectDir);
+  const client = createRunsClient({
+    apiUrl: cliConfig.apiUrl,
+    authToken: cliConfig.apiToken,
+    projectReference: cliConfig.projectSlug,
+  });
+  const accepted = await client.createScheduleRunFromSource({
+    sourceTriggerId: opts.id,
+    idempotencyKey: `schedule-cli:${crypto.randomUUID()}`,
+  });
+  const remoteRun = await waitForRemoteScheduleRun(
+    client,
+    accepted,
+  );
+  await outputTriggerRun({
+    command: "schedule",
+    triggerId: opts.id,
+    target: resolveRemoteScheduleTarget(remoteRun, accepted.target),
+    output: formatRemoteScheduleRunOutput(remoteRun),
+    durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
+  });
+}
+
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
   const projectDir = Deno.cwd();
@@ -126,34 +151,14 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       "Invalid schedule arguments: remote runs use the source already pushed to Veryfront and do not accept --input.",
     );
   }
+  if (opts.remote) {
+    await runRemoteSchedule(projectDir, opts);
+    exitProcess(0);
+    return;
+  }
+
   await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey, projectId } = context;
-    if (opts.remote) {
-      const startedAt = Date.now();
-      const cliConfig = await resolveConfigWithAuth(projectDir);
-      const client = createRunsClient({
-        apiUrl: cliConfig.apiUrl,
-        authToken: cliConfig.apiToken,
-        projectReference: cliConfig.projectSlug,
-      });
-      const accepted = await client.createScheduleRunFromSource({
-        sourceTriggerId: opts.id,
-        idempotencyKey: `schedule-cli:${crypto.randomUUID()}`,
-      });
-      const remoteRun = await waitForRemoteScheduleRun(
-        client,
-        accepted,
-      );
-      await outputTriggerRun({
-        command: "schedule",
-        triggerId: opts.id,
-        target: resolveRemoteScheduleTarget(remoteRun, accepted.target),
-        output: formatRemoteScheduleRunOutput(remoteRun),
-        durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
-      });
-      return;
-    }
-
     const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
     const result = await discoverSchedules({ projectDir, adapter, config });
     if (result.errors.length > 0) {

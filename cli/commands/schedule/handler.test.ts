@@ -127,7 +127,7 @@ describe("schedule command", () => {
     clearProjectAgentRuntimeRegistries();
   });
 
-  it("runs a pushed schedule without importing broken local schedule files", async () => {
+  it("runs a pushed schedule without importing local runtime source", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-remote-" });
     const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-remote-config-home-" });
     const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -160,7 +160,7 @@ describe("schedule command", () => {
       await Deno.mkdir(`${projectDir}/schedules`, { recursive: true });
       await Deno.writeTextFile(
         `${projectDir}/veryfront.config.ts`,
-        'export default { projectSlug: "dreamy-haven", fs: { type: "local" } };\n',
+        'throw new Error("remote schedules must not import local runtime config");\n',
       );
       await Deno.writeTextFile(
         `${projectDir}/veryfront.json`,
@@ -216,8 +216,8 @@ describe("schedule command", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(requests.map((request) => request.url), [
-        "https://api.from-config.test/projects/dreamy-haven/schedules?status=active&source_trigger_id=process-job-submissions",
-        `https://api.from-config.test/projects/dreamy-haven/schedules/${scheduleId}/runs`,
+        "https://api.from-config.test/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions",
+        `https://api.from-config.test/projects/json-only-project/schedules/${scheduleId}/runs`,
         `https://api.from-config.test/runs/${encodeURIComponent(runId)}`,
       ]);
       assertEquals(
