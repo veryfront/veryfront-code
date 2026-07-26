@@ -142,6 +142,38 @@ describe("MockAdapter", () => {
       const entries = await collectDirEntries(adapter.fs.readDir("/empty"));
       assertEquals(entries.length, 0);
     });
+
+    it("lists root files and explicit empty directories", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/root.txt", "root");
+      adapter.fs.directories.add("/empty");
+
+      const entries = await collectDirEntries(adapter.fs.readDir("///"));
+      assertEquals(
+        entries.some((entry) => entry.name === "root.txt" && entry.isFile),
+        true,
+      );
+      assertEquals(
+        entries.some((entry) => entry.name === "empty" && entry.isDirectory),
+        true,
+      );
+    });
+
+    it("rejects missing paths and file paths", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/file.txt", "content");
+
+      await assertRejects(
+        () => collectDirEntries(adapter.fs.readDir("/missing")),
+        Error,
+        "Path not found",
+      );
+      await assertRejects(
+        () => collectDirEntries(adapter.fs.readDir("/file.txt")),
+        TypeError,
+        "not a directory",
+      );
+    });
   });
 
   describe("fs.stat", () => {
@@ -153,6 +185,13 @@ describe("MockAdapter", () => {
       assertEquals(stat.isFile, true);
       assertEquals(stat.isDirectory, false);
       assertEquals(stat.size, 5);
+    });
+
+    it("reports UTF-8 byte size rather than UTF-16 code units", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/unicode.txt", "€");
+
+      assertEquals((await adapter.fs.stat("/unicode.txt")).size, 3);
     });
 
     it("should stat a directory", async () => {
@@ -201,6 +240,15 @@ describe("MockAdapter", () => {
       assertEquals(adapter.fs.directories.has("/a/b"), true);
       assertEquals(adapter.fs.directories.has("/a/b/c"), true);
     });
+
+    it("preserves relative paths when creating parents recursively", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("a/b", { recursive: true });
+
+      assertEquals(adapter.fs.directories.has("a"), true);
+      assertEquals(adapter.fs.directories.has("a/b"), true);
+      assertEquals(adapter.fs.directories.has("/a"), false);
+    });
   });
 
   describe("fs.remove", () => {
@@ -244,6 +292,7 @@ describe("MockAdapter", () => {
       const tempDir = await adapter.fs.makeTempDir("test");
 
       assertEquals(tempDir.startsWith("/tmp/test"), true);
+      assertEquals(await adapter.fs.exists(tempDir), true);
     });
   });
 
