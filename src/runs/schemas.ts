@@ -102,6 +102,33 @@ export const getCreateRunResponseSchema = defineSchema((v) =>
   })
 );
 
+export const getScheduleRunCreateResponseSchema = defineSchema((v) =>
+  v.object({
+    run_id: v.string(),
+    run_execution_id: v.string(),
+    schedule_id: v.string(),
+  })
+);
+
+export const getScheduleReferenceListSchema = defineSchema((v) =>
+  v.object({
+    schedules: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        status: v.enum(["active", "paused", "deleting"] as const),
+        target: v.object({
+          kind: v.enum(["task", "workflow", "agent"] as const),
+          id: v.string(),
+        }),
+        definition_source: v.enum(["manual", "source"] as const),
+        source_trigger_id: v.string().nullable(),
+        timeout_seconds: v.number().int(),
+      }),
+    ),
+  })
+);
+
 export const getCancelRunResponseSchema = defineSchema((v) =>
   v.object({
     cancelled: v.boolean(),
@@ -145,6 +172,10 @@ export const getRunListSchema = defineSchema((v) =>
 export const RunSchema = lazySchema(getRunSchema);
 /** Zod schema for a create-run response. */
 export const CreateRunResponseSchema = lazySchema(getCreateRunResponseSchema);
+/** Zod schema for a schedule-triggered create-run response. */
+export const ScheduleRunCreateResponseSchema = lazySchema(getScheduleRunCreateResponseSchema);
+/** Zod schema for the schedule references needed to trigger source schedules. */
+export const ScheduleReferenceListSchema = lazySchema(getScheduleReferenceListSchema);
 /** Zod schema for a cancel-run response. */
 export const CancelRunResponseSchema = lazySchema(getCancelRunResponseSchema);
 /** Zod schema for a run event. */
@@ -170,6 +201,10 @@ export type RunExecutionError = InferSchema<ReturnType<typeof getRunExecutionErr
 export type Run = InferSchema<ReturnType<typeof getRunSchema>>;
 /** Response returned when a run is accepted. */
 export type CreateRunResponse = InferSchema<ReturnType<typeof getCreateRunResponseSchema>>;
+/** Response returned when a schedule-triggered run is accepted. */
+export type ScheduleRunCreateResponse = InferSchema<
+  ReturnType<typeof getScheduleRunCreateResponseSchema>
+>;
 /** Response returned when a run is cancelled. */
 export type CancelRunResponse = InferSchema<ReturnType<typeof getCancelRunResponseSchema>>;
 /** Event emitted by a run. */
