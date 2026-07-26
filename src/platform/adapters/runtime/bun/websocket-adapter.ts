@@ -7,7 +7,7 @@ import {
   type WebSocketUpgradeResponse,
 } from "../../base.ts";
 import { DeferredWebSocket } from "../shared/deferred-websocket.ts";
-import { resolvePortableWebSocketUpgradeHeaders } from "../shared/websocket-upgrade.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "../../../compat/http/websocket-upgrade-options.ts";
 import type {
   BunServer,
   BunServerWebSocket,

@@ -1,5 +1,5 @@
 import type { ServerAdapter, WebSocketUpgrade, WebSocketUpgradeOptions } from "../../base.ts";
-import { resolvePortableWebSocketUpgradeHeaders } from "../shared/websocket-upgrade.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "../../../compat/http/websocket-upgrade-options.ts";
 import type { CloudflareResponseInit, WebSocketPair as CloudflareWebSocketPair } from "./types.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 

@@ -5,7 +5,7 @@ import {
   type WebSocketUpgradeOptions,
 } from "../../base.ts";
 import { DeferredWebSocket } from "../shared/deferred-websocket.ts";
-import { resolvePortableWebSocketUpgradeHeaders } from "../shared/websocket-upgrade.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "../../../compat/http/websocket-upgrade-options.ts";
 import type { WSMessageData, WSWebSocket } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";

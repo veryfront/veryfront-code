@@ -2838,9 +2838,72 @@ Current Node/lifecycle verification evidence:
   architecture ratchet, 66 public guides, all 739 documentation links, and all
   configured source and browser entrypoint typechecks.
 
-Platform remains open. The next wave must complete the Deno, hosted-adapter,
-and residual adapter review before formal closure. Agent and Server remain
-listed for their own module-level revalidation because this checkpoint verified
-only their Platform contract consumers.
+The Deno runtime and native-compatibility wave is also complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the Deno adapter kept
+  environment, filesystem, HTTP, shell, and WebSocket behavior in one mutable
+  504-line implementation; server addresses echoed the requested port; an
+  already-aborted signal still opened a listener; shutdown owned only the
+  caller's signal and tracked only the latest server. The consequence was
+  false readiness, leaked listeners, nondeterministic teardown, and an adapter
+  whose capability contract callers could mutate. Runtime responsibilities now
+  live in focused adapters, capabilities are frozen, bound addresses come from
+  the native server, startup fails before binding on pre-abort, every server is
+  registered, and one internally owned, retryable shutdown barrier handles
+  callback failure, abort, direct stop, and adapter shutdown.
+- **Symptom -> Source -> Consequence -> Remedy:** Deno WebSocket upgrades
+  accepted invalid or unoffered protocols, duplicate commits, and non-finite or
+  negative timeouts, while silently discarding custom response headers that
+  the native API cannot apply. The source was a runtime-specific partial
+  validator and optimistic forwarding to a permissive native API. The
+  consequence was handshake intent diverging from the wire contract. The
+  portable validator now lives in the HTTP compatibility boundary, exposes
+  explicit runtime capabilities, validates protocol and timeout input before
+  native coercion, rejects duplicate request upgrades, and fails closed for
+  unsupported Deno response headers.
+- **Symptom -> Source -> Consequence -> Remedy:** Deno file watching polled
+  recursive snapshots every 200 ms, silently tolerated missing roots, and had
+  no deterministic installation, completion, or concurrent-iteration
+  contract. The consequence was delayed or lost invalidation, needless I/O,
+  path mismatches on canonicalized macOS roots, and orphaned iterator waiters.
+  The adapter now uses `Deno.watchFs`, exposes `ready` and `done` barriers,
+  maps canonical native event paths back to caller-visible roots, rejects
+  concurrent `next()`, and closes native resources on abort, return, failure,
+  and explicit close.
+- **Symptom -> Source -> Consequence -> Remedy:** the legacy Deno HTTP
+  compatibility server repeated the requested-port and external-signal
+  lifecycle faults, and the crypto facade widened typed-array buffers from
+  `ArrayBuffer` to `ArrayBufferLike`. The consequence was incorrect ephemeral
+  addresses, unreusable or leaked compatibility servers, and strict
+  cross-runtime type failures. The compatibility server now uses the same
+  fail-closed address and owned-shutdown rules, while `getRandomValues`
+  preserves the caller's concrete typed-array type.
+
+Current Deno verification evidence:
+
+- Regression-first tests reproduced mutable capability records, incorrect
+  ephemeral addresses, pre-aborted listener creation, invalid timeout
+  acceptance, silently dropped response headers, polling-watch lifecycle
+  gaps, and external-signal shutdown ownership before remediation.
+- The complete Deno Platform suite passes 190 suites and 2,496 nested steps
+  with zero failures. A separate full Platform discovery/typecheck checks every
+  test file with all 190 suites filtered out and reports zero type failures.
+- Every supported Node Platform harness shard passes, totaling 1,646 tests
+  with zero failures.
+- Bun 1.3.14 passes 57 affected runtime and HTTP compatibility tests with zero
+  failures; its native filesystem watcher integration also passes five
+  consecutive repetitions.
+- Direct Platform lint checks 353 files, and the module-boundary ratchet passes
+  with 64 baselined broad imports and two baselined cyclic edges.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,348
+  configured files, lint across 4,255 configured source files, every style and
+  architecture ratchet, the reduced 20-test skip baseline, 66 public guides,
+  all 739 documentation links, and every configured source and browser
+  entrypoint typecheck.
+
+Platform remains open. The next wave must complete the hosted-adapter and
+residual adapter review before formal closure. Agent and Server remain listed
+for their own module-level revalidation because this checkpoint verified only
+their Platform contract consumers.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

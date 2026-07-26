@@ -1,4 +1,3 @@
-import type { RuntimeId, WebSocketUpgradeOptions } from "../../base.ts";
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 
 const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -10,10 +9,19 @@ const MANAGED_WEBSOCKET_HEADERS = new Set([
   "upgrade",
 ]);
 
+export interface PortableWebSocketUpgradeOptions {
+  readonly protocol?: string;
+  readonly headers?: Headers | Record<string, string>;
+  readonly idleTimeout?: number;
+}
+
 export interface PortableWebSocketUpgradeConfig {
-  readonly platform: RuntimeId;
+  readonly platform: string;
   readonly runtimeName: string;
-  readonly unsupportedIdleTimeoutDetail: string;
+  readonly supportsNonzeroIdleTimeout?: boolean;
+  readonly unsupportedIdleTimeoutDetail?: string;
+  readonly supportsResponseHeaders?: boolean;
+  readonly unsupportedResponseHeadersDetail?: string;
 }
 
 function invalidArgument(
@@ -60,11 +68,11 @@ function parseOfferedProtocols(
  * Native transports remain responsible for the RFC 6455 handshake itself.
  * This helper owns the behavior shared by runtimes: fail-closed request
  * detection, application header isolation, explicit subprotocol selection,
- * and rejection of unsupported per-connection idle timeouts.
+ * and deterministic idle-timeout validation.
  */
 export function resolvePortableWebSocketUpgradeHeaders(
   request: Request,
-  options: WebSocketUpgradeOptions = {},
+  options: PortableWebSocketUpgradeOptions = {},
   config: PortableWebSocketUpgradeConfig,
 ): Headers {
   if (request.headers.get("upgrade")?.trim().toLowerCase() !== "websocket") {
@@ -83,9 +91,14 @@ export function resolvePortableWebSocketUpgradeHeaders(
       `${config.runtimeName} WebSocket idleTimeout must be a non-negative finite number`,
     );
   }
-  if (options.idleTimeout !== undefined && options.idleTimeout !== 0) {
+  if (
+    options.idleTimeout !== undefined &&
+    options.idleTimeout !== 0 &&
+    config.supportsNonzeroIdleTimeout !== true
+  ) {
     throw NOT_SUPPORTED.create({
-      detail: config.unsupportedIdleTimeoutDetail,
+      detail: config.unsupportedIdleTimeoutDetail ??
+        `${config.runtimeName} does not support per-connection WebSocket idle timeouts`,
       context: {
         platform: config.platform,
         operation: "upgradeWebSocket",
@@ -112,6 +125,19 @@ export function resolvePortableWebSocketUpgradeHeaders(
         { header: name },
       );
     }
+  }
+  if (
+    config.supportsResponseHeaders === false &&
+    !headers.keys().next().done
+  ) {
+    throw NOT_SUPPORTED.create({
+      detail: config.unsupportedResponseHeadersDetail ??
+        `${config.runtimeName} does not support custom WebSocket response headers`,
+      context: {
+        platform: config.platform,
+        operation: "upgradeWebSocket",
+      },
+    });
   }
 
   const offeredProtocols = parseOfferedProtocols(request, config);

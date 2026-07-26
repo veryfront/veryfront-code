@@ -34,10 +34,13 @@ Primary source areas:
 - A WebSocket upgrade is authorized by the normal request handler before the
   transport commits it. Node and Bun use an explicit non-DOM upgrade signal;
   Cloudflare and Deno return their runtime-native upgrade responses.
-- Portable WebSocket options select at most one client-offered subprotocol and
-  can add application response headers. Runtime-managed handshake headers are
-  rejected. Node, Bun, and Cloudflare accept `idleTimeout: 0` as the portable
-  no-timeout sentinel and reject unsupported nonzero per-connection values.
+- Portable WebSocket options select at most one client-offered subprotocol.
+  Node, Bun, and Cloudflare can add application response headers; Deno's native
+  upgrade API cannot, so its adapter rejects them instead of silently dropping
+  them. Runtime-managed handshake headers are rejected. Node, Bun, and
+  Cloudflare accept `idleTimeout: 0` as the portable no-timeout sentinel and
+  reject unsupported nonzero per-connection values. Deno supports any
+  non-negative finite timeout accepted by its native per-connection API.
 - Local runtime adapters own every server returned by `serve()`.
   `Server.stop()` unregisters that server; adapter `shutdown()` retires all
   remaining servers, shares concurrent shutdown calls, and keeps failed
@@ -46,6 +49,10 @@ Primary source areas:
   preserves text and binary frame identity, and force-closes active HTTP and
   WebSocket transports during shutdown so a handler waiting on request abort
   cannot deadlock the server.
+- Deno rejects already-aborted starts before binding, reports the native bound
+  address for ephemeral ports, and owns an internal abort signal even when a
+  caller supplies one. This keeps direct stop, adapter shutdown, and startup
+  cleanup retryable without mutating the caller's signal.
 - Bun upgrades must use the original `Request` received by `Bun.serve`.
   `server.upgrade()` may invoke the native open callback synchronously, so
   consumers inspect `readyState` before waiting for `open`.
@@ -53,6 +60,9 @@ Primary source areas:
   Shared Node/Bun watchers own native handles, close on iterator return or
   abort, expose `ready` as the installation barrier, and expose `done` as the
   teardown barrier.
+- Deno uses `Deno.watchFs` rather than polling snapshots. Native event paths are
+  mapped back to the caller-visible watch roots, concurrent iterator reads fail
+  explicitly, and `ready`/`done` provide installation and teardown barriers.
 
 ## Change checks
 

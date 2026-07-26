@@ -211,7 +211,7 @@ describe("NodeServer lifecycle", () => {
       ["chat", "hmr"],
     );
     let handshakeHeader: string | string[] | undefined;
-    client.once("upgrade", (response) => {
+    client.once("upgrade", (response: import("node:http").IncomingMessage) => {
       handshakeHeader = response.headers["x-veryfront-handshake"];
     });
 

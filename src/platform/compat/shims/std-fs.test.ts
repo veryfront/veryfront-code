@@ -92,7 +92,7 @@ describe("platform/compat/shims/std-fs", () => {
       }
 
       assertEquals(entries.length, 1);
-      assertEquals(entries[0].name, "file.ts");
+      assertEquals(entries[0]!.name, "file.ts");
       await Deno.remove(tmpDir, { recursive: true });
     });
 

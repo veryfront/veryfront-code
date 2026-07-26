@@ -156,7 +156,9 @@ Portable WebSocket upgrade options preserve application response headers and
 select only an explicitly chosen client-offered subprotocol. The runtime owns
 `Connection`, `Upgrade`, and `Sec-WebSocket-*` handshake headers. Node, Bun, and
 Cloudflare accept `idleTimeout: 0` and fail closed for unsupported nonzero
-per-connection timeouts.
+per-connection timeouts. Deno supports native non-negative finite
+per-connection timeouts but cannot apply custom response headers, so its
+adapter rejects those headers rather than discarding them.
 
 `FileWatcher.close()` is idempotent. Breaking out of a `for await` loop closes
 the underlying watcher automatically. Callers that mutate files immediately
@@ -164,7 +166,9 @@ after calling `watch()` should await `watcher.ready`; callers that need a
 shutdown barrier should await `watcher.done`. Node.js 18 on platforms without
 native recursive watch uses a managed non-recursive directory tree, while Bun
 uses its documented Node-compatible `node:fs.watch` implementation rather than
-a fictional `Bun.watch` global.
+a fictional `Bun.watch` global. Deno uses `Deno.watchFs`, maps native canonical
+event paths back to the roots supplied by the caller, and rejects concurrent
+iterator reads.
 
 ## Compatibility Layer
 

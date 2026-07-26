@@ -204,6 +204,16 @@ const adapter = new DenoAdapter();
 // KV store support
 ```
 
+Deno server startup rejects an already-aborted signal before opening a
+listener and reports the actual native address when `port: 0` is used. Returned
+servers own their shutdown signal, so direct stop and adapter-wide shutdown
+close active work without mutating a caller-owned controller. WebSocket
+upgrades select only an explicitly offered subprotocol and accept Deno's
+non-negative finite per-connection idle timeout. Deno cannot attach custom
+headers to its native status-101 response, so those options fail explicitly.
+Filesystem watching uses `Deno.watchFs`; `ready` and `done` delimit native
+installation and teardown, and event paths retain the caller-visible root.
+
 ### Node.js
 
 ```typescript

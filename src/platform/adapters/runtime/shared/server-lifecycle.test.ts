@@ -60,7 +60,7 @@ describe("platform/adapters/runtime/shared/server-lifecycle", () => {
         return {
           addr: { hostname: "localhost", port: 3000 + index },
           stop: async () => {
-            stopCalls[index]++;
+            stopCalls[index] = (stopCalls[index] ?? 0) + 1;
           },
         };
       }, registry);

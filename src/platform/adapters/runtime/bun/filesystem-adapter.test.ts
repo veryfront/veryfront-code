@@ -71,11 +71,4 @@ describe("BunFileSystemAdapter", () => {
       "only be used in the Bun runtime",
     );
   });
-
-  it("does not reference the nonexistent Bun.watch API", async () => {
-    const source = await Deno.readTextFile(
-      new URL("./filesystem-adapter.ts", import.meta.url),
-    );
-    assertEquals(source.includes("Bun.watch"), false);
-  });
 });

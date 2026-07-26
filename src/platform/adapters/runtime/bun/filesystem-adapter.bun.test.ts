@@ -36,7 +36,10 @@ describe("BunFileSystemAdapter native integration", () => {
         }),
       ]);
       assertEquals(event.done, false);
-      assertEquals(event.value?.paths.some((path) => path.endsWith("file.txt")), true);
+      assertEquals(
+        event.value?.paths.some((path: string) => path.endsWith("file.txt")),
+        true,
+      );
 
       watcher.close();
       assertExists(watcher.done);

@@ -3,6 +3,16 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeRedisAdapter } from "./node.ts";
 
+type MockReadGroupResult =
+  | Array<{
+    name: string;
+    messages: Array<{
+      id: string;
+      message: { f1: string; f2: string };
+    }>;
+  }>
+  | null;
+
 function createMockClient() {
   const calls: Array<{ method: string; args: unknown[] }> = [];
 
@@ -73,7 +83,7 @@ function createMockClient() {
       consumer: string,
       streams: Array<{ key: string; id: string }>,
       options?: { BLOCK?: number; COUNT?: number },
-    ) {
+    ): Promise<MockReadGroupResult> {
       calls.push({ method: "xReadGroup", args: [group, consumer, streams, options] });
       return Promise.resolve([
         {
@@ -119,14 +129,23 @@ function createMockClient() {
   return { client, calls };
 }
 
+function firstCall(calls: Array<{ method: string; args: unknown[] }>): {
+  method: string;
+  args: unknown[];
+} {
+  const call = calls[0];
+  if (!call) throw new Error("Expected the Redis client to receive a call");
+  return call;
+}
+
 describe("platform/adapters/redis/node", () => {
   describe("NodeRedisAdapter", () => {
     it("should proxy hset to the camelCase client method (hSet)", async () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.hset("key", { f: "v" });
-      assertEquals(calls[0].method, "hSet");
-      assertEquals(calls[0].args, ["key", { f: "v" }]);
+      assertEquals(firstCall(calls).method, "hSet");
+      assertEquals(firstCall(calls).args, ["key", { f: "v" }]);
     });
 
     it("should return the hgetall object as-is", async () => {
@@ -141,14 +160,14 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.del("k1", "k2");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, [["k1", "k2"]]);
+      assertEquals(firstCall(calls).args, [["k1", "k2"]]);
     });
 
     it("should map mkstream to the MKSTREAM option on xgroupCreate", async () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.xgroupCreate("stream", "group", "0", true);
-      assertEquals(calls[0].args[3], { MKSTREAM: true });
+      assertEquals(firstCall(calls).args[3], { MKSTREAM: true });
     });
 
     it("should reshape xreadgroup streams and responses (name->key, message->data)", async () => {
@@ -159,14 +178,18 @@ describe("platform/adapters/redis/node", () => {
         { group: "g", consumer: "c", block: 100, count: 5 },
       );
       // request shape: xid -> id, group/consumer/BLOCK/COUNT forwarded
-      assertEquals(calls[0].args[0], "g");
-      assertEquals(calls[0].args[1], "c");
-      assertEquals(calls[0].args[2], [{ key: "stream1", id: ">" }]);
-      assertEquals(calls[0].args[3], { BLOCK: 100, COUNT: 5 });
+      assertEquals(firstCall(calls).args[0], "g");
+      assertEquals(firstCall(calls).args[1], "c");
+      assertEquals(firstCall(calls).args[2], [{ key: "stream1", id: ">" }]);
+      assertEquals(firstCall(calls).args[3], { BLOCK: 100, COUNT: 5 });
       // response shape: name -> key, message -> data
       assertEquals(result.length, 1);
-      assertEquals(result[0].key, "stream1");
-      assertEquals(result[0].messages[0].data, { f1: "v1", f2: "v2" });
+      const stream = result[0];
+      if (!stream) throw new Error("Expected one Redis stream result");
+      const message = stream.messages[0];
+      if (!message) throw new Error("Expected one Redis stream message");
+      assertEquals(stream.key, "stream1");
+      assertEquals(message.data, { f1: "v1", f2: "v2" });
     });
 
     it("should return an empty array when xreadgroup yields null", async () => {
@@ -184,14 +207,18 @@ describe("platform/adapters/redis/node", () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.set("key", "val", { nx: true, px: 1000, ex: 60 });
-      assertEquals(calls[0].args[2], { NX: true, PX: 1000, EX: 60 });
+      assertEquals(firstCall(calls).args[2], { NX: true, PX: 1000, EX: 60 });
     });
 
     it("should leave NX undefined when nx is falsy", async () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.set("key", "val");
-      assertEquals(calls[0].args[2], { NX: undefined, PX: undefined, EX: undefined });
+      assertEquals(firstCall(calls).args[2], {
+        NX: undefined,
+        PX: undefined,
+        EX: undefined,
+      });
     });
 
     it("should call client.close on quit (v5 rename)", async () => {
@@ -213,7 +240,7 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.hdel("key", "f1", "f2");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["key", ["f1", "f2"]]);
+      assertEquals(firstCall(calls).args, ["key", ["f1", "f2"]]);
     });
 
     it("should forward sadd members as an array (sAdd)", async () => {
@@ -221,7 +248,7 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.sadd("set", "m1", "m2");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["set", ["m1", "m2"]]);
+      assertEquals(firstCall(calls).args, ["set", ["m1", "m2"]]);
     });
 
     it("should forward srem members as an array (sRem)", async () => {
@@ -229,7 +256,7 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.srem("set", "m1");
       assertEquals(result, 1);
-      assertEquals(calls[0].args, ["set", ["m1"]]);
+      assertEquals(firstCall(calls).args, ["set", ["m1"]]);
     });
 
     it("should proxy smembers (sMembers)", async () => {
@@ -243,7 +270,7 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.rpush("list", "a", "b");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["list", ["a", "b"]]);
+      assertEquals(firstCall(calls).args, ["list", ["a", "b"]]);
     });
 
     it("should proxy lrange (lRange)", async () => {
@@ -281,7 +308,11 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.xack("stream", "group", "1-0", "1-1");
       assertEquals(result, 2);
-      assertEquals(calls[0].args, ["stream", "group", ["1-0", "1-1"]]);
+      assertEquals(firstCall(calls).args, [
+        "stream",
+        "group",
+        ["1-0", "1-1"],
+      ]);
     });
 
     it("should proxy keys", async () => {
@@ -295,7 +326,7 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       const result = await adapter.exists("k1", "k2");
       assertEquals(result, 1);
-      assertEquals(calls[0].args, [["k1", "k2"]]);
+      assertEquals(firstCall(calls).args, [["k1", "k2"]]);
     });
 
     it("should proxy expire", async () => {
@@ -314,7 +345,10 @@ describe("platform/adapters/redis/node", () => {
       const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.eval("return 1", ["k1"], ["a1"]);
-      assertEquals(calls[0].args, ["return 1", { keys: ["k1"], arguments: ["a1"] }]);
+      assertEquals(firstCall(calls).args, [
+        "return 1",
+        { keys: ["k1"], arguments: ["a1"] },
+      ]);
     });
   });
 });
