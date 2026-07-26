@@ -94,6 +94,10 @@ function makeAcceptedScheduleRun(timeoutSeconds = 5): CreateScheduleRunFromSourc
       schedule_id: scheduleId,
     },
     timeoutSeconds,
+    target: {
+      kind: "agent",
+      id: "job-submission-orchestrator",
+    },
   };
 }
 
@@ -120,14 +124,19 @@ describe("schedule command", () => {
     clearProjectAgentRuntimeRegistries();
   });
 
-  it("runs a source-defined schedule in the canonical cloud runtime", async () => {
+  it("runs a pushed schedule without importing broken local schedule files", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-remote-" });
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
         schedules: [{
           id: scheduleId,
+          name: "Process job submissions",
           status: "active",
+          target: {
+            kind: "agent",
+            id: "job-submission-orchestrator",
+          },
           definition_source: "source",
           source_trigger_id: "process-job-submissions",
           timeout_seconds: 1800,
@@ -139,7 +148,7 @@ describe("schedule command", () => {
         run_execution_id: runId,
         schedule_id: scheduleId,
       }, 201),
-      jsonResponse(makeRun()),
+      jsonResponse(makeRun({ target: null })),
     ];
     const output: string[] = [];
 
@@ -150,20 +159,8 @@ describe("schedule command", () => {
         'export default { projectSlug: "dreamy-haven", fs: { type: "local" } };\n',
       );
       await Deno.writeTextFile(
-        `${projectDir}/schedules/process-job-submissions.ts`,
-        [
-          'import { schedule } from "veryfront/schedule";',
-          "export default schedule({",
-          '  id: "process-job-submissions",',
-          '  name: "Process job submissions",',
-          '  schedule: "0 * * * *",',
-          '  timezone: "Europe/Berlin",',
-          '  target: { kind: "agent", id: "local-unpushed-orchestrator" },',
-          '  input: { prompt: "Process job submissions." },',
-          "  timeoutSeconds: 5,",
-          "});",
-          "",
-        ].join("\n"),
+        `${projectDir}/schedules/unrelated-broken.ts`,
+        "export default nope(",
       );
 
       Deno.env.set("VERYFRONT_API_URL", "https://api.test.com");
@@ -209,6 +206,9 @@ describe("schedule command", () => {
         `https://api.test.com/projects/dreamy-haven/schedules/${scheduleId}/runs`,
         `https://api.test.com/runs/${encodeURIComponent(runId)}`,
       ]);
+      const createRunBody = JSON.parse(String(requests[1]?.init?.body));
+      assertEquals(createRunBody.run_name, "Process job submissions");
+      assertEquals(typeof createRunBody.idempotency_key, "string");
       assertEquals(JSON.parse(output.at(-1) ?? "{}"), {
         success: true,
         command: "schedule",
@@ -249,8 +249,8 @@ describe("schedule command", () => {
 });
 
 describe("remote schedule polling", () => {
-  it("falls back to the local target when the cloud run target is unavailable", () => {
-    const fallback = { kind: "agent" as const, id: "local-orchestrator" };
+  it("falls back to the pushed schedule target when the run target is unavailable", () => {
+    const fallback = { kind: "agent" as const, id: "pushed-orchestrator" };
     assertEquals(resolveRemoteScheduleTarget(makeRun({ target: null }), fallback), fallback);
     assertEquals(
       resolveRemoteScheduleTarget(makeRun({ target: "eval:unsupported" }), fallback),
@@ -279,9 +279,19 @@ describe("remote schedule polling", () => {
 
   it("uses the accepted cloud schedule timeout instead of the local definition", async () => {
     const runs = [
-      makeRun({ status: "pending", output: null, completed_at: null }),
-      makeRun({ status: "running", output: null, completed_at: null }),
-      makeRun(),
+      makeRun({
+        status: "pending",
+        output: null,
+        completed_at: null,
+        timeout_seconds: null,
+      }),
+      makeRun({
+        status: "running",
+        output: null,
+        completed_at: null,
+        timeout_seconds: null,
+      }),
+      makeRun({ timeout_seconds: null }),
     ];
     const client = {
       get: (requestedRunId: string) => {
@@ -295,14 +305,7 @@ describe("remote schedule polling", () => {
 
     const run = await waitForRemoteScheduleRun(
       client,
-      {
-        scheduleRun: {
-          run_id: runId,
-          run_execution_id: runId,
-          schedule_id: scheduleId,
-        },
-        timeoutSeconds: 1800,
-      },
+      makeAcceptedScheduleRun(1800),
       {
         now: () => now,
         sleep: () => {
@@ -311,6 +314,42 @@ describe("remote schedule polling", () => {
         },
       },
     );
+
+    assertEquals(run.status, "completed");
+  });
+
+  it("does not spend the execution timeout while the remote run is queued", async () => {
+    const runs = [
+      makeRun({ status: "pending", output: null, completed_at: null, started_at: null }),
+      makeRun({ status: "pending", output: null, completed_at: null, started_at: null }),
+      makeRun({
+        status: "running",
+        output: null,
+        completed_at: null,
+        started_at: "1970-01-01T00:02:00.000Z",
+      }),
+      makeRun({
+        started_at: "1970-01-01T00:02:00.000Z",
+        completed_at: "1970-01-01T00:02:00.500Z",
+      }),
+    ];
+    const client = {
+      get: (requestedRunId: string) => {
+        assertEquals(requestedRunId, runId);
+        const run = runs.shift();
+        if (!run) throw new Error("Unexpected poll");
+        return Promise.resolve(run);
+      },
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+    let now = 0;
+
+    const run = await waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1), {
+      now: () => now,
+      sleep: () => {
+        now += 60_000;
+        return Promise.resolve();
+      },
+    });
 
     assertEquals(run.status, "completed");
   });
@@ -396,7 +435,15 @@ describe("remote schedule polling", () => {
 
   it("stops polling at the remote schedule deadline", async () => {
     const client = {
-      get: () => Promise.resolve(makeRun({ status: "running", completed_at: null })),
+      get: () =>
+        Promise.resolve(
+          makeRun({
+            status: "running",
+            completed_at: null,
+            timeout_seconds: null,
+            started_at: "1970-01-01T00:00:00.000Z",
+          }),
+        ),
     } satisfies Pick<VeryfrontRunsClient, "get">;
     let now = 0;
 
@@ -411,6 +458,57 @@ describe("remote schedule polling", () => {
         }),
       Error,
       `Timed out waiting for scheduled run: ${runId}`,
+    );
+  });
+
+  it("uses the timeout recorded on the cloud run once execution starts", async () => {
+    const client = {
+      get: () =>
+        Promise.resolve(
+          makeRun({
+            status: "running",
+            completed_at: null,
+            timeout_seconds: 1,
+            started_at: "1970-01-01T00:00:00.000Z",
+          }),
+        ),
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+    let now = 0;
+
+    await assertRejects(
+      () =>
+        waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1800), {
+          now: () => now,
+          sleep: () => {
+            now += 32_000;
+            return Promise.resolve();
+          },
+        }),
+      Error,
+      `Timed out waiting for scheduled run: ${runId}`,
+    );
+  });
+
+  it("stops polling when a remote run never leaves the queue", async () => {
+    const client = {
+      get: () =>
+        Promise.resolve(
+          makeRun({ status: "pending", output: null, completed_at: null, started_at: null }),
+        ),
+    } satisfies Pick<VeryfrontRunsClient, "get">;
+    let now = 0;
+
+    await assertRejects(
+      () =>
+        waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1), {
+          now: () => now,
+          sleep: () => {
+            now += 60_000;
+            return Promise.resolve();
+          },
+        }),
+      Error,
+      `Timed out waiting for scheduled run to start: ${runId}`,
     );
   });
 });

@@ -325,6 +325,10 @@ describe("VeryfrontRunsClient", () => {
         schedule_id: scheduleId,
       },
       timeoutSeconds: 1800,
+      target: {
+        kind: "agent",
+        id: "job-submission-orchestrator",
+      },
     });
     assertEquals(
       call(0).url,
@@ -369,6 +373,41 @@ describe("VeryfrontRunsClient", () => {
       call(0).url,
       "https://api.test.com/projects/dreamy-haven/schedules?status=active&source_trigger_id=missing-schedule&limit=1",
     );
+  });
+
+  it("does not trust a non-active schedule returned by the active filter", async () => {
+    mockFetch([
+      jsonResponse({
+        schedules: [{
+          id: scheduleId,
+          name: "Process job submissions",
+          status: "paused",
+          target: {
+            kind: "agent",
+            id: "job-submission-orchestrator",
+          },
+          definition_source: "source",
+          source_trigger_id: "process-job-submissions",
+          timeout_seconds: 1800,
+        }],
+      }),
+    ]);
+    const client = new VeryfrontRunsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await assertRejects(
+      () =>
+        client.createScheduleRunFromSource({
+          sourceTriggerId: "process-job-submissions",
+        }),
+      Error,
+      'Active source schedule "process-job-submissions" not found in project "dreamy-haven".',
+    );
+
+    assertEquals(fetchCalls.length, 1);
   });
 
   it("creates knowledge ingest task runs", async () => {

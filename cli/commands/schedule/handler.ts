@@ -16,6 +16,9 @@ import { outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
 
 const REMOTE_SCHEDULE_POLL_INTERVAL_MS = 1_000;
 const REMOTE_SCHEDULE_TIMEOUT_GRACE_MS = 30_000;
+// Bound how long the CLI waits for dispatch without consuming the cloud run's
+// execution budget. The run remains durable in Veryfront if this wait expires.
+const REMOTE_SCHEDULE_QUEUE_WAIT_TIMEOUT_MS = 5 * 60_000;
 
 const getScheduleArgsSchema = defineSchema((v) =>
   v.object({
@@ -53,11 +56,18 @@ export async function waitForRemoteScheduleRun(
   const sleep = options.sleep ??
     ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
   const runId = accepted.scheduleRun.run_id;
-  const deadline = now() +
-    accepted.timeoutSeconds * 1_000 +
-    REMOTE_SCHEDULE_TIMEOUT_GRACE_MS;
+  const acceptedAt = now();
+  const queueDeadline = acceptedAt + REMOTE_SCHEDULE_QUEUE_WAIT_TIMEOUT_MS;
+  let executionStartedAtMs: number | undefined;
   while (true) {
     const run = await client.get(runId);
+    const observedAt = now();
+    const parsedStartedAt = run.started_at ? Date.parse(run.started_at) : NaN;
+    if (executionStartedAtMs === undefined && Number.isFinite(parsedStartedAt)) {
+      executionStartedAtMs = Math.min(parsedStartedAt, observedAt);
+    } else if (run.status !== "pending" && executionStartedAtMs === undefined) {
+      executionStartedAtMs = observedAt;
+    }
     if (run.status === "completed" || run.status === "waiting") {
       return run;
     }
@@ -67,8 +77,20 @@ export async function waitForRemoteScheduleRun(
     if (run.status === "cancelled") {
       throw new Error(`Scheduled run was cancelled: ${runId}`);
     }
-    if (now() >= deadline) {
+    const recordedTimeoutSeconds = run.timeout_seconds;
+    const executionTimeoutSeconds = recordedTimeoutSeconds !== null &&
+        recordedTimeoutSeconds > 0
+      ? recordedTimeoutSeconds
+      : accepted.timeoutSeconds;
+    const executionDeadline = executionStartedAtMs === undefined
+      ? undefined
+      : executionStartedAtMs + executionTimeoutSeconds * 1_000 +
+        REMOTE_SCHEDULE_TIMEOUT_GRACE_MS;
+    if (executionDeadline !== undefined && observedAt >= executionDeadline) {
       throw new Error(`Timed out waiting for scheduled run: ${runId}`);
+    }
+    if (executionStartedAtMs === undefined && observedAt >= queueDeadline) {
+      throw new Error(`Timed out waiting for scheduled run to start: ${runId}`);
     }
     await sleep(REMOTE_SCHEDULE_POLL_INTERVAL_MS);
   }
@@ -103,28 +125,15 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       "Invalid schedule arguments: remote runs use the source already pushed to Veryfront and do not accept --input.",
     );
   }
-  const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
-
   await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey, projectId } = context;
-    const result = await discoverSchedules({ projectDir, adapter, config });
-    if (result.errors.length > 0) {
-      throw new Error(`Schedule discovery failed: ${result.errors[0]?.message}`);
-    }
-
-    const schedule = result.items.find((candidate) => candidate.id === opts.id);
-    if (!schedule) {
-      throw new Error(`Schedule "${opts.id}" not found.`);
-    }
-
     if (opts.remote) {
       const startedAt = Date.now();
       const client = createRunsClient({
         projectReference: config.projectSlug,
       });
       const accepted = await client.createScheduleRunFromSource({
-        sourceTriggerId: schedule.id,
-        runName: schedule.name ?? schedule.id,
+        sourceTriggerId: opts.id,
         idempotencyKey: `schedule-cli:${crypto.randomUUID()}`,
       });
       const remoteRun = await waitForRemoteScheduleRun(
@@ -133,12 +142,23 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
       );
       await outputTriggerRun({
         command: "schedule",
-        triggerId: schedule.id,
-        target: resolveRemoteScheduleTarget(remoteRun, schedule.target),
+        triggerId: opts.id,
+        target: resolveRemoteScheduleTarget(remoteRun, accepted.target),
         output: formatRemoteScheduleRunOutput(remoteRun),
         durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
       });
       return;
+    }
+
+    const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
+    const result = await discoverSchedules({ projectDir, adapter, config });
+    if (result.errors.length > 0) {
+      throw new Error(`Schedule discovery failed: ${result.errors[0]?.message}`);
+    }
+
+    const schedule = result.items.find((candidate) => candidate.id === opts.id);
+    if (!schedule) {
+      throw new Error(`Schedule "${opts.id}" not found.`);
     }
 
     const triggerInput = input ?? schedule.input ?? {};

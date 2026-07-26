@@ -97,6 +97,10 @@ export interface CreateScheduleRunFromSourceInput extends ProjectScopedOptions {
 export interface CreateScheduleRunFromSourceResult {
   scheduleRun: ScheduleRunCreateResponse;
   timeoutSeconds: number;
+  target: {
+    kind: "task" | "workflow" | "agent";
+    id: string;
+  };
 }
 
 /** Input payload for knowledge ingest by upload IDs. */
@@ -320,6 +324,7 @@ export class VeryfrontRunsClient {
       ScheduleReferenceListSchema,
     );
     const schedule = listed.schedules.find((candidate) =>
+      candidate.status === "active" &&
       candidate.definition_source === "source" &&
       candidate.source_trigger_id === input.sourceTriggerId
     );
@@ -334,12 +339,13 @@ export class VeryfrontRunsClient {
     const scheduleRun = await this.createScheduleRun({
       scheduleId: schedule.id,
       projectReference,
-      runName: input.runName,
+      runName: input.runName ?? schedule.name,
       idempotencyKey: input.idempotencyKey,
     });
     return {
       scheduleRun,
       timeoutSeconds: schedule.timeout_seconds,
+      target: schedule.target,
     };
   }
 

@@ -91,7 +91,12 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
     schedules: v.array(
       v.object({
         id: v.string(),
+        name: v.string(),
         status: v.enum(["active", "paused", "deleting"] as const),
+        target: v.object({
+          kind: v.enum(["task", "workflow", "agent"] as const),
+          id: v.string(),
+        }),
         definition_source: v.enum(["manual", "source"] as const),
         source_trigger_id: v.string().nullable(),
         timeout_seconds: v.number().int(),
