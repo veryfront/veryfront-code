@@ -12,7 +12,10 @@ import { createStrictContext } from "../../../create-strict-context.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 
-/** Public API contract for composer context value. */
+/**
+ * Public API contract for composer context value.
+ * @deprecated Use {@link ChatInputContextValue}. Alias kept for backward compatibility.
+ */
 export interface ComposerContextValue {
   // Input
   input: string;
@@ -50,13 +53,20 @@ const [ComposerContext, useComposerContext] = createStrictContext<ComposerContex
   "a Composer or Chat component",
 );
 
-/** React hook for composer context optional. */
+/**
+ * React hook for composer context optional.
+ * @deprecated Use {@link useChatInputContextOptional}. Alias kept for backward compatibility.
+ */
 export function useComposerContextOptional(): ComposerContextValue | null {
   return React.useContext(ComposerContext);
 }
 
-/** Render composer context provider. */
+/**
+ * Render composer context provider.
+ * @deprecated Use {@link ChatInputContextProvider}. Alias kept for backward compatibility.
+ */
 export const ComposerContextProvider = ComposerContext.Provider;
+/** @deprecated Use {@link useChatInputContext}. Alias kept for backward compatibility. */
 export { useComposerContext };
 
 // ---------------------------------------------------------------------------
