@@ -12,6 +12,7 @@ import {
   prepareProviderModelMessagesFromUiMessages,
   repairToolPairs,
   rewriteUnsupportedFilePartsAsAnnotations,
+  sanitizeProviderModelMessages,
   stripPendingToolParts,
 } from "./message-prep.ts";
 
@@ -176,6 +177,77 @@ Deno.test("repairToolPairs moves a later tool result immediately after the match
   assertEquals(toolResultMatches.length, 2);
   assertEquals(unavailableMatches.length, 0);
   assertEquals(repaired, [messages[0]!, messages[1]!, messages[3]!, messages[2]!]);
+});
+
+Deno.test("repairToolPairs never steals a matching result from a later user turn", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        input: {},
+      }],
+    },
+    { role: "user", content: "Start a new turn." },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        output: { type: "json", value: { from: "later turn" } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        output: { type: "text", value: "[tool result unavailable]" },
+      }],
+    },
+    messages[1]!,
+    messages[2]!,
+  ]);
+});
+
+Deno.test("sanitizeProviderModelMessages drops malformed and role-incompatible parts", () => {
+  const malformed = [
+    {
+      role: "user",
+      content: [
+        { type: "data-private", data: { secret: true } },
+        { type: "text", text: "Keep me" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "", toolName: "broken", input: {} },
+        { type: "text", text: "Also keep me" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [{ type: "text", text: "not a tool result" }],
+    },
+    {
+      role: "system",
+      content: { unexpected: true },
+    },
+  ] as unknown as ProviderModelMessage[];
+
+  assertEquals(sanitizeProviderModelMessages(malformed), [
+    { role: "user", content: [{ type: "text", text: "Keep me" }] },
+    { role: "assistant", content: [{ type: "text", text: "Also keep me" }] },
+  ]);
 });
 
 Deno.test("maskOldToolOutputs masks large historical tool outputs and removes stale reasoning before the latest user turn", () => {

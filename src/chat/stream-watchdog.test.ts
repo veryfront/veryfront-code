@@ -74,6 +74,52 @@ describe("chat/stream-watchdog", () => {
     );
   });
 
+  it("keeps parallel tools active until each matching result arrives", () => {
+    const first = getNextChatStreamWatchdogState(
+      { phase: "response_pending", timeoutMs: 120 },
+      { type: "tool-input-available", toolCallId: "tool-1", toolName: "bash", input: {} },
+      watchdogOptions,
+    );
+    const parallel = getNextChatStreamWatchdogState(
+      first,
+      {
+        type: "tool-input-available",
+        toolCallId: "tool-2",
+        toolName: "invoke_agent",
+        input: {},
+      },
+      watchdogOptions,
+    );
+
+    assertEquals(
+      getNextChatStreamWatchdogState(
+        parallel,
+        { type: "tool-output-available", toolCallId: "tool-2", output: "done" },
+        watchdogOptions,
+      ),
+      {
+        phase: "tool_running",
+        timeoutMs: 300,
+        toolCallId: "tool-1",
+        toolName: "bash",
+      },
+    );
+
+    assertEquals(
+      getNextChatStreamWatchdogState(
+        parallel,
+        { type: "tool-output-available", toolCallId: "tool-1", output: "done" },
+        watchdogOptions,
+      ),
+      {
+        phase: "tool_running",
+        timeoutMs: 300,
+        toolCallId: "tool-2",
+        toolName: "invoke_agent",
+      },
+    );
+  });
+
   it("keeps long-running tools alive across non-heartbeat chunks until output arrives", () => {
     const running = getNextChatStreamWatchdogState(
       { phase: "response_pending", timeoutMs: 120 },

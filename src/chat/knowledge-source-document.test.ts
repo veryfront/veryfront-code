@@ -59,5 +59,23 @@ describe("chat/knowledge-source-document", () => {
       }),
       null,
     );
+    for (
+      const path of [
+        "knowledge/../secret.md",
+        "knowledge/./secret.md",
+        "knowledge//secret.md",
+        "knowledge\\secret.md",
+        "knowledge/",
+        " knowledge/secret.md",
+      ]
+    ) {
+      assertEquals(
+        deriveKnowledgeSourceDocumentChunk({
+          toolName: "get_file",
+          output: { path, content: "secret" },
+        }),
+        null,
+      );
+    }
   });
 });

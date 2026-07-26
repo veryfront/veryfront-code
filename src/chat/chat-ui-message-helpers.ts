@@ -27,6 +27,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 function normalizeChildRunAudit(
   value: unknown,
 ): ChatMessageMetadata["childRunAudit"] | undefined {
@@ -79,12 +87,8 @@ function normalizeChildRunAudit(
   return {
     status: value.status,
     ...(typeof value.description === "string" ? { description: value.description } : {}),
-    ...(Number.isSafeInteger(value.steps) && (value.steps as number) >= 0
-      ? { steps: value.steps as number }
-      : {}),
-    ...(Number.isFinite(value.durationMs) && (value.durationMs as number) >= 0
-      ? { durationMs: value.durationMs as number }
-      : {}),
+    ...(isNonNegativeInteger(value.steps) ? { steps: value.steps } : {}),
+    ...(isNonNegativeFiniteNumber(value.durationMs) ? { durationMs: value.durationMs } : {}),
     ...(toolCalls ? { toolCalls } : {}),
     ...(toolResults ? { toolResults } : {}),
     ...(typeof value.terminalErrorCode === "string" || value.terminalErrorCode === null
@@ -105,32 +109,32 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
   const outputTokenDetails = isRecord(value.outputTokenDetails)
     ? value.outputTokenDetails
     : undefined;
-  const cacheCreationInputTokens = typeof value.cacheCreationInputTokens === "number"
+  const cacheCreationInputTokens = isNonNegativeInteger(value.cacheCreationInputTokens)
     ? value.cacheCreationInputTokens
-    : typeof inputTokenDetails?.cacheWriteTokens === "number"
+    : isNonNegativeInteger(inputTokenDetails?.cacheWriteTokens)
     ? inputTokenDetails.cacheWriteTokens
     : undefined;
-  const cacheReadInputTokens = typeof value.cacheReadInputTokens === "number"
+  const cacheReadInputTokens = isNonNegativeInteger(value.cacheReadInputTokens)
     ? value.cacheReadInputTokens
-    : typeof inputTokenDetails?.cacheReadTokens === "number"
+    : isNonNegativeInteger(inputTokenDetails?.cacheReadTokens)
     ? inputTokenDetails.cacheReadTokens
     : undefined;
-  const cachedInputTokens = typeof value.cachedInputTokens === "number"
+  const cachedInputTokens = isNonNegativeInteger(value.cachedInputTokens)
     ? value.cachedInputTokens
     : cacheReadInputTokens;
-  const reasoningTokens = typeof value.reasoningTokens === "number"
+  const reasoningTokens = isNonNegativeInteger(value.reasoningTokens)
     ? value.reasoningTokens
-    : typeof outputTokenDetails?.reasoningTokens === "number"
+    : isNonNegativeInteger(outputTokenDetails?.reasoningTokens)
     ? outputTokenDetails.reasoningTokens
     : undefined;
 
   const usage = {
-    ...(typeof value.inputTokens === "number" ? { inputTokens: value.inputTokens } : {}),
-    ...(typeof value.outputTokens === "number" ? { outputTokens: value.outputTokens } : {}),
-    ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
-    ...(typeof cachedInputTokens === "number" ? { cachedInputTokens } : {}),
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
+    ...(isNonNegativeInteger(value.inputTokens) ? { inputTokens: value.inputTokens } : {}),
+    ...(isNonNegativeInteger(value.outputTokens) ? { outputTokens: value.outputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
 
   return Object.keys(usage).length > 0 ? usage : undefined;
@@ -159,35 +163,35 @@ function normalizeBillingMetadata(
   }
 
   return {
-    ...(typeof value.billableInputTokens === "number"
+    ...(isNonNegativeInteger(value.billableInputTokens)
       ? { billableInputTokens: value.billableInputTokens }
       : {}),
-    ...(typeof value.billableOutputTokens === "number"
+    ...(isNonNegativeInteger(value.billableOutputTokens)
       ? { billableOutputTokens: value.billableOutputTokens }
       : {}),
-    ...(typeof value.costUsd === "number" ? { costUsd: value.costUsd } : {}),
-    ...(typeof value.providerInputCostUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.costUsd) ? { costUsd: value.costUsd } : {}),
+    ...(isNonNegativeFiniteNumber(value.providerInputCostUsd)
       ? { providerInputCostUsd: value.providerInputCostUsd }
       : {}),
-    ...(typeof value.providerOutputCostUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.providerOutputCostUsd)
       ? { providerOutputCostUsd: value.providerOutputCostUsd }
       : {}),
-    ...(typeof value.providerCostUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.providerCostUsd)
       ? { providerCostUsd: value.providerCostUsd }
       : {}),
-    ...(typeof value.veryfrontInputChargeUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.veryfrontInputChargeUsd)
       ? { veryfrontInputChargeUsd: value.veryfrontInputChargeUsd }
       : {}),
-    ...(typeof value.veryfrontOutputChargeUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.veryfrontOutputChargeUsd)
       ? { veryfrontOutputChargeUsd: value.veryfrontOutputChargeUsd }
       : {}),
-    ...(typeof value.veryfrontChargeUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.veryfrontChargeUsd)
       ? { veryfrontChargeUsd: value.veryfrontChargeUsd }
       : {}),
-    ...(typeof value.veryfrontBilledUsd === "number"
+    ...(isNonNegativeFiniteNumber(value.veryfrontBilledUsd)
       ? { veryfrontBilledUsd: value.veryfrontBilledUsd }
       : {}),
-    ...(typeof value.costCredits === "number" ? { costCredits: value.costCredits } : {}),
+    ...(isNonNegativeFiniteNumber(value.costCredits) ? { costCredits: value.costCredits } : {}),
     ...(value.costSource === "gateway" || value.costSource === "missing" ||
         value.costSource === "partial"
       ? { costSource: value.costSource }
