@@ -476,6 +476,30 @@ Deno.test("filterNeedsResolution: package pinned in one file not in needsResolut
 // main() integration — abort on corrupt/unreadable package.json
 // ---------------------------------------------------------------------------
 
+Deno.test("source parse errors identify the file that could not be migrated", async () => {
+  const dir = await Deno.makeTempDir();
+  const srcPath = `${dir}/broken.ts`;
+  try {
+    await Deno.writeTextFile(srcPath, "import {");
+    await Deno.writeTextFile(
+      `${dir}/package.json`,
+      JSON.stringify({ name: "test", dependencies: {} }) + "\n",
+    );
+
+    let thrown: unknown;
+    try {
+      await main(["--", dir]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(thrown instanceof Error, "main() should surface the parse failure");
+    assertStringIncludes(thrown.message, srcPath);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test(
   "corrupt package.json aborts run — source files are not modified",
   async () => {

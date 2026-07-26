@@ -428,7 +428,15 @@ async function main(args: string[]): Promise<void> {
 
   for (const file of sourceFiles) {
     const source = await Deno.readTextFile(file);
-    const result = migrateEsmShImports(source);
+    let result: EsmShFileResult;
+    try {
+      result = migrateEsmShImports(source);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to migrate ${file}: ${message}`, {
+        cause: error,
+      });
+    }
     if (!result.changed) continue;
 
     fileResults.push({ file, code: result.code });
