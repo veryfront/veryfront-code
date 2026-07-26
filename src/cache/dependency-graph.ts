@@ -291,21 +291,40 @@ export function normalizeSpecifierToPath(
   const fromPath = fromFile.startsWith("file://") ? fromFileUrl(fromFile) : fromFile;
 
   if (specifier.startsWith("@/")) {
-    return resolve(projectDir, specifier.slice(2).replace(/[?#].*$/, ""));
+    return preserveCompiledSourceSuffix(
+      resolve(projectDir, specifier.slice(2).replace(/[?#].*$/, "")),
+      fromPath,
+    );
   }
 
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const pathPart = specifier.replace(/[?#].*$/, "");
-    return resolve(dirname(fromPath), pathPart);
+    return preserveCompiledSourceSuffix(resolve(dirname(fromPath), pathPart), fromPath);
   }
 
   if (specifier.startsWith("file://")) {
-    return fromFileUrl(specifier);
+    return preserveCompiledSourceSuffix(fromFileUrl(specifier), fromPath);
   }
 
-  if (isAbsolute(specifier)) return resolve(specifier.replace(/[?#].*$/, ""));
+  if (isAbsolute(specifier)) {
+    return preserveCompiledSourceSuffix(
+      resolve(specifier.replace(/[?#].*$/, "")),
+      fromPath,
+    );
+  }
 
   return specifier;
+}
+
+function preserveCompiledSourceSuffix(path: string, fromFile: string): string {
+  if (
+    fromFile.endsWith(".src") &&
+    !path.endsWith(".src") &&
+    /\.(?:[cm]?[jt]sx?|mdx?)$/.test(path)
+  ) {
+    return `${path}.src`;
+  }
+  return path;
 }
 
 function importMapRelativePath(

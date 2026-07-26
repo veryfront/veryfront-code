@@ -144,6 +144,33 @@ describe("extractAllFilePaths", () => {
     assertEquals(extractAllFilePaths(code), ["/app/.cache/markdown.tsx"]);
   });
 
+  it("preserves compiled framework .src cache paths", () => {
+    const code = [
+      `import context from "file:///tmp/deno-compile-veryfront/dist/framework-src/react/context/index.tsx.src";`,
+      `import core from "file:///tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src?v=42";`,
+    ].join("\n");
+
+    assertEquals(extractAllFilePaths(code), [
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/context/index.tsx.src",
+      "/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src",
+    ]);
+  });
+
+  it("does not truncate unsupported file URL suffixes into valid-looking paths", () => {
+    const code = [
+      `import source from "file:///tmp/project/Button.ts.source";`,
+      `import sourceMap from "file:///tmp/project/Button.js.map";`,
+    ].join("\n");
+
+    assertEquals(extractAllFilePaths(code), []);
+  });
+
+  it("ignores file URLs with a host component", () => {
+    const code = `import remote from "file://cache-host/tmp/project/Button.js";`;
+
+    assertEquals(extractAllFilePaths(code), []);
+  });
+
   it("strips query parameters from extracted paths", () => {
     const code = `import a from "file:///tmp/project/Button.tsx?v=123";`;
     assertEquals(extractAllFilePaths(code), ["/tmp/project/Button.tsx"]);

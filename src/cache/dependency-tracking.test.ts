@@ -244,6 +244,35 @@ describe("Dependency tracking cache invalidation", () => {
       expect(maxActiveReads).toBe(8);
     });
 
+    it("should hash dependencies stored as compiled framework .src files", async () => {
+      const entryPath = "/framework/dist/framework-src/react/context/index.tsx.src";
+      const dependencyPath = "/framework/dist/framework-src/react/runtime/core.ts.src";
+      const entryCode =
+        `import { core } from "../runtime/core.ts";\nexport const context = core;\n`;
+
+      const filesV1 = new Map<string, string>([
+        [entryPath, entryCode],
+        [dependencyPath, `export const core = "v1";\n`],
+      ]);
+      const filesV2 = new Map<string, string>([
+        [entryPath, entryCode],
+        [dependencyPath, `export const core = "v2";\n`],
+      ]);
+
+      const hash1 = await computeDepsHash(
+        entryPath,
+        createGetContent(filesV1),
+        "/project",
+      );
+      const hash2 = await computeDepsHash(
+        entryPath,
+        createGetContent(filesV2),
+        "/project",
+      );
+
+      expect(hash1).not.toBe(hash2);
+    });
+
     it("should reuse cached content for overlapping dependency graphs", async () => {
       const files = new Map<string, string>([
         [
