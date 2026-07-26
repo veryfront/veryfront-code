@@ -80,6 +80,13 @@ describe("cli/ui/box", () => {
       assertEquals(lines.length >= 5, true);
     });
 
+    it("handles large line counts without spreading them into function arguments", () => {
+      const content = `${"x\n".repeat(150_000)}x`;
+      const result = box(content, { padding: 0, paddingY: 0 });
+
+      assertEquals(result.split("\n").length, 150_003);
+    });
+
     it("should apply custom width", () => {
       const firstLine = box("hi", { width: 30 }).split("\n")[0]!;
       assertEquals(stripAnsi(firstLine).length, 30);

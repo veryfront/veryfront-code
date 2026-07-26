@@ -26,7 +26,9 @@ function lines(text: string): string[] {
 }
 
 function maxLineWidth(textLines: string[]): number {
-  return Math.max(0, ...textLines.map(visibleLength));
+  let maximum = 0;
+  for (const line of textLines) maximum = Math.max(maximum, visibleLength(line));
+  return maximum;
 }
 
 export function pad(
@@ -220,7 +222,8 @@ export function joinHorizontal(
   if (items.length === 1) return items[0] ?? "";
 
   const itemLines = items.map(lines);
-  const maxHeight = Math.max(...itemLines.map((l) => l.length));
+  let maxHeight = 0;
+  for (const item of itemLines) maxHeight = Math.max(maxHeight, item.length);
   const itemWidths = itemLines.map(maxLineWidth);
 
   const paddedItems = itemLines.map((itemLns, idx) => {

@@ -118,6 +118,46 @@ describe("parallel", () => {
       semaphore.release();
       assertEquals(await pending, Array.from({ length: 100 }, (_, index) => index));
     });
+
+    it("does not return while sibling work from the same call is still running", async () => {
+      const blocker = Promise.withResolvers<void>();
+      const siblingStarted = Promise.withResolvers<void>();
+      const failureThrown = Promise.withResolvers<void>();
+      let settled = false;
+      const operation = parallelMap(
+        ["fail", "block"],
+        async (value) => {
+          if (value === "fail") {
+            await siblingStarted.promise;
+            failureThrown.resolve();
+            throw new Error("mapping failed");
+          }
+          siblingStarted.resolve();
+          await blocker.promise;
+          return value;
+        },
+        { concurrency: 2 },
+      );
+      const observed = operation.then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (error) => {
+          settled = true;
+          return error;
+        },
+      );
+
+      await failureThrown.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(settled, false);
+
+      blocker.resolve();
+      const error = await observed;
+      assertEquals(error instanceof Error, true);
+      assertEquals((error as Error).message, "mapping failed");
+    });
   });
 
   describe("parallelAll", () => {

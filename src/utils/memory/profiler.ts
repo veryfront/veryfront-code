@@ -19,7 +19,12 @@ export const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
 
 /** Heap growth (MB) per interval that triggers a rapid-growth warning */
 const HEAP_RAPID_GROWTH_THRESHOLD_MB = 100;
+const MIN_HEAP_WARNING_THRESHOLD = 0.1;
+const MAX_HEAP_WARNING_THRESHOLD = 0.99;
 
+export const MAX_REGISTERED_MEMORY_CACHES = 256;
+const MAX_CACHE_NAME_CHARACTERS = 256;
+const MAX_CACHE_BACKEND_CHARACTERS = 256;
 const cacheRegistry = new Map<string, () => CacheStats>();
 
 export interface CacheStats {
@@ -118,7 +123,44 @@ export interface RapidHeapGrowthState {
   pending: PendingRapidHeapGrowth | undefined;
 }
 
+function containsUnsafeLogCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (
+      codeUnit <= 0x1f ||
+      (codeUnit >= 0x7f && codeUnit <= 0x9f) ||
+      codeUnit === 0x2028 ||
+      codeUnit === 0x2029
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function registerCache(name: string, getStats: () => CacheStats): void {
+  if (
+    typeof name !== "string" ||
+    name.length === 0 ||
+    name.length > MAX_CACHE_NAME_CHARACTERS ||
+    name.trim() !== name ||
+    containsUnsafeLogCharacters(name)
+  ) {
+    throw new TypeError(
+      `Cache name must be a non-empty, bounded, log-safe string no longer than ${MAX_CACHE_NAME_CHARACTERS} characters`,
+    );
+  }
+  if (typeof getStats !== "function") {
+    throw new TypeError("Cache getStats must be a function");
+  }
+  if (
+    !cacheRegistry.has(name) &&
+    cacheRegistry.size >= MAX_REGISTERED_MEMORY_CACHES
+  ) {
+    throw new RangeError(
+      `Memory cache registry capacity of ${MAX_REGISTERED_MEMORY_CACHES} is exhausted`,
+    );
+  }
   cacheRegistry.set(name, getStats);
   logger.debug(`Registered cache: ${name}`);
 }
@@ -146,20 +188,82 @@ export function getHeapStats(): HeapStats {
   };
 }
 
+export function parseHeapLimitMB(value: string | null | undefined): number | undefined {
+  const normalized = value?.trim();
+  if (!normalized || !/^\d+$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseHeapLimitFlag(value: string | null | undefined): number | undefined {
+  const match = value?.match(/--max-old-space-size=([^\s,]+)/);
+  return parseHeapLimitMB(match?.[1]);
+}
+
 function getConfiguredHeapLimit(): number {
-  const args = getArgs().join(" ");
+  const argsLimit = parseHeapLimitFlag(getArgs().join(" "));
+  if (argsLimit !== undefined) return argsLimit;
 
-  const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);
-  if (v8FlagsMatch?.[1]) return parseInt(v8FlagsMatch[1], 10);
+  const denoLimit = parseHeapLimitFlag(getEnv("DENO_V8_FLAGS"));
+  if (denoLimit !== undefined) return denoLimit;
 
-  const denoV8Flags = getEnv("DENO_V8_FLAGS");
-  const denoV8Match = denoV8Flags?.match(/--max-old-space-size=(\d+)/);
-  if (denoV8Match?.[1]) return parseInt(denoV8Match[1], 10);
-
-  const v8MaxOldSpaceSize = parseInt(getEnv("V8_MAX_OLD_SPACE_SIZE") ?? "", 10);
-  if (!Number.isNaN(v8MaxOldSpaceSize) && v8MaxOldSpaceSize > 0) return v8MaxOldSpaceSize;
+  const environmentLimit = parseHeapLimitMB(getEnv("V8_MAX_OLD_SPACE_SIZE"));
+  if (environmentLimit !== undefined) return environmentLimit;
 
   return DEFAULT_HEAP_LIMIT_MB;
+}
+
+function requireCacheStatInteger(
+  value: unknown,
+  name: string,
+  minimum = 0,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < minimum
+  ) {
+    throw new TypeError(`${name} must be a safe integer no less than ${minimum}`);
+  }
+  return value;
+}
+
+function snapshotCacheStats(
+  registeredName: string,
+  rawStats: CacheStats,
+): CacheStats {
+  if (typeof rawStats !== "object" || rawStats === null) {
+    throw new TypeError("Cache stats must be an object");
+  }
+
+  const entries = requireCacheStatInteger(rawStats.entries, "Cache entries", -1);
+  const maxEntries = rawStats.maxEntries === undefined
+    ? undefined
+    : requireCacheStatInteger(rawStats.maxEntries, "Cache maxEntries");
+  const estimatedSizeBytes = rawStats.estimatedSizeBytes === undefined
+    ? undefined
+    : requireCacheStatInteger(
+      rawStats.estimatedSizeBytes,
+      "Cache estimatedSizeBytes",
+    );
+  const backend = rawStats.backend;
+  if (
+    backend !== undefined &&
+    (typeof backend !== "string" ||
+      backend.length === 0 ||
+      backend.length > MAX_CACHE_BACKEND_CHARACTERS ||
+      containsUnsafeLogCharacters(backend))
+  ) {
+    throw new TypeError("Cache backend must be a bounded, log-safe string");
+  }
+
+  return {
+    name: registeredName,
+    entries,
+    ...(maxEntries === undefined ? {} : { maxEntries }),
+    ...(estimatedSizeBytes === undefined ? {} : { estimatedSizeBytes }),
+    ...(backend === undefined ? {} : { backend }),
+  };
 }
 
 export function getCacheStats(): CacheStats[] {
@@ -167,7 +271,7 @@ export function getCacheStats(): CacheStats[] {
 
   for (const [name, getStats] of cacheRegistry) {
     try {
-      stats.push(getStats());
+      stats.push(snapshotCacheStats(name, getStats()));
     } catch (error) {
       logger.warn(`Failed to get stats for cache ${name}:`, error);
       stats.push({ name, entries: -1 });
@@ -180,7 +284,14 @@ export function getCacheStats(): CacheStats[] {
 export function getMemorySnapshot(): MemorySnapshot {
   const heap = getHeapStats();
   const caches = getCacheStats();
-  const totalCacheEntries = caches.reduce((sum, c) => sum + Math.max(0, c.entries), 0);
+  const totalCacheEntries = caches.reduce(
+    (sum, cache) =>
+      Math.min(
+        Number.MAX_SAFE_INTEGER,
+        sum + Math.max(0, cache.entries),
+      ),
+    0,
+  );
 
   return {
     timestamp: new Date().toISOString(),
@@ -409,33 +520,67 @@ export function stopMemoryMonitoring(): void {
 }
 
 export function setHeapWarningThreshold(threshold: number): void {
-  if (!Number.isFinite(threshold)) {
-    throw new RangeError("Heap warning threshold must be finite");
+  if (
+    !Number.isFinite(threshold) ||
+    threshold < MIN_HEAP_WARNING_THRESHOLD ||
+    threshold > MAX_HEAP_WARNING_THRESHOLD
+  ) {
+    throw new RangeError(
+      `Heap warning threshold must be between ${MIN_HEAP_WARNING_THRESHOLD} and ${MAX_HEAP_WARNING_THRESHOLD}`,
+    );
   }
-  heapGrowthWarningThreshold = Math.max(0.1, Math.min(0.99, threshold));
+  heapGrowthWarningThreshold = threshold;
+}
+
+const DEFAULT_MEMORY_WARNING_THRESHOLD = 65;
+const DEFAULT_MEMORY_CRITICAL_THRESHOLD = 80;
+
+function parseMemoryThreshold(value: string | null | undefined): number | undefined {
+  if (value == null || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : undefined;
 }
 
 /**
- * Memory pressure thresholds - should match pressure.ts defaults for consistency.
- * Uses same env vars: MEMORY_WARNING_THRESHOLD (default: 75), MEMORY_CRITICAL_THRESHOLD (default: 80)
+ * Resolve one coherent warning/critical pair. Any malformed or inverted pair
+ * falls back atomically so callers never observe `critical: true` with
+ * `warning: false` because two independently parsed thresholds crossed.
  */
-function getMemoryThreshold(envVar: string, fallback: number): number {
+export function getMemoryPressureThresholds(
+  env: MemoryMonitoringEnv,
+): { warning: number; critical: number } {
   try {
-    const value = getEnv(envVar);
-    if (!value) return fallback;
-
-    const parsed = parseInt(value, 10);
-    if (Number.isNaN(parsed)) return fallback;
-
-    return parsed;
-  } catch (_) {
-    /* expected: Deno.env.get may fail without --allow-env */
-    return fallback;
+    const rawWarning = env.get("MEMORY_WARNING_THRESHOLD");
+    const rawCritical = env.get("MEMORY_CRITICAL_THRESHOLD");
+    const warning = rawWarning == null || rawWarning.trim() === ""
+      ? DEFAULT_MEMORY_WARNING_THRESHOLD
+      : parseMemoryThreshold(rawWarning);
+    const critical = rawCritical == null || rawCritical.trim() === ""
+      ? DEFAULT_MEMORY_CRITICAL_THRESHOLD
+      : parseMemoryThreshold(rawCritical);
+    if (
+      warning === undefined ||
+      critical === undefined ||
+      warning > critical
+    ) {
+      return {
+        warning: DEFAULT_MEMORY_WARNING_THRESHOLD,
+        critical: DEFAULT_MEMORY_CRITICAL_THRESHOLD,
+      };
+    }
+    return { warning, critical };
+  } catch {
+    return {
+      warning: DEFAULT_MEMORY_WARNING_THRESHOLD,
+      critical: DEFAULT_MEMORY_CRITICAL_THRESHOLD,
+    };
   }
 }
 
-const PROFILER_WARNING_THRESHOLD = getMemoryThreshold("MEMORY_WARNING_THRESHOLD", 75);
-const PROFILER_CRITICAL_THRESHOLD = getMemoryThreshold("MEMORY_CRITICAL_THRESHOLD", 80);
+const {
+  warning: PROFILER_WARNING_THRESHOLD,
+  critical: PROFILER_CRITICAL_THRESHOLD,
+} = getMemoryPressureThresholds({ get: getEnv });
 
 export function checkMemoryPressure(): {
   critical: boolean;
@@ -445,8 +590,8 @@ export function checkMemoryPressure(): {
   const heap = getHeapStats();
   const heapUsedPercent = heap.heapUsedPercent;
 
-  const critical = heapUsedPercent > PROFILER_CRITICAL_THRESHOLD;
-  const warning = heapUsedPercent > PROFILER_WARNING_THRESHOLD;
+  const critical = heapUsedPercent >= PROFILER_CRITICAL_THRESHOLD;
+  const warning = critical || heapUsedPercent >= PROFILER_WARNING_THRESHOLD;
 
   if (critical) {
     logger.error("CRITICAL MEMORY PRESSURE", {

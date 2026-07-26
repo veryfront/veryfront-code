@@ -236,6 +236,14 @@ export const BUNDLE_MANIFEST_LRU_MAX_ENTRIES = getEnvCacheEntries(
   "BUNDLE_MANIFEST_LRU_MAX_ENTRIES",
   5000,
 );
+export const BUNDLE_MANIFEST_MEMORY_MAX_METADATA_SIZE_BYTES = getEnvCacheSizeMb(
+  "BUNDLE_MANIFEST_MEMORY_MAX_METADATA_SIZE_MB",
+  128,
+) * BYTES_PER_MB;
+export const BUNDLE_MANIFEST_MEMORY_MAX_CODE_SIZE_BYTES = getEnvCacheSizeMb(
+  "BUNDLE_MANIFEST_MEMORY_MAX_CODE_SIZE_MB",
+  256,
+) * BYTES_PER_MB;
 
 // HTTP module cache (esm.sh, CDN bundles)
 // These bundles are immutable once fetched, so long TTLs are safe

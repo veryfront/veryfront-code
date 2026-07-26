@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  type CacheStats,
   checkMemoryPressure,
   forceGC,
   getCacheStats,
@@ -9,9 +10,12 @@ import {
   getInitialRapidHeapGrowthState,
   getMemoryMonitoringConfig,
   getMemoryMonitoringLogContext,
+  getMemoryPressureThresholds,
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
   getTopCacheStats,
+  MAX_REGISTERED_MEMORY_CACHES,
+  parseHeapLimitMB,
   registerCache,
   setHeapWarningThreshold,
   startMemoryMonitoring,
@@ -48,6 +52,54 @@ describe("memory/profiler", () => {
     it("should handle unregistering a cache that does not exist", () => {
       unregisterCache("nonexistent");
     });
+
+    it("validates registrations and bounds distinct cache names", () => {
+      assertThrows(
+        () => registerCache("", () => ({ name: "", entries: 0 })),
+        TypeError,
+        "name",
+      );
+      assertThrows(
+        () =>
+          registerCache(
+            "x".repeat(257),
+            () => ({ name: "oversized", entries: 0 }),
+          ),
+        TypeError,
+        "name",
+      );
+      assertThrows(
+        () => registerCache("invalid-callback", null as never),
+        TypeError,
+        "getStats",
+      );
+
+      const names = Array.from(
+        {
+          length: MAX_REGISTERED_MEMORY_CACHES - getCacheStats().length,
+        },
+        (_, index) => `bounded-cache-${index}`,
+      );
+      try {
+        for (const name of names) {
+          registerCache(name, () => ({ name, entries: 0 }));
+        }
+        // Replacing an existing registration is not new admission.
+        registerCache(names[0]!, () => ({ name: names[0]!, entries: 1 }));
+        assertThrows(
+          () =>
+            registerCache(
+              "one-cache-too-many",
+              () => ({ name: "one-cache-too-many", entries: 0 }),
+            ),
+          RangeError,
+          "capacity",
+        );
+      } finally {
+        for (const name of names) unregisterCache(name);
+        unregisterCache("one-cache-too-many");
+      }
+    });
   });
 
   describe("getCacheStats", () => {
@@ -72,6 +124,24 @@ describe("memory/profiler", () => {
       assert(names.includes("test-cache-1"));
       assert(names.includes("test-cache-2"));
     });
+
+    it("snapshots and validates callback results before aggregation", () => {
+      registerCache(
+        "test-cache",
+        () =>
+          ({
+            name: "spoofed-name",
+            get entries() {
+              throw new Error("hostile entry getter");
+            },
+          }) as CacheStats,
+      );
+
+      assertEquals(
+        getCacheStats().find((stats) => stats.name === "test-cache"),
+        { name: "test-cache", entries: -1 },
+      );
+    });
   });
 
   describe("getHeapStats", () => {
@@ -95,6 +165,24 @@ describe("memory/profiler", () => {
       const { heapUsedPercent } = getHeapStats();
       assert(heapUsedPercent >= 0);
       assert(heapUsedPercent <= 100);
+    });
+  });
+
+  describe("parseHeapLimitMB", () => {
+    it("accepts only complete positive safe-integer limits", () => {
+      assertEquals(parseHeapLimitMB("512"), 512);
+      for (
+        const value of [
+          "",
+          "0",
+          "-1",
+          "512mb",
+          "1.5",
+          String(Number.MAX_SAFE_INTEGER + 1),
+        ]
+      ) {
+        assertEquals(parseHeapLimitMB(value), undefined);
+      }
     });
   });
 
@@ -170,6 +258,49 @@ describe("memory/profiler", () => {
       });
 
       assertEquals(config.intervalMs, 30_000);
+    });
+  });
+
+  describe("getMemoryPressureThresholds", () => {
+    it("parses complete bounded percentages and aligns defaults with request pressure", () => {
+      assertEquals(
+        getMemoryPressureThresholds({ get: () => undefined }),
+        { warning: 65, critical: 80 },
+      );
+      assertEquals(
+        getMemoryPressureThresholds({
+          get(key) {
+            if (key === "MEMORY_WARNING_THRESHOLD") return "62.5";
+            if (key === "MEMORY_CRITICAL_THRESHOLD") return "91";
+            return undefined;
+          },
+        }),
+        { warning: 62.5, critical: 91 },
+      );
+    });
+
+    it("rejects partial, out-of-range, and inverted threshold configuration", () => {
+      for (
+        const values of [
+          { warning: "75percent", critical: "80" },
+          { warning: "-1", critical: "80" },
+          { warning: "65", critical: "101" },
+          { warning: "90", critical: "80" },
+        ]
+      ) {
+        assertEquals(
+          getMemoryPressureThresholds({
+            get(key) {
+              return key === "MEMORY_WARNING_THRESHOLD"
+                ? values.warning
+                : key === "MEMORY_CRITICAL_THRESHOLD"
+                ? values.critical
+                : undefined;
+            },
+          }),
+          { warning: 65, critical: 80 },
+        );
+      }
     });
   });
 
@@ -276,23 +407,27 @@ describe("memory/profiler", () => {
   });
 
   describe("setHeapWarningThreshold", () => {
-    it("should reject non-finite thresholds", () => {
-      assertThrows(() => setHeapWarningThreshold(Number.NaN), RangeError);
-      assertThrows(() => setHeapWarningThreshold(Number.POSITIVE_INFINITY), RangeError);
+    it("should reject thresholds outside the supported range", () => {
+      for (
+        const threshold of [
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          Number.NEGATIVE_INFINITY,
+          0,
+          0.09,
+          1,
+          1.5,
+        ]
+      ) {
+        assertThrows(() => setHeapWarningThreshold(threshold), RangeError);
+      }
     });
 
     it("should not throw when setting valid thresholds", () => {
       setHeapWarningThreshold(0.5);
       setHeapWarningThreshold(0.9);
       setHeapWarningThreshold(0.1);
-    });
-
-    it("should clamp threshold to minimum 0.1", () => {
-      setHeapWarningThreshold(0.01);
-    });
-
-    it("should clamp threshold to maximum 0.99", () => {
-      setHeapWarningThreshold(1.5);
+      setHeapWarningThreshold(0.99);
     });
   });
 

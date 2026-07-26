@@ -411,6 +411,102 @@ describe("InMemoryBundleManifestStore", () => {
     assertExists(await store.getBundleMetadata("c"));
   });
 
+  it("bounds retained code by UTF-8 bytes and evicts the least-recently-used code", async () => {
+    const store = new InMemoryBundleManifestStore({
+      maxMetadataEntries: 10,
+      maxCodeEntries: 10,
+      maxCodeSizeBytes: 5,
+    });
+    for (const id of ["a", "b"]) {
+      await store.setBundleCode(`code-${id}`, { code: id.repeat(2) });
+      await store.setBundleMetadata(id, createMetadata(id));
+    }
+
+    await store.getBundleCode("code-a");
+    await store.setBundleCode("code-c", { code: "cc" });
+    await store.setBundleMetadata("c", createMetadata("c"));
+
+    assertEquals(await store.getBundleCode("code-a"), { code: "aa" });
+    assertEquals(await store.getBundleCode("code-b"), undefined);
+    assertEquals(await store.getBundleMetadata("b"), undefined);
+    assertEquals(await store.getBundleCode("code-c"), { code: "cc" });
+  });
+
+  it("uses exact UTF-8 byte accounting and rejects oversized code transactionally", async () => {
+    const store = new InMemoryBundleManifestStore({ maxCodeSizeBytes: 4 });
+    await store.setBundleCode("stable", { code: "éé" });
+
+    await assertRejects(
+      () => store.setBundleCode("stable", { code: "ééa" }),
+      RangeError,
+      "maxCodeSizeBytes",
+    );
+
+    assertEquals(await store.getBundleCode("stable"), { code: "éé" });
+  });
+
+  it("bounds retained metadata bytes and removes code orphaned by eviction", async () => {
+    const store = new InMemoryBundleManifestStore({
+      maxMetadataEntries: 10,
+      maxCodeEntries: 10,
+      maxMetadataSizeBytes: 2048,
+    });
+    const first = {
+      ...createMetadata("a"),
+      source: `${"a".repeat(1400)}.mdx`,
+    };
+    const second = {
+      ...createMetadata("b"),
+      source: `${"b".repeat(1400)}.mdx`,
+    };
+    await store.setBundleCode("code-a", { code: "a" });
+    await store.setBundleMetadata("a", first);
+    await store.setBundleCode("code-b", { code: "b" });
+    await store.setBundleMetadata("b", second);
+
+    assertEquals(await store.getBundleMetadata("a"), undefined);
+    assertEquals(await store.getBundleCode("code-a"), undefined);
+    assertEquals(await store.getBundleMetadata("b"), second);
+  });
+
+  it("rejects malformed metadata and code without replacing retained values", async () => {
+    const store = new InMemoryBundleManifestStore({ maxMetadataSizeBytes: 1024 });
+    const stableMetadata = createMetadata("stable");
+    await store.setBundleMetadata("stable", stableMetadata);
+    await store.setBundleCode("stable-code", { code: "stable" });
+
+    await assertRejects(
+      () =>
+        store.setBundleMetadata("stable", {
+          ...stableMetadata,
+          size: Number.NaN,
+        }),
+      TypeError,
+      "size",
+    );
+    await assertRejects(
+      () =>
+        store.setBundleMetadata("stable", {
+          ...stableMetadata,
+          source: "x".repeat(2048),
+        }),
+      RangeError,
+      "maxMetadataSizeBytes",
+    );
+    await assertRejects(
+      () =>
+        store.setBundleCode("stable-code", {
+          code: "replacement",
+          sourceMap: 1 as unknown as string,
+        }),
+      TypeError,
+      "sourceMap",
+    );
+
+    assertEquals(await store.getBundleMetadata("stable"), stableMetadata);
+    assertEquals(await store.getBundleCode("stable-code"), { code: "stable" });
+  });
+
   it("sweeps expired metadata and code opportunistically with an injected clock", async () => {
     let now = 0;
     const store = new InMemoryBundleManifestStore({ now: () => now });
@@ -446,6 +542,16 @@ describe("InMemoryBundleManifestStore", () => {
       RangeError,
       "maxCodeEntries",
     );
+    assertThrows(
+      () => new InMemoryBundleManifestStore({ maxMetadataSizeBytes: -1 }),
+      RangeError,
+      "maxMetadataSizeBytes",
+    );
+    assertThrows(
+      () => new InMemoryBundleManifestStore({ maxCodeSizeBytes: Number.POSITIVE_INFINITY }),
+      RangeError,
+      "maxCodeSizeBytes",
+    );
 
     const store = new InMemoryBundleManifestStore();
     await assertRejects(
@@ -458,6 +564,17 @@ describe("InMemoryBundleManifestStore", () => {
 });
 
 describe("setBundleManifestStore", () => {
+  it("rejects incomplete stores without replacing the active store", () => {
+    const previous = getBundleManifestStore();
+
+    assertThrows(
+      () => setBundleManifestStore({} as BundleManifestStore),
+      TypeError,
+      "getBundleMetadata",
+    );
+    assertEquals(getBundleManifestStore(), previous);
+  });
+
   it("accepts a structurally valid store without a constructor prototype", () => {
     const previous = getBundleManifestStore();
     const custom = Object.setPrototypeOf(

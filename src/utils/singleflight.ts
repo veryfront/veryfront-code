@@ -8,6 +8,11 @@ export interface SingleflightOptions {
   onStaleEvicted?: () => void;
 }
 
+export interface SingleflightConstructorOptions {
+  /** Maximum number of distinct leaders retained at once. */
+  maxInflight?: number;
+}
+
 export interface SingleflightControl {
   /** Whether this operation is still the exact leader registered for its key. */
   isCurrent(): boolean;
@@ -17,6 +22,10 @@ interface SingleflightEntry<T> {
   promise: Promise<T>;
   staleTimer?: ReturnType<typeof setTimeout>;
 }
+
+const DEFAULT_MAX_INFLIGHT = 10_000;
+const MAX_CONFIGURED_INFLIGHT = 100_000;
+const MAX_KEY_CHARACTERS = 4_096;
 
 /**
  * Wait for shared work while allowing this caller to detach independently.
@@ -60,12 +69,35 @@ export async function waitForSharedPromise<T>(
 
 export class Singleflight<T> {
   private inflight = new Map<string, SingleflightEntry<T>>();
+  private readonly maxInflight: number;
+
+  constructor(options: SingleflightConstructorOptions = {}) {
+    const maxInflight = options.maxInflight ?? DEFAULT_MAX_INFLIGHT;
+    if (
+      !Number.isSafeInteger(maxInflight) ||
+      maxInflight < 1 ||
+      maxInflight > MAX_CONFIGURED_INFLIGHT
+    ) {
+      throw new RangeError(
+        `Singleflight maxInflight must be a safe integer between 1 and ${MAX_CONFIGURED_INFLIGHT}`,
+      );
+    }
+    this.maxInflight = maxInflight;
+  }
 
   async do(
     key: string,
     operation: (control: SingleflightControl) => Promise<T>,
     options: SingleflightOptions = {},
   ): Promise<T> {
+    if (typeof key !== "string") {
+      throw new TypeError("Singleflight key must be a string");
+    }
+    if (key.length > MAX_KEY_CHARACTERS) {
+      throw new RangeError(
+        `Singleflight key must not exceed ${MAX_KEY_CHARACTERS} characters`,
+      );
+    }
     if (
       options.staleAfterMs !== undefined &&
       (!Number.isInteger(options.staleAfterMs) ||
@@ -79,6 +111,11 @@ export class Singleflight<T> {
 
     const existing = this.inflight.get(key);
     if (existing) return existing.promise;
+    if (this.inflight.size >= this.maxInflight) {
+      throw new RangeError(
+        `Singleflight capacity of ${this.maxInflight} distinct in-flight keys is exhausted`,
+      );
+    }
 
     let resolvePromise!: (value: T | PromiseLike<T>) => void;
     let rejectPromise!: (reason?: unknown) => void;

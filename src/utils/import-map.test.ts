@@ -5,6 +5,10 @@ import {
   DEFAULT_BROWSER_IMPORT_MAP_IMPORTS,
   getDocumentImportMapImports,
   importMapOwnsSpecifier,
+  MAX_IMPORT_MAP_ENTRIES,
+  MAX_IMPORT_MAP_JSON_CHARACTERS,
+  MAX_IMPORT_MAP_SPECIFIER_CHARACTERS,
+  MAX_IMPORT_MAP_TARGET_CHARACTERS,
   mergeBrowserImportMapImports,
   parseImportMapImports,
 } from "./import-map.ts";
@@ -89,6 +93,49 @@ describe("utils/import-map", () => {
     }
 
     assertEquals(warnings.length, 1);
+  });
+
+  it("rejects import maps outside fixed parsing and entry bounds", () => {
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      assertEquals(
+        parseImportMapImports(" ".repeat(MAX_IMPORT_MAP_JSON_CHARACTERS + 1)),
+        {},
+      );
+      assertEquals(
+        parseImportMapImports(JSON.stringify({
+          imports: Object.fromEntries(
+            Array.from(
+              { length: MAX_IMPORT_MAP_ENTRIES + 1 },
+              (_, index) => [`pkg-${index}`, `/pkg-${index}.js`],
+            ),
+          ),
+        })),
+        {},
+      );
+      assertEquals(
+        parseImportMapImports(JSON.stringify({
+          imports: {
+            ["s".repeat(MAX_IMPORT_MAP_SPECIFIER_CHARACTERS + 1)]: "/safe.js",
+          },
+        })),
+        {},
+      );
+      assertEquals(
+        parseImportMapImports(JSON.stringify({
+          imports: {
+            safe: `/${"t".repeat(MAX_IMPORT_MAP_TARGET_CHARACTERS)}`,
+          },
+        })),
+        {},
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assertEquals(warnings.length, 4);
   });
 
   it("reads the page import map from the document", () => {

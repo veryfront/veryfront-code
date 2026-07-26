@@ -227,12 +227,13 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
       assertEquals(await p2, true);
     });
 
-    it("should have unbounded queue by default", async () => {
+    it("should admit ordinary queues within a finite default budget", async () => {
       const sem = new Semaphore(1);
+      assertEquals(Number.isFinite(sem.queueCapacity), true);
 
       await sem.tryAcquire();
 
-      // Queue many waiters — should all be accepted
+      // Ordinary transform bursts remain below the defensive process bound.
       const promises = Array.from({ length: 50 }, () => sem.tryAcquire(500));
       assertEquals(sem.waiting, 50);
 

@@ -12,6 +12,10 @@ import {
   getEnvSource,
   hasEnvLoaded,
   loadEnv,
+  MAX_ENV_FILE_CHARACTERS,
+  MAX_ENV_FILE_VARIABLES,
+  MAX_ENV_MODE_CHARACTERS,
+  MAX_ENV_VALUE_CHARACTERS,
   supportsEnvFiles,
 } from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/index.ts";
@@ -392,6 +396,87 @@ describe("env-loader", () => {
         assertEquals(hasEnvLoaded(), false);
       } finally {
         cleanupKeys(validKey, invalidKey);
+      }
+    });
+
+    it("rejects unsafe environment selectors before constructing a file path", async () => {
+      const previousNodeEnv = getEnv("NODE_ENV");
+      const key = createKey("UNSAFE_SELECTOR");
+      try {
+        setEnv("NODE_ENV", `../${"x".repeat(MAX_ENV_MODE_CHARACTERS)}`);
+        await writeEnvFile(".env", `${key}=must_not_apply`);
+
+        await assertRejects(
+          () => loadEnv({ cwd: tempDir, override: true }),
+          RangeError,
+          "NODE_ENV",
+        );
+
+        assertEquals(getEnv(key), undefined);
+        assertEquals(hasEnvLoaded(), false);
+      } finally {
+        if (previousNodeEnv === undefined) deleteEnv("NODE_ENV");
+        else setEnv("NODE_ENV", previousNodeEnv);
+        cleanupKeys(key);
+      }
+    });
+
+    it("rejects oversized files before applying any values", async () => {
+      const key = createKey("OVERSIZED_FILE");
+      try {
+        await writeEnvFile(
+          ".env",
+          `${key}=must_not_apply\n#${"x".repeat(MAX_ENV_FILE_CHARACTERS)}`,
+        );
+
+        await assertRejects(
+          () => loadEnv({ cwd: tempDir, override: true }),
+          RangeError,
+          "file",
+        );
+        assertEquals(getEnv(key), undefined);
+      } finally {
+        cleanupKeys(key);
+      }
+    });
+
+    it("rejects excessive assignments and expanded values atomically", async () => {
+      const firstKey = createKey("BOUNDED_FIRST");
+      const expansionKey = createKey("BOUNDED_EXPANSION");
+      const externalKey = createKey("BOUNDED_EXTERNAL");
+
+      try {
+        await writeEnvFile(
+          ".env",
+          Array.from(
+            { length: MAX_ENV_FILE_VARIABLES + 1 },
+            (_, index) => `${firstKey}_${index}=value`,
+          ).join("\n"),
+        );
+        await assertRejects(
+          () => loadEnv({ cwd: tempDir, override: true }),
+          RangeError,
+          "assignments",
+        );
+        assertEquals(getEnv(`${firstKey}_0`), undefined);
+
+        __resetEnvLoaderForTests();
+        setEnv(externalKey, "x".repeat(Math.floor(MAX_ENV_VALUE_CHARACTERS / 2) + 1));
+        await writeEnvFile(
+          ".env",
+          `${expansionKey}=\${${externalKey}}\${${externalKey}}`,
+        );
+        await assertRejects(
+          () => loadEnv({ cwd: tempDir, override: true }),
+          RangeError,
+          "value",
+        );
+        assertEquals(getEnv(expansionKey), undefined);
+      } finally {
+        for (let index = 0; index <= MAX_ENV_FILE_VARIABLES; index++) {
+          cleanupKeys(`${firstKey}_${index}`);
+        }
+        cleanupKeys(expansionKey, externalKey);
       }
     });
 

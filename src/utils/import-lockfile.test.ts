@@ -12,6 +12,10 @@ import {
   extractImports,
   fetchWithLock,
   type FSAdapter,
+  MAX_LOCKFILE_DATA_CHARACTERS,
+  MAX_LOCKFILE_DEPENDENCIES_PER_ENTRY,
+  MAX_LOCKFILE_IMPORTS,
+  MAX_LOCKFILE_SPECIFIER_CHARACTERS,
   resolveImportUrl,
   verifyIntegrity,
 } from "./import-lockfile.ts";
@@ -714,6 +718,58 @@ describe("import-lockfile", () => {
       await assertRejects(() => mgr.read(), Error, "Invalid lockfile");
     });
 
+    it("bounds lockfile bytes, entries, keys, and dependency lists", async () => {
+      const oversizedFs = createMockFS({
+        "/project/veryfront.lock": " ".repeat(MAX_LOCKFILE_DATA_CHARACTERS + 1),
+      });
+      await assertRejects(
+        () => createLockfileManager("/project", oversizedFs).read(),
+        Error,
+        "Invalid lockfile",
+      );
+
+      const mgr = createLockfileManager("/project", createMockFS());
+      await assertRejects(
+        () =>
+          mgr.write({
+            version: 1,
+            imports: Object.fromEntries(
+              Array.from(
+                { length: MAX_LOCKFILE_IMPORTS + 1 },
+                (_, index) => [
+                  `pkg-${index}`,
+                  { resolved: `/pkg-${index}.js`, integrity: "sha256-test" },
+                ],
+              ),
+            ),
+          }),
+        RangeError,
+        "entries",
+      );
+      await assertRejects(
+        () =>
+          mgr.set("s".repeat(MAX_LOCKFILE_SPECIFIER_CHARACTERS + 1), {
+            resolved: "/safe.js",
+            integrity: "sha256-test",
+          }),
+        RangeError,
+        "specifier",
+      );
+      await assertRejects(
+        () =>
+          mgr.set("safe", {
+            resolved: "/safe.js",
+            integrity: "sha256-test",
+            dependencies: Array.from(
+              { length: MAX_LOCKFILE_DEPENDENCIES_PER_ENTRY + 1 },
+              (_, index) => `dependency-${index}`,
+            ),
+          }),
+        TypeError,
+        "entry",
+      );
+    });
+
     it("should clear lockfile data", async () => {
       const mgr = createLockfileManager("/project", createMockFS());
       const specifier = "https://cdn.com/mod.ts";
@@ -979,6 +1035,27 @@ describe("import-lockfile", () => {
         "rejected by policy",
       );
       assertEquals(await mgr.get(requestedUrl), null);
+    });
+
+    it("requires URL policies to return the boolean true", async () => {
+      const mgr = createLockfileManager("/project", createMockFS());
+      let fetchCalls = 0;
+
+      await assertRejects(
+        () =>
+          fetchWithLock({
+            lockfile: mgr,
+            url: "https://cdn.example/module.ts",
+            isUrlAllowed: (() => "yes") as unknown as (url: URL) => boolean,
+            fetchFn: (() => {
+              fetchCalls++;
+              return Promise.resolve(new Response("unexpected"));
+            }) as typeof fetch,
+          }),
+        Error,
+        "rejected by policy",
+      );
+      assertEquals(fetchCalls, 0);
     });
 
     it("wraps malformed absolute and protocol-relative redirect locations", async () => {

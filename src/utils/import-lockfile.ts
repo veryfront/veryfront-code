@@ -31,6 +31,14 @@ const LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 const LOCK_RETRY_INITIAL_MS = 10;
 const LOCK_RETRY_MAX_MS = 100;
 
+export const MAX_LOCKFILE_DATA_CHARACTERS = 16 * 1024 * 1024;
+export const MAX_LOCKFILE_IMPORTS = 10_000;
+export const MAX_LOCKFILE_SPECIFIER_CHARACTERS = 8_192;
+export const MAX_LOCKFILE_DEPENDENCIES_PER_ENTRY = 1_024;
+const MAX_LOCKFILE_RESOLVED_CHARACTERS = 8_192;
+const MAX_LOCKFILE_INTEGRITY_CHARACTERS = 512;
+const MAX_LOCKFILE_FETCHED_AT_CHARACTERS = 128;
+
 const pathMutationTails = new Map<string, Promise<void>>();
 
 async function withPathMutation<T>(path: string, operation: () => Promise<T>): Promise<T> {
@@ -58,20 +66,77 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeLockfileEntry(value: unknown): LockfileEntry | null {
+interface LockfileNormalizationBudget {
+  characters: number;
+}
+
+function consumeLockfileCharacters(
+  budget: LockfileNormalizationBudget,
+  characters: number,
+): void {
+  budget.characters += characters;
+  if (budget.characters > MAX_LOCKFILE_DATA_CHARACTERS) {
+    throw new RangeError(
+      `Lockfile data exceeds ${MAX_LOCKFILE_DATA_CHARACTERS} characters`,
+    );
+  }
+}
+
+function requireLockfileSpecifier(
+  specifier: string,
+  budget?: LockfileNormalizationBudget,
+): void {
+  if (specifier.length > MAX_LOCKFILE_SPECIFIER_CHARACTERS) {
+    throw new RangeError(
+      `Lockfile specifier exceeds ${MAX_LOCKFILE_SPECIFIER_CHARACTERS} characters`,
+    );
+  }
+  if (budget) consumeLockfileCharacters(budget, specifier.length);
+}
+
+function normalizeLockfileEntry(
+  value: unknown,
+  budget: LockfileNormalizationBudget = { characters: 0 },
+): LockfileEntry | null {
   if (
     !isRecord(value) || typeof value.resolved !== "string" || typeof value.integrity !== "string"
   ) {
     return null;
   }
   if (
-    value.dependencies !== undefined &&
-    (!Array.isArray(value.dependencies) ||
-      !value.dependencies.every((dependency) => typeof dependency === "string"))
+    value.resolved.length > MAX_LOCKFILE_RESOLVED_CHARACTERS ||
+    value.integrity.length > MAX_LOCKFILE_INTEGRITY_CHARACTERS
   ) {
     return null;
   }
-  if (value.fetchedAt !== undefined && typeof value.fetchedAt !== "string") return null;
+  if (
+    value.dependencies !== undefined &&
+    (!Array.isArray(value.dependencies) ||
+      value.dependencies.length > MAX_LOCKFILE_DEPENDENCIES_PER_ENTRY ||
+      !value.dependencies.every((dependency) =>
+        typeof dependency === "string" &&
+        dependency.length <= MAX_LOCKFILE_SPECIFIER_CHARACTERS
+      ))
+  ) {
+    return null;
+  }
+  if (
+    value.fetchedAt !== undefined &&
+    (typeof value.fetchedAt !== "string" ||
+      value.fetchedAt.length > MAX_LOCKFILE_FETCHED_AT_CHARACTERS)
+  ) {
+    return null;
+  }
+
+  consumeLockfileCharacters(
+    budget,
+    value.resolved.length +
+      value.integrity.length +
+      (value.fetchedAt?.length ?? 0),
+  );
+  for (const dependency of value.dependencies ?? []) {
+    consumeLockfileCharacters(budget, dependency.length);
+  }
 
   return {
     resolved: value.resolved,
@@ -100,13 +165,48 @@ function normalizeLockfileData(value: unknown): LockfileData {
   }
 
   const imports: Record<string, LockfileEntry> = {};
-  for (const [specifier, candidate] of Object.entries(value.imports)) {
-    const entry = normalizeLockfileEntry(candidate);
+  const budget: LockfileNormalizationBudget = { characters: 0 };
+  let importCount = 0;
+  for (const specifier in value.imports) {
+    if (!Object.hasOwn(value.imports, specifier)) continue;
+    importCount++;
+    if (importCount > MAX_LOCKFILE_IMPORTS) {
+      throw new RangeError(
+        `Lockfile exceeds ${MAX_LOCKFILE_IMPORTS} entries`,
+      );
+    }
+    requireLockfileSpecifier(specifier, budget);
+    const entry = normalizeLockfileEntry(value.imports[specifier], budget);
     if (!entry) throw new TypeError(`Invalid lockfile entry for ${specifier}`);
     defineImport(imports, specifier, entry);
   }
 
   return { version: LOCKFILE_VERSION, imports };
+}
+
+function lockfileEntryCharacterCount(entry: LockfileEntry): number {
+  return entry.resolved.length +
+    entry.integrity.length +
+    (entry.fetchedAt?.length ?? 0) +
+    (entry.dependencies ?? []).reduce(
+      (total, dependency) => total + dependency.length,
+      0,
+    );
+}
+
+function lockfileImportCharacterCount(
+  specifier: string,
+  entry: LockfileEntry,
+): number {
+  return specifier.length + lockfileEntryCharacterCount(entry);
+}
+
+function lockfileCharacterCount(data: LockfileData): number {
+  let characters = 0;
+  for (const [specifier, entry] of Object.entries(data.imports)) {
+    characters += lockfileImportCharacterCount(specifier, entry);
+  }
+  return characters;
 }
 
 /** Compute integrity. */
@@ -199,6 +299,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   let readInFlight: Promise<LockfileData | null> | null = null;
   let revision = 0;
   let stateMutationTail: Promise<void> = Promise.resolve();
+  let cacheCharacters = 0;
   const pendingEntries = new Map<string, { entry: LockfileEntry; revision: number }>();
 
   function withStateMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -230,8 +331,31 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     entries: Iterable<[string, { entry: LockfileEntry }]>,
   ): LockfileData {
     const merged = normalizeLockfileData(base ?? createEmptyLockfile());
+    let importCount = Object.keys(merged.imports).length;
+    let characters = lockfileCharacterCount(merged);
     for (const [specifier, pending] of entries) {
-      defineImport(merged.imports, specifier, pending.entry);
+      requireLockfileSpecifier(specifier);
+      const normalizedEntry = normalizeLockfileEntry(pending.entry);
+      if (!normalizedEntry) {
+        throw new TypeError(`Invalid lockfile entry for ${specifier}`);
+      }
+      const previous = merged.imports[specifier];
+      if (!Object.hasOwn(merged.imports, specifier)) {
+        importCount++;
+        if (importCount > MAX_LOCKFILE_IMPORTS) {
+          throw new RangeError(
+            `Lockfile exceeds ${MAX_LOCKFILE_IMPORTS} entries`,
+          );
+        }
+      }
+      characters -= previous === undefined ? 0 : lockfileImportCharacterCount(specifier, previous);
+      characters += lockfileImportCharacterCount(specifier, normalizedEntry);
+      if (characters > MAX_LOCKFILE_DATA_CHARACTERS) {
+        throw new RangeError(
+          `Lockfile data exceeds ${MAX_LOCKFILE_DATA_CHARACTERS} characters`,
+        );
+      }
+      defineImport(merged.imports, specifier, normalizedEntry);
     }
     return merged;
   }
@@ -249,6 +373,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     }
 
     try {
+      if (content.length > MAX_LOCKFILE_DATA_CHARACTERS) {
+        throw new RangeError(
+          `Lockfile data exceeds ${MAX_LOCKFILE_DATA_CHARACTERS} characters`,
+        );
+      }
       const parsed = JSON.parse(content) as unknown;
       if (isRecord(parsed) && parsed.version !== LOCKFILE_VERSION) {
         logger.warn(
@@ -274,6 +403,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       const diskData = await readFromDisk();
       if (revision !== readRevision) return cache;
       cache = diskData;
+      cacheCharacters = diskData === null ? 0 : lockfileCharacterCount(diskData);
       return diskData;
     })();
 
@@ -334,6 +464,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   async function writeAtomically(data: LockfileData): Promise<void> {
     const content = `${JSON.stringify(sortLockfile(data), null, 2)}\n`;
+    if (content.length > MAX_LOCKFILE_DATA_CHARACTERS) {
+      throw new RangeError(
+        `Serialized lockfile exceeds ${MAX_LOCKFILE_DATA_CHARACTERS} characters`,
+      );
+    }
     if (!fs.rename) {
       await fs.writeFile(lockfilePath, content);
       return;
@@ -371,10 +506,12 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   async function writeState(normalized: LockfileData): Promise<void> {
     const previousCache = cache;
+    const previousCacheCharacters = cacheCharacters;
     const previousPendingEntries = new Map(pendingEntries);
     const writeRevision = ++revision;
     pendingEntries.clear();
     cache = normalized;
+    cacheCharacters = lockfileCharacterCount(normalized);
 
     let persisted = false;
     try {
@@ -385,6 +522,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     } catch (error) {
       if (!persisted && revision === writeRevision) {
         cache = previousCache;
+        cacheCharacters = previousCacheCharacters;
         pendingEntries.clear();
         for (const [specifier, pending] of previousPendingEntries) {
           pendingEntries.set(specifier, pending);
@@ -404,6 +542,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   }
 
   function set(url: string, entry: LockfileEntry): Promise<void> {
+    try {
+      requireLockfileSpecifier(url);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const normalizedEntry = normalizeLockfileEntry(entry);
     if (!normalizedEntry) {
       return Promise.reject(new TypeError(`Invalid lockfile entry for ${url}`));
@@ -414,10 +557,28 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
   async function setState(url: string, normalizedEntry: LockfileEntry): Promise<void> {
     const existing = await load();
     const data = existing ?? cache ?? createEmptyLockfile();
+    const previous = Object.hasOwn(data.imports, url) ? data.imports[url] : undefined;
+    if (
+      previous === undefined &&
+      Object.keys(data.imports).length >= MAX_LOCKFILE_IMPORTS
+    ) {
+      throw new RangeError(
+        `Lockfile exceeds ${MAX_LOCKFILE_IMPORTS} entries`,
+      );
+    }
+    const nextCacheCharacters = cacheCharacters -
+      (previous === undefined ? 0 : lockfileImportCharacterCount(url, previous)) +
+      lockfileImportCharacterCount(url, normalizedEntry);
+    if (nextCacheCharacters > MAX_LOCKFILE_DATA_CHARACTERS) {
+      throw new RangeError(
+        `Lockfile data exceeds ${MAX_LOCKFILE_DATA_CHARACTERS} characters`,
+      );
+    }
     const entryRevision = ++revision;
     defineImport(data.imports, url, normalizedEntry);
     pendingEntries.set(url, { entry: normalizedEntry, revision: entryRevision });
     cache = data;
+    cacheCharacters = nextCacheCharacters;
   }
 
   async function has(url: string): Promise<boolean> {
@@ -431,9 +592,11 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
 
   async function clearState(): Promise<void> {
     const previousCache = cache;
+    const previousCacheCharacters = cacheCharacters;
     const previousPendingEntries = new Map(pendingEntries);
     const clearRevision = ++revision;
     cache = createEmptyLockfile();
+    cacheCharacters = 0;
     pendingEntries.clear();
 
     let persisted = false;
@@ -449,6 +612,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     } catch (error) {
       if (!persisted && revision === clearRevision) {
         cache = previousCache;
+        cacheCharacters = previousCacheCharacters;
         pendingEntries.clear();
         for (const [specifier, pending] of previousPendingEntries) {
           pendingEntries.set(specifier, pending);
@@ -474,7 +638,10 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         pendingEntries.delete(specifier);
       }
     }
-    if (revision === flushRevision) cache = merged;
+    if (revision === flushRevision) {
+      cache = merged;
+      cacheCharacters = lockfileCharacterCount(merged);
+    }
     logger.debug(`Written ${Object.keys(merged.imports).length} entries`);
   }
 
@@ -554,7 +721,7 @@ async function authorizeRemoteModuleUrl(
   if (isUrlAllowed) {
     let allowed = false;
     try {
-      allowed = await isUrlAllowed(url);
+      allowed = await isUrlAllowed(url) === true;
     } catch (cause) {
       throw NETWORK_ERROR.create({
         detail: `Remote module URL policy failed closed (${stage})`,

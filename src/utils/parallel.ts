@@ -104,6 +104,7 @@ export async function parallelMap<T, R>(
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
   let failed = false;
+  let firstError: unknown;
 
   async function worker(): Promise<void> {
     while (!failed) {
@@ -118,15 +119,19 @@ export async function parallelMap<T, R>(
           semaphore.release();
         }
       } catch (error) {
-        failed = true;
+        if (!failed) {
+          failed = true;
+          firstError = error;
+        }
         throw error;
       }
     }
   }
 
-  await Promise.all(
+  await Promise.allSettled(
     Array.from({ length: workerCount }, () => worker()),
   );
+  if (failed) throw firstError;
   return results;
 }
 

@@ -9,6 +9,14 @@ import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts"
 
 const logger = serverLogger.component("env");
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_MODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+export const MAX_ENV_MODE_CHARACTERS = 64;
+export const MAX_ENV_FILE_CHARACTERS = 1024 * 1024;
+export const MAX_ENV_FILE_LINES = 20_000;
+export const MAX_ENV_FILE_VARIABLES = 10_000;
+export const MAX_ENV_KEY_CHARACTERS = 256;
+export const MAX_ENV_VALUE_CHARACTERS = 256 * 1024;
 
 const envSources = new Map<string, string>();
 let envLoaded = false;
@@ -63,6 +71,15 @@ async function loadEnvOnce(
   const { cwd = getCwd(), override = false, debug = false } = options;
 
   const env = getHostEnv("NODE_ENV") ?? getHostEnv("DENO_ENV") ?? "development";
+  if (
+    env.length === 0 ||
+    env.length > MAX_ENV_MODE_CHARACTERS ||
+    !ENV_MODE_PATTERN.test(env)
+  ) {
+    throw new RangeError(
+      `NODE_ENV or DENO_ENV must contain 1-${MAX_ENV_MODE_CHARACTERS} letters, digits, underscores, or hyphens`,
+    );
+  }
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
 
   const staged = await stageEnvFiles(envFiles, override);
@@ -105,6 +122,11 @@ async function stageEnvFiles(
     } catch (error) {
       if (isNotFoundError(error)) continue;
       throw error;
+    }
+    if (content.length > MAX_ENV_FILE_CHARACTERS) {
+      throw new RangeError(
+        `Environment file exceeds ${MAX_ENV_FILE_CHARACTERS} characters`,
+      );
     }
 
     const vars = parseEnvFile(
@@ -189,33 +211,55 @@ function parseEnvFile(
   resolveAuthoritative: (key: string) => string | undefined,
 ): Record<string, string> {
   const vars = Object.create(null) as Record<string, string>;
+  let lineCount = 1;
+  for (let index = 0; index < content.length; index++) {
+    if (content.charCodeAt(index) !== 10) continue;
+    lineCount++;
+    if (lineCount > MAX_ENV_FILE_LINES) {
+      throw new RangeError(
+        `Environment file exceeds ${MAX_ENV_FILE_LINES} lines`,
+      );
+    }
+  }
   const lines = content.split("\n");
 
   let currentKey: string | null = null;
-  let currentValue = "";
+  let currentValueParts: string[] = [];
+  let currentValueCharacters = 0;
   let inMultiline = false;
   let quoteChar: '"' | "'" | null = null;
   let quoteStartLine = 0;
+  let assignmentCount = 0;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     let line = lines[lineIndex] ?? "";
     if (inMultiline) {
       const endQuoteIndex = line.indexOf(quoteChar!);
       if (endQuoteIndex === -1) {
-        currentValue += `\n${line}`;
+        currentValueCharacters += 1 + line.length;
+        requireEnvValueLength(currentValueCharacters);
+        currentValueParts.push("\n", line);
         continue;
       }
 
-      currentValue += `\n${line.substring(0, endQuoteIndex)}`;
+      const finalPart = line.substring(0, endQuoteIndex);
+      currentValueCharacters += 1 + finalPart.length;
+      requireEnvValueLength(currentValueCharacters);
+      currentValueParts.push("\n", finalPart);
       assignParsedValue(
         vars,
         currentKey!,
-        expandVariables(currentValue, vars, resolveExternal),
+        expandVariables(
+          currentValueParts.join(""),
+          vars,
+          resolveExternal,
+        ),
         resolveAuthoritative,
       );
 
       currentKey = null;
-      currentValue = "";
+      currentValueParts = [];
+      currentValueCharacters = 0;
       inMultiline = false;
       quoteChar = null;
       continue;
@@ -226,9 +270,18 @@ function parseEnvFile(
 
     const equalIndex = line.indexOf("=");
     if (equalIndex === -1) continue;
+    assignmentCount++;
+    if (assignmentCount > MAX_ENV_FILE_VARIABLES) {
+      throw new RangeError(
+        `Environment file exceeds ${MAX_ENV_FILE_VARIABLES} assignments`,
+      );
+    }
 
     const key = line.substring(0, equalIndex).trim();
-    if (!ENV_KEY_PATTERN.test(key)) {
+    if (
+      key.length > MAX_ENV_KEY_CHARACTERS ||
+      !ENV_KEY_PATTERN.test(key)
+    ) {
       throw new Error(`Invalid environment variable name at line ${lineIndex + 1}`);
     }
 
@@ -240,11 +293,13 @@ function parseEnvFile(
 
       const endQuoteIndex = value.indexOf(quoteChar);
       if (endQuoteIndex !== -1) {
+        const parsedValue = value.substring(0, endQuoteIndex);
+        requireEnvValueLength(parsedValue.length);
         assignParsedValue(
           vars,
           key,
           expandVariables(
-            value.substring(0, endQuoteIndex),
+            parsedValue,
             vars,
             resolveExternal,
           ),
@@ -254,7 +309,9 @@ function parseEnvFile(
       }
 
       currentKey = key;
-      currentValue = value;
+      requireEnvValueLength(value.length);
+      currentValueParts = [value];
+      currentValueCharacters = value.length;
       inMultiline = true;
       quoteStartLine = lineIndex + 1;
       continue;
@@ -267,6 +324,7 @@ function parseEnvFile(
     if (commentMatch?.index !== undefined) {
       value = value.substring(0, commentMatch.index).trim();
     }
+    requireEnvValueLength(value.length);
 
     assignParsedValue(
       vars,
@@ -296,7 +354,17 @@ function assignParsedValue(
   resolveAuthoritative: (key: string) => string | undefined,
 ): void {
   const authoritativeValue = resolveAuthoritative(key);
-  vars[key] = authoritativeValue === undefined ? parsedValue : authoritativeValue;
+  const value = authoritativeValue === undefined ? parsedValue : authoritativeValue;
+  requireEnvValueLength(value.length);
+  vars[key] = value;
+}
+
+function requireEnvValueLength(length: number): void {
+  if (length > MAX_ENV_VALUE_CHARACTERS) {
+    throw new RangeError(
+      `Environment variable value exceeds ${MAX_ENV_VALUE_CHARACTERS} characters`,
+    );
+  }
 }
 
 function expandVariables(
@@ -309,15 +377,35 @@ function expandVariables(
     return resolveExternal(key) ?? "";
   };
 
-  value = value.replace(/\$\{([^}]+)\}/g, (_, varName: string) => {
-    return resolve(varName);
-  });
-
-  value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName: string) => {
-    return resolve(varName);
-  });
+  value = replaceVariablesBounded(value, /\$\{([^}]+)\}/g, resolve);
+  value = replaceVariablesBounded(value, /\$([A-Z_][A-Z0-9_]*)/g, resolve);
 
   return value;
+}
+
+function replaceVariablesBounded(
+  value: string,
+  pattern: RegExp,
+  resolve: (key: string) => string,
+): string {
+  const parts: string[] = [];
+  let length = 0;
+  let previousEnd = 0;
+
+  function append(part: string): void {
+    length += part.length;
+    requireEnvValueLength(length);
+    parts.push(part);
+  }
+
+  for (const match of value.matchAll(pattern)) {
+    const matchIndex = match.index ?? 0;
+    append(value.substring(previousEnd, matchIndex));
+    append(resolve(match[1] ?? ""));
+    previousEnd = matchIndex + match[0].length;
+  }
+  append(value.substring(previousEnd));
+  return parts.join("");
 }
 
 /** Check whether `.env` file loading is supported in the current runtime. */

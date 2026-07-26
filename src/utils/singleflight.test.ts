@@ -37,6 +37,51 @@ describe("Singleflight", () => {
     }
   });
 
+  it("bounds distinct in-flight keys while preserving same-key followers", async () => {
+    const sf = new Singleflight<number>({ maxInflight: 1 });
+    const leader = Promise.withResolvers<number>();
+    let calls = 0;
+
+    const first = sf.do("shared", () => {
+      calls++;
+      return leader.promise;
+    });
+    const follower = sf.do("shared", () => {
+      calls++;
+      return Promise.resolve(2);
+    });
+
+    await assertRejects(
+      () => sf.do("other", () => Promise.resolve(3)),
+      RangeError,
+      "capacity",
+    );
+    assertEquals(calls, 1);
+
+    leader.resolve(1);
+    assertEquals(await Promise.all([first, follower]), [1, 1]);
+  });
+
+  it("rejects unsafe constructor limits and unbounded keys", async () => {
+    for (const maxInflight of [0, 1.5, Number.POSITIVE_INFINITY]) {
+      await assertRejects(
+        () =>
+          Promise.resolve().then(() => {
+            new Singleflight<number>({ maxInflight });
+          }),
+        RangeError,
+        "maxInflight",
+      );
+    }
+
+    const sf = new Singleflight<number>();
+    await assertRejects(
+      () => sf.do("k".repeat(4_097), () => Promise.resolve(1)),
+      RangeError,
+      "key",
+    );
+  });
+
   it("should execute operation and return result", async () => {
     const sf = new Singleflight<number>();
     const result = await sf.do("key", () => Promise.resolve(42));

@@ -507,10 +507,9 @@ describe("MDXCacheAdapter", () => {
 
   describe("Error Handling", () => {
     it("should handle getCachedBundle errors gracefully", async () => {
-      const failingStore: BundleManifestStore = {
-        ...manifestStore,
+      const failingStore = storeProxy({
         getBundleMetadata: () => Promise.reject(new Error("Storage error")),
-      };
+      });
       setBundleManifestStore(failingStore);
 
       const result = await adapter.getCachedBundle("# Test");
@@ -518,19 +517,17 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should handle setCachedBundle errors gracefully", async () => {
-      const failingStore: BundleManifestStore = {
-        ...manifestStore,
+      const failingStore = storeProxy({
         setBundleCode: () => Promise.reject(new Error("Storage error")),
         setBundleMetadata: () => Promise.reject(new Error("Storage error")),
-      };
+      });
       setBundleManifestStore(failingStore);
 
       await adapter.setCachedBundle("# Test", createBundle(), "test.mdx");
     });
 
     it("propagates destructive invalidation failures", async () => {
-      const failingStore: BundleManifestStore = {
-        ...manifestStore,
+      const failingStore = storeProxy({
         capabilities: {
           scopedSourceInvalidation: true,
           prefixInvalidation: true,
@@ -539,7 +536,7 @@ describe("MDXCacheAdapter", () => {
         deleteBundle: () => Promise.reject(new Error("Delete error")),
         invalidateSource: () => Promise.reject(new Error("Invalidate error")),
         invalidatePrefix: () => Promise.reject(new Error("Prefix error")),
-      };
+      });
       setBundleManifestStore(failingStore);
 
       await assertRejects(() => adapter.invalidateBundle("# Test"), Error, "Delete error");
@@ -558,10 +555,9 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should handle getStats errors gracefully", async () => {
-      const failingStore: BundleManifestStore = {
-        ...manifestStore,
+      const failingStore = storeProxy({
         getStats: () => Promise.reject(new Error("Stats error")),
-      };
+      });
       setBundleManifestStore(failingStore);
 
       const stats = await adapter.getStats();

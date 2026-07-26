@@ -1,9 +1,10 @@
 import { MAX_TIMER_DELAY_MS } from "./timer.ts";
 
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
+export const DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE = 10_000;
 
 export interface PermitSemaphoreOptions {
-  /** Maximum number of queued acquirers; defaults to unbounded for compatibility. */
+  /** Maximum number of queued acquirers. */
   maxQueueSize?: number;
 }
 
@@ -16,15 +17,10 @@ interface PermitWaiter {
   onAbort?: () => void;
 }
 
-function requireCapacity(value: number, optionName: string, allowInfinity: boolean): number {
-  if (
-    (allowInfinity && value === Number.POSITIVE_INFINITY) ||
-    (Number.isSafeInteger(value) && value >= 0)
-  ) {
-    return value;
-  }
+function requireCapacity(value: number, optionName: string): number {
+  if (Number.isSafeInteger(value) && value >= 0) return value;
   throw new RangeError(
-    `${optionName} must be a non-negative safe integer${allowInfinity ? " or Infinity" : ""}`,
+    `${optionName} must be a non-negative safe integer`,
   );
 }
 
@@ -56,12 +52,11 @@ export class PermitSemaphore {
   private readonly waitQueue: PermitWaiter[] = [];
 
   constructor(permits: number, options: PermitSemaphoreOptions = {}) {
-    this.maxPermits = requireCapacity(permits, "Semaphore permits", false);
+    this.maxPermits = requireCapacity(permits, "Semaphore permits");
     this.permits = this.maxPermits;
     this.maxQueueSize = requireCapacity(
-      options.maxQueueSize ?? Number.POSITIVE_INFINITY,
+      options.maxQueueSize ?? DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE,
       "Semaphore maxQueueSize",
-      true,
     );
   }
 
@@ -159,5 +154,9 @@ export class PermitSemaphore {
 
   get capacity(): number {
     return this.maxPermits;
+  }
+
+  get queueCapacity(): number {
+    return this.maxQueueSize;
   }
 }
