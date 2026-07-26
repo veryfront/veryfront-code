@@ -8,16 +8,33 @@ export interface ExecOptions {
   env?: Record<string, string>;
   /** Optional project reference forwarded to sandbox command surfaces that support project-scoped execution. */
   projectReference?: string;
+  /**
+   * Maximum combined stdout/stderr bytes buffered by executeCommand().
+   * Defaults to 64 MiB and may be raised to 256 MiB. This client-only limit is
+   * not sent to the sandbox runtime; use executeStream() for larger output.
+   */
+  maxOutputBytes?: number;
 }
 
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
-  /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL, then the Veryfront Cloud API. */
+  /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL and otherwise fails closed. */
   apiUrl?: string;
   /** Explicit Veryfront auth token or API key override. */
   authToken?: string;
   /** Optional project context for project-billed / project-scoped sandbox sessions. */
   projectId?: string;
+  /** Maximum combined readiness time for each session provisioning attempt, in milliseconds. */
+  startupTimeoutMs?: number;
+  /** Delay between session-readiness checks, in milliseconds. */
+  pollIntervalMs?: number;
+  /**
+   * Deadline for each control request and bounded response-body read, in
+   * milliseconds. For command streams it covers startup through response
+   * headers; stream duration remains governed by timeout_seconds. Zero
+   * disables the client deadline.
+   */
+  controlRequestTimeoutMs?: number;
 }
 
 /** Result of a command execution: stdout, stderr, and exit code. */

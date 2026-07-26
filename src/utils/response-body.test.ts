@@ -43,6 +43,19 @@ describe("utils/response-body", () => {
     assertEquals(result, { text: "complete", truncated: false });
   });
 
+  it("can reject invalid UTF-8 at strict response boundaries", async () => {
+    await assertRejects(
+      () =>
+        readResponseTextPrefix(
+          new Response(new Uint8Array([0xc3, 0x28])),
+          100,
+          undefined,
+          { fatalUtf8: true },
+        ),
+      TypeError,
+    );
+  });
+
   it("does not emit a replacement character when truncating inside UTF-8", async () => {
     const result = await readResponseTextPrefix(new Response("😀after"), 3);
 

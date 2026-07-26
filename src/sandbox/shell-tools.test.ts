@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
@@ -124,25 +130,19 @@ describe("sandbox/shell-tools", () => {
     assertEquals(normalized.bash?.id, "bash");
   });
 
-  it("provides provider-safe JSON schema for bash-tool schemas without inputSchemaJson", () => {
-    const normalized = normalizeBashToolSet({
-      bash: {
-        description: "Run commands",
-        inputSchema: { parse: (input: unknown) => input },
-        execute: () => ({ ok: true }),
-      },
-    });
-
-    assertEquals(normalized.bash?.inputSchemaJson, {
-      type: "object",
-      properties: {},
-      additionalProperties: true,
-    });
-    assertEquals(toolToProviderDefinition(normalized.bash as never).parameters, {
-      type: "object",
-      properties: {},
-      additionalProperties: true,
-    });
+  it("rejects unconverted provider schemas instead of weakening them", () => {
+    assertThrows(
+      () =>
+        normalizeBashToolSet({
+          bash: {
+            description: "Run commands",
+            inputSchema: { parse: (input: unknown) => input },
+            execute: () => ({ ok: true }),
+          },
+        }),
+      VeryfrontError,
+      "provider must supply inputSchemaJson",
+    );
   });
 
   it("keeps defineSchema input schemas on the normal conversion path", () => {
@@ -169,27 +169,93 @@ describe("sandbox/shell-tools", () => {
     });
   });
 
-  it("falls back for schema-like objects that are not JSON Schema", () => {
-    const normalized = normalizeBashToolSet({
-      bash: {
-        description: "Run commands",
-        inputSchema: { metadata: { name: "bash" } },
-        execute: () => ({ ok: true }),
-      },
-    });
-
-    assertEquals(normalized.bash?.inputSchemaJson, {
-      type: "object",
-      properties: {},
-      additionalProperties: true,
-    });
+  it("rejects schema-like objects that are not JSON Schema", () => {
+    assertThrows(
+      () =>
+        normalizeBashToolSet({
+          bash: {
+            description: "Run commands",
+            inputSchema: { metadata: { name: "bash" } },
+            execute: () => ({ ok: true }),
+          },
+        }),
+      VeryfrontError,
+      "provider must supply inputSchemaJson",
+    );
   });
 
-  it("handles invalid definitions gracefully", () => {
-    assertEquals(normalizeBashToolSet({ bad: "not-an-object" }), { bad: { id: "bad" } });
-    assertEquals(normalizeBashToolSet({ bad: null }), { bad: { id: "bad" } });
-    assertEquals(normalizeBashToolSet({ tool: { inputSchemaJson: "bad" } }), {
-      tool: { id: "tool" },
+  it("rejects malformed definitions and invalid explicit schemas", () => {
+    assertThrows(
+      () => normalizeBashToolSet({ bad: "not-an-object" }),
+      VeryfrontError,
+      "definition must be an object",
+    );
+    assertThrows(
+      () => normalizeBashToolSet({ bad: null }),
+      VeryfrontError,
+      "definition must be an object",
+    );
+    assertThrows(
+      () => normalizeBashToolSet({ tool: { inputSchemaJson: "bad" } }),
+      VeryfrontError,
+      "inputSchemaJson is not a JSON Schema",
+    );
+  });
+
+  it("preserves supported JSON Schema constraints without sharing mutable data", () => {
+    const inputSchemaJson = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          pattern: "^[a-z]+$",
+          minLength: 1,
+        },
+      },
+      required: ["command"],
+      allOf: [{ additionalProperties: false }],
+    };
+    const normalized = normalizeBashToolSet({
+      bash: { inputSchemaJson },
     });
+
+    assertEquals(normalized.bash?.inputSchemaJson, inputSchemaJson);
+    inputSchemaJson.required.push("later");
+    assertEquals(normalized.bash?.inputSchemaJson?.required, ["command"]);
+  });
+
+  it("does not invoke tool-map or schema accessors", () => {
+    let toolAccessorCalled = false;
+    const tools = {};
+    Object.defineProperty(tools, "bash", {
+      enumerable: true,
+      get() {
+        toolAccessorCalled = true;
+        return {};
+      },
+    });
+    assertThrows(
+      () => normalizeBashToolSet(tools),
+      VeryfrontError,
+      "must be a data property",
+    );
+    assertEquals(toolAccessorCalled, false);
+
+    let schemaAccessorCalled = false;
+    const schema = { type: "object" };
+    Object.defineProperty(schema, "properties", {
+      enumerable: true,
+      get() {
+        schemaAccessorCalled = true;
+        return {};
+      },
+    });
+    assertThrows(
+      () => normalizeBashToolSet({ bash: { inputSchemaJson: schema } }),
+      VeryfrontError,
+      "must be a data property",
+    );
+    assertEquals(schemaAccessorCalled, false);
   });
 });

@@ -1,4 +1,5 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { MAX_SANDBOX_FILE_RESPONSE_BYTES, readBoundedSandboxText } from "./transport.ts";
 
 export function sandboxSessionRoute(
   apiUrl: string,
@@ -9,15 +10,28 @@ export function sandboxSessionRoute(
   return path ? `${base}${path}` : base;
 }
 
-export async function readSandboxFileContent(res: Response): Promise<string> {
+export async function readSandboxFileContent(
+  res: Response,
+  options: {
+    operation?: string;
+    maxBytes?: number;
+    signal?: AbortSignal;
+  } = {},
+): Promise<string> {
+  const operation = options.operation ?? "Sandbox file read";
+  const text = await readBoundedSandboxText(res, {
+    operation,
+    maxBytes: options.maxBytes ?? MAX_SANDBOX_FILE_RESPONSE_BYTES,
+    signal: options.signal,
+  });
   const contentType = res.headers.get("Content-Type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
-    return await res.text();
+    return text;
   }
 
   let json: unknown;
   try {
-    json = await res.json();
+    json = JSON.parse(text) as unknown;
   } catch (cause) {
     throw REQUEST_ERROR.create({
       detail: "Sandbox file response is not valid JSON",

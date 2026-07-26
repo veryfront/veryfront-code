@@ -1,7 +1,14 @@
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
 import type { BackgroundCommand, BackgroundCommandOutput, ExecOptions } from "./sandbox.ts";
+import { resolveSandboxProjectId } from "./config.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
+import {
+  MAX_SANDBOX_WRITE_BYTES,
+  MAX_SANDBOX_WRITE_FILES,
+  normalizeSandboxFiles,
+} from "./request-payload.ts";
 import {
   type BashToolSandboxLike,
   type CreateSandboxBashTool,
@@ -12,6 +19,7 @@ import {
 const SANDBOX_WORKING_DIRECTORY = "/workspace";
 const SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN =
   /^\s*(?:mkdir -p \/tmp\/bash-tool\s*&&\s*)?cd\s+"\/workspace"\s*&&\s*/i;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 /** Public API contract for agent service sandbox background command client. */
 export interface AgentServiceSandboxBackgroundCommandClient {
@@ -61,11 +69,31 @@ export function unwrapSandboxWorkingDirectoryCommand(command: string): string {
 export function createProjectScopedExecOptions(
   projectReference: string | null | undefined,
 ): ExecOptions {
-  return projectReference ? { projectReference } : {};
+  const normalized = resolveSandboxProjectId(projectReference);
+  return normalized ? { projectReference: normalized } : {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalid(detail: string, cause?: unknown): never {
+  throw INVALID_ARGUMENT.create({ detail, cause });
+}
+
+function ownDataValue(
+  record: Record<string, unknown>,
+  key: string,
+  entryIndex: number,
+): unknown {
+  const descriptor = getOwnPropertyDescriptor(record, key);
+  if (!descriptor) {
+    invalid(`Sandbox writeFiles entry ${entryIndex} must include ${key}`);
+  }
+  if (!("value" in descriptor)) {
+    invalid(`Sandbox writeFiles entry ${entryIndex} ${key} must be a data property`);
+  }
+  return descriptor.value;
 }
 
 function toSandboxFileContent(content: unknown): string {
@@ -73,20 +101,54 @@ function toSandboxFileContent(content: unknown): string {
     return content;
   }
   if (content instanceof Uint8Array) {
-    return new TextDecoder().decode(content);
+    if (content.byteLength > MAX_SANDBOX_WRITE_BYTES) {
+      invalid(`Sandbox writeFiles binary content exceeds ${MAX_SANDBOX_WRITE_BYTES} bytes`);
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(content);
+    } catch (cause) {
+      invalid("Sandbox writeFiles binary content must be valid UTF-8", cause);
+    }
   }
-  return String(content ?? "");
+  invalid("Sandbox writeFiles content must be a string or Uint8Array");
 }
 
-function normalizeSandboxWriteFile(file: unknown): { path: string; content: string } {
-  if (!isRecord(file) || typeof file.path !== "string") {
-    throw new Error("Sandbox writeFiles entries must include a string path");
+function normalizeSandboxWriteFile(
+  file: unknown,
+  entryIndex: number,
+): { path: string; content: string } {
+  if (!isRecord(file)) {
+    invalid(`Sandbox writeFiles entry ${entryIndex} must be an object`);
+  }
+
+  const path = ownDataValue(file, "path", entryIndex);
+  if (typeof path !== "string") {
+    invalid(`Sandbox writeFiles entry ${entryIndex} path must be a string`);
   }
 
   return {
-    path: file.path,
-    content: toSandboxFileContent(file.content),
+    path,
+    content: toSandboxFileContent(ownDataValue(file, "content", entryIndex)),
   };
+}
+
+function normalizeSandboxWriteFiles(files: unknown[]): Array<{ path: string; content: string }> {
+  if (!Array.isArray(files)) {
+    invalid("Sandbox writeFiles input must be an array");
+  }
+  if (files.length > MAX_SANDBOX_WRITE_FILES) {
+    invalid(`Sandbox writeFiles input exceeds ${MAX_SANDBOX_WRITE_FILES} files`);
+  }
+
+  const normalized: Array<{ path: string; content: string }> = [];
+  for (let index = 0; index < files.length; index += 1) {
+    const descriptor = getOwnPropertyDescriptor(files, String(index));
+    if (!descriptor || !("value" in descriptor)) {
+      invalid(`Sandbox writeFiles entry ${index} must be a data property`);
+    }
+    normalized.push(normalizeSandboxWriteFile(descriptor.value, index));
+  }
+  return normalizeSandboxFiles(normalized);
 }
 
 /** Create agent service sandbox client. */
@@ -96,23 +158,17 @@ export function createAgentServiceSandboxClient(
   const getProjectId = input.getProjectId ?? (() => input.projectId);
   const sandbox = new LazySandbox({ ...input, getProjectId });
 
-  const getExecOptions = () => createProjectScopedExecOptions(getProjectId());
-  const getBackgroundCommandExecOptions = () => ({
-    ...getExecOptions(),
-    cwd: SANDBOX_WORKING_DIRECTORY,
-  });
-
   return {
     ensure: () => sandbox.ensure(),
     async executeCommand(command) {
-      return await sandbox.executeCommand(command, getExecOptions());
+      return await sandbox.executeCommand(command);
     },
     readFile: (path) => sandbox.readFile(path),
-    writeFiles: (files) => sandbox.writeFiles(files.map((file) => normalizeSandboxWriteFile(file))),
+    writeFiles: (files) => sandbox.writeFiles(normalizeSandboxWriteFiles(files)),
     startBackgroundCommand: (command) =>
       sandbox.startBackgroundCommand(
         unwrapSandboxWorkingDirectoryCommand(command),
-        getBackgroundCommandExecOptions(),
+        { cwd: SANDBOX_WORKING_DIRECTORY },
       ),
     getBackgroundCommand: (commandId) => sandbox.getBackgroundCommand(commandId),
     getBackgroundCommandOutput: (commandId) => sandbox.getBackgroundCommandOutput(commandId),

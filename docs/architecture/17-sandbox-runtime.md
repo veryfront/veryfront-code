@@ -15,6 +15,10 @@ Primary source areas:
 - [`src/sandbox/`](../../src/sandbox/)
 - [`src/sandbox/sandbox.ts`](../../src/sandbox/sandbox.ts)
 - [`src/sandbox/lazy-sandbox.ts`](../../src/sandbox/lazy-sandbox.ts)
+- [`src/sandbox/transport.ts`](../../src/sandbox/transport.ts)
+- [`src/sandbox/protocol.ts`](../../src/sandbox/protocol.ts)
+- [`src/sandbox/exec-stream.ts`](../../src/sandbox/exec-stream.ts)
+- [`src/sandbox/request-payload.ts`](../../src/sandbox/request-payload.ts)
 - [`src/sandbox/shell-tools.ts`](../../src/sandbox/shell-tools.ts)
 - [`src/sandbox/agent-service-tools.ts`](../../src/sandbox/agent-service-tools.ts)
 - [`src/sandbox/types.ts`](../../src/sandbox/types.ts)
@@ -48,9 +52,11 @@ flowchart TD
    session endpoint.
 3. `Sandbox.createLazy()` defers provisioning until command or file operations
    need a session.
-4. Command helpers support buffered output, streamed NDJSON events, and async
+4. Transport, protocol, and request helpers apply deadlines and size limits,
+   then validate remote responses and caller-owned command/file payloads.
+5. Command helpers support buffered output, streamed NDJSON events, and async
    background commands.
-5. Agent-service helpers adapt sandbox operations into shell and file tools.
+6. Agent-service helpers adapt sandbox operations into shell and file tools.
 
 ## Boundaries
 

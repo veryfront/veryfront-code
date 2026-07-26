@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    13 |      22.4% | Current formal closure evidence remains valid       |
+| Closed                         |    14 |      24.1% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     5 |       8.6% | No current authoritative-branch review delta exists |
+| Pending current review         |     4 |       6.9% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 53/58 (91.4%). This is progress coverage, not a substitute for the
+coverage of 54/58 (93.1%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -49,6 +49,7 @@ stricter closure count.
 - `provider`
 - `runs`
 - `runtime`
+- `sandbox`
 - `schemas`
 - `version.ts`
 
@@ -103,7 +104,6 @@ stricter closure count.
 - `chat`
 - `issues`
 - `repositories`
-- `sandbox`
 - `studio`
 
 ## Historical recovery context
@@ -122,17 +122,100 @@ every affected unit.
 
 The current closed review chain covers `config`, `embedding`, `eval`,
 `extensions`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`, `runs`,
-`runtime`, `schemas`, and `version.ts`. The latest independent adversarial
-knowledge, Markdown, MDX, provider, runs, and runtime findings are remediated
-and revalidated. `prompt` and `resource` have now received deep current-state
-reviews and substantial remediation, but remain open while their documented
-cross-cutting findings are unresolved. Each closure requires a complete
-consumer map, deep module-level review, adversarial boundary tests,
-public-contract documentation, and repository-wide static verification.
-Cross-module consumers changed by a fix remain in revalidation; focused
-evidence for one boundary does not by itself close the consumer's top-level
-unit. `sandbox` is the next pending current-state target after this checkpoint
-is committed, pushed, and synchronized with `origin/main`.
+`runtime`, `sandbox`, `schemas`, and `version.ts`. The latest independent
+adversarial knowledge, Markdown, MDX, provider, runs, runtime, and sandbox
+findings are remediated and revalidated. `prompt` and `resource` have now
+received deep current-state reviews and substantial remediation, but remain
+open while their documented cross-cutting findings are unresolved. Each
+closure requires a complete consumer map, deep module-level review,
+adversarial boundary tests, public-contract documentation, and repository-wide
+static verification. Cross-module consumers changed by a fix remain in
+revalidation; focused evidence for one boundary does not by itself close the
+consumer's top-level unit. `repositories` is the next pending current-state
+target after this checkpoint is committed, pushed, and synchronized with
+`origin/main`.
+
+### Sandbox closure checkpoint
+
+The `sandbox` audit unit owns the public eager and lazy sandbox clients, their
+control-plane and runtime protocol boundaries, streaming command execution,
+agent-service and shell-tool adapters, and sandbox-specific configuration and
+lifecycle behavior. Direct consumers include hosted agents, internal-agent
+execution, root sandbox tool sources, the sandbox shell extension, generated
+API declarations, and the public sandbox guide.
+
+The current sandbox findings are remediated:
+
+- Configuration now fails closed. Explicit blank API URLs and tokens no longer
+  fall back to ambient values; URLs, credentials, project references, timeouts,
+  and polling intervals are bounded and validated before a request. One
+  project-reference snapshot is used throughout each operation so an ambient
+  project change cannot split one lifecycle across tenants.
+- One shared transport layer now owns request deadlines through response-body
+  consumption, caller-signal composition, redirect rejection, structured
+  status and transport classification, bounded bodies, and fatal UTF-8
+  decoding. Error details are bounded independently from successful JSON and
+  file responses, and retry decisions no longer inspect runtime-specific error
+  messages or operating-system codes.
+- Control-plane responses, runtime endpoints, file metadata, session state,
+  and command events cross explicit protocol parsers. Required fields,
+  nullability, identifiers, enums, URLs, dense arrays, and own data properties
+  are checked without invoking accessors. Runtime endpoint URLs reject
+  credentials, queries, and fragments.
+- Streaming command output is accumulated by bytes rather than JavaScript
+  character count. Each newline-delimited JSON event has a fixed bound,
+  decoding is strict, malformed and post-exit events cancel the reader, and
+  every successful stream must contain exactly one terminal exit event.
+- Request payloads are snapshotted into descriptor-safe owned data before
+  network activity. Commands, environment entries, file names and contents,
+  option shapes, and buffered output are bounded. Unsupported values, sparse or
+  extended arrays, accessors, cycles, invalid UTF-8, and implicit object-to-text
+  coercion fail closed instead of becoming partial or misleading requests.
+- Eager and lazy lifecycle behavior now rejects work during or after close,
+  makes successful close idempotent, surfaces deletion failures while keeping
+  failed closes retryable, and prevents project-session deletion while a
+  background command is active. Concurrent provisioning cannot silently reuse
+  a sandbox created for a different project snapshot; custom internal
+  endpoints pass readiness checks under one bounded provisioning budget.
+- Shell-tool schemas retain the provider's actual command constraints.
+  Provider-owned Standard Schema values are converted at the extension
+  boundary, including the pinned `bash-tool` Zod schemas, and core accepts only
+  bounded, descriptor-safe JSON Schema. Invalid, cyclic, accessor-backed, or
+  unsupported definitions reject registration; the former permissive `{id}`
+  fallback is removed.
+- The How-to-oriented sandbox guide, architecture explanation, extension
+  reference, generated API reference, and public option documentation now
+  describe authentication, project snapshots, limits, deadlines, streaming
+  guarantees, and lifecycle failures consistently.
+
+Reproducible checkpoint evidence:
+
+- The focused sandbox, shell-extension, and strict response-body suites passed
+  26 tests and 140 nested checks with zero failures.
+- Sixty-one downstream consumer tests, including hosted and internal agents,
+  root/default sandbox tool sources, child-fork sources, and public boundary
+  aliases, passed with zero failures.
+- The repository suite passed 3,568 tests and 28,227 steps with zero failures;
+  one 36-step group remains intentionally ignored under the repository
+  baseline.
+- `deno task verify:quick` passed generated-manifest checks, formatting, lint,
+  sanitizer and skipped-test ratchets, dependency and module boundaries,
+  extension audits, documentation validation, and all configured entrypoint
+  typechecks. Core retained zero disallowed third-party imports.
+- `deno task typecheck:consumer` rebuilt the root npm package and every
+  first-party extension, verified root-import lifecycle behavior, and compiled
+  the documented public composition surface against generated declarations.
+- All 66 guides, 109 public documentation files, 38 generated reference groups,
+  and 735 documentation links passed validation. The frozen lockfile was
+  byte-for-byte stable across installation, the npm dependency audit reported
+  zero vulnerabilities, and `git diff --check` passed.
+
+The shared response-body utility and npm build metadata changed only to support
+the sandbox boundary and remain assigned to the still-open `utils` and `build`
+units. Hosted-agent and tool consumers remain in their existing revalidation
+categories. No unresolved critical or high-confidence production risk remains
+inside the sandbox client, protocol, transport, lifecycle, or tool-schema
+boundary.
 
 ### MDX closure checkpoint
 

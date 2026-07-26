@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import type { CreateSandboxBashTool, SandboxShellToolSet } from "./shell-tools.ts";
 import {
   createAgentServiceSandboxClient,
@@ -167,6 +173,114 @@ describe("sandbox/agent-service-tools", () => {
     });
   });
 
+  it("uses one project-context snapshot while provisioning and executing a command", async () => {
+    mockFetch([
+      createSandboxSessionResponse(),
+      createOkResponse(),
+      ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+      createOkResponse(),
+    ]);
+
+    let projectIdReads = 0;
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+      getProjectId: () => {
+        projectIdReads += 1;
+        return projectIdReads === 1 ? "project-1" : "project-2";
+      },
+    });
+
+    try {
+      await sandbox.executeCommand("true");
+    } finally {
+      await sandbox.close();
+    }
+
+    assertEquals(projectIdReads, 1);
+    assertEquals(jsonBody(fetchCalls, 0), { project_id: "project-1" });
+    assertEquals(jsonBody(fetchCalls, 2), {
+      command: "true",
+      projectReference: "project-1",
+    });
+  });
+
+  it("decodes supported binary file content without coercing arbitrary values", async () => {
+    mockFetch([
+      createSandboxSessionResponse(),
+      createOkResponse(),
+      createOkResponse(),
+      createOkResponse(),
+    ]);
+
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+      projectId: "project-1",
+    });
+    const writeFiles = sandbox.writeFiles;
+    assertExists(writeFiles);
+
+    try {
+      await writeFiles([
+        {
+          path: "/workspace/notes.txt",
+          content: new TextEncoder().encode("hello"),
+        },
+      ]);
+    } finally {
+      await sandbox.close();
+    }
+
+    assertEquals(jsonBody(fetchCalls, 2), {
+      files: [{ path: "/workspace/notes.txt", content: "hello" }],
+    });
+  });
+
+  it("rejects malformed write-file entries before provisioning a session", async () => {
+    mockFetch([]);
+    const sandbox = createAgentServiceSandboxClient({
+      authToken: "test-token",
+      apiUrl: "https://api.example.com",
+    });
+    const writeFiles = sandbox.writeFiles;
+    assertExists(writeFiles);
+
+    let accessorCalls = 0;
+    const accessorEntry = { path: "/workspace/notes.txt" };
+    Object.defineProperty(accessorEntry, "content", {
+      enumerable: true,
+      get() {
+        accessorCalls += 1;
+        return "secret";
+      },
+    });
+
+    await assertRejects(
+      async () => await writeFiles([accessorEntry]),
+      VeryfrontError,
+      "content must be a data property",
+    );
+    await assertRejects(
+      async () =>
+        await writeFiles([{ path: "/workspace/notes.txt", content: { arbitrary: true } }]),
+      VeryfrontError,
+      "content must be a string or Uint8Array",
+    );
+    await assertRejects(
+      async () =>
+        await writeFiles([{
+          path: "/workspace/notes.txt",
+          content: new Uint8Array([0xc3, 0x28]),
+        }]),
+      VeryfrontError,
+      "must be valid UTF-8",
+    );
+
+    assertEquals(accessorCalls, 0);
+    assertEquals(fetchCalls, []);
+  });
+
   it("strips bash-tool workspace prefixes from async background command tool commands", async () => {
     mockFetch([
       createSandboxSessionResponse(),
@@ -205,6 +319,9 @@ describe("sandbox/agent-service-tools", () => {
     );
     assertEquals(unwrapSandboxWorkingDirectoryCommand("  echo ok  "), "echo ok");
     assertEquals(createProjectScopedExecOptions("project-123"), {
+      projectReference: "project-123",
+    });
+    assertEquals(createProjectScopedExecOptions(" project-123 "), {
       projectReference: "project-123",
     });
     assertEquals(createProjectScopedExecOptions(null), {});

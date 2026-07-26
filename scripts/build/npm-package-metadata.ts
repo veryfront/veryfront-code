@@ -97,6 +97,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"unified",
 	"unist-util-visit",
 	"vfile",
+	"zod-to-json-schema",
 ] as const;
 
 const STALE_DIRECT_DEPENDENCIES = [

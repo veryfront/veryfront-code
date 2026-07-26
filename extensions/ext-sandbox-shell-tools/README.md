@@ -20,3 +20,6 @@ of importing them from core, CLI, React, or unrelated extensions.
 - **sandbox `bash`:** Creates shell tools that execute commands through the
   configured sandbox provider. The extension does not spawn local processes
   directly, but it exposes command execution inside the sandbox boundary.
+- **schema conversion:** Converts provider-owned Standard Schema definitions
+  to JSON Schema before they cross the extension contract. Unsupported schemas
+  fail closed; core never substitutes a permissive accept-any schema.

@@ -10,20 +10,23 @@ The sandbox client talks to an authenticated sandbox session API. You need eithe
 
 ## Prerequisites
 
-- A Veryfront Cloud token (`VERYFRONT_API_TOKEN`) or a self-hosted
-  `/sandbox-sessions` API and matching `VERYFRONT_API_URL`.
+- A sandbox API base URL in `VERYFRONT_API_URL` or the `apiUrl` option. The
+  client does not guess or silently default to a production endpoint.
+- A Veryfront Cloud token (`VERYFRONT_API_TOKEN`), request-scoped Veryfront
+  credentials, or an `authToken` option accepted by your backing service.
 - A reachable network from the process that calls `Sandbox.create()`.
 
 ## Create a sandbox session
 
 Use `Sandbox.create()` with sandbox API credentials. In local development,
 self-hosted apps, CI, and other runtimes outside a Veryfront-hosted request,
-provide credentials explicitly. Set `VERYFRONT_API_TOKEN`, and set
-`VERYFRONT_API_URL` when you need a non-default API endpoint.
+set both `VERYFRONT_API_URL` and `VERYFRONT_API_TOKEN`, or pass `apiUrl` and
+`authToken` explicitly.
 
 Inside a Veryfront-hosted request, the client can use request-scoped
-credentials automatically. In that path, you do not need to set
-`VERYFRONT_API_TOKEN` separately for the request.
+credentials automatically. The hosted runtime must still provide
+`VERYFRONT_API_URL`; you do not need to set `VERYFRONT_API_TOKEN` separately
+for the request.
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
@@ -70,6 +73,10 @@ const sandbox = Sandbox.createLazy({
 });
 ```
 
+The lazy client resolves the project once per operation. If it changes between
+operations, a client-created session is replaced before the next operation so
+the session and command request use the same project.
+
 To override the resolved credentials, pass `authToken` explicitly. This can be a
 JWT or a Studio-generated API key.
 
@@ -87,9 +94,26 @@ const sandbox = await Sandbox.create({
 Buffered execution:
 
 ```ts
-const result = await sandbox.executeCommand("ls -la");
+const result = await sandbox.executeCommand("ls -la", {
+  timeout_seconds: 120,
+});
 console.log(result.stdout, result.stderr, result.exitCode);
 ```
+
+`executeCommand()` buffers at most 64 MiB of combined stdout and stderr by
+default. Set `maxOutputBytes` up to 256 MiB when bounded buffering is
+appropriate:
+
+```ts
+const result = await sandbox.executeCommand("generate-report", {
+  maxOutputBytes: 128 * 1024 * 1024,
+});
+```
+
+Use `executeStream()` instead when output can be larger or should be processed
+incrementally. A malformed event, invalid UTF-8, oversized event, error event,
+or stream that ends without an exit event fails the operation instead of
+returning partial output.
 
 Streaming execution:
 
@@ -112,11 +136,34 @@ const content = await sandbox.readFile("input.txt");
 console.log(content);
 ```
 
+A write request is limited to 1,024 files and 64 MiB. A file read is limited to
+64 MiB. Split larger transfers at the application boundary.
+
+## Configure client deadlines
+
+Set bounded startup, polling, and control-request timing when the defaults do
+not fit your workload:
+
+```ts
+const sandbox = Sandbox.createLazy({
+  startupTimeoutMs: 180_000,
+  pollIntervalMs: 2_000,
+  controlRequestTimeoutMs: 15_000,
+  execStartTimeoutMs: 30_000,
+});
+```
+
+`controlRequestTimeoutMs` covers response-body consumption for bounded
+control, JSON, and file requests. For command streams, it covers startup
+through response headers; use `timeout_seconds` to bound command runtime.
+Setting a client deadline to `0` disables that deadline where supported.
+
 ## Lifecycle best practices
 
 - Always call `await sandbox.close()` in `finally` blocks.
 - Prefer `Sandbox.createLazy()` for agent-style workflows that may not need a session every run.
-- Use `sandbox.heartbeat()` during long-running sessions to avoid idle timeouts.
+- The lazy client sends automatic heartbeats. For the eager client, call
+  `sandbox.heartbeat()` when a long-lived session would otherwise be idle.
 - Persist `sandbox.id` only when you need reconnect semantics.
 - Keep auth tokens and API keys server-side only. Do not expose them to browsers.
 
@@ -144,6 +191,9 @@ sandbox:
 - Returns `exitCode: 0` from the command result.
 - Releases its session on `sandbox.close()` without an error.
 
-If `Sandbox.create()` throws a `401`, double-check the API token. If the
+If configuration fails before a request, verify both the API URL and
+credentials. If `Sandbox.create()` throws a `401` or `403`, double-check the
+token and project authorization; authorization failures fail immediately
+instead of waiting through the startup timeout. If the
 session never closes, look in the cloud dashboard for the lingering session
 id and close it manually.

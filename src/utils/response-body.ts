@@ -4,6 +4,14 @@ export interface ResponseTextPrefix {
   truncated: boolean;
 }
 
+/** Raised when strict response decoding encounters malformed UTF-8. */
+export class InvalidResponseBodyUtf8Error extends TypeError {
+  constructor(options?: ErrorOptions) {
+    super("Response body is not valid UTF-8", options);
+    this.name = "InvalidResponseBodyUtf8Error";
+  }
+}
+
 async function readChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   abortSignal?: AbortSignal,
@@ -27,6 +35,7 @@ export async function readResponseTextPrefix(
   response: Response,
   maxBytes: number,
   abortSignal?: AbortSignal,
+  options: { fatalUtf8?: boolean } = {},
 ): Promise<ResponseTextPrefix> {
   if (!Number.isInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("maxBytes must be a non-negative integer");
@@ -38,7 +47,7 @@ export async function readResponseTextPrefix(
 
   const limit = maxBytes;
   const reader = body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: options.fatalUtf8 ?? false });
   let remaining = limit;
   let text = "";
   let completed = false;
@@ -53,7 +62,11 @@ export async function readResponseTextPrefix(
       }
 
       const used = Math.min(value.byteLength, remaining);
-      text += decoder.decode(value.subarray(0, used), { stream: true });
+      try {
+        text += decoder.decode(value.subarray(0, used), { stream: true });
+      } catch (cause) {
+        throw new InvalidResponseBodyUtf8Error({ cause });
+      }
       remaining -= used;
 
       if (used < value.byteLength) {
@@ -77,5 +90,10 @@ export async function readResponseTextPrefix(
     reader.releaseLock();
   }
 
-  return { text: truncated ? text : text + decoder.decode(), truncated };
+  if (truncated) return { text, truncated };
+  try {
+    return { text: text + decoder.decode(), truncated };
+  } catch (cause) {
+    throw new InvalidResponseBodyUtf8Error({ cause });
+  }
 }
