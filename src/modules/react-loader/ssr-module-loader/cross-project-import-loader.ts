@@ -12,6 +12,7 @@ import { globalCrossProjectCache } from "./cache/index.ts";
 import type { SSRModuleLoaderOptions } from "./types.ts";
 import { readLimitedCrossProjectSource } from "#veryfront/modules/server/cross-project-source-limit.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 
 interface CrossProjectImportCache {
   hashContentAsync(content: string): Promise<string>;
@@ -51,6 +52,29 @@ function getRegistryBaseUrl(apiBaseUrl?: string): string {
   return resolvedApiBaseUrl.replace(/\/api\/?$/, "");
 }
 
+interface CrossProjectImportCacheKeyOptions {
+  specifier: string;
+  projectId: string;
+  reactVersion?: string;
+  registryBaseUrl: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+}
+
+export function buildCrossProjectImportCacheKey(
+  options: CrossProjectImportCacheKeyOptions,
+): string {
+  const reactVersion = options.reactVersion ?? "default";
+  const registryKey = base64urlEncode(options.registryBaseUrl);
+  const baseKey =
+    `${options.specifier}:${options.projectId}:${reactVersion}:registry:${registryKey}`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+  return cacheVariant ? `${baseKey}:${cacheVariant}` : baseKey;
+}
+
 export async function transformCrossProjectImportFlow(
   flowOptions: TransformCrossProjectImportFlowOptions,
 ): Promise<string> {
@@ -67,18 +91,19 @@ export async function transformCrossProjectImportFlow(
   } = flowOptions;
 
   const { specifier, projectSlug, version, path } = crossProjectImport;
-  const reactVersion = options.reactVersion ?? "default";
-  const legacyCacheKey = `${specifier}:${options.projectId}:${reactVersion}`;
-  const cacheVariant = buildDependencyPinningCacheVariant(
-    options.dependencyPinningCacheKey,
-    options.moduleServerOrigin,
-  );
-  const cacheKey = cacheVariant ? `${legacyCacheKey}:${cacheVariant}` : legacyCacheKey;
+  const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
+  const cacheKey = buildCrossProjectImportCacheKey({
+    specifier,
+    projectId: options.projectId,
+    reactVersion: options.reactVersion,
+    registryBaseUrl,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+  });
 
   const cachedEntry = globalCrossProjectCache.get(cacheKey);
   if (cachedEntry) return cachedEntry.tempPath;
 
-  const registryBaseUrl = getRegistryBaseUrl(options.apiBaseUrl);
   const projectRef = `${projectSlug}@${version}`;
   const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
 

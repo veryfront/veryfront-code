@@ -436,25 +436,17 @@ function loadAndTranspileModule(
       // handled by the framework's own external/rewrite logic and should not be
       // treated as user npm packages.
       //
-      // `zod` is kept as a user dep on Node and the Deno source-run so a
-      // handler's own `import { z } from "zod"` is rewritten to a resolvable
-      // specifier. Excluding it left a bare `import "zod"` in the temp handler
-      // that Deno cannot resolve → "not a dependency and not in import map" → 500.
-      // (The Node path already always-resolves zod via
-      // getNodeExternalPackagesToResolve, so only the Deno source-run was broken
-      // by the exclusion.) zod is still force-externalized below, never bundled.
-      //
-      // The compiled binary keeps zod excluded — this change is scoped to the
-      // runtimes where it is verified. The binary loads framework helpers
-      // (createValidatedHandler, MiddlewarePipeline, …) through per-subpath
-      // veryfront runtime shims written next to the temp handler, a separate and
-      // more constrained resolution path; wiring a user `zod` through it belongs
-      // in a dedicated change with its own binary coverage. Leaving the binary
-      // branch byte-identical to before keeps that path untouched here.
-      const userDeps = getUserDependencies(allDeps, {
-        isDeno,
-        isCompiledBinary: isDeno && isCompiledBinary(),
-      });
+      // `zod` is kept as a user dep on every runtime — Node, the Deno source-run,
+      // AND the compiled binary — so a handler's own `import { z } from "zod"` is
+      // rewritten to a resolvable specifier. Excluding it left a bare `import "zod"`
+      // in the temp handler that Deno cannot resolve → "not a dependency and not in
+      // import map" → 500. (The Node path already always-resolves zod via
+      // getNodeExternalPackagesToResolve.) On the compiled binary, keeping zod in
+      // userDeps routes it through rewriteCompiledBinaryUserDependencyImports like
+      // any other npm package, so its import resolves from the project's
+      // node_modules via the createRequire shim. zod is still force-externalized
+      // below, never bundled inline. See veryfront-issue-inbox#217.
+      const userDeps = getUserDependencies(allDeps);
 
       // Always externalize user npm dependencies. The bundled handler is loaded
       // from a temp file and user deps are resolved at runtime:
@@ -577,10 +569,8 @@ async function readFileWithExtensions(
 
 export function getUserDependencies(
   allDeps: ReadonlyMap<string, string>,
-  runtime: { isDeno: boolean; isCompiledBinary: boolean },
 ): Map<string, string> {
   const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
-  if (runtime.isDeno && runtime.isCompiledBinary) frameworkPackages.add("zod");
 
   const frameworkPrefixes = ["@opentelemetry/", "node:", "veryfront/"];
   const userDeps = new Map<string, string>();

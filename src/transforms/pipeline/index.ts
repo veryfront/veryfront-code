@@ -214,6 +214,7 @@ export function runPipeline(
         moduleServerUrl: ctx.moduleServerUrl,
         moduleServerOrigin: ctx.moduleServerOrigin,
         vendorBundleHash: ctx.vendorBundleHash,
+        apiBaseUrl: ctx.apiBaseUrl,
         studioEmbed: ctx.studioEmbed,
         dev: ctx.dev,
         dependencyPinningCacheKey,

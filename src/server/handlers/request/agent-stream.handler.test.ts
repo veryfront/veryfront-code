@@ -842,13 +842,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const contextCalls: string[] = [];
     const configReads: string[] = [];
+    const sourceEvents: string[] = [];
     const fs = createNoopFsAdapter([]);
     Object.assign(fs, {
       getUnderlyingAdapter: () => fs,
       isVeryfrontAdapter: () => true,
+      ensureSourceSnapshotFresh: async () => {
+        sourceEvents.push("source-fresh");
+      },
       exists: async (path: string) => path === "/veryfront.config.ts",
       readFile: async () => {
         const branch = getCurrentRequestContext()?.branch ?? "main";
+        sourceEvents.push("config-read");
         configReads.push(branch);
         return branch === "restrict-gmail"
           ? 'export default { integrations: { allow: { gmail: { allowedTools: ["list_emails"] } } } };'
@@ -899,6 +904,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 200);
     assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
+    assertEquals(sourceEvents.slice(0, 2), ["source-fresh", "config-read"]);
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });

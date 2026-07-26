@@ -24,6 +24,7 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
@@ -31,6 +32,7 @@ const applyMdxLayoutLog = logger.component("apply-mdx-layout");
 const APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS = LAYOUT_EXTENSIONS.filter((extension) =>
   extension !== "md" && extension !== "mdx"
 );
+const TSX_COMPONENT_FLIGHT_STALE_EVICTION_MS = 5 * 60_000;
 
 type AppRouterDocumentLayoutFunction = (
   props: { children?: BundledReact.ReactNode },
@@ -42,6 +44,26 @@ export interface LayoutComponentCache {
   delete(key: string): void;
   clear(): void;
   clearForProject?(projectId: string): void;
+}
+
+interface LoadTSXComponentDeps {
+  loadComponentFromSource: typeof loadComponentFromSource;
+}
+
+const tsxComponentFlights = new WeakMap<
+  LayoutComponentCache,
+  Singleflight<BundledReact.ComponentType>
+>();
+
+function getTSXComponentFlights(
+  cache: LayoutComponentCache,
+): Singleflight<BundledReact.ComponentType> {
+  let flights = tsxComponentFlights.get(cache);
+  if (!flights) {
+    flights = new Singleflight<BundledReact.ComponentType>();
+    tsxComponentFlights.set(cache, flights);
+  }
+  return flights;
 }
 
 class InMemoryLayoutComponentCache implements LayoutComponentCache {
@@ -234,6 +256,7 @@ export async function loadTSXComponent(
   projectSlug: string,
   contentSourceId: string,
   reactVersion?: string,
+  deps: LoadTSXComponentDeps = { loadComponentFromSource },
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
@@ -258,29 +281,54 @@ export async function loadTSXComponent(
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
-  const loaded = await loadComponentFromSource(source, componentPath, projectDir, adapter, {
-    dev: true,
-    projectId,
-    projectSlug,
-    ssr: true,
-    contentSourceId,
-    reactVersion,
-    moduleServerOrigin,
-    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
-    dependencyPinningDependencies: dependencySnapshot.dependencies,
-    dependencyPinningSource: dependencyPinningSource ?? projectDir,
-  });
+  const loaded = await getTSXComponentFlights(cache).do(
+    cacheKey,
+    async (control) => {
+      const cachedDuringFlight = cache.get(cacheKey);
+      if (cachedDuringFlight) return cachedDuringFlight;
 
-  if (!loaded) {
-    throw toError(
-      createError({
-        type: "render",
-        message: "Component loading failed",
-      }),
-    );
-  }
+      const loaded = await deps.loadComponentFromSource(
+        source,
+        componentPath,
+        projectDir,
+        adapter,
+        {
+          dev: true,
+          projectId,
+          projectSlug,
+          ssr: true,
+          contentSourceId,
+          reactVersion,
+          moduleServerOrigin,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource: dependencyPinningSource ?? projectDir,
+        },
+      );
 
-  cache.set(cacheKey, loaded);
+      if (!loaded) {
+        throw toError(
+          createError({
+            type: "render",
+            message: "Component loading failed",
+          }),
+        );
+      }
+
+      if (control.isCurrent()) {
+        cache.set(cacheKey, loaded);
+      }
+      return loaded;
+    },
+    {
+      staleAfterMs: TSX_COMPONENT_FLIGHT_STALE_EVICTION_MS,
+      onStaleEvicted: () => {
+        applyTsxLayoutLog.warn("Evicted stale TSX layout component load flight", {
+          componentPath,
+        });
+      },
+    },
+  );
   return loaded;
 }
 
@@ -415,6 +463,7 @@ export async function applyTSXLayout(
       projectSlug,
       contentSourceId,
       reactVersion,
+      undefined,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
       dependencyPinningSource,

@@ -220,6 +220,7 @@ export async function applyLayoutsFunctionBody(
         projectSlug,
         contentSourceId,
         reactVersion,
+        undefined,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
         dependencyPinningSource,

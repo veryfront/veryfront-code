@@ -297,10 +297,14 @@ export async function login(
 export async function ensureAuthenticated(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AuthIdentity | null> {
+  const humanOutput = !isJsonMode();
+
   if (env.apiToken) {
     const credential = await validateCredential(env.apiToken, env);
     if (credential) return credential;
-    console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
+    if (humanOutput) {
+      console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
+    }
   }
 
   const storedToken = await readToken(env);
@@ -308,8 +312,12 @@ export async function ensureAuthenticated(
     const credential = await validateCredential(storedToken, env);
     if (credential) return credential;
     await deleteToken(env);
-    console.log("  " + warning("Session expired. Please log in again."));
+    if (humanOutput) {
+      console.log("  " + warning("Session expired. Please log in again."));
+    }
   }
+
+  if (!humanOutput) return null;
 
   if (!isTTY()) {
     cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");

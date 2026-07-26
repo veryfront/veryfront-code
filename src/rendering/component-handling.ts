@@ -13,6 +13,8 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getDependencyPinningCacheKey } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -21,17 +23,59 @@ interface ComponentPageResult {
 
 /**
  * Cache for transformed component hydration bundles.
- * Keys are content-addressed: `component:${projectId}:${filePath}:${sha256(source)}`.
- * Safe for multi-tenant use (project-scoped + content-hashed).
+ * Keys are content-addressed and scoped to transform-affecting inputs.
+ * Safe for multi-tenant use (project-scoped + content/transform-hashed).
  * Evicted when exceeding MAX_COMPONENT_CACHE_SIZE to prevent unbounded memory growth.
  */
 const MAX_COMPONENT_CACHE_SIZE = 5_000;
 const componentHydrationCache = new LRUCache<string, string>({
   maxEntries: MAX_COMPONENT_CACHE_SIZE,
 });
+const componentHydrationFlights = new Singleflight<string>();
+const COMPONENT_HYDRATION_FLIGHT_STALE_EVICTION_MS = 5 * 60_000;
+
+interface BundleComponentForClientDeps {
+  transformToESM: (
+    source: string,
+    filePath: string,
+    projectDir: string,
+    adapter: RuntimeAdapter,
+    options: {
+      projectId: string;
+      dev: boolean;
+      jsxImportSource: string;
+      moduleServerUrl?: string;
+      moduleServerOrigin?: string;
+      reactVersion?: string;
+      dependencyPinningCacheKey?: string;
+      dependencyPinningDependencies?: Readonly<Record<string, string>>;
+      dependencyPinningSource?: DependencyPinningSourceInput;
+    },
+  ) => Promise<string>;
+}
+
+async function getBundleComponentForClientDeps(): Promise<BundleComponentForClientDeps> {
+  const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
+  return { transformToESM };
+}
 
 // Register cache for monitoring
 registerLRUCache("component-hydration-cache", componentHydrationCache);
+
+async function buildComponentHydrationCacheHash(
+  source: string,
+  moduleServerUrl?: string,
+  reactVersion?: string,
+): Promise<string> {
+  const sourceHash = await computeHash(source);
+  const effectiveReactVersion = reactVersion ?? DEFAULT_REACT_VERSION;
+  const cacheIdentity = JSON.stringify([
+    sourceHash,
+    moduleServerUrl ?? null,
+    effectiveReactVersion,
+  ]);
+  return (await computeHash(cacheIdentity)).slice(0, 16);
+}
 
 /**
  * Load and render a TSX/JSX component page
@@ -83,9 +127,10 @@ export async function handleComponentPage(
         projectDir,
         adapter,
         options?.moduleServerUrl,
-        options?.moduleServerOrigin,
         options?.projectId,
         options?.reactVersion,
+        undefined,
+        options?.moduleServerOrigin,
         dependencyPinningCacheKey,
         options?.dependencyPinningDependencies,
         options?.dependencyPinningSource,
@@ -149,45 +194,68 @@ export async function handleComponentPage(
   }
 }
 
-async function bundleComponentForClient(
+export async function bundleComponentForClient(
   source: string,
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   moduleServerUrl?: string,
-  moduleServerOrigin?: string,
   projectId?: string,
   reactVersion?: string,
+  injectedDeps?: BundleComponentForClientDeps,
+  moduleServerOrigin?: string,
   dependencyPinningCacheKey = "off",
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
-): Promise<string | null> {
+): Promise<string> {
   try {
-    const contentHash = (await computeHash(source)).slice(0, 16);
+    const cacheHash = await buildComponentHydrationCacheHash(
+      source,
+      moduleServerUrl,
+      reactVersion,
+    );
     const cacheKey = buildComponentCacheKey(
       projectId ?? projectDir,
       filePath,
-      contentHash,
+      cacheHash,
       dependencyPinningCacheKey,
       moduleServerOrigin,
     );
     const cached = componentHydrationCache.get(cacheKey);
     if (cached) return cached;
 
-    const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
-    const transformed = await transformToESM(source, filePath, projectDir, adapter, {
-      projectId: projectId ?? projectDir,
-      dev: true,
-      jsxImportSource: "react",
-      moduleServerUrl,
-      moduleServerOrigin,
-      reactVersion,
-      dependencyPinningCacheKey,
-      dependencyPinningDependencies,
-      dependencyPinningSource,
-    });
+    const transformed = await componentHydrationFlights.do(
+      cacheKey,
+      async (control) => {
+        const cachedDuringFlight = componentHydrationCache.get(cacheKey);
+        if (cachedDuringFlight) return cachedDuringFlight;
 
-    componentHydrationCache.set(cacheKey, transformed);
+        const { transformToESM } = injectedDeps ?? await getBundleComponentForClientDeps();
+        const transformed = await transformToESM(source, filePath, projectDir, adapter, {
+          projectId: projectId ?? projectDir,
+          dev: true,
+          jsxImportSource: "react",
+          moduleServerUrl,
+          moduleServerOrigin,
+          reactVersion,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
+        });
+
+        if (control.isCurrent()) {
+          componentHydrationCache.set(cacheKey, transformed);
+        }
+        return transformed;
+      },
+      {
+        staleAfterMs: COMPONENT_HYDRATION_FLIGHT_STALE_EVICTION_MS,
+        onStaleEvicted: () => {
+          logger.warn("Evicted stale component hydration transform flight", { filePath });
+        },
+      },
+    );
+
     return transformed;
   } catch (error) {
     const errorMessage = getErrorMessage(error);

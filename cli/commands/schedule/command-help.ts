@@ -3,12 +3,17 @@ import type { CommandHelp } from "../../help/types.ts";
 export const scheduleHelp: CommandHelp = {
   name: "schedule",
   category: "ai",
-  description: "Run a source-defined schedule locally",
+  description: "Run a source-defined schedule locally or in the Veryfront cloud",
   usage: "veryfront schedule run <id> [options]",
   options: [
     {
       flag: "--input <file>",
       description: "JSON input file to override the schedule input",
+    },
+    {
+      flag: "--remote",
+      description:
+        "Run the pushed source schedule in the Veryfront cloud runtime; cannot be combined with --input",
     },
     {
       flag: "--json",
@@ -22,5 +27,6 @@ export const scheduleHelp: CommandHelp = {
   examples: [
     "veryfront schedule run daily-triage",
     "veryfront schedule run daily-triage --input fixtures/priority-queue.json --json",
+    "veryfront schedule run daily-triage --remote --json",
   ],
 };

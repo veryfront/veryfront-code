@@ -208,6 +208,7 @@ export class LayoutOrchestrator {
                   this.config.projectSlug,
                   this.config.contentSourceId,
                   reactVersion,
+                  undefined,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
                   dependencyPinningSource,

@@ -60,12 +60,16 @@ describe("cache/config-hash", () => {
       assertNotEquals(h1, h2);
     });
 
-    it("preserves the legacy hash when dependency pinning is off or unset", async () => {
-      const unkeyed = await computeConfigHash({});
-      const flagOff = await computeConfigHash({
+    it("preserves the mainline hash when dependency pinning is off or unset", async () => {
+      const baseConfig = {
         moduleServerUrl: "https://modules.example.test/_vf_modules",
-        moduleServerOrigin: "https://preview.example",
         vendorBundleHash: "vendor-a",
+        apiBaseUrl: "https://api.example.test",
+      };
+      const unkeyed = await computeConfigHash(baseConfig);
+      const flagOff = await computeConfigHash({
+        ...baseConfig,
+        moduleServerOrigin: "https://preview.example",
         dependencyPinningCacheKey: "off",
       });
 
@@ -89,6 +93,20 @@ describe("cache/config-hash", () => {
       const h2 = await computeConfigHash({ dependencyPinningCacheKey: "on:abc" });
       assertNotEquals(h1, h2);
     });
+
+    for (
+      const [field, baseValue, changedValue] of [
+        ["moduleServerUrl", "https://modules-a.example.test", "https://modules-b.example.test"],
+        ["vendorBundleHash", "vendor-a", "vendor-b"],
+        ["apiBaseUrl", "https://api-a.example.test", "https://api-b.example.test"],
+      ] as const
+    ) {
+      it(`should differ when ${field} changes`, async () => {
+        const h1 = await computeConfigHash({ [field]: baseValue });
+        const h2 = await computeConfigHash({ [field]: changedValue });
+        assertNotEquals(h1, h2);
+      });
+    }
   });
 
   describe("computeConfigHashSync", () => {
@@ -127,12 +145,28 @@ describe("cache/config-hash", () => {
       assertNotEquals(h1, h2);
     });
 
-    it("preserves the legacy sync hash when dependency pinning is off or unset", () => {
-      const unkeyed = computeConfigHashSync({});
-      const flagOff = computeConfigHashSync({
+    it("should differ when the enabled snapshot origin changes", () => {
+      const h1 = computeConfigHashSync({
+        moduleServerOrigin: "https://preview-a.example",
+        dependencyPinningCacheKey: "on:snapshot",
+      });
+      const h2 = computeConfigHashSync({
+        moduleServerOrigin: "https://preview-b.example",
+        dependencyPinningCacheKey: "on:snapshot",
+      });
+      assertNotEquals(h1, h2);
+    });
+
+    it("preserves the mainline sync hash when dependency pinning is off or unset", () => {
+      const baseConfig = {
         moduleServerUrl: "https://modules.example.test/_vf_modules",
-        moduleServerOrigin: "https://preview.example",
         vendorBundleHash: "vendor-a",
+        apiBaseUrl: "https://api.example.test",
+      };
+      const unkeyed = computeConfigHashSync(baseConfig);
+      const flagOff = computeConfigHashSync({
+        ...baseConfig,
+        moduleServerOrigin: "https://preview.example",
         dependencyPinningCacheKey: "off",
       });
 
@@ -149,5 +183,19 @@ describe("cache/config-hash", () => {
       const h2 = computeConfigHashSync({ dependencyPinningCacheKey: "on:def" });
       assertNotEquals(h1, h2);
     });
+
+    for (
+      const [field, baseValue, changedValue] of [
+        ["moduleServerUrl", "https://modules-a.example.test", "https://modules-b.example.test"],
+        ["vendorBundleHash", "vendor-a", "vendor-b"],
+        ["apiBaseUrl", "https://api-a.example.test", "https://api-b.example.test"],
+      ] as const
+    ) {
+      it(`should differ when ${field} changes`, () => {
+        const h1 = computeConfigHashSync({ [field]: baseValue });
+        const h2 = computeConfigHashSync({ [field]: changedValue });
+        assertNotEquals(h1, h2);
+      });
+    }
   });
 });

@@ -22,12 +22,14 @@ interface TransformConfig {
   reactVersion?: string;
   /** JSX import source */
   jsxImportSource?: string;
-  /** Module server base embedded into rewritten browser/SSR imports. */
+  /** Module server URL for rewritten browser imports */
   moduleServerUrl?: string;
   /** Absolute request origin used to emit browser-loadable static asset URLs. */
   moduleServerOrigin?: string;
-  /** Vendor bundle revision embedded into rewritten React imports. */
+  /** Vendor bundle hash for rewritten vendor imports */
   vendorBundleHash?: string;
+  /** API base URL for rewritten cross-project imports */
+  apiBaseUrl?: string;
   /** Enable Studio Navigator embed */
   studioEmbed?: boolean;
   /** Development mode */
@@ -50,12 +52,9 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     transformVersion: VERSION,
     reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
     jsxImportSource: config.jsxImportSource ?? "react",
-    ...(dependencyPinningCacheVariant
-      ? {
-        moduleServerUrl: config.moduleServerUrl ?? null,
-        vendorBundleHash: config.vendorBundleHash ?? null,
-      }
-      : {}),
+    moduleServerUrl: config.moduleServerUrl ?? null,
+    vendorBundleHash: config.vendorBundleHash ?? null,
+    apiBaseUrl: config.apiBaseUrl ?? null,
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
     ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
@@ -76,6 +75,9 @@ export function computeConfigHashSync(config: TransformConfig): string {
     `v${VERSION}`,
     config.reactVersion ?? DEFAULT_REACT_VERSION,
     config.jsxImportSource ?? "react",
+    encodeConfigPart("modules", config.moduleServerUrl),
+    encodeConfigPart("vendor", config.vendorBundleHash),
+    encodeConfigPart("api", config.apiBaseUrl),
     config.studioEmbed ? "studio" : "",
     config.dev ? "dev" : "",
   ].filter(Boolean);
@@ -84,10 +86,13 @@ export function computeConfigHashSync(config: TransformConfig): string {
     config.moduleServerOrigin,
   );
   if (dependencyPinningCacheVariant) {
-    parts.push(`modules:${config.moduleServerUrl ?? ""}`);
-    parts.push(`vendor:${config.vendorBundleHash ?? ""}`);
     parts.push(`pins:${dependencyPinningCacheVariant}`);
   }
 
   return parts.join(":");
+}
+
+function encodeConfigPart(label: string, value: string | undefined): string {
+  if (!value) return "";
+  return `${label}:${value.length}:${value}`;
 }
