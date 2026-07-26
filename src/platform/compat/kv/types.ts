@@ -12,6 +12,12 @@ export interface KvListOptions {
   reverse?: boolean;
 }
 
+/**
+ * Minimal cross-runtime KV contract.
+ *
+ * Keys are arrays of strings. Values must be JSON-serializable; implementations
+ * snapshot values on write and return a fresh deserialized value on every read.
+ */
 export interface Kv {
   get<T = unknown>(key: string[]): Promise<{ value: T | undefined; versionstamp?: string }>;
   set<T = unknown>(key: string[], value: T): Promise<void>;

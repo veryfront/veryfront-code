@@ -1,14 +1,14 @@
 export type Platform = "deno" | "node" | "bun" | "cloudflare-workers" | "unknown";
 
-interface PlatformCapabilities {
-  canRunMCPServer: boolean;
-  maxAgentSteps: number;
-  cpuTimeLimit: number | null;
-  memoryLimit: number | null;
-  hasFileSystem: boolean;
-  supportsLongRunning: boolean;
-  streamingRecommended: boolean;
-  displayName: string;
+export interface PlatformCapabilities {
+  readonly canRunMCPServer: boolean;
+  readonly maxAgentSteps: number;
+  readonly cpuTimeLimit: number | null;
+  readonly memoryLimit: number | null;
+  readonly hasFileSystem: boolean;
+  readonly supportsLongRunning: boolean;
+  readonly streamingRecommended: boolean;
+  readonly displayName: string;
 }
 
 type RuntimeGlobal = typeof globalThis & {
@@ -62,8 +62,8 @@ const MIN_AGENT_STEPS_WARNING_THRESHOLD = 10;
 /** CPU time limit below which a platform warning is emitted (60 seconds) */
 const CPU_TIME_WARNING_THRESHOLD_MS = 60_000;
 
-const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
-  deno: {
+const PLATFORM_CAPABILITIES: Readonly<Record<Platform, PlatformCapabilities>> = Object.freeze({
+  deno: Object.freeze({
     canRunMCPServer: true,
     maxAgentSteps: Infinity,
     cpuTimeLimit: null,
@@ -72,8 +72,8 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
     supportsLongRunning: true,
     streamingRecommended: false,
     displayName: "Deno",
-  },
-  node: {
+  }),
+  node: Object.freeze({
     canRunMCPServer: true,
     maxAgentSteps: Infinity,
     cpuTimeLimit: null,
@@ -82,8 +82,8 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
     supportsLongRunning: true,
     streamingRecommended: false,
     displayName: "Node.js",
-  },
-  bun: {
+  }),
+  bun: Object.freeze({
     canRunMCPServer: true,
     maxAgentSteps: Infinity,
     cpuTimeLimit: null,
@@ -92,8 +92,8 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
     supportsLongRunning: true,
     streamingRecommended: false,
     displayName: "Bun",
-  },
-  "cloudflare-workers": {
+  }),
+  "cloudflare-workers": Object.freeze({
     canRunMCPServer: false,
     maxAgentSteps: CF_WORKERS_MAX_AGENT_STEPS,
     cpuTimeLimit: CF_WORKERS_CPU_TIME_LIMIT_MS,
@@ -102,8 +102,8 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
     supportsLongRunning: false,
     streamingRecommended: true,
     displayName: "Cloudflare Workers",
-  },
-  unknown: {
+  }),
+  unknown: Object.freeze({
     canRunMCPServer: false,
     maxAgentSteps: UNKNOWN_PLATFORM_MAX_AGENT_STEPS,
     cpuTimeLimit: UNKNOWN_PLATFORM_CPU_TIME_LIMIT_MS,
@@ -112,8 +112,8 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
     supportsLongRunning: false,
     streamingRecommended: true,
     displayName: "Unknown Platform",
-  },
-};
+  }),
+});
 
 export function getPlatformCapabilities(platform?: Platform): PlatformCapabilities {
   return PLATFORM_CAPABILITIES[platform ?? detectPlatform()] ?? PLATFORM_CAPABILITIES.unknown;
@@ -160,11 +160,11 @@ export function getPlatformWarnings(): string[] {
   return warnings;
 }
 
-interface CompatibilityConfig {
-  maxSteps?: number;
-  streaming?: boolean;
-  requiresFileSystem?: boolean;
-  requiresMCP?: boolean;
+export interface CompatibilityConfig {
+  readonly maxSteps?: number;
+  readonly streaming?: boolean;
+  readonly requiresFileSystem?: boolean;
+  readonly requiresMCP?: boolean;
 }
 
 export function validatePlatformCompatibility(
@@ -179,14 +179,17 @@ export function validatePlatformCompatibility(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  if (
-    config.maxSteps &&
-    capabilities.maxAgentSteps !== Infinity &&
-    config.maxSteps > capabilities.maxAgentSteps
-  ) {
-    errors.push(
-      `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
-    );
+  if (config.maxSteps !== undefined) {
+    if (!Number.isSafeInteger(config.maxSteps) || config.maxSteps <= 0) {
+      errors.push("Agent maxSteps must be a positive safe integer");
+    } else if (
+      capabilities.maxAgentSteps !== Infinity &&
+      config.maxSteps > capabilities.maxAgentSteps
+    ) {
+      errors.push(
+        `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
+      );
+    }
   }
 
   if (config.requiresFileSystem && !capabilities.hasFileSystem) {

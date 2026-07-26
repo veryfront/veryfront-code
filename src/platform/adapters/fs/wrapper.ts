@@ -13,6 +13,7 @@ import type {
   StyleConfigBinding,
 } from "./veryfront/types.ts";
 import type { RequestTokenProvenance } from "./veryfront/request-context.ts";
+import { getVeryfrontFSAdapterKind } from "./veryfront/adapter-kind.ts";
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getUnderlyingAdapter(): FSAdapter;
@@ -154,8 +155,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   isVeryfrontAdapter(): boolean {
-    const name = this._fsAdapter.constructor.name;
-    return name === "VeryfrontFSAdapter" || name === "MultiProjectFSAdapter";
+    return getVeryfrontFSAdapterKind(this._fsAdapter) !== undefined;
   }
 
   private get adapterType(): string {

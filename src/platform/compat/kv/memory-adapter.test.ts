@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryKv } from "./memory-adapter.ts";
 
@@ -79,6 +79,90 @@ describe("MemoryKv", () => {
 
       const entries = await collectEntries(kv.list({ limit: 2 }));
       assertEquals(entries.length, 2);
+    });
+
+    it("matches prefixes by complete key parts", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["a"], "exact");
+      await kv.set(["a", "child"], "child");
+      await kv.set(["ab"], "collision");
+
+      const entries = await collectEntries(kv.list({ prefix: ["a"] }));
+      assertEquals(entries.map((entry) => entry.key.join("/")).sort(), ["a", "a/child"]);
+    });
+
+    it("treats a zero limit as an empty result", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["a"], 1);
+
+      assertEquals(await collectEntries(kv.list({ limit: 0 })), []);
+    });
+
+    it("rejects invalid limits", async () => {
+      const kv = new MemoryKv();
+
+      for (const limit of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        await assertRejects(
+          () => collectEntries(kv.list({ limit })),
+          RangeError,
+          "non-negative safe integer",
+        );
+      }
+    });
+  });
+
+  describe("value isolation", () => {
+    it("snapshots values on write and read", async () => {
+      const kv = new MemoryKv();
+      const input = { nested: { count: 1 } };
+      await kv.set(["object"], input);
+      input.nested.count = 2;
+
+      const first = await kv.get<typeof input>(["object"]);
+      assertEquals(first.value, { nested: { count: 1 } });
+      first.value!.nested.count = 3;
+
+      assertEquals((await kv.get<typeof input>(["object"])).value, {
+        nested: { count: 1 },
+      });
+    });
+
+    it("generates a distinct versionstamp for every write", async () => {
+      const kv = new MemoryKv();
+      const originalNow = Date.now;
+      Date.now = () => 123;
+      try {
+        await kv.set(["key"], "first");
+        const first = (await kv.get(["key"])).versionstamp;
+        await kv.set(["key"], "second");
+        const second = (await kv.get(["key"])).versionstamp;
+
+        assertExists(first);
+        assertExists(second);
+        assertEquals(first === second, false);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    it("rejects values without a JSON representation", async () => {
+      const kv = new MemoryKv();
+      await assertRejects(
+        () => kv.set(["undefined"], undefined),
+        TypeError,
+        "JSON-serializable",
+      );
+    });
+  });
+
+  describe("key validation", () => {
+    it("rejects sparse keys instead of storing unreadable entries", async () => {
+      const kv = new MemoryKv();
+      await assertRejects(
+        () => kv.set(new Array<string>(1), "value"),
+        TypeError,
+        "arrays of strings",
+      );
     });
   });
 

@@ -45,6 +45,24 @@ describe("platform/core-platform", () => {
       assertEquals(caps.canRunMCPServer, false);
       assertEquals(caps.displayName, "Unknown Platform");
     });
+
+    it("returns immutable capability records", () => {
+      const caps = getPlatformCapabilities("deno");
+      assertEquals(Object.isFrozen(caps), true);
+    });
+
+    it("does not expose mutable global capability state", () => {
+      const caps = getPlatformCapabilities("deno");
+      const mutableCaps = caps as unknown as { hasFileSystem: boolean };
+      try {
+        mutableCaps.hasFileSystem = false;
+      } catch {
+        // Frozen records throw in strict mode; either way the shared contract must be unchanged.
+      }
+      const observed = getPlatformCapabilities("deno").hasFileSystem;
+      if (!Object.isFrozen(caps)) mutableCaps.hasFileSystem = true;
+      assertEquals(observed, true);
+    });
   });
 
   describe("supportsCapability", () => {
@@ -142,6 +160,17 @@ describe("platform/core-platform", () => {
     it("should use detected platform when none specified", () => {
       const result = validatePlatformCompatibility({});
       assertEquals(result.compatible, true);
+    });
+
+    it("rejects invalid maxSteps values before applying platform limits", () => {
+      for (const maxSteps of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const result = validatePlatformCompatibility({ maxSteps }, "deno");
+        assertEquals(result.compatible, false);
+        assertEquals(
+          result.errors.some((error) => error.includes("positive safe integer")),
+          true,
+        );
+      }
     });
   });
 

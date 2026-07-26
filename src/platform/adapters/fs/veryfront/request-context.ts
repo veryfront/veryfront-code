@@ -64,8 +64,8 @@ const IntrinsicSet = Set;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicWeakSet = WeakSet;
 const ArrayPrototypePush = Array.prototype.push;
+const AsyncLocalStoragePrototypeEnterWith = AsyncLocalStorage.prototype.enterWith;
 const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
-const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
 const MapPrototypeClear = Map.prototype.clear;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
@@ -100,11 +100,15 @@ function getRawStore(): RequestContext | undefined {
 }
 
 function runInContext<T>(context: RequestContext, fn: () => T): T {
-  return ReflectApply(
-    AsyncLocalStoragePrototypeRun,
-    asyncLocalStorage,
-    [context, fn],
-  ) as T;
+  const previous = getRawStore();
+  if (previous === context) return fn();
+
+  ReflectApply(AsyncLocalStoragePrototypeEnterWith, asyncLocalStorage, [context]);
+  try {
+    return fn();
+  } finally {
+    ReflectApply(AsyncLocalStoragePrototypeEnterWith, asyncLocalStorage, [previous]);
+  }
 }
 
 function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {

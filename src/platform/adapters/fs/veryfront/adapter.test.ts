@@ -14,6 +14,7 @@ import {
 import {
   clearReleaseAssetManifestCache,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 
@@ -548,7 +549,10 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(getReadyManifestForRender(releaseId), null);
-      await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 2);
+      assertEquals(
+        (await getReadyManifestForRenderAsync(releaseId))?.manifestVersion,
+        2,
+      );
       assertEquals(fetchCount, 1);
     });
 
@@ -644,7 +648,10 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(adapter.getContentContext()?.releaseId, releaseId);
       assertEquals(getReadyManifestForRender(releaseId), null);
-      await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 3);
+      assertEquals(
+        (await getReadyManifestForRenderAsync(releaseId))?.manifestVersion,
+        3,
+      );
       assertEquals(fetchCount, 1);
     });
 
@@ -698,9 +705,9 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(getReadyManifestForRender(releaseId), null);
-      await waitFor(async () =>
-        getReadyManifestForRender(releaseId)?.modules["pages/index.tsx"]?.contentHash ===
-          "a".repeat(64)
+      assertEquals(
+        (await getReadyManifestForRenderAsync(releaseId))?.modules["pages/index.tsx"]?.contentHash,
+        "a".repeat(64),
       );
       assertEquals(fetchCount, 1);
 
@@ -710,9 +717,9 @@ describe("VeryfrontFSAdapter", () => {
       }).wsManager.deps.clearMemoryCaches();
 
       assertEquals(getReadyManifestForRender(releaseId), null);
-      await waitFor(async () =>
-        getReadyManifestForRender(releaseId)?.modules["pages/index.tsx"]?.contentHash ===
-          "b".repeat(64)
+      assertEquals(
+        (await getReadyManifestForRenderAsync(releaseId))?.modules["pages/index.tsx"]?.contentHash,
+        "b".repeat(64),
       );
       assertEquals(fetchCount, 2);
     });

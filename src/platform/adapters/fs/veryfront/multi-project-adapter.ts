@@ -11,6 +11,7 @@ import {
   type RequestTokenProvenance,
   runWithRequestContext,
 } from "./request-context.ts";
+import { getVeryfrontFSAdapterKind, VERYFRONT_FS_ADAPTER_KIND } from "./adapter-kind.ts";
 export {
   clearRequestScopedFileCache,
   getCurrentRequestContext,
@@ -43,6 +44,7 @@ function formatDurationSince(startTime: number): string {
 }
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly [VERYFRONT_FS_ADAPTER_KIND] = "multi-project" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
 
@@ -380,5 +382,5 @@ export class MultiProjectFSAdapter implements FSAdapter {
 }
 
 export function isMultiProjectAdapter(adapter: unknown): adapter is MultiProjectFSAdapter {
-  return adapter instanceof MultiProjectFSAdapter;
+  return getVeryfrontFSAdapterKind(adapter) === "multi-project";
 }

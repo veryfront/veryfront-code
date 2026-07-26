@@ -153,12 +153,16 @@ interface RuntimeAdapter {
 Use `veryfront/platform` for cross-runtime compatibility utilities:
 
 ```ts
-import { openKv, readTextFile, writeTextFile } from "veryfront/platform";
+import { createKVStore, readTextFile, writeTextFile } from "veryfront/platform";
 
-// KV store (Deno.Kv compatible API)
-const kv = await openKv("./data.db");
+// An explicit path requires a durable native Deno KV or SQLite backend.
+// The call rejects when neither backend is available.
+const kv = await createKVStore({ path: "./data.db" });
 await kv.set(["users", "alice"], { name: "Alice" });
 const entry = await kv.get(["users", "alice"]);
+
+// Omit the path only when volatile, process-local storage is intentional.
+const volatileKv = await createKVStore();
 
 // Filesystem utilities
 const content = await readTextFile("./file.txt");

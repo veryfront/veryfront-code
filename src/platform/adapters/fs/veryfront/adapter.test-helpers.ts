@@ -36,14 +36,14 @@ export function seedCachedFiles(
 
 export async function waitFor(
   predicate: () => Promise<boolean>,
-  timeoutMs = 200,
+  timeoutMs = 5_000,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = performance.now();
 
-  while (Date.now() < deadline) {
+  while (performance.now() - startedAt < timeoutMs) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
-  throw new Error("Timed out waiting for condition");
+  throw new Error(`Timed out waiting for condition after ${timeoutMs}ms`);
 }

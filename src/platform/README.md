@@ -36,7 +36,7 @@ Provides unified abstractions for platform-specific APIs:
 import { runtime } from "veryfront/platform";
 
 const adapter = await runtime.get();
-console.log(adapter.id); // 'deno' | 'node' | 'bun' | 'cloudflare'
+console.log(adapter.id); // 'deno' | 'node' | 'bun' | 'cloudflare' | 'memory'
 
 // Filesystem operations
 const content = await adapter.fs.readFile("/path/to/file.txt");
@@ -45,8 +45,8 @@ await adapter.fs.writeFile("/path/to/output.txt", "Hello World");
 const exists = await adapter.fs.exists("/path/to/check.txt");
 const stats = await adapter.fs.stat("/path/to/file.txt");
 
-// HTTP Server
-import { createHttpServer } from "#veryfront/platform/compat/http/index.ts";
+// HTTP server
+import { createHttpServer } from "veryfront/platform/http";
 
 const server = createHttpServer();
 await server.serve(async (req) => {
@@ -70,6 +70,17 @@ const fileCache = createFileCache({
   ttl: 5000, // 5 seconds
 });
 await fileCache.setAsync("/src/index.ts", content);
+
+// Durable KV storage
+import { createKVStore } from "veryfront/platform";
+
+// An explicit path requires native Deno KV or the SQLite extension. The call
+// rejects instead of silently substituting process-local memory.
+const kv = await createKVStore({ path: "./data.db" });
+await kv.set(["users", "alice"], { name: "Alice" });
+
+// Omit the path only when volatile, process-local storage is intentional.
+const volatileKv = await createKVStore();
 ```
 
 ## Structure

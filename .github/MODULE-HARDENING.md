@@ -2554,4 +2554,93 @@ Platform, routing, sandbox, and the build-script surface changed or were
 extended by this checkpoint and remain listed for their own top-level
 revalidation.
 
+### Platform in-progress checkpoint
+
+The `platform` audit unit owns runtime detection and capabilities, adapter
+lifecycle and selection, filesystem, HTTP, KV, process, path, and native-host
+compatibility, hosted Veryfront filesystem access, and the public
+`veryfront/platform`, `veryfront/platform/esbuild-init`,
+`veryfront/platform/path`, and `veryfront/platform/http` surfaces. It has broad
+consumers across server, rendering, build, transforms, modules, routing,
+security, workflow, and shared utilities.
+
+The first confirmed Platform findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** concurrent adapter
+  initialization, replacement, and reset could commit out of invocation order,
+  resurrect a reset adapter, leak a superseded candidate, or shut down an
+  adapter that was set to itself. The source was independent asynchronous
+  mutations of one global registry slot. The consequence was nondeterministic
+  runtime ownership and resource lifecycle. Registry operations now execute
+  through one ordered queue, consecutive reads coalesce, failed candidates are
+  cleaned up without replacing the active adapter, and replacement and reset
+  shut down each superseded adapter exactly once.
+- **Symptom -> Source -> Consequence -> Remedy:** callers could mutate shared
+  platform capability records, and fractional, non-finite, or unsafe
+  `maxSteps` values reached compatibility comparisons. The source was exposing
+  mutable configuration objects and validating only their sign. The
+  consequence was process-wide policy drift and misleading compatibility
+  results. Capability data is now deeply frozen and typed read-only, and step
+  limits must be positive safe integers.
+- **Symptom -> Source -> Consequence -> Remedy:** the memory and SQLite KV
+  adapters disagreed on prefix boundaries, value ownership, invalid inputs,
+  zero limits, and failure timing; millisecond version stamps could collide;
+  and an explicit durable path silently degraded to volatile memory. The source
+  was duplicated serialization and fallback logic. The consequence was
+  backend-dependent query results, mutable stored values, lost update
+  identities, and acknowledged data that disappeared on restart. Shared
+  validation now enforces string-tuple keys and JSON snapshots, prefix matching
+  is exact in both backends, list limits and rejection semantics agree, version
+  stamps use UUIDs, and explicit durable paths fail closed when no durable
+  backend opens.
+- **Symptom -> Source -> Consequence -> Remedy:** response helpers let caller
+  options override their promised status or discard generated headers, while
+  Node request bodies could hang after premature close and cancellation left
+  listeners and the underlying request alive. The source was option spread
+  order, fragmented fallback construction, and incomplete stream lifecycle
+  handling. Helpers now enforce their canonical status while preserving
+  metadata, serialization fallbacks retain caller headers and correlation IDs,
+  and Node request streams detach listeners, destroy on cancellation, and
+  reject aborted or prematurely closed bodies.
+- **Symptom -> Source -> Consequence -> Remedy:** native compatibility assumed a
+  global `self`, request context called mutable `AsyncLocalStorage` prototype
+  methods indirectly, and Veryfront filesystem detection depended on
+  constructor names and `instanceof`. The source was treating host globals,
+  ambient prototypes, bundle-assigned names, and module identity as stable.
+  The consequence was Node-only failures, prototype-poisoning exposure, and
+  false adapter detection after bundling or duplicate module loading. Native
+  host selection now falls back safely to `globalThis`, request context uses
+  captured storage primordials with deterministic restoration, and adapters
+  carry a descriptor-read global-symbol brand that is independent of names and
+  constructor identity.
+- **Symptom -> Source -> Consequence -> Remedy:** async adapter tests shared a
+  200 ms wall-clock polling deadline and polled a manifest operation that
+  already exposes an awaitable contract. The source was timing-based
+  synchronization that predated the async API. The consequence was unrelated
+  failures under the supported Node runner's normal shard load. Manifest tests
+  now await the in-flight operation directly, and remaining fire-and-forget
+  assertions use a monotonic CI-sized deadline while still returning
+  immediately on success.
+
+Reproducible checkpoint evidence:
+
+- Regression-first tests reproduced adapter replacement/reset races, mutable
+  global capabilities, KV prefix and durability errors, response metadata loss,
+  request-stream hangs, missing Node `self`, dynamic storage-prototype lookup,
+  and bundle-renamed adapter misclassification before remediation.
+- The complete Deno Platform suite passes 177 suites and 2,413 nested steps
+  with zero failures.
+- The supported Node harness passes all four Platform shards, totaling 1,587
+  tests with zero failures.
+- Changed Platform sources and tests pass direct formatting, lint, and type
+  checking. Core dependency and dependency-boundary checks report zero
+  violations, and the module-boundary ratchet remains at 75 baselined broad
+  imports and two baselined cycle edges. No new Platform architecture violation
+  was introduced.
+
+Platform remains open. The next wave must replace the hard-coded Cloudflare
+capability and agent-step policy with an explicit deployment policy, complete
+the remaining runtime and hosted-adapter review, and reconcile the stale
+Platform and adapter documentation before formal closure.
+
 Update this ledger in the same commit that closes or reopens an audit unit.

@@ -11,6 +11,7 @@ import {
 } from "./wrapper.ts";
 import { denoAdapter } from "../deno.ts";
 import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
+import { VERYFRONT_FS_ADAPTER_KIND } from "./veryfront/adapter-kind.ts";
 import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
 
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
@@ -243,7 +244,45 @@ describe("FSAdapterWrapper", () => {
       assertEquals(wrapper.isVeryfrontAdapter(), false);
     });
 
-    it("isVeryfrontAdapter should return true for VeryfrontFSAdapter", () => {
+    it("isVeryfrontAdapter should return true for a branded single-project adapter", () => {
+      class HostedAdapter {
+        readonly [VERYFRONT_FS_ADAPTER_KIND] = "single-project" as const;
+        readFile = () => Promise.resolve("content");
+        exists = () => Promise.resolve(true);
+        stat = () =>
+          Promise.resolve({
+            size: 0,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(),
+          });
+      }
+
+      const wrapper = new FSAdapterWrapper(new HostedAdapter() as FSAdapter);
+      assertEquals(wrapper.isVeryfrontAdapter(), true);
+    });
+
+    it("isVeryfrontAdapter should return true for a branded multi-project adapter", () => {
+      class HostedAdapter {
+        readonly [VERYFRONT_FS_ADAPTER_KIND] = "multi-project" as const;
+        readFile = () => Promise.resolve("content");
+        exists = () => Promise.resolve(true);
+        stat = () =>
+          Promise.resolve({
+            size: 0,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(),
+          });
+      }
+
+      const wrapper = new FSAdapterWrapper(new HostedAdapter() as FSAdapter);
+      assertEquals(wrapper.isVeryfrontAdapter(), true);
+    });
+
+    it("does not trust a constructor name without the internal brand", () => {
       class VeryfrontFSAdapter {
         readFile = () => Promise.resolve("content");
         exists = () => Promise.resolve(true);
@@ -258,25 +297,7 @@ describe("FSAdapterWrapper", () => {
       }
 
       const wrapper = new FSAdapterWrapper(new VeryfrontFSAdapter() as FSAdapter);
-      assertEquals(wrapper.isVeryfrontAdapter(), true);
-    });
-
-    it("isVeryfrontAdapter should return true for MultiProjectFSAdapter", () => {
-      class MultiProjectFSAdapter {
-        readFile = () => Promise.resolve("content");
-        exists = () => Promise.resolve(true);
-        stat = () =>
-          Promise.resolve({
-            size: 0,
-            isFile: true,
-            isDirectory: false,
-            isSymlink: false,
-            mtime: new Date(),
-          });
-      }
-
-      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as FSAdapter);
-      assertEquals(wrapper.isVeryfrontAdapter(), true);
+      assertEquals(wrapper.isVeryfrontAdapter(), false);
     });
   });
 
