@@ -622,7 +622,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           branch: contentContext.branch,
           proxyMode: this.proxyMode,
         });
-        this.wsManager.connect(projectId, this.client.getToken());
+        this.ensureRealtimeConnection();
         return;
       }
 
@@ -637,7 +637,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Keep a WebSocket connection in environment mode to receive deployment pokes.
       // Release mode is immutable, so no need to keep a live connection.
       if (contentContext.sourceType === "environment") {
-        this.wsManager.connect(projectId, this.client.getToken());
+        this.ensureRealtimeConnection();
       }
     } catch (error) {
       // Resolve (not reject) to avoid an unhandled-rejection crash in Deno when no lookup() is awaiting.
@@ -1174,6 +1174,61 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.wsManager.getPokeMetrics();
   }
 
+  /**
+   * Establish realtime invalidation only with a credential that is safe for
+   * the adapter to retain beyond the request that supplied it.
+   *
+   * Proxy adapters deliberately ignore untrusted request credentials here.
+   * A later project-bound request can activate or rotate the connection.
+   */
+  ensureRealtimeConnection(): void {
+    if (this.disposed) return;
+    const contentContext = this.contentContext;
+    if (!contentContext || contentContext.sourceType === "release") return;
+
+    let token: string | undefined;
+    let retainedCredential:
+      | NonNullable<ReturnType<typeof getCurrentRequestContext>>["cacheApiCredential"]
+      | undefined;
+
+    if (!this.proxyMode) {
+      token = this.client.getToken();
+    } else {
+      retainedCredential = getCurrentRequestContext()?.cacheApiCredential;
+      if (!retainedCredential) {
+        logger.debug("Skipping realtime connection without project-bound credential", {
+          projectSlug: this.projectSlug,
+        });
+        return;
+      }
+    }
+
+    const projectId = this.client.getProjectId();
+    if (retainedCredential) {
+      const projectIdMismatch = retainedCredential.projectId !== undefined &&
+        retainedCredential.projectId !== projectId;
+      if (retainedCredential.projectSlug !== this.projectSlug || projectIdMismatch) {
+        logger.warn("Rejected mismatched realtime connection credential", {
+          adapterProjectSlug: this.projectSlug,
+          adapterProjectId: projectId,
+          credentialProjectSlug: retainedCredential.projectSlug,
+          credentialProjectId: retainedCredential.projectId,
+        });
+        return;
+      }
+      token = retainedCredential.token;
+    }
+
+    if (!token) {
+      logger.warn("Skipping realtime connection without a non-empty credential", {
+        projectSlug: this.projectSlug,
+        projectId,
+      });
+      return;
+    }
+    this.wsManager.ensureConnected(projectId, token);
+  }
+
   async readFile(path: string): Promise<string> {
     await this.ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
@@ -1499,6 +1554,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     const nextReleaseId = context.releaseId;
 
+    if (contextChanged) {
+      this.wsManager.onContentContextChanged();
+      if (context.sourceType === "release") {
+        this.wsManager.disconnect();
+      }
+    }
+
     this.manifestFetcherCleanup?.();
     this.manifestFetcherCleanup = null;
 
@@ -1536,6 +1598,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         oldContext,
         newContext: context,
       });
+
+      if (this.initialized && context.sourceType !== "release") {
+        this.ensureRealtimeConnection();
+      }
     }
 
     logger.debug("Content context set complete", {

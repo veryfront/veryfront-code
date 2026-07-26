@@ -9,9 +9,14 @@ import {
   buildReloadProjectContext,
   getReconnectDelay,
   parsePokeWebSocketMessage,
+  WS_MAX_MESSAGE_CODE_UNITS,
 } from "./websocket-manager-helpers.ts";
 import { getCurrentRequestContext } from "./request-context.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import {
+  clearAllPendingInvalidations,
+  getPendingInvalidationsCount,
+} from "./invalidation-state.ts";
 
 interface TimerEntry {
   delay: number;
@@ -96,10 +101,14 @@ function createWebSocketManager(options: {
   pregenerateStyles?: (
     files: Array<{ path: string; content?: string }>,
   ) => Promise<{ hash: string; assetPath: string } | undefined>;
+  cache?: Partial<FileCache>;
+  clearMemoryCaches?: () => void;
 } = {}): WebSocketManager {
   const cache = {
+    deleteAsync: async () => false,
     deleteByPrefixAsync: async () => 0,
     deleteByPrefixAndSuffixAsync: async () => 0,
+    ...options.cache,
   } as unknown as FileCache;
 
   const client = {
@@ -124,7 +133,7 @@ function createWebSocketManager(options: {
     }),
     getContentSource: () => ({ type: "branch", branch: "main" }),
     getProjectDir: () => undefined,
-    clearMemoryCaches: () => {},
+    clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
     replaceSourceSnapshot: async () => {},
     pregenerateStyles: options.pregenerateStyles,
   });
@@ -192,6 +201,11 @@ describe("WebSocketManager", () => {
     it("returns null for malformed JSON (parser logs the error at warn)", () => {
       assertEquals(parsePokeWebSocketMessage("{"), null);
     });
+
+    it("rejects non-text and oversized messages without parsing them", () => {
+      assertEquals(parsePokeWebSocketMessage(new Uint8Array([1, 2, 3])), null);
+      assertEquals(parsePokeWebSocketMessage("x".repeat(WS_MAX_MESSAGE_CODE_UNITS + 1)), null);
+    });
   });
   let originalWebSocket: typeof WebSocket;
   let originalSetTimeout: typeof setTimeout;
@@ -212,6 +226,7 @@ describe("WebSocketManager", () => {
   };
 
   beforeEach(() => {
+    clearAllPendingInvalidations();
     MockWebSocket.instances = [];
     nextTimerId = 1;
     scheduledTimers = new Map<ReturnType<typeof setTimeout>, TimerEntry>();
@@ -244,6 +259,7 @@ describe("WebSocketManager", () => {
   });
 
   afterEach(() => {
+    clearAllPendingInvalidations();
     (globalThis as typeof globalThis & { WebSocket: typeof WebSocket }).WebSocket =
       originalWebSocket;
     globalThis.setTimeout = originalSetTimeout;
@@ -315,6 +331,195 @@ describe("WebSocketManager", () => {
     assertEquals(socket.readyState, MockWebSocket.CLOSED);
   });
 
+  it("ignores callbacks from a superseded connection", () => {
+    const manager = createWebSocketManager();
+    manager.connect("project-1", "first-token");
+    const firstSocket = MockWebSocket.instances[0];
+    assertExists(firstSocket);
+    const staleOpen = firstSocket.onopen;
+    const staleClose = firstSocket.onclose;
+
+    manager.connect("project-1", "second-token");
+    const secondSocket = MockWebSocket.instances[1];
+    assertExists(secondSocket);
+    const currentConnectionId = manager.getPokeMetrics().connectionId;
+    assertExists(currentConnectionId);
+    assertEquals(firstSocket.readyState, MockWebSocket.CLOSED);
+
+    staleOpen?.call(firstSocket as unknown as WebSocket, new Event("open"));
+    staleClose?.call(firstSocket as unknown as WebSocket, new CloseEvent("close"));
+
+    assertEquals(manager.getPokeMetrics().connectionId, currentConnectionId);
+    assertEquals(scheduledTimers.size, 0);
+    assertEquals(secondSocket.readyState, MockWebSocket.OPEN);
+    manager.dispose();
+  });
+
+  it("reuses a live connection for the same credential and rotates changed credentials", () => {
+    const manager = createWebSocketManager();
+    manager.ensureConnected("project-1", "first-token");
+    const firstSocket = MockWebSocket.instances[0];
+    assertExists(firstSocket);
+
+    manager.ensureConnected("project-1", "first-token");
+    assertEquals(MockWebSocket.instances.length, 1);
+
+    manager.ensureConnected("project-1", "rotated-token");
+    assertEquals(MockWebSocket.instances.length, 2);
+    assertEquals(firstSocket.readyState, MockWebSocket.CLOSED);
+    assertEquals(MockWebSocket.instances[1]?.protocols, ["bearer-rotated-token"]);
+    manager.dispose();
+  });
+
+  it("can disconnect intentionally and reconnect later", () => {
+    const manager = createWebSocketManager();
+    manager.ensureConnected("project-1", "connection-token");
+    const firstSocket = MockWebSocket.instances[0];
+    assertExists(firstSocket);
+    const staleClose = firstSocket.onclose;
+
+    manager.disconnect();
+    assertEquals(firstSocket.readyState, MockWebSocket.CLOSED);
+    assertEquals(manager.getPokeMetrics().connectionId, null);
+    assertEquals(scheduledTimers.size, 0);
+
+    staleClose?.call(firstSocket as unknown as WebSocket, new CloseEvent("close"));
+    assertEquals(scheduledTimers.size, 0);
+
+    manager.ensureConnected("project-1", "connection-token");
+    assertEquals(MockWebSocket.instances.length, 2);
+    assertEquals(MockWebSocket.instances[1]?.protocols, ["bearer-connection-token"]);
+    manager.dispose();
+  });
+
+  it("ignores a late open after disposal", () => {
+    const manager = createWebSocketManager();
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    const lateOpen = socket.onopen;
+
+    manager.dispose();
+    lateOpen?.call(socket as unknown as WebSocket, new Event("open"));
+
+    const internals = manager as unknown as {
+      wsHeartbeatTimer: ReturnType<typeof setInterval> | null;
+    };
+    assertEquals(internals.wsHeartbeatTimer, null);
+    assertEquals(manager.getPokeMetrics().connectionId, null);
+  });
+
+  it("releases pending preview invalidation ownership on disposal", () => {
+    const manager = createWebSocketManager();
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(getPendingInvalidationsCount(), 1);
+    assertEquals(scheduledTimers.size, 1);
+    manager.dispose();
+    assertEquals(getPendingInvalidationsCount(), 0);
+    assertEquals(scheduledTimers.size, 0);
+  });
+
+  it("cancels debounced invalidation work when the content context changes", () => {
+    const manager = createWebSocketManager();
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(getPendingInvalidationsCount(), 1);
+    assertEquals(scheduledTimers.size, 1);
+
+    manager.onContentContextChanged();
+
+    assertEquals(getPendingInvalidationsCount(), 0);
+    assertEquals(scheduledTimers.size, 0);
+    assertEquals(manager.getPokeMetrics().invalidationsTriggered, 0);
+    manager.dispose();
+  });
+
+  it("ignores unsafe changed paths without opening an invalidation window", () => {
+    const manager = createWebSocketManager();
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["../outside.ts"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(manager.getPokeMetrics().received, 0);
+    assertEquals(getPendingInvalidationsCount(), 0);
+    assertEquals(scheduledTimers.size, 0);
+    manager.dispose();
+  });
+
+  it("retries a failed immediate volatile-cache clear during scheduled invalidation", async () => {
+    let clearCalls = 0;
+    let reloadCalls = 0;
+    const manager = createWebSocketManager({
+      clearMemoryCaches: () => {
+        clearCalls++;
+        if (clearCalls === 1) throw new Error("temporary memory-cache failure");
+      },
+      invalidationCallbacks: {
+        triggerReload: () => {
+          reloadCalls++;
+        },
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(clearCalls, 1);
+    assertEquals(scheduledTimers.size, 1);
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(clearCalls, 2);
+    assertEquals(reloadCalls, 1);
+    assertEquals(getPendingInvalidationsCount(), 0);
+    manager.dispose();
+  });
+
   it("should set connection ID after connect", () => {
     const manager = createWebSocketManager();
     manager.connect("project-1");
@@ -373,7 +578,7 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
-  it("should reset failure counter after reaching max failures", () => {
+  it("should remain at maximum backoff until a connection opens", () => {
     const manager = createWebSocketManager();
     manager.connect("project-1");
 
@@ -385,13 +590,13 @@ describe("WebSocketManager", () => {
       runOnlyScheduledTimer();
     }
 
-    // On the next connect, the counter should have been reset
-    // The 11th socket close should use the base delay (5000)
+    // A failure after the cap must stay capped rather than cycling back to
+    // aggressive five-second retries.
     const socket = MockWebSocket.instances.at(-1);
     assertExists(socket);
     socket.emitClose();
     const delay = runOnlyScheduledTimer();
-    assertEquals(delay, 5000);
+    assertEquals(delay, 120000);
 
     manager.dispose();
   });
@@ -531,7 +736,10 @@ describe("WebSocketManager", () => {
         assertEquals(recoveryEntry.context?.consecutiveFailures, 1);
 
         warnCapture.reset();
-        socket.onerror?.call(socket as unknown as WebSocket, new Event("error"));
+        reconnectedSocket.onerror?.call(
+          reconnectedSocket as unknown as WebSocket,
+          new Event("error"),
+        );
 
         const errorEntry = JSON.parse(warnCapture.getOutput()) as {
           message: string;
@@ -889,8 +1097,177 @@ describe("WebSocketManager", () => {
       projectId: "project-1",
       token: "connection-token",
     });
-    assertEquals(apiRequestContext?.cacheApiCredential, undefined);
+    assertEquals(apiRequestContext?.cacheApiCredential, {
+      projectSlug: "test-project",
+      projectId: "project-1",
+      token: "connection-token",
+    });
 
+    manager.dispose();
+  });
+
+  it("selective invalidation deletes only exact keys for the current project source", async () => {
+    const deletedKeys: string[] = [];
+    const deletedPrefixes: string[] = [];
+    const manager = createWebSocketManager({
+      cache: {
+        deleteAsync: (key) => {
+          deletedKeys.push(key);
+          return Promise.resolve(true);
+        },
+        deleteByPrefixAsync: (prefix) => {
+          deletedPrefixes.push(prefix);
+          return Promise.resolve(0);
+        },
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(deletedKeys.sort(), [
+      "dir:branch:test-project:main:",
+      "dir:branch:test-project:main:app",
+      "file:branch:test-project:main:app/page.tsx",
+      "files:branch:test-project:main",
+      "stat:branch:test-project:main:app/page.tsx",
+    ]);
+    assertEquals(deletedPrefixes, ["stat:branch:test-project:main:resolve:"]);
+    manager.dispose();
+  });
+
+  it("selective invalidation clears every cached ancestor directory", async () => {
+    const deletedKeys: string[] = [];
+    const manager = createWebSocketManager({
+      cache: {
+        deleteAsync: (key) => {
+          deletedKeys.push(key);
+          return Promise.resolve(true);
+        },
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: {
+            changedPaths: ["src/components/ui/button.tsx"],
+            branchName: "main",
+          },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(
+      deletedKeys.filter((key) => key.startsWith("dir:")).sort(),
+      [
+        "dir:branch:test-project:main:",
+        "dir:branch:test-project:main:src",
+        "dir:branch:test-project:main:src/components",
+        "dir:branch:test-project:main:src/components/ui",
+      ],
+    );
+    manager.dispose();
+  });
+
+  it("full invalidation scopes prefix deletion to the current project source", async () => {
+    const deletedKeys: string[] = [];
+    const deletedPrefixes: string[] = [];
+    const manager = createWebSocketManager({
+      cache: {
+        deleteAsync: (key) => {
+          deletedKeys.push(key);
+          return Promise.resolve(true);
+        },
+        deleteByPrefixAsync: (prefix) => {
+          deletedPrefixes.push(prefix);
+          return Promise.resolve(0);
+        },
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(deletedKeys, ["files:branch:test-project:main"]);
+    assertEquals(deletedPrefixes.sort(), [
+      "dir:branch:test-project:main:",
+      "file:branch:test-project:main:",
+      "stat:branch:test-project:main:",
+    ]);
+    manager.dispose();
+  });
+
+  it("a pending full invalidation supersedes selective debounce work", async () => {
+    const reloads: Array<string[] | undefined> = [];
+    const manager = createWebSocketManager({
+      invalidationCallbacks: {
+        triggerReload: (changedPaths) => reloads.push(changedPaths),
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(scheduledTimers.size, 1);
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await flushMicrotasks();
+
+    assertEquals(reloads, [undefined]);
+    assertEquals(manager.getPokeMetrics().invalidationsTriggered, 1);
     manager.dispose();
   });
 
@@ -982,6 +1359,106 @@ describe("WebSocketManager", () => {
     await reloadTriggered.promise;
     await flushMicrotasks();
     assertEquals(events, ["css:start", "css:done", "reload", "ack", "evict"]);
+    manager.dispose();
+  });
+
+  it("does not finish an in-flight invalidation after the content context changes", async () => {
+    const events: string[] = [];
+    const cssStarted = Promise.withResolvers<void>();
+    const releaseCss = Promise.withResolvers<void>();
+    const manager = createWebSocketManager({
+      invalidationCallbacks: {
+        clearProjectCSSCache: async () => {
+          events.push("css:start");
+          cssStarted.resolve();
+          await releaseCss.promise;
+          events.push("css:done");
+        },
+        triggerReload: () => events.push("reload"),
+        evictCurrentAdapter: () => events.push("evict"),
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.send = () => events.push("ack");
+
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await cssStarted.promise;
+
+    manager.onContentContextChanged();
+    releaseCss.resolve();
+    await flushMicrotasks();
+
+    assertEquals(events, ["css:start", "css:done"]);
+    assertEquals(getPendingInvalidationsCount(), 0);
+    assertEquals(manager.getPokeMetrics().invalidationsTriggered, 0);
+    manager.dispose();
+  });
+
+  it("does not evict for older invalidation work while a newer poke is pending", async () => {
+    const firstCssGate = Promise.withResolvers<void>();
+    const secondCssGate = Promise.withResolvers<void>();
+    const cssGates = [firstCssGate, secondCssGate] as const;
+    const firstCssStart = Promise.withResolvers<void>();
+    const secondCssStart = Promise.withResolvers<void>();
+    const cssStarts = [firstCssStart, secondCssStart] as const;
+    let cssCalls = 0;
+    let evictions = 0;
+    const manager = createWebSocketManager({
+      invalidationCallbacks: {
+        clearProjectCSSCache: async () => {
+          const call = cssCalls++;
+          cssStarts[call]?.resolve();
+          await cssGates[call]?.promise;
+        },
+        evictCurrentAdapter: () => {
+          evictions++;
+        },
+      },
+    });
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+
+    const poke = (path: string): void => {
+      socket.onmessage?.call(
+        socket as unknown as WebSocket,
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "poke",
+            data: { changedPaths: [path], branchName: "main" },
+          }),
+        }),
+      );
+    };
+
+    poke("app/first.tsx");
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await firstCssStart.promise;
+
+    poke("app/second.tsx");
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await secondCssStart.promise;
+
+    firstCssGate.resolve();
+    await flushMicrotasks();
+    assertEquals(evictions, 0);
+    assertEquals(getPendingInvalidationsCount(), 1);
+
+    secondCssGate.resolve();
+    await flushMicrotasks();
+    assertEquals(evictions, 1);
+    assertEquals(getPendingInvalidationsCount(), 0);
     manager.dispose();
   });
 

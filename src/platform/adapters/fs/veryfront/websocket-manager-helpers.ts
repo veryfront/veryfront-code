@@ -11,6 +11,8 @@ export const WS_RECONNECT_MAX_DELAY_MS = 120000;
 export const WS_RECONNECT_MAX_FAILURES = 10;
 export const WS_HEARTBEAT_INTERVAL_MS = 60000;
 export const WS_HEARTBEAT_TIMEOUT_MS = 300000;
+export const WS_MAX_MESSAGE_CODE_UNITS = 256 * 1024;
+export const WS_MAX_CHANGED_PATHS = 1_000;
 
 export function getConnectionLogContext(
   projectSlug: string | undefined,
@@ -85,13 +87,27 @@ export type PokeWebSocketMessage = {
   payload: Record<string, unknown>;
 };
 
-export function parsePokeWebSocketMessage(data: string): PokeWebSocketMessage | null {
+export function parsePokeWebSocketMessage(data: unknown): PokeWebSocketMessage | null {
+  if (typeof data !== "string") {
+    logger.warn("parsePokeWebSocketMessage: ignored non-text WebSocket message", {
+      dataType: typeof data,
+    });
+    return null;
+  }
+  if (data.length > WS_MAX_MESSAGE_CODE_UNITS) {
+    logger.warn("parsePokeWebSocketMessage: WebSocket message exceeds size limit", {
+      messageCodeUnits: data.length,
+      maxMessageCodeUnits: WS_MAX_MESSAGE_CODE_UNITS,
+    });
+    return null;
+  }
+
   let raw: unknown;
   try {
     raw = JSON.parse(data);
   } catch {
     logger.warn("parsePokeWebSocketMessage: malformed JSON in WebSocket message", {
-      preview: data.slice(0, 200),
+      messageCodeUnits: data.length,
     });
     return null;
   }
@@ -103,7 +119,7 @@ export function parsePokeWebSocketMessage(data: string): PokeWebSocketMessage | 
 
   return {
     type,
-    payload: message.data && typeof message.data === "object"
+    payload: message.data && typeof message.data === "object" && !Array.isArray(message.data)
       ? message.data as Record<string, unknown>
       : {},
   };

@@ -413,9 +413,10 @@ describe("VeryfrontApiClient", () => {
           if (request === 1) {
             return new Promise<Response>((resolve, reject) => {
               resolveFirst = resolve;
-              init?.signal?.addEventListener(
+              const signal = init && "signal" in init ? init.signal : undefined;
+              signal?.addEventListener(
                 "abort",
-                () => reject(init.signal?.reason),
+                () => reject(signal.reason),
                 { once: true },
               );
             });

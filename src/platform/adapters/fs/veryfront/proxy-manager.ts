@@ -35,6 +35,7 @@ const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeHas = Map.prototype.has;
 const MapPrototypeSet = Map.prototype.set;
 const MapSizeDescriptor = Object.getOwnPropertyDescriptor(Map.prototype, "size");
+const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const PerformanceNow = performance.now;
 const ReflectApply = Reflect.apply;
@@ -168,14 +169,25 @@ export class ProxyFSAdapterManager {
       ((adapterConfig) => new VeryfrontFSAdapter(adapterConfig));
     this.maxAdapters = config.maxAdapters ?? DEFAULT_MAX_ADAPTERS;
     this.maxIdleMs = config.maxIdleMs ?? DEFAULT_MAX_IDLE_MS;
+    const cleanupIntervalMs = config.cleanupIntervalMs ?? 0;
 
     if (!NumberIsInteger(this.maxAdapters) || this.maxAdapters < 1) {
       throw INVALID_ARGUMENT.create({
         detail: "[ProxyFSAdapterManager] maxAdapters must be a positive integer",
       });
     }
+    if (!NumberIsFinite(this.maxIdleMs) || this.maxIdleMs < 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "[ProxyFSAdapterManager] maxIdleMs must be a finite non-negative number",
+      });
+    }
+    if (!NumberIsFinite(cleanupIntervalMs) || cleanupIntervalMs < 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "[ProxyFSAdapterManager] cleanupIntervalMs must be a finite non-negative number",
+      });
+    }
 
-    if (config.cleanupIntervalMs) {
+    if (cleanupIntervalMs > 0) {
       this.cleanupTimer = setInterval(
         (): void => {
           try {
@@ -186,7 +198,7 @@ export class ProxyFSAdapterManager {
             });
           }
         },
-        config.cleanupIntervalMs,
+        cleanupIntervalMs,
       );
     }
 
@@ -304,6 +316,7 @@ export class ProxyFSAdapterManager {
 
       existing.lastAccessed = DateNow();
       this.acquireContextLease(requestContext, cacheKey, existing);
+      existing.adapter.ensureRealtimeConnection();
       return existing.adapter;
     }
 
@@ -337,6 +350,7 @@ export class ProxyFSAdapterManager {
       }
       pendingEntry.lastAccessed = DateNow();
       this.acquireContextLease(requestContext, cacheKey, pendingEntry);
+      adapter.ensureRealtimeConnection();
 
       logger.debug("Pending adapter ready", {
         cacheKey,
@@ -562,8 +576,6 @@ export class ProxyFSAdapterManager {
       }),
     };
 
-    const adapter = this.adapterFactory(config);
-
     let context: ResolvedContentContext;
     if (productionMode) {
       if (!releaseId) {
@@ -585,6 +597,25 @@ export class ProxyFSAdapterManager {
       context = { sourceType: "branch", projectSlug, branch };
     }
 
+    let adapter: VeryfrontFSAdapter | undefined;
+    try {
+      adapter = this.adapterFactory(config);
+      adapter.setContentContext(context);
+    } catch (error) {
+      if (adapter) {
+        try {
+          adapter.dispose();
+        } catch (cleanupError) {
+          logger.error("Adapter setup cleanup failed", {
+            cacheKey,
+            projectSlug,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
+      }
+      throw error;
+    }
+
     logger.debug("CONTENT_CONTEXT_SET", {
       cacheKey,
       projectSlug,
@@ -594,8 +625,6 @@ export class ProxyFSAdapterManager {
       sourceType: context.sourceType,
       contextReleaseId: "releaseId" in context ? context.releaseId : "N/A",
     });
-
-    adapter.setContentContext(context);
 
     const projectAdapter: ProjectAdapter = {
       adapter,
@@ -655,6 +684,7 @@ export class ProxyFSAdapterManager {
           });
         }
 
+        adapter.ensureRealtimeConnection();
         logger.debug("Adapter initialization DONE", {
           cacheKey,
           projectSlug,

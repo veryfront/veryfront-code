@@ -295,6 +295,13 @@ through 10, with both 0 and 1 performing one request. Each outbound API request
 receives at most 10 attempts. A filesystem operation can issue multiple API
 requests.
 
+In `proxyMode`, file API credentials remain request-scoped. A shared hosted
+filesystem adapter opens or rotates its background WebSocket invalidation
+connection only when `runWithContext()` receives
+`tokenProvenance: "project-bound"`. An untrusted token can authorize that
+request's file operations, but it is never retained as background authority;
+realtime invalidation starts when a later project-bound request arrives.
+
 ### Token Storage Configuration
 
 ```ts

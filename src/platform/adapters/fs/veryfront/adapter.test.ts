@@ -17,6 +17,7 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { runWithRequestContext } from "./request-context.ts";
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -168,6 +169,68 @@ describe("VeryfrontFSAdapter", () => {
 
       adapter.clearRequestToken();
       assertEquals(websocketToken, "static-token");
+    });
+
+    it("retains only project-bound proxy credentials for realtime invalidation", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      const connections: Array<{ projectId: string; token: string }> = [];
+      const internals = adapter as unknown as {
+        client: { getProjectId: () => string };
+        wsManager: {
+          ensureConnected: (projectId: string, token: string) => void;
+        };
+      };
+      internals.client.getProjectId = () => "project-1";
+      internals.wsManager.ensureConnected = (projectId, token) => {
+        connections.push({ projectId, token });
+      };
+
+      await runWithRequestContext(
+        {
+          projectSlug: "test-project",
+          projectId: "project-1",
+          token: "untrusted-token",
+          tokenProvenance: "untrusted",
+        },
+        async () => adapter.ensureRealtimeConnection(),
+      );
+      assertEquals(connections, []);
+
+      await runWithRequestContext(
+        {
+          projectSlug: "test-project",
+          projectId: "project-1",
+          token: "project-token",
+          tokenProvenance: "project-bound",
+        },
+        async () => adapter.ensureRealtimeConnection(),
+      );
+      assertEquals(connections, [{ projectId: "project-1", token: "project-token" }]);
+
+      await runWithRequestContext(
+        {
+          projectSlug: "test-project",
+          projectId: "different-project",
+          token: "wrong-project-token",
+          tokenProvenance: "project-bound",
+        },
+        async () => adapter.ensureRealtimeConnection(),
+      );
+      assertEquals(connections, [{ projectId: "project-1", token: "project-token" }]);
+      adapter.dispose();
     });
   });
 
@@ -794,6 +857,47 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(adapter.getContentContext()?.sourceType, "release");
+    });
+
+    it("reconciles realtime delivery when an initialized adapter changes source type", () => {
+      const adapter = createAdapter();
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+
+      let disconnectCalls = 0;
+      let connectCalls = 0;
+      const internals = adapter as unknown as {
+        initialized: boolean;
+        wsManager: { disconnect: () => void };
+      };
+      internals.initialized = true;
+      internals.wsManager.disconnect = () => {
+        disconnectCalls++;
+      };
+      adapter.ensureRealtimeConnection = () => {
+        connectCalls++;
+      };
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-1",
+      });
+      assertEquals(disconnectCalls, 1);
+      assertEquals(connectCalls, 0);
+
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+        releaseId: "release-2",
+      });
+      assertEquals(disconnectCalls, 1);
+      assertEquals(connectCalls, 1);
+      adapter.dispose();
     });
   });
 

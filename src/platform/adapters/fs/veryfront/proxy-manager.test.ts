@@ -14,6 +14,10 @@ import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import { runWithRequestContext } from "./request-context.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import {
+  MAX_PROXY_SOURCE_IDENTITY_CODE_UNITS,
+  MAX_PROXY_TOKEN_CODE_UNITS,
+} from "./schemas/proxy-manager.schema.ts";
 
 const baseConfig = {
   veryfront: {
@@ -1241,6 +1245,66 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
+    it("rejects invalid idle and cleanup durations", () => {
+      assertThrows(
+        () => createManager({ maxIdleMs: -1 }),
+        VeryfrontError,
+        "maxIdleMs must be a finite non-negative number",
+      );
+      assertThrows(
+        () => createManager({ maxIdleMs: Number.POSITIVE_INFINITY }),
+        VeryfrontError,
+        "maxIdleMs must be a finite non-negative number",
+      );
+      assertThrows(
+        () => createManager({ cleanupIntervalMs: -1 }),
+        VeryfrontError,
+        "cleanupIntervalMs must be a finite non-negative number",
+      );
+      assertThrows(
+        () => createManager({ cleanupIntervalMs: Number.NaN }),
+        VeryfrontError,
+        "cleanupIntervalMs must be a finite non-negative number",
+      );
+    });
+
+    it("disposes an adapter when content-context setup fails", async () => {
+      let disposeCalls = 0;
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.setContentContext = () => {
+            throw new Error("context setup failed");
+          };
+          adapter.dispose = () => {
+            disposeCalls++;
+          };
+          return adapter;
+        },
+      });
+
+      try {
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "setup-failure-project",
+              "token",
+              undefined,
+              false,
+              null,
+              null,
+              "main",
+            ),
+          Error,
+          "context setup failed",
+        );
+        assertEquals(disposeCalls, 1);
+        assertEquals(manager.getStats().adapters, 0);
+      } finally {
+        manager.dispose();
+      }
+    });
+
     it("should default maxAdapters to 100", () => {
       const manager = createManager();
       assertExists(manager);
@@ -1388,6 +1452,37 @@ describe("ProxyFSAdapterManager", () => {
           manager,
           ["valid-slug", "", undefined, false],
           "token",
+        );
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("rejects oversized credentials and source identities", async () => {
+      const manager = createManager();
+      try {
+        await assertGetAdapterRejects(
+          manager,
+          [
+            "valid-slug",
+            "t".repeat(MAX_PROXY_TOKEN_CODE_UNITS + 1),
+            undefined,
+            false,
+          ],
+          "token",
+        );
+        await assertGetAdapterRejects(
+          manager,
+          [
+            "valid-slug",
+            "valid-token",
+            undefined,
+            false,
+            null,
+            null,
+            "b".repeat(MAX_PROXY_SOURCE_IDENTITY_CODE_UNITS + 1),
+          ],
+          "branch",
         );
       } finally {
         manager.dispose();
