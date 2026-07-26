@@ -148,8 +148,11 @@ export function getEnvNumber(key: string, fallback?: number): number | undefined
   const value = getEnvString(key);
   if (value === undefined) return fallback;
 
-  const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed)) return fallback ?? Number.NaN;
+  const normalized = value.trim();
+  if (!/^[+-]?\d+$/.test(normalized)) return fallback ?? Number.NaN;
+
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) return fallback ?? Number.NaN;
   return parsed;
 }
 

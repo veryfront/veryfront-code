@@ -7,7 +7,7 @@ import {
 import {
   DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/limits.ts";
 
 // ---------------------------------------------------------------------------

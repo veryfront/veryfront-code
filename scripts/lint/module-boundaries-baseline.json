@@ -21,7 +21,6 @@
     "cycle-sensitive:src/observability/tracing/context-propagation.ts -> #veryfront/utils",
     "cycle-sensitive:src/observability/tracing/manager.ts -> #veryfront/utils",
     "cycle-sensitive:src/observability/tracing/span-operations.ts -> #veryfront/utils",
-    "cycle-sensitive:src/platform/adapters/detect.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/fallback-wrapper.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/fs/cache/file-cache.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/fs/github/adapter.ts -> #veryfront/errors",

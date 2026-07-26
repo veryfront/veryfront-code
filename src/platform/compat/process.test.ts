@@ -222,8 +222,16 @@ describe("Process Compat", () => {
     });
 
     it("should return parsed number for valid values", () => {
-      setEnv(testKey, "42");
+      setEnv(testKey, "  +42 ");
       assertEquals(getEnvNumber(testKey), 42);
+    });
+
+    it("rejects partial, fractional, non-decimal, and unsafe integer values", () => {
+      for (const value of ["42ms", "1.5", "0x10", "1e3", "9007199254740992"]) {
+        setEnv(testKey, value);
+        assertEquals(Number.isNaN(getEnvNumber(testKey) ?? Number.NaN), true);
+        assertEquals(getEnvNumber(testKey, 99), 99);
+      }
     });
 
     it("should use fallback for missing env var", () => {

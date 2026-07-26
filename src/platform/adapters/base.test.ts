@@ -31,6 +31,7 @@ describe("base.ts type exports", () => {
       assertEquals(response.body, null);
       assertEquals(response.headers.get("upgrade"), "websocket");
       assertEquals(response instanceof Response, false);
+      assertEquals(Object.isFrozen(response), true);
       assertEquals(isWebSocketUpgradeResponse(response), true);
       assertEquals(isWebSocketUpgradeResponse(new Response()), false);
     });
@@ -117,6 +118,25 @@ describe("base.ts type exports", () => {
       };
 
       assertEquals(isWebSocketUpgradeResponse(incomplete), false);
+    });
+
+    it("rejects a forged Headers-shaped object without invoking it", () => {
+      let calls = 0;
+      const forged = {
+        kind: "websocket-upgrade",
+        status: 101,
+        statusText: "Switching Protocols",
+        headers: {
+          get() {
+            calls++;
+            return "websocket";
+          },
+        },
+        body: null,
+      };
+
+      assertEquals(isWebSocketUpgradeResponse(forged), false);
+      assertEquals(calls, 0);
     });
   });
 

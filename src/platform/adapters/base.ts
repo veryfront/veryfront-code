@@ -121,13 +121,13 @@ export interface WebSocketUpgrade {
 export function createWebSocketUpgradeResponse(
   input: { headers?: HeadersInit; statusText?: string } = {},
 ): WebSocketUpgradeResponse {
-  return {
+  return Object.freeze({
     kind: WEBSOCKET_UPGRADE_RESPONSE_KIND,
     status: 101,
     statusText: input.statusText ?? "Switching Protocols",
     headers: new Headers(input.headers),
     body: null,
-  };
+  });
 }
 
 type DataPropertyRead =
@@ -138,6 +138,7 @@ type DataPropertyRead =
 // Bound each structural field lookup so an upgrade discriminator can never
 // turn into attacker-controlled, unbounded traversal.
 const MAX_UPGRADE_RESPONSE_PROTOTYPE_DEPTH = 16;
+const headersGet = Headers.prototype.get;
 
 function readDataProperty(value: object, key: PropertyKey): DataPropertyRead {
   const visited = new Set<object>();
@@ -180,6 +181,15 @@ export function isWebSocketUpgradeResponse(value: unknown): value is WebSocketUp
 
   const headers = readDataProperty(value, "headers");
   if (!headers.readable || typeof headers.value !== "object" || headers.value === null) {
+    return false;
+  }
+  try {
+    // A structural object with a `get()` method is not a Headers instance and
+    // can run arbitrary code when the transport clones it. Invoke a captured
+    // Web IDL primordial to verify the native internal slot without consulting
+    // attacker-controlled properties or Symbol.hasInstance hooks.
+    Reflect.apply(headersGet, headers.value, ["upgrade"]);
+  } catch {
     return false;
   }
 

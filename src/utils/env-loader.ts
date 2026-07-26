@@ -6,17 +6,27 @@ import {
   setEnv,
 } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
+import {
+  MAX_ENV_FILE_CHARACTERS,
+  MAX_ENV_FILE_LINES,
+  MAX_ENV_FILE_VARIABLES,
+  MAX_ENV_KEY_CHARACTERS,
+  MAX_ENV_VALUE_CHARACTERS,
+} from "#veryfront/platform/compat/std/dotenv-limits.ts";
+
+export {
+  MAX_ENV_FILE_CHARACTERS,
+  MAX_ENV_FILE_LINES,
+  MAX_ENV_FILE_VARIABLES,
+  MAX_ENV_KEY_CHARACTERS,
+  MAX_ENV_VALUE_CHARACTERS,
+};
 
 const logger = serverLogger.component("env");
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_MODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export const MAX_ENV_MODE_CHARACTERS = 64;
-export const MAX_ENV_FILE_CHARACTERS = 1024 * 1024;
-export const MAX_ENV_FILE_LINES = 20_000;
-export const MAX_ENV_FILE_VARIABLES = 10_000;
-export const MAX_ENV_KEY_CHARACTERS = 256;
-export const MAX_ENV_VALUE_CHARACTERS = 256 * 1024;
 
 const envSources = new Map<string, string>();
 let envLoaded = false;

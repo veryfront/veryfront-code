@@ -3,6 +3,24 @@ type GlobalWithRuntime = typeof globalThis & {
   Bun?: unknown;
 };
 
+export type RuntimeKind = "bun" | "cloudflare" | "deno" | "node" | "unknown";
+
+/** @internal Exported so overlapping host signals can be regression-tested. */
+export function classifyRuntimeSignals(signals: {
+  bun: boolean;
+  cloudflare: boolean;
+  deno: boolean;
+  node: boolean;
+}): RuntimeKind {
+  // Bun exposes Node compatibility globals. Cloudflare Workers can do the same
+  // when nodejs_compat is enabled, so the more specific host signals must win.
+  if (signals.bun) return "bun";
+  if (signals.cloudflare) return "cloudflare";
+  if (signals.node) return "node";
+  if (signals.deno) return "deno";
+  return "unknown";
+}
+
 function hasNodeProcess(): boolean {
   const global = globalThis as GlobalWithRuntime;
   return global.process?.versions?.node != null && !global.process?.versions?.deno;
@@ -65,14 +83,24 @@ function hasCloudflareGlobals(): boolean {
   return "caches" in globalThis && "WebSocketPair" in globalThis;
 }
 
-/** True if running in Bun runtime (check first since Bun has process.versions.node) */
-export const isBun: boolean = hasBunGlobal();
+export const runtimeKind: RuntimeKind = classifyRuntimeSignals({
+  bun: hasBunGlobal(),
+  cloudflare: hasCloudflareGlobals(),
+  deno: hasRealDeno(),
+  node: hasNodeProcess(),
+});
 
-/** True if running in Node.js runtime (has process.versions.node, not Bun, not shimmed Deno) */
-export const isNode: boolean = !isBun && hasNodeProcess();
+/** True if running in Bun runtime (Bun also exposes process.versions.node). */
+export const isBun: boolean = runtimeKind === "bun";
 
-/** True if running in real Deno runtime (not dnt shim) */
-export const isDeno: boolean = !isNode && !isBun && hasRealDeno();
+/** True if running in Cloudflare Workers, including nodejs_compat workers. */
+export const isCloudflare: boolean = runtimeKind === "cloudflare";
+
+/** True if running in Node.js rather than a more specific compatible host. */
+export const isNode: boolean = runtimeKind === "node";
+
+/** True if running in the real Deno runtime rather than a dnt shim. */
+export const isDeno: boolean = runtimeKind === "deno";
 
 /**
  * True if running in a compiled Deno binary.
@@ -81,16 +109,18 @@ export const isDeno: boolean = !isNode && !isBun && hasRealDeno();
  */
 export const isDenoCompiled: boolean = isDeno && isDenoCompiledBinary();
 
-/** True if running in Cloudflare Workers runtime */
-export const isCloudflare: boolean = hasCloudflareGlobals();
-
 /**
  * Detect if running in Node.js (vs Deno) at call time.
  * Use this function instead of the constant when runtime detection needs to happen
  * at call time (e.g., when bundled with esbuild's __esm lazy initialization pattern).
  */
 export function isNodeRuntime(): boolean {
-  return !hasBunGlobal() && hasNodeProcess();
+  return classifyRuntimeSignals({
+    bun: hasBunGlobal(),
+    cloudflare: hasCloudflareGlobals(),
+    deno: false,
+    node: hasNodeProcess(),
+  }) === "node";
 }
 
 /**
