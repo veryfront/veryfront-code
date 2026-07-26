@@ -1,4 +1,4 @@
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 
 /**
  * Return the cache-key suffix for an enabled dependency snapshot.
@@ -13,6 +13,8 @@ export function buildDependencyPinningCacheVariant(
   if (!dependencyPinningCacheKey?.startsWith("on:")) return undefined;
 
   return moduleServerOrigin
-    ? `${dependencyPinningCacheKey}:origin:${hashCodeHex(moduleServerOrigin)}`
+    ? `${dependencyPinningCacheKey}:origin:${
+      base64urlEncodeBytes(new TextEncoder().encode(moduleServerOrigin))
+    }`
     : dependencyPinningCacheKey;
 }
