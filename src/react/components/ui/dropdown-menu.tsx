@@ -11,12 +11,11 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { Slot } from "./slot.tsx";
-import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+import { useAdapter } from "./adapter/context.tsx";
 
-// Per-skin context + machinery -- distinct from Popover's instance so a
-// Popover nested inside a DropdownMenu cannot accidentally close the menu.
-const { Context: _ctx, AnchoredRoot: _Root, AnchoredTrigger: _Trigger, AnchoredContent: _Content } =
-  createAnchoredSurfaceParts();
+// The DropdownMenu's behavioural mechanics (open state, positioning anchor,
+// dismiss) resolve per-render from the active UI adapter. With no adapter
+// provider this is the zero-dependency `builtinMenu`, so behaviour is unchanged.
 
 /** Props accepted by `<DropdownMenu>`. */
 export interface DropdownMenuProps {
@@ -28,14 +27,16 @@ export interface DropdownMenuProps {
 
 /** DropdownMenu root — owns open state and the positioning anchor. */
 export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
-  return <_Root {...props} />;
+  const { menu } = useAdapter();
+  return <menu.Root {...props} />;
 }
 
 /** Trigger — toggles the menu. `asChild` merges onto the child element. */
 export function DropdownMenuTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <_Trigger {...props} haspopup="menu" />;
+  const { menu } = useAdapter();
+  return <menu.Trigger {...props} />;
 }
 
 /** Props accepted by `<DropdownMenuContent>`. */
@@ -51,15 +52,16 @@ export function DropdownMenuContent({
   align = "start",
   ...props
 }: DropdownMenuContentProps): React.ReactElement | null {
+  const { menu } = useAdapter();
   return (
-    <_Content
+    <menu.Content
       role="menu"
       align={align}
       className={cn("min-w-[260px] p-2.5", className)}
       {...props}
     >
       {children}
-    </_Content>
+    </menu.Content>
   );
 }
 
@@ -92,7 +94,8 @@ export function DropdownMenuItem({
   asChild,
   ...props
 }: DropdownMenuItemProps): React.ReactElement {
-  const ctx = React.useContext(_ctx);
+  const { menu } = useAdapter();
+  const ctx = menu.useMenu();
   const Comp = asChild ? Slot : "button";
   return (
     <Comp

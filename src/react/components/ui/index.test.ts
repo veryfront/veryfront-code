@@ -119,6 +119,7 @@ const expectedRuntimeExports = [
   "TooltipContent",
   "TooltipProvider",
   "TooltipTrigger",
+  "UIAdapterProvider",
   "badgeVariants",
   "buttonVariants",
   "cva",
@@ -132,9 +133,11 @@ const expectedRuntimeExports = [
   "selectTriggerVariants",
   "switchTrackVariants",
   "textareaVariants",
+  "useAdapter",
   "useAppShell",
   "useColorMode",
   "useColorModeOptional",
+  "useTokenScope",
 ];
 
 describe("react/components/ui/index.ts exports", () => {

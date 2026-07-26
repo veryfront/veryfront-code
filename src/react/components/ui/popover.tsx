@@ -10,12 +10,13 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { createAnchoredSurfaceParts } from "./anchored-surface.tsx";
+import { useAdapter } from "./adapter/context.tsx";
 
-// Per-skin context + machinery -- distinct from DropdownMenu's instance so
-// a DropdownMenu nested inside a Popover cannot accidentally close the Popover.
-const { AnchoredRoot: _Root, AnchoredTrigger: _Trigger, AnchoredContent: _Content } =
-  createAnchoredSurfaceParts();
+// The Popover's behavioural mechanics (open state, positioning anchor, dismiss)
+// are resolved per-render from the active UI adapter. With no adapter provider
+// this is the zero-dependency `builtinPopover`, so behaviour is unchanged; an
+// app may swap in Base UI / Radix / React Aria without touching this skin or any
+// call-site.
 
 /** Props accepted by `<Popover>`. */
 export interface PopoverProps {
@@ -27,14 +28,18 @@ export interface PopoverProps {
 
 /** Popover root — owns open state and the positioning anchor. */
 export function Popover(props: PopoverProps): React.ReactElement {
-  return <_Root {...props} />;
+  const { popover } = useAdapter();
+  return <popover.Root {...props} />;
 }
 
 /** Trigger — toggles the popover. `asChild` merges onto the child element. */
 export function PopoverTrigger(
   props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
 ): React.ReactElement {
-  return <_Trigger {...props} haspopup="dialog" />;
+  // `aria-haspopup` is supplied by the adapter's trigger (a mechanics concern),
+  // so the skin stays engine-neutral.
+  const { popover } = useAdapter();
+  return <popover.Trigger {...props} />;
 }
 
 /** Props accepted by `<PopoverContent>`. */
@@ -50,15 +55,16 @@ export function PopoverContent({
   align = "end",
   ...props
 }: PopoverContentProps): React.ReactElement | null {
+  const { popover } = useAdapter();
   return (
-    <_Content
+    <popover.Content
       role="dialog"
       align={align}
       className={cn("min-w-[220px]", className)}
       {...props}
     >
       {children}
-    </_Content>
+    </popover.Content>
   );
 }
 

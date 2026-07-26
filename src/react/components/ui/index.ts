@@ -198,3 +198,18 @@ export {
   PopoverTitle,
   PopoverTrigger,
 } from "./popover.tsx";
+export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
+export { useTokenScope } from "./adapter/token-scope.tsx";
+export type {
+  DialogParts,
+  DisclosureProps,
+  MenuParts,
+  ModalState,
+  PartialUIAdapter,
+  PopoverParts,
+  SelectParts,
+  SelectState,
+  TooltipParts,
+  TooltipSide,
+  UIAdapter,
+} from "./adapter/contract.ts";

@@ -12,11 +12,10 @@
  * @module react/components/ui/select
  */
 import * as React from "react";
-import { createStrictContext } from "../create-strict-context.ts";
 import { cx as cn } from "./cva.ts";
 import { cva, type VariantProps } from "./cva.ts";
 import { CheckIcon, ChevronDownIcon } from "./icons/index.ts";
-import { Floating } from "./floating.tsx";
+import { useAdapter } from "./adapter/context.tsx";
 
 const selectTriggerVariants = cva(
   [
@@ -40,20 +39,6 @@ const selectTriggerVariants = cva(
   },
 );
 
-interface SelectContextValue {
-  value: string | undefined;
-  setValue: (value: string) => void;
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  labels: Map<string, React.ReactNode>;
-  anchorRef: React.RefObject<HTMLElement | null>;
-}
-
-const [SelectContext, useSelect] = createStrictContext<SelectContextValue>(
-  "Select components",
-  "<Select>",
-);
-
 /** Props accepted by `<Select>`. */
 export interface SelectProps {
   children: React.ReactNode;
@@ -65,59 +50,25 @@ export interface SelectProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-/** Select root — owns the selected value, open state, and label registry. */
-export function Select({
-  children,
-  value,
-  defaultValue,
-  onValueChange,
-  open,
-  defaultOpen,
-  onOpenChange,
-}: SelectProps): React.ReactElement {
-  const [internalValue, setInternalValue] = React.useState(defaultValue);
-  const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
-  const anchorRef = React.useRef<HTMLElement | null>(null);
-
-  const isValueControlled = value !== undefined;
-  const isOpenControlled = open !== undefined;
-  const currentValue = isValueControlled ? value : internalValue;
-  const isOpen = isOpenControlled ? open : internalOpen;
-
-  const setValue = React.useCallback((next: string) => {
-    if (!isValueControlled) setInternalValue(next);
-    onValueChange?.(next);
-  }, [isValueControlled, onValueChange]);
-
-  const setOpen = React.useCallback((next: boolean) => {
-    if (!isOpenControlled) setInternalOpen(next);
-    onOpenChange?.(next);
-  }, [isOpenControlled, onOpenChange]);
-
-  // Collect value→label synchronously from the item children so the trigger
-  // shows the selected LABEL immediately — no flip from raw value on first open.
+/**
+ * Select root — collects the value→label map from its items (so the trigger
+ * shows the selected LABEL immediately) and hands it, with the state props, to
+ * the active adapter's Select root. The state machine + positioning anchor live
+ * in the adapter (builtin by default); this skin owns styling only.
+ */
+export function Select(
+  { children, ...stateProps }: SelectProps,
+): React.ReactElement {
+  const { select } = useAdapter();
+  // Collect value→label synchronously from the item children — no flip from raw
+  // value on first open. This walks the skin's own `SelectItem`, so it stays in
+  // the skin, decoupled from the adapter.
   const labels = React.useMemo(() => {
     const map = new Map<string, React.ReactNode>();
     collectSelectLabels(children, map);
     return map;
   }, [children]);
-
-  return (
-    <span ref={anchorRef} className="relative inline-block w-full">
-      <SelectContext.Provider
-        value={{
-          value: currentValue,
-          setValue,
-          open: isOpen,
-          setOpen,
-          labels,
-          anchorRef,
-        }}
-      >
-        {children}
-      </SelectContext.Provider>
-    </span>
-  );
+  return <select.Root {...stateProps} labels={labels}>{children}</select.Root>;
 }
 
 /** Walk children for `SelectItem` elements, mapping `value` → label node. */
@@ -151,7 +102,8 @@ export function SelectTrigger({
   onClick,
   ...props
 }: SelectTriggerProps): React.ReactElement {
-  const ctx = useSelect();
+  const { select } = useAdapter();
+  const ctx = select.useSelect();
   return (
     <button
       type="button"
@@ -175,7 +127,8 @@ export function SelectTrigger({
 export function SelectValue(
   { placeholder }: { placeholder?: string },
 ): React.ReactElement {
-  const ctx = useSelect();
+  const { select } = useAdapter();
+  const ctx = select.useSelect();
   const label = ctx.value !== undefined ? ctx.labels.get(ctx.value) ?? ctx.value : undefined;
   return (
     <span className={cn(label === undefined && "opacity-25")}>
@@ -190,15 +143,9 @@ export function SelectContent({
   children,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
-  const ctx = useSelect();
+  const { select } = useAdapter();
   return (
-    <Floating
-      anchorRef={ctx.anchorRef}
-      open={ctx.open}
-      align="start"
-      matchTriggerWidth
-      onDismiss={() => ctx.setOpen(false)}
-      role="listbox"
+    <select.Content
       className={cn(
         "z-50 max-h-96 overflow-x-hidden overflow-y-auto rounded-lg bg-[var(--secondary)] text-[var(--foreground)] shadow-sm",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
@@ -206,8 +153,8 @@ export function SelectContent({
       )}
       {...props}
     >
-      <div className="p-2.5">{children}</div>
-    </Floating>
+      {children}
+    </select.Content>
   );
 }
 
@@ -226,7 +173,8 @@ export function SelectItem({
   onClick,
   ...props
 }: SelectItemProps): React.ReactElement {
-  const ctx = useSelect();
+  const { select } = useAdapter();
+  const ctx = select.useSelect();
   const selected = ctx.value === value;
 
   return (
