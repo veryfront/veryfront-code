@@ -25,8 +25,16 @@ const logger = rendererLogger.component("npm-registry-client");
  */
 const VERSION_CACHE_MAX_PROJECTS = 256;
 
-/** Per-project cache: projectDir -> packageName -> resolved version string */
-const versionCache = new Map<string, Map<string, string>>();
+/** Resolved version paired with the range hint that produced it.
+ * Storing the hint lets scheduleNpmVersionResolution detect when
+ * package.json changes (e.g. "^1" → "^2") and re-resolve accordingly. */
+interface CachedEntry {
+  version: string;
+  hint: string | undefined;
+}
+
+/** Per-project cache: projectDir -> packageName -> CachedEntry */
+const versionCache = new Map<string, Map<string, CachedEntry>>();
 
 /** Deduplicates concurrent fetches for the same package+project pair */
 const pendingFetches = new Set<string>();
@@ -38,13 +46,13 @@ const pendingFetches = new Set<string>();
  */
 const pendingResolutionPromises = new Set<Promise<void>>();
 
-function pendingKey(projectDir: string, packageName: string): string {
-  return `${projectDir}\0${packageName}`;
+function pendingKey(projectDir: string, packageName: string, hint: string | undefined): string {
+  return `${projectDir}\0${packageName}\0${hint ?? ""}`;
 }
 
 /** True when the string is a bare three-part semver version (no range prefix). */
 export function isExactSemver(s: string): boolean {
-  return /^\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.]+)?$/.test(s);
+  return /^\d+\.\d+\.\d+(-[\w.-]+)?(\+[\w.-]+)?$/.test(s);
 }
 
 /**
@@ -62,10 +70,15 @@ export function getCachedNpmVersion(
   packageName: string,
   projectDir: string,
 ): string | undefined {
-  return versionCache.get(projectDir)?.get(packageName);
+  return versionCache.get(projectDir)?.get(packageName)?.version;
 }
 
-function setCachedVersion(projectDir: string, packageName: string, version: string): void {
+function setCachedVersion(
+  projectDir: string,
+  packageName: string,
+  version: string,
+  hint?: string,
+): void {
   let projectCache = versionCache.get(projectDir);
   if (!projectCache) {
     // Evict the oldest project entry when the cap is reached. JavaScript Maps
@@ -77,7 +90,7 @@ function setCachedVersion(projectDir: string, packageName: string, version: stri
     projectCache = new Map();
     versionCache.set(projectDir, projectCache);
   }
-  projectCache.set(packageName, version);
+  projectCache.set(packageName, { version, hint });
 }
 
 /**
@@ -101,20 +114,25 @@ export function scheduleNpmVersionResolution(
   projectDir: string,
   onResolved?: (version: string, packageName: string, projectDir: string) => void,
 ): void {
-  // Already cached: first writer wins, do not overwrite.
-  if (versionCache.get(projectDir)?.has(packageName)) return;
+  // Already cached: reuse when the hint matches.
+  // A different hint means the package.json range changed — evict and re-resolve.
+  const existingEntry = versionCache.get(projectDir)?.get(packageName);
+  if (existingEntry !== undefined) {
+    if (existingEntry.hint === rangeHint) return;
+    versionCache.get(projectDir)!.delete(packageName);
+  }
 
   // Exact version from package.json: use it immediately without a network fetch.
   // Only short-circuit when the raw hint is already an exact semver — never strip
   // range prefixes (^, ~, >=) to manufacture a pin that package.json didn't contain.
   if (rangeHint && isExactSemver(rangeHint)) {
-    setCachedVersion(projectDir, packageName, rangeHint);
+    setCachedVersion(projectDir, packageName, rangeHint, rangeHint);
     onResolved?.(rangeHint, packageName, projectDir);
     return;
   }
 
   // In-flight deduplication.
-  const key = pendingKey(projectDir, packageName);
+  const key = pendingKey(projectDir, packageName, rangeHint);
   if (pendingFetches.has(key)) return;
 
   pendingFetches.add(key);
@@ -125,7 +143,7 @@ export function scheduleNpmVersionResolution(
   const resolution: Promise<void> = fetchLatestNpmVersion(packageName)
     .then((version) => {
       if (version) {
-        setCachedVersion(projectDir, packageName, version);
+        setCachedVersion(projectDir, packageName, version, rangeHint);
         onResolved?.(version, packageName, projectDir);
       }
     })
@@ -249,6 +267,7 @@ export async function postDependencyResolution(
 export function _clearNpmVersionCache(): void {
   versionCache.clear();
   pendingFetches.clear();
+  pendingResolutionPromises.clear();
 }
 
 /**

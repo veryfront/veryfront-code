@@ -8,6 +8,7 @@ import {
   _pendingResolutions,
   getCachedNpmVersion,
   isDependencyPinningEnabled,
+  isExactSemver,
   scheduleNpmVersionResolution,
 } from "./npm-registry-client.ts";
 
@@ -37,6 +38,40 @@ describe("isDependencyPinningEnabled", () => {
   it("returns true when flag is '1'", () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     assertEquals(isDependencyPinningEnabled(), true);
+  });
+});
+
+describe("isExactSemver", () => {
+  it("accepts a plain three-part version", () => {
+    assertEquals(isExactSemver("1.2.3"), true);
+  });
+
+  it("accepts a prerelease with a hyphen-separated identifier", () => {
+    assertEquals(isExactSemver("1.2.3-alpha-beta.1"), true);
+  });
+
+  it("accepts a prerelease with a single hyphen-separated label", () => {
+    assertEquals(isExactSemver("1.0.0-rc-1"), true);
+  });
+
+  it("accepts a build-metadata identifier containing a hyphen", () => {
+    assertEquals(isExactSemver("1.0.0+build-2"), true);
+  });
+
+  it("rejects a caret range", () => {
+    assertEquals(isExactSemver("^1.2.3"), false);
+  });
+
+  it("rejects a tilde range", () => {
+    assertEquals(isExactSemver("~1.2"), false);
+  });
+
+  it("rejects a compound range", () => {
+    assertEquals(isExactSemver(">=1 <2"), false);
+  });
+
+  it("rejects a bare two-part version", () => {
+    assertEquals(isExactSemver("1.2"), false);
   });
 });
 
@@ -135,10 +170,9 @@ describe("scheduleNpmVersionResolution", () => {
     scheduleNpmVersionResolution("some-pkg", undefined, PROJECT_DIR);
   });
 
-  it("does not overwrite an already-cached entry", () => {
+  it("does not re-resolve when called again with the same hint", () => {
     scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
-    // A second call with a different hint must not overwrite the cached entry.
-    scheduleNpmVersionResolution("lodash", "4.17.20", PROJECT_DIR);
+    scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
     assertStrictEquals(getCachedNpmVersion("lodash", PROJECT_DIR), "4.17.21");
   });
 
@@ -182,6 +216,32 @@ describe("scheduleNpmVersionResolution", () => {
       await new Promise((r) => setTimeout(r, 0));
 
       assertEquals(getCachedNpmVersion("failing-pkg", PROJECT_DIR), undefined);
+    });
+
+    it("re-resolves when the range hint changes (^1 → ^2)", async () => {
+      // First resolution: package.json declares "^1".
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "1.9.0" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      scheduleNpmVersionResolution("some-lib", "^1", PROJECT_DIR);
+      await _pendingResolutions();
+      assertStrictEquals(getCachedNpmVersion("some-lib", PROJECT_DIR), "1.9.0");
+
+      // package.json is updated to "^2" — the stale entry must be evicted.
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "2.0.0" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      scheduleNpmVersionResolution("some-lib", "^2", PROJECT_DIR);
+      await _pendingResolutions();
+      assertStrictEquals(getCachedNpmVersion("some-lib", PROJECT_DIR), "2.0.0");
     });
   });
 });

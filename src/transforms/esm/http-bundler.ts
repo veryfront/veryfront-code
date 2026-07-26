@@ -43,15 +43,6 @@ export function hasHttpImports(code: string): boolean {
 /** Re-export getReactUrls for backwards compatibility */
 export { getReactUrls };
 
-export interface CreateHTTPPluginOptions {
-  /**
-   * Optional synchronous callback that returns a pinned version for a bare
-   * package name, used when VERYFRONT_DEPENDENCY_PINNING=1 is active.
-   * Returning undefined falls through to the unversioned esm.sh URL.
-   */
-  getPinVersion?: (packageName: string) => string | undefined;
-}
-
 /**
  * Build an esm.sh URL for a bare specifier, optionally injecting a pinned version.
  *
@@ -82,7 +73,7 @@ export function buildBareSpecifierEsmUrl(
 /**
  * esbuild plugin that fetches HTTP imports and rewrites esm.sh URLs.
  */
-export function createHTTPPlugin(options?: CreateHTTPPluginOptions): Plugin {
+export function createHTTPPlugin(): Plugin {
   return {
     name: "vf-http-fetch",
     setup(build: Parameters<Plugin["setup"]>[0]) {
@@ -122,7 +113,7 @@ export function createHTTPPlugin(options?: CreateHTTPPluginOptions): Plugin {
         } catch (_) {
           /* expected: bare specifier may not resolve as URL */
           return {
-            path: buildBareSpecifierEsmUrl(path, options?.getPinVersion),
+            path: buildBareSpecifierEsmUrl(path),
             namespace: "http-url",
           };
         }
