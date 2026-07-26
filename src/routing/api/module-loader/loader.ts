@@ -446,10 +446,7 @@ function loadAndTranspileModule(
       // any other npm package, so its import resolves from the project's
       // node_modules via the createRequire shim. zod is still force-externalized
       // below, never bundled inline. See veryfront-issue-inbox#217.
-      const userDeps = getUserDependencies(allDeps, {
-        isDeno,
-        isCompiledBinary: isDeno && isCompiledBinary(),
-      });
+      const userDeps = getUserDependencies(allDeps);
 
       // Always externalize user npm dependencies. The bundled handler is loaded
       // from a temp file and user deps are resolved at runtime:
@@ -572,7 +569,6 @@ async function readFileWithExtensions(
 
 export function getUserDependencies(
   allDeps: ReadonlyMap<string, string>,
-  runtime: { isDeno: boolean; isCompiledBinary: boolean },
 ): Map<string, string> {
   const frameworkPackages = new Set(["veryfront", "react", "react-dom", "path"]);
 
