@@ -15,6 +15,14 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
 
+/** Assign a value to a callback- or object-ref (no-op for null). */
+function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref && typeof ref === "object") {
+    (ref as React.MutableRefObject<T | null>).current = value;
+  }
+}
+
 /** Props accepted by `<Floating>`. */
 export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Element the surface is positioned against (usually the trigger wrapper). */
@@ -26,6 +34,11 @@ export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
   onDismiss: () => void;
   /** Give the surface at least the anchor's width (Select). */
   matchTriggerWidth?: boolean;
+  /**
+   * Consumer ref for the surface node — composed with the internal measurement
+   * ref so a consumer's `ref` reaches the portalled element (one-node contract).
+   */
+  contentRef?: React.Ref<HTMLDivElement>;
 }
 
 /** Portal a positioned surface anchored to `anchorRef`. */
@@ -35,11 +48,18 @@ export function Floating({
   align = "start",
   onDismiss,
   matchTriggerWidth,
+  contentRef,
   style,
   children,
   ...rest
 }: FloatingProps): React.ReactElement | null {
   const ref = React.useRef<HTMLDivElement>(null);
+  // Compose the internal measurement ref with the consumer's ref so both the
+  // positioning logic and the caller observe the same node.
+  const setNode = React.useCallback((node: HTMLDivElement | null) => {
+    ref.current = node;
+    assignRef(contentRef, node);
+  }, [contentRef]);
   const [pos, setPos] = React.useState<React.CSSProperties>({
     position: "fixed",
     top: 0,
@@ -115,7 +135,7 @@ export function Floating({
   const container = anchorRef.current?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
     document.body;
   return createPortal(
-    <div ref={ref} style={{ ...pos, ...style }} {...rest}>{children}</div>,
+    <div ref={setNode} style={{ ...pos, ...style }} {...rest}>{children}</div>,
     container,
   );
 }

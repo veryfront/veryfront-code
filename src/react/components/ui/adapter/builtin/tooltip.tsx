@@ -103,13 +103,24 @@ const arrowClasses: Record<TooltipSide, string> = {
   right: "right-full top-1/2 translate-x-1/2 -translate-y-1/2 rotate-45",
 };
 
+function assignRef<T>(r: React.Ref<T> | undefined, value: T | null): void {
+  if (typeof r === "function") r(value);
+  else if (r && typeof r === "object") {
+    (r as React.MutableRefObject<T | null>).current = value;
+  }
+}
+
 function TooltipContent(
-  { side = "top", sideOffset = 6, className, children, style, ...props }:
+  { side = "top", sideOffset = 6, className, children, style, ref: consumerRef, ...props }:
     & React.HTMLAttributes<HTMLDivElement>
-    & { side?: TooltipSide; sideOffset?: number },
+    & { side?: TooltipSide; sideOffset?: number; ref?: React.Ref<HTMLDivElement> },
 ): React.ReactElement | null {
   const ctx = React.useContext(TooltipContext);
   const ref = React.useRef<HTMLDivElement>(null);
+  const setNode = React.useCallback((node: HTMLDivElement | null) => {
+    ref.current = node;
+    assignRef(consumerRef, node);
+  }, [consumerRef]);
   const [pos, setPos] = React.useState<
     { top: number; left: number; side: TooltipSide; visible: boolean }
   >({ top: 0, left: 0, side, visible: false });
@@ -142,7 +153,7 @@ function TooltipContent(
 
   return createPortal(
     <div
-      ref={ref}
+      ref={setNode}
       role="tooltip"
       className={cn(
         "fixed z-[60] w-max max-w-xs whitespace-nowrap rounded-md bg-[var(--primary)] px-2.5 py-1 text-xs font-medium text-[var(--secondary)] shadow-sm pointer-events-none",

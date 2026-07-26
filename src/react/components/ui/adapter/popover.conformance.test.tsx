@@ -261,6 +261,31 @@ export function runPopoverConformance(
       }
     });
 
+    it("forwards a consumer ref to the content node (one-node contract)", () => {
+      const contentRef = React.createRef<HTMLDivElement>();
+      const { scope, clickTrigger, cleanup } = mountInScope(
+        <Wrap>
+          <Popover>
+            <PopoverTrigger>Open</PopoverTrigger>
+            {/* @ts-ignore ref-as-prop flows through the skin's {...props} */}
+            <PopoverContent ref={contentRef}>Body</PopoverContent>
+          </Popover>
+        </Wrap>,
+      );
+      try {
+        clickTrigger();
+        const content = scope.querySelector('[role="dialog"]');
+        assert(content, "content renders");
+        assertEquals(
+          contentRef.current,
+          content,
+          "consumer ref reaches the portalled content node",
+        );
+      } finally {
+        cleanup();
+      }
+    });
+
     it("controlled open is honoured (open prop drives visibility)", () => {
       function Controlled({ open }: { open: boolean }): React.ReactElement {
         return (

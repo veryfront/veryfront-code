@@ -120,6 +120,29 @@ function runTooltipConformance(
       }
     });
 
+    it("forwards a consumer ref to the bubble node (one-node contract)", () => {
+      const tipRef = React.createRef<HTMLDivElement>();
+      const { scope, focus, cleanup } = mount(
+        <Wrap>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button">Hover</button>
+            </TooltipTrigger>
+            {/* @ts-ignore ref-as-prop flows through the skin's {...props} */}
+            <TooltipContent ref={tipRef}>Hi</TooltipContent>
+          </Tooltip>
+        </Wrap>,
+      );
+      try {
+        focus(scope.querySelector("button")!);
+        const tip = scope.querySelector('[role="tooltip"]');
+        assert(tip, "tooltip renders on focus");
+        assertEquals(tipRef.current, tip, "consumer ref reaches the bubble node");
+      } finally {
+        cleanup();
+      }
+    });
+
     it("Provider is a passthrough that renders its children", () => {
       const { scope, cleanup } = mount(
         <Wrap>

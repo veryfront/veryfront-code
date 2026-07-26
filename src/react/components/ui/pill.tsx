@@ -11,6 +11,7 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { cva, type VariantProps } from "./cva.ts";
+import { Slot } from "./slot.tsx";
 
 const pillVariants = cva(
   [
@@ -42,17 +43,20 @@ export interface PillProps
   extends
     Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "type">,
     VariantProps<typeof pillVariants> {
+  /** Render as a Slot, merging props onto the child element. */
+  asChild?: boolean;
   ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Render a selection-trigger pill. */
 export function Pill(
-  { className, on, ref, ...props }: PillProps,
+  { className, on, asChild = false, ref, ...props }: PillProps,
 ): React.ReactElement {
+  const Comp = asChild ? Slot : "button";
   return (
-    <button
+    <Comp
       ref={ref}
-      type="button"
+      type={asChild ? undefined : "button"}
       className={cn(pillVariants({ on }), className)}
       {...props}
     />

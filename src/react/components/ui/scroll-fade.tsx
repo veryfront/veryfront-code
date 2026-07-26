@@ -32,11 +32,23 @@ export function ScrollFade({
   edges = "both",
   className,
   children,
+  ref: forwardedRef,
   ...props
 }: ScrollFadeProps): React.ReactElement {
   const ref = React.useRef<HTMLDivElement>(null);
   const [hasOverflow, setHasOverflow] = React.useState(false);
   const [hasScrolled, setHasScrolled] = React.useState(false);
+
+  // Compose the consumer's ref with the internal one so both observe the node.
+  const setRef = React.useCallback((node: HTMLDivElement | null) => {
+    ref.current = node;
+    if (typeof forwardedRef === "function") {
+      forwardedRef(node);
+    } else if (forwardedRef != null) {
+      (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current =
+        node;
+    }
+  }, [forwardedRef]);
 
   React.useEffect(() => {
     const el = ref.current;
@@ -58,7 +70,7 @@ export function ScrollFade({
 
   return (
     <div
-      ref={ref}
+      ref={setRef}
       data-overflow={hasOverflow || undefined}
       data-scrolled={hasScrolled || undefined}
       className={cn(

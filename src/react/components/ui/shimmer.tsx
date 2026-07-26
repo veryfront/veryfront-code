@@ -12,7 +12,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 
 /** Props accepted by `<Shimmer>`. */
-export interface ShimmerProps {
+export interface ShimmerProps extends React.HTMLAttributes<HTMLElement> {
   children: React.ReactNode;
   /** Element to render as. @default "span" */
   as?: React.ElementType;
@@ -21,6 +21,7 @@ export interface ShimmerProps {
   duration?: number;
   /** Band spread multiplier (× content length). @default 2 */
   spread?: number;
+  ref?: React.Ref<HTMLElement>;
 }
 
 /** Render shimmering text. */
@@ -30,6 +31,8 @@ export function Shimmer({
   className,
   duration = 2,
   spread = 2,
+  ref,
+  ...props
 }: ShimmerProps): React.ReactElement {
   const dynamicSpread = React.useMemo(() => {
     const length = typeof children === "string" ? children.length : 20;
@@ -38,6 +41,7 @@ export function Shimmer({
 
   return (
     <Component
+      ref={ref}
       className={cn(
         "relative inline-block min-w-0 bg-[length:250%_100%,auto] bg-clip-text text-transparent [background-position:100%_center]",
         "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
@@ -49,6 +53,7 @@ export function Shimmer({
         animationDuration: `${duration}s`,
         backgroundImage: "var(--bg), linear-gradient(var(--soft), var(--soft))",
       } as React.CSSProperties}
+      {...props}
     >
       {children}
     </Component>

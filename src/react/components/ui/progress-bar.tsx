@@ -41,6 +41,7 @@ export function ProgressBar({
   className,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
+  ref,
   ...props
 }: ProgressBarProps): React.ReactElement {
   const clampedPercent = clampProgressPercent(percent);
@@ -48,6 +49,7 @@ export function ProgressBar({
 
   return (
     <div
+      ref={ref}
       {...props}
       className={cn(
         "w-full bg-[var(--accent)] rounded-full h-2.5 overflow-hidden",

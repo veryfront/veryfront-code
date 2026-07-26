@@ -78,8 +78,9 @@ function SelectRoot({
 function SelectContentPart({
   className,
   children,
+  ref,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement | null {
+}: React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }): React.ReactElement | null {
   const ctx = useSelect();
   return (
     <Floating
@@ -90,6 +91,7 @@ function SelectContentPart({
       onDismiss={() => ctx.setOpen(false)}
       role="listbox"
       className={className}
+      contentRef={ref}
       {...props}
     >
       <div className="p-2.5">{children}</div>

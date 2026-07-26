@@ -154,6 +154,25 @@ function runDialogConformance(
       }
     });
 
+    it("forwards a consumer ref to the panel node (one-node contract)", () => {
+      const panelRef = React.createRef<HTMLDivElement>();
+      const { scope, cleanup } = mount(
+        <Wrap>
+          <Dialog defaultOpen>
+            {/* @ts-ignore ref-as-prop flows through the skin's {...props} */}
+            <DialogContent ref={panelRef}>Body</DialogContent>
+          </Dialog>
+        </Wrap>,
+      );
+      try {
+        const panel = scope.querySelector('[role="dialog"]');
+        assert(panel, "panel renders");
+        assertEquals(panelRef.current, panel, "consumer ref reaches the panel node");
+      } finally {
+        cleanup();
+      }
+    });
+
     it("asChild merges the trigger onto a consumer element (no wrapper button)", () => {
       const { scope, click, cleanup } = mount(
         <Wrap>

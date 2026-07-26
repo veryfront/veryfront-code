@@ -23,16 +23,19 @@ const alertVariants = {
 export interface AlertProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Colour scheme. @default "default" */
   variant?: keyof typeof alertVariants;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 export function Alert({
   children,
   className,
   variant = "default",
+  ref,
   ...props
 }: AlertProps): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn(
         // 14px: Inter renders larger than Studio's Söhne, so `vf-type-base`
         // (16px) reads too big here — step down to `text-sm`.
@@ -51,10 +54,14 @@ export function Alert({
 export function AlertIcon({
   children,
   className,
+  ref,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement {
+}: React.HTMLAttributes<HTMLDivElement> & {
+  ref?: React.Ref<HTMLDivElement>;
+}): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn(
         "shrink-0 text-[var(--foreground)] dark:text-[var(--background)]",
         className,
@@ -70,10 +77,14 @@ export function AlertIcon({
 export function AlertContent({
   children,
   className,
+  ref,
   ...props
-}: React.HTMLAttributes<HTMLParagraphElement>): React.ReactElement {
+}: React.HTMLAttributes<HTMLParagraphElement> & {
+  ref?: React.Ref<HTMLParagraphElement>;
+}): React.ReactElement {
   return (
     <p
+      ref={ref}
       className={cn(
         "flex-1 text-sm text-[var(--foreground)] dark:text-[var(--background)]",
         className,
@@ -89,10 +100,14 @@ export function AlertContent({
 export function AlertAction({
   children,
   className,
+  ref,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>): React.ReactElement {
+}: React.HTMLAttributes<HTMLDivElement> & {
+  ref?: React.Ref<HTMLDivElement>;
+}): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn("-my-1 -mr-1 flex shrink-0 items-center", className)}
       {...props}
     >

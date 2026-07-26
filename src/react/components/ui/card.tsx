@@ -62,10 +62,13 @@ Card.displayName = "Card";
 
 /** Card header row — a flex row (Studio composes these inline). */
 export function CardHeader(
-  { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
+  { className, ref, ...props }: React.HTMLAttributes<HTMLDivElement> & {
+    ref?: React.Ref<HTMLDivElement>;
+  },
 ): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn("flex items-center gap-2", className)}
       {...props}
     />
@@ -75,8 +78,10 @@ CardHeader.displayName = "Card.Header";
 
 /** Card body region — vertical stack. */
 export function CardContent(
-  { className, ...props }: React.HTMLAttributes<HTMLDivElement>,
+  { className, ref, ...props }: React.HTMLAttributes<HTMLDivElement> & {
+    ref?: React.Ref<HTMLDivElement>;
+  },
 ): React.ReactElement {
-  return <div className={cn("flex flex-col", className)} {...props} />;
+  return <div ref={ref} className={cn("flex flex-col", className)} {...props} />;
 }
 CardContent.displayName = "Card.Content";

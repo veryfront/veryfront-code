@@ -8,16 +8,19 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
+import { Slot } from "./slot.tsx";
 
 const tagClasses =
   "inline-flex items-center rounded-full bg-[var(--edge)] px-3 py-1 text-xs text-[var(--foreground)] whitespace-nowrap";
 
 /** Static metadata chip. */
 export function Tag(
-  { className, children, ...props }: React.HTMLAttributes<HTMLSpanElement>,
+  { className, children, ref, ...props }: React.HTMLAttributes<HTMLSpanElement> & {
+    ref?: React.Ref<HTMLSpanElement>;
+  },
 ): React.ReactElement {
   return (
-    <span className={cn(tagClasses, className)} {...props}>
+    <span ref={ref} className={cn(tagClasses, className)} {...props}>
       {children}
     </span>
   );
@@ -26,14 +29,19 @@ export function Tag(
 /** Props accepted by `<TagLink>`. */
 export interface TagLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
   href: string;
+  /** Render as a Slot, merging props onto the child element. */
+  asChild?: boolean;
+  ref?: React.Ref<HTMLAnchorElement>;
 }
 
 /** Tag rendered as an external link. */
 export function TagLink(
-  { className, ...props }: TagLinkProps,
+  { className, asChild = false, ref, ...props }: TagLinkProps,
 ): React.ReactElement {
+  const Comp = asChild ? Slot : "a";
   return (
-    <a
+    <Comp
+      ref={ref}
       className={cn(
         tagClasses,
         "hover:bg-[var(--tertiary)] transition-colors",
@@ -48,11 +56,19 @@ export function TagLink(
 
 /** Tag rendered as a button. */
 export function TagButton(
-  { className, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>,
+  { className, asChild = false, type, ref, ...props }:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & {
+      /** Render as a Slot, merging props onto the child element. */
+      asChild?: boolean;
+      ref?: React.Ref<HTMLButtonElement>;
+    },
 ): React.ReactElement {
+  const Comp = asChild ? Slot : "button";
   return (
-    <button
-      type="button"
+    <Comp
+      ref={ref}
+      type={asChild ? type : (type ?? "button")}
       className={cn(
         tagClasses,
         "hover:bg-[var(--tertiary)] transition-colors",
@@ -65,10 +81,13 @@ export function TagButton(
 
 /** Wrapping container for a row of tags. */
 export function TagGroup(
-  { className, children, ...props }: React.HTMLAttributes<HTMLDivElement>,
+  { className, children, ref, ...props }: React.HTMLAttributes<HTMLDivElement> & {
+    ref?: React.Ref<HTMLDivElement>;
+  },
 ): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn("flex flex-wrap items-center gap-1.5", className)}
       {...props}
     >

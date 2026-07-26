@@ -39,7 +39,8 @@ export interface PopoverParts {
   >;
   /** The floating surface, portalled into the token scope while open. */
   Content: React.FC<
-    React.HTMLAttributes<HTMLDivElement> & { align?: "start" | "end" }
+    & React.HTMLAttributes<HTMLDivElement>
+    & { align?: "start" | "end"; ref?: React.Ref<HTMLDivElement> }
   >;
 }
 
@@ -59,7 +60,8 @@ export interface DialogParts {
   >;
   /** Overlay + panel; `lead` is an optional node before children (Drawer's drag handle). */
   Content: React.FC<
-    React.HTMLAttributes<HTMLDivElement> & { lead?: React.ReactNode }
+    & React.HTMLAttributes<HTMLDivElement>
+    & { lead?: React.ReactNode; ref?: React.Ref<HTMLDivElement> }
   >;
   /** Closes the dialog; `asChild` merges onto the consumer's element. */
   Close: React.FC<
@@ -79,7 +81,8 @@ export interface MenuParts {
   >;
   /** The floating menu surface, portalled into the token scope while open. */
   Content: React.FC<
-    React.HTMLAttributes<HTMLDivElement> & { align?: "start" | "end" }
+    & React.HTMLAttributes<HTMLDivElement>
+    & { align?: "start" | "end"; ref?: React.Ref<HTMLDivElement> }
   >;
   /**
    * Read menu open-state from a menu part (e.g. an Item that closes the menu on
@@ -106,7 +109,7 @@ export interface TooltipParts {
   /** The floating bubble, portalled into the token scope while open. */
   Content: React.FC<
     & React.HTMLAttributes<HTMLDivElement>
-    & { side?: TooltipSide; sideOffset?: number }
+    & { side?: TooltipSide; sideOffset?: number; ref?: React.Ref<HTMLDivElement> }
   >;
 }
 
@@ -138,7 +141,9 @@ export interface SelectParts {
     labels: Map<string, React.ReactNode>;
   }>;
   /** The floating listbox surface, portalled into the token scope while open. */
-  Content: React.FC<React.HTMLAttributes<HTMLDivElement>>;
+  Content: React.FC<
+    React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }
+  >;
   /** Read select state from a skin part (Trigger/Value/Item). Throws outside a Select. */
   useSelect: () => SelectState;
 }

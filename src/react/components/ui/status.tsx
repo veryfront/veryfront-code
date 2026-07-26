@@ -13,7 +13,7 @@ import { cx as cn } from "./cva.ts";
 export type StatusColor = "gray" | "blue" | "green" | "red" | "yellow";
 
 /** Props accepted by `<Status>`. */
-export interface StatusProps {
+export interface StatusProps extends React.HTMLAttributes<HTMLDivElement> {
   label: string;
   color: StatusColor;
   /** Pulse the dot (e.g. an in-progress run). */
@@ -25,6 +25,7 @@ export interface StatusProps {
   /** `'sm'` (14px, default) or `'inherit'` to inherit the parent's size. */
   size?: "sm" | "inherit";
   className?: string;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 const dotColorMap: Record<StatusColor, string> = {
@@ -44,14 +45,18 @@ export function Status({
   responsive,
   size = "sm",
   className,
+  ref,
+  ...props
 }: StatusProps): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn(
         "flex items-center gap-1.5",
         responsive && "@container",
         className,
       )}
+      {...props}
     >
       <span
         className={cn(

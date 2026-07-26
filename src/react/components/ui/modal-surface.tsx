@@ -18,6 +18,16 @@ export interface ModalState {
 export interface ModalContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Extra node rendered before `children` -- used by Drawer for the drag handle. */
   lead?: React.ReactNode;
+  /** Consumer ref for the panel node (composed with the internal focus ref). */
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Assign a value to a callback- or object-ref (no-op for null). */
+function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref && typeof ref === "object") {
+    (ref as React.MutableRefObject<T | null>).current = value;
+  }
 }
 
 type ModalBtnProps = React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean };
@@ -116,11 +126,16 @@ export function createModalSurfaceParts(name: string) {
 
   /** Fixed overlay + panel shell. Skins supply panel layout via `className`. */
   function ModalContent(
-    { className, children, lead, ...props }: ModalContentProps,
+    { className, children, lead, ref, ...props }: ModalContentProps,
   ): React.ReactElement | null {
     const ctx = useModal();
     const panelRef = React.useRef<HTMLDivElement>(null);
     useModalContentEffect(ctx.open, ctx.setOpen, panelRef);
+    // Compose the internal focus ref with the consumer's ref.
+    const setNode = React.useCallback((node: HTMLDivElement | null) => {
+      panelRef.current = node;
+      assignRef(ref, node);
+    }, [ref]);
     if (!ctx.open) return null;
     return (
       <div className="fixed inset-0 z-50">
@@ -129,7 +144,7 @@ export function createModalSurfaceParts(name: string) {
           onClick={() => ctx.setOpen(false)}
         />
         <div
-          ref={panelRef}
+          ref={setNode}
           role="dialog"
           aria-modal="true"
           tabIndex={-1}

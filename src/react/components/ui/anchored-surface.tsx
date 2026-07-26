@@ -28,6 +28,8 @@ export interface AnchoredTriggerProps extends React.ButtonHTMLAttributes<HTMLBut
 /** Props for `AnchoredContent` (returned by the factory). */
 export interface AnchoredContentProps extends React.HTMLAttributes<HTMLDivElement> {
   align?: "start" | "end";
+  /** Consumer ref for the surface node (composed with the positioning ref). */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -92,7 +94,7 @@ export function createAnchoredSurfaceParts() {
 
   /** `Floating` wrapper with base classes. Skins extend via `className` and `role`. */
   function AnchoredContent(
-    { children, className, align, ...props }: AnchoredContentProps,
+    { children, className, align, ref, ...props }: AnchoredContentProps,
   ): React.ReactElement | null {
     const ctx = React.useContext(Context);
     if (!ctx) return null;
@@ -102,6 +104,7 @@ export function createAnchoredSurfaceParts() {
         open={ctx.open}
         align={align}
         onDismiss={() => ctx.setOpen(false)}
+        contentRef={ref}
         className={cn(
           "z-50 overflow-hidden rounded-lg bg-[var(--popover)] text-[var(--foreground)] shadow-sm outline-none",
           className,
