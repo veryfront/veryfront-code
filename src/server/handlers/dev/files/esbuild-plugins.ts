@@ -330,8 +330,9 @@ function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string
         const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;
         return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${versionedPath}`;
       }
-      // Cache is cold — schedule a background registry fetch to warm it for the
-      // next bundler run. Fire-and-forget; must never block the build.
+      // Cache is cold — schedule a background latest-version fetch only when
+      // no project declaration exists. Non-exact declarations are not coerced
+      // to registry latest.
       scheduleNpmVersionResolution(parsed.packageName, rawPin, projectDir);
     }
   }

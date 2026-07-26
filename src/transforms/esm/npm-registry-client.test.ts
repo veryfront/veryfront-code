@@ -84,9 +84,8 @@ describe("getCachedNpmVersion", () => {
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    // Mock fetch so that tests triggering a background resolution (e.g. a caret
-    // range hint) don't open real network connections or leave long-lived
-    // AbortController timers running past the test boundary.
+    // Mock fetch so tests that resolve a truly unversioned dependency do not
+    // open real network connections or leave long-lived timers behind.
     originalFetch = globalThis.fetch;
     globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
   });
@@ -102,7 +101,7 @@ describe("getCachedNpmVersion", () => {
     assertEquals(getCachedNpmVersion("lodash", PROJECT_DIR, undefined), undefined);
   });
 
-  it("returns a version after scheduleNpmVersionResolution resolves an exact range", () => {
+  it("returns a version after scheduleNpmVersionResolution receives an exact version", () => {
     scheduleNpmVersionResolution("lodash", "4.17.21", PROJECT_DIR);
     // Exact version is stored synchronously (no fetch needed).
     assertStrictEquals(
@@ -115,11 +114,16 @@ describe("getCachedNpmVersion", () => {
     );
   });
 
-  it("leaves cache cold when the hint is a caret range (range goes to background fetch)", () => {
-    // Policy: only an exact semver literal (no prefix) is stored synchronously.
-    // Caret ranges must go through the resolution client (background fetch) so
-    // we never manufacture a pin by floor-stripping a range the file didn't pin.
+  it("leaves cache cold without fetching latest when the hint is a caret range", () => {
+    let fetchCalls = 0;
+    globalThis.fetch = () => {
+      fetchCalls++;
+      return Promise.resolve(new Response(null, { status: 503 }));
+    };
+
     scheduleNpmVersionResolution("zod", "^3.22.4", PROJECT_DIR);
+
+    assertEquals(fetchCalls, 0);
     assertEquals(getCachedNpmVersion("zod", PROJECT_DIR, "^3.22.4"), undefined);
   });
 
@@ -165,19 +169,31 @@ describe("scheduleNpmVersionResolution", () => {
     assertEquals(resolvedVersion, "5.0.0");
   });
 
-  it("does not call onResolved synchronously for a caret range (range triggers background fetch)", async () => {
-    // Policy: caret ranges are NOT treated as pinned versions; they go to the
-    // resolution client. onResolved must NOT fire synchronously here.
+  it("does not replace a declared range with registry latest", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = () => {
+      fetchCalls++;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ "dist-tags": { latest: "4.0.0" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    };
+
     let resolved = "";
     scheduleNpmVersionResolution("date-fns", "^3.6.0", PROJECT_DIR, (v) => {
       resolved = v;
     });
-    // Synchronously: callback must not have fired yet.
+
+    await _pendingResolutions();
+
+    assertEquals(fetchCalls, 0);
     assertEquals(resolved, "");
-    // Let the (mocked, 503) background fetch settle.
-    await new Promise<void>((r) => setTimeout(r, 1));
-    // Even after the fetch, the 503 means no version was cached — still empty.
-    assertEquals(resolved, "");
+    assertEquals(
+      getCachedNpmVersion("date-fns", PROJECT_DIR, "^3.6.0"),
+      undefined,
+    );
   });
 
   it("does not double-schedule a fetch when called twice for the same package+project", () => {
@@ -204,7 +220,7 @@ describe("scheduleNpmVersionResolution", () => {
         resolveFetch = resolve;
       });
 
-    scheduleNpmVersionResolution("reset-during-fetch", "^1", PROJECT_DIR);
+    scheduleNpmVersionResolution("reset-during-fetch", undefined, PROJECT_DIR);
     _clearNpmVersionCache();
 
     let drained = false;
@@ -272,39 +288,7 @@ describe("scheduleNpmVersionResolution", () => {
       );
     });
 
-    it("re-resolves when the range hint changes (^1 → ^2)", async () => {
-      // First resolution: package.json declares "^1".
-      globalThis.fetch = () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ "dist-tags": { latest: "1.9.0" } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
-        );
-      scheduleNpmVersionResolution("some-lib", "^1", PROJECT_DIR);
-      await _pendingResolutions();
-      assertStrictEquals(
-        getCachedNpmVersion("some-lib", PROJECT_DIR, "^1"),
-        "1.9.0",
-      );
-
-      // package.json is updated to "^2" — the stale entry must be evicted.
-      globalThis.fetch = () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({ "dist-tags": { latest: "2.0.0" } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
-        );
-      scheduleNpmVersionResolution("some-lib", "^2", PROJECT_DIR);
-      await _pendingResolutions();
-      assertStrictEquals(
-        getCachedNpmVersion("some-lib", PROJECT_DIR, "^2"),
-        "2.0.0",
-      );
-    });
-
-    it("ignores a stale resolution that finishes after the range changes", async () => {
+    it("ignores an unversioned resolution that finishes after a range appears", async () => {
       const responseResolvers: Array<(response: Response) => void> = [];
       const resolvedVersions: string[] = [];
       globalThis.fetch = () =>
@@ -312,19 +296,13 @@ describe("scheduleNpmVersionResolution", () => {
           responseResolvers.push(resolve);
         });
 
-      scheduleNpmVersionResolution("racing-range", "^1", PROJECT_DIR, (version) => {
+      scheduleNpmVersionResolution("racing-range", undefined, PROJECT_DIR, (version) => {
         resolvedVersions.push(version);
       });
       scheduleNpmVersionResolution("racing-range", "^2", PROJECT_DIR, (version) => {
         resolvedVersions.push(version);
       });
 
-      responseResolvers[1]!(
-        new Response(
-          JSON.stringify({ "dist-tags": { latest: "2.4.0" } }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
       responseResolvers[0]!(
         new Response(
           JSON.stringify({ "dist-tags": { latest: "1.9.0" } }),
@@ -334,14 +312,14 @@ describe("scheduleNpmVersionResolution", () => {
       await _pendingResolutions();
 
       assertEquals(
-        getCachedNpmVersion("racing-range", PROJECT_DIR, "^1"),
+        getCachedNpmVersion("racing-range", PROJECT_DIR, undefined),
         undefined,
       );
       assertStrictEquals(
         getCachedNpmVersion("racing-range", PROJECT_DIR, "^2"),
-        "2.4.0",
+        undefined,
       );
-      assertEquals(resolvedVersions, ["2.4.0"]);
+      assertEquals(resolvedVersions, []);
     });
   });
 });

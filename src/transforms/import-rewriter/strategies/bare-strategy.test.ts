@@ -291,26 +291,26 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier?.includes("@tanstack/react-query@5.28.0"), true);
     });
 
-    it("does not reuse a registry result from an outdated package range", async () => {
-      globalThis.fetch = () =>
-        Promise.resolve(
+    it("does not replace a declared package range with registry latest", async () => {
+      _primeDependenciesCache("/project", { lodash: "^2" });
+      let fetchCalls = 0;
+      globalThis.fetch = () => {
+        fetchCalls++;
+        return Promise.resolve(
           new Response(
-            JSON.stringify({ "dist-tags": { latest: "1.9.0" } }),
+            JSON.stringify({ "dist-tags": { latest: "3.0.0" } }),
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      scheduleNpmVersionResolution("lodash", "^1", "/project");
-      await _pendingResolutions();
-
-      _primeDependenciesCache("/project", { lodash: "^2" });
-      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+      };
 
       const result = bareStrategy.rewrite(
         makeInfo("lodash"),
         makeCtx({ target: "browser" }),
       );
+      await _pendingResolutions();
 
-      assertEquals(result.specifier?.includes("lodash@1.9.0"), false);
+      assertEquals(fetchCalls, 0);
       assertEquals(
         result.specifier,
         "https://esm.sh/lodash?external=react,react-dom&target=es2022",
@@ -343,10 +343,10 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier?.includes("4.0.0"), false);
     });
 
-    it("treats a compound range in package.json as unpinned and falls back to registry cache", () => {
+    it("leaves a compound package range on the current unversioned fallback", () => {
       // Compound ranges like ">=1.0.0 <2.0.0" are not exact semver literals so
-      // isExactSemver returns false. The strategy skips them and falls through to
-      // the npm registry cache (which is also cold here) — unversioned fallback.
+      // isExactSemver returns false. The strategy must not replace the range with
+      // registry latest, so it retains the current unversioned fallback.
       _primeDependenciesCache("/project", { lodash: ">=1.0.0 <2.0.0" });
       // No registry cache entry — should fall through to cold-cache (unversioned).
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));

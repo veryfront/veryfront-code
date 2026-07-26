@@ -133,8 +133,9 @@ function resolveBareImportPin(bareSpecifier: string, projectDir: string): string
   const cached = getCachedNpmVersion(parsed.packageName, projectDir, rawPin);
   if (cached) return cached;
 
-  // Cache is cold — schedule a background registry fetch to warm it for the
-  // next SSR render. Fire-and-forget; must never block or fail a render.
+  // Cache is cold — schedule a background latest-version fetch only when no
+  // project declaration exists. Non-exact declarations are deliberately left
+  // unresolved rather than being replaced by registry latest.
   scheduleNpmVersionResolution(parsed.packageName, rawPin, projectDir);
   return undefined;
 }

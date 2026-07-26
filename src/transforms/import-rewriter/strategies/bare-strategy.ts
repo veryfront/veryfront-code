@@ -57,7 +57,9 @@ function warnUnversionedImport(specifier: string, projectId: string): void {
 /**
  * Resolve a pinned version for a bare package when the flag is on.
  * Priority: package.json pin -> npm registry cache -> undefined (fallback).
- * Schedules a background registry fetch when both caches are cold.
+ * Schedules a background latest-version fetch only when the project has no
+ * declaration for the package. Non-exact declarations retain the fallback
+ * until the platform resolver normalizes them to an exact pin.
  */
 function resolvePinnedVersion(
   packageName: string,
@@ -65,7 +67,7 @@ function resolvePinnedVersion(
 ): string | undefined {
   // 1. package.json exact version pin (the raw value must already be an exact
   //    semver — never strip range prefixes to manufacture a pin that the file
-  //    didn't literally contain; ranges go through the resolution client).
+  //    didn't literally contain).
   const allDeps = getProjectDependenciesSync(ctx.projectDir);
   const rawPin = allDeps?.[packageName];
   if (rawPin && isExactSemver(rawPin)) return rawPin;
@@ -74,9 +76,9 @@ function resolvePinnedVersion(
   const registryVersion = getCachedNpmVersion(packageName, ctx.projectDir, rawPin);
   if (registryVersion) return registryVersion;
 
-  // 3. Cache cold: schedule a background resolution for the next render.
-  // Pass the package.json range hint (if any) — the client uses it to skip the
-  // network fetch when the hint itself resolves to an exact version.
+  // 3. Cache cold: schedule a background resolution for the next render only
+  // when no package declaration exists. The client rejects non-exact hints so
+  // a declared range can never be replaced by registry latest.
   scheduleNpmVersionResolution(packageName, rawPin, ctx.projectDir, (version) => {
     void postDependencyResolution(ctx.projectId, [`${packageName}@${version}`]);
   });

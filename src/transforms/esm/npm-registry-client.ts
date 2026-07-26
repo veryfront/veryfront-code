@@ -40,7 +40,7 @@ interface CachedEntry {
 /** Per-project cache: projectDir -> packageName -> CachedEntry */
 const versionCache = new Map<string, Map<string, CachedEntry>>();
 
-/** Deduplicates concurrent fetches for the same package+project pair */
+/** Deduplicates concurrent fetches for the same package, project, and declaration. */
 const pendingFetches = new Set<string>();
 
 /**
@@ -104,9 +104,12 @@ function setCurrentResolution(
  *
  * - If rangeHint is already an exact semver literal (no range prefix stripped),
  *   it is stored directly without a network fetch and onResolved fires synchronously.
- * - Otherwise a background fetch is started. The result is stored in the cache
- *   and onResolved is called when it completes.
- * - Duplicate in-flight fetches for the same package+project are suppressed.
+ * - A non-exact package declaration is left unresolved. Resolving it to the
+ *   registry's global latest could violate the project's declared constraint.
+ * - When no declaration exists, a background latest-version fetch is started.
+ *   The result is stored in the cache and onResolved is called when it completes.
+ * - Duplicate in-flight fetches for the same package, project, and declaration
+ *   are suppressed.
  * - Any failure is silently ignored; the cache stays cold for this call.
  *
  * @param packageName - npm package name
@@ -136,8 +139,22 @@ export function scheduleNpmVersionResolution(
     return;
   }
 
-  // Mark this declaration as current before consulting the in-flight registry.
-  // A late fetch for a previous range will then be ignored.
+  // Do not coerce a declared range, dist-tag, alias, workspace reference, or
+  // other non-exact package specifier to dist-tags.latest. Until the platform
+  // resolver normalizes that declaration to an exact version, callers retain
+  // the existing unversioned fallback rather than silently crossing its bounds.
+  if (rangeHint !== undefined) {
+    // Record the declaration even without a resolved version. This invalidates
+    // both an older cached latest and any unversioned fetch that is still in
+    // flight, preventing its late result from crossing the new constraint.
+    if (cached === undefined || cached.hint !== rangeHint) {
+      setCurrentResolution(projectDir, packageName, rangeHint);
+    }
+    return;
+  }
+
+  // Mark the absence of a declaration as current before consulting the
+  // in-flight registry. A late fetch from an older state will then be ignored.
   if (cached === undefined || cached.hint !== rangeHint) {
     setCurrentResolution(projectDir, packageName, rangeHint);
   }
@@ -170,7 +187,8 @@ export function scheduleNpmVersionResolution(
 }
 
 /**
- * Fetch the latest published version of a package from the npm registry.
+ * Fetch the latest published version of a package with no project declaration
+ * from the npm registry.
  * Uses the lighter install-metadata Accept header.
  * Returns null on any failure (network, timeout, unexpected response shape).
  */
@@ -288,10 +306,10 @@ export function _clearNpmVersionCache(): void {
 /**
  * Resolves when all in-flight background npm version resolutions have settled.
  *
- * For use in tests only. Call this in afterEach after any test that calls
- * scheduleNpmVersionResolution with a range hint (which triggers a background
- * fetch). Awaiting it ensures no open fetch handles or AbortController timers
- * remain by the time the Deno leak sanitizer inspects the test teardown.
+ * For use in tests only. Call this in afterEach after any test that schedules
+ * resolution for a package without a project declaration. Awaiting it ensures
+ * no open fetch handles or AbortController timers remain when the Deno leak
+ * sanitizer inspects test teardown.
  */
 export function _pendingResolutions(): Promise<void> {
   if (pendingResolutionPromises.size === 0) return Promise.resolve();
