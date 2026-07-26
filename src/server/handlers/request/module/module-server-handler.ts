@@ -1,7 +1,10 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  ensureProjectDependenciesLoaded,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { profilePhase } from "#veryfront/observability";
 
 export function handleModuleServer(
@@ -18,14 +21,21 @@ export function handleModuleServer(
     "module.server.handle",
     async () => {
       try {
-        const reactVersion = await profilePhase(
-          "module.resolve_react_version",
-          () =>
-            resolveProjectReactVersion({
-              projectDir: ctx.projectDir,
-              config: ctx.config,
-            }),
-        );
+        // Warm the dep-pin cache in parallel with the React version lookup.
+        // resolveProjectReactVersion may skip readProjectDependencyVersions
+        // (e.g. when config.react.version is set), so ensureProjectDependenciesLoaded
+        // must be called independently.
+        const [reactVersion] = await Promise.all([
+          profilePhase(
+            "module.resolve_react_version",
+            () =>
+              resolveProjectReactVersion({
+                projectDir: ctx.projectDir,
+                config: ctx.config,
+              }),
+          ),
+          ensureProjectDependenciesLoaded(ctx.projectDir),
+        ]);
 
         const moduleResponse = await profilePhase("module.serve", async () => {
           const { serveModule } = await import("#veryfront/modules/server/index.ts");

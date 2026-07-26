@@ -15,7 +15,10 @@ import {
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "#veryfront/rendering/layouts/utils/component-loader.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  ensureProjectDependenciesLoaded,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
@@ -121,6 +124,10 @@ export async function renderAppRouteToHTML(args: {
   } = args;
 
   const appRoot = join(projectDir, config?.directories?.app ?? "app");
+  // Warm the dependency pin cache before bare-import rewriting runs. Must be
+  // explicit here because resolveProjectReactVersion may early-return (when
+  // config.react.version is set) without reading package.json.
+  await ensureProjectDependenciesLoaded(projectDir);
   const reactVersion = explicitReactVersion ??
     await resolveProjectReactVersion({ projectDir, config });
   const layouts: string[] = [];

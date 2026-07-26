@@ -1,6 +1,7 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { handleModuleBatch } from "#veryfront/modules/server/module-batch-handler.ts";
+import { ensureProjectDependenciesLoaded } from "#veryfront/transforms/esm/package-registry.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -20,6 +21,9 @@ export function handleBatchModuleEndpoint(
         url: req.url,
       });
 
+      // Warm the dep-pin cache before module transforms run. The batch handler
+      // has no resolveProjectReactVersion call so this is the only warm-up point.
+      await ensureProjectDependenciesLoaded(ctx.projectDir);
       const response = await handleModuleBatch(req, {
         projectDir: ctx.projectDir,
         adapter: ctx.adapter,

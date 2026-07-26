@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import {
+  _clearNpmVersionCache,
+  _pendingResolutions,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { rewriteSSRImportsCompat } from "../import-rewriter/ssr-adapter.ts";
 import {
   clearReactVersionCache,
   DEFAULT_REACT_VERSION,
+  ensureProjectDependenciesLoaded,
+  getProjectDependenciesSync,
   isValidReactVersion,
   normalizeReactVersion,
   readProjectDependencyVersions,
@@ -185,5 +194,92 @@ describe("package-registry", () => {
         await Deno.remove(dir, { recursive: true });
       }
     });
+  });
+});
+
+describe("ensureProjectDependenciesLoaded — pin cache warm-up independent of react config", () => {
+  let tmpDir: string;
+  let originalFetch: typeof globalThis.fetch;
+  let originalFlag: string | undefined;
+
+  beforeEach(async () => {
+    tmpDir = await Deno.makeTempDir({ prefix: "vf-pin-cache-" });
+    await Deno.writeTextFile(
+      `${tmpDir}/package.json`,
+      JSON.stringify({ dependencies: { lodash: "4.17.20" } }),
+    );
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+    _clearNpmVersionCache();
+    // Mock fetch so cold-cache scheduleNpmVersionResolution calls never make
+    // real network requests.
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+  });
+
+  afterEach(async () => {
+    // Drain any in-flight background fetches before the sanitizer runs.
+    await _pendingResolutions();
+    globalThis.fetch = originalFetch;
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+    clearReactVersionCache();
+    _clearNpmVersionCache();
+    await Deno.remove(tmpDir, { recursive: true });
+  });
+
+  it("warms the dep cache from a real package.json (config null — baseline path)", async () => {
+    await ensureProjectDependenciesLoaded(tmpDir);
+    assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.20");
+  });
+
+  it("warms the dep cache when config.react.version is set (was broken before fix)", async () => {
+    // Before this fix: resolveProjectReactVersion early-returned at step 1
+    // (config.react.version) without ever calling readProjectDependencyVersions,
+    // leaving getProjectDependenciesSync cold for the entire request.
+    await resolveProjectReactVersion({
+      projectDir: tmpDir,
+      config: { react: { version: "19.2.4" } },
+    });
+    // Verify the cache is still cold after resolveProjectReactVersion alone.
+    assertEquals(getProjectDependenciesSync(tmpDir), undefined);
+
+    // ensureProjectDependenciesLoaded warms it independently.
+    await ensureProjectDependenciesLoaded(tmpDir);
+    assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.20");
+  });
+
+  it("emits a pinned esm.sh URL from rewriteSSRImportsCompat (config null path)", async () => {
+    await ensureProjectDependenciesLoaded(tmpDir);
+    const result = rewriteSSRImportsCompat(`import x from "lodash";`, {
+      projectDir: tmpDir,
+    });
+    assertEquals(
+      result.includes("lodash@4.17.20"),
+      true,
+      `Expected pinned URL; got: ${result}`,
+    );
+  });
+
+  it("emits a pinned URL even when config.react.version bypassed resolveProjectReactVersion (regression guard)", async () => {
+    // Simulate what a handler does when config.react.version is set: it calls
+    // resolveProjectReactVersion, which early-returns without warming the cache.
+    await resolveProjectReactVersion({
+      projectDir: tmpDir,
+      config: { react: { version: "19.2.4" } },
+    });
+
+    // The fix: ensureProjectDependenciesLoaded is called explicitly at the entry
+    // point, independent of how reactVersion was obtained.
+    await ensureProjectDependenciesLoaded(tmpDir);
+
+    const result = rewriteSSRImportsCompat(`import x from "lodash";`, {
+      projectDir: tmpDir,
+    });
+    assertEquals(
+      result.includes("lodash@4.17.20"),
+      true,
+      `Expected pinned URL; got: ${result}`,
+    );
   });
 });

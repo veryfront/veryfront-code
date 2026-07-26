@@ -9,6 +9,8 @@ import { rendererLogger } from "#veryfront/utils";
 
 const logger = rendererLogger.component("package-registry");
 import type { VeryfrontConfig } from "#veryfront/config";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
   buildReactUrl,
   CSSTYPE_VERSION,
@@ -126,6 +128,25 @@ export function getProjectDependenciesSync(
   projectDir: string,
 ): Record<string, string> | undefined {
   return dependencyVersionCache.get(getPackageJsonPath(projectDir))?.dependencies;
+}
+
+/**
+ * When VERYFRONT_DEPENDENCY_PINNING=1, ensure the project's package.json has
+ * been read into the in-process dependency cache. No-op when the flag is off
+ * or when projectDir is absent. Repeat calls within the same process are cheap
+ * because readProjectDependencyVersions is mtime-guarded.
+ *
+ * Call this early in each request/build lifecycle — before any synchronous
+ * getProjectDependenciesSync calls run — so that bare-import pin lookups find
+ * the cache warm even when resolveProjectReactVersion is bypassed (e.g. when
+ * config.react.version is set or an explicitReactVersion is supplied by the
+ * caller).
+ */
+export async function ensureProjectDependenciesLoaded(
+  projectDir: string | null | undefined,
+): Promise<void> {
+  if (!projectDir || getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) !== "1") return;
+  await readProjectDependencyVersions(projectDir);
 }
 
 function getPackageJsonPath(projectDir: string): string {

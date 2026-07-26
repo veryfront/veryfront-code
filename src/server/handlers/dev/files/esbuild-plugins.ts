@@ -24,7 +24,10 @@ import {
   describeBrowserModuleBoundaryViolation,
   inspectBrowserModuleBoundary,
 } from "#veryfront/server/shared/browser-module-boundary.ts";
-import { getProjectDependenciesSync } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  ensureProjectDependenciesLoaded,
+  getProjectDependenciesSync,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import {
   getCachedNpmVersion,
   isDependencyPinningEnabled,
@@ -423,6 +426,12 @@ export function createBareExternalPlugin(
   return {
     name: "veryfront-bare-ext",
     setup(build: PluginBuild) {
+      // Warm the package.json dep cache once before any onResolve callbacks
+      // fire. No-op when VERYFRONT_DEPENDENCY_PINNING is off or when projectDir
+      // is absent. The underlying readProjectDependencyVersions is mtime-cached
+      // so this is cheap on warm paths.
+      build.onStart(() => ensureProjectDependenciesLoaded(opts.projectDir));
+
       build.onResolve({ filter: /.*/ }, (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
         if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
