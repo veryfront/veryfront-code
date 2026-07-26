@@ -29,8 +29,8 @@ function resolveDefaultExport<T>(module: unknown): T {
 const generate = resolveDefaultExport<GenerateFunction>(generateModule);
 
 // Matches esm.sh URLs with optional build-version prefix (v135/), scoped packages
-// (@scope/name), subpaths, and query params.  Query params are captured separately
-// so they can be dropped from the bare specifier.
+// (@scope/name), subpaths, and query params. Query params are matched but
+// deliberately not captured, so the generated bare specifier drops them.
 //
 // Groups: (1) package name, (2) version, (3) subpath (leading slash included)
 const ESM_SH_URL_RE =
