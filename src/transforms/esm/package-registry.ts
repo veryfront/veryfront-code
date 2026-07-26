@@ -161,6 +161,7 @@ export async function readProjectDependencyVersions(
   projectDir: string,
 ): Promise<{ react?: string; veryfront?: string; dependencies?: Record<string, string> }> {
   const packageJsonPath = getPackageJsonPath(projectDir);
+  const pinningOn = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
 
   try {
     const { createFileSystem } = await import("../../platform/compat/fs.ts");
@@ -170,11 +171,16 @@ export async function readProjectDependencyVersions(
     const cached = dependencyVersionCache.get(packageJsonPath);
 
     if (cached && cached.mtimeMs === mtimeMs) {
-      return {
-        react: cached.react,
-        veryfront: cached.veryfront,
-        dependencies: cached.dependencies,
-      };
+      // Serve the cached entry unless pinning just turned on and the entry was
+      // written during a flag-off period (no dependencies stored). In that case
+      // fall through to re-read so the entry is upgraded in place.
+      if (!pinningOn || cached.dependencies !== undefined) {
+        return {
+          react: cached.react,
+          veryfront: cached.veryfront,
+          dependencies: cached.dependencies,
+        };
+      }
     }
 
     const content = await fs.readTextFile(packageJsonPath);
@@ -186,10 +192,15 @@ export async function readProjectDependencyVersions(
     const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
-    // Preserve raw semver strings in the full map so callers can strip ranges as needed.
-    const dependencies: Record<string, string> = {};
-    for (const [name, version] of Object.entries(deps)) {
-      if (typeof version === "string") dependencies[name] = version;
+    // Only materialize the full dependency map when the pinning flag is on.
+    // Flag-off callers only need react/veryfront extraction; building the full
+    // map on the default path wastes memory across up to 256 cached projects.
+    let dependencies: Record<string, string> | undefined;
+    if (pinningOn) {
+      dependencies = {};
+      for (const [name, version] of Object.entries(deps)) {
+        if (typeof version === "string") dependencies[name] = version;
+      }
     }
 
     dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront, dependencies });
