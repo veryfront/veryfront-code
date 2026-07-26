@@ -16,7 +16,7 @@ const txt = (body: string, name = "note.txt", type = "text/plain") =>
 
 describe("chat/upload-handler", () => {
   it("requires explicit unauthenticated mode when authorize is omitted", () =>
-    withTempDir((dir) => {
+    withTempDir(async (dir) => {
       assert(
         (() => {
           try {

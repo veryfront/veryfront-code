@@ -58,9 +58,14 @@ export function createChatStreamWatchdogState(
     toolRunningTimeoutMs: DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
   },
 ): ChatStreamWatchdogState {
+  const idleTimeoutMs = requirePositiveTimeout(options.idleTimeoutMs, "idleTimeoutMs");
+  const toolRunningTimeoutMs = requirePositiveTimeout(
+    options.toolRunningTimeoutMs,
+    "toolRunningTimeoutMs",
+  );
   return {
     phase,
-    timeoutMs: phase === "tool_running" ? options.toolRunningTimeoutMs : options.idleTimeoutMs,
+    timeoutMs: phase === "tool_running" ? toolRunningTimeoutMs : idleTimeoutMs,
     ...(metadata?.toolCallId ? { toolCallId: metadata.toolCallId } : {}),
     ...(metadata?.toolName ? { toolName: metadata.toolName } : {}),
   };
@@ -76,7 +81,9 @@ export function isLongRunningToolRunning(
     current.phase === "tool_running" &&
     typeof current.toolName === "string" &&
     (longRunningToolNames.has(current.toolName) ||
-      longRunningToolPrefixes.some((prefix) => current.toolName?.startsWith(prefix)))
+      longRunningToolPrefixes.some(
+        (prefix) => prefix.length > 0 && current.toolName?.startsWith(prefix),
+      ))
   );
 }
 
@@ -170,6 +177,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
   let state = createChatStreamWatchdogState("response_pending", undefined, resolvedOptions);
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastTimeoutState: ChatStreamWatchdogState | null = null;
+  let disposed = false;
 
   const clearTimer = () => {
     if (timer !== null) {
@@ -179,7 +187,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
   };
 
   const arm = () => {
-    if (controller.signal.aborted) {
+    if (disposed || controller.signal.aborted) {
       return;
     }
 
@@ -212,6 +220,9 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       return lastTimeoutState;
     },
     keepAlive() {
+      if (disposed) {
+        return;
+      }
       if (
         isLongRunningToolRunning(
           state,
@@ -226,6 +237,9 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       arm();
     },
     observe(chunk: ChatUiMessageChunk<MessageMetadata>) {
+      if (disposed) {
+        return;
+      }
       if (isHeartbeatOnlyMetadataChunk(chunk)) {
         return;
       }
@@ -238,6 +252,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       arm();
     },
     dispose() {
+      disposed = true;
       clearTimer();
     },
   };
@@ -248,17 +263,45 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
   const defaultClearTimeout = globalThis.clearTimeout.bind(globalThis);
 
   return {
-    idleTimeoutMs: options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-    toolRunningTimeoutMs: options?.toolRunningTimeoutMs ??
-      DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+    idleTimeoutMs: requirePositiveTimeout(
+      options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+      "idleTimeoutMs",
+    ),
+    toolRunningTimeoutMs: requirePositiveTimeout(
+      options?.toolRunningTimeoutMs ?? DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+      "toolRunningTimeoutMs",
+    ),
     // Default to an empty set — callers must opt in to exempt specific tool names
     // from the idle timeout. Embedding product-specific names here as a default
     // couples this shared utility to application concerns.
     longRunningToolNames: new Set(options?.longRunningToolNames ?? []),
-    longRunningToolPrefixes: [...(options?.longRunningToolPrefixes ?? [])],
+    longRunningToolPrefixes: normalizeLongRunningToolPrefixes(
+      options?.longRunningToolPrefixes ?? [],
+    ),
     setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
     clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
   };
+}
+
+function requirePositiveTimeout(value: number, optionName: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(`Chat stream watchdog ${optionName} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function normalizeLongRunningToolPrefixes(prefixes: Iterable<string>): string[] {
+  const normalized = [...prefixes];
+  if (
+    normalized.some((prefix) =>
+      typeof prefix !== "string" || prefix.length === 0 || prefix.trim().length === 0
+    )
+  ) {
+    throw new TypeError(
+      "Chat stream watchdog longRunningToolPrefixes must contain non-empty strings",
+    );
+  }
+  return normalized;
 }
 
 function maybeUnrefTimer(timer: ReturnType<typeof setTimeout>): void {

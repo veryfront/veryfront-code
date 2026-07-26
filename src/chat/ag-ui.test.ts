@@ -8,6 +8,7 @@ import {
   mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
+import type { ChatUiMessageChunk } from "./protocol.ts";
 
 describe("chat/ag-ui", () => {
   it("keeps the public browser entrypoint off server-side data stream imports", async () => {
@@ -144,6 +145,43 @@ describe("chat/ag-ui", () => {
       delta: "partial",
     }]);
     assertEquals(flushed.remainder, "");
+  });
+
+  it("preserves an SSE CRLF pair split across transport chunks", () => {
+    const state = createAgUiChatEventDecoderState();
+    const initial = decodeAgUiSseChunk(
+      state,
+      "event: TextMessageContent\r",
+    );
+
+    assertEquals(initial.events, []);
+
+    const completed = decodeAgUiSseChunk(
+      state,
+      '\ndata: {"messageId":"msg-1","contentId":"text:0","delta":"hello"}\r\n\r\n',
+    );
+
+    assertEquals(completed.events.length, 1);
+    assertEquals(completed.events[0]?.chatEvents, [{
+      type: "text-delta",
+      id: "msg-1",
+      contentId: "text:0",
+      delta: "hello",
+    }]);
+    assertEquals(completed.remainder, "");
+  });
+
+  it("exposes file metadata on the canonical UI chunk type", () => {
+    const chunk = {
+      type: "file",
+      url: "https://cdn.example.com/report.pdf",
+      mediaType: "application/pdf",
+      filename: "report.pdf",
+      size: 42,
+    } satisfies ChatUiMessageChunk;
+
+    assertEquals(chunk.filename, "report.pdf");
+    assertEquals(chunk.size, 42);
   });
 
   it("preserves AG-UI text content ids when decoding chat stream events", () => {

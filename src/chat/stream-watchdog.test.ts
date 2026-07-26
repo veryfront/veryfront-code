@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -16,6 +16,22 @@ const watchdogOptions = {
 };
 
 describe("chat/stream-watchdog", () => {
+  it("rejects invalid timeout and long-running-prefix configuration", () => {
+    for (const idleTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => createChatStreamWatchdog({ idleTimeoutMs }),
+        RangeError,
+        "idleTimeoutMs",
+      );
+    }
+
+    assertThrows(
+      () => createChatStreamWatchdog({ longRunningToolPrefixes: [""] }),
+      TypeError,
+      "longRunningToolPrefixes",
+    );
+  });
+
   it("transitions through tool input, running, and post-tool idle states", () => {
     const inputStreaming = getNextChatStreamWatchdogState(
       { phase: "response_pending", timeoutMs: 120 },
@@ -169,6 +185,24 @@ describe("chat/stream-watchdog", () => {
 
     assertEquals(watchdog.signal.aborted, false);
     watchdog.dispose();
+  });
+
+  it("cannot be re-armed after disposal", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog(watchdogOptions);
+
+    watchdog.dispose();
+    watchdog.keepAlive();
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "tool-after-dispose",
+      toolName: "bash",
+      input: {},
+    });
+    time.tick(1_000);
+
+    assertEquals(watchdog.signal.aborted, false);
+    assertEquals(watchdog.lastTimeoutState, null);
   });
 
   it("aborts with AbortError and records timeout state", () => {

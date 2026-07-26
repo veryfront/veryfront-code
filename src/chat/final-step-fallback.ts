@@ -628,13 +628,23 @@ function buildToolChunkDescriptorsFromParts(
     if (!isRecord(part)) {
       continue;
     }
-    if (part.type !== "dynamic-tool" && part.type !== "tool_call" && part.type !== "tool-call") {
+    if (
+      typeof part.type !== "string" ||
+      (part.type !== "dynamic-tool" &&
+        part.type !== "tool_call" &&
+        !part.type.startsWith("tool-"))
+    ) {
       continue;
     }
     if (!("toolCallId" in part) || typeof part.toolCallId !== "string") {
       continue;
     }
-    if (!("toolName" in part) || typeof part.toolName !== "string") {
+    const toolName = typeof part.toolName === "string" && part.toolName.length > 0
+      ? part.toolName
+      : part.type !== "tool-call" && part.type.startsWith("tool-")
+      ? part.type.slice("tool-".length)
+      : "";
+    if (toolName.length === 0) {
       continue;
     }
     if (!("input" in part) || !("state" in part) || typeof part.state !== "string") {
@@ -642,7 +652,6 @@ function buildToolChunkDescriptorsFromParts(
     }
 
     const toolCallId = part.toolCallId;
-    const toolName = part.toolName;
     const input = toToolInput(part.input);
     const state = part.state;
 
@@ -900,7 +909,7 @@ async function resolveStreamPromiseWithTimeout<T>(
   } catch {
     return fallback;
   } finally {
-    if (timeoutId) {
+    if (timeoutId !== null) {
       globalThis.clearTimeout(timeoutId);
     }
   }

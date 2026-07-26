@@ -244,6 +244,38 @@ describe("chat/final-step-fallback", () => {
     );
   });
 
+  it("derives a named tool from its canonical tool-prefixed part type", () => {
+    assertEquals(
+      buildMissingFallbackToolChunksFromParts([
+        {
+          type: "tool-weather",
+          toolCallId: "tool-weather-1",
+          input: { city: "Stockholm" },
+          state: "output-available",
+          output: { temperatureC: 21 },
+        },
+      ]),
+      [
+        {
+          type: "tool-input-start",
+          toolCallId: "tool-weather-1",
+          toolName: "weather",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-weather-1",
+          toolName: "weather",
+          input: { city: "Stockholm" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tool-weather-1",
+          output: { temperatureC: 21 },
+        },
+      ],
+    );
+  });
+
   it("appends only missing final-step text suffixes", () => {
     const existingParts = [
       { type: "text" as const, text: "Let me re-read the skill." },

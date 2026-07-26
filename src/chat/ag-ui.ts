@@ -949,9 +949,15 @@ export function decodeAgUiSseChunk(
   state: AgUiChatEventDecoderState,
   chunk: string,
 ): AgUiDecodedChunk {
-  const normalized = `${state.remainder}${normalizeNewlines(chunk)}`;
+  // A transport chunk may end between the CR and LF of an SSE line ending.
+  // Keep that final CR raw until the next chunk so it cannot become a false
+  // blank-line frame delimiter when the following LF arrives.
+  const combined = `${state.remainder}${chunk}`;
+  const hasTrailingCarriageReturn = combined.endsWith("\r");
+  const completeInput = hasTrailingCarriageReturn ? combined.slice(0, -1) : combined;
+  const normalized = normalizeNewlines(completeInput);
   const { frames, remainder } = splitSseFrames(normalized);
-  state.remainder = remainder;
+  state.remainder = `${remainder}${hasTrailingCarriageReturn ? "\r" : ""}`;
 
   const events: AgUiDecodedEvent[] = [];
 

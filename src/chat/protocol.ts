@@ -443,6 +443,8 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
     type: "file";
     mediaType: string;
     url: string;
+    filename?: string;
+    size?: number;
   }
   | NamedToolCallChunk<"tool-input-start">
   | (ToolCallChunk<"tool-input-delta"> & {

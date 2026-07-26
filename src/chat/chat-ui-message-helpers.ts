@@ -27,6 +27,75 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeChildRunAudit(
+  value: unknown,
+): ChatMessageMetadata["childRunAudit"] | undefined {
+  if (
+    !isRecord(value) ||
+    (value.status !== "completed" &&
+      value.status !== "failed" &&
+      value.status !== "cancelled" &&
+      value.status !== "stopped")
+  ) {
+    return undefined;
+  }
+
+  const toolCalls = Array.isArray(value.toolCalls)
+    ? value.toolCalls.flatMap((entry) => {
+      if (
+        !isRecord(entry) ||
+        typeof entry.toolName !== "string" ||
+        typeof entry.toolCallId !== "string"
+      ) {
+        return [];
+      }
+      return [{
+        toolName: entry.toolName,
+        toolCallId: entry.toolCallId,
+        ...("input" in entry ? { input: entry.input } : {}),
+      }];
+    })
+    : undefined;
+  const toolResults = Array.isArray(value.toolResults)
+    ? value.toolResults.flatMap((entry) => {
+      if (
+        !isRecord(entry) ||
+        typeof entry.toolName !== "string" ||
+        typeof entry.toolCallId !== "string" ||
+        !("input" in entry) ||
+        !("output" in entry)
+      ) {
+        return [];
+      }
+      return [{
+        toolName: entry.toolName,
+        toolCallId: entry.toolCallId,
+        input: entry.input,
+        output: entry.output,
+      }];
+    })
+    : undefined;
+
+  return {
+    status: value.status,
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(Number.isSafeInteger(value.steps) && (value.steps as number) >= 0
+      ? { steps: value.steps as number }
+      : {}),
+    ...(Number.isFinite(value.durationMs) && (value.durationMs as number) >= 0
+      ? { durationMs: value.durationMs as number }
+      : {}),
+    ...(toolCalls ? { toolCalls } : {}),
+    ...(toolResults ? { toolResults } : {}),
+    ...(typeof value.terminalErrorCode === "string" || value.terminalErrorCode === null
+      ? { terminalErrorCode: value.terminalErrorCode }
+      : {}),
+    ...(typeof value.terminalErrorMessage === "string" || value.terminalErrorMessage === null
+      ? { terminalErrorMessage: value.terminalErrorMessage }
+      : {}),
+  };
+}
+
 function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -203,6 +272,7 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
     "avatar_url",
     "avatarUrl",
   ]);
+  const childRunAudit = normalizeChildRunAudit(value.childRunAudit);
 
   return {
     ...(typeof value.createdAt === "string" ? { createdAt: value.createdAt } : {}),
@@ -218,6 +288,7 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
     ...(typeof value.streamingMessageId === "string"
       ? { streamingMessageId: value.streamingMessageId }
       : {}),
+    ...(childRunAudit ? { childRunAudit } : {}),
     ...(usage ? { usage } : {}),
     ...billingMetadata,
   };

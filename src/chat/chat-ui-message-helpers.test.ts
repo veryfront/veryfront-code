@@ -64,6 +64,56 @@ describe("chat/chat-ui-message-helpers", () => {
     );
   });
 
+  it("preserves valid child-run audit metadata while dropping unknown fields", () => {
+    assertEquals(
+      normalizeChatMessageMetadata({
+        childRunAudit: {
+          status: "failed",
+          description: "Delegate could not finish",
+          steps: 3,
+          durationMs: 1250,
+          toolCalls: [{
+            toolName: "web_search",
+            toolCallId: "call-1",
+            input: { query: "status" },
+            ignored: true,
+          }],
+          toolResults: [{
+            toolName: "web_search",
+            toolCallId: "call-1",
+            input: { query: "status" },
+            output: { error: "timeout" },
+            ignored: true,
+          }],
+          terminalErrorCode: "TIMEOUT",
+          terminalErrorMessage: "Timed out",
+          ignored: true,
+        },
+      }),
+      {
+        childRunAudit: {
+          status: "failed",
+          description: "Delegate could not finish",
+          steps: 3,
+          durationMs: 1250,
+          toolCalls: [{
+            toolName: "web_search",
+            toolCallId: "call-1",
+            input: { query: "status" },
+          }],
+          toolResults: [{
+            toolName: "web_search",
+            toolCallId: "call-1",
+            input: { query: "status" },
+            output: { error: "timeout" },
+          }],
+          terminalErrorCode: "TIMEOUT",
+          terminalErrorMessage: "Timed out",
+        },
+      },
+    );
+  });
+
   it("returns undefined when extracting empty metadata", () => {
     assertEquals(extractChatMessageMetadata(null), undefined);
     assertEquals(extractChatMessageMetadata({ ignored: true }), undefined);
