@@ -652,22 +652,20 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(packages, ["zod", "pdf-parse", "another-lib"]);
   });
 
-  it("keeps zod for Deno source runs but excludes it from compiled binaries", () => {
+  it("keeps zod as a user dependency for compiled binary resolution (#217)", () => {
     const dependencies = new Map([
       ["zod", "^3.22.0"],
       ["pdf-parse", "^1.1.1"],
     ]);
 
+    // A compiled binary needs zod in this list so a handler's `import { z } from
+    // "zod"` is rewritten to resolve from node_modules instead of 500ing (#217).
     assertEquals(
-      [...getUserDependencies(dependencies, { isDeno: true, isCompiledBinary: false })],
+      [...getUserDependencies(dependencies)],
       [
         ["zod", "^3.22.0"],
         ["pdf-parse", "^1.1.1"],
       ],
-    );
-    assertEquals(
-      [...getUserDependencies(dependencies, { isDeno: true, isCompiledBinary: true })],
-      [["pdf-parse", "^1.1.1"]],
     );
   });
 
