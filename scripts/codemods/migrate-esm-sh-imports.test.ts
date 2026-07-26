@@ -863,6 +863,72 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "mixed versioned+unversioned imports: conflict specifier points at the versioned URL",
+  async () => {
+    // A file imports the same package both without and with a version.  The
+    // unversioned import may appear first in the source, so a plain .find()
+    // on result.rewrites would pick "https://esm.sh/lodash" as the specifier —
+    // a URL that has nothing to do with the version conflict.  pickSpecifier()
+    // must prefer the rewrite whose URL carries the conflicting version.
+    const dir = await Deno.makeTempDir();
+    const source = [
+      'import a from "https://esm.sh/lodash";',
+      'import b from "https://esm.sh/lodash@4.17.21";',
+      "",
+    ].join("\n");
+    const manifest = JSON.stringify(
+      { name: "test", dependencies: { lodash: "^4.17.0" } },
+      null,
+      2,
+    ) + "\n";
+    try {
+      await Deno.writeTextFile(`${dir}/app.ts`, source);
+      await Deno.writeTextFile(`${dir}/package.json`, manifest);
+
+      let report: unknown;
+      const origLog = console.log.bind(console);
+      console.log = (msg: string) => {
+        try {
+          report = JSON.parse(msg);
+        } catch { /* ignore non-JSON lines */ }
+        origLog(msg);
+      };
+      try {
+        await main(["--", dir]);
+      } finally {
+        console.log = origLog;
+      }
+
+      // Both specifiers rewritten to bare form.
+      const written = await Deno.readTextFile(`${dir}/app.ts`);
+      assertStringIncludes(written, 'from "lodash"');
+      // Existing range in package.json is preserved.
+      assertStringIncludes(await Deno.readTextFile(`${dir}/package.json`), '"lodash": "^4.17.0"');
+      // Conflict entry must reference the VERSIONED URL, not "https://esm.sh/lodash".
+      const conflicts = (report as { conflicts: unknown[] }).conflicts;
+      assert(conflicts.length >= 1, "expected at least one conflict entry");
+      const c = conflicts[0] as {
+        pkg: string;
+        existing: string;
+        fromVersion: string;
+        file: string;
+        specifier: string;
+      };
+      assertEquals(c.pkg, "lodash");
+      assertEquals(c.fromVersion, "4.17.21");
+      assertStringIncludes(c.file, "app.ts");
+      assertEquals(
+        c.specifier,
+        "https://esm.sh/lodash@4.17.21",
+        "specifier must point at the versioned URL, not the unversioned one",
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Prototype-key collision safety (Fix 1)
 // ---------------------------------------------------------------------------

@@ -540,6 +540,26 @@ async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
   }
 }
 
+/**
+ * Select the rewrite specifier for a package, preferring the URL that carries
+ * the target version.  When a file imports the same package both with and
+ * without a version, a plain `.find()` on rewrites would return whichever URL
+ * appeared first — which may be the unversioned one, making conflict reports
+ * point at a URL that has nothing to do with the version mismatch.
+ */
+function pickSpecifier(
+  rewrites: Array<{ from: string; to: string }>,
+  pkg: string,
+  version: string,
+): string {
+  const forPkg = rewrites.filter((r) => r.to === pkg || r.to.startsWith(pkg + "/"));
+  return (
+    forPkg.find((r) => r.from.includes(`@${version}`))?.from ??
+      forPkg[0]?.from ??
+      `${pkg}@${version}`
+  );
+}
+
 async function main(args: string[]): Promise<void> {
   const { projectDir, dryRun, failOnConflict } = parseCliOptions(args);
 
@@ -592,10 +612,10 @@ async function main(args: string[]): Promise<void> {
       const existing = allPins.get(pkg);
       if (existing !== undefined && existing.version !== version) {
         // Two different files disagree on the version; first file seen wins.
-        // Look up the URL that introduced the conflicting version in this file.
-        const specifier = result.rewrites.find(
-          (r) => r.to === pkg || r.to.startsWith(pkg + "/"),
-        )?.from ?? `${pkg}@${version}`;
+        // Prefer the URL in this file that actually carries the conflicting
+        // version — a file may also have an unversioned import of the same
+        // package, and a plain find() would return whichever appeared first.
+        const specifier = pickSpecifier(result.rewrites, pkg, version);
         report.conflicts.push({
           pkg,
           existing: existing.version,
@@ -604,9 +624,7 @@ async function main(args: string[]): Promise<void> {
           specifier,
         });
       } else if (existing === undefined) {
-        const specifier = result.rewrites.find(
-          (r) => r.to === pkg || r.to.startsWith(pkg + "/"),
-        )?.from ?? `${pkg}@${version}`;
+        const specifier = pickSpecifier(result.rewrites, pkg, version);
         allPins.set(pkg, { version, file, specifier });
       }
     }
