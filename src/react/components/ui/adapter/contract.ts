@@ -35,7 +35,8 @@ export interface PopoverParts {
   Root: React.FC<DisclosureProps & { children: React.ReactNode }>;
   /** Toggles the surface; `asChild` merges behaviour onto the consumer's element. */
   Trigger: React.FC<
-    React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
   >;
   /** The floating surface, portalled into the token scope while open. */
   Content: React.FC<
@@ -56,7 +57,8 @@ export interface DialogParts {
   Root: React.FC<DisclosureProps & { children: React.ReactNode }>;
   /** Opens the dialog; `asChild` merges onto the consumer's element. */
   Trigger: React.FC<
-    React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
   >;
   /** Overlay + panel; `lead` is an optional node before children (Drawer's drag handle). */
   Content: React.FC<
@@ -65,7 +67,8 @@ export interface DialogParts {
   >;
   /** Closes the dialog; `asChild` merges onto the consumer's element. */
   Close: React.FC<
-    React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
   >;
   /** Hook for skin parts that must close programmatically (e.g. `DialogCancel`). */
   useDialog: () => ModalState;
@@ -77,7 +80,8 @@ export interface MenuParts {
   Root: React.FC<DisclosureProps & { children: React.ReactNode }>;
   /** Toggles the menu; `asChild` merges onto the consumer's element. */
   Trigger: React.FC<
-    React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
   >;
   /** The floating menu surface, portalled into the token scope while open. */
   Content: React.FC<

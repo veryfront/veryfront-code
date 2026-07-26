@@ -34,7 +34,9 @@ export function Popover(props: PopoverProps): React.ReactElement {
 
 /** Trigger — toggles the popover. `asChild` merges onto the child element. */
 export function PopoverTrigger(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   // `aria-haspopup` is supplied by the adapter's trigger (a mechanics concern),
   // so the skin stays engine-neutral.
@@ -46,6 +48,8 @@ export function PopoverTrigger(
 export interface PopoverContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
+  /** Consumer ref for the surface node (forwarded through the adapter). */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Popover surface — rendered below the trigger while open. */

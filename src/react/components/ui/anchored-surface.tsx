@@ -23,6 +23,8 @@ export interface AnchoredTriggerProps extends React.ButtonHTMLAttributes<HTMLBut
   asChild?: boolean;
   /** `aria-haspopup` value -- `"dialog"` for Popover, `"menu"` for DropdownMenu. */
   haspopup: NonNullable<React.AriaAttributes["aria-haspopup"]>;
+  /** Consumer ref for the trigger node. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** Props for `AnchoredContent` (returned by the factory). */

@@ -33,7 +33,9 @@ export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
 
 /** Trigger — toggles the menu. `asChild` merges onto the child element. */
 export function DropdownMenuTrigger(
-  props: React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean },
+  props:
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> },
 ): React.ReactElement {
   const { menu } = useAdapter();
   return <menu.Trigger {...props} />;
@@ -43,6 +45,8 @@ export function DropdownMenuTrigger(
 export interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal alignment relative to the trigger. */
   align?: "start" | "end";
+  /** Consumer ref for the surface node (forwarded through the adapter). */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Menu surface — rendered below the trigger while open. No border (Studio). */
@@ -82,6 +86,8 @@ export interface DropdownMenuItemProps extends React.ButtonHTMLAttributes<HTMLBu
   onSelect?: () => void;
   /** `asChild` merges item styling onto your own element. */
   asChild?: boolean;
+  /** Consumer ref for the item node. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** A selectable menu item. Icons render at `size-3.5` (14px). */

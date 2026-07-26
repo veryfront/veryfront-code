@@ -111,6 +111,8 @@ export function CommandDialog({
 export interface CommandInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "value"> {
   icon?: React.ReactNode;
+  /** Consumer ref for the input node. */
+  ref?: React.Ref<HTMLInputElement>;
 }
 
 /** Search input row — bound to the command's filter query. */
@@ -118,6 +120,7 @@ export function CommandInput({
   className,
   icon,
   placeholder = "Search…",
+  ref,
   ...props
 }: CommandInputProps): React.ReactElement {
   const ctx = useCommand();
@@ -128,6 +131,7 @@ export function CommandInput({
         {icon ?? <SearchIcon className="size-3.5" />}
       </span>
       <input
+        ref={ref}
         value={ctx.search}
         onChange={(e) => ctx.setSearch(e.target.value)}
         placeholder={placeholder}
@@ -155,10 +159,14 @@ export function CommandInput({
 export function CommandList({
   className,
   variant = "default",
+  ref,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "flush" }): React.ReactElement {
+}:
+  & React.HTMLAttributes<HTMLDivElement>
+  & { variant?: "default" | "flush"; ref?: React.Ref<HTMLDivElement> }): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn(
         "max-h-[300px] overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         variant === "flush" ? "p-0" : "p-2.5",
@@ -227,6 +235,8 @@ export interface CommandItemProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   align?: "center" | "start";
   disabled?: boolean;
   onSelect?: (value?: string) => void;
+  /** Consumer ref for the item node. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** A selectable, filterable result row. */
@@ -237,6 +247,7 @@ export function CommandItem({
   disabled,
   onSelect,
   children,
+  ref,
   ...props
 }: CommandItemProps): React.ReactElement {
   const ctx = useCommand();
@@ -252,6 +263,7 @@ export function CommandItem({
 
   return (
     <div
+      ref={ref}
       data-command-item=""
       role="option"
       aria-disabled={disabled || undefined}
