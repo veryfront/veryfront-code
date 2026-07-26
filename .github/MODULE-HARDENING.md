@@ -26,18 +26,19 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    17 |      29.3% | Current formal closure evidence remains valid       |
+| Closed                         |    18 |      31.0% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     1 |       1.7% | No current authoritative-branch review delta exists |
+| Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 57/58 (98.3%). This is progress coverage, not a substitute for the
+coverage of 58/58 (100.0%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
 
+- `chat`
 - `config`
 - `embedding`
 - `eval`
@@ -104,7 +105,7 @@ stricter closure count.
 
 ### Pending current review
 
-- `chat`
+None.
 
 ## Historical recovery context
 
@@ -120,22 +121,22 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `config`, `embedding`, `eval`,
+The current closed review chain covers `chat`, `config`, `embedding`, `eval`,
 `extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
 `repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, and
-`version.ts`. The
-latest independent adversarial knowledge, Markdown, MDX, provider,
-repositories, runs, runtime, and sandbox findings are remediated and
-revalidated. `prompt` and `resource` have now received deep current-state
-reviews and substantial remediation, but remain open while their documented
-cross-cutting findings are unresolved. Each closure requires a complete
-consumer map, deep module-level review, adversarial boundary tests,
-public-contract documentation, and repository-wide static verification.
+`version.ts`. The latest Chat findings and the independent adversarial
+knowledge, Markdown, MDX, provider, repositories, runs, runtime, and sandbox
+findings are remediated and revalidated. `prompt` and `resource` have now
+received deep current-state reviews and substantial remediation, but remain
+open while their documented cross-cutting findings are unresolved. Each
+closure requires a complete consumer map, deep module-level review,
+adversarial boundary tests, public-contract documentation, and repository-wide
+static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
-unit. `chat` is the sole unit still lacking a current authoritative-branch
-review delta and is the next dependency-ordered target after the Studio
-checkpoint is committed, pushed, and synchronized with `origin/main`.
+unit. No unit now lacks a current authoritative-branch review delta; the next
+dependency-ordered work revalidates the touched units and closes the two
+reviewed units with pending cross-cutting fixes.
 
 ### Issues closure checkpoint
 
@@ -1737,5 +1738,94 @@ page assets can make canvas capture fail. The bridge returns a correlated,
 schema-valid generic failure, restores owned scroll state, and does not fall
 back to a remote script or ambient renderer; changing remote asset policy
 requires a separate product and security decision.
+
+### Chat closure checkpoint
+
+The `chat` audit unit owns the canonical chat message and metadata contracts,
+AG-UI decoding, provider-history conversion and preparation, terminal fallback
+recovery, provider-error classification, stream watchdog, and upload route.
+Its production consumers are the hosted Agent stream/runtime, React chat hooks
+and components, the root `veryfront/chat` entrypoint, and the focused
+`veryfront/chat/ag-ui`, `veryfront/chat/message-prep`, `veryfront/chat/types`,
+and `veryfront/chat/uploads` exports. Its direct non-UI dependencies are the
+schema extension, bounded JSON and timer utilities, platform media/runtime
+helpers, integration summaries, and workflow blob adapters. Browser-facing
+helpers retain leaf imports and the public React barrel remains isolated from
+server upload dependencies.
+
+The current Chat findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** upload authorization was
+  permissive when omitted or when a callback returned a non-boolean value, and
+  multipart bodies were materialized before applying a file limit. The
+  consequence was an accidental unauthenticated route and memory use above the
+  advertised limit. Construction now requires an explicit auth policy,
+  authorization succeeds only on literal `true`, request and file bytes are
+  independently bounded before parsing, aborts propagate, malformed or
+  multi-file bodies fail with stable client errors, and custom storage IDs,
+  metadata, and URLs are validated before exposure. The approved fail-closed
+  behavior and migration are documented in the Chat UI guide.
+- **Symptom -> Source -> Consequence -> Remedy:** streamed reasoning could leak
+  lifecycle fragments when disabled, CRLF boundaries split across network
+  chunks were corrupted, permissive SSE IDs advanced replay state, and decoder
+  frame/tool maps grew without a terminal bound. The consequence was protocol
+  drift, duplicate suppression errors, and retained attacker-controlled state.
+  Hosted mapping now suppresses the complete reasoning lifecycle; the AG-UI
+  decoder preserves split CRLF, accepts only canonical non-negative integer
+  IDs, bounds complete and incomplete frames, validates initial state, and
+  releases tool and reasoning state on results and terminal events.
+- **Symptom -> Source -> Consequence -> Remedy:** one active tool overwrote
+  another in the watchdog, long-running exemptions could mask a parallel
+  ordinary tool, keep-alives discarded tool phase, and oversized timer values
+  were silently clamped by hosts. Parallel tool state is now explicit,
+  ordinary tools retain timeout priority, matching outputs remove only their
+  own state, keep-alives preserve active work, disposal is final, and every
+  delay uses the shared portable timer-domain validator.
+- **Symptom -> Source -> Consequence -> Remedy:** provider history accepted
+  unknown, malformed, and role-incompatible parts; tool-result repair could
+  move a reused call ID across a later user turn; cyclic or accessor-backed
+  values could break conversion; and invalid usage/cost numbers survived
+  normalization. Provider messages now use role-aware structural filtering,
+  repair stops at user/system boundaries, JSON normalization is bounded,
+  accessor-free and cycle-safe, metadata schemas and normalizers agree on
+  non-negative integer token counts and finite costs, and uploaded file
+  identity survives UI/provider conversion.
+- **Symptom -> Source -> Consequence -> Remedy:** knowledge citations trusted
+  prefix-only paths, serialized numeric tool results omitted exponent grammar,
+  final-step promises accepted non-portable timeouts, and decorated or deeply
+  nested provider errors could be missed or overflow the stack. Citations now
+  require bounded canonical knowledge paths including decoded-segment checks;
+  serialized results accept the complete JSON number grammar; fallback timers
+  use the shared bounds; and error parsing has bounded text, candidate, and
+  recursion budgets while still extracting balanced JSON from decorated logs.
+- **Symptom -> Source -> Consequence -> Remedy:** public upload identity,
+  decoder limits, and parallel watchdog state were not fully reflected in
+  protocol types and generated reference material. Canonical types now expose
+  filenames, sizes, upload IDs, decoder frame configuration, and active tool
+  state; runtime export tests cover the barrel; the how-to guide and generated
+  API reference were refreshed without mixing instructional and reference
+  content.
+
+Reproducible checkpoint evidence:
+
+- The complete `src/chat` suite passes 58 tests and 151 nested steps with zero
+  failures under coverage.
+- Direct `src/chat` coverage is 82.8 percent branches, 94.1 percent functions,
+  and 80.5 percent lines.
+- The affected Agent/React boundary set passes 15 suites and 151 nested steps
+  with zero failures, including hosted request/runtime, AG-UI encoding, stream
+  finalization, runtime message adaptation, upload persistence, and controlled
+  Chat rendering.
+- Chat composability and antipattern ratchets pass, and all 39 migration
+  codemod tests pass.
+- `deno task verify:quick` passes generated manifests, full formatting and
+  lint, sanitizer/skipped-test baselines, core/dependency/module boundaries,
+  extension contracts, all documentation validators and 736 links, every root
+  entrypoint typecheck, and the isolated Studio browser typecheck.
+
+No unresolved critical or high-confidence Chat production risk remains.
+Cross-module Agent and React files exercised or adjusted by this checkpoint
+remain correctly listed as touched units until their own top-level
+revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

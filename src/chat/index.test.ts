@@ -9,6 +9,7 @@ import type {
   UseConversationChatOptions as ComponentsChatOptions,
   UseConversationChatResult as ComponentsChatResult,
 } from "veryfront/components/chat";
+import type { ChatStreamWatchdogActiveTool } from "./index.ts";
 import type {
   UseConversationChatOptions as ReactComponentsChatOptions,
   UseConversationChatResult as ReactComponentsChatResult,
@@ -26,8 +27,13 @@ const _componentsChatOptions: ComponentsChatOptions = {};
 const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatOptions;
 const _componentsChatResult = null as unknown as ComponentsChatResult;
 const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
+const _activeTool: ChatStreamWatchdogActiveTool = {
+  phase: "tool_running",
+  toolCallId: "tool-1",
+};
 void _reactComponentsChatOptions;
 void _reactComponentsChatResult;
+void _activeTool;
 
 const expectedRuntimeExports = [
   // Canonical component names.

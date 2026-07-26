@@ -426,6 +426,7 @@ export {
 
 export {
   ChatStreamIdleTimeoutError,
+  type ChatStreamWatchdogActiveTool,
   type ChatStreamWatchdogOptions,
   type ChatStreamWatchdogPhase,
   type ChatStreamWatchdogState,
