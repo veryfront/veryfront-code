@@ -839,23 +839,10 @@ Deno.test('mergeEsmShPins: package named "__proto__" is stored as own property, 
   //
   // NOTE: { "__proto__": "1.0.0" } in an object literal is NOT an own property
   // — JS interprets __proto__ as a prototype setter, so Object.entries returns
-  // nothing.  We must build the newPins argument on a null-prototype object so
-  // "__proto__" is a genuine own enumerable property that Object.entries can see.
-  //
-  // Object.defineProperty is used instead of a direct assignment
-  // (`newPins["__proto__"] = "1.0.0"`) because static analysis tools (CodeQL)
-  // cannot always track the null-prototype origin through type casts and
-  // flag the assignment as a potential prototype setter on a normal object.
-  // defineProperty expresses the intent — "create an own enumerable property
-  // named __proto__" — in a way that is unambiguous to both the runtime and
-  // static analyzers.
-  const newPins = Object.create(null) as Record<string, string>;
-  Object.defineProperty(newPins, "__proto__", {
-    value: "1.0.0",
-    enumerable: true,
-    writable: true,
-    configurable: true,
-  });
+  // nothing. Object.fromEntries uses own-property creation semantics, so
+  // "__proto__" remains ordinary enumerable data without invoking the legacy
+  // prototype setter.
+  const newPins = Object.fromEntries([["__proto__", "1.0.0"]]);
   const { updatedDeps, conflicts } = mergeEsmShPins({}, newPins);
 
   // The version must be stored and retrievable.
