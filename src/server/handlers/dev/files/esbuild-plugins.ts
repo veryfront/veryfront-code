@@ -325,7 +325,7 @@ function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string
       // never strip range prefixes to manufacture a pin.
       const version = (rawPin && isExactSemver(rawPin))
         ? rawPin
-        : getCachedNpmVersion(parsed.packageName, projectDir);
+        : getCachedNpmVersion(parsed.packageName, projectDir, rawPin);
       if (version) {
         const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;
         return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${versionedPath}`;

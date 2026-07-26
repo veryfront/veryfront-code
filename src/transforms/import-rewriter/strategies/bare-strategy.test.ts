@@ -238,10 +238,16 @@ describe("BareStrategy", () => {
       globalThis.fetch = originalFetch;
     });
 
-    it("uses a synchronously stored exact version from the npm cache (no registry fetch needed)", () => {
-      // Store an exact semver synchronously — scheduleNpmVersionResolution short-
-      // circuits for exact literals, so no background network request is issued.
-      scheduleNpmVersionResolution("lodash", "4.17.21", "/project");
+    it("uses a version warmed for a dependency without a package.json hint", async () => {
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "4.17.21" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      scheduleNpmVersionResolution("lodash", undefined, "/project");
+      await _pendingResolutions();
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));
       assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
     });
@@ -268,13 +274,47 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier?.includes("3.0.0"), false);
     });
 
-    it("produces a versioned URL for a scoped package from npm cache", () => {
-      scheduleNpmVersionResolution("@tanstack/react-query", "5.28.0", "/project");
+    it("produces a versioned URL for a scoped package from npm cache", async () => {
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "5.28.0" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      scheduleNpmVersionResolution("@tanstack/react-query", undefined, "/project");
+      await _pendingResolutions();
       const result = bareStrategy.rewrite(
         makeInfo("@tanstack/react-query"),
         makeCtx({ target: "browser" }),
       );
       assertEquals(result.specifier?.includes("@tanstack/react-query@5.28.0"), true);
+    });
+
+    it("does not reuse a registry result from an outdated package range", async () => {
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ "dist-tags": { latest: "1.9.0" } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      scheduleNpmVersionResolution("lodash", "^1", "/project");
+      await _pendingResolutions();
+
+      _primeDependenciesCache("/project", { lodash: "^2" });
+      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+
+      const result = bareStrategy.rewrite(
+        makeInfo("lodash"),
+        makeCtx({ target: "browser" }),
+      );
+
+      assertEquals(result.specifier?.includes("lodash@1.9.0"), false);
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/lodash?external=react,react-dom&target=es2022",
+      );
     });
 
     it("still uses tailwindcss pinned version regardless of npm cache", () => {

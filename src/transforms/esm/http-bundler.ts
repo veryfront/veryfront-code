@@ -15,7 +15,6 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
-import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 
@@ -42,33 +41,6 @@ export function hasHttpImports(code: string): boolean {
 
 /** Re-export getReactUrls for backwards compatibility */
 export { getReactUrls };
-
-/**
- * Build an esm.sh URL for a bare specifier, optionally injecting a pinned version.
- *
- * The version is inserted between the package name and any subpath so that
- * specifiers like "lodash/fp" become "https://esm.sh/lodash@4.17.21/fp" rather
- * than the malformed "https://esm.sh/lodash/fp@4.17.21".
- *
- * Exported for unit testing only.
- */
-export function buildBareSpecifierEsmUrl(
-  path: string,
-  getPinVersion?: (packageName: string) => string | undefined,
-): string {
-  if (getPinVersion) {
-    const parsed = parseBarePackageSpecifier(path);
-    // Only inject a pin when the specifier has no inline version specifier.
-    // An inline version (including dist-tags like @next) must be preserved as-is.
-    if (parsed && parsed.version === null) {
-      const pinVersion = getPinVersion(parsed.packageName);
-      if (pinVersion) {
-        return `https://esm.sh/${parsed.packageName}@${pinVersion}${parsed.subpath ?? ""}`;
-      }
-    }
-  }
-  return `https://esm.sh/${path}`;
-}
 
 /**
  * esbuild plugin that fetches HTTP imports and rewrites esm.sh URLs.
@@ -112,10 +84,7 @@ export function createHTTPPlugin(): Plugin {
           return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
         } catch (_) {
           /* expected: bare specifier may not resolve as URL */
-          return {
-            path: buildBareSpecifierEsmUrl(path),
-            namespace: "http-url",
-          };
+          return { path: `https://esm.sh/${path}`, namespace: "http-url" };
         }
       });
 

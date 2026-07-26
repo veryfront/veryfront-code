@@ -289,7 +289,10 @@ describe(
 
       // Wait for the background registry fetch (fired inside onResolve) to settle.
       await _pendingResolutions();
-      assertEquals(getCachedNpmVersion("lodash", "/project"), "4.17.21");
+      assertEquals(
+        getCachedNpmVersion("lodash", "/project", undefined),
+        "4.17.21",
+      );
     });
   },
 );

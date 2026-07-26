@@ -130,7 +130,7 @@ function resolveBareImportPin(bareSpecifier: string, projectDir: string): string
   // semver — never strip range prefixes to manufacture a pin.
   if (rawPin && isExactSemver(rawPin)) return rawPin;
 
-  const cached = getCachedNpmVersion(parsed.packageName, projectDir);
+  const cached = getCachedNpmVersion(parsed.packageName, projectDir, rawPin);
   if (cached) return cached;
 
   // Cache is cold — schedule a background registry fetch to warm it for the

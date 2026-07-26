@@ -170,17 +170,16 @@ export async function readProjectDependencyVersions(
     const mtimeMs = getMtimeMs(stat.mtime);
     const cached = dependencyVersionCache.get(packageJsonPath);
 
-    if (cached && cached.mtimeMs === mtimeMs) {
-      // Serve the cached entry unless pinning just turned on and the entry was
-      // written during a flag-off period (no dependencies stored). In that case
-      // fall through to re-read so the entry is upgraded in place.
-      if (!pinningOn || cached.dependencies !== undefined) {
-        return {
-          react: cached.react,
-          veryfront: cached.veryfront,
-          dependencies: cached.dependencies,
-        };
-      }
+    if (
+      cached &&
+      cached.mtimeMs === mtimeMs &&
+      (!pinningOn || cached.dependencies !== undefined)
+    ) {
+      return {
+        react: cached.react,
+        veryfront: cached.veryfront,
+        dependencies: pinningOn ? cached.dependencies : undefined,
+      };
     }
 
     const content = await fs.readTextFile(packageJsonPath);

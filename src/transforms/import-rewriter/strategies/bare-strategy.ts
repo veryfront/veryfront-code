@@ -71,7 +71,7 @@ function resolvePinnedVersion(
   if (rawPin && isExactSemver(rawPin)) return rawPin;
 
   // 2. npm registry cache (populated by a prior background fetch).
-  const registryVersion = getCachedNpmVersion(packageName, ctx.projectDir);
+  const registryVersion = getCachedNpmVersion(packageName, ctx.projectDir, rawPin);
   if (registryVersion) return registryVersion;
 
   // 3. Cache cold: schedule a background resolution for the next render.

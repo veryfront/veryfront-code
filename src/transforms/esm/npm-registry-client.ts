@@ -17,6 +17,10 @@ import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 
 const logger = rendererLogger.component("npm-registry-client");
+const SEMVER_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
+const EXACT_SEMVER_RE = new RegExp(
+  `^\\d+\\.\\d+\\.\\d+(?:-${SEMVER_IDENTIFIER})?(?:\\+${SEMVER_IDENTIFIER})?$`,
+);
 
 /**
  * Maximum number of distinct project directories held in the version cache.
@@ -29,7 +33,7 @@ const VERSION_CACHE_MAX_PROJECTS = 256;
  * Storing the hint lets scheduleNpmVersionResolution detect when
  * package.json changes (e.g. "^1" → "^2") and re-resolve accordingly. */
 interface CachedEntry {
-  version: string;
+  version: string | undefined;
   hint: string | undefined;
 }
 
@@ -52,7 +56,7 @@ function pendingKey(projectDir: string, packageName: string, hint: string | unde
 
 /** True when the string is a bare three-part semver version (no range prefix). */
 export function isExactSemver(s: string): boolean {
-  return /^\d+\.\d+\.\d+(-[\w.-]+)?(\+[\w.-]+)?$/.test(s);
+  return EXACT_SEMVER_RE.test(s);
 }
 
 /**
@@ -69,15 +73,17 @@ export function isDependencyPinningEnabled(): boolean {
 export function getCachedNpmVersion(
   packageName: string,
   projectDir: string,
+  rangeHint: string | undefined,
 ): string | undefined {
-  return versionCache.get(projectDir)?.get(packageName)?.version;
+  const entry = versionCache.get(projectDir)?.get(packageName);
+  return entry !== undefined && entry.hint === rangeHint ? entry.version : undefined;
 }
 
-function setCachedVersion(
+function setCurrentResolution(
   projectDir: string,
   packageName: string,
-  version: string,
-  hint?: string,
+  hint: string | undefined,
+  version?: string,
 ): void {
   let projectCache = versionCache.get(projectDir);
   if (!projectCache) {
@@ -114,21 +120,26 @@ export function scheduleNpmVersionResolution(
   projectDir: string,
   onResolved?: (version: string, packageName: string, projectDir: string) => void,
 ): void {
-  // Already cached: reuse when the hint matches.
-  // A different hint means the package.json range changed — evict and re-resolve.
-  const existingEntry = versionCache.get(projectDir)?.get(packageName);
-  if (existingEntry !== undefined) {
-    if (existingEntry.hint === rangeHint) return;
-    versionCache.get(projectDir)!.delete(packageName);
-  }
+  const cached = versionCache.get(projectDir)?.get(packageName);
+  if (
+    cached !== undefined &&
+    cached.hint === rangeHint &&
+    cached.version !== undefined
+  ) return;
 
   // Exact version from package.json: use it immediately without a network fetch.
   // Only short-circuit when the raw hint is already an exact semver — never strip
   // range prefixes (^, ~, >=) to manufacture a pin that package.json didn't contain.
   if (rangeHint && isExactSemver(rangeHint)) {
-    setCachedVersion(projectDir, packageName, rangeHint, rangeHint);
+    setCurrentResolution(projectDir, packageName, rangeHint, rangeHint);
     onResolved?.(rangeHint, packageName, projectDir);
     return;
+  }
+
+  // Mark this declaration as current before consulting the in-flight registry.
+  // A late fetch for a previous range will then be ignored.
+  if (cached === undefined || cached.hint !== rangeHint) {
+    setCurrentResolution(projectDir, packageName, rangeHint);
   }
 
   // In-flight deduplication.
@@ -142,10 +153,11 @@ export function scheduleNpmVersionResolution(
   // fully initialized — no temporal dead zone issue.
   const resolution: Promise<void> = fetchLatestNpmVersion(packageName)
     .then((version) => {
-      if (version) {
-        setCachedVersion(projectDir, packageName, version, rangeHint);
-        onResolved?.(version, packageName, projectDir);
-      }
+      if (!version) return;
+      const current = versionCache.get(projectDir)?.get(packageName);
+      if (current === undefined || current.hint !== rangeHint) return;
+      current.version = version;
+      onResolved?.(version, packageName, projectDir);
     })
     .catch(() => {
       // Silently ignored — unversioned fallback remains in effect.
@@ -262,12 +274,15 @@ export async function postDependencyResolution(
 }
 
 /**
- * Clear the in-process caches. For use in tests only.
+ * Clear resolved versions. For use in tests only.
+ *
+ * This intentionally retains in-flight tracking: callers must still be able
+ * to await already-started fetches via _pendingResolutions() so their handles
+ * and timers do not escape test teardown. Tests that schedule work should
+ * await _pendingResolutions() before calling this helper.
  */
 export function _clearNpmVersionCache(): void {
   versionCache.clear();
-  pendingFetches.clear();
-  pendingResolutionPromises.clear();
 }
 
 /**

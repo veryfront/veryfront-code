@@ -219,28 +219,26 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
 
   it("does not materialize the dependency map when the flag is off", async () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
-    await readProjectDependencyVersions(tmpDir);
-    // react/veryfront extraction still works (needed by resolveProjectReactVersion)
-    const cached = await readProjectDependencyVersions(tmpDir);
-    assertEquals(cached.react, "18.3.1");
-    // Full dependency map must NOT be allocated on the flag-off path
+    const result = await readProjectDependencyVersions(tmpDir);
+
+    assertEquals(result.react, "18.3.1");
+    assertEquals(result.dependencies, undefined);
     assertEquals(getProjectDependenciesSync(tmpDir), undefined);
   });
 
   it("materializes the dependency map when the flag is on", async () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
-    await readProjectDependencyVersions(tmpDir);
+    const result = await readProjectDependencyVersions(tmpDir);
+
+    assertEquals(result.dependencies?.["lodash"], "4.17.21");
     assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.21");
   });
 
   it("upgrades a flag-off cache entry when the flag is later turned on", async () => {
-    // First read: flag off — no dependency map stored
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
     await readProjectDependencyVersions(tmpDir);
     assertEquals(getProjectDependenciesSync(tmpDir), undefined);
 
-    // Flag turns on in the same process — next read must upgrade the entry
-    // even though the file mtime has not changed
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     await readProjectDependencyVersions(tmpDir);
     assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.21");

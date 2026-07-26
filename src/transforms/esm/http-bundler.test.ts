@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildBareSpecifierEsmUrl, bundleHttpImports, hasHttpImports } from "./http-bundler.ts";
+import { bundleHttpImports, hasHttpImports } from "./http-bundler.ts";
 
 describe("transforms/esm/http-bundler", () => {
   describe("hasHttpImports", () => {
@@ -97,58 +97,6 @@ describe("transforms/esm/http-bundler", () => {
       const code = `import lib from "https://esm.sh/lodash@4";`;
       const result = await bundleHttpImports(code, "/tmp/cache", "abc123", "19.0.0");
       assertEquals(result.includes("react@19.0.0"), true);
-    });
-  });
-
-  describe("buildBareSpecifierEsmUrl", () => {
-    it("returns plain esm.sh URL when no pin callback provided", () => {
-      assertEquals(buildBareSpecifierEsmUrl("lodash"), "https://esm.sh/lodash");
-    });
-
-    it("returns plain esm.sh URL when callback returns undefined", () => {
-      assertEquals(buildBareSpecifierEsmUrl("lodash", () => undefined), "https://esm.sh/lodash");
-    });
-
-    it("injects pin version for a simple package name", () => {
-      assertEquals(
-        buildBareSpecifierEsmUrl("lodash", () => "4.17.21"),
-        "https://esm.sh/lodash@4.17.21",
-      );
-    });
-
-    it("injects pin version before subpath — lodash/fp", () => {
-      // Without the fix this would produce "https://esm.sh/lodash/fp@4.17.21" (malformed).
-      assertEquals(
-        buildBareSpecifierEsmUrl("lodash/fp", () => "4.17.21"),
-        "https://esm.sh/lodash@4.17.21/fp",
-      );
-    });
-
-    it("does not override an inline numeric version even when a pin callback is provided", () => {
-      // The specifier already has a version (@4.17.21); the pin callback must
-      // not overwrite it with a different version.
-      assertEquals(
-        buildBareSpecifierEsmUrl("lodash@4.17.21", () => "3.0.0"),
-        "https://esm.sh/lodash@4.17.21",
-      );
-    });
-
-    it("does not override an inline dist-tag (pkg@next) with a numeric pin", () => {
-      assertEquals(
-        buildBareSpecifierEsmUrl("some-pkg@next", () => "4.0.0"),
-        "https://esm.sh/some-pkg@next",
-      );
-    });
-
-    it("handles scoped packages with a subpath", () => {
-      assertEquals(
-        buildBareSpecifierEsmUrl("@tanstack/react-query/internals", () => "5.0.0"),
-        "https://esm.sh/@tanstack/react-query@5.0.0/internals",
-      );
-    });
-
-    it("returns plain esm.sh URL for a subpath specifier when no pin", () => {
-      assertEquals(buildBareSpecifierEsmUrl("lodash/fp"), "https://esm.sh/lodash/fp");
     });
   });
 });
