@@ -103,6 +103,20 @@ function authorize(request: Request) {
 export const { POST, GET, DELETE } = createChatUploadHandler({ authorize });
 ```
 
+The authorization callback must return literal `true` to permit a request.
+`false` and invalid runtime results such as `undefined` are denied.
+
+To change the upload limits, bound the complete multipart request separately
+from the file bytes:
+
+```ts
+export const { POST, GET, DELETE } = createChatUploadHandler({
+  authorize,
+  maxFileSize: 25 * 1024 * 1024,
+  maxBodySize: 25 * 1024 * 1024 + 64 * 1024,
+});
+```
+
 ```tsx
 <Chat
   chat={chat}
