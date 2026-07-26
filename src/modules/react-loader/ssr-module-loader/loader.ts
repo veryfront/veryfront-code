@@ -68,6 +68,7 @@ import {
   createDependencyHashCache,
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -135,9 +136,19 @@ function publishTransformCacheIfCurrent(input: {
   return true;
 }
 
+function getMdxEsmCacheVariant(
+  options: Pick<SSRModuleLoaderOptions, "dependencyPinningCacheKey" | "moduleServerOrigin">,
+): string | undefined {
+  return buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+}
+
 /** Internal test seam for the singleflight timeout lifecycle. */
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
+  getMdxEsmCacheVariant,
   publishTransformCacheIfCurrent,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
@@ -387,7 +398,7 @@ export class SSRModuleLoader {
       this.options.projectDir,
       this.options.reactVersion,
       mdxCacheDirs,
-      this.options.dependencyPinningCacheKey,
+      getMdxEsmCacheVariant(this.options),
     );
   }
 
@@ -614,7 +625,7 @@ export class SSRModuleLoader {
           contentSourceId: this.options.contentSourceId,
         },
         this.options.reactVersion,
-        this.options.dependencyPinningCacheKey,
+        getMdxEsmCacheVariant(this.options),
       );
 
       if (mdxCacheResult.status === "hit") {

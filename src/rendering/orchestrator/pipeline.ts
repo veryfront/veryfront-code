@@ -21,6 +21,10 @@ import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { FILE_NOT_FOUND, RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
+import {
+  buildDependencyPinnedRenderCacheKey,
+  type RenderCacheKeyComposition,
+} from "#veryfront/cache/keys/dependency-pinning.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   extractRelativePath as extractRelativePathShared,
@@ -142,6 +146,8 @@ export interface RenderPipelineConfig {
   directories?: RouterDirectories;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
+  /** Prefixes applied after the pipeline returns a render cache override. */
+  renderCacheKeyComposition?: Omit<RenderCacheKeyComposition, "colorScheme">;
 }
 
 interface DataResolutionResult {
@@ -1292,14 +1298,17 @@ export class RenderPipeline {
     options: RenderOptions | undefined,
     dependencyPinningCacheKey: string,
   ): string | null {
-    const pinningEnabled = dependencyPinningCacheKey.startsWith("on:");
+    const composition: RenderCacheKeyComposition = {
+      ...(this.config.renderCacheKeyComposition ?? {}),
+      colorScheme: options?.colorScheme,
+    };
     if (options?.cacheKey) {
-      const baseKey = pinningEnabled
-        ? `${options.cacheKey}:pins:${dependencyPinningCacheKey}`
-        : options.cacheKey;
-      return pinningEnabled && options.url
-        ? `${baseKey}:origin:${encodeURIComponent(options.url.origin)}`
-        : baseKey;
+      return buildDependencyPinnedRenderCacheKey(
+        options.cacheKey,
+        dependencyPinningCacheKey,
+        options.url?.origin,
+        composition,
+      );
     }
     const req = options?.request;
     if (req) {
@@ -1307,9 +1316,11 @@ export class RenderPipeline {
     }
 
     const baseKey = buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
-    const cacheKey = pinningEnabled ? `${baseKey}:pins:${dependencyPinningCacheKey}` : baseKey;
-    return pinningEnabled && options?.url
-      ? `${cacheKey}:origin:${encodeURIComponent(options.url.origin)}`
-      : cacheKey;
+    return buildDependencyPinnedRenderCacheKey(
+      baseKey,
+      dependencyPinningCacheKey,
+      options?.url?.origin,
+      composition,
+    );
   }
 }

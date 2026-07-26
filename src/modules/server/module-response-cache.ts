@@ -9,6 +9,9 @@ import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_ENTRIES = 10_000;
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const RELEASE_MODULE_RESPONSE_DISTRIBUTED_TTL_SEC = TRANSFORM_DISTRIBUTED_TTL_SEC;
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
+const DISTRIBUTED_MODULE_CACHE_PREFIX = "module";
 
 export interface ReleaseModuleResponseCacheEntry {
   body: string;
@@ -25,6 +28,7 @@ export interface ReleaseModuleResponseCacheKeyOptions {
   runtimeVersion: string;
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   releaseDependencyManifestVersion?: number | null;
   modulePath: string;
 }
@@ -98,6 +102,26 @@ function sanitizeModulePathForCacheKey(modulePath: string): string {
   return `${hashString(modulePath)}-${readable}`;
 }
 
+/**
+ * Keep local LRU identities readable and lossless while deriving a bounded key
+ * for the distributed API. CacheBackends.module() adds `module:` after this
+ * boundary, so validation must include that otherwise-hidden prefix.
+ */
+function resolveDistributedModuleResponseCacheKey(cacheKey: string): string {
+  const completeKey = `${DISTRIBUTED_MODULE_CACHE_PREFIX}:${cacheKey}`;
+  if (
+    completeKey.length <= API_CACHE_KEY_MAX_LENGTH &&
+    API_CACHE_KEY_PATTERN.test(completeKey)
+  ) {
+    return cacheKey;
+  }
+
+  const identity = `${cacheKey.length}:${cacheKey}`;
+  return `module-response:hash-${hashString(`module-response-distributed:a:${identity}`)}-${
+    hashString(`module-response-distributed:b:${identity}`)
+  }`;
+}
+
 export function buildReleaseModuleResponseCacheKey(
   options: ReleaseModuleResponseCacheKeyOptions,
 ): string {
@@ -112,6 +136,7 @@ export function buildReleaseModuleResponseCacheKey(
   // byte, which the distributed cache backend's key validator also rejects.
   const cacheVariant = buildDependencyPinningCacheVariant(
     options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
   );
   return [
     "module-server-release-response",
@@ -139,7 +164,8 @@ export async function getReleaseModuleResponse(
   if (!distributedCache) return undefined;
 
   try {
-    const raw = await distributedCache.get(cacheKey);
+    const distributedCacheKey = resolveDistributedModuleResponseCacheKey(cacheKey);
+    const raw = await distributedCache.get(distributedCacheKey);
     if (!raw) return undefined;
 
     const entry = parseDistributedEntry(raw);
@@ -162,8 +188,9 @@ export async function rememberReleaseModuleResponse(
   if (!distributedCache) return;
 
   try {
+    const distributedCacheKey = resolveDistributedModuleResponseCacheKey(cacheKey);
     await distributedCache.set(
-      cacheKey,
+      distributedCacheKey,
       JSON.stringify(entry),
       RELEASE_MODULE_RESPONSE_DISTRIBUTED_TTL_SEC,
     );

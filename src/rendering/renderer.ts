@@ -39,6 +39,10 @@ import {
   buildRenderCachePrefix,
   type QueryParamCacheOptions,
 } from "#veryfront/cache/keys.ts";
+import {
+  buildDependencyPinnedRenderCacheKey,
+  type RenderCacheKeyComposition,
+} from "#veryfront/cache/keys/dependency-pinning.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import { getEnvNumber } from "#veryfront/compat/process.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
@@ -442,6 +446,12 @@ export class Renderer {
         options.cacheKey,
         options.dependencyPinningCacheKey,
         options.url?.origin,
+        {
+          backendPrefix: "render",
+          cachePrefix: ctx.cachePrefix,
+          addPagePrefix: true,
+          colorScheme: options.colorScheme,
+        },
       );
     }
 
@@ -453,10 +463,17 @@ export class Renderer {
     // Get query param handling options from config
     const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
 
+    const baseCacheKey = buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
     return this.withDependencyPinningCacheKey(
-      buildQueryAwareCacheKey(slug, options?.url, queryParamOptions),
+      baseCacheKey,
       options?.dependencyPinningCacheKey,
       options?.url?.origin,
+      {
+        backendPrefix: "render",
+        cachePrefix: ctx.cachePrefix,
+        addPagePrefix: true,
+        colorScheme: options?.colorScheme,
+      },
     );
   }
 
@@ -464,12 +481,14 @@ export class Renderer {
     cacheKey: string,
     dependencyPinningCacheKey: string | undefined,
     moduleServerOrigin?: string,
+    composition?: RenderCacheKeyComposition,
   ): string {
-    if (!dependencyPinningCacheKey?.startsWith("on:")) return cacheKey;
-    const pinnedKey = `${cacheKey}:pins:${dependencyPinningCacheKey}`;
-    return moduleServerOrigin
-      ? `${pinnedKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
-      : pinnedKey;
+    return buildDependencyPinnedRenderCacheKey(
+      cacheKey,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+      composition,
+    );
   }
 
   private scheduleProductionRenderPrewarm(
@@ -1171,6 +1190,11 @@ export class Renderer {
       config: ctx.config,
       directories: ctx.config.directories,
       queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
+      renderCacheKeyComposition: {
+        backendPrefix: "render",
+        cachePrefix: ctx.cachePrefix,
+        addPagePrefix: true,
+      },
     });
 
     return { pipeline };

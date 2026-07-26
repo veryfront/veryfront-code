@@ -40,6 +40,8 @@ const crossProjectImport: CrossProjectImport = {
   version: "1.2.3",
   path: "components/Button.tsx",
 };
+const SNAPSHOT_A_PIN_KEY = "on:34n9smy47dk9";
+const SNAPSHOT_B_PIN_KEY = "on:34n8mjmdp7io";
 
 describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", () => {
   it("returns cached temp path without fetching", async () => {
@@ -109,17 +111,17 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
     const snapshotA = buildCrossProjectImportCacheKey({
       ...base,
       moduleServerOrigin: "https://app.example",
-      dependencyPinningCacheKey: "on:snapshot-a",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
     });
     const snapshotB = buildCrossProjectImportCacheKey({
       ...base,
       moduleServerOrigin: "https://app.example",
-      dependencyPinningCacheKey: "on:snapshot-b",
+      dependencyPinningCacheKey: SNAPSHOT_B_PIN_KEY,
     });
     const otherOrigin = buildCrossProjectImportCacheKey({
       ...base,
       moduleServerOrigin: "https://other.example",
-      dependencyPinningCacheKey: "on:snapshot-a",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
     });
 
     assertNotEquals(snapshotA, snapshotB);

@@ -27,10 +27,17 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
+const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
+
 describe("cache/keys", () => {
   describe("buildComponentCacheKey", () => {
     it("isolates pin-on hydration transforms by request origin", () => {
-      const base = ["project", "/app/page.tsx", "content-hash", "on:snapshot"] as const;
+      const base = [
+        "project",
+        "/app/page.tsx",
+        "content-hash",
+        CANONICAL_PIN_KEY,
+      ] as const;
       const originA = buildComponentCacheKey(...base, "https://a.example");
       const originB = buildComponentCacheKey(...base, "https://b.example");
 

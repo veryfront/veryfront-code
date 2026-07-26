@@ -9,6 +9,7 @@ const logger = rendererLogger.component("ssr-module-loader");
 const SSR_MODULE_CACHE_PREFIX = "ssr-module";
 // Mirrors the maximum key length accepted by veryfront-api.
 const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
 const SHA256_KEY_PREFIX = "sha256:";
 
 /**
@@ -32,7 +33,12 @@ export function isSSRDistributedCacheEnabled(): boolean {
 
 async function getDistributedCacheKey(cacheKey: string): Promise<string> {
   const fullyPrefixedKey = `${SSR_MODULE_CACHE_PREFIX}:${cacheKey}`;
-  if (fullyPrefixedKey.length <= API_CACHE_KEY_MAX_LENGTH) return cacheKey;
+  if (
+    fullyPrefixedKey.length <= API_CACHE_KEY_MAX_LENGTH &&
+    API_CACHE_KEY_PATTERN.test(fullyPrefixedKey)
+  ) {
+    return cacheKey;
+  }
 
   return `${SHA256_KEY_PREFIX}${await computeHash(fullyPrefixedKey)}`;
 }

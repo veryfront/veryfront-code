@@ -602,6 +602,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           runtimeVersion: VERSION,
           reactVersion,
           dependencyPinningCacheKey,
+          moduleServerOrigin: url.origin,
           releaseDependencyManifestVersion,
           modulePath,
         })

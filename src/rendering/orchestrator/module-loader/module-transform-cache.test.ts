@@ -26,6 +26,8 @@ import {
   transformModuleCodeWithCache,
 } from "./module-transform-cache.ts";
 
+const CHANGED_PIN_KEY = "on:34n9smy47dk9";
+
 function createDeps(
   overrides: Partial<ModuleTransformCacheDeps>,
 ): ModuleTransformCacheDeps {
@@ -105,20 +107,20 @@ describe("module-loader/module-transform-cache", () => {
       ...baseInput,
       mode: "development",
       reactVersion: "19.0.0",
-      dependencyPinningCacheKey: "on:changed-pins",
+      dependencyPinningCacheKey: CHANGED_PIN_KEY,
     });
     await transformModuleCodeWithCache({
       ...baseInput,
       mode: "development",
       reactVersion: "19.0.0",
-      dependencyPinningCacheKey: "on:changed-pins",
+      dependencyPinningCacheKey: CHANGED_PIN_KEY,
       moduleServerOrigin: "https://a.example",
     });
     await transformModuleCodeWithCache({
       ...baseInput,
       mode: "development",
       reactVersion: "19.0.0",
-      dependencyPinningCacheKey: "on:changed-pins",
+      dependencyPinningCacheKey: CHANGED_PIN_KEY,
       moduleServerOrigin: "https://b.example",
     });
 

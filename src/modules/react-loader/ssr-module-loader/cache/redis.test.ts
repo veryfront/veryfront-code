@@ -8,6 +8,7 @@ import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const API_CACHE_KEY_MAX_LENGTH = 512;
 const SSR_MODULE_CACHE_PREFIX = "ssr-module";
+const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
 
 describe("SSR distributed cache keys", () => {
   it("bounds long read and write keys with the same full SHA-256 identity", async () => {
@@ -43,24 +44,32 @@ describe("SSR distributed cache keys", () => {
         adapter: denoAdapter,
         dev: true,
         reactVersion: "19.1.1",
-        dependencyPinningCacheKey: "on:snapshot",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
         moduleServerOrigin,
       });
       const rawKey = manager.getCacheKey(
-        `/project/${"nested/".repeat(40)}page.tsx:content-hash`,
+        `/project/${"nested/".repeat(90)}page.tsx:content-hash`,
       );
       const fullyPrefixedRawKey = `${SSR_MODULE_CACHE_PREFIX}:${rawKey}`;
+      const unsafeRawKey = manager.getCacheKey(
+        "/project/app/(marketing)/[slug].tsx:content-hash",
+      );
+      const fullyPrefixedUnsafeKey = `${SSR_MODULE_CACHE_PREFIX}:${unsafeRawKey}`;
 
       assertEquals(fullyPrefixedRawKey.length > API_CACHE_KEY_MAX_LENGTH, true);
+      assertEquals(fullyPrefixedUnsafeKey.length <= API_CACHE_KEY_MAX_LENGTH, true);
 
       await redis.getFromRedis(rawKey);
       await redis.setInRedis(rawKey, "export default 1;");
+      await redis.getFromRedis(unsafeRawKey);
+      await redis.setInRedis(unsafeRawKey, "export default 1;");
       await redis.getFromRedis("short-key");
       await redis.setInRedis("short-key", "export default 1;");
 
       const expectedLongKey = `sha256:${await computeHash(fullyPrefixedRawKey)}`;
-      assertEquals(readKeys, [expectedLongKey, "short-key"]);
-      assertEquals(writeKeys, [expectedLongKey, "short-key"]);
+      const expectedUnsafeKey = `sha256:${await computeHash(fullyPrefixedUnsafeKey)}`;
+      assertEquals(readKeys, [expectedLongKey, expectedUnsafeKey, "short-key"]);
+      assertEquals(writeKeys, [expectedLongKey, expectedUnsafeKey, "short-key"]);
       assertEquals(
         `${SSR_MODULE_CACHE_PREFIX}:${expectedLongKey}`.length <= API_CACHE_KEY_MAX_LENGTH,
         true,

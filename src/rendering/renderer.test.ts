@@ -1815,6 +1815,38 @@ describe("Renderer release asset cache isolation", () => {
 });
 
 describe("Renderer dependency pin cache isolation", () => {
+  it("bounds the complete API render key while preserving the flag-off override", () => {
+    const renderer = new Renderer();
+    const buildCacheKey = (renderer as unknown as {
+      buildCacheKey(
+        slug: string,
+        ctx: RenderContext,
+        options?: RenderOptions,
+      ): string | null;
+    }).buildCacheKey.bind(renderer);
+    const ctx = makeRenderContext();
+    const legacyKey = "a".repeat(440);
+    const options: RenderOptions = {
+      cacheKey: legacyKey,
+      colorScheme: "dark",
+      dependencyPinningCacheKey: "on:3w5e11264sgsf",
+      url: new URL("https://preview.example.test"),
+    };
+    const cacheKey = buildCacheKey("/", ctx, options);
+
+    assertEquals(typeof cacheKey, "string");
+    const completeKey = `render:${ctx.cachePrefix}:page:${cacheKey}:theme-dark`;
+    assertEquals(completeKey.length <= 512, true);
+    assertEquals(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey), true);
+    assertEquals(
+      buildCacheKey("/", ctx, {
+        ...options,
+        dependencyPinningCacheKey: "off",
+      }),
+      legacyKey,
+    );
+  });
+
   it("misses the outer render cache when the package map changes", async () => {
     const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
     const projectDir = await Deno.makeTempDir({ prefix: "vf-renderer-pins-" });

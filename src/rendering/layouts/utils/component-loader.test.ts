@@ -14,6 +14,8 @@ import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
+const SNAPSHOT_A_PIN_KEY = "on:34n9smy47dk9";
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (!predicate()) {
@@ -494,12 +496,12 @@ describe("rendering/layouts/utils/component-loader", () => {
         "preview-main",
         { imports: {} },
         "18.3.1",
-        "on:snapshot-a",
+        SNAPSHOT_A_PIN_KEY,
         { zod: "3.0.0" },
       );
 
       assertEquals(moduleReactVersion, "18.3.1");
-      assertEquals(modulePinKey, "on:snapshot-a");
+      assertEquals(modulePinKey, SNAPSHOT_A_PIN_KEY);
       assertEquals(moduleDependencies, { zod: "3.0.0" });
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
@@ -536,12 +538,15 @@ describe("rendering/layouts/utils/component-loader", () => {
       "preview-main",
       "19.1.1",
       undefined,
-      "on:snapshot-a",
+      SNAPSHOT_A_PIN_KEY,
       { zod: "3.0.0" },
     );
 
     assertEquals(loaded, CachedLayout);
-    assertEquals(requestedCacheKey.endsWith(":19.1.1:pins:on:snapshot-a"), true);
+    assertEquals(
+      requestedCacheKey.endsWith(`:19.1.1:pins:${SNAPSHOT_A_PIN_KEY}`),
+      true,
+    );
   });
 
   it("preserves the legacy TSX layout cache key when pinning is off", async () => {

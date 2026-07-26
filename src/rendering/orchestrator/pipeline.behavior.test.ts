@@ -27,6 +27,8 @@ import {
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
+const SNAPSHOT_A_PIN_KEY = "on:34n9smy47dk9";
+const SNAPSHOT_B_PIN_KEY = "on:34n8mjmdp7io";
 
 function createPipeline(
   pagePath: string,
@@ -202,7 +204,7 @@ describe("RenderPipeline behavior", () => {
 
     await pipeline.resolvePageData("/", {
       ...requestOptions,
-      dependencyPinningCacheKey: "on:snapshot-b",
+      dependencyPinningCacheKey: SNAPSHOT_B_PIN_KEY,
       dependencyPinningDependencies: { react: "^19.0.0" },
     });
     const afterSnapshotB = observedVersions.slice();
@@ -210,7 +212,7 @@ describe("RenderPipeline behavior", () => {
 
     await pipeline.resolvePageData("/", {
       ...requestOptions,
-      dependencyPinningCacheKey: "on:snapshot-a",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
       dependencyPinningDependencies: { react: "^18.3.1" },
     });
 
@@ -398,6 +400,37 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+  });
+
+  it("bounds the complete API render key while preserving the flag-off override", () => {
+    const cachePrefix = "project:preview:branch:v1";
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      renderCacheKeyComposition: {
+        backendPrefix: "render",
+        cachePrefix,
+        addPagePrefix: true,
+      },
+    });
+    const buildCacheKey = (pipeline as unknown as {
+      buildCacheKey(
+        slug: string,
+        options: RenderOptions | undefined,
+        dependencyPinningCacheKey: string,
+      ): string | null;
+    }).buildCacheKey.bind(pipeline);
+    const legacyKey = "a".repeat(440);
+    const options: RenderOptions = {
+      cacheKey: legacyKey,
+      colorScheme: "dark",
+      url: new URL("https://preview.example.test/"),
+    };
+    const cacheKey = buildCacheKey("/", options, "on:3w5e11264sgsf");
+
+    assert(cacheKey);
+    const completeKey = `render:${cachePrefix}:page:${cacheKey}:theme-dark`;
+    assert(completeKey.length <= 512);
+    assert(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey));
+    assertEquals(buildCacheKey("/", options, "off"), legacyKey);
   });
 
   it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {
