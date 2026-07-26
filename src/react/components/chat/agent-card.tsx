@@ -176,11 +176,13 @@ AgentCardRoot.displayName = "AgentCard.Root";
  * `ChatMessageHeader` / `Message.Header`.
  */
 function AgentCardHeader(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { name, avatarUrl, presentation } = useAgentCard();
   return (
-    <div className={cn("flex items-center gap-2", className)}>
+    <div ref={ref} className={cn("flex items-center gap-2", className)} {...props}>
       <Avatar name={name} avatarSrc={avatarUrl} className="size-8" />
       <span className="min-w-0 truncate font-medium text-[var(--foreground)]">
         {name}
@@ -198,22 +200,24 @@ AgentCardHeader.displayName = "AgentCard.Header";
 
 /** The reasoning block. Renders only when `thinking` text is present. */
 function AgentCardReasoning(
-  { className }: { className?: string },
+  { className, ref }: { className?: string; ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { thinking } = useAgentCard();
   if (!thinking) return null;
-  return <Reasoning text={thinking} className={className} />;
+  return <Reasoning ref={ref} text={thinking} className={className} />;
 }
 AgentCardReasoning.displayName = "AgentCard.Reasoning";
 
 /** The tool-call list. Renders one `ToolCall` card per entry. */
 function AgentCardTools(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { toolCalls } = useAgentCard();
   if (toolCalls.length === 0) return null;
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
+    <div ref={ref} className={cn("flex flex-col gap-2", className)} {...props}>
       {toolCalls.map((tool) => <ToolCallView key={tool.id} tool={toToolPart(tool)} />)}
     </div>
   );
@@ -222,12 +226,14 @@ AgentCardTools.displayName = "AgentCard.Tools";
 
 /** The message body — each message's text rendered as `Markdown`. */
 function AgentCardBody(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { messages } = useAgentCard();
   if (!messages || messages.length === 0) return null;
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
+    <div ref={ref} className={cn("flex flex-col gap-2", className)} {...props}>
       {messages.map((message) => {
         const text = messageText(message);
         if (!text) return null;

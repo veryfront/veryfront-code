@@ -211,11 +211,13 @@ export interface ChatSidebarRootProps extends ChatSidebarControlProps {
   fill?: boolean;
   className?: string;
   children: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Context provider + outer rail container for the compound sidebar. */
 export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement | null {
-  const { loading, isOpen = true, fill = false, className, children } = props;
+  const { loading, isOpen = true, fill = false, className, children, ref } = props;
   const resolved = useResolvedSidebar(props);
 
   const value = React.useMemo<ChatSidebarContextValue>(
@@ -239,6 +241,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
       <ChatTokens />
       <div
         {...UI_SCOPE_ATTRS}
+        ref={ref}
         // Fills its parent by default (a composed layout container provides
         // width + overlay); the standalone preset supplies its own rail chrome.
         className={cn("flex flex-col h-full", fill && "w-full", className)}
@@ -261,6 +264,8 @@ export interface ChatSidebarNewButtonProps {
   /** Optional leading icon. */
   icon?: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The primary "new conversation" action. Wires `onNew` from context. */
@@ -268,11 +273,13 @@ export function ChatSidebarNewButton({
   children,
   icon,
   className,
+  ref,
 }: ChatSidebarNewButtonProps): React.ReactElement {
   const { onNew } = useChatSidebarContext();
   return (
     <div className="px-3 pt-4 pb-1">
       <Button
+        ref={ref}
         type="button"
         variant="primary"
         onClick={onNew}
@@ -325,6 +332,8 @@ export interface ChatSidebarItemProps {
    * Omit for the default `…` rename/delete menu.
    */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop — forwarded to the row's `ListItem`. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -336,6 +345,7 @@ export function ChatSidebarItem({
   conversation,
   className,
   children,
+  ref,
 }: ChatSidebarItemProps): React.ReactElement {
   const { activeId, onSelect, onDelete, onRename } = useChatSidebarContext();
 
@@ -399,6 +409,7 @@ export function ChatSidebarItem({
   return (
     <ChatSidebarItemContext.Provider value={itemContext}>
       <ListItem
+        ref={ref}
         title={conversation.title}
         active={isActive || menuOpen}
         className={className}
@@ -456,17 +467,20 @@ export interface ChatSidebarItemActionProps {
   icon?: React.ReactNode;
   /** Override the entry label. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop — forwarded to the `DropdownMenuItem`. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** `Rename` menu entry — enters inline rename. Renders nothing if unavailable. */
 export function ChatSidebarItemRename({
   icon,
   children,
+  ref,
 }: ChatSidebarItemActionProps): React.ReactElement | null {
   const { canRename, startRename } = useChatSidebarItem();
   if (!canRename) return null;
   return (
-    <DropdownMenuItem onSelect={startRename}>
+    <DropdownMenuItem ref={ref} onSelect={startRename}>
       {icon ?? <PencilIcon />}
       {children ?? "Rename"}
     </DropdownMenuItem>
@@ -478,10 +492,12 @@ ChatSidebarItemRename.displayName = "ChatSidebar.Item.Rename";
 export function ChatSidebarItemDelete({
   icon,
   children,
+  ref,
 }: ChatSidebarItemActionProps): React.ReactElement {
   const { remove } = useChatSidebarItem();
   return (
     <DropdownMenuItem
+      ref={ref}
       onSelect={remove}
       className="text-[var(--destructive)] hover:bg-[color-mix(in_oklch,var(--destructive),transparent_92%)]"
     >
@@ -502,6 +518,8 @@ export interface ChatSidebarGroupProps {
   label?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop — forwarded to the group's `List`. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** A labeled cluster of conversation rows. */
@@ -509,9 +527,10 @@ export function ChatSidebarGroup({
   label,
   children,
   className,
+  ref,
 }: ChatSidebarGroupProps): React.ReactElement {
   return (
-    <List className={className}>
+    <List ref={ref} className={className}>
       {label !== undefined && <ListLabel>{label}</ListLabel>}
       {children}
     </List>
@@ -524,22 +543,26 @@ ChatSidebarGroup.displayName = "ChatSidebar.Group";
 // ---------------------------------------------------------------------------
 
 /** Props accepted by {@link ChatSidebarEmpty}. */
-export interface ChatSidebarEmptyProps {
-  children?: React.ReactNode;
-  className?: string;
+export interface ChatSidebarEmptyProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Placeholder shown when there are no conversations to list. */
 export function ChatSidebarEmpty({
   children,
   className,
+  ref,
+  ...props
 }: ChatSidebarEmptyProps): React.ReactElement {
   return (
     <div
+      ref={ref}
       className={cn(
         "flex h-full flex-col items-center justify-center px-4 text-center text-[var(--faint)]",
         className,
       )}
+      {...props}
     >
       {children ?? <p className="text-sm">No chats yet</p>}
     </div>
@@ -575,7 +598,7 @@ function ChatSidebarSkeleton(): React.ReactElement {
 // ---------------------------------------------------------------------------
 
 /** Props accepted by {@link ChatSidebarList}. */
-export interface ChatSidebarListProps {
+export interface ChatSidebarListProps extends React.HTMLAttributes<HTMLDivElement> {
   /**
    * Provide your own groups/rows. When omitted, the list auto-groups the
    * context conversations by recency and renders {@link ChatSidebarEmpty} when
@@ -583,12 +606,16 @@ export interface ChatSidebarListProps {
    */
   children?: React.ReactNode;
   className?: string;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Scrollable region. Auto-groups by recency unless given `children`. */
 export function ChatSidebarList({
   children,
   className,
+  ref,
+  ...props
 }: ChatSidebarListProps): React.ReactElement {
   const {
     conversations,
@@ -644,7 +671,9 @@ export function ChatSidebarList({
 
   return (
     <div
+      ref={ref}
       className={cn("flex-1 overflow-y-auto px-2 pt-2 pb-3 space-y-3", className)}
+      {...props}
     >
       {body}
     </div>
