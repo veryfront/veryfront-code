@@ -69,21 +69,27 @@ type WrapClick = (event: React.MouseEvent<HTMLElement>, next: () => void) => voi
 // ---------------------------------------------------------------------------
 
 /** Props accepted by `<ChatInput.Field>`. */
-export interface ChatInputFieldProps {
+export interface ChatInputFieldProps
+  extends Omit<
+    React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>,
+    "value" | "onChange" | "onSubmit"
+  > {
   placeholder?: string;
-  className?: string;
-  "aria-label"?: string;
+  /** React 19: ref is a regular prop (threaded to the underlying editor). */
+  ref?: React.Ref<HTMLInputElement | HTMLTextAreaElement>;
 }
 
 /** The multiline text editor. */
 export function ChatInputField(
-  { placeholder = "Type a message...", className, ...props }: ChatInputFieldProps,
+  { placeholder = "Type a message...", className, ref, ...props }: ChatInputFieldProps,
 ): React.ReactElement {
   const c = useComposerContext();
   const value = c.isListening ? c.transcript || c.input : c.input;
   const label = props["aria-label"] ?? placeholder ?? "Message";
   return (
     <InputBox
+      ref={ref}
+      {...props}
       value={value}
       onChange={c.onChange}
       onSubmit={() => c.onSubmit()}
@@ -239,7 +245,12 @@ export function ChatInputModel(
  * dialog) and adds "Select document" when `onSelectAttachment` is set.
  */
 export function ChatInputAttach(
-  { icon, onClick }: { icon?: React.ReactNode; onClick?: WrapClick },
+  { icon, onClick, ref }: {
+    icon?: React.ReactNode;
+    onClick?: WrapClick;
+    /** React 19: ref is a regular prop (the wrapper this sub-part owns). */
+    ref?: React.Ref<HTMLDivElement>;
+  },
 ): React.ReactElement | null {
   const c = useComposerContext();
   const fileInputRef = React.useRef<HTMLInputElement>(null!);
@@ -253,7 +264,7 @@ export function ChatInputAttach(
     onClick ? onClick({} as React.MouseEvent<HTMLElement>, openDialog) : openDialog();
 
   return (
-    <div className="relative flex shrink-0 items-center">
+    <div ref={ref} className="relative flex shrink-0 items-center">
       {c.onAttach && (
         <input
           ref={fileInputRef}
@@ -348,9 +359,11 @@ export function ChatInputExport(
 ChatInputExport.displayName = "ChatInput.Export";
 
 /** Props accepted by `<ChatInput.Toolbar>`. */
-export interface ChatInputToolbarProps {
+export interface ChatInputToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -361,12 +374,14 @@ export interface ChatInputToolbarProps {
  * mirrors the default action-row wrapper classes.
  */
 export function ChatInputToolbar(
-  { className, children }: ChatInputToolbarProps,
+  { className, children, ref, ...props }: ChatInputToolbarProps,
 ): React.ReactElement {
   return (
     <div
+      ref={ref}
       role="toolbar"
       className={cn("flex items-center gap-1.5 md:gap-2", className)}
+      {...props}
     >
       {children}
     </div>

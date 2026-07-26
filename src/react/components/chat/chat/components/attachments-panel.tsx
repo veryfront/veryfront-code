@@ -162,10 +162,12 @@ function AttachmentsPanelRoot(
 AttachmentsPanelRoot.displayName = "AttachmentsPanel.Root";
 
 /** Props for `AttachmentsPanel.Header` — the title row + close button. */
-export interface AttachmentsPanelHeaderProps {
+export interface AttachmentsPanelHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
   /** Compose your own header; when omitted, the "Attachments" title + close. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -173,15 +175,17 @@ export interface AttachmentsPanelHeaderProps {
  * The close button only appears when `onClose` is set on the panel.
  */
 function AttachmentsPanelHeader(
-  { className, children }: AttachmentsPanelHeaderProps,
+  { className, children, ref, ...props }: AttachmentsPanelHeaderProps,
 ): React.JSX.Element {
   const { onClose } = useAttachmentsPanel();
   return (
     <div
+      ref={ref}
       className={cn(
         "flex shrink-0 items-center justify-between px-4 pt-4",
         className,
       )}
+      {...props}
     >
       {children ?? (
         <>
@@ -206,10 +210,12 @@ function AttachmentsPanelHeader(
 AttachmentsPanelHeader.displayName = "AttachmentsPanel.Header";
 
 /** Props for `AttachmentsPanel.List` — the scrollable list of file rows. */
-export interface AttachmentsPanelListProps {
+export interface AttachmentsPanelListProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
   /** Compose your own rows; when omitted, one `AttachmentsPanel.Item` per upload. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -218,11 +224,11 @@ export interface AttachmentsPanelListProps {
  * when `onAttach` is set.
  */
 function AttachmentsPanelList(
-  { className, children }: AttachmentsPanelListProps,
+  { className, children, ref, ...props }: AttachmentsPanelListProps,
 ): React.JSX.Element {
   const { uploads, onAttach } = useAttachmentsPanel();
   return (
-    <div className={cn("mx-auto flex max-w-2xl flex-col gap-2", className)}>
+    <div ref={ref} className={cn("mx-auto flex max-w-2xl flex-col gap-2", className)} {...props}>
       {children ?? (
         <>
           {uploads.map((doc) => <AttachmentsPanelItem key={doc.id} file={doc} />)}
@@ -245,6 +251,8 @@ export interface AttachmentsPanelItemProps {
    * (media + label + overflow menu).
    */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop (threaded to the underlying `AttachmentPill`). */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -255,12 +263,12 @@ export interface AttachmentsPanelItemProps {
  * children to recompose the row from the `AttachmentsPanel.Item.*` leaves.
  */
 function AttachmentsPanelItem(
-  { file: doc, className, children }: AttachmentsPanelItemProps,
+  { file: doc, className, children, ref }: AttachmentsPanelItemProps,
 ): React.JSX.Element {
   return (
     // Borderless rows here — the panel is a plain list, not a field of chips.
     // The `AttachmentPill` provides the per-item context the `Item.*` leaves read.
-    <AttachmentPill attachment={doc} bordered={false} className={cn("w-full", className)}>
+    <AttachmentPill ref={ref} attachment={doc} bordered={false} className={cn("w-full", className)}>
       {children ?? (
         <>
           <AttachmentsPanelItemMedia />
@@ -297,9 +305,11 @@ function AttachmentsPanelItemMedia(
 
 /** `AttachmentsPanel.Item.Icon` — the file-type icon square. */
 function AttachmentsPanelItemIcon(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
-  return <AttachmentPill.Icon className={className} />;
+  return <AttachmentPill.Icon ref={ref} className={className} {...props} />;
 }
 AttachmentsPanelItemIcon.displayName = "AttachmentsPanel.Item.Icon";
 
@@ -308,11 +318,13 @@ AttachmentsPanelItemIcon.displayName = "AttachmentsPanel.Item.Icon";
  * the file isn't an image (fall back to `AttachmentsPanel.Item.Icon`).
  */
 function AttachmentsPanelItemPreview(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { imageSrc, isError } = useAttachmentPill();
   if (!imageSrc || isError) return null;
-  return <AttachmentPill.Thumbnail className={className} />;
+  return <AttachmentPill.Thumbnail ref={ref} className={className} {...props} />;
 }
 AttachmentsPanelItemPreview.displayName = "AttachmentsPanel.Item.Preview";
 
@@ -329,6 +341,8 @@ export interface AttachmentsPanelItemRemoveProps {
   className?: string;
   /** Override the button's icon (defaults to the trash glyph). */
   icon?: React.ReactNode;
+  /** React 19: ref is a regular prop (threaded to the button). */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /**
@@ -336,13 +350,14 @@ export interface AttachmentsPanelItemRemoveProps {
  * `onRemoveUpload` for this item. Renders nothing when no remove handler is set.
  */
 function AttachmentsPanelItemRemove(
-  { className, icon }: AttachmentsPanelItemRemoveProps,
+  { className, icon, ref }: AttachmentsPanelItemRemoveProps,
 ): React.JSX.Element | null {
   const { attachment } = useAttachmentPill();
   const { onRemoveUpload } = useAttachmentsPanel();
   if (!onRemoveUpload) return null;
   return (
     <Button
+      ref={ref}
       type="button"
       variant="icon-ghost"
       size="icon-sm"
@@ -412,10 +427,12 @@ function AttachmentsPanelItemMenu(
 }
 
 /** Props for `AttachmentsPanel.Loading` — the initial-fetch placeholder. */
-export interface AttachmentsPanelLoadingProps {
+export interface AttachmentsPanelLoadingProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
   /** How many skeleton rows to render. Default `3`. */
   count?: number;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -423,14 +440,16 @@ export interface AttachmentsPanelLoadingProps {
  * shown while the initial list is fetched so the panel doesn't flash `Empty`.
  */
 function AttachmentsPanelLoading(
-  { className, count = 3 }: AttachmentsPanelLoadingProps,
+  { className, count = 3, ref, ...props }: AttachmentsPanelLoadingProps,
 ): React.JSX.Element {
   return (
     <div
+      ref={ref}
       className={cn("mx-auto flex max-w-2xl flex-col gap-2", className)}
       aria-busy="true"
       aria-live="polite"
       aria-label="Loading files"
+      {...props}
     >
       {Array.from(
         { length: count },
@@ -451,23 +470,27 @@ function AttachmentsPanelLoading(
 AttachmentsPanelLoading.displayName = "AttachmentsPanel.Loading";
 
 /** Props for `AttachmentsPanel.Empty` — the no-files state. */
-export interface AttachmentsPanelEmptyProps {
+export interface AttachmentsPanelEmptyProps extends React.HTMLAttributes<HTMLDivElement> {
   className?: string;
   /** Compose your own empty state; when omitted, the default copy + action. */
   children?: React.ReactNode;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** The empty state: heading, hint, and the upload `AttachmentsPanel.Action`. */
 function AttachmentsPanelEmpty(
-  { className, children }: AttachmentsPanelEmptyProps,
+  { className, children, ref, ...props }: AttachmentsPanelEmptyProps,
 ): React.JSX.Element {
   const { onAttach } = useAttachmentsPanel();
   return (
     <div
+      ref={ref}
       className={cn(
         "flex flex-col items-center justify-center h-full text-center",
         className,
       )}
+      {...props}
     >
       {children ?? (
         <>
@@ -505,11 +528,13 @@ export interface AttachmentsPanelActionProps {
   children?: React.ReactNode;
   /** Called after opening the native picker. */
   onClick?: () => void;
+  /** React 19: ref is a regular prop (threaded to the button). */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 /** The upload/attach button. Opens the native file picker wired in `Root`. */
 function AttachmentsPanelAction(
-  { variant = "empty", className, children, onClick }: AttachmentsPanelActionProps,
+  { variant = "empty", className, children, onClick, ref }: AttachmentsPanelActionProps,
 ): React.JSX.Element {
   const { triggerAttach } = useAttachmentsPanel();
   const handleClick = () => {
@@ -520,6 +545,7 @@ function AttachmentsPanelAction(
     ? (
       <div className="flex justify-center pt-2">
         <Button
+          ref={ref}
           variant="primary"
           onClick={handleClick}
           className={cn("shadow-sm", className)}
@@ -530,6 +556,7 @@ function AttachmentsPanelAction(
     )
     : (
       <Button
+        ref={ref}
         variant="primary"
         onClick={handleClick}
         className={cn("mt-4 shadow-sm", className)}

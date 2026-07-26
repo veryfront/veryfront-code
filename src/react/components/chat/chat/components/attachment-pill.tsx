@@ -283,16 +283,20 @@ AttachmentPillRoot.displayName = "AttachmentPill.Root";
  * only when the attachment resolves to a non-error image with a source.
  */
 function AttachmentPillThumbnail(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element | null {
   const { imageSrc, isError, isBusy } = useAttachmentPill();
   if (!imageSrc || isError) return null;
   return (
     <div
+      ref={ref}
       className={cn(
         "relative size-10 shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-[var(--tertiary)]",
         className,
       )}
+      {...props}
     >
       <img
         alt=""
@@ -314,16 +318,20 @@ AttachmentPillThumbnail.displayName = "AttachmentPill.Thumbnail";
  * there is no image thumbnail.
  */
 function AttachmentPillIcon(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { boxClass, stateGlyph, ext, legacyUploading } = useAttachmentPill();
   return (
     <div
+      ref={ref}
       className={cn(
         "relative flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[10px] font-medium uppercase leading-none",
         boxClass,
         className,
       )}
+      {...props}
     >
       {stateGlyph ?? ext ?? "file"}
       {legacyUploading && (
@@ -338,12 +346,16 @@ AttachmentPillIcon.displayName = "AttachmentPill.Icon";
 
 /** `AttachmentPill.Label` — the name + secondary state-line column. */
 function AttachmentPillLabel(
-  { className }: { className?: string },
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLDivElement>
+    & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
   const { attachment, shimmerTitle, isError, label } = useAttachmentPill();
   return (
     <div
+      ref={ref}
       className={cn("flex min-w-0 flex-1 flex-col gap-0.5", className)}
+      {...props}
     >
       <p className="truncate text-sm font-medium leading-tight">
         {shimmerTitle
@@ -368,12 +380,18 @@ AttachmentPillLabel.displayName = "AttachmentPill.Label";
  * when an `onRetry` handler is provided.
  */
 function AttachmentPillRetry(
-  { className, icon }: { className?: string; icon?: React.ReactNode },
+  { className, icon, ref }: {
+    className?: string;
+    icon?: React.ReactNode;
+    /** React 19: ref is a regular prop (threaded to the button). */
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.JSX.Element | null {
   const { attachment, isError, onRetry } = useAttachmentPill();
   if (!isError || !onRetry) return null;
   return (
     <Button
+      ref={ref}
       type="button"
       variant="icon-ghost"
       size="icon-xs"
@@ -393,12 +411,18 @@ AttachmentPillRetry.displayName = "AttachmentPill.Retry";
  * `onRemove` handler is provided and the pill isn't a legacy uploading pill.
  */
 function AttachmentPillRemove(
-  { className, icon }: { className?: string; icon?: React.ReactNode },
+  { className, icon, ref }: {
+    className?: string;
+    icon?: React.ReactNode;
+    /** React 19: ref is a regular prop (threaded to the button). */
+    ref?: React.Ref<HTMLButtonElement>;
+  },
 ): React.JSX.Element | null {
   const { attachment, onRemove, legacyUploading } = useAttachmentPill();
   if (!onRemove || legacyUploading) return null;
   return (
     <Button
+      ref={ref}
       type="button"
       variant="icon-ghost"
       size="icon-xs"
