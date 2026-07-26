@@ -1,5 +1,5 @@
 /**
- * Canonical durable runs for task, workflow, and eval execution.
+ * Canonical durable runs for task, workflow, eval, and schedule-triggered execution.
  *
  * @module
  *
@@ -25,6 +25,8 @@
 export {
   type CreateEvalRunInput,
   createRunsClient,
+  type CreateScheduleRunFromSourceInput,
+  type CreateScheduleRunInput,
   type CreateTaskRunInput,
   type CreateWorkflowRunInput,
   type KnowledgeIngestByUploadIdsInput,
@@ -55,4 +57,6 @@ export {
   RunSchema,
   type RunStatus,
   type RunTriggerKind,
+  type ScheduleRunCreateResponse,
+  ScheduleRunCreateResponseSchema,
 } from "./schemas.ts";

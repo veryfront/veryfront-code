@@ -16,6 +16,9 @@ import {
   type RunList,
   RunListSchema,
   RunSchema,
+  ScheduleReferenceListSchema,
+  type ScheduleRunCreateResponse,
+  ScheduleRunCreateResponseSchema,
 } from "./schemas.ts";
 
 const DEFAULT_MAX_RETRIES = 3;
@@ -74,6 +77,20 @@ export interface CreateEvalRunInput extends RunCreateBaseInput, RunRuntimeTarget
   input?: Record<string, unknown>;
   config?: Record<string, unknown>;
   startMode?: string;
+}
+
+/** Input for triggering one persisted schedule by its canonical UUID. */
+export interface CreateScheduleRunInput extends ProjectScopedOptions {
+  scheduleId: string;
+  runName?: string;
+  idempotencyKey?: string;
+}
+
+/** Input for resolving and triggering one pushed source-defined schedule. */
+export interface CreateScheduleRunFromSourceInput extends ProjectScopedOptions {
+  sourceTriggerId: string;
+  runName?: string;
+  idempotencyKey?: string;
 }
 
 /** Input payload for knowledge ingest by upload IDs. */
@@ -262,6 +279,57 @@ export class VeryfrontRunsClient {
           start_mode: startMode,
         },
       },
+    });
+  }
+
+  createScheduleRun(input: CreateScheduleRunInput): Promise<ScheduleRunCreateResponse> {
+    const { scheduleId, projectReference, runName, idempotencyKey } = input;
+    const project = this.resolveProjectReference(projectReference);
+    return this.requestJson(
+      `/projects/${encodeURIComponent(project)}/schedules/${encodeURIComponent(scheduleId)}/runs`,
+      ScheduleRunCreateResponseSchema,
+      {
+        method: "POST",
+        body: {
+          run_name: runName,
+          idempotency_key: idempotencyKey,
+        },
+      },
+    );
+  }
+
+  async createScheduleRunFromSource(
+    input: CreateScheduleRunFromSourceInput,
+  ): Promise<ScheduleRunCreateResponse> {
+    const projectReference = this.resolveProjectReference(input.projectReference);
+    const listed = await this.requestJson(
+      withQuery(
+        `/projects/${encodeURIComponent(projectReference)}/schedules`,
+        toQueryParams({
+          status: "active",
+          source_trigger_id: input.sourceTriggerId,
+          limit: 1,
+        }),
+      ),
+      ScheduleReferenceListSchema,
+    );
+    const schedule = listed.schedules.find((candidate) =>
+      candidate.definition_source === "source" &&
+      candidate.source_trigger_id === input.sourceTriggerId
+    );
+    if (!schedule) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          `Active source schedule "${input.sourceTriggerId}" not found in project "${projectReference}". Push the source schedule before running it remotely.`,
+        status: 404,
+      });
+    }
+
+    return await this.createScheduleRun({
+      scheduleId: schedule.id,
+      projectReference,
+      runName: input.runName,
+      idempotencyKey: input.idempotencyKey,
     });
   }
 

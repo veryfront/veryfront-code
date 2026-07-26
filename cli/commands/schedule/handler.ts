@@ -4,15 +4,20 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess } from "#cli/utils";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
+import { createRunsClient, type Run, type VeryfrontRunsClient } from "veryfront/runs";
 import { discoverSchedules } from "veryfront/schedule";
 import { runTriggerTarget } from "veryfront/trigger";
 import { outputTriggerRun, readJsonFile } from "../trigger-utils.ts";
+
+const REMOTE_SCHEDULE_POLL_INTERVAL_MS = 1_000;
+const REMOTE_SCHEDULE_TIMEOUT_GRACE_MS = 30_000;
 
 const getScheduleArgsSchema = defineSchema((v) =>
   v.object({
     action: v.literal("run"),
     id: v.string(),
     input: v.string().optional(),
+    remote: v.boolean().default(false),
     debug: v.boolean().default(false),
   })
 );
@@ -25,12 +30,51 @@ const parseScheduleArgs = createArgParser(ScheduleArgsSchema, {
   action: { keys: ["action"], type: "string", positional: 0 },
   id: { keys: ["id"], type: "string", positional: 1 },
   input: { keys: ["input"], type: "string" },
+  remote: { keys: ["remote"], type: "boolean" },
   debug: { keys: ["debug"], type: "boolean" },
 });
+
+interface RemoteSchedulePollOptions {
+  now?: () => number;
+  sleep?: (delayMs: number) => Promise<void>;
+}
+
+export async function waitForRemoteScheduleRun(
+  client: Pick<VeryfrontRunsClient, "get">,
+  runId: string,
+  timeoutMs: number,
+  options: RemoteSchedulePollOptions = {},
+): Promise<Run> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ??
+    ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  const deadline = now() + timeoutMs;
+  while (true) {
+    const run = await client.get(runId);
+    if (run.status === "completed" || run.status === "waiting") {
+      return run;
+    }
+    if (run.status === "failed") {
+      throw new Error(run.error?.message ?? `Scheduled run failed: ${runId}`);
+    }
+    if (run.status === "cancelled") {
+      throw new Error(`Scheduled run was cancelled: ${runId}`);
+    }
+    if (now() >= deadline) {
+      throw new Error(`Timed out waiting for scheduled run: ${runId}`);
+    }
+    await sleep(REMOTE_SCHEDULE_POLL_INTERVAL_MS);
+  }
+}
 
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
   const projectDir = Deno.cwd();
+  if (opts.remote && opts.input) {
+    throw new Error(
+      "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
+    );
+  }
   const input = opts.input ? await readJsonFile(opts.input, "--input JSON file") : undefined;
 
   await withProjectSourceContext(projectDir, async (context) => {
@@ -43,6 +87,35 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
     const schedule = result.items.find((candidate) => candidate.id === opts.id);
     if (!schedule) {
       throw new Error(`Schedule "${opts.id}" not found.`);
+    }
+
+    if (opts.remote) {
+      const startedAt = Date.now();
+      const client = createRunsClient({
+        projectReference: config.projectSlug,
+      });
+      const accepted = await client.createScheduleRunFromSource({
+        sourceTriggerId: schedule.id,
+        runName: schedule.name ?? schedule.id,
+        idempotencyKey: `schedule-cli:${crypto.randomUUID()}`,
+      });
+      const remoteRun = await waitForRemoteScheduleRun(
+        client,
+        accepted.run_id,
+        (schedule.timeoutSeconds ?? 300) * 1_000 + REMOTE_SCHEDULE_TIMEOUT_GRACE_MS,
+      );
+      await outputTriggerRun({
+        command: "schedule",
+        triggerId: schedule.id,
+        target: schedule.target,
+        output: {
+          runId: remoteRun.run_id,
+          status: remoteRun.status,
+          result: remoteRun.output,
+        },
+        durationMs: remoteRun.duration_ms ?? Date.now() - startedAt,
+      });
+      return;
     }
 
     const triggerInput = input ?? schedule.input ?? {};

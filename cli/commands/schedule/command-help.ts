@@ -11,6 +11,10 @@ export const scheduleHelp: CommandHelp = {
       description: "JSON input file to override the schedule input",
     },
     {
+      flag: "--remote",
+      description: "Run the pushed source schedule in the Veryfront cloud runtime",
+    },
+    {
       flag: "--json",
       description: "Output the run result as JSON",
     },
@@ -22,5 +26,6 @@ export const scheduleHelp: CommandHelp = {
   examples: [
     "veryfront schedule run daily-triage",
     "veryfront schedule run daily-triage --input fixtures/priority-queue.json --json",
+    "veryfront schedule run daily-triage --remote --json",
   ],
 };
