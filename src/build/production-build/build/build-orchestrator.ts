@@ -19,6 +19,7 @@ import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import {
   createDependencyPinningSource,
   type DependencyPinningSnapshot,
+  type DependencyPinningSource,
   resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
@@ -32,19 +33,32 @@ interface BuildDependencySnapshotOptions {
   config: VeryfrontConfig;
 }
 
+interface BuildDependencyContext {
+  source: DependencyPinningSource;
+  snapshot: DependencyPinningSnapshot;
+}
+
+async function captureBuildDependencyContext(
+  options: BuildDependencySnapshotOptions,
+): Promise<BuildDependencyContext> {
+  const source = createDependencyPinningSource({
+    projectDir: options.projectDir,
+    adapter: options.adapter,
+    isLocalProject: options.isLocalProject,
+    contentSourceId: "production-build",
+    config: options.config,
+  });
+  return {
+    source,
+    snapshot: await resolveDependencyPinningSnapshot(source),
+  };
+}
+
 /** Capture the immutable package/config state shared by one production build. */
-export function captureBuildDependencySnapshot(
+export async function captureBuildDependencySnapshot(
   options: BuildDependencySnapshotOptions,
 ): Promise<DependencyPinningSnapshot> {
-  return resolveDependencyPinningSnapshot(
-    createDependencyPinningSource({
-      projectDir: options.projectDir,
-      adapter: options.adapter,
-      isLocalProject: options.isLocalProject,
-      contentSourceId: "production-build",
-      config: options.config,
-    }),
-  );
+  return (await captureBuildDependencyContext(options)).snapshot;
 }
 
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
@@ -77,15 +91,17 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       );
 
       try {
-        const dependencySnapshot = await captureBuildDependencySnapshot({
+        const dependencyContext = await captureBuildDependencyContext({
           projectDir: normalizedOptions.projectDir,
           adapter: context.adapter,
           isLocalProject: true,
           config: context.config,
         });
+        const dependencySnapshot = dependencyContext.snapshot;
         const buildReactVersion = await resolveProjectReactVersion({
           projectDir: normalizedOptions.projectDir,
           config: context.config,
+          dependencyPinningSource: dependencyContext.source,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
         });
@@ -117,6 +133,8 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               dryRun,
               config: context.config,
               reactVersion: buildReactVersion,
+              dependencyPinningSource: dependencyContext.source,
+              dependencyPinningSnapshot: dependencySnapshot,
             }),
           {},
         );

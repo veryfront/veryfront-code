@@ -17,7 +17,13 @@ import {
 } from "#veryfront/release-assets/build-executor.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { computeHashBytes } from "#veryfront/utils";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -35,6 +41,10 @@ export interface LocalReleaseAssetOptions {
   frameworkTransform?: ReleaseAssetTransform;
   /** React version derived from the build-wide dependency snapshot. */
   reactVersion?: string;
+  /** Immutable dependency state shared by the production build. */
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  /** Package source paired with dependencyPinningSnapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 function shouldBuildLocalDependencyAssets(): boolean {
@@ -64,10 +74,22 @@ export async function generateLocalReleaseAssetManifest(
 
   try {
     try {
+      const dependencyPinningSource = options.dependencyPinningSource ??
+        createDependencyPinningSource({
+          projectDir: options.projectDir,
+          adapter: options.adapter,
+          contentSourceId: "local-release-assets",
+          config: options.config,
+        });
+      const dependencyPinningSnapshot = options.dependencyPinningSnapshot ??
+        await resolveDependencyPinningSnapshot(dependencyPinningSource);
       const reactVersion = options.reactVersion ??
         await resolveProjectReactVersion({
           projectDir: options.projectDir,
           config: options.config,
+          dependencyPinningSource,
+          dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
         });
       const built = await buildReactImportMapDependencyAssets({
         tempDir,
@@ -86,6 +108,8 @@ export async function generateLocalReleaseAssetManifest(
         projectId: options.projectId ?? "local",
         transform: options.frameworkTransform,
         dependencyUrls,
+        dependencyPinningSource,
+        dependencyPinningSnapshot,
       });
       dependencies = { ...dependencies, ...framework.dependencies };
       const assetsByHash = new Map<string, PreparedReleaseAsset>();
