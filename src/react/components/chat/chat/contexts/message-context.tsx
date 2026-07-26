@@ -48,6 +48,41 @@ export function useMessageContextOptional(): MessageContextValue | null {
 
 export { useMessageContext };
 
+/** Result of {@link useMessageBranches} — the message's regeneration variants. */
+export interface UseMessageBranchesResult {
+  /** 0-based index of the active branch. */
+  index: number;
+  /** Total number of branches (1 when the message has no variants). */
+  count: number;
+  /** Whether an earlier / later variant exists. */
+  hasPrevious: boolean;
+  hasNext: boolean;
+  /** Switch to the previous / next variant. No-op when unavailable. */
+  previous: () => void;
+  next: () => void;
+}
+
+/**
+ * `useMessageBranches` — thin hook over the message context's branch state
+ * (`getBranches` / `switchBranch` on `useChat`, surfaced as `branch` +
+ * `onBranchPrev/Next`). Powers `Message.BranchPicker`; RFC 2980. Must be used
+ * within a `<Message>`.
+ */
+export function useMessageBranches(): UseMessageBranchesResult {
+  const ctx = useMessageContext();
+  const current = ctx.branch?.current ?? 1; // 1-based
+  const count = ctx.branch?.total ?? 1;
+  const noop = () => {};
+  return {
+    index: current - 1,
+    count,
+    hasPrevious: current > 1,
+    hasNext: current < count,
+    previous: ctx.onBranchPrev ?? noop,
+    next: ctx.onBranchNext ?? noop,
+  };
+}
+
 /** The message's grouped parts exposed as headless data. */
 export interface MessagePartsData {
   /** Parts grouped in render order (text / reasoning / tool / source …). */

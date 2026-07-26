@@ -86,9 +86,11 @@ export {
   useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
+  useMessageBranches,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
+  type UseMessageBranchesResult,
 } from "./chat/index.tsx";
 
 // ---------------------------------------------------------------------------

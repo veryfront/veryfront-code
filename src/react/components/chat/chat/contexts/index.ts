@@ -18,8 +18,10 @@ export {
   MessageContextProvider,
   type MessageContextValue,
   type MessagePartsData,
+  useMessageBranches,
   useMessageContext,
   useMessageContextOptional,
+  type UseMessageBranchesResult,
   useMessageParts,
 } from "./message-context.tsx";
 

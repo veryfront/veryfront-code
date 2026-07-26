@@ -290,9 +290,11 @@ export {
   useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
+  useMessageBranches,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
+  type UseMessageBranchesResult,
 } from "./contexts/index.ts";
 
 // ChatProps: preset interface, re-exported here to preserve the public surface.
