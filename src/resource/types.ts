@@ -9,10 +9,18 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 // Re-export schema-based types
-export type { CachePolicy, McpConfig } from "./schemas/index.ts";
+export type { CachePolicy, McpConfig, McpContentConfig } from "./schemas/index.ts";
 
 // Import for use in interface definitions
 import type { McpConfig } from "./schemas/index.ts";
+
+/** Per-read runtime context supplied to a resource loader. */
+export interface ResourceLoadContext {
+  /** Cooperative cancellation signal for the current read. */
+  readonly abortSignal?: AbortSignal;
+  /** Exact URI requested by the transport, when one exists. */
+  readonly uri?: string;
+}
 
 /** Configuration used by resource. */
 export interface ResourceConfig<TParams = unknown, TData = unknown> {
@@ -20,7 +28,10 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
   description: string;
   title?: string;
   paramsSchema: Schema<TParams>;
-  load: (params: TParams) => Promise<TData> | TData;
+  load: (
+    params: TParams,
+    context?: Readonly<ResourceLoadContext>,
+  ) => Promise<TData> | TData;
   /**
    * Optional application-level update stream.
    *
@@ -46,7 +57,10 @@ export interface Resource<TParams = unknown, TData = unknown> {
   description: string;
   title?: string;
   paramsSchema: Schema<TParams>;
-  load: (params: TParams) => Promise<TData>;
+  load: (
+    params: TParams,
+    context?: Readonly<ResourceLoadContext>,
+  ) => Promise<TData>;
   /**
    * Optional application-level update stream.
    *

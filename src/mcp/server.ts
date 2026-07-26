@@ -16,8 +16,10 @@ import { TaskStore } from "./task-store.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import {
   ResourceParamsValidationError,
+  ResourceUriSyntaxError,
   ResourceUriValidationError,
 } from "#veryfront/resource/errors.ts";
+import { getResourceMCPMimeType, toMCPResourceContents } from "#veryfront/resource/mcp-content.ts";
 
 const logger = baseLogger.component("mcp-server");
 const MAX_CONTEXT_HEADER_LENGTH = 255;
@@ -340,7 +342,7 @@ export class MCPServer {
       case "resources/list":
         return this.listResources(params);
       case "resources/read":
-        return this.readResource(params);
+        return this.readResource(params, context, requestId, sessionId);
       case "resources/templates/list":
         return this.listResourceTemplates(params);
       case "prompts/list":
@@ -610,7 +612,7 @@ export class MCPServer {
           uriTemplate,
           name: id,
           description: resource.description,
-          mimeType: "application/json",
+          mimeType: getResourceMCPMimeType(resource),
         };
         if (resource.title) entry.title = resource.title;
         templates.push(entry);
@@ -637,7 +639,7 @@ export class MCPServer {
         uri: resource.pattern,
         name: id,
         description: resource.description,
-        mimeType: "application/json",
+        mimeType: getResourceMCPMimeType(resource),
       };
       if (resource.title) entry.title = resource.title;
       resources.push(entry);
@@ -646,7 +648,12 @@ export class MCPServer {
     return Promise.resolve({ resources });
   }
 
-  private readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private readResource(
+    params: JSONRPCParams | undefined,
+    context?: ToolExecutionContext,
+    requestId?: string | number,
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
     const { uri } = toParamsRecord(params);
 
     if (typeof uri !== "string" || uri.length === 0) {
@@ -654,7 +661,15 @@ export class MCPServer {
     }
 
     const resourceUri = uri;
-    const resourceEntry = resourceRegistry.findEntryByPattern(resourceUri);
+    let resourceEntry: ReturnType<typeof resourceRegistry.findEntryByPattern>;
+    try {
+      resourceEntry = resourceRegistry.findEntryByPattern(resourceUri);
+    } catch (error) {
+      if (error instanceof ResourceUriSyntaxError) {
+        throw new JsonRpcError(-32602, error.message);
+      }
+      throw new JsonRpcError(-32603, "Resource URI could not be resolved");
+    }
 
     // Hidden resources must be indistinguishable from absent resources. This
     // check applies to direct reads as well as list endpoints so guessing a URI
@@ -666,53 +681,62 @@ export class MCPServer {
 
     return withSpan(
       "mcp.readResource",
-      async () => {
-        let resourceParams: Record<string, string>;
-        try {
-          resourceParams = resourceRegistry.extractParams(resourceUri, resource.pattern);
-        } catch (error) {
-          if (error instanceof ResourceUriValidationError) {
-            throw new JsonRpcError(-32602, error.message);
-          }
-          throw new JsonRpcError(-32603, `Resource "${resourceId}" could not be resolved`);
-        }
-        let data: unknown;
-        try {
-          data = await resource.load(resourceParams);
-        } catch (error) {
-          if (error instanceof ResourceParamsValidationError) {
-            throw new JsonRpcError(
-              -32602,
-              `Resource URI does not satisfy parameters for "${resourceId}"`,
-            );
-          }
-          logger.warn("Resource loading failed", {
-            resource: resourceId,
-            errorType: error instanceof Error ? error.name : typeof error,
-          });
-          throw new JsonRpcError(
-            -32603,
-            `Resource "${resourceId}" could not be loaded`,
-          );
-        }
-        const snapshot = snapshotBoundedJsonValue(data);
-        if (!snapshot.success) {
-          throw new JsonRpcError(
-            -32603,
-            `Resource "${resourceId}" returned data that is not bounded JSON`,
-          );
-        }
+      () =>
+        this.withForegroundRequestSignal(
+          requestId,
+          sessionId,
+          context?.abortSignal,
+          async (abortSignal) => {
+            let resourceParams: Record<string, string>;
+            try {
+              resourceParams = resourceRegistry.extractParams(
+                resourceUri,
+                resource.pattern,
+              );
+            } catch (error) {
+              if (error instanceof ResourceUriValidationError) {
+                throw new JsonRpcError(-32602, error.message);
+              }
+              throw new JsonRpcError(
+                -32603,
+                `Resource "${resourceId}" could not be resolved`,
+              );
+            }
+            let data: unknown;
+            try {
+              data = await resource.load(
+                resourceParams,
+                abortSignal ? { abortSignal, uri: resourceUri } : { uri: resourceUri },
+              );
+            } catch (error) {
+              if (error instanceof ResourceParamsValidationError) {
+                throw new JsonRpcError(
+                  -32602,
+                  `Resource URI does not satisfy parameters for "${resourceId}"`,
+                );
+              }
+              logger.warn("Resource loading failed", {
+                resource: resourceId,
+                errorType: error instanceof Error ? error.name : typeof error,
+              });
+              throw new JsonRpcError(
+                -32603,
+                `Resource "${resourceId}" could not be loaded`,
+              );
+            }
 
-        return {
-          contents: [
-            {
-              uri: resourceUri,
-              mimeType: "application/json",
-              text: JSON.stringify(snapshot.value, null, 2),
-            },
-          ],
-        };
-      },
+            return {
+              contents: [
+                toMCPResourceContents(
+                  resourceId,
+                  resource,
+                  data,
+                  resourceUri,
+                ),
+              ],
+            };
+          },
+        ),
       {
         "mcp.resource.id": resourceId,
         "mcp.resource.pattern": resource.pattern,

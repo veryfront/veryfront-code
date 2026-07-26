@@ -26,6 +26,12 @@
  * ```
  */
 
-export type { Resource, ResourceConfig } from "./types.ts";
+export type {
+  McpConfig,
+  McpContentConfig,
+  Resource,
+  ResourceConfig,
+  ResourceLoadContext,
+} from "./types.ts";
 export { resource } from "./factory.ts";
 export { resourceRegistry } from "./registry.ts";

@@ -9,6 +9,9 @@ export {
   cachePolicySchema,
   getCachePolicySchema,
   getMcpConfigSchema,
+  getMcpContentConfigSchema,
   type McpConfig,
   McpConfigSchema,
+  type McpContentConfig,
+  McpContentConfigSchema,
 } from "./resource.schema.ts";

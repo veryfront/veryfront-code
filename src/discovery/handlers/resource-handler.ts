@@ -4,41 +4,27 @@
 
 import type { Resource } from "#veryfront/resource";
 import { registerResource } from "#veryfront/mcp";
+import {
+  assertResourceConfig,
+  replaceResourceDefinitionMetadata,
+} from "#veryfront/resource/validation.ts";
 import type { DiscoveryHandler } from "../types.ts";
 import { filenameToId, filePathToPattern } from "../discovery-utils.ts";
 
 function isResource(value: unknown): value is Resource {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value as Partial<Resource>;
-  if (
-    (candidate.id !== undefined && typeof candidate.id !== "string") ||
-    (candidate.pattern !== undefined && typeof candidate.pattern !== "string") ||
-    typeof candidate.description !== "string" ||
-    typeof candidate.load !== "function" ||
-    candidate.paramsSchema === null ||
-    typeof candidate.paramsSchema !== "object" ||
-    typeof candidate.paramsSchema.parse !== "function"
-  ) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  if (candidate.title !== undefined && typeof candidate.title !== "string") return false;
-  if (candidate.subscribe !== undefined && typeof candidate.subscribe !== "function") return false;
-  if (candidate.mcp !== undefined) {
-    if (candidate.mcp === null || typeof candidate.mcp !== "object") return false;
-    if (
-      candidate.mcp.enabled !== undefined &&
-      typeof candidate.mcp.enabled !== "boolean"
-    ) {
-      return false;
-    }
-    if (
-      candidate.mcp.cachePolicy !== undefined &&
-      !["no-cache", "cache", "cache-first"].includes(candidate.mcp.cachePolicy)
-    ) {
-      return false;
-    }
+  const candidate = value as Partial<Resource>;
+  if (candidate.id !== undefined && typeof candidate.id !== "string") {
+    return false;
   }
-  return true;
+  try {
+    assertResourceConfig(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function hasGeneratedResourcePattern(resource: Resource): boolean {
@@ -62,7 +48,7 @@ export const resourceHandler: DiscoveryHandler<Resource> = {
       : filePathToPattern(file, dir);
     const resourceWithMeta = resource.id === id && resource.pattern === pattern
       ? resource
-      : { ...resource, id, pattern };
+      : replaceResourceDefinitionMetadata(resource, id, pattern);
     registerResource(id, resourceWithMeta);
     return resourceWithMeta;
   },

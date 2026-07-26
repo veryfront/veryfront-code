@@ -1176,6 +1176,267 @@ describe("mcp/server", () => {
       );
     });
 
+    it("keeps query and fragment variants distinct from a path template", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "user",
+        resource({
+          pattern: "/users/:id",
+          description: "User",
+          paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          load: ({ id }) => ({ id }),
+        }),
+      );
+
+      for (const uri of ["/users/42?view=full", "/users/42#profile"]) {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "resources/read",
+          params: { uri },
+        });
+        assertEquals(response.error?.code, -32002);
+        assertEquals(response.error?.message, `Resource not found: ${uri}`);
+      }
+    });
+
+    it("rejects malformed resource URIs before invoking a loader", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      let loadCalls = 0;
+      registerResource(
+        "bounded-user",
+        resource({
+          pattern: "/bounded-users/:id",
+          description: "Bounded user",
+          paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          load: ({ id }) => {
+            loadCalls += 1;
+            return { id };
+          },
+        }),
+      );
+
+      for (
+        const uri of [
+          "/bounded-users/raw value",
+          `/bounded-users/${"x".repeat(8 * 1024)}`,
+        ]
+      ) {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "resources/read",
+          params: { uri },
+        });
+        assertEquals(response.error?.code, -32602);
+        assertStringIncludes(response.error?.message ?? "", "Resource URI");
+      }
+      assertEquals(loadCalls, 0);
+    });
+
+    it("lists and reads explicitly configured text content", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "readme",
+        resource({
+          pattern: "docs://readme",
+          description: "README",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => "# Project\n",
+          mcp: {
+            content: { type: "text", mimeType: "text/markdown" },
+          },
+        }),
+      );
+
+      const listed = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+      });
+      const entry = (
+        listed.result as {
+          resources: Array<Record<string, unknown>>;
+        }
+      ).resources.find(({ name }) => name === "readme");
+      assertEquals(entry?.mimeType, "text/markdown");
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/read",
+        params: { uri: "docs://readme" },
+      });
+      assertEquals(response.result, {
+        contents: [{
+          uri: "docs://readme",
+          mimeType: "text/markdown",
+          text: "# Project\n",
+        }],
+      });
+    });
+
+    it("lists and reads explicitly configured binary content", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "pixel",
+        resource({
+          pattern: "asset://pixel",
+          description: "Pixel",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => new Uint8Array([0, 255, 128]),
+          mcp: {
+            content: { type: "blob", mimeType: "image/png" },
+          },
+        }),
+      );
+
+      const listed = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+      });
+      const entry = (
+        listed.result as {
+          resources: Array<Record<string, unknown>>;
+        }
+      ).resources.find(({ name }) => name === "pixel");
+      assertEquals(entry?.mimeType, "image/png");
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/read",
+        params: { uri: "asset://pixel" },
+      });
+      assertEquals(response.result, {
+        contents: [{
+          uri: "asset://pixel",
+          mimeType: "image/png",
+          blob: "AP+A",
+        }],
+      });
+    });
+
+    it("rejects content that does not match its declared transport mode", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "invalid-text",
+        resource({
+          pattern: "docs://invalid-text",
+          description: "Invalid text",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => ({ text: "not a string" }),
+          mcp: {
+            content: { type: "text", mimeType: "text/plain" },
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "docs://invalid-text" },
+      });
+
+      assertEquals(response.error?.code, -32603);
+      assertEquals(
+        response.error?.message,
+        'Resource "invalid-text" returned invalid text content',
+      );
+    });
+
+    it("rejects oversized text content before transport encoding", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "oversized-text",
+        resource({
+          pattern: "docs://oversized-text",
+          description: "Oversized text",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: () => "x".repeat(4 * 1024 * 1024 + 1),
+          mcp: {
+            content: { type: "text", mimeType: "text/plain" },
+          },
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "docs://oversized-text" },
+      });
+
+      assertEquals(response.error?.code, -32603);
+      assertEquals(
+        response.error?.message,
+        'Resource "oversized-text" returned invalid text content',
+      );
+    });
+
+    it("propagates MCP cancellation to a pending resource loader", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const started = Promise.withResolvers<void>();
+      let receivedSignal: AbortSignal | undefined;
+      registerResource(
+        "pending-resource",
+        resource({
+          pattern: "docs://pending",
+          description: "Pending resource",
+          paramsSchema: defineSchema((v) => v.object({}))(),
+          load: (_params, context) => {
+            receivedSignal = context?.abortSignal;
+            started.resolve();
+            return new Promise<Record<string, never>>(() => {});
+          },
+        }),
+      );
+
+      const pending = server.handleRequest({
+        jsonrpc: "2.0",
+        id: 73,
+        method: "resources/read",
+        params: { uri: "docs://pending" },
+      });
+      await started.promise;
+      await server.handleRequest({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: { requestId: 73 },
+      });
+      const response = await pending;
+
+      assertEquals(receivedSignal?.aborted, true);
+      assertEquals(response.error?.code, -32603);
+      assertEquals(
+        response.error?.message,
+        'Resource "pending-resource" could not be loaded',
+      );
+    });
+
     it("rejects non-JSON resource output with a stable transport error", async () => {
       const server = createMCPServer({
         enabled: true,

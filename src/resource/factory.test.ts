@@ -9,6 +9,7 @@ import {
 import { stub } from "#std/testing/mock";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
+import type { ResourceConfig } from "./types.ts";
 
 describe("resource factory", () => {
   describe("resource()", () => {
@@ -78,10 +79,93 @@ describe("resource factory", () => {
         description: "Data",
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
-        mcp: { enabled: true, cachePolicy: "cache-first" },
+        mcp: {
+          enabled: true,
+          content: { type: "text", mimeType: "text/plain" },
+        },
       });
       assertEquals(r.mcp?.enabled, true);
-      assertEquals(r.mcp?.cachePolicy, "cache-first");
+      assertEquals(r.mcp?.content, { type: "text", mimeType: "text/plain" });
+      assertEquals(Object.isFrozen(r.mcp), true);
+      assertEquals(Object.isFrozen(r.mcp?.content), true);
+    });
+
+    it("should snapshot configuration functions and MCP metadata", async () => {
+      const mcp = {
+        enabled: true,
+        content: { type: "text" as const, mimeType: "text/plain" },
+      };
+      const config: ResourceConfig<Record<string, never>, string> = {
+        pattern: "/stable",
+        description: "Stable",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: () => "original",
+        mcp,
+      };
+      const r = resource(config);
+
+      config.load = () => "mutated";
+      mcp.enabled = false;
+      mcp.content.mimeType = "text/html";
+
+      assertEquals(await r.load({}), "original");
+      assertEquals(r.mcp, {
+        enabled: true,
+        content: { type: "text", mimeType: "text/plain" },
+      });
+    });
+
+    it("should reject malformed runtime configuration", () => {
+      assertThrows(
+        () => resource(null as never),
+        TypeError,
+        "Resource configuration must be an object",
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/invalid",
+            description: "Invalid",
+            paramsSchema: {} as never,
+            load: () => ({}),
+          }),
+        TypeError,
+        "paramsSchema.parse must be a function",
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/invalid-mime",
+            description: "Invalid MIME",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => "content",
+            mcp: {
+              content: {
+                type: "text",
+                mimeType: "text/plain\r\nX-Injected: yes",
+              },
+            },
+          }),
+        TypeError,
+        "MCP content mimeType must be a valid media type",
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/invalid-folded-mime",
+            description: "Invalid folded MIME",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => "content",
+            mcp: {
+              content: {
+                type: "text",
+                mimeType: "text/plain;\r\ncharset=utf-8",
+              },
+            },
+          }),
+        TypeError,
+        "MCP content mimeType must be a valid media type",
+      );
     });
 
     it("should expose configured subscription support", () => {
@@ -184,6 +268,55 @@ describe("resource factory", () => {
       });
 
       assertEquals(await r.load({ key: "lower" }), "LOWER");
+    });
+
+    it("should not invoke a loader for a pre-aborted read", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      let loadCalls = 0;
+      const r = resource({
+        pattern: "/cancelled",
+        description: "Cancelled",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: () => {
+          loadCalls += 1;
+          return {};
+        },
+      });
+
+      await assertRejects(
+        () => r.load({}, { abortSignal: controller.signal }),
+        DOMException,
+        "Resource loading aborted",
+      );
+      assertEquals(loadCalls, 0);
+    });
+
+    it("should cancel a pending loader even when it ignores the signal", async () => {
+      const controller = new AbortController();
+      const started = Promise.withResolvers<void>();
+      let receivedSignal: AbortSignal | undefined;
+      const r = resource({
+        pattern: "/pending",
+        description: "Pending",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: (_params, context) => {
+          receivedSignal = context?.abortSignal;
+          started.resolve();
+          return new Promise<Record<string, never>>(() => {});
+        },
+      });
+
+      const pending = r.load({}, { abortSignal: controller.signal });
+      await started.promise;
+      controller.abort();
+
+      await assertRejects(
+        () => pending,
+        DOMException,
+        "Resource loading aborted",
+      );
+      assertEquals(receivedSignal, controller.signal);
     });
   });
 

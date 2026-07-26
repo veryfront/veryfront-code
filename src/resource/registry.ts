@@ -9,6 +9,8 @@
 
 import type { Resource } from "./types.ts";
 import {
+  assertResourceUri,
+  type CompiledResourcePattern,
   compileResourcePattern,
   extractResourcePatternParams,
   resourceTemplatePatternsOverlap,
@@ -18,6 +20,17 @@ import {
   ScopedRegistryView,
 } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { normalizeResourceDefinition } from "./validation.ts";
+
+const compiledResourcePatterns = new WeakMap<Resource, CompiledResourcePattern>();
+
+function compiledPatternFor(resource: Resource): CompiledResourcePattern {
+  const existing = compiledResourcePatterns.get(resource);
+  if (existing) return existing;
+  const compiled = compileResourcePattern(resource.pattern);
+  compiledResourcePatterns.set(resource, compiled);
+  return compiled;
+}
 
 function assertEquivalentResourceId(
   id: string,
@@ -40,23 +53,25 @@ class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
     id: string,
     resource: Resource<TParams, TData>,
   ): void {
-    this.assertUnambiguousRegistration(id, resource);
-    super.register(id, resource as unknown as Resource);
+    const normalized = normalizeResourceDefinition(resource);
+    this.assertUnambiguousRegistration(id, normalized);
+    super.register(id, normalized as unknown as Resource);
   }
 
   override registerShared<TParams, TData>(
     id: string,
     resource: Resource<TParams, TData>,
   ): void {
-    this.assertUnambiguousRegistration(id, resource);
-    super.registerShared(id, resource as unknown as Resource);
+    const normalized = normalizeResourceDefinition(resource);
+    this.assertUnambiguousRegistration(id, normalized);
+    super.registerShared(id, normalized as unknown as Resource);
   }
 
   private assertUnambiguousRegistration<TParams, TData>(
     id: string,
     incoming: Resource<TParams, TData>,
   ): void {
-    const incomingPattern = compileResourcePattern(incoming.pattern);
+    const incomingPattern = compiledPatternFor(incoming as unknown as Resource);
 
     for (const [existingId, existing] of this.getAll()) {
       if (existingId === id) {
@@ -64,7 +79,7 @@ class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
         continue;
       }
 
-      const existingPattern = compileResourcePattern(existing.pattern);
+      const existingPattern = compiledPatternFor(existing);
       if (
         existingPattern.signature === incomingPattern.signature ||
         resourceTemplatePatternsOverlap(existingPattern, incomingPattern)
@@ -78,12 +93,13 @@ class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
   }
 
   findEntryByPattern(uri: string): readonly [string, Resource] | undefined {
+    assertResourceUri(uri);
     const candidates = Array.from(
       this.getAll(),
       ([id, resource]) => ({
         id,
         resource,
-        pattern: compileResourcePattern(resource.pattern),
+        pattern: compiledPatternFor(resource),
       }),
     );
 

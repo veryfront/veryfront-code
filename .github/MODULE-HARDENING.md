@@ -129,8 +129,8 @@ knowledge, Markdown, MDX, provider, repositories, runs, runtime, and sandbox
 findings are remediated and revalidated. `prompt` is now closed after its
 cross-cutting registry, discovery, HMR, request-lifecycle, and MCP findings
 were remediated and revalidated. `resource` has received a deep current-state
-review and substantial remediation, but remains open while its documented
-transport and cache-policy decisions are unresolved. Each
+review and substantial remediation, but remains open while its cache-policy
+breaking-change decision is unresolved. Each
 closure requires a complete consumer map, deep module-level review,
 adversarial boundary tests, public-contract documentation, and repository-wide
 static verification.
@@ -1065,10 +1065,24 @@ Prompt findings are remediated:
   generation and returning every structured error; strict task callers reject
   that same result.
 - Resource patterns retain one validated grammar for registration, lookup,
-  parameter extraction, and URI-template rendering. Resource load and direct
-  subscription paths validate transformed parameters, while MCP hides disabled
-  resources, separates resources from templates, rejects unbounded JSON, and
-  does not advertise unsupported subscriptions.
+  parameter extraction, and URI-template rendering. Raw query and fragment
+  delimiters cannot alias into path parameters, exact URI identity is
+  preserved, raw template braces are rejected, and patterns and requested URIs
+  have explicit whitespace, control-character, and length bounds.
+- Factory and literal definitions cross one strict, immutable registration
+  boundary. Loader and subscription functions, schemas, and MCP metadata are
+  captured before caller mutation; literal definitions receive the same schema
+  validation and transforms as factory definitions; discovery metadata
+  replacement does not apply non-idempotent transforms twice.
+- Resource loaders receive an immutable read context with the exact URI and
+  cooperative cancellation signal. Pre-aborted work does not start, pending
+  loaders cancel promptly even when they ignore the signal, and MCP
+  cancellation remains scoped to the originating foreground request.
+- MCP hides disabled resources, separates resources from templates, and does
+  not advertise unsupported subscriptions. JSON remains the bounded default;
+  explicit text and blob modes enforce their declared MIME type and loader
+  result, every final transport payload is byte-bounded at four megabytes, and
+  binary bytes are snapshotted before base64 encoding.
 - The Prompt concept page, MCP how-to, Resource explanation, README transport
   wording, generated API reference, and published-package consumer fixtures
   match the implemented contracts.
@@ -1101,6 +1115,13 @@ Reproducible evidence for this checkpoint:
   extension, verifies root import lifecycle, and passes external TypeScript
   composition against the emitted Prompt, Resource, Skill, and Tool registry
   declarations.
+- The current Resource-focused surface passes 24 test groups and 337 nested
+  steps with zero failures, including registry, factory, schema, MCP,
+  discovery, dashboard, request-time rediscovery, and OpenAPI consumers.
+- After the Resource transport remediation, `deno task verify:quick` passes
+  generated manifests, formatting, lint and architecture ratchets, docs and
+  all 736 links, guide examples, and every configured source and browser
+  entrypoint typecheck.
 
 The `prompt` unit is closed. Adjacent `agent`, `cache`, `discovery`, `mcp`,
 `platform`, `registry`, `resource`, `server`, `skill`, `tool`, and `workflow`
@@ -1113,8 +1134,6 @@ The following findings keep `resource` in
 - Resource `mcp.cachePolicy` remains a reserved but unenforced setting. Cache
   key, TTL, invalidation, and failure semantics require a deliberate API
   decision; no behavior was invented for an existing no-op knob.
-- Resource canonicalization for query and fragment variants, plus non-JSON
-  content modes, remains an explicit transport-design decision.
 
 ### Cross-module cache, routing, and production-server remediation checkpoint
 

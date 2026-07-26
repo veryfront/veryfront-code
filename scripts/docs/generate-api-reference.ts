@@ -596,8 +596,11 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   "veryfront/resource": {
     resource: "Create MCP-discoverable resource",
     resourceRegistry: "Global resource registry",
+    McpConfig: "MCP resource exposure configuration",
+    McpContentConfig: "MCP resource content transport configuration",
     Resource: "`resource()` return type",
     ResourceConfig: "`resource()` config",
+    ResourceLoadContext: "Per-read resource loader context",
   },
 
   "veryfront/mcp": {

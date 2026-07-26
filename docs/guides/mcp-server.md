@@ -179,6 +179,46 @@ export default resource({
 Set `mcp: { enabled: false }` when application code should still be able to
 load a resource but MCP clients must not list or read it.
 
+Without an `mcp.content` setting, the loader result must be bounded JSON. To
+serve text, declare its media type and return a string:
+
+```ts
+export default resource({
+  description: "Project README",
+  pattern: "docs://readme",
+  paramsSchema: defineSchema((v) => v.object({}))(),
+  mcp: {
+    content: { type: "text", mimeType: "text/markdown" },
+  },
+  load: () => "# Project\n",
+});
+```
+
+To serve binary content, use `type: "blob"` with a media type and return a
+`Uint8Array`. The MCP server base64-encodes the bytes. JSON, text, and blob
+payloads are limited to four megabytes.
+
+Parameterized URI segments do not absorb raw `?` or `#` delimiters. Percent-
+encode a reserved delimiter when it belongs inside a parameter value. Resource
+patterns and requested URIs are limited to 8,192 characters and reject raw
+whitespace and control characters.
+
+Loaders receive MCP cancellation through the optional read context:
+
+```ts
+export default resource({
+  description: "Project documentation",
+  pattern: "docs://project",
+  paramsSchema: defineSchema((v) => v.object({}))(),
+  load: async (_params, context) => {
+    return await loadDocs({ signal: context?.abortSignal });
+  },
+});
+```
+
+The server returns promptly after a cancellation notification. Honor the
+signal in loader I/O to release the underlying work.
+
 ## Manual registration
 
 For tools, prompts, or resources not in the auto-discovered directories:

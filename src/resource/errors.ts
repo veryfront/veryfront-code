@@ -25,3 +25,11 @@ export class ResourceUriValidationError extends Error {
     this.parameterName = parameterName;
   }
 }
+
+/** Error raised when a resource URI is malformed or exceeds its input bound. */
+export class ResourceUriSyntaxError extends Error {
+  constructor(detail: string) {
+    super(`Resource URI ${detail}`);
+    this.name = "ResourceUriSyntaxError";
+  }
+}

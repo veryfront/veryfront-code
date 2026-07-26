@@ -3,7 +3,12 @@ import {
   type PromptGenerateFn,
   promptRegistry,
 } from "veryfront/prompt";
-import { resource, resourceRegistry } from "veryfront/resource";
+import {
+  type McpContentConfig,
+  resource,
+  resourceRegistry,
+  type ResourceLoadContext,
+} from "veryfront/resource";
 import { defineSchema } from "veryfront/schemas";
 import { registerResource } from "veryfront/mcp";
 import { skillRegistry } from "veryfront/skill";
@@ -28,6 +33,25 @@ void welcome.getContent({ name: "Ada" });
 void docs.load({ section: "agents" });
 resourceRegistry.register(docs.id, docs);
 registerResource(docs.id, docs);
+
+const markdownContent: McpContentConfig = {
+  type: "text",
+  mimeType: "text/markdown",
+};
+const readme = resource({
+  pattern: "docs://readme",
+  description: "Read the project README",
+  paramsSchema: defineSchema((v) => v.object({}))(),
+  mcp: { content: markdownContent },
+  load: (_params, context?: Readonly<ResourceLoadContext>) => {
+    void context?.uri;
+    return "# Project\n";
+  },
+});
+void readme.load({}, {
+  abortSignal: new AbortController().signal,
+  uri: "docs://readme",
+});
 
 prompt({
   id: "invalid-generator",

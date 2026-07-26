@@ -31,6 +31,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   ResourceParamsValidationError,
+  ResourceUriSyntaxError,
   ResourceUriValidationError,
 } from "#veryfront/resource/errors.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
@@ -255,7 +256,18 @@ async function handleReadResource(req: Request): Promise<Response> {
     const { uri } = (await req.json()) as { uri?: string };
     if (!uri) return errorResponse("uri is required", 400);
 
-    const resource = resourceRegistry.findByPattern(uri);
+    let resource: ReturnType<typeof resourceRegistry.findByPattern>;
+    try {
+      resource = resourceRegistry.findByPattern(uri);
+    } catch (error) {
+      if (error instanceof ResourceUriSyntaxError) {
+        return errorResponse(error.message, 400);
+      }
+      dashboardApiLogger.warn("Resource URI lookup failed", {
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
+      return errorResponse("Resource URI could not be resolved", 500);
+    }
     if (!resource) return errorResponse(`Resource not found for URI: ${uri}`, 404);
 
     let params: Record<string, string>;

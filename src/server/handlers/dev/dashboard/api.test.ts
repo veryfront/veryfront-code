@@ -497,6 +497,32 @@ describe("Dashboard API - POST endpoints", () => {
     }
   });
 
+  it("/_dev/api/read-resource rejects raw-whitespace URIs before loading", async () => {
+    const bounded = resource({
+      pattern: "/dashboard-bounded/:id",
+      description: "Bounded user",
+      paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+      load: ({ id }) => ({ id }),
+    });
+    resourceRegistry.register(bounded.id, bounded);
+
+    try {
+      const req = new Request("http://localhost/_dev/api/read-resource", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ uri: "/dashboard-bounded/raw value" }),
+      });
+      const res = await handleDashboardAPI(req, createMockCtx());
+
+      assertEquals(res?.status, 400);
+      assertEquals(await res?.json(), {
+        error: "Resource URI contains raw whitespace",
+      });
+    } finally {
+      resourceRegistry.delete(bounded.id);
+    }
+  });
+
   it("/_dev/api/render-prompt returns 400 without promptId", async () => {
     const req = new Request("http://localhost/_dev/api/render-prompt", {
       method: "POST",

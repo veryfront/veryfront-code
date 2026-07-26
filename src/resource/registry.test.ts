@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
 import { resourceRegistry, resourceRegistryInternal } from "./registry.ts";
@@ -75,6 +75,66 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("/users/me") === exact, true);
     });
 
+    it("should not alias query or fragment variants into path parameters", () => {
+      const user = resource({
+        pattern: "/users/:id",
+        description: "User",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: ({ id }) => ({ id }),
+      });
+      resourceRegistry.register(user.id, user);
+
+      assertEquals(resourceRegistry.findByPattern("/users/42?view=full"), undefined);
+      assertEquals(resourceRegistry.findByPattern("/users/42#profile"), undefined);
+      assertEquals(resourceRegistry.findByPattern("/users/42%3Fview%3Dfull"), user);
+      assertEquals(
+        resourceRegistry.extractParams("/users/42%3Fview%3Dfull", user.pattern),
+        { id: "42?view=full" },
+      );
+    });
+
+    it("should preserve complete exact URI identity", () => {
+      const summary = resource({
+        pattern: "docs://project?view=summary",
+        description: "Project summary",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: () => ({}),
+      });
+      resourceRegistry.register(summary.id, summary);
+
+      assertEquals(
+        resourceRegistry.findByPattern("docs://project?view=summary"),
+        summary,
+      );
+      assertEquals(resourceRegistry.findByPattern("docs://project"), undefined);
+      assertEquals(
+        resourceRegistry.findByPattern("docs://project?view=full"),
+        undefined,
+      );
+    });
+
+    it("should reject unbounded or raw-whitespace URIs before matching", () => {
+      const user = resource({
+        pattern: "/users/:id",
+        description: "User",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: ({ id }) => ({ id }),
+      });
+      resourceRegistry.register(user.id, user);
+
+      assertThrows(
+        () => resourceRegistry.findByPattern("/users/raw value"),
+        Error,
+        "raw whitespace",
+      );
+      assertThrows(
+        () => resourceRegistry.findByPattern(`/users/${"x".repeat(8 * 1024)}`),
+        Error,
+        "8192",
+      );
+      assertEquals(resourceRegistry.findByPattern("/users/encoded%20value"), user);
+    });
+
     it("should reject ambiguous patterns instead of depending on registration order", () => {
       const byId = resource({
         pattern: "/users/:id",
@@ -140,6 +200,20 @@ describe("resource registry", () => {
         'resource id "a_b" is already registered for pattern "/a/b"',
       );
     });
+
+    it("should reject raw URI-template braces", () => {
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/users/{id}",
+            description: "Invalid template syntax",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: async () => ({}),
+          }),
+        Error,
+        "raw URI-template braces are not allowed",
+      );
+    });
   });
 
   describe("extractParams()", () => {
@@ -192,6 +266,79 @@ describe("resource registry", () => {
       resourceRegistry.register(beta.id, beta);
 
       assertEquals(resourceRegistry.list().sort(), ["alpha", "beta"]);
+    });
+  });
+
+  describe("registration boundary", () => {
+    it("should validate and transform params for literal resource definitions", async () => {
+      let received = "";
+      resourceRegistry.register("literal", {
+        id: "literal",
+        pattern: "/literal/:value",
+        description: "Literal",
+        paramsSchema: defineSchema((v) =>
+          v.object({
+            value: v.string().transform((value) => `${value}!`),
+          })
+        )(),
+        load: ({ value }) => {
+          received = value;
+          return value;
+        },
+      });
+
+      const registered = resourceRegistry.get("literal");
+      assertEquals(await registered?.load({ value: "ready" }), "ready!");
+      assertEquals(received, "ready!");
+      await assertRejects(
+        () => registered!.load({ value: 42 } as never),
+        Error,
+        "params validation failed",
+      );
+    });
+
+    it("should snapshot and freeze a registered definition", async () => {
+      const definition = {
+        id: "stable",
+        pattern: "/stable",
+        description: "Stable",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: () => "original",
+        mcp: {
+          enabled: true,
+          content: { type: "text" as const, mimeType: "text/plain" },
+        },
+      };
+      resourceRegistry.register("stable", definition);
+
+      definition.pattern = "/mutated";
+      definition.load = () => "mutated";
+      definition.mcp.enabled = false;
+      definition.mcp.content.mimeType = "text/html";
+
+      const registered = resourceRegistry.get("stable");
+      assertEquals(Object.isFrozen(registered), true);
+      assertEquals(registered?.pattern, "/stable");
+      assertEquals(registered?.mcp, {
+        enabled: true,
+        content: { type: "text", mimeType: "text/plain" },
+      });
+      assertEquals(await registered?.load({}), "original");
+    });
+
+    it("should reject malformed literal definitions", () => {
+      assertThrows(
+        () =>
+          resourceRegistry.register("invalid", {
+            id: "invalid",
+            pattern: "/invalid",
+            description: "Invalid",
+            paramsSchema: {} as never,
+            load: () => ({}),
+          }),
+        TypeError,
+        "paramsSchema.parse must be a function",
+      );
     });
   });
 });

@@ -6,10 +6,14 @@
  * and MCP template rendering from drifting into subtly different grammars.
  */
 
-import { ResourceUriValidationError } from "./errors.ts";
+import { ResourceUriSyntaxError, ResourceUriValidationError } from "./errors.ts";
+import { containsControlCharacter } from "./string-validation.ts";
 
 const PARAMETER_PATTERN = /:([A-Za-z_][A-Za-z0-9_]*)/g;
 const INVALID_PATTERN_WHITESPACE = /\s/;
+const RAW_URI_TEMPLATE_BRACE = /[{}]/;
+export const MAX_RESOURCE_URI_LENGTH = 8 * 1024;
+const MAX_RESOURCE_PATTERN_LENGTH = MAX_RESOURCE_URI_LENGTH;
 
 export type ResourcePatternSegment =
   | { readonly kind: "literal"; readonly value: string }
@@ -32,13 +36,43 @@ function invalidPattern(pattern: unknown, detail: string): Error {
   return new Error(`Invalid resource pattern "${String(pattern)}": ${detail}`);
 }
 
+/** Reject malformed or unbounded URI input before registry matching. */
+export function assertResourceUri(uri: string): void {
+  if (typeof uri !== "string" || uri.length === 0) {
+    throw new ResourceUriSyntaxError("must be a non-empty string");
+  }
+  if (uri.length > MAX_RESOURCE_URI_LENGTH) {
+    throw new ResourceUriSyntaxError(
+      `must not exceed ${MAX_RESOURCE_URI_LENGTH} characters`,
+    );
+  }
+  if (containsControlCharacter(uri)) {
+    throw new ResourceUriSyntaxError("contains control characters");
+  }
+  if (INVALID_PATTERN_WHITESPACE.test(uri)) {
+    throw new ResourceUriSyntaxError("contains raw whitespace");
+  }
+}
+
 /** Compile and validate a resource pattern. */
 export function compileResourcePattern(pattern: string): CompiledResourcePattern {
   if (typeof pattern !== "string" || pattern.length === 0) {
     throw invalidPattern(pattern, "pattern must be a non-empty string");
   }
+  if (pattern.length > MAX_RESOURCE_PATTERN_LENGTH) {
+    throw invalidPattern(
+      pattern,
+      `pattern must not exceed ${MAX_RESOURCE_PATTERN_LENGTH} characters`,
+    );
+  }
   if (INVALID_PATTERN_WHITESPACE.test(pattern)) {
     throw invalidPattern(pattern, "raw whitespace is not allowed");
+  }
+  if (containsControlCharacter(pattern)) {
+    throw invalidPattern(pattern, "control characters are not allowed");
+  }
+  if (RAW_URI_TEMPLATE_BRACE.test(pattern)) {
+    throw invalidPattern(pattern, "raw URI-template braces are not allowed");
   }
 
   const parameterNames: string[] = [];
@@ -82,7 +116,10 @@ export function compileResourcePattern(pattern: string): CompiledResourcePattern
     parameterNames.push(name);
 
     const literal = pattern.slice(lastIndex, match.index);
-    expressionParts.push(escapeRegExp(literal), "([^/]+)");
+    // Query and fragment delimiters are part of the complete URI identity,
+    // not part of a path-segment parameter. Callers that need those characters
+    // inside a parameter must percent-encode them.
+    expressionParts.push(escapeRegExp(literal), "([^/?#]+)");
     signatureParts.push(literal, ":");
     templateParts.push(literal, `{${name}}`);
     lastIndex = match.index + match[0].length;
@@ -130,6 +167,7 @@ export function extractResourcePatternParams(
   uri: string,
   compiled: CompiledResourcePattern,
 ): Record<string, string> {
+  assertResourceUri(uri);
   const match = compiled.expression.exec(uri);
   if (!match) return {};
 

@@ -92,6 +92,32 @@ Deno.test("resource discovery preserves explicit patterns and replaces generated
   }
 });
 
+Deno.test("resource discovery applies parameter transforms exactly once", async () => {
+  const discovered = resource({
+    description: "Transformed profile",
+    paramsSchema: defineSchema((v) =>
+      v.object({
+        id: v.string().transform((value) => `${value}!`),
+      })
+    )(),
+    load: ({ id }) => id,
+  });
+
+  try {
+    resourceHandler.register(
+      "profile",
+      discovered as unknown as Resource,
+      "/project/resources/users/[id]/profile.ts",
+      "/project/resources",
+    );
+
+    const registered = resourceRegistry.get("profile");
+    assertEquals(await registered?.load({ id: "ready" }), "ready!");
+  } finally {
+    resourceRegistry.delete("profile");
+  }
+});
+
 Deno.test("prompt discovery validates description and optional suggestion", () => {
   assertEquals(
     promptHandler.validate({

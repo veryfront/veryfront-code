@@ -31,6 +31,21 @@ It does not advertise resource subscriptions. A resource's optional
 `subscribe` function is therefore an application-level capability, not an MCP
 subscription contract.
 
+Resource URI identity is exact. Query and fragment variants do not silently
+become part of a path parameter; reserved delimiters inside a parameter must be
+percent-encoded. This keeps lookup, parameter validation, and the URI template
+advertised to MCP clients aligned.
+
+JSON is the default MCP content mode because it gives loaders a bounded,
+data-only transport contract. A resource can instead declare text or binary
+content together with its media type. The declared mode is checked against the
+loader result before content crosses the MCP boundary, and every mode has a
+four-megabyte payload limit.
+
+MCP cancellation reaches the loader through its optional read context. The
+server can stop waiting even when a loader ignores the signal, but the loader
+must cooperate to stop its own I/O and side effects.
+
 Resources can also remain available to application code while being hidden from
 MCP clients. Setting `mcp.enabled` to `false` excludes the resource from MCP
 lists, templates, and reads.
