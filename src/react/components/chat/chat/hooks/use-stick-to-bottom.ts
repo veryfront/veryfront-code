@@ -143,3 +143,16 @@ export function useStickToBottom<T extends HTMLElement>(
 
   return { scrollRef, contentRef, isAtBottom, scrollToBottom };
 }
+
+/**
+ * `useChatScroll` — the canonical name for the chat scroll hook (RFC 2980).
+ * Today it aliases {@link useStickToBottom}; the documented superset methods
+ * (`viewportRef`/`getViewportProps`, `scrollToMessage`, `scrollToStart/End`,
+ * `preserveScrollOnPrepend`) land in the batched breaking release. Prefer this
+ * name in new code.
+ */
+export const useChatScroll = useStickToBottom;
+/** Options for {@link useChatScroll}. */
+export type UseChatScrollOptions = UseStickToBottomOptions;
+/** Result of {@link useChatScroll}. */
+export type UseChatScrollResult<T extends HTMLElement> = UseStickToBottomResult<T>;

@@ -58,3 +58,18 @@ export function useComposerContextOptional(): ComposerContextValue | null {
 /** Render composer context provider. */
 export const ComposerContextProvider = ComposerContext.Provider;
 export { useComposerContext };
+
+// ---------------------------------------------------------------------------
+// Canonical RFC 2980 names ("Composer" is banned across the surface → ChatInput).
+// Additive aliases through the migration; the "Composer" names become deprecated
+// re-exports and are removed in the batched breaking release.
+// ---------------------------------------------------------------------------
+
+/** Shared state exposed by a `<ChatInput>` to its children (RFC 2980 name). */
+export type ChatInputContextValue = ComposerContextValue;
+/** Read the enclosing `<ChatInput>` context; throws outside one. */
+export const useChatInputContext = useComposerContext;
+/** Read the enclosing `<ChatInput>` context, or null outside one. */
+export const useChatInputContextOptional = useComposerContextOptional;
+/** Provider for `<ChatInput>` context (RFC 2980 name). */
+export const ChatInputContextProvider = ComposerContextProvider;

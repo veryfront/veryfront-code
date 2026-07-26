@@ -223,6 +223,9 @@ export {
   type UseAttachmentsResult,
 } from "./hooks/use-uploads-registry.ts";
 export {
+  useChatScroll,
+  type UseChatScrollOptions,
+  type UseChatScrollResult,
   useStickToBottom,
   type UseStickToBottomOptions,
   type UseStickToBottomResult,
@@ -274,6 +277,8 @@ export {
 export {
   ChatContextProvider,
   type ChatContextValue,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   ComposerContextProvider,
   type ComposerContextValue,
   MessageContextProvider,
@@ -281,6 +286,8 @@ export {
   type MessagePartsData,
   useChatContext,
   useChatContextOptional,
+  useChatInputContext,
+  useChatInputContextOptional,
   useComposerContext,
   useComposerContextOptional,
   useMessageContext,
