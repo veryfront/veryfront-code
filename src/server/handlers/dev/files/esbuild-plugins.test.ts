@@ -242,9 +242,11 @@ describe(
   "createBareExternalPlugin \u2014 schedules background resolution when pinning is enabled and cache is cold",
   () => {
     let originalFetch: typeof globalThis.fetch;
+    let originalPinningFlag: string | undefined;
 
     beforeEach(() => {
       originalFetch = globalThis.fetch;
+      originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
     });
 
     afterEach(async () => {
@@ -254,7 +256,7 @@ describe(
       await _pendingResolutions();
       _clearNpmVersionCache();
       globalThis.fetch = originalFetch;
-      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
     });
 
     it("warms the npm version cache via background fetch when caches are cold and pinning is enabled", async () => {
