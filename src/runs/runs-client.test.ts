@@ -346,8 +346,9 @@ describe("VeryfrontRunsClient", () => {
     });
   });
 
-  it("generates an idempotency key for direct schedule run creation", async () => {
+  it("reuses a generated idempotency key when direct schedule creation retries", async () => {
     mockFetch([
+      jsonResponse({ error: "temporary upstream failure" }, 500),
       jsonResponse({
         run_id: "run_11111111-1111-4111-8111-111111111111",
         run_execution_id: "run_11111111-1111-4111-8111-111111111111",
@@ -358,6 +359,11 @@ describe("VeryfrontRunsClient", () => {
       apiUrl: "https://api.test.com",
       authToken: "test-token",
       projectReference: "dreamy-haven",
+      retry: {
+        maxRetries: 1,
+        initialDelay: 1,
+        maxDelay: 1,
+      },
     });
 
     await client.createScheduleRun({
@@ -365,13 +371,17 @@ describe("VeryfrontRunsClient", () => {
       runName: "Manual schedule retry guard",
     });
 
-    const body = jsonBody(0) as { run_name: string; idempotency_key: string };
+    const firstBody = jsonBody(0) as { run_name: string; idempotency_key: string };
+    const retryBody = jsonBody(1) as { run_name: string; idempotency_key: string };
+    assertEquals(fetchCalls.length, 2);
     assertEquals(call(0).init?.method, "POST");
-    assertEquals(body, {
+    assertEquals(call(1).init?.method, "POST");
+    assertEquals(firstBody, {
       run_name: "Manual schedule retry guard",
-      idempotency_key: body.idempotency_key,
+      idempotency_key: firstBody.idempotency_key,
     });
-    assertStringIncludes(body.idempotency_key, "schedule-run:");
+    assertStringIncludes(firstBody.idempotency_key, "schedule-run:");
+    assertEquals(retryBody, firstBody);
   });
 
   it("does not create a run when the pushed source schedule is missing", async () => {
