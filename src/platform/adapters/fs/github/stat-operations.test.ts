@@ -141,6 +141,37 @@ describe("GitHubStatOperations", () => {
       );
     });
 
+    it("isolates stat cache entries by repository", async () => {
+      const cache = new FileCache();
+      const first = new GitHubStatOperations(
+        mockConfig,
+        {
+          getTree: () =>
+            Promise.resolve({
+              tree: [{ path: "shared.ts", type: "blob", sha: "first", size: 1 }],
+              truncated: false,
+            }),
+          repoId: "test-owner/test-repo",
+        } as any,
+        cache,
+      );
+      const second = new GitHubStatOperations(
+        { ...mockConfig, repo: "other-repo" },
+        {
+          getTree: () =>
+            Promise.resolve({
+              tree: [{ path: "shared.ts", type: "blob", sha: "second", size: 2 }],
+              truncated: false,
+            }),
+          repoId: "test-owner/other-repo",
+        } as any,
+        cache,
+      );
+
+      assertEquals((await first.stat("shared.ts")).size, 1);
+      assertEquals((await second.stat("shared.ts")).size, 2);
+    });
+
     it("does not let an index build commit after clearIndex invalidates it", async () => {
       let resolveTree:
         | ((tree: {

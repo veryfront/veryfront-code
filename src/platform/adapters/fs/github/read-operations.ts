@@ -6,6 +6,7 @@ import type { GitHubApiClient } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
 
 const LOG_PREFIX = "[GitHubReadOperations]";
 
@@ -35,7 +36,10 @@ export class GitHubReadOperations {
 
   async readTextFile(path: string): Promise<string> {
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
-    const cacheKey = buildGitHubContentCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubContentCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<string>(cacheKey);
     if (cached !== undefined) return cached;
 
@@ -52,7 +56,10 @@ export class GitHubReadOperations {
 
   async readFile(path: string): Promise<Uint8Array> {
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
-    const cacheKey = buildGitHubBytesCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubBytesCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<Uint8Array>(cacheKey);
     if (cached !== undefined) return cached;
 
@@ -101,7 +108,7 @@ export class GitHubReadOperations {
         );
       }
 
-      if (!response.content) {
+      if (typeof response.content !== "string") {
         throw toError(
           createError({
             type: "file",

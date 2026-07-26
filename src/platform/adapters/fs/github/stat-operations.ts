@@ -10,6 +10,7 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubApiClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
+import { buildGitHubCacheRef } from "./cache-scope.ts";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
@@ -172,7 +173,10 @@ export class GitHubStatOperations {
       indexSize: this.fileIndex.size,
     });
 
-    const cacheKey = buildGitHubStatCacheKey(this.config.ref, normalizedPath);
+    const cacheKey = buildGitHubStatCacheKey(
+      buildGitHubCacheRef(this.config),
+      normalizedPath,
+    );
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) return cached;
 
@@ -230,9 +234,12 @@ export class GitHubStatOperations {
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
     const allowPagesPrefix = options?.allowPagesPrefix !== false;
-    const cacheKey = `${buildGitHubResolveCacheKey(this.config.ref, normalizedPath)}:${
-      allowPagesPrefix ? "with-pages" : "without-pages"
-    }`;
+    const cacheKey = `${
+      buildGitHubResolveCacheKey(
+        buildGitHubCacheRef(this.config),
+        normalizedPath,
+      )
+    }:${allowPagesPrefix ? "with-pages" : "without-pages"}`;
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) return cached;
 

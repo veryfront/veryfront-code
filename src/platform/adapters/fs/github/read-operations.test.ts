@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FileCache } from "../cache/file-cache.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
 
 describe("GitHubReadOperations", () => {
@@ -93,6 +94,16 @@ describe("GitHubReadOperations", () => {
       assertEquals(result, "test");
     });
 
+    it("should accept an empty file from the Contents API", async () => {
+      const ops = createOps({
+        client: {
+          getContents: () => Promise.resolve({ type: "file", content: "" }),
+        },
+      });
+
+      assertEquals(await ops.readTextFile("empty.txt"), "");
+    });
+
     it("should cache the result after fetching", async () => {
       let cachedKey = "";
       let cachedValue = "";
@@ -173,6 +184,30 @@ describe("GitHubReadOperations", () => {
         Error,
         "not found",
       );
+    });
+
+    it("isolates cached content by repository", async () => {
+      const cache = new FileCache();
+      const first = new GitHubReadOperations(
+        mockConfig,
+        createMockClient({
+          getContents: () => Promise.resolve({ type: "file", content: "Zmlyc3Q=" }),
+        }) as any,
+        cache,
+        createMockStatOps() as any,
+      );
+      const second = new GitHubReadOperations(
+        { ...mockConfig, repo: "other-repo" },
+        createMockClient({
+          repoId: "test-owner/other-repo",
+          getContents: () => Promise.resolve({ type: "file", content: "c2Vjb25k" }),
+        }) as any,
+        cache,
+        createMockStatOps() as any,
+      );
+
+      assertEquals(await first.readTextFile("shared.txt"), "first");
+      assertEquals(await second.readTextFile("shared.txt"), "second");
     });
   });
 
