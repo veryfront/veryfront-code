@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
@@ -317,8 +318,10 @@ describe("cli/router helpers", () => {
     const originalExit = Deno.exit;
     const originalInfo = cliLogger.info;
     const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
     let infoMessages: string[];
     let consoleOutput: string[];
+    let consoleErrorOutput: string[];
 
     function stubExit() {
       // deno-lint-ignore no-explicit-any
@@ -336,8 +339,12 @@ describe("cli/router helpers", () => {
 
     function stubConsole() {
       consoleOutput = [];
+      consoleErrorOutput = [];
       console.log = (...args: unknown[]) => {
         consoleOutput.push(args.map(String).join(" "));
+      };
+      console.error = (...args: unknown[]) => {
+        consoleErrorOutput.push(args.map(String).join(" "));
       };
     }
 
@@ -346,6 +353,7 @@ describe("cli/router helpers", () => {
       (Deno as any).exit = originalExit;
       cliLogger.info = originalInfo;
       console.log = originalConsoleLog;
+      console.error = originalConsoleError;
       setJsonMode(false);
       resetInteractiveMode();
     }
@@ -480,6 +488,86 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.error.slug, "invalid-arguments");
       } finally {
         restoreAll();
+      }
+    });
+
+    it("reports incompatible remote schedule input as a usage error", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit({
+          _: ["schedule", "run", "process-job-submissions"],
+          remote: true,
+          input: "input.json",
+          json: true,
+        } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "schedule");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("reports missing credentials for schedule remote JSON runs as JSON command failure", async () => {
+      const originalCwd = Deno.cwd();
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-json-auth-" });
+      const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-json-auth-config-" });
+      const environmentNames = [
+        "VERYFRONT_API_URL",
+        "VERYFRONT_API_TOKEN",
+        "VERYFRONT_PROJECT_SLUG",
+        "XDG_CONFIG_HOME",
+      ] as const;
+      const originalEnvironment = Object.fromEntries(
+        environmentNames.map((name) => [name, Deno.env.get(name)]),
+      ) as Record<(typeof environmentNames)[number], string | undefined>;
+
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ projectSlug: "json-auth-project" }),
+        );
+        Deno.chdir(projectDir);
+        Deno.env.delete("VERYFRONT_API_URL");
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.set("XDG_CONFIG_HOME", configHome);
+        _resetEnvironmentConfig();
+
+        const code = await runAndCaptureExit({
+          _: ["schedule", "run", "process-job-submissions"],
+          remote: true,
+          json: true,
+        } as ParsedArgs);
+        assertEquals(code, 1);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0] ?? "{}");
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "schedule");
+        assertEquals(parsed.error.code, "RUNTIME_ERROR");
+        assertEquals(parsed.error.slug, "command-failed");
+        assertEquals(parsed.error.message, "Authentication required for this operation.");
+        assertEquals(consoleErrorOutput, []);
+      } finally {
+        Deno.chdir(originalCwd);
+        for (const name of environmentNames) {
+          const value = originalEnvironment[name];
+          if (value === undefined) Deno.env.delete(name);
+          else Deno.env.set(name, value);
+        }
+        _resetEnvironmentConfig();
+        restoreAll();
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(configHome, { recursive: true });
       }
     });
   });
