@@ -17,6 +17,10 @@ describe("platform/compat/path/basic-operations", () => {
       assertEquals(join("a/", "/b"), "a/b");
     });
 
+    it("normalizes dot and parent segments", () => {
+      assertEquals(join("a", ".", "b", "..", "c"), "a/c");
+    });
+
     it("preserves UNC roots while normalizing interior separators", () => {
       assertEquals(
         join("//server/share/project", "veryfront.config.ts"),
@@ -53,6 +57,10 @@ describe("platform/compat/path/basic-operations", () => {
 
     it("should handle Windows backslash paths", () => {
       assertEquals(dirname("D:\\a\\project\\src\\file.ts"), "D:/a/project/src");
+    });
+
+    it("preserves a Windows drive root", () => {
+      assertEquals(dirname("D:\\file.ts"), "D:/");
     });
   });
 

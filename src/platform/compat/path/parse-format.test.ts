@@ -103,5 +103,29 @@ describe("platform/compat/path/parse-format", () => {
       assertEquals(ext, ".txt");
       // dir is "." on Deno, "" on Node/Bun — both valid
     });
+
+    it("parses Windows paths into portable components", () => {
+      const parsed = parse("D:\\workspace\\src\\file.ts");
+      assertEquals(parsed, {
+        root: "D:/",
+        dir: "D:/workspace/src",
+        base: "file.ts",
+        ext: ".ts",
+        name: "file",
+      });
+    });
+
+    it("formats Windows path objects with portable separators", () => {
+      assertEquals(
+        format({
+          root: "D:/",
+          dir: "D:/workspace/src",
+          base: "file.ts",
+          ext: ".ts",
+          name: "file",
+        }),
+        "D:/workspace/src/file.ts",
+      );
+    });
   });
 });

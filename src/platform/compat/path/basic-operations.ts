@@ -1,71 +1,39 @@
-import { isDeno, nodePath } from "./runtime.ts";
+import {
+  hasWindowsLikePath,
+  portableBasename,
+  portableDirname,
+  portableExtname,
+  portableJoin,
+  toPortableSeparators,
+} from "./portable.ts";
+import { getNativePathImplementation } from "./runtime.ts";
 
-function hasWindowsLikePath(path: string): boolean {
-  return path.includes("\\") || /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
-}
-
-/** Normalize backslashes to forward slashes (for Deno on Windows). */
-function normSep(p: string): string {
-  return p.includes("\\") ? p.replace(/\\/g, "/") : p;
-}
-
-/** Join path segments. */
+/** Join and normalize path segments using their detected path flavor. */
 export function join(...paths: string[]): string {
-  const normalizedPaths = paths
-    .map(normSep)
-    .filter((p) => p.length > 0);
-  const hasUncPrefix = normalizedPaths[0]?.startsWith("//") === true;
-  let joined = normalizedPaths
-    .join("/")
-    .replace(/\/+/g, "/");
-
-  if (hasUncPrefix) {
-    joined = `//${joined.replace(/^\/+/, "")}`;
-  }
-  if (joined.length > (hasUncPrefix ? 2 : 1)) {
-    joined = joined.replace(/\/$/, "");
-  }
-
-  return joined || "/";
+  if (paths.every((path) => path.length === 0)) return "/";
+  const windows = paths.some(hasWindowsLikePath);
+  const pathApi = getNativePathImplementation(windows);
+  return pathApi ? toPortableSeparators(pathApi.join(...paths)) : portableJoin(paths, windows);
 }
 
 /** Return the parent directory path. */
 export function dirname(path: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.dirname(path);
-
-  const p = normSep(path);
-  const lastSlash = p.lastIndexOf("/");
-  if (lastSlash === -1) return ".";
-  if (lastSlash === 0) return "/";
-  return p.slice(0, lastSlash);
+  const windows = hasWindowsLikePath(path);
+  const pathApi = getNativePathImplementation(windows);
+  return pathApi ? toPortableSeparators(pathApi.dirname(path)) : portableDirname(path, windows);
 }
 
 /** Return the last path segment. */
 export function basename(path: string, ext?: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) {
-    // Only pass ext if defined - Bun is strict about this parameter
-    return ext === undefined ? nodePath.basename(path) : nodePath.basename(path, ext);
-  }
-
-  let normalizedPath = normSep(path);
-  while (normalizedPath.length > 1 && normalizedPath.endsWith("/")) {
-    normalizedPath = normalizedPath.slice(0, -1);
-  }
-
-  const lastSlash = normalizedPath.lastIndexOf("/");
-  let base = lastSlash === -1 ? normalizedPath : normalizedPath.slice(lastSlash + 1);
-
-  if (ext && base.endsWith(ext)) base = base.slice(0, -ext.length);
-
-  return base;
+  const windows = hasWindowsLikePath(path);
+  const pathApi = getNativePathImplementation(windows);
+  if (!pathApi) return portableBasename(path, ext, windows);
+  return ext === undefined ? pathApi.basename(path) : pathApi.basename(path, ext);
 }
 
 /** Return the file extension for a path. */
 export function extname(path: string): string {
-  if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.extname(path);
-
-  const base = basename(path);
-  const lastDot = base.lastIndexOf(".");
-  if (lastDot <= 0) return "";
-  return base.slice(lastDot);
+  const windows = hasWindowsLikePath(path);
+  const pathApi = getNativePathImplementation(windows);
+  return pathApi?.extname(path) ?? portableExtname(path, windows);
 }

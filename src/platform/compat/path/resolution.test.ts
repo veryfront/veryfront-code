@@ -38,6 +38,13 @@ describe("platform/compat/path/resolution", () => {
     it("should preserve drive letter when resolving to root", () => {
       assertEquals(resolve("D:/a", ".."), "D:/");
     });
+
+    it("preserves UNC roots", () => {
+      assertEquals(
+        resolve("//server/share/project", ".."),
+        "//server/share/",
+      );
+    });
   });
 
   describe("isAbsolute", () => {
@@ -70,6 +77,10 @@ describe("platform/compat/path/resolution", () => {
 
     it("should return . for same path", () => {
       assertEquals(relative("/home/user", "/home/user"), ".");
+    });
+
+    it("returns an absolute portable path across Windows drives", () => {
+      assertEquals(relative("C:/workspace", "D:/project"), "D:/project");
     });
   });
 
@@ -104,6 +115,13 @@ describe("platform/compat/path/resolution", () => {
 
     it("should preserve Windows drive letter", () => {
       assertEquals(normalize("D:/"), "D:/");
+    });
+
+    it("preserves UNC roots while normalizing traversal", () => {
+      assertEquals(
+        normalize("\\\\server\\share\\project\\..\\src"),
+        "//server/share/src",
+      );
     });
   });
 });
