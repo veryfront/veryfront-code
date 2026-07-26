@@ -109,6 +109,7 @@ export type ChatFileUiPart = {
   mediaType: string;
   url: string;
   filename?: string;
+  size?: number;
 };
 
 /** File UI part enriched with upload metadata. */
@@ -517,6 +518,7 @@ const getFileUiPartWithUploadSchema = defineSchema((v) =>
     mediaType: nonEmptyString(v),
     url: nonEmptyString(v),
     filename: nonEmptyString(v).optional(),
+    size: v.number().int().nonnegative().optional(),
     uploadId: nonEmptyString(v).optional(),
     uploadPath: nonEmptyString(v).optional(),
   }).strip()

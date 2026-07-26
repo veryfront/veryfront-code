@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
@@ -70,6 +70,60 @@ function rawToolResultReplayPart(toolCallId: string, output: unknown, toolName?:
 function stripReplayMessages(messages: ReplayMessage[]): unknown {
   return stripPendingToolParts(messages as unknown as ChatUiMessage[]) as unknown;
 }
+
+Deno.test("estimateTokens handles cyclic and non-JSON runtime values", () => {
+  const value: Record<string, unknown> = { big: 42n, notANumber: Number.NaN };
+  value.self = value;
+
+  assertEquals(
+    estimateTokens(value),
+    Math.ceil('{"big":"42","notANumber":null,"self":"[Circular]"}'.length / 4),
+  );
+});
+
+Deno.test("historical compaction validates limits and handles cyclic tool input", () => {
+  const input: Record<string, unknown> = {
+    path: "src/example.ts",
+    content: "x".repeat(2_000),
+  };
+  input.self = input;
+  const messages = [
+    userReplayMessage("Create the file.", "user-old"),
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "tool-cyclic",
+        "update_file",
+        input,
+        "output-available",
+        { ok: true },
+      ),
+    ]),
+    userReplayMessage("Continue.", "user-current"),
+  ] as unknown as ChatUiMessage[];
+
+  const compacted = compactHistoricalUiMessageToolInputs(messages);
+  assertStringIncludes(JSON.stringify(compacted), "historical_tool_input_summary");
+
+  assertThrows(
+    () =>
+      compactHistoricalUiMessageToolInputs(messages, {
+        limits: { charsPerToken: 0 },
+      }),
+    TypeError,
+    "charsPerToken",
+  );
+  assertThrows(
+    () =>
+      compactHistoricalUiMessageToolInputs(messages, {
+        resolvePolicy: () => ({
+          compactCompletedInput: true,
+          compactAfterChars: -1,
+        }),
+      }),
+    TypeError,
+    "compactAfterChars",
+  );
+});
 
 Deno.test("repairToolPairs moves a later tool result immediately after the matching tool call", () => {
   const messages = [

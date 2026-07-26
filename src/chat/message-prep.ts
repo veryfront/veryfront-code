@@ -21,6 +21,7 @@ import {
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
+import { stringifyChatJson } from "./json-value.ts";
 
 /** Tunable limits used while preparing chat history for model context. */
 export type MessagePrepLimits = {
@@ -97,7 +98,7 @@ export interface PrepareProviderModelMessagesFromUiMessagesOptions {
 
 /** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value ?? "").length / CHARS_PER_TOKEN);
+  return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
 }
 
 /** Approximate token categories for context diagnostics. */
@@ -239,7 +240,7 @@ export function compressTurn(
     if (!msg) continue;
 
     if (msg.role === "user") {
-      const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+      const text = typeof msg.content === "string" ? msg.content : stringifyChatJson(msg.content);
       userQuery = truncate(text, 100);
     } else if (msg.role === "assistant" && Array.isArray(msg.content)) {
       for (const part of msg.content) {
@@ -305,6 +306,12 @@ export function enforceTokenBudgetWithTurnCompression(
   budget: number,
   overhead: number,
 ): ProviderModelMessage[] {
+  if (!Number.isSafeInteger(budget) || budget < 0) {
+    throw new TypeError("Chat message token budget must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(overhead) || overhead < 0) {
+    throw new TypeError("Chat message token overhead must be a non-negative safe integer");
+  }
   const effectiveBudget = budget - overhead;
   let totalTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
   if (totalTokens <= effectiveBudget) return messages;
@@ -413,15 +420,11 @@ const DEFAULT_CHILD_AGENT_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInput
 ];
 
 function serializedLength(value: unknown): number {
-  return JSON.stringify(value ?? "").length;
+  return stringifyChatJson(value ?? "").length;
 }
 
 function serializedValue(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return String(value);
-  }
+  return stringifyChatJson(value ?? null);
 }
 
 function stableHash(value: unknown): string {
@@ -457,7 +460,29 @@ function isChildAgentToolInput(toolName: string): boolean {
 }
 
 function resolveMessagePrepLimits(overrides?: Partial<MessagePrepLimits>): MessagePrepLimits {
-  return overrides ? { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides } : DEFAULT_MESSAGE_PREP_LIMITS;
+  const resolved = overrides
+    ? { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides }
+    : DEFAULT_MESSAGE_PREP_LIMITS;
+
+  if (!Number.isFinite(resolved.charsPerToken) || resolved.charsPerToken <= 0) {
+    throw new TypeError("Message preparation charsPerToken must be a positive finite number");
+  }
+  for (
+    const name of [
+      "historicalToolOutputMaskChars",
+      "historicalToolInputMaskChars",
+      "retainedMetadataStringMaxChars",
+      "retainedMetadataArrayMaxItems",
+      "retainedMetadataObjectMaxEntries",
+    ] as const
+  ) {
+    if (!Number.isSafeInteger(resolved[name]) || resolved[name] < 0) {
+      throw new TypeError(
+        `Message preparation ${name} must be a non-negative safe integer`,
+      );
+    }
+  }
+  return resolved;
 }
 
 function getDefaultHistoricalToolInputRetentionPolicy(
@@ -488,11 +513,64 @@ function resolveHistoricalToolInputRetentionPolicy(
   if (options?.resolvePolicy) {
     const resolved = options.resolvePolicy(toolName, input);
     if (resolved !== undefined) {
-      return resolved ?? undefined;
+      return resolved === null ? undefined : validateHistoricalToolInputRetentionPolicy(resolved);
     }
   }
 
-  return getDefaultHistoricalToolInputRetentionPolicy(toolName);
+  const fallback = getDefaultHistoricalToolInputRetentionPolicy(toolName);
+  return fallback ? validateHistoricalToolInputRetentionPolicy(fallback) : undefined;
+}
+
+function validateHistoricalToolInputRetentionPolicy(
+  policy: HistoricalToolInputRetentionPolicy,
+): HistoricalToolInputRetentionPolicy {
+  if (typeof policy.compactCompletedInput !== "boolean") {
+    throw new TypeError("Historical tool input compactCompletedInput must be a boolean");
+  }
+  if (
+    policy.compactAfterChars !== undefined &&
+    (!Number.isSafeInteger(policy.compactAfterChars) || policy.compactAfterChars < 0)
+  ) {
+    throw new TypeError(
+      "Historical tool input compactAfterChars must be a non-negative safe integer",
+    );
+  }
+  if (policy.retainInputFields !== undefined && !Array.isArray(policy.retainInputFields)) {
+    throw new TypeError("Historical tool input retainInputFields must be an array");
+  }
+
+  for (const field of policy.retainInputFields ?? []) {
+    if (typeof field === "string") {
+      if (field.length === 0) {
+        throw new TypeError("Historical tool input retained field names must not be empty");
+      }
+      continue;
+    }
+    if (!isRecord(field)) {
+      throw new TypeError("Historical tool input retained fields must be strings or objects");
+    }
+    if ("inputNames" in field) {
+      if (
+        !Array.isArray(field.inputNames) ||
+        field.inputNames.length === 0 ||
+        !field.inputNames.every((name) => typeof name === "string" && name.length > 0) ||
+        typeof field.outputName !== "string" ||
+        field.outputName.length === 0
+      ) {
+        throw new TypeError("Historical tool input multi-field selectors are invalid");
+      }
+      continue;
+    }
+    if (
+      typeof field.inputName !== "string" ||
+      field.inputName.length === 0 ||
+      (field.outputName !== undefined &&
+        (typeof field.outputName !== "string" || field.outputName.length === 0))
+    ) {
+      throw new TypeError("Historical tool input field selectors are invalid");
+    }
+  }
+  return policy;
 }
 
 function shouldCompactHistoricalToolInput(
@@ -1317,7 +1395,7 @@ function wrapToolResultOutput(
   original: ChatToolResultOutput,
   newValue: unknown,
 ): ChatToolResultOutput {
-  const textValue = typeof newValue === "string" ? newValue : JSON.stringify(newValue);
+  const textValue = typeof newValue === "string" ? newValue : stringifyChatJson(newValue);
   if (original.type === "text") {
     return { ...original, value: textValue };
   }

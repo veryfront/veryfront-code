@@ -141,6 +141,22 @@ describe("chat/conversation schemas", () => {
     );
     assertEquals(
       messagePartSchema.safeParse({
+        type: "file",
+        upload_id: "custom_blob-1",
+        media_type: "application/pdf",
+      }).success,
+      true,
+    );
+    assertEquals(
+      messagePartSchema.safeParse({
+        type: "file",
+        upload_id: "../unsafe",
+        media_type: "application/pdf",
+      }).success,
+      false,
+    );
+    assertEquals(
+      messagePartSchema.safeParse({
         type: "source_document",
         source_id: "doc-1",
         media_type: "text/markdown",
@@ -383,7 +399,8 @@ describe("chat/conversation helpers", () => {
           type: "file",
           mediaType: "application/pdf",
           filename: "brief.pdf",
-          url: "https://files.example.com/uploaded/22222222-2222-4222-a222-222222222222",
+          uploadId: "custom_blob-1",
+          url: "https://files.example.com/api/uploads?id=custom_blob-1",
         },
         {
           type: "tool-form_input",
@@ -416,9 +433,10 @@ describe("chat/conversation helpers", () => {
       },
       {
         type: "file",
-        upload_id: "22222222-2222-4222-a222-222222222222",
+        upload_id: "custom_blob-1",
         media_type: "application/pdf",
-        url: "https://files.example.com/uploaded/22222222-2222-4222-a222-222222222222",
+        filename: "brief.pdf",
+        url: "https://files.example.com/api/uploads?id=custom_blob-1",
       },
       {
         type: "tool_call",
@@ -495,6 +513,11 @@ describe("chat/conversation helpers", () => {
       extractUploadId("https://api.example.com/uploads/550e8400-e29b-41d4-a716-446655440000/url"),
       "550e8400-e29b-41d4-a716-446655440000",
     );
+    assertEquals(
+      extractUploadId("https://api.example.com/uploads?id=custom_blob-1"),
+      "custom_blob-1",
+    );
+    assertEquals(extractUploadId("https://api.example.com/uploads?id=..%2Funsafe"), null);
     assertEquals(isRecord({ ok: true }), true);
     assertEquals(isRecord([]), false);
     assertEquals(stringifyUnknown({ a: 1 }), '{"a":1}');
@@ -515,6 +538,38 @@ describe("chat/conversation helpers", () => {
 });
 
 describe("convertUiMessagesToProviderModelMessages", () => {
+  it("normalizes non-JSON tool output without crashing provider conversion", () => {
+    const output: Record<string, unknown> = {
+      big: 42n,
+      notANumber: Number.NaN,
+    };
+    output.self = output;
+
+    assertEquals(
+      convertUiMessagesToProviderModelMessages([
+        assistantInputMessage([
+          dynamicToolInputPart(
+            "tool-unsafe-json",
+            "custom_tool",
+            {},
+            "output-available",
+            output,
+          ),
+        ]),
+      ]),
+      expectedToolExchange(
+        [expectedToolCall("tool-unsafe-json", "custom_tool", {})],
+        [
+          expectedJsonResult("tool-unsafe-json", "custom_tool", {
+            big: "42",
+            notANumber: null,
+            self: "[Circular]",
+          }),
+        ],
+      ),
+    );
+  });
+
   it("converts assistant tool UI parts into assistant and tool provider model messages", () => {
     const messages: ChatProviderModelInputMessage[] = [
       {

@@ -34,6 +34,10 @@ export interface ChatFilePart {
   filename?: string;
   /** File size in bytes, when known — shown in the read-only message pill. */
   size?: number;
+  /** Storage-issued upload identifier, when the URL came from an upload endpoint. */
+  uploadId?: string;
+  /** Storage path for runtimes that resolve uploads by path. */
+  uploadPath?: string;
 }
 
 /** Chat message part that carries a URL citation source. */

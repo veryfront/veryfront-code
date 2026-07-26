@@ -54,6 +54,37 @@ interface Tracked {
   xhr?: XMLHttpRequest;
 }
 
+/** Parsed success payload returned by a durable chat upload endpoint. */
+export interface ChatUploadResponse {
+  url: string;
+  uploadId?: string;
+}
+
+/** Parse and validate a durable chat upload response. */
+export function parseChatUploadResponse(responseText: string): ChatUploadResponse | null {
+  try {
+    const value: unknown = JSON.parse(responseText);
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("url" in value) ||
+      typeof value.url !== "string" ||
+      value.url.length === 0
+    ) {
+      return null;
+    }
+    const uploadId = "id" in value && typeof value.id === "string" && value.id.length > 0
+      ? value.id
+      : undefined;
+    return {
+      url: value.url,
+      ...(uploadId ? { uploadId } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function isImage(file: File): boolean {
   return file.type.startsWith("image/");
 }
@@ -135,17 +166,17 @@ export function useUpload(
       };
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          let url: string | undefined;
-          try {
-            const body = JSON.parse(xhr.responseText) as {
-              url?: string;
-              id?: string;
-            };
-            url = body.url;
-          } catch (_) {
-            /* non-JSON response — leave url undefined */
+          const response = parseChatUploadResponse(xhr.responseText);
+          if (!response) {
+            patch(info.id, { state: "error" });
+            return;
           }
-          patch(info.id, { state: "uploaded", progress: 100, url });
+          patch(info.id, {
+            state: "uploaded",
+            progress: 100,
+            url: response.url,
+            ...(response.uploadId ? { uploadId: response.uploadId } : {}),
+          });
         } else {
           patch(info.id, { state: "error" });
         }

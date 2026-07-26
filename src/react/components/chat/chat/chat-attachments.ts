@@ -11,6 +11,7 @@ export function attachmentsToFileParts(items: AttachmentInfo[]): ChatFilePart[] 
       url: item.url,
       filename: item.name,
       ...(item.size != null ? { size: item.size } : {}),
+      ...(item.uploadId ? { uploadId: item.uploadId } : {}),
     }));
 }
 
