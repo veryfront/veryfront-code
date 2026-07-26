@@ -41,4 +41,23 @@ describe("cache source identity", () => {
 
     assertNotEquals(left.key, right.key);
   });
+
+  it("keeps malformed UTF-16 segments total and injective", () => {
+    const first = encodeCacheSourceIdentity({
+      type: "branch",
+      branch: "feature-\ud800",
+    });
+    const second = encodeCacheSourceIdentity({
+      type: "branch",
+      branch: "feature-\ud801",
+    });
+    const literalEscape = encodeCacheSourceIdentity({
+      type: "branch",
+      branch: "feature-%uD800",
+    });
+
+    assertEquals(first.qualifier, "feature-%uD800");
+    assertNotEquals(first.key, second.key);
+    assertNotEquals(first.key, literalEscape.key);
+  });
 });

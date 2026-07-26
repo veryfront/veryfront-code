@@ -7,7 +7,10 @@ import {
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
-import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
+import {
+  leaseVerifiedCacheApiCredentialResponse,
+  runWithVerifiedCacheApiCredential,
+} from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
@@ -829,7 +832,11 @@ export class AgentStreamHandler extends BaseHandler {
                     runtimeOwnerInvokeUrl,
                   )
                   : response;
-                return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
+                return this.respond(
+                  leaseVerifiedCacheApiCredentialResponse(
+                    applyBuilderHeaders(responseWithOwner, builder.headers),
+                  ),
+                );
               },
             );
           },

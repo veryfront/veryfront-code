@@ -36,6 +36,7 @@ export interface CacheBackend {
 
   /**
    * Get multiple values from the cache in a single batch.
+   * A batch may contain at most the shared `MAX_BATCH_SIZE` items.
    * @param keys - Array of cache keys
    * @returns Map of key to value (null for missing keys)
    */
@@ -53,6 +54,7 @@ export interface CacheBackend {
 
   /**
    * Set multiple values in the cache in a single batch.
+   * A batch may contain at most the shared `MAX_BATCH_SIZE` items.
    * @param entries - Array of {key, value, ttl} objects
    */
   setBatch?(entries: CacheSetBatchEntry[]): Promise<void>;

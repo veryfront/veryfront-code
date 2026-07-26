@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   CACHE_DIR_TOKEN,
@@ -132,6 +132,17 @@ describe("Cache Portability", () => {
 
       assert(tokenized.includes(CACHE_DIR_TOKEN), "Should contain token");
       assert(!tokenized.includes("/home/ci/"), "Should not contain build server path");
+    });
+
+    it("rejects an authored reserved cache-path token", () => {
+      const code =
+        `export const authored = "file://${CACHE_DIR_TOKEN}/veryfront-http-bundle/module.mjs";`;
+
+      assertThrows(
+        () => tokenizeAllVeryFrontPaths(code),
+        Error,
+        "reserved cache path token",
+      );
     });
 
     it("tokenizes multiple paths in the same code", () => {
@@ -283,6 +294,22 @@ describe("Cache Portability", () => {
       assert(results?.get("first")?.includes(localCacheDir));
       assertEquals(results?.get("missing"), null);
       assertEquals(results?.get("third"), "export const value = 1;");
+    });
+
+    it("rejects oversized batches before invoking a custom backend", async () => {
+      const keys = Array.from({ length: 101 }, (_, index) => `key-${index}`);
+      const entries = keys.map((key) => ({ key, code: "export {};" }));
+
+      await assertRejects(
+        () => gateway.getCodeBatch(keys),
+        RangeError,
+        "at most 100 items",
+      );
+      await assertRejects(
+        () => gateway.setCodeBatch(entries),
+        RangeError,
+        "at most 100 items",
+      );
     });
 
     it("preserves valid empty modules in single and batch reads", async () => {

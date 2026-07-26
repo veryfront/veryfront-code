@@ -383,6 +383,12 @@ async function readContentOnce(
   }
   try {
     const content = await read;
+    // Multiple parents can await the same in-flight read before it completes.
+    // The first continuation validates and accounts for the source; later
+    // continuations must reuse that committed result rather than charging the
+    // same bytes repeatedly against the traversal-wide safety limit.
+    const concurrentlyPrefetched = traversal.prefetchedContent.get(path);
+    if (concurrentlyPrefetched !== undefined) return concurrentlyPrefetched;
     if (typeof content !== "string") {
       throw new TypeError(`Dependency reader returned a non-string value for ${path}`);
     }

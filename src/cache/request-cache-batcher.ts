@@ -27,6 +27,7 @@ interface BackendBatchState {
 interface RequestCacheContext extends BackendBatchState {
   backend: CacheBackend | null;
   additionalBackends: Map<CacheBackend, BackendBatchState>;
+  closed: boolean;
   hits: number;
 }
 
@@ -118,6 +119,7 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
     ...primaryState,
     backend: null,
     additionalBackends: new Map(),
+    closed: false,
     hits: 0,
   };
 
@@ -125,6 +127,10 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } finally {
+      // AsyncLocalStorage descendants can outlive the callback that created
+      // them. Revoke this request cache before draining already-started reads so
+      // delayed work cannot retain or reuse request-scoped values.
+      context.closed = true;
       // A caller may intentionally keep a read promise and return before
       // awaiting it. Drain queued and already-started work before closing the
       // request scope so those reads cannot outlive the batching lifecycle.
@@ -134,12 +140,17 @@ export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
         drains.push(drainBatchState(state, backend));
       }
       await Promise.all(drains);
+      releaseBatchState(context);
+      for (const state of context.additionalBackends.values()) releaseBatchState(state);
+      context.additionalBackends.clear();
+      context.backend = null;
     }
   });
 }
 
 export function getRequestCacheContext(): RequestCacheContext | undefined {
-  return asyncLocalStorage.getStore();
+  const context = asyncLocalStorage.getStore();
+  return context?.closed ? undefined : context;
 }
 
 export async function getCachedWithBatching(
@@ -147,7 +158,7 @@ export async function getCachedWithBatching(
   key: string,
 ): Promise<string | null> {
   const ctx = asyncLocalStorage.getStore();
-  if (!ctx) return backend.get(key);
+  if (!ctx || ctx.closed) return backend.get(key);
 
   const state = getBackendBatchState(ctx, backend);
   if (!state || key.length > MAX_REQUEST_CACHE_KEY_CODE_UNITS) return backend.get(key);
@@ -229,6 +240,17 @@ async function drainBatchState(
   }
 }
 
+function releaseBatchState(state: BackendBatchState): void {
+  if (state.batchTimer) clearTimeout(state.batchTimer);
+  state.batchTimer = null;
+  state.batchQueue = [];
+  state.cache.clear();
+  state.explicitCacheKeys.clear();
+  state.pending.clear();
+  state.inflightFlushes.clear();
+  state.generations.clear();
+}
+
 async function performFlush(
   state: BackendBatchState,
   backend: CacheBackend,
@@ -292,7 +314,7 @@ export function setInRequestCache(
   value: string | null,
 ): void {
   const context = asyncLocalStorage.getStore();
-  if (!context) return;
+  if (!context || context.closed) return;
 
   const state = getBackendBatchState(context, backend);
   if (!state || key.length > MAX_REQUEST_CACHE_KEY_CODE_UNITS) return;
@@ -303,7 +325,7 @@ export function setInRequestCache(
 
 export function getRequestCacheStats(): { hits: number; stored: number } | null {
   const ctx = asyncLocalStorage.getStore();
-  if (!ctx) return null;
+  if (!ctx || ctx.closed) return null;
 
   let stored = ctx.cache.size;
   for (const state of ctx.additionalBackends.values()) stored += state.cache.size;

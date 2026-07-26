@@ -13,6 +13,7 @@ import type { QueryParamCacheOptions } from "../prefixes.ts";
 import { sanitizeQueryParamsForCacheKey } from "../utils.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity } from "../source-identity.ts";
+import { encodeCacheKeyPercentSegment } from "../segment-codec.ts";
 
 export function buildRenderCachePrefix(
   projectId: string,
@@ -31,7 +32,7 @@ export function buildRenderCachePrefix(
       detail: "Missing projectId for render cache prefix",
     });
   }
-  const encodedProjectId = encodeURIComponent(projectId);
+  const encodedProjectId = encodeCacheKeyPercentSegment(projectId);
   const encodedReleaseKey = encodeCacheSourceIdentity(
     environment === "production"
       ? { type: "release", releaseId: releaseKey }

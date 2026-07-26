@@ -375,6 +375,30 @@ Deno.test("MemoryCacheBackend setBatch sets multiple entries", async () => {
   assertEquals(cache.size, 3);
 });
 
+Deno.test("cache backends reject batches beyond the shared operation limit", async () => {
+  const { ApiCacheBackend, MemoryCacheBackend, RedisCacheBackend } = await importBackend();
+  const keys = Array.from({ length: 101 }, (_, index) => `key-${index}`);
+  const entries = keys.map((key) => ({ key, value: "value" }));
+  const backends = [
+    new MemoryCacheBackend(),
+    new ApiCacheBackend(),
+    new RedisCacheBackend(),
+  ];
+
+  for (const backend of backends) {
+    await assertRejects(
+      () => backend.getBatch(keys),
+      RangeError,
+      "at most 100 items",
+    );
+    await assertRejects(
+      () => backend.setBatch(entries),
+      RangeError,
+      "at most 100 items",
+    );
+  }
+});
+
 Deno.test("MemoryCacheBackend setBatch evicts when at capacity", async () => {
   const { MemoryCacheBackend } = await importBackend();
 
@@ -687,6 +711,73 @@ Deno.test("ApiCacheBackend rejects malformed response values", async () => {
 
     assertEquals(await cache.get("key"), null);
     await assertRejects(() => cache.delByPattern("prefix:*"));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
+Deno.test("ApiCacheBackend bounds successful JSON response bodies", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      Response.json({ value: "x".repeat(128) }),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend(
+      {
+        apiBaseUrl: "https://api.example.test",
+        projectRef: "project-slug",
+        circuitBreakerName: "api-cache-bounded-response-test",
+        maxResponseBytes: 32,
+      },
+    );
+
+    assertEquals(await cache.get("key"), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+    } else {
+      Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+    }
+  }
+});
+
+Deno.test("ApiCacheBackend rejects malformed UTF-16 keys before network I/O", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let fetchCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(new Response(null, { status: 204 }));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-malformed-key-test",
+    });
+
+    await assertRejects(
+      () => cache.set("key-\ud800", "value"),
+      TypeError,
+      "well-formed UTF-16",
+    );
+    assertEquals(fetchCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) {
@@ -1206,6 +1297,46 @@ Deno.test("RedisCacheBackend propagates set failures", async () => {
     Error,
     "redis set failed",
   );
+});
+
+Deno.test("RedisCacheBackend waits for every batch write before reporting failure", async () => {
+  const { RedisCacheBackend } = await importBackend();
+  const cache = new RedisCacheBackend("vf:test:");
+  let releaseSlowWrite!: () => void;
+  const slowWriteReleased = new Promise<void>((resolve) => {
+    releaseSlowWrite = resolve;
+  });
+  let markSlowWriteStarted!: () => void;
+  const slowWriteStarted = new Promise<void>((resolve) => {
+    markSlowWriteStarted = resolve;
+  });
+  injectRedisClient(cache, {
+    set: async (key) => {
+      if (key.endsWith(":failed")) throw new Error("redis set failed");
+      markSlowWriteStarted();
+      await slowWriteReleased;
+      return "OK";
+    },
+  });
+  let settled = false;
+
+  const write = cache.setBatch([
+    { key: "failed", value: "value" },
+    { key: "slow", value: "value" },
+  ]).then(
+    () => null,
+    (error: unknown) => error,
+  ).finally(() => {
+    settled = true;
+  });
+  await slowWriteStarted;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const settledBeforeSibling = settled;
+
+  releaseSlowWrite();
+  const error = await write;
+  assertEquals(settledBeforeSibling, false);
+  assertEquals(error instanceof Error ? error.message : null, "redis set failed");
 });
 
 Deno.test("RedisCacheBackend del rejects without a configured client", async () => {

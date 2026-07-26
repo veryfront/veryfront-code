@@ -10,6 +10,7 @@ import {
 } from "#veryfront/utils/redis-client.ts";
 import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
+import { assertCacheBatchSize } from "../batch-policy.ts";
 import {
   DEFAULT_CACHE_TTL_SECONDS,
   expiresImmediately,
@@ -133,6 +134,7 @@ export class RedisCacheBackend implements CacheBackend {
   }
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    assertCacheBatchSize(keys, "Redis cache getBatch");
     if (keys.length === 0) return new Map<string, string | null>();
 
     const client = await this.getClientForRead();
@@ -192,6 +194,7 @@ export class RedisCacheBackend implements CacheBackend {
   }
 
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+    assertCacheBatchSize(entries, "Redis cache setBatch");
     if (entries.length === 0) return;
 
     const finalEntriesByKey = new Map<string, { key: string; value: string; ttl: number }>();
@@ -203,9 +206,13 @@ export class RedisCacheBackend implements CacheBackend {
       });
     }
 
-    await Promise.all(
+    const writes = await Promise.allSettled(
       [...finalEntriesByKey.values()].map(({ key, value, ttl }) => this.set(key, value, ttl)),
     );
+    const firstFailure = writes.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (firstFailure) throw firstFailure.reason;
   }
 
   async del(key: string): Promise<void> {

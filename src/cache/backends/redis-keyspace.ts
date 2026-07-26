@@ -1,4 +1,4 @@
-import { decodeCacheKeySegment } from "../keys/segment-codec.ts";
+import { decodeCacheKeyPercentSegment, decodeCacheKeySegment } from "../keys/segment-codec.ts";
 
 /**
  * Redis namespaces owned by cache backends. Project invalidation is opt-in per
@@ -124,13 +124,8 @@ export const matchRenderCacheProjectOwnership: RedisCacheOwnershipMatcher = (key
     !parts[2] ||
     !parts[3]
   ) return null;
-  try {
-    const projectId = decodeURIComponent(parts[0]);
-    if (!projectId) return null;
-    return { projectId, environment: parts[1] };
-  } catch {
-    return null;
-  }
+  const projectId = decodeCacheKeyPercentSegment(parts[0]);
+  return projectId ? { projectId, environment: parts[1] } : null;
 };
 
 /** Matcher for legacy renderer CacheCoordinator keys. */

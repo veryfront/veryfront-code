@@ -83,6 +83,17 @@ describe("cache/keys", () => {
       assertMatch(prefix, /^proj_123:preview:main:.+$/);
     });
 
+    it("round-trips malformed UTF-16 project and release identities", () => {
+      const projectId = "project-\ud800";
+      const releaseKey = "release-\udc00";
+      const prefix = buildRenderCachePrefix(projectId, "production", releaseKey);
+      const parsed = parseRenderCacheKey(`${prefix}:page`);
+
+      assertEquals(parsed?.projectId, projectId);
+      assertEquals(parsed?.releaseKey, releaseKey);
+      assertEquals(parsed?.contentKey, "page");
+    });
+
     it("should append :m{n} suffix when manifestVersion is provided", () => {
       const base = buildRenderCachePrefix("proj_123", "production", "rel_456");
       const withManifest = buildRenderCachePrefix("proj_123", "production", "rel_456", 1);

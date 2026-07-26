@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "@std/assert";
-import { createCacheBackend, isDiskCacheConfigured, isDistributedBackend } from "./factory.ts";
+import {
+  createCacheBackend,
+  isApiCacheAvailable,
+  isDiskCacheConfigured,
+  isDistributedBackend,
+} from "./factory.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { MemoryCacheBackend } from "./memory.ts";
 
@@ -12,6 +17,45 @@ Deno.test("factory: isDiskCacheConfigured", async (t) => {
   });
 });
 
+Deno.test("factory: API availability classifies exact local hostnames", () => {
+  const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+  const originalProxyMode = Deno.env.get("PROXY_MODE");
+  const originalNodeEnv = Deno.env.get("NODE_ENV");
+  Deno.env.delete("PROXY_MODE");
+  Deno.env.delete("NODE_ENV");
+
+  try {
+    for (
+      const localUrl of [
+        "http://LOCALHOST:8787",
+        "http://127.0.0.1:8787",
+        "http://[::1]:8787",
+        "http://preview.lvh.me:8787",
+      ]
+    ) {
+      Deno.env.set("VERYFRONT_API_BASE_URL", localUrl);
+      assertEquals(isApiCacheAvailable(), false);
+    }
+
+    for (
+      const remoteUrl of [
+        "https://localhost.example.com",
+        "https://lvh.me.attacker.example",
+      ]
+    ) {
+      Deno.env.set("VERYFRONT_API_BASE_URL", remoteUrl);
+      assertEquals(isApiCacheAvailable(), true);
+    }
+  } finally {
+    if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+    if (originalProxyMode === undefined) Deno.env.delete("PROXY_MODE");
+    else Deno.env.set("PROXY_MODE", originalProxyMode);
+    if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
+    else Deno.env.set("NODE_ENV", originalNodeEnv);
+  }
+});
+
 Deno.test("factory: createCacheBackend with preferredBackend=disk", async () => {
   const backend = await createCacheBackend({ preferredBackend: "disk" });
   assertEquals(backend.type, "disk");
@@ -20,6 +64,19 @@ Deno.test("factory: createCacheBackend with preferredBackend=disk", async () => 
 Deno.test("factory: createCacheBackend with preferredBackend=memory", async () => {
   const backend = await createCacheBackend({ preferredBackend: "memory" });
   assertEquals(backend.type, "memory");
+});
+
+Deno.test("factory: forwards API response size limits", async () => {
+  await assertRejects(
+    () =>
+      createCacheBackend({
+        preferredBackend: "api",
+        apiBaseUrl: "https://api.example.test",
+        apiMaxResponseBytes: 0,
+      }),
+    RangeError,
+    "maxResponseBytes",
+  );
 });
 
 Deno.test("factory: isDistributedBackend", async (t) => {

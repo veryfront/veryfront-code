@@ -1,4 +1,5 @@
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { encodeCacheKeyPercentSegment } from "./segment-codec.ts";
 
 export type CacheSourceIdentity =
   | { type: "branch"; branch: string }
@@ -23,7 +24,7 @@ function encodeRequiredSegment(value: string | null | undefined, label: string):
       detail: "Missing " + label + " for cache source identity",
     });
   }
-  return encodeURIComponent(value);
+  return encodeCacheKeyPercentSegment(value);
 }
 
 /** Encode an exact content source without permitting delimiter collisions. */

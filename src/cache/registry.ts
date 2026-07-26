@@ -12,6 +12,7 @@ import {
   validateRedisCacheProjectIdentity,
 } from "./backends/redis-keyspace.ts";
 import { encodeCacheSourceIdentity } from "./keys/source-identity.ts";
+import { decodeCacheKeyPercentSegment } from "./keys/segment-codec.ts";
 
 const logger = rendererLogger.component("cache-registry");
 
@@ -686,12 +687,9 @@ export function isKeyForProject(key: string, projectId: string): boolean {
   if (parts[0]?.startsWith("v") && parts[1] === projectId) return true;
 
   // Render/module cache keys where projectId is first segment and next is env/content source
-  let decodedFirstSegment: string | undefined;
-  try {
-    decodedFirstSegment = parts[0] ? decodeURIComponent(parts[0]) : undefined;
-  } catch {
-    decodedFirstSegment = undefined;
-  }
+  const decodedFirstSegment = parts[0]
+    ? decodeCacheKeyPercentSegment(parts[0]) ?? undefined
+    : undefined;
   if (decodedFirstSegment === projectId) {
     if (parts[1] === "production" || parts[1] === "preview") return true;
     if (getEnvironmentFromContentSourceId(parts[1])) return true;
@@ -769,9 +767,13 @@ function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment
   const normalizedKey = stripRedisPrefix(key);
   const parts = normalizedKey.split(":");
   if (parts.length < 2) return null;
+  const decodedFirstSegment = parts[0] ? decodeCacheKeyPercentSegment(parts[0]) : null;
 
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
-  if (parts[0] === projectId && (parts[1] === "production" || parts[1] === "preview")) {
+  if (
+    decodedFirstSegment === projectId &&
+    (parts[1] === "production" || parts[1] === "preview")
+  ) {
     return parts[1] as CacheEnvironment;
   }
 
@@ -808,6 +810,7 @@ function isKeyForContentSource(
 ): boolean {
   const normalizedKey = stripRedisPrefix(key);
   const parts = normalizedKey.split(":");
+  const decodedFirstSegment = parts[0] ? decodeCacheKeyPercentSegment(parts[0]) : null;
   const encodedContentSourceId = encodeCacheSourceIdentity({
     type: "branch",
     branch: contentSourceId,
@@ -828,7 +831,7 @@ function isKeyForContentSource(
 
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
   if (
-    parts[0] === projectId &&
+    decodedFirstSegment === projectId &&
     (parts[1] === "production" || parts[1] === "preview") &&
     parts[2]
   ) {

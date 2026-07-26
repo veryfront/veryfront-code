@@ -3,10 +3,10 @@ import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { encodeCacheKeyPercentSegment } from "./keys/segment-codec.ts";
 
 const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
 const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
-const EncodeURIComponent = encodeURIComponent;
 const IntrinsicWeakMap = WeakMap;
 const NumberPrototypeToString = Number.prototype.toString;
 const ObjectFreeze = Object.freeze;
@@ -115,45 +115,6 @@ function formatEscapedCodeUnit(codeUnit: number): string {
   return `%u${ReflectApply(StringPrototypePadStart, upperHex, [4, "0"]) as string}`;
 }
 
-function encodeRegistryScopeSegment(value: string): string {
-  try {
-    return EncodeURIComponent(value);
-  } catch {
-    // encodeURIComponent rejects lone UTF-16 surrogates. Project identity comes
-    // from external boundaries, so keep this encoder total without collapsing
-    // malformed strings onto the replacement character. `%uXXXX` cannot collide
-    // with a literal sequence because encodeURIComponent escapes its `%` first.
-    let encoded = "";
-    let chunkStart = 0;
-    for (let index = 0; index < value.length; index++) {
-      const codeUnit = getStringCodeUnit(value, index);
-      const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
-      const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
-      const nextCodeUnit = isHighSurrogate && index + 1 < value.length
-        ? getStringCodeUnit(value, index + 1)
-        : -1;
-
-      if (
-        isHighSurrogate &&
-        nextCodeUnit >= 0xdc00 &&
-        nextCodeUnit <= 0xdfff
-      ) {
-        index++;
-        continue;
-      }
-      if (!isHighSurrogate && !isLowSurrogate) continue;
-
-      encoded += EncodeURIComponent(
-        ReflectApply(StringPrototypeSlice, value, [chunkStart, index]) as string,
-      );
-      encoded += formatEscapedCodeUnit(codeUnit);
-      chunkStart = index + 1;
-    }
-    return encoded +
-      EncodeURIComponent(ReflectApply(StringPrototypeSlice, value, [chunkStart]) as string);
-  }
-}
-
 /**
  * Build the canonical registry scope for a versioned preview or production
  * source. Every segment is encoded independently so delimiter-bearing tenant
@@ -164,8 +125,8 @@ export function buildVersionedRegistryScopeId(
   mode: CacheKeyContext["mode"],
   versionId: string,
 ): string {
-  return `${encodeRegistryScopeSegment(projectId)}:${mode}:` +
-    encodeRegistryScopeSegment(versionId);
+  return `${encodeCacheKeyPercentSegment(projectId)}:${mode}:` +
+    encodeCacheKeyPercentSegment(versionId);
 }
 
 /**
@@ -182,7 +143,7 @@ export function isRegistryScopeForProject(
   return ReflectApply(
     StringPrototypeStartsWith,
     scopeId,
-    [`${encodeRegistryScopeSegment(projectId)}:`],
+    [`${encodeCacheKeyPercentSegment(projectId)}:`],
   ) as boolean;
 }
 
@@ -337,8 +298,8 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
       // discovery, and adapter caches all describe the same content source.
       const environmentName = reqCtx.environmentName || "production";
       return {
-        scopeId: `${encodeRegistryScopeSegment(projectId)}:production:environment:` +
-          encodeRegistryScopeSegment(environmentName),
+        scopeId: `${encodeCacheKeyPercentSegment(projectId)}:production:environment:` +
+          encodeCacheKeyPercentSegment(environmentName),
         immutable: false,
       };
     }

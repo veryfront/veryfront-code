@@ -121,6 +121,34 @@ describe("cache/request-cache-batcher", () => {
       await wrapped;
       assertEquals(await pending, "value");
     });
+
+    it("revokes inherited batching state after the request scope settles", async () => {
+      const backend = createMockBackend({ key: "backend-value" });
+      let observedContext: ReturnType<typeof getRequestCacheContext>;
+      let observedStats: ReturnType<typeof getRequestCacheStats> | undefined;
+      let observedValue: string | null | undefined;
+      let markDetachedDone!: () => void;
+      const detachedDone = new Promise<void>((resolve) => {
+        markDetachedDone = resolve;
+      });
+
+      await runWithCacheBatching(async () => {
+        setInRequestCache(backend, "key", "request-value");
+        setTimeout(async () => {
+          observedContext = getRequestCacheContext();
+          observedStats = getRequestCacheStats();
+          observedValue = await getCachedWithBatching(backend, "key");
+          setInRequestCache(backend, "detached", "must-not-retain");
+          markDetachedDone();
+        }, 0);
+      });
+      await detachedDone;
+
+      assertEquals(observedContext, undefined);
+      assertEquals(observedStats, null);
+      assertEquals(observedValue, "backend-value");
+      assertEquals(backend.getCalls, ["key"]);
+    });
   });
 
   describe("getRequestCacheContext", () => {

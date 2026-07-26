@@ -274,6 +274,43 @@ describe("MultiTierCache", () => {
       await assertRejects(() => cache.set("key", "value"), Error, "L1 down");
     });
 
+    it("waits for every local write before reporting a sibling failure", async () => {
+      const l1 = createMockTier("l1");
+      const l2 = createMockTier("l2");
+      l1.set = () => Promise.reject(new Error("L1 down"));
+      let markL2Started!: () => void;
+      const l2Started = new Promise<void>((resolve) => {
+        markL2Started = resolve;
+      });
+      let releaseL2!: () => void;
+      const l2Released = new Promise<void>((resolve) => {
+        releaseL2 = resolve;
+      });
+      l2.set = async (key, value) => {
+        markL2Started();
+        await l2Released;
+        l2.store.set(key, value);
+      };
+      const cache = new MultiTierCache({ name: "test", l1, l2, asyncBackfill: false });
+      let settled = false;
+
+      const write = cache.set("key", "value").then(
+        () => null,
+        (error: unknown) => error,
+      ).finally(() => {
+        settled = true;
+      });
+      await l2Started;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const settledBeforeSibling = settled;
+
+      releaseL2();
+      const error = await write;
+      assertEquals(settledBeforeSibling, false);
+      assertEquals(error instanceof Error ? error.message : null, "L1 down");
+      assertEquals(l2.store.get("key"), "value");
+    });
+
     it("validates an explicit TTL before mutating any tier", async () => {
       const l1 = createMockTier("l1");
       const cache = new MultiTierCache({ name: "test", l1 });
@@ -422,6 +459,37 @@ describe("MultiTierCache", () => {
       releaseCompute();
 
       assertEquals(await computed, "stale-computation");
+      assertEquals(l1.store.get("key"), "fresh");
+    });
+
+    it("does not overwrite a set that completes during the initial lookup", async () => {
+      const l1 = createMockTier("l1");
+      let markReadStarted!: () => void;
+      const readStarted = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      let releaseRead!: () => void;
+      const readReleased = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      const originalGet = l1.get;
+      let firstRead = true;
+      l1.get = async (key) => {
+        if (!firstRead) return await originalGet(key);
+        firstRead = false;
+        const captured = await originalGet(key);
+        markReadStarted();
+        await readReleased;
+        return captured;
+      };
+      const cache = new MultiTierCache({ name: "test", l1, asyncBackfill: false });
+
+      const computed = cache.getOrCompute("key", () => Promise.resolve("stale-computation"));
+      await readStarted;
+      await cache.set("key", "fresh");
+      releaseRead();
+
+      assertEquals(await computed, "fresh");
       assertEquals(l1.store.get("key"), "fresh");
     });
 

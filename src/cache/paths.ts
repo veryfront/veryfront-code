@@ -76,6 +76,12 @@ export function tokenizeCachePaths(code: string, localCacheDir: string): string 
  */
 export function tokenizeAllVeryFrontPaths(code: string): string {
   if (!code) return code;
+  if (code.includes(`file://${CACHE_DIR_TOKEN}`)) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail:
+        "[CACHE INVARIANT VIOLATION] Source code contains the reserved cache path token before tokenization.",
+    });
+  }
 
   // First, do the fast tokenization for current environment
   let result = tokenizeAllCachePaths(code);

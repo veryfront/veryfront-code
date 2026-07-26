@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
@@ -8,6 +8,7 @@ import {
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import {
   getVerifiedCacheApiCredential,
+  leaseVerifiedCacheApiCredentialResponse,
   runWithVerifiedCacheApiCredential,
 } from "./verified-api-credential-context.ts";
 
@@ -90,25 +91,117 @@ describe("verified cache API credential context", () => {
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 
-  it("preserves the scope in delayed stream work created inside it", async () => {
+  it("revokes the credential from detached work after the callback settles", async () => {
+    const verifiedClaims = await createVerifiedClaims("detached-token");
+    let observeDetachedCredential: Promise<string | undefined> | undefined;
+
+    await runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+      observeDetachedCredential = new Promise((resolve) => {
+        setTimeout(
+          () => resolve(getVerifiedCacheApiCredential()?.token),
+          0,
+        );
+      });
+    });
+
+    assertEquals(await observeDetachedCredential, undefined);
+  });
+
+  it("leases the credential only until a delayed response body closes", async () => {
     const verifiedClaims = await createVerifiedClaims("stream-token");
     let observedToken: string | undefined;
+    let observeAfterClose: Promise<string | undefined> | undefined;
 
-    const stream = runWithVerifiedCacheApiCredential(
+    const response = runWithVerifiedCacheApiCredential(
       verifiedClaims,
       () =>
-        new ReadableStream<void>({
-          async pull(controller) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            observedToken = getVerifiedCacheApiCredential()?.token;
-            controller.close();
-          },
-        }),
+        leaseVerifiedCacheApiCredentialResponse(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async pull(controller) {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                observedToken = getVerifiedCacheApiCredential()?.token;
+                observeAfterClose = new Promise((resolve) => {
+                  setTimeout(
+                    () => resolve(getVerifiedCacheApiCredential()?.token),
+                    0,
+                  );
+                });
+                controller.close();
+              },
+            }),
+          ),
+        ),
     );
 
     assertEquals(getVerifiedCacheApiCredential(), undefined);
-    await stream.getReader().read();
+    await response.text();
     assertEquals(observedToken, "stream-token");
+    assertEquals(await observeAfterClose, undefined);
+    assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("revokes a response lease when the consumer cancels the body", async () => {
+    const verifiedClaims = await createVerifiedClaims("cancel-token");
+    let observedDuringCancel: string | undefined;
+    let observeAfterCancel: Promise<string | undefined> | undefined;
+
+    const response = runWithVerifiedCacheApiCredential(
+      verifiedClaims,
+      () =>
+        leaseVerifiedCacheApiCredentialResponse(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                observedDuringCancel = getVerifiedCacheApiCredential()?.token;
+                observeAfterCancel = new Promise((resolve) => {
+                  setTimeout(
+                    () => resolve(getVerifiedCacheApiCredential()?.token),
+                    0,
+                  );
+                });
+              },
+            }),
+          ),
+        ),
+    );
+
+    assertEquals(getVerifiedCacheApiCredential(), undefined);
+    await response.body?.cancel();
+    assertEquals(observedDuringCancel, "cancel-token");
+    assertEquals(await observeAfterCancel, undefined);
+    assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("revokes a response lease when the body errors", async () => {
+    const verifiedClaims = await createVerifiedClaims("error-token");
+    let observedDuringError: string | undefined;
+    let observeAfterError: Promise<string | undefined> | undefined;
+
+    const response = runWithVerifiedCacheApiCredential(
+      verifiedClaims,
+      () =>
+        leaseVerifiedCacheApiCredentialResponse(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                observedDuringError = getVerifiedCacheApiCredential()?.token;
+                observeAfterError = new Promise((resolve) => {
+                  setTimeout(
+                    () => resolve(getVerifiedCacheApiCredential()?.token),
+                    0,
+                  );
+                });
+                controller.error(new Error("stream failed"));
+              },
+            }),
+          ),
+        ),
+    );
+
+    await assertRejects(() => response.text(), Error, "stream failed");
+    assertEquals(observedDuringError, "error-token");
+    assertEquals(await observeAfterError, undefined);
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 });

@@ -36,6 +36,7 @@ import {
 import {
   buildFileCacheKeyPrefix,
   buildFileOperationCacheKey,
+  buildRenderCachePrefix,
   buildSSRModuleCacheKey,
 } from "./keys/index.ts";
 import { buildReleaseModuleResponseCacheKey } from "#veryfront/modules/server/module-response-cache.ts";
@@ -324,6 +325,14 @@ describe("isKeyForProjectEnvironment", () => {
     assertEquals(isKeyForProjectEnvironment(key, "proj1", "preview"), false);
   });
 
+  it("classifies encoded render project identities without losing ownership", () => {
+    const projectId = "project:one-\ud800";
+    const key = `${buildRenderCachePrefix(projectId, "production", "release/one")}:page`;
+
+    assertEquals(isKeyForProject(key, projectId), true);
+    assertEquals(isKeyForProjectEnvironment(key, projectId, "production"), true);
+  });
+
   // Proxy cache keys: proxy:{projectSlug}:{environment}:{qualifier}
   it("should match proxy cache key production", () => {
     assertEquals(
@@ -539,6 +548,20 @@ describe("CacheRegistry", () => {
     assertEquals(cacheRegistry.deleteKeysForContentSource("proj1", "feature/foo"), 1);
     assertEquals(m.has(branchKey), false);
     assertEquals(cacheRegistry.deleteKeysForContentSource("proj1", "release/one"), 1);
+    assertEquals(m.size, 0);
+  });
+
+  it("deletes encoded render keys for an exact content source", () => {
+    const projectId = "project:one-\ud800";
+    const key = `${buildRenderCachePrefix(projectId, "production", "release/one")}:page`;
+    const m = new Map<string, unknown>([[key, 1]]);
+    registerMapCache(
+      "encoded-render-content-source-store",
+      m,
+      structuredCacheStoreProjectOwnership,
+    );
+
+    assertEquals(cacheRegistry.deleteKeysForContentSource(projectId, "release/one"), 1);
     assertEquals(m.size, 0);
   });
 

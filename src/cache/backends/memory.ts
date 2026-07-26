@@ -4,6 +4,7 @@ import {
 } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
+import { assertCacheBatchSize } from "../batch-policy.ts";
 import { type CacheGlob, compileCacheGlob } from "./glob.ts";
 import { DEFAULT_CACHE_TTL_SECONDS, expiresImmediately, resolveCacheTtlSeconds } from "./ttl.ts";
 
@@ -79,7 +80,8 @@ export class MemoryCacheBackend implements CacheBackend {
     return Promise.resolve(remainingMs / 1000);
   }
 
-  getBatch(keys: string[]): Promise<Map<string, string | null>> {
+  async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    assertCacheBatchSize(keys, "Memory cache getBatch");
     const now = Date.now();
 
     const results = buildBatchResults(keys, (key) => {
@@ -94,7 +96,7 @@ export class MemoryCacheBackend implements CacheBackend {
       return entry.value;
     });
 
-    return Promise.resolve(results);
+    return results;
   }
 
   async set(key: string, value: string, ttlSeconds = DEFAULT_CACHE_TTL_SECONDS): Promise<void> {
@@ -133,6 +135,7 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+    assertCacheBatchSize(entries, "Memory cache setBatch");
     const resolvedEntries = entries.map(({ key, value, ttl }) => ({
       key,
       value,

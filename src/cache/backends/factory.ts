@@ -32,6 +32,8 @@ export interface CacheBackendConfig {
   memoryMaxEntries?: number;
   preferredBackend?: "api" | "redis" | "disk" | "memory";
   apiBaseUrl?: string;
+  /** Maximum decoded JSON response body accepted from the API cache. */
+  apiMaxResponseBytes?: number;
   /** Project identity bound to process-level API credentials. */
   projectRef?: string;
   circuitBreakerName?: string;
@@ -43,6 +45,26 @@ export interface CacheBackendConfig {
   redisProjectOwnershipMatcher?: RedisCacheOwnershipMatcher;
 }
 
+function isLocalDevelopmentApiUrl(value: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(value).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    // Let ApiCacheBackend report malformed configured URLs instead of silently
+    // treating a typo as an unavailable cache.
+    return false;
+  }
+
+  return hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "lvh.me" ||
+    hostname.endsWith(".lvh.me") ||
+    hostname === "0.0.0.0" ||
+    hostname === "[::]" ||
+    hostname === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname);
+}
+
 export function isApiCacheAvailable(): boolean {
   const proxyMode = getEnv("PROXY_MODE");
   const nodeEnv = getEnv("NODE_ENV");
@@ -50,7 +72,7 @@ export function isApiCacheAvailable(): boolean {
 
   const isProduction = proxyMode === "1" ||
     nodeEnv === "production" ||
-    !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
+    !!(apiUrl && !isLocalDevelopmentApiUrl(apiUrl));
 
   return isProduction && !!apiUrl;
 }
@@ -65,6 +87,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
     memoryMaxEntries = DEFAULT_MEMORY_MAX_ENTRIES,
     preferredBackend,
     apiBaseUrl,
+    apiMaxResponseBytes,
     projectRef,
     circuitBreakerName,
     redisProjectOwnershipMatcher,
@@ -78,7 +101,13 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       if (shouldUseApi) {
         logger.debug("Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
-        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, circuitBreakerName, projectRef });
+        return new ApiCacheBackend({
+          keyPrefix,
+          apiBaseUrl,
+          maxResponseBytes: apiMaxResponseBytes,
+          circuitBreakerName,
+          projectRef,
+        });
       }
 
       const shouldUseRedis = preferredBackend === "redis" ||

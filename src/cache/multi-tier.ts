@@ -19,7 +19,7 @@ import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CACHE_ERROR } from "#veryfront/errors";
 import { MAX_CACHE_TTL_SECONDS, resolveCacheTtlSeconds } from "#veryfront/cache/backends/ttl.ts";
-import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
+import { assertCacheBatchSize } from "./batch-policy.ts";
 
 /**
  * Generic cache tier interface.
@@ -266,14 +266,33 @@ export class MultiTierCache<T = string> {
   }
 
   async getOrCompute(key: string, computeFn: () => Promise<T>, ttlSeconds?: number): Promise<T> {
-    const cached = await this.get(key);
-    if (cached !== null) return cached;
-    const ttl = resolveCacheTtlSeconds(ttlSeconds, this.config.defaultTtlSeconds)!;
-
     const state = this.retainKeyState(key);
-    const generation = state.generation;
+    const lookupGeneration = state.generation;
     let ownedComputation: Promise<T> | undefined;
     try {
+      const cached = await this.get(key);
+      if (cached !== null) return cached;
+      const ttl = resolveCacheTtlSeconds(ttlSeconds, this.config.defaultTtlSeconds)!;
+
+      // Retain the generation across the initial lookup. Without this guard, a
+      // set that completes after a miss was captured but before computation
+      // starts can be pruned from keyStates, letting a fresh generation publish
+      // stale computed data over the explicit value.
+      if (!this.isCurrentGeneration(key, state, lookupGeneration)) {
+        const mutation = this.mutationQueues.get(key);
+        if (mutation) {
+          try {
+            await mutation;
+          } catch {
+            // A failed cache mutation does not make the source computation fail.
+          }
+        }
+        const refreshed = await this.get(key);
+        if (refreshed !== null) return refreshed;
+        return await computeFn();
+      }
+
+      const generation = lookupGeneration;
       const existing = this.computations.get(key);
       if (
         existing?.state === state && existing.generation === generation
@@ -304,10 +323,8 @@ export class MultiTierCache<T = string> {
   }
 
   async getBatch(keys: string[]): Promise<Map<string, T | null>> {
+    assertCacheBatchSize(keys, "Multi-tier cache getBatch");
     if (keys.length === 0) return new Map();
-    if (keys.length > MAX_BATCH_SIZE) {
-      throw new RangeError(`Multi-tier cache batches may contain at most ${MAX_BATCH_SIZE} keys`);
-    }
 
     // Batch results are maps, so duplicate requested keys collapse to one cache
     // lookup for statistics just as they collapse to one returned entry.
@@ -513,19 +530,23 @@ export class MultiTierCache<T = string> {
       });
     }
 
-    await Promise.all(
-      perPodTiers.map(async (tier) => {
-        try {
-          await tier.set(key, value, ttl);
-        } catch (error) {
-          logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
-            keyLength: key.length,
-            errorName: error instanceof Error ? error.name : typeof error,
-          });
-          throw error;
-        }
-      }),
+    const localWrites = await Promise.allSettled(
+      perPodTiers.map((tier) => tier.set(key, value, ttl)),
     );
+    for (let index = 0; index < localWrites.length; index++) {
+      const result = localWrites[index]!;
+      if (result.status === "fulfilled") continue;
+      const tier = perPodTiers[index]!;
+      logger.error(`[${this.config.name}] Set error in ${tier.name}`, {
+        keyLength: key.length,
+        errorName: result.reason instanceof Error ? result.reason.name : typeof result.reason,
+      });
+    }
+
+    const firstFailure = localWrites.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (firstFailure) throw firstFailure.reason;
   }
 
   private async getFromTier(

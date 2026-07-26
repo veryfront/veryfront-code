@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    20 |      34.5% | Current formal closure evidence remains valid       |
+| Closed                         |    21 |      36.2% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    37 |      63.8% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    36 |      62.1% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -38,6 +38,7 @@ stricter closure count.
 
 ### Closed
 
+- `cache`
 - `chat`
 - `config`
 - `embedding`
@@ -67,7 +68,6 @@ stricter closure count.
 
 - `agent`
 - `build`
-- `cache`
 - `channels`
 - `client`
 - `data`
@@ -121,21 +121,23 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `chat`, `config`, `embedding`, `eval`,
-`extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
-`prompt`, `registry`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`,
-`studio`, and `version.ts`. The latest Chat findings and the independent
+The current closed review chain covers `cache`, `chat`, `config`, `embedding`,
+`eval`, `extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
+`provider`, `prompt`, `registry`, `repositories`, `runs`, `runtime`, `sandbox`,
+`schemas`, `studio`, and `version.ts`. The latest Chat findings and the independent
 adversarial knowledge, Markdown, MDX, provider, repositories, runs, runtime,
 and sandbox findings are remediated and revalidated. `prompt` is closed after
 its cross-cutting registry, discovery, HMR, request-lifecycle, and MCP findings
 were remediated and revalidated. `registry` is closed after its scope
 lifecycle, request-generation isolation, transaction invalidation, and
-cross-entry validation findings were remediated and revalidated. `resource`
-has received a deep current-state review and substantial remediation, but
-remains open while its cache-policy breaking-change decision is unresolved. Each
-closure requires a complete consumer map, deep module-level review,
-adversarial boundary tests, public-contract documentation, and repository-wide
-static verification.
+cross-entry validation findings were remediated and revalidated. `cache` is
+closed after its backend contracts, key identity and invalidation, portability,
+request lifecycle, multi-tier coordination, and dependency hashing findings
+were remediated and revalidated. `resource` has received a deep current-state
+review and substantial remediation, but remains open while its cache-policy
+breaking-change decision is unresolved. Each closure requires a complete
+consumer map, deep module-level review, adversarial boundary tests,
+public-contract documentation, and repository-wide static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
@@ -1951,5 +1953,129 @@ hosted request context do not receive request-generation snapshots or adapter
 eviction; they retain the existing explicit `clear` and `clearProject`
 ownership contract. This path is not a public Registry API and does not affect
 the hosted production lifecycle.
+
+### Cache closure checkpoint
+
+The `cache` audit unit owns cache-key and source identity, backend contracts,
+memory/disk/Redis/API implementations, portable code storage, request-local
+batching, multi-tier coordination, module caches, dependency hashing, and the
+cache registry/invalidation facade. Its consumers span Build, Transforms,
+Rendering, Platform adapters, Server request handling, project discovery, and
+the React/MDX module loaders. `#veryfront/cache` is an internal workspace
+surface rather than a published npm subpath, so this checkpoint updates the
+internal contract and hardening ledger rather than public API guides.
+
+The current Cache findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** batch-capable backends and
+  wrappers accepted arrays of unrelated size and delegated them inconsistently.
+  The consequence was unbounded fan-out, oversized network calls, and a caller
+  receiving different limits depending on the selected backend. One shared
+  100-item policy now validates Memory, Redis, API, tokenizing-gateway, and
+  multi-tier get/set batch boundaries before authentication, lookup, or
+  mutation.
+- **Symptom -> Source -> Consequence -> Remedy:** the batch-entry schema
+  required positive integer TTLs while runtime backends accept finite
+  fractional TTLs and define non-positive TTL as immediate expiry. The
+  consequence was valid runtime operations being rejected at schema boundaries
+  and out-of-range values reaching backend-specific handling. The schema now
+  follows the shared finite maximum and immediate-expiry contract, with direct
+  parity tests.
+- **Symptom -> Source -> Consequence -> Remedy:** URI encoding rejected lone
+  UTF-16 surrogates while byte encoders could collapse distinct malformed
+  strings onto the replacement character. Render ownership parsing also used a
+  different decoder from key construction. The consequence was exceptions,
+  cache identity aliases, and missed project/source invalidation. A total,
+  injective percent-segment codec preserves every JavaScript string, its
+  decoder accepts only canonical emitted forms, and registry scopes, source
+  identities, render keys, parsers, and Redis ownership use that single codec.
+- **Symptom -> Source -> Consequence -> Remedy:** project, environment, and
+  content-source invalidation partly interpreted structured render keys as raw
+  colon-separated text. The consequence was stale render entries for encoded
+  or delimiter-bearing identities. Every structured render ownership path now
+  decodes the canonical segments and matches the exact requested source; opaque
+  namespaces remain deliberately excluded rather than guessed.
+- **Symptom -> Source -> Consequence -> Remedy:** API-cache availability used
+  hostname substrings, successful JSON bodies were read without a byte bound,
+  and malformed UTF-16 keys could reach network operations that could never be
+  addressed by the GET URL. The consequence was remote hosts being
+  misclassified as local, unbounded response memory, and write-only cache
+  entries. URL parsing now classifies exact loopback/development hosts,
+  configurable bounded fatal-UTF-8 reads replace `response.json()`, and all
+  keys/project references are bounded and URI-valid before network I/O. The
+  normal backend factory exposes the response limit.
+- **Symptom -> Source -> Consequence -> Remedy:** a verified control-plane
+  cache credential was stored directly in AsyncLocalStorage, so detached async
+  descendants retained authority after the request callback settled. Streaming
+  work had no explicit ownership signal. The consequence was a request
+  credential lifetime extending beyond its verified operation. Credential
+  scopes now hold revocable state; ordinary completion clears the capability;
+  the agent-stream handler explicitly leases it to the returned response body;
+  and close, error, or cancellation releases the lease. Detached descendants
+  observe no credential after settlement.
+- **Symptom -> Source -> Consequence -> Remedy:** Redis batch writes used
+  fail-fast `Promise.all`. The consequence was the caller observing failure
+  while sibling writes were still mutating Redis. Batch writes now await every
+  sibling with `allSettled` and report the first failure only after the batch
+  reaches a stable terminal state.
+- **Symptom -> Source -> Consequence -> Remedy:** request-batching
+  AsyncLocalStorage retained a live cache, timers, and backend state in
+  detached descendants after the request returned. The consequence was
+  cross-lifecycle memory retention and late mutation of finished request state.
+  Request completion now drains queued work, closes the state, releases its
+  collections, and makes inherited descendants fail closed.
+- **Symptom -> Source -> Consequence -> Remedy:** an explicit multi-tier write
+  could finish between an initial miss and computation publication, after its
+  generation state had been pruned. Local sibling writes could also reject
+  before all tiers settled. The consequence was stale computed data
+  overwriting a newer value and callers returning while local mutation
+  continued. The initial lookup retains its generation through the decision,
+  stale computations re-read after the queued mutation, and local writes settle
+  completely before failure is reported.
+- **Symptom -> Source -> Consequence -> Remedy:** concurrent parents awaiting
+  one deduplicated dependency read each charged the shared source bytes after
+  the promise resolved. The consequence was valid dependency graphs falsely
+  exceeding the aggregate source budget. The first continuation now records
+  and charges shared content; later waiters re-check the prefetched map before
+  accounting it.
+- **Symptom -> Source -> Consequence -> Remedy:** Map-compatible iteration over
+  the module LRU implemented `values()` and `entries()` through recency-mutating
+  `get()` calls. The consequence was observation changing later eviction
+  order. Iterators now traverse the LRU entries directly, leaving recency
+  unchanged.
+- **Symptom -> Source -> Consequence -> Remedy:** authored code containing the
+  internal `file://__VF_CACHE_DIR__` marker survived tokenization and was later
+  rewritten to a machine-local path. The consequence was silent source
+  corruption and possible resolution of an unintended local cache artifact.
+  Distributed tokenization now treats that exact protocol marker as reserved
+  input and rejects it before storage; ordinary text mentioning the marker
+  without the `file://` protocol remains valid.
+
+Reproducible checkpoint evidence:
+
+- The complete `src/cache` suite passes 137 tests and 586 nested steps with zero
+  failures, including disk corruption/symlink/capacity invariants, backend
+  contract tests, key and invalidation identity, request lifecycle, dependency
+  graphs, multi-tier races, portability, and credential lease close/error/cancel
+  paths.
+- The complete internal agent-stream handler suite passes with the leased
+  verified credential boundary, including successful streaming, cancellation,
+  waiting/resume, exact source selection, and failure responses.
+- The complete unit baseline passes 3,231 tests and 24,676 nested steps with
+  zero failures; its one ignored test and five ignored nested steps match the
+  repository baseline.
+- `deno task verify:quick` passes generated manifests, formatting and lint,
+  sanitizer/skipped-test baselines, architecture and extension boundaries,
+  documentation validation with all 736 links, every configured root
+  entrypoint typecheck, and the isolated Studio browser typecheck.
+- `deno task typecheck:consumer` rebuilds the npm package and every extension,
+  then passes the documented consumer composition typecheck against the
+  generated declarations.
+
+No unresolved critical or high-confidence Cache production risk remains.
+Read-through cache misses and explicitly configured asynchronous backfills
+remain availability-oriented by design: they are observable through logs and
+statistics but do not replace authoritative source failures. Mutation,
+identity, invalidation, credential, and lifecycle boundaries fail closed.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

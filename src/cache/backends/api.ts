@@ -5,10 +5,12 @@ import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
+import { assertCacheBatchSize } from "../batch-policy.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   DEFAULT_CACHE_TTL_SECONDS,
   expiresImmediately,
@@ -19,10 +21,14 @@ const logger = baseLogger.component("api-cache-backend");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 120_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_CONFIGURED_RESPONSE_BYTES = 512 * 1024 * 1024;
+const MAX_CACHE_KEY_CODE_UNITS = 64 * 1024;
 const MAX_PROJECT_REF_UTF8_BYTES = 2_048;
 const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
+const EncodeURIComponent = encodeURIComponent;
 
 type CacheRequestOptions = {
   failOnError?: boolean;
@@ -55,10 +61,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isWellFormedUriComponent(value: string): boolean {
+  try {
+    EncodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
   private apiBaseUrl: string;
   private keyPrefix: string;
+  private readonly maxResponseBytes: number;
   private timeoutMs: number;
   private readonly trustedProjectRef?: string;
   private circuitBreaker;
@@ -68,6 +84,8 @@ export class ApiCacheBackend implements CacheBackend {
       apiBaseUrl?: string;
       keyPrefix?: string;
       timeoutMs?: number;
+      /** Maximum decoded JSON response body size accepted from the cache API. */
+      maxResponseBytes?: number;
       circuitBreakerName?: string;
       /** Project identity bound to process-level credentials at construction. */
       projectRef?: string;
@@ -87,11 +105,23 @@ export class ApiCacheBackend implements CacheBackend {
       );
     }
     this.timeoutMs = timeoutMs;
+    const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+    if (
+      !Number.isSafeInteger(maxResponseBytes) ||
+      maxResponseBytes <= 0 ||
+      maxResponseBytes > MAX_CONFIGURED_RESPONSE_BYTES
+    ) {
+      throw new RangeError(
+        `API cache maxResponseBytes must be a positive integer at most ${MAX_CONFIGURED_RESPONSE_BYTES}`,
+      );
+    }
+    this.maxResponseBytes = maxResponseBytes;
     if (
       options.projectRef !== undefined &&
       (options.projectRef.trim().length === 0 || options.projectRef.trim() !== options.projectRef ||
         new TextEncoder().encode(options.projectRef).byteLength > MAX_PROJECT_REF_UTF8_BYTES ||
-        /\p{Cc}/u.test(options.projectRef))
+        /\p{Cc}/u.test(options.projectRef) ||
+        !isWellFormedUriComponent(options.projectRef))
     ) {
       throw new TypeError(
         "API cache projectRef must be a bounded non-blank trimmed string without control characters",
@@ -108,7 +138,17 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private prefixKey(key: string): string {
-    return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    if (typeof key !== "string") throw new TypeError("API cache key must be a string");
+    const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    if (prefixed.length > MAX_CACHE_KEY_CODE_UNITS) {
+      throw new RangeError(
+        `API cache key must contain at most ${MAX_CACHE_KEY_CODE_UNITS} characters`,
+      );
+    }
+    if (!isWellFormedUriComponent(prefixed)) {
+      throw new TypeError("API cache key must be well-formed UTF-16");
+    }
+    return prefixed;
   }
 
   private async request(
@@ -166,7 +206,7 @@ export class ApiCacheBackend implements CacheBackend {
 
     try {
       return await this.circuitBreaker.execute(async () => {
-        const encodedProjectRef = encodeURIComponent(projectRef);
+        const encodedProjectRef = EncodeURIComponent(projectRef);
         const url = `${this.apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
         const spanUrl = sanitizeUrlForSpan(url);
         const cacheOperation = sanitizeUrlForSpan(path);
@@ -221,7 +261,18 @@ export class ApiCacheBackend implements CacheBackend {
             return null;
           }
 
-          return await response.json();
+          const { text, truncated } = await readResponseTextPrefix(
+            response,
+            this.maxResponseBytes + 1,
+            controller.signal,
+            { fatalUtf8: true },
+          );
+          if (truncated) {
+            throw REQUEST_ERROR.create({
+              detail: `Cache API response exceeded ${this.maxResponseBytes} bytes`,
+            });
+          }
+          return JSON.parse(text) as unknown;
         } finally {
           clearTimeout(timeoutId);
         }
@@ -252,7 +303,7 @@ export class ApiCacheBackend implements CacheBackend {
   async get(key: string): Promise<string | null> {
     const result = await this.request(
       "GET",
-      `/get?key=${encodeURIComponent(this.prefixKey(key))}`,
+      `/get?key=${EncodeURIComponent(this.prefixKey(key))}`,
     );
     if (!isRecord(result)) return null;
     if (result.value === null || typeof result.value === "string") return result.value;
@@ -264,6 +315,7 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    assertCacheBatchSize(keys, "API cache getBatch");
     if (keys.length === 0) return new Map<string, string | null>();
 
     const prefixedByKey = new Map(keys.map((k) => [k, this.prefixKey(k)] as const));
@@ -319,15 +371,20 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+    assertCacheBatchSize(entries, "API cache setBatch");
     if (entries.length === 0) return;
 
     // Validate the entire batch before authentication or network I/O. Collapse
     // duplicate keys to the final operation so mixed set/delete batches retain
     // deterministic last-write-wins semantics across separate API requests.
-    const finalEntriesByKey = new Map<string, { key: string; value: string; ttl: number }>();
+    const finalEntriesByKey = new Map<
+      string,
+      { key: string; prefixedKey: string; value: string; ttl: number }
+    >();
     for (const { key, value, ttl } of entries) {
       finalEntriesByKey.set(key, {
         key,
+        prefixedKey: this.prefixKey(key),
         value,
         ttl: resolveIntegerCacheTtlSeconds(ttl, DEFAULT_CACHE_TTL_SECONDS)!,
       });
@@ -335,8 +392,8 @@ export class ApiCacheBackend implements CacheBackend {
 
     const writes = [...finalEntriesByKey.values()]
       .filter(({ ttl }) => !expiresImmediately(ttl))
-      .map(({ key, value, ttl }) => ({
-        key: this.prefixKey(key),
+      .map(({ prefixedKey, value, ttl }) => ({
+        key: prefixedKey,
         value,
         ttl,
       }));

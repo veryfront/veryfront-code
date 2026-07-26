@@ -16,6 +16,7 @@
 import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "./types.ts";
 import { buildBatchResults } from "./batch-results.ts";
+import { assertCacheBatchSize } from "./batch-policy.ts";
 import { assertPortableCode, detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
 
 /**
@@ -132,6 +133,7 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
    * Get multiple codes from cache with automatic detokenization.
    */
   async getCodeBatch(keys: string[]): Promise<Map<string, string | null>> {
+    assertCacheBatchSize(keys, "Tokenizing cache getCodeBatch");
     if (keys.length === 0) return new Map<string, string | null>();
 
     if (!this.backend.getBatch) {
@@ -192,6 +194,7 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
    * Store multiple codes in cache with automatic tokenization.
    */
   async setCodeBatch(entries: Array<{ key: string; code: string; ttl?: number }>): Promise<void> {
+    assertCacheBatchSize(entries, "Tokenizing cache setCodeBatch");
     if (entries.length === 0) return;
 
     if (!this.backend.setBatch) {

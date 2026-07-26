@@ -147,6 +147,23 @@ describe("cache/module-cache", () => {
       assertEquals(entries, [["k1", "v1"]]);
     });
 
+    it("does not rewrite LRU recency when entries are observed", () => {
+      const map = createModuleCache();
+      const maxEntries = getModuleCacheStats().moduleCache.maxEntries;
+      for (let index = 0; index < maxEntries; index++) {
+        map.set(`key-${index}`, `value-${index}`);
+      }
+      assertEquals(map.get("key-0"), "value-0");
+
+      for (const _entry of map) {
+        // Observing a Map must not count as reading every cache entry.
+      }
+      map.set("overflow", "value");
+
+      assertEquals(map.has("key-0"), true);
+      assertEquals(map.has("key-1"), false);
+    });
+
     it("should return itself from set() for chaining", () => {
       const map = createModuleCache();
       assertEquals(map.set("k", "v"), map);

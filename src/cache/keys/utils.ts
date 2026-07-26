@@ -13,6 +13,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { cacheRegistry } from "../registry.ts";
 
 import { DEFAULT_EXCLUDED_QUERY_PARAMS, type QueryParamCacheOptions } from "./prefixes.ts";
+import { decodeCacheKeyPercentSegment } from "./segment-codec.ts";
 
 const querySegmentEncoder = new TextEncoder();
 const pathHashEncoder = new TextEncoder();
@@ -57,14 +58,8 @@ export function parseRenderCacheKey(cacheKey: string): {
   const [encodedProjectId, environment, encodedReleaseKey, version, ...contentParts] = parts;
   if (!encodedProjectId || !environment || !encodedReleaseKey || !version) return null;
 
-  let projectId: string;
-  let releaseKey: string;
-  try {
-    projectId = decodeURIComponent(encodedProjectId);
-    releaseKey = decodeURIComponent(encodedReleaseKey);
-  } catch {
-    return null;
-  }
+  const projectId = decodeCacheKeyPercentSegment(encodedProjectId);
+  const releaseKey = decodeCacheKeyPercentSegment(encodedReleaseKey);
   if (!projectId || !releaseKey) return null;
 
   return {

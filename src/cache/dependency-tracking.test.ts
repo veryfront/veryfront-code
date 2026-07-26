@@ -244,6 +244,46 @@ describe("Dependency tracking cache invalidation", () => {
       expect(maxActiveReads).toBe(8);
     });
 
+    it("accounts for a concurrently shared dependency only once", async () => {
+      const entryPath = "/project/pages/index.ts";
+      const sharedPath = "/project/pages/shared.ts";
+      const intermediaryCount = 65;
+      const files = new Map<string, string>([
+        [
+          entryPath,
+          Array.from(
+            { length: intermediaryCount },
+            (_, index) => `import "./intermediary-${index}.ts";`,
+          ).join("\n"),
+        ],
+        [
+          sharedPath,
+          `export const shared = "${"x".repeat(2 * 1024 * 1024)}";`,
+        ],
+      ]);
+      for (let index = 0; index < intermediaryCount; index++) {
+        files.set(
+          `/project/pages/intermediary-${index}.ts`,
+          `import { shared } from "./shared.ts"; export { shared };`,
+        );
+      }
+
+      const hash = await computeDepsHash(
+        entryPath,
+        async (path) => {
+          const content = files.get(path);
+          if (content === undefined) throw new Error(`not found: ${path}`);
+          if (path === sharedPath) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return content;
+        },
+        "/project",
+      );
+
+      expect(typeof hash).toBe("string");
+    });
+
     it("should hash dependencies stored as compiled framework .src files", async () => {
       const entryPath = "/framework/dist/framework-src/react/context/index.tsx.src";
       const dependencyPath = "/framework/dist/framework-src/react/runtime/core.ts.src";

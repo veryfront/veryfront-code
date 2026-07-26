@@ -182,25 +182,14 @@ class LRUBackedMap implements ModuleCacheMap {
   }
 
   values(): MapIterator<string> {
-    const keysIter = this.cache.keys();
-    const cacheRef = this.cache;
+    const entries = this.cache.entries();
     return toMapIterator((function* () {
-      for (const key of keysIter) {
-        const value = cacheRef.get(key);
-        if (value !== undefined) yield value;
-      }
+      for (const [, value] of entries) yield value;
     })());
   }
 
   entries(): MapIterator<[string, string]> {
-    const keysIter = this.cache.keys();
-    const cacheRef = this.cache;
-    return toMapIterator((function* () {
-      for (const key of keysIter) {
-        const value = cacheRef.get(key);
-        if (value !== undefined) yield [key, value] as [string, string];
-      }
-    })());
+    return toMapIterator(this.cache.entries());
   }
 
   forEach(
