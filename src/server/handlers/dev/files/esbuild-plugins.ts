@@ -307,9 +307,6 @@ export function createRelativeFsPlugin(
   };
 }
 
-/** Map of common packages to their esm.sh URLs for browser imports */
-const ESM_PACKAGE_MAP: Record<string, string> = {};
-
 /**
  * Build an esm.sh URL for a bare specifier, injecting a pinned version when
  * VERYFRONT_DEPENDENCY_PINNING=1 and a cached version is available.
@@ -328,7 +325,7 @@ function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string
         : getCachedNpmVersion(parsed.packageName, projectDir, rawPin);
       if (version) {
         const versionedPath = `${parsed.packageName}@${version}${parsed.subpath ?? ""}`;
-        return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${versionedPath}`;
+        return `https://esm.sh/${versionedPath}`;
       }
       // Cache is cold — schedule a background latest-version fetch only when
       // no project declaration exists. Non-exact declarations are not coerced
@@ -336,7 +333,7 @@ function buildPinnedEsmUrl(path: string, projectDir: string | undefined): string
       scheduleNpmVersionResolution(parsed.packageName, rawPin, projectDir);
     }
   }
-  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
+  return `https://esm.sh/${path}`;
 }
 
 interface BareExternalPluginOptions {

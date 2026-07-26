@@ -277,6 +277,19 @@ describe("scheduleNpmVersionResolution", () => {
       );
     });
 
+    it("does not corrupt an incomplete scoped package name", async () => {
+      let requestUrl = "";
+      globalThis.fetch = (input: string | URL | Request) => {
+        requestUrl = String(input);
+        return Promise.resolve(new Response(null, { status: 404 }));
+      };
+
+      scheduleNpmVersionResolution("@scope", undefined, PROJECT_DIR);
+      await _pendingResolutions();
+
+      assertEquals(requestUrl, "https://registry.npmjs.org/@scope");
+    });
+
     it("backs off failed lookups and retries after the negative-cache window", async () => {
       using time = new FakeTime();
       let fetchCalls = 0;

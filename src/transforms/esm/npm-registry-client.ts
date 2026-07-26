@@ -212,11 +212,10 @@ async function fetchLatestNpmVersion(packageName: string): Promise<string | null
 
   // Scoped package names like @tanstack/react-query need the / encoded in the
   // path segment but the @ left as-is so the registry recognizes the scope.
-  const encodedName = packageName.startsWith("@")
-    ? `${packageName.slice(0, packageName.indexOf("/"))}%2F${
-      packageName.slice(packageName.indexOf("/") + 1)
-    }`
-    : packageName;
+  // Preserve malformed inputs so they produce an ordinary registry miss
+  // instead of synthesizing a different package name.
+  const scopedPackage = /^(@[^/]+)\/([^/]+)$/.exec(packageName);
+  const encodedName = scopedPackage ? `${scopedPackage[1]}%2F${scopedPackage[2]}` : packageName;
 
   try {
     const res = await fetch(`https://registry.npmjs.org/${encodedName}`, {
