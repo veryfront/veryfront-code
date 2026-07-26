@@ -21,6 +21,7 @@ const logger = serverLogger.component("api-wrapper");
  */
 interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
+  sourceSnapshotVersion?: number;
 }
 
 const discoveredProjects = new LRUCacheAdapter({ maxEntries: 1000 });
@@ -103,17 +104,19 @@ function discoveryKey(ctx: HandlerContext): string {
     return registryScope.scopeId;
   }
 
-  const slug = ctx.projectSlug ?? ctx.projectDir;
+  const projectIdentity = ctx.projectId ?? ctx.projectSlug ?? ctx.projectDir;
   const environment = ctx.enriched?.environment ?? ctx.resolvedEnvironment ??
     (ctx.releaseId ? "production" : "preview");
 
   if (environment === "production") {
-    return ctx.releaseId ? `${slug}:release:${ctx.releaseId}` : `${slug}:production:unreleased`;
+    return ctx.releaseId
+      ? `${projectIdentity}:release:${ctx.releaseId}`
+      : `${projectIdentity}:production:unreleased`;
   }
 
   const branch = ctx.requestContext?.branch ?? ctx.enriched?.branch ?? ctx.parsedDomain?.branch ??
     "main";
-  return `${slug}:preview:${branch}`;
+  return `${projectIdentity}:preview:${branch}`;
 }
 
 function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
@@ -134,23 +137,33 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * correct project scope.
  */
 export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
+  await ctx.adapter.fs.ensureSourceSnapshotFresh?.("primitive-discovery");
   const key = discoveryKey(ctx);
-  const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
+  const sourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+  const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx) ||
+    sourceSnapshotVersion !== undefined;
 
   const existing = discoveredProjects.get<DiscoveryRecord>(key);
-  if (existing) return existing.promise;
+  if (
+    existing &&
+    (sourceSnapshotVersion === undefined ||
+      existing.sourceSnapshotVersion === sourceSnapshotVersion)
+  ) {
+    return existing.promise;
+  }
 
   const discovery = {
+    sourceSnapshotVersion,
     promise: (async () => {
-      const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
-      const { agentRegistry } = await import(
-        "#veryfront/agent/composition/composition.ts"
-      );
-      const { toolRegistry } = await import("#veryfront/tool/registry.ts");
-      const { promptRegistry } = await import("#veryfront/prompt/registry.ts");
-      const { resourceRegistry } = await import("#veryfront/resource/registry.ts");
-
       return await runWithRegistryTransaction(async () => {
+        const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
+        const { agentRegistry } = await import(
+          "#veryfront/agent/composition/composition.ts"
+        );
+        const { toolRegistry } = await import("#veryfront/tool/registry.ts");
+        const { promptRegistry } = await import("#veryfront/prompt/registry.ts");
+        const { resourceRegistry } = await import("#veryfront/resource/registry.ts");
+
         // Clear stale entries in a transaction-local copy. Concurrent runs keep
         // using the prior live registry until discovery succeeds and the staged
         // replacement is committed atomically.
@@ -200,10 +213,21 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   discoveredProjects.set(key, discovery);
 
   try {
-    return await discovery.promise;
+    const result = await discovery.promise;
+    if (result.errors.length > 0) {
+      const current = discoveredProjects.get<DiscoveryRecord>(key);
+      if (current === discovery) {
+        discoveredProjects.delete(key);
+      }
+    }
+    return result;
   } catch (error) {
-    // Allow retry on next request
-    discoveredProjects.delete(key);
+    // A superseded generation may already own this key. Delete only our own
+    // record so the newer discovery remains reusable after it completes.
+    const current = discoveredProjects.get<DiscoveryRecord>(key);
+    if (current === discovery) {
+      discoveredProjects.delete(key);
+    }
     logger.warn("Primitive discovery failed (will retry)", {
       projectSlug: ctx.projectSlug,
       error: error instanceof Error ? error.message : String(error),
@@ -219,6 +243,19 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
       if (current === discovery) {
         discoveredProjects.delete(key);
       }
+    }
+  }
+}
+
+/**
+ * Drop completed and in-flight discovery records for every source scope owned
+ * by a project. The next scoped request rebuilds registries transactionally
+ * from its current source snapshot.
+ */
+export function clearProjectDiscoveryCacheForProject(projectId: string): void {
+  for (const key of discoveredProjects.keys()) {
+    if (key === projectId || key.startsWith(`${projectId}:`)) {
+      discoveredProjects.delete(key);
     }
   }
 }

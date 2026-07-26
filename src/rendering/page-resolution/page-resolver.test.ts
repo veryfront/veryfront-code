@@ -128,6 +128,74 @@ describe("rendering/page-resolution/page-resolver", () => {
       assertEquals(dynamic.entity.slug, "article");
     });
 
+    it("resolves dynamic App Router pages without remote stat misses", async () => {
+      let statCalls = 0;
+      const adapter = {
+        fs: {
+          readFile: async (path: string) => {
+            if (path === "/project/app/[slug]/page.tsx") {
+              return "export default function Page() { return null; }";
+            }
+            throw fileNotFoundError();
+          },
+          resolveFile: async () => null,
+          stat: async () => {
+            statCalls++;
+            throw new Error("File not found");
+          },
+          readDir: async function* (path: string) {
+            if (path === "/project/app") {
+              yield { name: "[slug]", isFile: false, isDirectory: true };
+            }
+          },
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig({ router: "app" }),
+        adapter,
+      });
+
+      const page = await resolver.resolvePage("article");
+
+      assertEquals(page.entity.path, "/project/app/[slug]/page.tsx");
+      assertEquals(statCalls, 0);
+    });
+
+    it("resolves optional catch-all App Router pages across remaining segments", async () => {
+      const adapter = {
+        fs: {
+          readFile: async (path: string) => {
+            if (path === "/project/app/[[...slug]]/page.tsx") {
+              return "export default function Page() { return null; }";
+            }
+            throw fileNotFoundError();
+          },
+          resolveFile: async () => null,
+          readDir: async function* (path: string) {
+            if (path === "/project/app") {
+              yield { name: "[[...slug]]", isFile: false, isDirectory: true };
+            }
+          },
+          writeFile: async () => {},
+          mkdir: async () => {},
+        },
+        env: { get: () => undefined },
+      } as unknown as RuntimeAdapter;
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig({ router: "app" }),
+        adapter,
+      });
+
+      const page = await resolver.resolvePage("guides/platform/agents");
+
+      assertEquals(page.entity.path, "/project/app/[[...slug]]/page.tsx");
+    });
+
     it("keeps auto router detection aligned with the structural app router", async () => {
       const adapter = {
         id: "memory",
@@ -223,7 +291,9 @@ describe("rendering/page-resolution/page-resolver", () => {
           },
           exists: async (path: string) => path === "/project/pages",
           readDir: async function* (path: string) {
-            if (path === "/project/pages") {
+            if (path === "/project") {
+              yield { name: "pages", isFile: false, isDirectory: true };
+            } else if (path === "/project/pages") {
               yield { name: "index.tsx", isFile: true, isDirectory: false };
             }
           },

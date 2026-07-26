@@ -5,7 +5,11 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
+import {
+  ensurePreviewSourceSnapshotFresh,
+  getApiHandler,
+  withApiHandler,
+} from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
@@ -16,6 +20,7 @@ import { isWorkerIsolationEnabled } from "#veryfront/security/sandbox/worker-poo
 import { internalServerError, serviceUnavailable } from "#veryfront/http/responses";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import { PageResolver } from "#veryfront/rendering/page-resolution/page-resolver.ts";
 
 const NativeResponse = Response;
 const stringStartsWith = String.prototype.startsWith;
@@ -122,7 +127,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     );
   }
 
-  private handleWithContext(
+  private async handleWithContext(
     req: Request,
     ctx: HandlerContext,
     pathname: string,
@@ -133,6 +138,17 @@ export class ApiHandlerWrapper extends BaseHandler {
         const ownsApiPath = pathname === "/api" ||
           apply(stringStartsWith, pathname, ["/api/"]);
         try {
+          // WebSocket pokes update mutable previews immediately. This bounded,
+          // coalesced check is the fallback for missed pokes and establishes
+          // one source snapshot for route and primitive discovery.
+          await ensurePreviewSourceSnapshotFresh(ctx);
+
+          const canResolveAsPage = !ownsApiPath &&
+            (req.method === "GET" || req.method === "HEAD");
+          if (canResolveAsPage && await this.isPageRequest(pathname, ctx)) {
+            return this.continue();
+          }
+
           // In-process discovery imports project modules into host registries.
           // Isolated API handling must never cross that boundary: the route
           // handler either uses worker-owned prepared capabilities or rejects
@@ -147,6 +163,7 @@ export class ApiHandlerWrapper extends BaseHandler {
           const apiRes = await withApiHandler(
             ctx,
             (api) => api.handle(req, ctx, { applyCORS: false }),
+            { sourceSnapshotReady: true },
           );
 
           if (!apiRes) {
@@ -207,5 +224,29 @@ export class ApiHandlerWrapper extends BaseHandler {
         "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  private async isPageRequest(pathname: string, ctx: HandlerContext): Promise<boolean> {
+    const slug = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
+    const pageResolver = new PageResolver({
+      projectDir: ctx.projectDir,
+      projectId: ctx.projectId,
+      config: ctx.config ?? {},
+      adapter: ctx.adapter,
+    });
+
+    try {
+      return await pageResolver.pageExists(slug);
+    } catch (error) {
+      this.logDebug(
+        "[API-Wrapper] Page ownership is indeterminate; preserving API discovery",
+        {
+          pathname,
+          error: this.getErrorMessage(error),
+        },
+        ctx,
+      );
+      return false;
+    }
   }
 }

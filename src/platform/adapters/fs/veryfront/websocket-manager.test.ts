@@ -125,8 +125,7 @@ function createWebSocketManager(options: {
     getContentSource: () => ({ type: "branch", branch: "main" }),
     getProjectDir: () => undefined,
     clearMemoryCaches: () => {},
-    clearFileListIndex: () => {},
-    setFileListCache: async () => {},
+    replaceSourceSnapshot: async () => {},
     pregenerateStyles: options.pregenerateStyles,
   });
 }
@@ -637,8 +636,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -700,8 +698,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -740,8 +737,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -780,8 +776,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");
@@ -820,8 +815,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      clearFileListIndex: () => {},
-      setFileListCache: async () => {},
+      replaceSourceSnapshot: async () => {},
     });
 
     manager.connect("project-1");

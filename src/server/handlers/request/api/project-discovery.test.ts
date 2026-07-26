@@ -7,7 +7,10 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { HandlerContext } from "../../types.ts";
-import { ensureProjectDiscovery } from "./project-discovery.ts";
+import {
+  clearProjectDiscoveryCacheForProject,
+  ensureProjectDiscovery,
+} from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { promptRegistry } from "#veryfront/prompt/registry.ts";
 import { resourceRegistry } from "#veryfront/resource/registry.ts";
@@ -175,6 +178,99 @@ describe(
       assertExists(promptRegistry.get("newPrompt"));
     });
 
+    it("reuses preview discovery for one source snapshot generation", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/versioned-preview-project",
+        "versioned-preview-project",
+        "preview",
+      );
+      const agentId = "versioned-preview-agent";
+      let sourceSnapshotVersion = 1;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => sourceSnapshotVersion;
+
+      await writeAgentFile(ctx, agentId, "FIRST");
+      await ensureProjectDiscovery(ctx);
+
+      await writeAgentFile(ctx, agentId, "SECOND");
+      await ensureProjectDiscovery(ctx);
+
+      const cachedAgent = getAgent(agentId);
+      assertExists(cachedAgent);
+      assertEquals(cachedAgent.config.system, "FIRST");
+
+      sourceSnapshotVersion++;
+      await ensureProjectDiscovery(ctx);
+
+      const updatedAgent = getAgent(agentId);
+      assertExists(updatedAgent);
+      assertEquals(updatedAgent.config.system, "SECOND");
+    });
+
+    it("keeps a newer source generation cached when an older discovery fails", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/overlapping-preview-project",
+        "overlapping-preview-project",
+        "preview",
+      );
+      const agentId = "overlapping-preview-agent";
+      let sourceSnapshotVersion = 1;
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => sourceSnapshotVersion;
+
+      await writeAgentFile(ctx, agentId, "FIRST");
+
+      const staleDiscoveryPaused = Promise.withResolvers<void>();
+      const resumeStaleDiscovery = Promise.withResolvers<void>();
+      const originalExists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+      let failFirstSkillsRead = true;
+      ctx.adapter.fs.exists = async (path: string) => {
+        if (failFirstSkillsRead && path === `${ctx.projectDir}/skills`) {
+          failFirstSkillsRead = false;
+          staleDiscoveryPaused.resolve();
+          await resumeStaleDiscovery.promise;
+          throw new Error("old snapshot unavailable");
+        }
+        return originalExists(path);
+      };
+
+      const staleDiscovery = ensureProjectDiscovery(ctx);
+      await staleDiscoveryPaused.promise;
+
+      sourceSnapshotVersion++;
+      const currentDiscovery = ensureProjectDiscovery(ctx);
+      // Let the newer generation publish its cache record before the older
+      // transaction is released and rejects.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resumeStaleDiscovery.resolve();
+
+      await assertRejects(
+        () => staleDiscovery,
+        Error,
+        "old snapshot unavailable",
+      );
+      await currentDiscovery;
+
+      await writeAgentFile(ctx, agentId, "SECOND");
+      await ensureProjectDiscovery(ctx);
+
+      const cachedAgent = getAgent(agentId);
+      assertExists(cachedAgent);
+      assertEquals(cachedAgent.config.system, "FIRST");
+    });
+
     it("keeps production discovery cached for the same release", async () => {
       agentRegistry.clearAll();
       toolRegistry.clearAll();
@@ -200,6 +296,37 @@ describe(
       const cachedAgent = getAgent(agentId);
       assertExists(cachedAgent);
       assertEquals(cachedAgent.config.system, "FIRST");
+    });
+
+    it("invalidates fallback discovery by canonical project id", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/project-id-invalidation",
+        "project-id-invalidation-slug",
+        "production",
+        "release-123",
+      );
+      ctx.projectId = "project-id-invalidation-id";
+      const agentId = "project-id-invalidation-agent";
+
+      await writeAgentFile(ctx, agentId, "FIRST");
+      await ensureProjectDiscovery(ctx);
+
+      await writeAgentFile(ctx, agentId, "SECOND");
+      await ensureProjectDiscovery(ctx);
+
+      const cachedAgent = getAgent(agentId);
+      assertExists(cachedAgent);
+      assertEquals(cachedAgent.config.system, "FIRST");
+
+      clearProjectDiscoveryCacheForProject(ctx.projectId);
+      await ensureProjectDiscovery(ctx);
+
+      const updatedAgent = getAgent(agentId);
+      assertExists(updatedAgent);
+      assertEquals(updatedAgent.config.system, "SECOND");
     });
 
     it("does not cache completed production discovery without a release id", async () => {
@@ -645,6 +772,52 @@ describe(
         message: "broken discovery fixture",
       }]);
       assertEquals(JSON.stringify(partialWarning).includes(ctx.projectDir), false);
+    });
+
+    it("retries partial discovery within the same source snapshot", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/partial-discovery-retry-project",
+        "partial-discovery-retry-project",
+        "preview",
+      );
+      (
+        ctx.adapter.fs as typeof ctx.adapter.fs & {
+          getSourceSnapshotVersion: () => number;
+        }
+      ).getSourceSnapshotVersion = () => 1;
+
+      const toolPath = `${ctx.projectDir}/tools/recovered-tool.ts`;
+      await ctx.adapter.fs.writeFile(
+        toolPath,
+        'throw new Error("temporary discovery failure");\n',
+      );
+
+      const partial = await ensureProjectDiscovery(ctx);
+      assertEquals(partial.errors.length, 1);
+
+      await ctx.adapter.fs.writeFile(
+        toolPath,
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          '  id: "recovered_tool",',
+          '  description: "Recovers after a transient discovery failure",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ ok: true }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      const recovered = await ensureProjectDiscovery(ctx);
+      assertEquals(recovered.errors.length, 0);
+      assertEquals(recovered.tools.has("recovered_tool"), true);
     });
 
     it("rethrows hard primitive discovery failures instead of returning an empty result", async () => {

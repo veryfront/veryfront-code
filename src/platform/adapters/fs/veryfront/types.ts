@@ -31,6 +31,8 @@ export interface FSAdapter {
 
   resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
   refreshSourceSnapshot?(reason?: string): Promise<void>;
+  ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
+  getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {
@@ -182,10 +184,11 @@ export interface InvalidationProjectContext {
 }
 
 export interface InvalidationCallbacks {
-  clearSSRModuleCache?: () => void;
-  clearSSRModuleCacheForProject?: (projectId: string) => void;
-  clearRouterDetectionCacheForProject?: (projectId: string) => void;
-  clearModulePathCache?: () => void;
+  clearSSRModuleCache?: () => void | Promise<void>;
+  clearSSRModuleCacheForProject?: (projectId: string) => void | Promise<void>;
+  clearRouterDetectionCacheForProject?: (projectId: string) => void | Promise<void>;
+  clearProjectDiscoveryCacheForProject?: (projectId: string) => void | Promise<void>;
+  clearModulePathCache?: () => void | Promise<void>;
   invalidateModulePaths?: (changedPaths: string[]) => void | Promise<void>;
   clearSnippetCacheForProject?: (projectSlug: string) => void | Promise<void>;
   triggerReload?: (changedPaths?: string[], project?: InvalidationProjectContext) => void;

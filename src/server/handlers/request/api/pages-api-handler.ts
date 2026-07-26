@@ -172,12 +172,27 @@ function shouldCacheApiHandler(ctx: HandlerContext): boolean {
   return getApiHandlerCacheContext(ctx)?.mode === "production";
 }
 
-async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
-  if (!ctx.projectSlug) return;
+function hasMutablePreviewSource(ctx: HandlerContext): boolean {
+  if (!ctx.projectSlug) return false;
   const cacheContext = getApiHandlerCacheContext(ctx);
   // Skip when production, or when the context is indeterminate.
-  if (!cacheContext || cacheContext.mode === "production") return;
+  return !!cacheContext && cacheContext.mode !== "production";
+}
 
+export async function ensurePreviewSourceSnapshotFresh(ctx: HandlerContext): Promise<void> {
+  if (!hasMutablePreviewSource(ctx)) return;
+  if (ctx.adapter.fs.ensureSourceSnapshotFresh) {
+    await ctx.adapter.fs.ensureSourceSnapshotFresh("preview-request-routing");
+    return;
+  }
+
+  // Backward compatibility for custom remote adapters that only implement the
+  // original unconditional refresh contract.
+  await refreshPreviewSourceSnapshot(ctx);
+}
+
+export async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
+  if (!hasMutablePreviewSource(ctx)) return;
   await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
 }
 
@@ -196,11 +211,18 @@ async function hashScopeMaterial(material: string): Promise<string> {
   return apply(arrayJoin, hex, [""]) as string;
 }
 
+interface ApiHandlerOptions {
+  sourceSnapshotReady?: boolean;
+}
+
 async function createApiHandler(
   ctx: HandlerContext,
+  options: ApiHandlerOptions = {},
   capturedScopeKey = getCacheKey(ctx),
 ): Promise<APIRouteHandler> {
-  await refreshPreviewSourceSnapshot(ctx);
+  if (!options.sourceSnapshotReady) {
+    await ensurePreviewSourceSnapshotFresh(ctx);
+  }
 
   const scopeDigest = await hashScopeMaterial(capturedScopeKey);
   const executionScopeId = `api:${apply(stringSlice, scopeDigest, [0, 32])}:${
@@ -273,17 +295,18 @@ function retainHandler(promise: Promise<APIRouteHandler>): () => Promise<void> {
 
 function getApiHandlerPromise(
   ctx: HandlerContext,
+  options: ApiHandlerOptions = {},
 ): { promise: Promise<APIRouteHandler>; cached: boolean } {
   const key = getCacheKey(ctx);
   if (!shouldCacheApiHandler(ctx)) {
-    return { promise: createApiHandler(ctx, key), cached: false };
+    return { promise: createApiHandler(ctx, options, key), cached: false };
   }
 
   const cache = getCache();
 
   let promise = cache.get(key);
   if (!promise) {
-    promise = createApiHandler(ctx, key);
+    promise = createApiHandler(ctx, options, key);
     cache.set(key, promise);
     const installed = promise;
     void apply(promiseCatch, installed, [() => {
@@ -311,8 +334,9 @@ export async function getApiHandler(ctx: HandlerContext): Promise<APIRouteHandle
 export async function withApiHandler<T>(
   ctx: HandlerContext,
   use: (handler: APIRouteHandler) => T | Promise<T>,
+  options: ApiHandlerOptions = {},
 ): Promise<T> {
-  const { promise, cached } = getApiHandlerPromise(ctx);
+  const { promise, cached } = getApiHandlerPromise(ctx, options);
   const release = retainHandler(promise);
 
   try {

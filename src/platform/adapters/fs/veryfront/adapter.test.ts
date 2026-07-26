@@ -110,6 +110,8 @@ describe("VeryfrontFSAdapter", () => {
       "refreshSourceSnapshot",
       "createStyleConfigBinding",
       "installStyleConfig",
+      "ensureSourceSnapshotFresh",
+      "getSourceSnapshotVersion",
     ] as const;
 
     for (const method of methods) {
@@ -1055,6 +1057,130 @@ describe("VeryfrontFSAdapter", () => {
       });
     });
 
+    it("does not reuse a freshness lease after the request branch changes", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        const branch = client.getContext().name ?? "main";
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: branch,
+          content: branch,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
+
+      adapter.setRequestBranch("draft");
+      await adapter.ensureSourceSnapshotFresh("draft-request");
+
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "draft");
+
+      adapter.clearRequestBranch();
+      await adapter.ensureSourceSnapshotFresh("main-request");
+
+      assertEquals(listAllFilesCalls, 3);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
+    });
+
+    it("discards an in-flight refresh when the request branch changes", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let finishMainRefresh: (() => void) | undefined;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        const branch = client.getContext().name ?? "main";
+        const files = [{
+          path: "pages/index.tsx",
+          version_id: branch,
+          content: branch,
+        }];
+
+        if (listAllFilesCalls !== 2) return Promise.resolve(files);
+        return new Promise((resolve) => {
+          finishMainRefresh = () => resolve(files);
+        });
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+
+      const mainRefresh = adapter.ensureSourceSnapshotFresh("main-request");
+      await waitFor(async () => finishMainRefresh !== undefined);
+
+      adapter.setRequestBranch("draft");
+      const draftRefresh = adapter.ensureSourceSnapshotFresh("draft-request");
+      finishMainRefresh?.();
+
+      await Promise.all([mainRefresh, draftRefresh]);
+
+      assertEquals(listAllFilesCalls, 3);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "draft");
+    });
+
     it("refreshes a stale branch snapshot once when a pushed file is missing", async () => {
       const adapter = createAdapter({
         veryfront: {
@@ -1123,6 +1249,284 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(secondContent, "export const second = true;");
       assertEquals(listAllFilesCalls, 3);
+    });
+
+    it("leases an unchanged branch snapshot without relying on the file-list cache", async () => {
+      let routerInvalidations = 0;
+      let ssrInvalidations = 0;
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+        invalidationCallbacks: {
+          clearRouterDetectionCacheForProject: () => {
+            routerInvalidations++;
+          },
+          clearSSRModuleCacheForProject: () => {
+            ssrInvalidations++;
+          },
+        },
+      });
+
+      const firstFiles = [{
+        path: "pages/review.tsx",
+        version_id: "version-1",
+        content: "export default function Review() { return null; }",
+      }];
+      const changedFiles = [{
+        path: "app/review/page.tsx",
+        version_id: "version-2",
+        content: "export default function Review() { return null; }",
+      }];
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id?: string; content?: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = async () => {
+        listAllFilesCalls++;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return listAllFilesCalls < 3 ? firstFiles : changedFiles;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      const initialSnapshotVersion = adapter.getSourceSnapshotVersion();
+      assertEquals(initialSnapshotVersion > 0, true);
+      assertEquals(listAllFilesCalls, 1);
+
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+      await Promise.all([
+        adapter.ensureSourceSnapshotFresh("first-concurrent-check"),
+        adapter.ensureSourceSnapshotFresh("second-concurrent-check"),
+        adapter.ensureSourceSnapshotFresh("third-concurrent-check"),
+      ]);
+
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(adapter.getSourceSnapshotVersion(), initialSnapshotVersion);
+      assertEquals(routerInvalidations, 0);
+      assertEquals(ssrInvalidations, 0);
+
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+      await adapter.ensureSourceSnapshotFresh("changed-source-check");
+
+      assertEquals(listAllFilesCalls, 3);
+      assertEquals(adapter.getSourceSnapshotVersion() > initialSnapshotVersion, true);
+      assertEquals(routerInvalidations, 1);
+      assertEquals(ssrInvalidations, 1);
+    });
+
+    it("keeps freshness followers attached until SSR invalidation completes", async () => {
+      const invalidationStarted = Promise.withResolvers<void>();
+      const releaseInvalidation = Promise.withResolvers<void>();
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+        invalidationCallbacks: {
+          clearSSRModuleCacheForProject: async () => {
+            invalidationStarted.resolve();
+            await releaseInvalidation.promise;
+          },
+        },
+      });
+
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/review.tsx",
+          version_id: `version-${listAllFilesCalls}`,
+          content: `export const version = ${listAllFilesCalls};`,
+        }]);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+
+      const leader = adapter.ensureSourceSnapshotFresh("leader");
+      await invalidationStarted.promise;
+
+      let followerFinished = false;
+      const follower = adapter.ensureSourceSnapshotFresh("follower").then(() => {
+        followerFinished = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(followerFinished, false);
+
+      releaseInvalidation.resolve();
+      await Promise.all([leader, follower]);
+      assertEquals(followerFinished, true);
+      assertEquals(listAllFilesCalls, 2);
+    });
+
+    it("does not let an older refresh overwrite a pushed source snapshot", async () => {
+      const refreshStarted = Promise.withResolvers<void>();
+      const releaseRefresh = Promise.withResolvers<
+        Array<{ path: string; version_id: string; content: string }>
+      >();
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const initialFiles = [{
+        path: "pages/review.tsx",
+        version_id: "version-1",
+        content: "export const version = 1;",
+      }];
+      const pushedFiles = [{
+        path: "pages/review.tsx",
+        version_id: "version-2",
+        content: "export const version = 2;",
+      }];
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        if (listAllFilesCalls === 1) return Promise.resolve(initialFiles);
+        refreshStarted.resolve();
+        return releaseRefresh.promise;
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const context = adapter.getContentContext();
+      assertExists(context);
+
+      const staleRefresh = adapter.refreshSourceSnapshot("poll");
+      await refreshStarted.promise;
+
+      await (adapter as unknown as {
+        replaceSourceSnapshot: (
+          cacheKey: string,
+          files: typeof pushedFiles,
+        ) => Promise<void>;
+      }).replaceSourceSnapshot(buildFileListCacheKey(context), pushedFiles);
+      const pushedVersion = adapter.getSourceSnapshotVersion();
+
+      releaseRefresh.resolve(initialFiles);
+      await staleRefresh;
+
+      assertEquals(adapter.getSourceSnapshotVersion(), pushedVersion);
+      assertEquals(await adapter.getAllSourceFiles(), pushedFiles);
+    });
+
+    it("does not reuse source snapshot generations across adapter instances", async () => {
+      async function initializeAdapter(
+        projectSlug: string,
+        projectId: string,
+      ): Promise<VeryfrontFSAdapter> {
+        const adapter = createAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug,
+            contentSource: { type: "branch", branch: "main" },
+            cache: { enabled: true },
+          },
+        });
+        const client = (adapter as unknown as {
+          client: {
+            initialize: () => Promise<void>;
+            getProjectSlug: () => string;
+            getProjectId: () => string;
+            getCachedProject: () => { provider: string; layout: string };
+            listAllFiles: () => Promise<
+              Array<{ path: string; version_id?: string; content?: string }>
+            >;
+          };
+        }).client;
+
+        client.initialize = () => Promise.resolve();
+        client.getProjectSlug = () => projectSlug;
+        client.getProjectId = () => projectId;
+        client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+        client.listAllFiles = () =>
+          Promise.resolve([{
+            path: "agents/support.ts",
+            version_id: "version-1",
+            content: "export default {};",
+          }]);
+        (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+          .connect = () => {};
+
+        await adapter.initialize();
+        return adapter;
+      }
+
+      const first = await initializeAdapter("first-project", "project-1");
+      const second = await initializeAdapter("second-project", "project-2");
+
+      assertEquals(
+        first.getSourceSnapshotVersion() === second.getSourceSnapshotVersion(),
+        false,
+      );
+
+      first.dispose();
+      second.dispose();
     });
 
     it("refreshes a stale branch snapshot when resolveFile returns a cached miss", async () => {

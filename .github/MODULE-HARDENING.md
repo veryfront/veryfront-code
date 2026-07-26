@@ -631,6 +631,20 @@ stress runs and the complete parallel suite pass. The regenerated root lockfile
 passes frozen resolution, generated manifests are current, and the repository
 and consumer-package typecheck gates pass.
 
+The later 2026-07-26 synchronization to v0.1.1153 was merged from the pushed
+MDX checkpoint. Fifteen files required semantic resolution because the
+recovered branch had independently hardened the same adapter, routing, config,
+and discovery paths. The resolution retains source-qualified declarative
+config evaluation, host-execution authorization, bounded route traversal,
+strict operational-error propagation, transactional registry replacement, and
+style-source revision guards while adding upstream's coalesced source
+freshness lease, monotonic snapshot generations, generation-aware discovery
+cache, page-before-API ownership check, and single-snapshot directory reads.
+Focused adapter, routing, config, discovery, and entity coverage passed 30
+suites and 551 steps with zero failures. `deno task verify:quick` passed, and
+the complete post-merge repository suite passed 3,549 tests and 28,210 steps
+with zero failures; one 36-step group remains intentionally ignored.
+
 - `src/version.ts` remains intentionally absent. Its only content was a stale
   single-image build test comment, so removing the non-production marker closed
   that audit unit; its absence is not recovery loss.

@@ -315,6 +315,7 @@ async function resolveAgentSourceConfig(
   if (!cacheKey) {
     throw new Error("Explicit agent source requires a project identity");
   }
+  await ctx.adapter.fs.ensureSourceSnapshotFresh?.("agent-source-config");
   return await getHostedConfig(ctx.projectDir, ctx.adapter, {
     cacheKey,
     sourceContext: buildAgentSourceRunOptions(sourceContext),

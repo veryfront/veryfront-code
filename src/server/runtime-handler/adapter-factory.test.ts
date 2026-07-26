@@ -1234,6 +1234,77 @@ describe("adapter-factory", () => {
       }
     });
 
+    it("refreshes mutable source before loading proxy config", async () => {
+      let sourceFresh = false;
+      const base = createMockAdapter({
+        "/veryfront.config.js": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) =>
+          runWithRequestContext({
+            projectSlug: slug,
+            token,
+            projectId,
+            ...options,
+          }, fn),
+        ensureSourceSnapshotFresh: () => {
+          sourceFresh = true;
+          return Promise.resolve();
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.js") {
+            return Promise.reject(new Error(`Not found: ${path}`));
+          }
+          return Promise.resolve(
+            `export default { router: "${sourceFresh ? "pages" : "app"}" };`,
+          );
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: () => preparePreviewHostedConfigContext(),
+      });
+
+      assertEquals(sourceFresh, true);
+      assertEquals(result.config?.router, "pages");
+    });
+
     it("re-throws config loading errors in proxy mode", async () => {
       // Use an extended adapter whose runWithContext throws
       const base = createMockAdapter({});

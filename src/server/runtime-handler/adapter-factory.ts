@@ -250,6 +250,10 @@ export async function resolveAdapter(
             opts.projectSlug!,
             opts.proxyToken!,
             async () => {
+              // Config controls routing and primitive discovery, so evaluate it
+              // from the same current snapshot those consumers will retain.
+              await contextualFs.ensureSourceSnapshotFresh?.("config-load");
+
               if (!hostedStyleFs) {
                 return getHostedConfig(effectiveProjectDir, effectiveAdapter, {
                   ...hosted,
@@ -303,6 +307,7 @@ export async function resolveAdapter(
           );
         }
 
+        await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
         return getHostedConfig(effectiveProjectDir, effectiveAdapter, {
           ...hosted,
           signal: opts.req.signal,

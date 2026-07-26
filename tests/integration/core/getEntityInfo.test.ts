@@ -764,24 +764,26 @@ describe("getEntityBySlug", () => {
     await assertRouteConflict(() => getEntityBySlug(projectDir, "post", adapter));
   });
 
-  it("propagates a dynamic-directory stat failure with its original provenance", async () => {
-    await withTestContext("entity-dynamic-directory-stat", async (context) => {
-      const pagesDir = join(context.projectDir, "pages");
-      await createTestFile(join(pagesDir, "[id].tsx"), "// host-only route");
+  it("does not perform a redundant dynamic-directory stat before reading one snapshot", async () => {
+    const adapter = createMockAdapter();
+    const projectDir = "/project";
+    const pagesDir = join(projectDir, "pages");
+    adapter.fs.files.set(join(pagesDir, "[id].tsx"), "// remote route");
+    const adapterStat = adapter.fs.stat.bind(adapter.fs);
+    let directoryStatCalls = 0;
+    adapter.fs.stat = (path) => {
+      if (path === pagesDir) {
+        directoryStatCalls++;
+        return Promise.reject(new Error("remote directory stat unavailable"));
+      }
+      return adapterStat(path);
+    };
 
-      const adapter = createMockAdapter();
-      const adapterStat = adapter.fs.stat.bind(adapter.fs);
-      const backendError = new Error("remote directory stat unavailable");
-      adapter.fs.stat = (path) =>
-        path === pagesDir ? Promise.reject(backendError) : adapterStat(path);
+    const info = await getEntityBySlug(projectDir, "post", adapter);
 
-      const error = await assertRejects(
-        () => getEntityBySlug(context.projectDir, "post", adapter),
-        Error,
-      );
-
-      assertEquals(error, backendError);
-    });
+    assertExists(info);
+    assertEquals(info.entity.content, "// remote route");
+    assertEquals(directoryStatCalls, 0);
   });
 
   it("propagates a dynamic-directory read failure with its original provenance", async () => {

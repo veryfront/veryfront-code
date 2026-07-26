@@ -584,7 +584,6 @@ async function findPageInDirectory(
 
   let entries: DirectoryEntry[];
   try {
-    if (!await pagesDirectoryExists(directoryPath, adapter)) return null;
     const rawEntries = await readDirectoryEntries(directoryPath, adapter);
     budget.entriesInspected += rawEntries.length;
     if (budget.entriesInspected > MAX_DYNAMIC_ENTRIES) {
@@ -802,20 +801,6 @@ function withResolvedSlug(info: EntityInfo, normalizedSlug: string): EntityInfo 
       slug: normalizedSlug === "index" ? "" : normalizedSlug,
     },
   };
-}
-
-async function pagesDirectoryExists(
-  pagesDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<boolean> {
-  try {
-    const stat = adapter ? await adapter.fs.stat(pagesDir) : await fs.stat(pagesDir);
-    return stat.isDirectory;
-  } catch (error) {
-    if (!isFileNotFoundError(error)) throw error;
-    /* expected: directory may not exist */
-    return false;
-  }
 }
 
 async function readDirectoryEntries(

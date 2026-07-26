@@ -269,6 +269,36 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
+  async ensureSourceSnapshotFresh(reason?: string): Promise<void> {
+    const adapter = await this.getAdapter();
+    if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
+
+    const previousVersion = await adapter.getSourceSnapshotVersion?.();
+    await adapter.ensureSourceSnapshotFresh(reason);
+    const currentVersion = await adapter.getSourceSnapshotVersion?.();
+    const sourceMayHaveChanged = previousVersion === undefined ||
+      currentVersion === undefined ||
+      previousVersion !== currentVersion;
+    if (!sourceMayHaveChanged) return;
+
+    const cleared = clearRequestScopedFileCache();
+    if (cleared > 0) {
+      logger.debug("Cleared request-scoped file cache after source freshness changed", {
+        reason,
+        cleared,
+        previousVersion,
+        currentVersion,
+      });
+    }
+  }
+
+  async getSourceSnapshotVersion(): Promise<number | undefined> {
+    const adapter = await this.getAdapter();
+    return typeof adapter.getSourceSnapshotVersion === "function"
+      ? await adapter.getSourceSnapshotVersion()
+      : undefined;
+  }
+
   dispose(): void {
     let managerError: unknown;
     let managerFailed = false;

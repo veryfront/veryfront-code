@@ -234,6 +234,16 @@ export interface FileSystemAdapter {
   resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
   /** Refresh remote source snapshots when a preview render detects stale cached content. */
   refreshSourceSnapshot?(reason?: string): Promise<void>;
+  /**
+   * Confirm that a mutable remote source snapshot is within its freshness
+   * lease, coalescing the network check across concurrent requests.
+   */
+  ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
+  /**
+   * Monotonic generation for the active source snapshot. Consumers can retain
+   * derived state while this value is unchanged.
+   */
+  getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
 
 export interface ResolveFileOptions {
