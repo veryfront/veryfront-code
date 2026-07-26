@@ -132,6 +132,8 @@ describe("GitHubApiClient", () => {
         );
         const rateLimitError = Object.assign(new Error("rate limited"), {
           statusCode: 403,
+          rateLimited: true,
+          rateLimitResetAt: Date.now() + 60_000,
         });
         assertEquals(
           getInternals(rateLimitClient).calculateRetryDelay(2, rateLimitError),
@@ -226,6 +228,149 @@ describe("GitHubApiClient", () => {
       } finally {
         globalThis.fetch = originalFetch;
         Math.random = originalRandom;
+      }
+    });
+
+    it("encodes repository, ref, path, and blob identifiers without changing path hierarchy", async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: Array<{ url: string; hasSignal: boolean }> = [];
+      globalThis.fetch = ((url: RequestInfo | URL, init?: RequestInit) => {
+        const value = String(url);
+        requests.push({
+          url: value,
+          hasSignal: init?.signal instanceof AbortSignal,
+        });
+
+        if (value.includes("/git/trees/")) {
+          return Promise.resolve(Response.json({
+            sha: "tree-sha",
+            tree: [],
+            truncated: false,
+          }));
+        }
+        if (value.includes("/contents/")) {
+          return Promise.resolve(Response.json({
+            type: "file",
+            name: "file name#.ts",
+            path: "dir/file name#.ts",
+            sha: "blob-sha",
+            size: 1,
+            content: "eA==",
+            encoding: "base64",
+          }));
+        }
+        return Promise.resolve(Response.json({
+          sha: "blob/sha",
+          size: 1,
+          content: "eA==",
+          encoding: "base64",
+        }));
+      }) as typeof fetch;
+
+      try {
+        const client = new GitHubApiClient({
+          ...mockConfig,
+          owner: "owner/name",
+          repo: "repo?name",
+          ref: "feature/foo?preview=1",
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        });
+
+        await client.getTree();
+        await client.getContents("dir/file name#.ts");
+        await client.getBlob("blob/sha");
+
+        assertEquals(requests, [
+          {
+            url:
+              "https://api.github.com/repos/owner%2Fname/repo%3Fname/git/trees/feature%2Ffoo%3Fpreview%3D1?recursive=1",
+            hasSignal: true,
+          },
+          {
+            url:
+              "https://api.github.com/repos/owner%2Fname/repo%3Fname/contents/dir/file%20name%23.ts?ref=feature%2Ffoo%3Fpreview%3D1",
+            hasSignal: true,
+          },
+          {
+            url: "https://api.github.com/repos/owner%2Fname/repo%3Fname/git/blobs/blob%2Fsha",
+            hasSignal: true,
+          },
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("fails closed when GitHub marks a recursive tree as truncated", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () =>
+        Promise.resolve(Response.json({
+          sha: "tree-sha",
+          tree: [{ path: "partial.ts", type: "blob", sha: "partial" }],
+          truncated: true,
+        }));
+
+      try {
+        const client = new GitHubApiClient({
+          ...mockConfig,
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        });
+        await assertRejects(
+          () => client.getTree(),
+          Error,
+          "truncated",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("ignores malformed rate-limit headers instead of constructing invalid dates", () => {
+      const client = createClient();
+      getInternals(client).updateRateLimitInfo(
+        new Response(null, {
+          headers: {
+            "X-RateLimit-Limit": "5000",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "not-a-timestamp",
+          },
+        }),
+      );
+      assertEquals(client.getRateLimitInfo(), null);
+    });
+
+    it("bounds and cancels error response bodies", async () => {
+      const originalFetch = globalThis.fetch;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("x".repeat(16 * 1024)));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(body, {
+            status: 500,
+            statusText: "Upstream failure",
+          }),
+        );
+
+      try {
+        const client = new GitHubApiClient({
+          ...mockConfig,
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        });
+        const error = await assertRejects(() => client.getTree());
+        assertEquals(
+          error instanceof Error && error.message.length < 9 * 1024,
+          true,
+        );
+        assertEquals(cancelled, true);
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     });
   });

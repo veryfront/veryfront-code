@@ -28,6 +28,8 @@ export class GitHubFSAdapter implements FSAdapter {
   private readonly projectDir: string;
 
   private initialized = false;
+  private initialization: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
 
   constructor(adapterConfig: FSAdapterConfig) {
     const githubConfig = adapterConfig.github;
@@ -80,16 +82,22 @@ export class GitHubFSAdapter implements FSAdapter {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initialization) return this.initialization;
 
     logger.debug(`${LOG_PREFIX} Initializing`, {
       repo: this.client.repoId,
       ref: this.config.ref,
     });
 
-    await this.statOps.buildIndex();
-    this.initialized = true;
+    const generation = this.lifecycleGeneration;
+    const initialization = this.doInitialize(generation);
+    this.initialization = initialization;
 
-    logger.debug(`${LOG_PREFIX} Initialized successfully`);
+    try {
+      await initialization;
+    } finally {
+      if (this.initialization === initialization) this.initialization = null;
+    }
   }
 
   async readFile(path: string): Promise<Uint8Array | string> {
@@ -144,9 +152,11 @@ export class GitHubFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
+    this.lifecycleGeneration++;
     this.cache.clear();
     this.statOps.clearIndex();
     this.initialized = false;
+    this.initialization = null;
 
     logger.debug(`${LOG_PREFIX} Disposed`);
   }
@@ -154,5 +164,14 @@ export class GitHubFSAdapter implements FSAdapter {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
     await this.initialize();
+  }
+
+  private async doInitialize(generation: number): Promise<void> {
+    await this.statOps.buildIndex();
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error("GitHub filesystem initialization was invalidated");
+    }
+    this.initialized = true;
+    logger.debug(`${LOG_PREFIX} Initialized successfully`);
   }
 }

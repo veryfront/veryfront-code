@@ -1,9 +1,28 @@
 export function normalizeGitHubPath(path: string, projectDir: string = ""): string {
-  let normalized = path;
+  const normalizedPath = normalizePathSegments(path, "path");
+  const normalizedProjectDir = normalizePathSegments(projectDir, "projectDir");
 
-  if (projectDir && normalized.startsWith(projectDir)) {
-    normalized = normalized.slice(projectDir.length);
+  if (
+    normalizedProjectDir &&
+    (normalizedPath === normalizedProjectDir ||
+      normalizedPath.startsWith(`${normalizedProjectDir}/`))
+  ) {
+    return normalizedPath.slice(normalizedProjectDir.length).replace(/^\/+/, "");
   }
 
-  return normalized.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/+/g, "/");
+  return normalizedPath;
+}
+
+function normalizePathSegments(value: string, label: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`GitHub ${label} must be a string`);
+  }
+
+  const normalized = value.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+  for (const segment of normalized.split("/")) {
+    if (segment === "." || segment === "..") {
+      throw new TypeError(`GitHub ${label} must not contain dot or traversal segments`);
+    }
+  }
+  return normalized;
 }

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { GitHubStatOperations } from "./stat-operations.ts";
@@ -94,6 +94,113 @@ describe("GitHubStatOperations", () => {
 
     it("should return empty array for getSubdirectories before index is built", () => {
       assertEquals(createOps().getSubdirectories("test"), []);
+    });
+  });
+
+  describe("failure and cache semantics", () => {
+    it("does not turn repository/index failures into a false existence result", async () => {
+      const failure = new Error("GitHub unavailable");
+      const ops = new GitHubStatOperations(
+        mockConfig,
+        {
+          getTree: () => Promise.reject(failure),
+          repoId: "test-owner/test-repo",
+        } as any,
+        new FileCache(),
+      );
+
+      const error = await assertRejects(() => ops.exists("file.ts"));
+      assertEquals(error, failure);
+    });
+
+    it("includes allowPagesPrefix in resolve cache identity", async () => {
+      const ops = new GitHubStatOperations(
+        mockConfig,
+        {
+          getTree: () =>
+            Promise.resolve({
+              tree: [
+                {
+                  path: "pages/about.mdx",
+                  type: "blob",
+                  sha: "about-sha",
+                  size: 12,
+                },
+              ],
+              truncated: false,
+            }),
+          repoId: "test-owner/test-repo",
+        } as any,
+        new FileCache(),
+      );
+
+      assertEquals(await ops.resolveFile("about"), "pages/about.mdx");
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+      );
+    });
+
+    it("does not let an index build commit after clearIndex invalidates it", async () => {
+      let resolveTree:
+        | ((tree: {
+          tree: Array<{ path: string; type: "blob"; sha: string; size: number }>;
+          truncated: boolean;
+        }) => void)
+        | undefined;
+      const treePromise = new Promise<{
+        tree: Array<{ path: string; type: "blob"; sha: string; size: number }>;
+        truncated: boolean;
+      }>((resolve) => {
+        resolveTree = resolve;
+      });
+      const ops = new GitHubStatOperations(
+        mockConfig,
+        {
+          getTree: () => treePromise,
+          repoId: "test-owner/test-repo",
+        } as any,
+        new FileCache(),
+      );
+
+      const pending = ops.buildIndex();
+      await Promise.resolve();
+      ops.clearIndex();
+      resolveTree?.({
+        tree: [{ path: "late.ts", type: "blob", sha: "late", size: 1 }],
+        truncated: false,
+      });
+
+      await assertRejects(() => pending, Error, "invalidated");
+      assertEquals(ops.getFileEntry("late.ts"), undefined);
+    });
+
+    it("rejects non-canonical paths from repository tree responses", async () => {
+      const ops = new GitHubStatOperations(
+        mockConfig,
+        {
+          getTree: () =>
+            Promise.resolve({
+              tree: [
+                {
+                  path: "../outside.ts",
+                  type: "blob",
+                  sha: "outside",
+                  size: 1,
+                },
+              ],
+              truncated: false,
+            }),
+          repoId: "test-owner/test-repo",
+        } as any,
+        new FileCache(),
+      );
+
+      await assertRejects(
+        () => ops.buildIndex(),
+        TypeError,
+        "repository tree path",
+      );
     });
   });
 });

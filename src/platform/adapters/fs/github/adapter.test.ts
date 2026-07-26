@@ -156,6 +156,30 @@ describe("GitHubFSAdapter", () => {
 
       assertEquals(treeRequested, true);
     });
+
+    it("cannot be resurrected by initialization that finishes after dispose", async () => {
+      let resolveResponse: ((response: Response) => void) | undefined;
+      globalThis.fetch = () =>
+        new Promise<Response>((resolve) => {
+          resolveResponse = resolve;
+        });
+
+      const adapter = createAdapter();
+      const initialization = adapter.initialize();
+      await Promise.resolve();
+      adapter.dispose();
+      resolveResponse?.(Response.json(mockTreeResponse));
+
+      await assertRejects(
+        () => initialization,
+        Error,
+        "invalidated",
+      );
+
+      globalThis.fetch = createTreeFetch(mockTreeResponse);
+      await adapter.initialize();
+      assertEquals(await adapter.exists("README.md"), true);
+    });
   });
 
   describe("file operations", () => {

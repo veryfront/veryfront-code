@@ -1,4 +1,4 @@
-import { createError, toError } from "#veryfront/errors";
+import { createError, fromError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import {
   buildGitHubResolveCacheKey,
@@ -14,6 +14,16 @@ import { normalizeGitHubPath } from "./path-utils.ts";
 const LOG_PREFIX = "[GitHubStatOperations]";
 const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 
+function isFileNotFoundError(error: unknown): boolean {
+  const data = fromError(error);
+  return data?.type === "file" && data.message.startsWith("File not found:");
+}
+
+interface GitHubIndexSnapshot {
+  fileIndex: Map<string, FileIndexEntry>;
+  directoryIndex: Set<string>;
+}
+
 export class GitHubStatOperations {
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubApiClient;
@@ -24,6 +34,7 @@ export class GitHubStatOperations {
   private directoryIndex = new Set<string>();
   private buildingIndex: Promise<void> | null = null;
   private indexBuilt = false;
+  private indexGeneration = 0;
 
   constructor(
     config: ResolvedGitHubConfig,
@@ -41,23 +52,24 @@ export class GitHubStatOperations {
     if (this.buildingIndex) return this.buildingIndex;
     if (this.indexBuilt) return;
 
-    this.buildingIndex = this.doBuildIndex();
+    const generation = this.indexGeneration;
+    const buildingIndex = this.doBuildIndex(generation);
+    this.buildingIndex = buildingIndex;
 
     try {
-      await this.buildingIndex;
+      await buildingIndex;
     } finally {
-      this.buildingIndex = null;
+      if (this.buildingIndex === buildingIndex) this.buildingIndex = null;
     }
   }
 
-  private async doBuildIndex(): Promise<void> {
+  private async doBuildIndex(generation: number): Promise<void> {
     const cacheKey = buildGitHubTreeCacheKey(this.client.repoId, this.config.ref);
     const cached = this.cache.get<GitHubTreeEntry[]>(cacheKey);
 
     if (cached) {
       logger.debug(`${LOG_PREFIX} Using cached tree`);
-      this.buildIndexFromEntries(cached);
-      this.indexBuilt = true;
+      this.commitIndex(this.createIndexSnapshot(cached), generation);
       return;
     }
 
@@ -67,10 +79,10 @@ export class GitHubStatOperations {
     });
 
     const tree = await this.client.getTree();
+    const snapshot = this.createIndexSnapshot(tree.tree);
+    this.assertCurrentGeneration(generation);
     this.cache.set(cacheKey, tree.tree);
-
-    this.buildIndexFromEntries(tree.tree);
-    this.indexBuilt = true;
+    this.commitIndex(snapshot, generation);
 
     logger.debug(`${LOG_PREFIX} Index built`, {
       files: this.fileIndex.size,
@@ -78,28 +90,51 @@ export class GitHubStatOperations {
     });
   }
 
-  private buildIndexFromEntries(entries: GitHubTreeEntry[]): void {
-    this.fileIndex.clear();
-    this.directoryIndex.clear();
-    this.directoryIndex.add("");
+  private createIndexSnapshot(entries: GitHubTreeEntry[]): GitHubIndexSnapshot {
+    const fileIndex = new Map<string, FileIndexEntry>();
+    const directoryIndex = new Set<string>([""]);
+    const seenPaths = new Set<string>();
 
     for (const entry of entries) {
+      let normalizedPath: string;
+      try {
+        normalizedPath = normalizeGitHubPath(entry.path);
+      } catch (cause) {
+        throw new TypeError(`Invalid repository tree path: ${entry.path}`, {
+          cause,
+        });
+      }
+      if (!normalizedPath || normalizedPath !== entry.path) {
+        throw new TypeError(`Invalid repository tree path: ${entry.path}`);
+      }
+      if (seenPaths.has(normalizedPath)) {
+        throw new TypeError(`Duplicate repository tree path: ${normalizedPath}`);
+      }
+      seenPaths.add(normalizedPath);
+
       if (entry.type === "blob") {
-        this.fileIndex.set(entry.path, {
-          path: entry.path,
+        if (
+          entry.size !== undefined &&
+          (!Number.isSafeInteger(entry.size) || entry.size < 0)
+        ) {
+          throw new TypeError(`Invalid repository tree size for path: ${normalizedPath}`);
+        }
+        fileIndex.set(normalizedPath, {
+          path: normalizedPath,
           sha: entry.sha,
           size: entry.size ?? 0,
           type: "blob",
         });
-        this.addDirectoryHierarchy(entry.path);
+        this.addDirectoryHierarchy(normalizedPath, directoryIndex);
         continue;
       }
 
-      if (entry.type === "tree") this.directoryIndex.add(entry.path);
+      if (entry.type === "tree") directoryIndex.add(normalizedPath);
     }
+    return { fileIndex, directoryIndex };
   }
 
-  private addDirectoryHierarchy(filePath: string): void {
+  private addDirectoryHierarchy(filePath: string, directoryIndex: Set<string>): void {
     const parts = filePath.split("/");
     let current = "";
 
@@ -108,7 +143,20 @@ export class GitHubStatOperations {
       if (!part) continue;
 
       current = current ? `${current}/${part}` : part;
-      this.directoryIndex.add(current);
+      directoryIndex.add(current);
+    }
+  }
+
+  private commitIndex(snapshot: GitHubIndexSnapshot, generation: number): void {
+    this.assertCurrentGeneration(generation);
+    this.fileIndex = snapshot.fileIndex;
+    this.directoryIndex = snapshot.directoryIndex;
+    this.indexBuilt = true;
+  }
+
+  private assertCurrentGeneration(generation: number): void {
+    if (generation !== this.indexGeneration) {
+      throw new Error("GitHub filesystem index build was invalidated");
     }
   }
 
@@ -172,8 +220,8 @@ export class GitHubStatOperations {
       await this.stat(path);
       return true;
     } catch (_) {
-      /* expected: stat throws when file does not exist */
-      return false;
+      if (isFileNotFoundError(_)) return false;
+      throw _;
     }
   }
 
@@ -181,12 +229,15 @@ export class GitHubStatOperations {
     await this.ensureIndex();
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
-    const cacheKey = buildGitHubResolveCacheKey(this.config.ref, normalizedPath);
+    const allowPagesPrefix = options?.allowPagesPrefix !== false;
+    const cacheKey = `${buildGitHubResolveCacheKey(this.config.ref, normalizedPath)}:${
+      allowPagesPrefix ? "with-pages" : "without-pages"
+    }`;
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) return cached;
 
     const resolved = this.tryResolve(normalizedPath) ??
-      (options?.allowPagesPrefix === false ? null : this.tryResolveWithPagesPrefix(normalizedPath));
+      (allowPagesPrefix ? this.tryResolveWithPagesPrefix(normalizedPath) : null);
 
     this.cache.set(cacheKey, resolved);
     return resolved;
@@ -253,6 +304,7 @@ export class GitHubStatOperations {
   }
 
   clearIndex(): void {
+    this.indexGeneration++;
     this.fileIndex.clear();
     this.directoryIndex.clear();
     this.indexBuilt = false;

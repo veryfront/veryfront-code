@@ -12,12 +12,12 @@ import {
   type TransportRetryConfig,
 } from "./veryfront-api-transport.ts";
 
-describe("Veryfront API transport retry boundaries", () => {
-  const baseConfig = {
-    baseUrl: "https://api.example.com",
-    getToken: () => "token",
-  };
+const baseConfig = {
+  baseUrl: "https://api.example.com",
+  getToken: () => "token",
+};
 
+describe("Veryfront API transport retry boundaries", () => {
   it("rejects retry policies that exceed ten total attempts", () => {
     assertThrows(
       () =>
@@ -164,6 +164,151 @@ describe("Veryfront API transport retry boundaries", () => {
       assertEquals(error.name, "AbortError");
       assertEquals(tokenReads, 0);
       assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe("Veryfront API transport authority and response boundaries", () => {
+  it("rejects invalid or credential-bearing API base URLs at construction", () => {
+    for (
+      const baseUrl of [
+        "not a URL",
+        "ftp://api.example.com",
+        "https://user:secret@api.example.com",
+        "https://api.example.com?token=secret",
+        "https://api.example.com#fragment",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          createVeryfrontApiTransport({
+            ...baseConfig,
+            baseUrl,
+            retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+          }),
+        TypeError,
+      );
+    }
+  });
+
+  it("rejects cross-origin absolute requests before reading credentials or fetching", async () => {
+    const originalFetch = globalThis.fetch;
+    let tokenReads = 0;
+    let fetchCalls = 0;
+
+    try {
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response("{}"));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        baseUrl: baseConfig.baseUrl,
+        getToken: () => {
+          tokenReads += 1;
+          return "secret";
+        },
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      await assertRejects(
+        () => transport.request("https://attacker.example/files"),
+        TypeError,
+        "origin",
+      );
+      assertEquals(tokenReads, 0);
+      assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("allows same-origin absolute requests and normalizes relative base paths", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+
+    try {
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({
+          url: String(input),
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return Promise.resolve(Response.json({ ok: true }));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        baseUrl: "https://api.example.com/root/",
+        getToken: () => "secret",
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      await transport.request("/v1/files");
+      await transport.request("https://api.example.com/v1/projects");
+
+      assertEquals(requests, [
+        {
+          url: "https://api.example.com/root/v1/files",
+          authorization: "Bearer secret",
+        },
+        {
+          url: "https://api.example.com/v1/projects",
+          authorization: "Bearer secret",
+        },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("bounds and cancels upstream error bodies while redacting diagnostic URLs", async () => {
+    const originalFetch = globalThis.fetch;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(16 * 1024)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    try {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(body, {
+            status: 500,
+            statusText: "Upstream failure",
+          }),
+        )) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        shouldRetry: () => false,
+        wrapFinalError: (error) => error,
+      });
+
+      const error = await assertRejects(() =>
+        transport.request(
+          "https://api.example.com/files?access_token=secret&cursor=public",
+        )
+      );
+      assertInstanceOf(error, Error);
+      const context = (error as {
+        context?: {
+          details?: {
+            url?: string;
+            responseText?: string;
+            responseTruncated?: boolean;
+          };
+        };
+      }).context;
+      assertEquals(
+        context?.details?.url,
+        "https://api.example.com/files?access_token=[REDACTED]&cursor=public",
+      );
+      assertEquals(context?.details?.responseText?.length, 8 * 1024);
+      assertEquals(context?.details?.responseTruncated, true);
+      assertEquals(cancelled, true);
     } finally {
       globalThis.fetch = originalFetch;
     }
