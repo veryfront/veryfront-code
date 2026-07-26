@@ -50,6 +50,44 @@ import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
+const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
+// Process-wide uniqueness prevents a recreated adapter from matching stale
+// derived-state generations left behind by its predecessor.
+let sourceSnapshotGeneration = 0;
+
+function nextSourceSnapshotGeneration(): number {
+  sourceSnapshotGeneration++;
+  return sourceSnapshotGeneration;
+}
+
+interface SourceSnapshotFile {
+  path: string;
+  id?: string;
+  version_id?: string;
+  content?: string;
+  type?: string;
+  size?: number;
+  updated_at?: string;
+}
+
+function sourceSnapshotsEqual(
+  previous: SourceSnapshotFile[] | undefined,
+  next: SourceSnapshotFile[],
+): boolean {
+  if (!previous || previous.length !== next.length) return false;
+
+  const previousByPath = new Map(previous.map((file) => [file.path, file]));
+  return next.every((file) => {
+    const prior = previousByPath.get(file.path);
+    return prior !== undefined &&
+      prior.id === file.id &&
+      prior.version_id === file.version_id &&
+      prior.content === file.content &&
+      prior.type === file.type &&
+      prior.size === file.size &&
+      prior.updated_at === file.updated_at;
+  });
+}
 
 interface BranchSnapshotRecoveryOptions<T> {
   isRecoverableMissResult?: (result: T) => boolean;
@@ -95,6 +133,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private branchMissRecoveryPromise: Promise<void> | null = null;
   private branchMissRecoveryGeneration = 0;
   private readonly branchMissRecoveryFailures = new Map<string, number>();
+  /** Last successful source check and generation of the materialized snapshot. */
+  private sourceSnapshotCheckedAt = 0;
+  private sourceSnapshotVersion = 0;
+  private sourceSnapshotIdentity: string | undefined;
+  private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
+  private sourceSnapshotRefreshPromise: Promise<void> | null = null;
+  private sourceSnapshotMutationTail: Promise<void> = Promise.resolve();
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -116,6 +161,22 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private getCurrentFileListCacheKey(): string | undefined {
     return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
+  }
+
+  private getCurrentSourceSnapshotIdentity(): string | undefined {
+    const context = this.contentContext;
+    if (!context) return undefined;
+
+    switch (context.sourceType) {
+      case "branch":
+        return `branch:${context.projectSlug}:${this.requestBranch ?? context.branch ?? "main"}`;
+      case "environment":
+        return `environment:${context.projectSlug}:${context.environmentName ?? ""}:${
+          context.releaseId ?? ""
+        }`;
+      case "release":
+        return `release:${context.projectSlug}:${context.releaseId ?? ""}`;
+    }
   }
 
   private syncClientContext(): void {
@@ -283,8 +344,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.statOps.clearIndex();
         this.dirOps.clearTree();
       },
-      clearFileListIndex: () => this.readOps.clearFileListIndex(),
-      setFileListCache: (cacheKey, files) => this.cache.setAsync(cacheKey, files),
+      replaceSourceSnapshot: (cacheKey, files) => this.replaceSourceSnapshot(cacheKey, files),
       pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
     });
 
@@ -389,6 +449,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const fileSummary = summarizeFileList(files);
 
       await this.cache.setAsync(cacheKey, files);
+      this.markSourceSnapshotChanged(files);
 
       this.fileListReadyResolve?.();
       this.fileListReadyResolve = null;
@@ -655,7 +716,79 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.readOps.setFileListReadyPromise(warmupPromise);
   }
 
-  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
+  private markSourceSnapshotChanged(
+    files: SourceSnapshotFile[],
+    identity = this.getCurrentSourceSnapshotIdentity(),
+  ): void {
+    this.sourceSnapshotFiles = files;
+    this.sourceSnapshotIdentity = identity;
+    this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotCheckedAt = Date.now();
+  }
+
+  private runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const mutation = this.sourceSnapshotMutationTail
+      .catch(() => undefined)
+      .then(operation);
+    this.sourceSnapshotMutationTail = mutation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return mutation;
+  }
+
+  private replaceSourceSnapshot(
+    cacheKey: string,
+    files: SourceSnapshotFile[],
+  ): Promise<void> {
+    return this.runSourceSnapshotMutation(async () => {
+      const context = this.contentContext;
+      if (!context || buildFileListCacheKey(context) !== cacheKey) {
+        logger.debug("Discarding source snapshot for superseded content context", {
+          cacheKey,
+          projectSlug: this.projectSlug,
+        });
+        return;
+      }
+
+      await this.cache.setAsync(cacheKey, files);
+      this.readOps.clearFileListIndex();
+      this.markSourceSnapshotChanged(files);
+    });
+  }
+
+  private async invalidateDerivedSourceCaches(): Promise<void> {
+    const projectId = this.client.getProjectId();
+    const invalidations: Array<void | Promise<void>> = [];
+
+    if (projectId) {
+      invalidations.push(
+        this.invalidationCallbacks.clearSSRModuleCacheForProject?.(projectId),
+        this.invalidationCallbacks.clearRouterDetectionCacheForProject?.(projectId),
+        this.invalidationCallbacks.clearProjectDiscoveryCacheForProject?.(projectId),
+        this.invalidationCallbacks.clearRendererCacheForProject?.(projectId),
+      );
+    } else {
+      invalidations.push(this.invalidationCallbacks.clearSSRModuleCache?.());
+    }
+
+    invalidations.push(this.invalidationCallbacks.clearModulePathCache?.());
+    if (this.projectSlug) {
+      invalidations.push(
+        this.invalidationCallbacks.clearSnippetCacheForProject?.(this.projectSlug),
+        this.invalidationCallbacks.clearProjectCSSCache?.(this.projectSlug),
+      );
+    }
+
+    const pendingInvalidations = invalidations.filter(
+      (invalidation): invalidation is Promise<void> => invalidation !== undefined,
+    );
+    if (pendingInvalidations.length > 0) {
+      await Promise.all(pendingInvalidations);
+    }
+  }
+
+  private async performSourceSnapshotRefresh(reason: string): Promise<void> {
     await this.ensureInitialized();
 
     if (!this.contentContext) {
@@ -668,26 +801,69 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     const cacheKey = buildFileListCacheKey(this.contentContext);
     const refreshContext = this.contentContext;
-
-    this.fileListWarmupPromise = null;
-    this.fileListWarmupKey = null;
-    this.readOps.clearFileListIndex();
-    this.statOps.clearIndex();
-    this.dirOps.clearTree();
-
-    await Promise.all([
-      this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(refreshContext)),
-      this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(refreshContext)),
-      this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
-      this.cache.deleteAsync(cacheKey),
-    ]);
-
+    const refreshIdentity = this.getCurrentSourceSnapshotIdentity();
+    const previousFiles = this.sourceSnapshotFiles;
+    const previousVersion = this.sourceSnapshotVersion;
     const files = await fetchFileListForContext(this.client, refreshContext);
-    await this.cache.setAsync(cacheKey, files);
-    const fileSummary = summarizeFileList(files);
-    this.branchMissRecoveryFailures.clear();
+    const result = await this.runSourceSnapshotMutation(async () => {
+      if (
+        this.contentContext !== refreshContext ||
+        this.getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
+        this.sourceSnapshotVersion !== previousVersion
+      ) {
+        return { applied: false, sourceChanged: false };
+      }
 
-    if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
+      const sourceChanged = !sourceSnapshotsEqual(previousFiles, files);
+      if (sourceChanged) {
+        this.fileListWarmupPromise = null;
+        this.fileListWarmupKey = null;
+        this.readOps.clearFileListIndex();
+        this.statOps.clearIndex();
+        this.dirOps.clearTree();
+
+        await Promise.all([
+          this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(refreshContext)),
+          this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(refreshContext)),
+          this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
+          this.cache.deleteAsync(cacheKey),
+        ]);
+      }
+
+      await this.cache.setAsync(cacheKey, files);
+      this.branchMissRecoveryFailures.clear();
+
+      if (sourceChanged) {
+        await this.invalidateDerivedSourceCaches();
+        // Publish freshness only after every cache derived from the previous
+        // snapshot has been invalidated. Concurrent followers remain attached
+        // to the refresh singleflight until this point.
+        this.markSourceSnapshotChanged(files, refreshIdentity);
+      } else {
+        this.sourceSnapshotFiles = files;
+        this.sourceSnapshotIdentity = refreshIdentity;
+        this.sourceSnapshotCheckedAt = Date.now();
+      }
+
+      return { applied: true, sourceChanged };
+    });
+
+    if (!result.applied) {
+      logger.debug("Discarding stale source snapshot refresh", {
+        reason,
+        cacheKey,
+        projectSlug: this.projectSlug,
+      });
+      return;
+    }
+
+    const fileSummary = summarizeFileList(files);
+
+    if (
+      result.sourceChanged &&
+      fileSummary.sourceFilesWithContent > 0 &&
+      this.shouldBackgroundPregenerateStyles()
+    ) {
       this.triggerCSSPregeneration(files).catch(() => {
         // Error already logged in triggerCSSPregeneration
       });
@@ -703,7 +879,50 @@ export class VeryfrontFSAdapter implements FSAdapter {
       releaseId: refreshContext.releaseId,
       totalFiles: fileSummary.totalFiles,
       filesWithContent: fileSummary.filesWithContent,
+      sourceChanged: result.sourceChanged,
+      sourceSnapshotVersion: this.sourceSnapshotVersion,
     });
+  }
+
+  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
+    await this.ensureInitialized();
+
+    while (true) {
+      this.sourceSnapshotRefreshPromise ??= this.performSourceSnapshotRefresh(reason);
+      const refresh = this.sourceSnapshotRefreshPromise;
+
+      try {
+        await refresh;
+      } finally {
+        if (this.sourceSnapshotRefreshPromise === refresh) {
+          this.sourceSnapshotRefreshPromise = null;
+        }
+      }
+
+      const currentIdentity = this.getCurrentSourceSnapshotIdentity();
+      if (
+        currentIdentity === undefined ||
+        this.sourceSnapshotIdentity === currentIdentity
+      ) return;
+    }
+  }
+
+  async ensureSourceSnapshotFresh(reason = "freshness-check"): Promise<void> {
+    await this.ensureInitialized();
+    if (this.contentContext?.sourceType !== "branch") return;
+
+    if (
+      this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
+      Date.now() - this.sourceSnapshotCheckedAt < BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS
+    ) {
+      return;
+    }
+
+    await this.refreshSourceSnapshot(reason);
+  }
+
+  getSourceSnapshotVersion(): number {
+    return this.sourceSnapshotVersion;
   }
 
   getPokeMetrics(): {
@@ -949,6 +1168,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.branchMissRecoveryPromise = null;
       this.branchMissRecoveryGeneration++;
       this.branchMissRecoveryFailures.clear();
+      this.sourceSnapshotCheckedAt = 0;
+      this.sourceSnapshotVersion = 0;
+      this.sourceSnapshotIdentity = undefined;
+      this.sourceSnapshotFiles = undefined;
+      this.sourceSnapshotRefreshPromise = null;
       logger.debug("Cleared index and dirTree due to context change", {
         oldContext,
         newContext: context,
