@@ -81,6 +81,22 @@ describe("platform/adapters/token/veryfront/api-client", () => {
         VeryfrontError,
       );
     });
+
+    it("validates successful response payloads", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () => Promise.resolve(Response.json({ value: 42 }));
+
+      try {
+        const client = new TokenStorageApiClient(createConfig());
+        await assertRejects(
+          () => client.get("test-key"),
+          VeryfrontError,
+          "Malformed get response",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("set", () => {
@@ -119,6 +135,22 @@ describe("platform/adapters/token/veryfront/api-client", () => {
         VeryfrontError,
       );
     });
+
+    it("validates the returned key array", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () => Promise.resolve(Response.json({ keys: ["valid", 42] }));
+
+      try {
+        const client = new TokenStorageApiClient(createConfig());
+        await assertRejects(
+          () => client.list(),
+          VeryfrontError,
+          "Malformed list response",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("ping", () => {
@@ -126,6 +158,108 @@ describe("platform/adapters/token/veryfront/api-client", () => {
       const client = new TokenStorageApiClient(createConfig());
       const result = await client.ping();
       assertEquals(result, false);
+    });
+  });
+
+  describe("request and response lifecycle", () => {
+    it("preserves configured base paths for every endpoint", async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: string[] = [];
+      globalThis.fetch = ((url: RequestInfo | URL, init?: RequestInit) => {
+        requests.push(String(url));
+        if (init?.method === "PUT" || init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        if (String(url).endsWith("/tokens")) {
+          return Promise.resolve(Response.json({ keys: [] }));
+        }
+        return Promise.resolve(Response.json({ value: "encrypted" }));
+      }) as typeof fetch;
+
+      try {
+        const client = new TokenStorageApiClient(createConfig({
+          apiBaseUrl: "https://api.example.com/control/",
+        }));
+        await client.get("user/key");
+        await client.set("user/key", "encrypted");
+        await client.delete("user/key");
+        await client.list();
+
+        assertEquals(requests, [
+          "https://api.example.com/control/v1/projects/test-project/tokens/user%2Fkey",
+          "https://api.example.com/control/v1/projects/test-project/tokens/user%2Fkey",
+          "https://api.example.com/control/v1/projects/test-project/tokens/user%2Fkey",
+          "https://api.example.com/control/v1/projects/test-project/tokens",
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("consumes successful and not-found response bodies before returning", async () => {
+      const originalFetch = globalThis.fetch;
+      const createdResponses = [
+        new Response("missing", { status: 404 }),
+        new Response("stored", { status: 200 }),
+        new Response("already absent", { status: 404 }),
+      ];
+      const responses = [...createdResponses];
+      globalThis.fetch = () => Promise.resolve(responses.shift()!);
+
+      try {
+        const client = new TokenStorageApiClient(createConfig());
+        assertEquals(await client.get("missing"), null);
+        await client.set("key", "value");
+        await client.delete("missing");
+
+        assertEquals(responses.length, 0);
+        assertEquals(createdResponses.every((response) => response.bodyUsed), true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects empty keys at the client boundary before fetching", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(Response.json({ value: "unexpected" }));
+      }) as typeof fetch;
+
+      try {
+        const client = new TokenStorageApiClient(createConfig());
+        await assertRejects(() => client.get(""), TypeError, "non-empty");
+        assertEquals(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("bounds and cancels oversized successful response bodies", async () => {
+      const originalFetch = globalThis.fetch;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(1024 * 1024 + 1));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      globalThis.fetch = () => Promise.resolve(new Response(body));
+
+      try {
+        const client = new TokenStorageApiClient(createConfig());
+        await assertRejects(
+          () => client.get("key"),
+          VeryfrontError,
+          "exceeds 1048576 bytes",
+        );
+        assertEquals(cancelled, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

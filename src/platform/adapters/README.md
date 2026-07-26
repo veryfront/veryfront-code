@@ -295,6 +295,37 @@ through 10, with both 0 and 1 performing one request. Each outbound API request
 receives at most 10 attempts. A filesystem operation can issue multiple API
 requests.
 
+### Token Storage Configuration
+
+```ts
+interface TokenStorageAdapterConfig {
+  type?: "memory" | "veryfront-api"; // Default: "memory"
+  veryfront?: {
+    apiToken?: string;
+    projectSlug?: string;
+    apiBaseUrl?: string; // Default: https://api.veryfront.com
+    timeoutMs?: number; // Default: 30000ms
+    retry?: {
+      maxRetries?: number; // Default: 3, range: 0 through 9
+      initialDelay?: number; // Default: 1000ms
+      maxDelay?: number; // Default: 10000ms
+    };
+  };
+}
+```
+
+The Veryfront adapter requires non-blank `apiToken` and `projectSlug` values.
+Its API base URL must be an absolute HTTP(S) URL without embedded credentials,
+query parameters, or a fragment. Token keys must be non-empty, contain no
+control characters, and be at most 4096 code units. Responses are consumed
+within the configured request timeout and rejected above 1 MiB.
+
+The memory adapter is development-only. Each instance owns an isolated store,
+and `dispose()` clears its values. `getTokenStorageAdapter()` provides a
+process-local singleton for the current environment configuration; concurrent
+creation is coalesced, and `resetTokenStorageAdapter()` invalidates any creation
+still in flight.
+
 ## Runtime Detection
 
 ```ts

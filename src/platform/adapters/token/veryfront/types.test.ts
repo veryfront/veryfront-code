@@ -59,4 +59,41 @@ describe("createTokenConfig retry boundaries", () => {
       },
     );
   });
+
+  it("exposes and validates the request timeout at the public config boundary", () => {
+    assertEquals(
+      createTokenConfig({
+        ...baseConfig,
+        veryfront: { ...baseConfig.veryfront, timeoutMs: 250 },
+      }).timeoutMs,
+      250,
+    );
+
+    for (const timeoutMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () =>
+          createTokenConfig({
+            ...baseConfig,
+            veryfront: { ...baseConfig.veryfront, timeoutMs },
+          }),
+        RangeError,
+        "timeoutMs",
+      );
+    }
+  });
+
+  it("rejects blank credentials and project selectors", () => {
+    for (
+      const veryfront of [
+        { apiToken: "   ", projectSlug: "project" },
+        { apiToken: "token", projectSlug: "\n" },
+      ]
+    ) {
+      assertThrows(
+        () => createTokenConfig({ type: "veryfront-api", veryfront }),
+        Error,
+        "requires",
+      );
+    }
+  });
 });
