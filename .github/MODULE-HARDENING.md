@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    23 |      39.7% | Current formal closure evidence remains valid       |
+| Closed                         |    24 |      41.4% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    34 |      58.6% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    33 |      56.9% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -60,6 +60,7 @@ stricter closure count.
 - `sandbox`
 - `schemas`
 - `studio`
+- `types`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
@@ -97,7 +98,6 @@ stricter closure count.
 - `tool`
 - `transforms`
 - `trigger`
-- `types`
 - `utils`
 - `webhook`
 - `workflow`
@@ -124,9 +124,9 @@ every affected unit.
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `eval`, `extensions`, `fs`, `issues`, `knowledge`, `markdown`,
 `mdx`, `metrics`, `provider`, `prompt`, `registry`, `repositories`, `runs`,
-`runtime`, `sandbox`, `schemas`, `studio`, and `version.ts`. The latest Chat
-findings and the independent adversarial knowledge, Markdown, MDX, provider,
-repositories, runs, runtime, and sandbox findings are remediated and
+`runtime`, `sandbox`, `schemas`, `studio`, `types`, and `version.ts`. The latest
+Chat findings and the independent adversarial knowledge, Markdown, MDX,
+provider, repositories, runs, runtime, and sandbox findings are remediated and
 revalidated. `prompt` is closed after its cross-cutting registry, discovery,
 HMR, request-lifecycle, and MCP findings were remediated and revalidated.
 `registry` is closed after its scope lifecycle, request-generation isolation,
@@ -138,7 +138,10 @@ closed after its signed-envelope, proxy trust, route identity, invoke lifecycle,
 serialization, and consumer findings were remediated and revalidated. `fs` is
 closed after its public facade, cross-runtime failure semantics, atomic
 temporary allocation, path/cwd dependencies, package declarations, and direct
-consumers were remediated and revalidated. `resource` has received a deep
+consumers were remediated and revalidated. `types` is closed after its shared
+server and RSC contracts, runtime consumers, package surface, dependency
+direction, and type-level regressions were remediated and revalidated.
+`resource` has received a deep
 current-state review and substantial remediation, but remains open while its
 cache-policy breaking-change decision is unresolved. Each closure requires a
 complete consumer map, deep module-level review, adversarial boundary tests,
@@ -2276,5 +2279,78 @@ No unresolved critical or high-confidence FS production risk remains. Platform
 remains listed for its own top-level review because it owns the broader
 compatibility layer beyond the narrow filesystem, path, and cwd surface
 validated here.
+
+### Types closure checkpoint
+
+The `types` audit unit owns shared compile-time contracts for rendering,
+request handling, HMR, RSC, bundling, modules, and the small type surface
+re-exported by the root package. Its consumers span rendering, routing, server,
+client, build, and runtime code. It is a foundation unit: type-only references
+may describe higher-level integration contracts, but eager runtime behavior
+must not make the shared type layer initialize or depend on those higher
+layers.
+
+The current Types findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the shared `RouteHandler`
+  contract advertised route parameters as `string | string[]`, while both
+  application-route execution paths normalize every parameter to a string.
+  The source was drift between an older generic route shape and the actual
+  server and route-executor boundaries. The consequence was that valid handlers
+  could not use the runtime's string contract without casts, while impossible
+  array branches appeared supported. The contract now uses
+  `Record<string, string>`, and a compile-time regression exercises a handler
+  against the normalized runtime shape.
+- **Symptom -> Source -> Consequence -> Remedy:** `RSCRendererOptions` required
+  a mutable `Map` even though renderer construction only reads and snapshots
+  the client manifest. The source was exposing the implementation container
+  rather than the operation the renderer requires. The consequence was
+  needless mutation authority and rejection of immutable manifest views. The
+  option now accepts `ReadonlyMap`, with a compile-time and runtime contract
+  regression.
+- **Symptom -> Source -> Consequence -> Remedy:** the foundation Types module
+  contained a 1,033-line entity resolver with filesystem, routing, telemetry,
+  error, and YAML behavior. The source was placing runtime entity discovery
+  beside the entity interfaces it consumes. The consequence was inverted layer
+  ownership and a shared-type path that initialized higher-level production
+  dependencies. Entity resolution now lives in `rendering`, its only production
+  owner, all consumers and tests use that location, and the architecture
+  ratchet rejects any future eager runtime import from `src/types` into another
+  top-level module.
+
+No published Deno or npm subpath was removed by the relocation: the old entity
+resolver path was internal-only. The handler correction aligns the declared
+contract with both existing execution paths, and accepting `ReadonlyMap` is a
+backward-compatible widening. Rendering remains listed for its own top-level
+revalidation because it now owns entity resolution.
+
+Reproducible checkpoint evidence:
+
+- Before remediation, the new contract check rejected a normalized handler and
+  a read-only RSC manifest. The new architecture regression independently
+  reported all twelve eager edges from the Types entity resolver into higher
+  layers.
+- The complete Types suite, entity-resolution regressions, and direct
+  page/layout consumers pass 13 suites and 163 nested steps with zero failures.
+- The wider RSC, route-execution, cross-adapter, and layout integration matrix
+  passes 9 suites and 217 nested steps with zero failures.
+- The repository script suite passes 71 tests and 156 nested steps with zero
+  failures, including the new dependency-direction regression.
+- The deterministic complete unit baseline
+  (`DENO_JOBS=1 deno task test:unit`) passes 3,231 tests and 24,693 nested steps
+  with zero failures; the existing one test and five nested steps remain
+  explicitly ignored.
+- The module-boundary ratchet passes with no forbidden Types layer imports and
+  no growth beyond the existing broad-import and cycle baselines.
+- `deno task docs` and `deno task docs:coverage` generate all 39 API-reference
+  pages and account for all 3,967 published source links.
+- `deno task build:npm` rebuilds the root package and every extension. All
+  68 npm export paths and 90 Node runtime smoke checks pass, and the external
+  consumer typecheck accepts the generated declarations.
+- `deno task verify:quick` passes manifest freshness, formatting, lint and
+  architecture ratchets, all 739 documentation links and guide contracts, and
+  every configured source and browser entrypoint typecheck.
+
+No unresolved critical or high-confidence Types production risk remains.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

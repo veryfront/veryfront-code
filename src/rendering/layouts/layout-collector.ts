@@ -3,7 +3,7 @@ import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { getLayoutEntity } from "#veryfront/types/entities/getEntityInfo.ts";
+import { getLayoutEntity } from "../entity-resolution.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { resolveRouterModeForPage } from "../router-detection.ts";
 import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";

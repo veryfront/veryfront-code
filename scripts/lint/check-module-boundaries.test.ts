@@ -129,4 +129,10 @@ describe("check-module-boundaries", () => {
 
     assertEquals(discoveryCycleEdges, []);
   });
+
+  it("keeps the shared types runtime independent from higher layers", async () => {
+    const analysis = await analyzeModules();
+
+    assertEquals(analysis.forbiddenLayerImports, []);
+  });
 });

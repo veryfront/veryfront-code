@@ -6,8 +6,6 @@ The rendering module handles server-side rendering (SSR), React Server Component
 
 ## Scope
 
-### 
-
 What this module does:
 
 - Server-Side Rendering (SSR) with React 17/18/19
@@ -30,6 +28,7 @@ What this module does:
 
 ```
 rendering/
+├── entity-resolution.ts        # Bounded page and layout source resolution
 ├── orchestrator/              # Rendering orchestration
 │   ├── ssr.ts                # Main SSR renderer
 │   ├── types.ts              # Renderer types
@@ -82,7 +81,7 @@ rendering/
 - `#veryfront/types` - TypeScript types
 - `#veryfront/utils` - Utilities (logging, caching)
 - `#veryfront/html` - HTML generation
-- `#veryfront/module-system` - Module loading
+- `#veryfront/modules` - Module loading
 - `#veryfront/platform` - Runtime adapters
 
 ### External

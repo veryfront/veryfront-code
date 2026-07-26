@@ -8,7 +8,7 @@ import {
   getEntityBySlug,
   getEntityInfo,
   getLayoutEntity,
-} from "../../../src/types/entities/getEntityInfo.ts";
+} from "../../../src/rendering/entity-resolution.ts";
 import { createMockAdapter } from "../../../src/platform/adapters/mock.ts";
 import { VeryfrontError } from "../../../src/errors/types.ts";
 import { withTestContext } from "../../_helpers/context.ts";

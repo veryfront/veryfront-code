@@ -58,7 +58,7 @@ export interface ClientComponentMeta {
 /** Options used to create the React Server Components renderer. */
 export interface RSCRendererOptions {
   /** Client component metadata keyed by component identifier. */
-  clientManifest: Map<string, ClientComponentMeta>;
+  clientManifest: ReadonlyMap<string, ClientComponentMeta>;
   /** Absolute directory of the rendered project. */
   projectDir: string;
   /** Optimization mode used for the render. */

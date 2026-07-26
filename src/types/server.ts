@@ -199,7 +199,7 @@ export interface RouteRegistryConfig {
 /** Function exported by an application route module for one HTTP method. */
 export type RouteHandler = (
   req: Request,
-  ctx: { params: Record<string, string | string[]> },
+  ctx: { params: Record<string, string> },
 ) => Promise<Response> | Response;
 
 /** Supported exports from an application route source module. */

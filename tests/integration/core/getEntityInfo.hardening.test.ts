@@ -12,7 +12,7 @@ import {
   getEntityBySlug,
   getEntityInfo,
   getLayoutEntity,
-} from "#veryfront/types/entities/getEntityInfo.ts";
+} from "#veryfront/rendering/entity-resolution.ts";
 
 async function assertRouteConflict(operation: () => Promise<unknown>): Promise<void> {
   const error = await assertRejects(operation, VeryfrontError);

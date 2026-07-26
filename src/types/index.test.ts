@@ -13,6 +13,7 @@ import type {
   LayoutItem,
   MDXComponents,
   MDXFrontmatter,
+  RouteHandler,
   RSCRendererOptions,
   ScriptPageModule,
 } from "./index.ts";
@@ -51,9 +52,14 @@ const clientComponent: ClientComponentMeta = {
 clientComponent.path = "/counter-v2.js";
 clientComponent.exports.push("Counter");
 const clientManifest = new Map([["Counter", clientComponent]]);
+const readonlyClientManifest: ReadonlyMap<string, ClientComponentMeta> = clientManifest;
 const rscOptions: RSCRendererOptions = {
-  clientManifest,
+  clientManifest: readonlyClientManifest,
   projectDir: "/project",
+};
+const routeHandler: RouteHandler = (_request, context) => {
+  const slug: string = context.params.slug ?? "";
+  return new Response(slug);
 };
 const metadata: HandlerMetadata = {
   name: "MediumPriority",
@@ -75,7 +81,7 @@ const frontmatter: MDXFrontmatter = {
 };
 
 describe("types public contracts", () => {
-  it("preserves component, handler, and frontmatter contracts", () => {
+  it("preserves component, handler, and frontmatter contracts", async () => {
     assertEquals(typeof components.h1, "function");
     assertEquals(typeof layout.component, "function");
     assertEquals(typeof requiredLayout.component, "function");
@@ -86,6 +92,12 @@ describe("types public contracts", () => {
     assertEquals(typeof scriptPage.default, "function");
     assertEquals(typeof dataScriptPage.default, "function");
     assertEquals(rscOptions.clientManifest.get("Counter")?.path, "/counter-v2.js");
+    assertEquals(
+      await (await routeHandler(new Request("https://example.test"), {
+        params: { slug: "guides/intro" },
+      })).text(),
+      "guides/intro",
+    );
     assertEquals(metadata.priority, HandlerPriority.MEDIUM);
     assertEquals(customPriorityMetadata.priority, 5);
     assertEquals(frontmatter.author, "Ada");

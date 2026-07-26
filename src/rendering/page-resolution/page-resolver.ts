@@ -5,7 +5,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { EntityInfo } from "#veryfront/types";
-import { getEntityBySlug } from "#veryfront/types/entities/getEntityInfo.ts";
+import { getEntityBySlug } from "../entity-resolution.ts";
 import {
   detectAppRouter,
   getAppRouteEntity,

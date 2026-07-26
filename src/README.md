@@ -780,7 +780,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 ## Dependency Layers
 
 ```
-Foundation (0 deps)
+Foundation (lowest-level runtime dependencies)
 └─ config/, types/, utils/, errors/, platform/, fs/, schemas/
 
 Infrastructure (foundation only)
@@ -805,7 +805,8 @@ Orchestrators (most modules)
 
 **Rules**:
 
-1. Foundation modules have no internal dependencies
+1. Foundation modules do not eagerly depend on higher layers; type-only
+   integration contracts may refer upward without initializing those modules
 2. Infrastructure depends only on foundation
 3. Features depend on foundation + infrastructure
 4. AI modules depend on foundation + tool + extensions

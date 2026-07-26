@@ -76,6 +76,7 @@ interface ModuleBoundaryBaseline {
 export interface ModuleAnalysis {
   broadBarrelImports: BroadBarrelViolation[];
   cycleEdges: string[];
+  forbiddenLayerImports: string[];
   parseFailures: string[];
 }
 
@@ -387,6 +388,7 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
   const imports = await readImportMap();
   const graph = new Map<string, ReadonlySet<string>>();
   const broadBarrelImports: BroadBarrelViolation[] = [];
+  const forbiddenLayerImports: string[] = [];
   const parseFailures: string[] = [];
 
   for (const file of files) {
@@ -412,7 +414,16 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
         imports,
         fileSet,
       );
-      if (dependency) dependencies.add(dependency);
+      if (!dependency) continue;
+      dependencies.add(dependency);
+
+      // Shared types are a foundation contract. Runtime behavior that depends
+      // on a higher layer belongs with that layer; otherwise importing a
+      // seemingly inert type path can initialize filesystem, telemetry, or
+      // server code and invert the documented dependency direction.
+      if (file.startsWith("src/types/") && !dependency.startsWith("src/types/")) {
+        forbiddenLayerImports.push(`${file} -> ${dependency}`);
+      }
     }
     graph.set(file, dependencies);
   }
@@ -420,6 +431,7 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
   return {
     broadBarrelImports,
     cycleEdges: findCyclicEdges(graph),
+    forbiddenLayerImports: [...new Set(forbiddenLayerImports)].sort(),
     parseFailures: parseFailures.sort(),
   };
 }
@@ -488,14 +500,19 @@ async function main(): Promise<void> {
     "New dependency edges that participate in cycles:",
     newCycleEdges,
   );
+  printFindings(
+    "Runtime imports from shared types into higher layers:",
+    analysis.forbiddenLayerImports,
+  );
 
   if (
     analysis.parseFailures.length > 0 ||
     newBarrelImports.length > 0 ||
-    newCycleEdges.length > 0
+    newCycleEdges.length > 0 ||
+    analysis.forbiddenLayerImports.length > 0
   ) {
     console.error(
-      "\nUse focused #veryfront/* leaf imports and remove the cyclic dependency. " +
+      "\nUse focused #veryfront/* leaf imports, preserve layer direction, and remove cyclic dependencies. " +
         "Do not raise the baseline for new violations.",
     );
     Deno.exit(1);

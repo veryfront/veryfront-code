@@ -1,3 +1,15 @@
+/**
+ * Bounded page and layout entity discovery for the rendering pipeline.
+ *
+ * This module owns source reads, frontmatter normalization, adapter
+ * containment, route precedence, and ambiguity detection. Shared entity
+ * shapes remain in `#veryfront/types`; filesystem-backed resolution belongs
+ * here because it depends on rendering, platform, error, and telemetry
+ * behavior.
+ *
+ * @module rendering/entity-resolution
+ */
+
 import { extract } from "#std/front-matter/yaml.ts";
 import {
   createFileSystem,
@@ -9,8 +21,8 @@ import {
   isExtendedFSAdapter,
   isVirtualFilesystem,
 } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { detectEntityType, normalizeFrontmatter } from "../entities.ts";
-import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
+import { detectEntityType, normalizeFrontmatter } from "../types/entities.ts";
+import type { Entity, EntityInfo, Frontmatter } from "../types/entities.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -79,7 +91,7 @@ export async function getEntityInfo(
 ): Promise<EntityInfo | null> {
   if (!isBoundedPath(filePath)) return null;
   return await withSpan(
-    "types.getEntityInfo",
+    "rendering.getEntityInfo",
     async () => {
       const shouldReadDirectly = adapter
         ? isExtendedFSAdapter(adapter.fs) && adapter.fs.isVeryfrontAdapter()
@@ -238,7 +250,7 @@ export async function getEntityBySlug(
   ) return null;
 
   return await withSpan(
-    "types.getEntityBySlug",
+    "rendering.getEntityBySlug",
     async () => {
       const isVeryfrontRoute = normalizedSlug.startsWith(".veryfront/") ||
         normalizedSlug === ".veryfront";
@@ -389,7 +401,7 @@ export async function getLayoutEntity(
 ): Promise<EntityInfo | null> {
   if (!isBoundedPath(projectDir) || !isBoundedPath(layoutName)) return null;
   return await withSpan(
-    "types.getLayoutEntity",
+    "rendering.getLayoutEntity",
     async () => {
       let resolvedLayoutName = layoutName;
       if (layoutName.startsWith("@components/")) {
