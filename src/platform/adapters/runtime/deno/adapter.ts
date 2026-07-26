@@ -28,7 +28,7 @@ import {
   createWatcherIterator,
   enqueueWatchEvent,
 } from "../shared/watcher-queue.ts";
-import { stopManagedServer } from "../shared/server-lifecycle.ts";
+import { ManagedServerRegistry } from "../shared/server-lifecycle.ts";
 import {
   getNativeDeno,
   getNativeResponse,
@@ -426,7 +426,7 @@ export class DenoAdapter implements RuntimeAdapter {
     writableFs: true,
   };
 
-  private activeServer: DenoServer | null = null;
+  private readonly servers = new ManagedServerRegistry();
 
   serve(
     handler: (request: Request) => Promise<Response> | Response,
@@ -438,61 +438,66 @@ export class DenoAdapter implements RuntimeAdapter {
       });
     }
 
-    const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
+    return this.servers.start(
+      async () => {
+        const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
 
-    const controller = new AbortController();
-    const signal = options.signal ?? controller.signal;
+        const controller = new AbortController();
+        const signal = options.signal ?? controller.signal;
 
-    const envOverlay = getEnvOverlayStorage();
-    const envStore = envOverlay?.getStore();
+        const envOverlay = getEnvOverlayStorage();
+        const envStore = envOverlay?.getStore();
 
-    const wrappedHandler = envOverlay && envStore
-      ? (request: Request) => {
-        if (envOverlay.run) return envOverlay.run(envStore, () => handler(request));
-        envOverlay.enterWith?.(envStore);
-        return handler(request);
-      }
-      : handler;
+        const wrappedHandler = envOverlay && envStore
+          ? (request: Request) => {
+            if (envOverlay.run) return envOverlay.run(envStore, () => handler(request));
+            envOverlay.enterWith?.(envStore);
+            return handler(request);
+          }
+          : handler;
 
-    // Access native Deno.serve via `self` to bypass dnt shim transform.
-    // dnt rewrites both `Deno.*` and `globalThis.*` to use @deno/shim-deno which lacks .serve.
-    // `self` is not shimmed by dnt and equals `globalThis` in Deno.
-    const nativeDeno = getNativeDeno()!;
+        // Access native Deno.serve via `self` to bypass dnt shim transform.
+        // dnt rewrites both `Deno.*` and `globalThis.*` to use @deno/shim-deno which lacks .serve.
+        // `self` is not shimmed by dnt and equals `globalThis` in Deno.
+        const nativeDeno = getNativeDeno()!;
 
-    // Access native Response via `self` to bypass dnt shim transform.
-    // In npm packages, dnt replaces Response with undici's polyfill,
-    // but Deno.serve requires native Response instances.
-    const NativeResponse = getNativeResponse();
+        // Access native Response via `self` to bypass dnt shim transform.
+        // In npm packages, dnt replaces Response with undici's polyfill,
+        // but Deno.serve requires native Response instances.
+        const NativeResponse = getNativeResponse();
 
-    const server = nativeDeno.serve({
-      port,
-      hostname,
-      signal,
-      handler: async (request) => {
-        try {
-          const response: Response = await wrappedHandler(request);
-          return toNativeResponse(response, NativeResponse);
-        } catch (error) {
-          serverLogger.error("Request handler error:", error);
-          return new NativeResponse("Internal Server Error", { status: 500 });
-        }
+        const server = nativeDeno.serve({
+          port,
+          hostname,
+          signal,
+          handler: async (request) => {
+            try {
+              const response: Response = await wrappedHandler(request);
+              return toNativeResponse(response, NativeResponse);
+            } catch (error) {
+              serverLogger.error("Request handler error:", error);
+              return new NativeResponse("Internal Server Error", { status: 500 });
+            }
+          },
+          onListen: (params) => {
+            onListen?.({ hostname: params.hostname, port: params.port });
+          },
+        });
+
+        return new DenoServer(
+          server,
+          hostname,
+          port,
+          options.signal ? undefined : controller,
+        );
       },
-      onListen: (params) => {
-        onListen?.({ hostname: params.hostname, port: params.port });
-      },
-    });
-
-    this.activeServer = new DenoServer(
-      server,
-      hostname,
-      port,
-      options.signal ? undefined : controller,
+      handler,
+      options,
     );
-    return Promise.resolve(this.activeServer);
   }
 
-  async shutdown(): Promise<void> {
-    this.activeServer = await stopManagedServer(this.activeServer);
+  shutdown(): Promise<void> {
+    return this.servers.shutdown();
   }
 }
 

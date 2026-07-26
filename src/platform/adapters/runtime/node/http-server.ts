@@ -6,12 +6,13 @@ import {
 } from "../../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
-import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { TIMEOUT_ERROR } from "#veryfront/errors/error-registry/general.ts";
 
 const pendingWebSocketUpgrades = new Map<
   string,
   { resolve: (ws: WSWebSocket) => void; reject: (error: Error) => void }
 >();
+const NODE_WEBSOCKET_UPGRADE_TIMEOUT_MS = 30_000;
 
 /** Private correlation header injected by Node upgrade transports. */
 export const NODE_WEBSOCKET_UPGRADE_ID_HEADER = "x-veryfront-node-upgrade-id";
@@ -50,6 +51,10 @@ export class NodeServer implements Server {
       await new Promise<void>((resolve, reject) => {
         try {
           this.server.close((error) => error ? reject(error) : resolve());
+          // `close()` waits for active HTTP requests and can otherwise
+          // deadlock with handlers that are waiting for their Fetch signal to
+          // abort. Node >=18.2 exposes this explicit force-close phase.
+          this.server.closeAllConnections?.();
         } catch (error) {
           reject(error);
         }
@@ -79,7 +84,7 @@ export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket
 
       pendingWebSocketUpgrades.delete(requestId);
       pending.reject(TIMEOUT_ERROR.create({ detail: "WebSocket upgrade timed out" }));
-    }, 30000);
+    }, NODE_WEBSOCKET_UPGRADE_TIMEOUT_MS);
 
     pendingWebSocketUpgrades.set(requestId, {
       resolve: (ws) => {
@@ -92,6 +97,10 @@ export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket
       },
     });
   });
+}
+
+export function hasPendingWebSocketUpgrade(requestId: string): boolean {
+  return pendingWebSocketUpgrades.has(requestId);
 }
 
 export function resolveWebSocketUpgrade(requestId: string, ws: WSWebSocket): boolean {
@@ -152,6 +161,81 @@ function waitForResponseDrain(
   });
 }
 
+const NODE_MANAGED_WEBSOCKET_RESPONSE_HEADERS = new Set([
+  "connection",
+  "sec-websocket-accept",
+  "sec-websocket-extensions",
+  "sec-websocket-protocol",
+  "upgrade",
+]);
+
+function appendApplicationUpgradeHeaders(
+  wireHeaders: string[],
+  responseHeaders: Headers,
+): void {
+  const extendedHeaders = responseHeaders as Headers & {
+    getSetCookie?: () => string[];
+  };
+  const setCookies = extendedHeaders.getSetCookie?.() ?? [];
+
+  for (const [name, value] of responseHeaders) {
+    const normalizedName = name.toLowerCase();
+    if (NODE_MANAGED_WEBSOCKET_RESPONSE_HEADERS.has(normalizedName)) continue;
+    if (normalizedName === "set-cookie" && setCookies.length > 0) continue;
+    wireHeaders.push(`${name}: ${value}`);
+  }
+  for (const cookie of setCookies) wireHeaders.push(`set-cookie: ${cookie}`);
+}
+
+export interface NodeWebSocketServerOptions {
+  readonly noServer: true;
+  readonly handleProtocols: (
+    protocols: ReadonlySet<string>,
+    request: object,
+  ) => string | false;
+}
+
+/**
+ * Request-scoped handshake metadata shared with `ws`.
+ *
+ * `ws` otherwise auto-selects the first offered subprotocol and owns the wire
+ * response headers. Both Node server entry points use this controller so the
+ * application-selected protocol and custom headers are applied exactly once.
+ */
+export class NodeWebSocketHandshakeController {
+  private readonly metadata = new WeakMap<
+    object,
+    { readonly headers: Headers; readonly protocol?: string }
+  >();
+
+  readonly serverOptions: NodeWebSocketServerOptions = Object.freeze({
+    noServer: true,
+    handleProtocols: (_protocols: ReadonlySet<string>, request: object) =>
+      this.metadata.get(request)?.protocol ?? false,
+  });
+
+  attach(server: Pick<WSWebSocketServer, "on">): void {
+    server.on("headers", (headers, request) => {
+      if (typeof request !== "object" || request === null) return;
+      const metadata = this.metadata.get(request);
+      if (metadata) appendApplicationUpgradeHeaders(headers, metadata.headers);
+    });
+  }
+
+  authorize(request: object, response: WebSocketUpgradeResponse): void {
+    const headers = new Headers(response.headers);
+    const protocol = headers.get("sec-websocket-protocol") ?? undefined;
+    this.metadata.set(request, {
+      headers,
+      ...(protocol ? { protocol } : {}),
+    });
+  }
+
+  release(request: object): void {
+    this.metadata.delete(request);
+  }
+}
+
 export async function createNodeServer(
   handler: (
     request: Request,
@@ -162,8 +246,10 @@ export async function createNodeServer(
   const { createServer } = await import("node:http");
   let wsServer: WSWebSocketServer | null = null;
   let upgradesDisposed = false;
-  const rawUpgradeSockets = new Set<{ destroy(): void }>();
+  const rawUpgradeSockets = new Set<import("node:stream").Duplex>();
   const activeRequestIds = new Set<string>();
+  const upgradeAbortControllers = new Map<string, AbortController>();
+  const handshakeController = new NodeWebSocketHandshakeController();
   let abortListener: (() => void) | undefined;
 
   const server = createServer(async (_req, _res) => {
@@ -203,7 +289,11 @@ export async function createNodeServer(
 
       if (requestAbort.signal.aborted || _res.destroyed) return;
 
-      if (response.status === 101) return;
+      if (isWebSocketUpgradeResponse(response)) {
+        throw new Error(
+          "A WebSocket upgrade response is only valid for an HTTP Upgrade request",
+        );
+      }
 
       _res.statusCode = response.status;
       _res.statusMessage = response.statusText;
@@ -235,7 +325,7 @@ export async function createNodeServer(
       if (!requestAbort.signal.aborted && !_res.destroyed) _res.end();
     } catch (error) {
       if (requestAbort.signal.aborted || _res.destroyed) return;
-      const { serverLogger } = await import("#veryfront/utils");
+      const { serverLogger } = await import("#veryfront/utils/logger/logger.ts");
       serverLogger.error("Request handler error:", error);
       if (!_res.headersSent) {
         _res.statusCode = 500;
@@ -261,12 +351,33 @@ export async function createNodeServer(
     void (async () => {
       const requestId = crypto.randomUUID();
       activeRequestIds.add(requestId);
+      const requestAbort = new AbortController();
+      upgradeAbortControllers.set(requestId, requestAbort);
+      let transportSettled = false;
+
+      const clearTransportState = (): void => {
+        activeRequestIds.delete(requestId);
+        upgradeAbortControllers.delete(requestId);
+        handshakeController.release(request);
+        rawUpgradeSockets.delete(socket);
+        socket.off("close", onSocketClose);
+      };
+      const failUpgrade = (error: Error): void => {
+        if (transportSettled) return;
+        transportSettled = true;
+        clearTransportState();
+        if (!requestAbort.signal.aborted) requestAbort.abort(error);
+        rejectWebSocketUpgrade(requestId, error);
+        socket.destroy();
+      };
+      const onSocketClose = (): void => {
+        failUpgrade(new DOMException("WebSocket client disconnected", "AbortError"));
+      };
+      socket.once("close", onSocketClose);
 
       try {
         if (upgradesDisposed) {
-          activeRequestIds.delete(requestId);
-          socket.destroy();
-          rawUpgradeSockets.delete(socket);
+          failUpgrade(new Error("Node server stopped before WebSocket upgrade completed"));
           return;
         }
 
@@ -284,43 +395,53 @@ export async function createNodeServer(
           new Request(url.toString(), {
             method: request.method ?? "GET",
             headers: headersRecord,
+            signal: requestAbort.signal,
           }),
         );
 
         if (upgradesDisposed || !isWebSocketUpgradeResponse(response)) {
-          activeRequestIds.delete(requestId);
-          rejectWebSocketUpgrade(
-            requestId,
+          failUpgrade(
             new Error(
               upgradesDisposed
                 ? "Node server stopped before WebSocket upgrade completed"
                 : "Request handler did not authorize a WebSocket upgrade",
             ),
           );
-          socket.destroy();
-          rawUpgradeSockets.delete(socket);
+          return;
+        }
+        if (!hasPendingWebSocketUpgrade(requestId)) {
+          failUpgrade(
+            new Error(
+              "Request handler returned a WebSocket upgrade response without registering an application socket",
+            ),
+          );
           return;
         }
 
         const { WebSocketServer } = await import("ws");
-        if (upgradesDisposed) {
-          activeRequestIds.delete(requestId);
-          rejectWebSocketUpgrade(
-            requestId,
-            new Error("Node server stopped before WebSocket upgrade completed"),
-          );
-          socket.destroy();
-          rawUpgradeSockets.delete(socket);
+        if (upgradesDisposed || transportSettled || requestAbort.signal.aborted) {
+          failUpgrade(new Error("Node server stopped before WebSocket upgrade completed"));
           return;
         }
         if (!wsServer) {
-          wsServer = new WebSocketServer({ noServer: true }) as unknown as WSWebSocketServer;
+          const WebSocketServerConstructor = WebSocketServer as unknown as new (
+            options: NodeWebSocketServerOptions,
+          ) => WSWebSocketServer;
+          wsServer = new WebSocketServerConstructor(handshakeController.serverOptions);
+          handshakeController.attach(wsServer);
         }
+
+        handshakeController.authorize(request, response);
 
         const ownedServer = wsServer;
         ownedServer.handleUpgrade(request, socket, head, (ws: WSWebSocket) => {
-          rawUpgradeSockets.delete(socket);
-          activeRequestIds.delete(requestId);
+          if (transportSettled) {
+            if (ws.terminate) ws.terminate();
+            else ws.close();
+            return;
+          }
+          transportSettled = true;
+          clearTransportState();
           if (!resolveWebSocketUpgrade(requestId, ws)) {
             if (ws.terminate) ws.terminate();
             else ws.close();
@@ -329,15 +450,9 @@ export async function createNodeServer(
           ownedServer.emit("connection", ws, request);
         });
       } catch (error) {
-        activeRequestIds.delete(requestId);
-        rawUpgradeSockets.delete(socket);
-        rejectWebSocketUpgrade(
-          requestId,
-          error instanceof Error ? error : new Error(String(error)),
-        );
-        const { serverLogger } = await import("#veryfront/utils");
+        failUpgrade(error instanceof Error ? error : new Error(String(error)));
+        const { serverLogger } = await import("#veryfront/utils/logger/logger.ts");
         serverLogger.error("WebSocket upgrade error:", error);
-        socket.destroy();
       }
     })();
   };
@@ -352,13 +467,15 @@ export async function createNodeServer(
       abortListener = undefined;
     }
 
+    const stoppedError = new Error("Node server stopped before WebSocket upgrade completed");
+    for (const controller of upgradeAbortControllers.values()) {
+      if (!controller.signal.aborted) controller.abort(stoppedError);
+    }
+    upgradeAbortControllers.clear();
     for (const socket of rawUpgradeSockets) socket.destroy();
     rawUpgradeSockets.clear();
     for (const requestId of activeRequestIds) {
-      rejectWebSocketUpgrade(
-        requestId,
-        new Error("Node server stopped before WebSocket upgrade completed"),
-      );
+      rejectWebSocketUpgrade(requestId, stoppedError);
     }
     activeRequestIds.clear();
 
@@ -423,7 +540,7 @@ export async function createNodeServer(
       const error = abortError();
       if (settled) {
         void nodeServer.stop().catch(async (cleanupError) => {
-          const { serverLogger } = await import("#veryfront/utils");
+          const { serverLogger } = await import("#veryfront/utils/logger/logger.ts");
           serverLogger.error("Node server abort cleanup failed:", cleanupError);
         });
         return;

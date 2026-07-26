@@ -2776,10 +2776,71 @@ Current Bun/shared verification evidence:
   documentation links, and every configured source and browser entrypoint
   typecheck.
 
-Platform remains open. The next wave must complete the remaining Node, Deno,
-hosted-adapter, and residual adapter-documentation review before formal
-closure. Agent remains listed for its own module-level revalidation because
-this checkpoint verified only the execution-policy consumer changed by
-Platform.
+The Node transport and shared server-lifecycle wave is also complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** Node ignored
+  `WebSocketUpgradeOptions`, echoed the client's entire protocol offer into its
+  sentinel, let `ws` silently choose the first protocol on the wire, and
+  converted every inbound frame to text. The source was a mock-oriented bridge
+  that never implemented the portable option or `ws` message contracts. The
+  consequence was application intent diverging from the handshake, invalid
+  multi-protocol responses, lost custom headers, and corrupted binary data.
+  One shared portable validator now owns protocol, header, and timeout rules
+  for Node, Bun, and Cloudflare; Node validates the RFC 6455 request, applies
+  exactly the selected protocol, and preserves binary frames as exact
+  `ArrayBuffer` copies.
+- **Symptom -> Source -> Consequence -> Remedy:** both Node upgrade entry
+  points treated any structurally valid upgrade sentinel as authorization, and
+  the development-handler bridge discarded its headers. A forged sentinel
+  could therefore reach a status-101 handshake without an application socket,
+  while a legitimate sentinel's protocol and cookies or custom headers never
+  reached the client. A request-scoped handshake controller now configures
+  `ws` in both entry points, requires a matching pending application socket,
+  injects only non-managed response headers, aborts disconnected synthetic
+  requests, and retires correlation state on every exit.
+- **Symptom -> Source -> Consequence -> Remedy:** a normal HTTP request that
+  returned an upgrade sentinel was left open, and Node shutdown could wait
+  forever for an active handler that was itself waiting for the request abort
+  caused by disconnect. Normal requests now reject upgrade-only responses with
+  a terminal HTTP 500, and shutdown closes active connections after stopping
+  acceptance so Fetch signals abort and body readers cancel deterministically.
+- **Symptom -> Source -> Consequence -> Remedy:** Node, Bun, and Deno adapters
+  retained only the most recently started server. Multiple legal `serve()`
+  calls therefore leaked earlier listeners on `shutdown()`, and a startup
+  racing shutdown could escape ownership entirely. A shared managed-server
+  registry now owns every returned server, unregisters successful direct
+  stops, retires late startups, shares concurrent shutdown, aggregates
+  independent failures, and retains only failed resources for retry.
+
+Current Node/lifecycle verification evidence:
+
+- Regression-first tests reproduce lost protocol/header intent, binary
+  corruption, forged-sentinel handshakes, normal-request hangs, active-request
+  shutdown deadlock, and multi-server leakage before remediation.
+- The focused Deno source portfolio passes 15 suites and 153 nested steps with
+  zero failures across Node, Bun, Cloudflare, Deno, and shared lifecycle
+  contracts.
+- The supported Node package harness passes every focused Node runtime and
+  shared-lifecycle test, including live ephemeral-port HTTP, protocol/header
+  negotiation, raw-handshake, forged-sentinel, active-request shutdown, and
+  two-listener adapter shutdown scenarios.
+- Bun 1.3.14 passes 116 focused Bun, Cloudflare, and shared-runtime tests with
+  zero failures, including its native HTTP, WebSocket, filesystem, and watcher
+  integrations.
+- Changed sources pass direct formatting, lint, and source-entrypoint type
+  checks. Three obsolete broad-import baseline entries were removed, leaving
+  67 baselined broad imports and two baselined cyclic edges.
+- The complete Deno Platform suite passes 187 suites and 2,472 nested steps
+  with zero failures, and every supported Node Platform harness shard passes
+  with zero failures.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,340
+  configured files, lint across 4,247 configured source files, every style and
+  architecture ratchet, 66 public guides, all 739 documentation links, and all
+  configured source and browser entrypoint typechecks.
+
+Platform remains open. The next wave must complete the Deno, hosted-adapter,
+and residual adapter review before formal closure. Agent and Server remain
+listed for their own module-level revalidation because this checkpoint verified
+only their Platform contract consumers.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

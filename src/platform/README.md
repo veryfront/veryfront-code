@@ -83,6 +83,11 @@ await kv.set(["users", "alice"], { name: "Alice" });
 const volatileKv = await createKVStore();
 ```
 
+Local adapters can own more than one server. Each returned `Server.stop()`
+retires only that listener; `adapter.shutdown()` retires every server still
+owned by the adapter. Concurrent shutdown calls share one attempt, and a
+failed stop remains tracked so a later shutdown can retry it.
+
 ## Structure
 
 ```
@@ -209,6 +214,13 @@ const adapter = new NodeAdapter();
 // Process management
 // Native module support
 ```
+
+Node WebSocket upgrades validate the RFC 6455 request and apply only the
+application-selected client subprotocol. Custom response headers are preserved;
+transport-owned handshake headers and unsupported nonzero per-connection idle
+timeouts are rejected. Text frames remain strings and binary frames remain
+`ArrayBuffer` values. Server shutdown force-closes active HTTP and WebSocket
+transports and aborts their request signals.
 
 ### Bun
 

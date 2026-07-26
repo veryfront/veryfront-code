@@ -42,20 +42,29 @@ function attach(): { socket: NodeWebSocket; ws: WSWebSocket & EventEmitter } {
   return { socket, ws };
 }
 
+function websocketRequest(
+  key = "dGhlIHNhbXBsZSBub25jZQ==",
+  protocols?: string,
+  transportId?: string,
+): Request {
+  return new Request("http://localhost/_ws", {
+    headers: {
+      connection: "Upgrade",
+      upgrade: "websocket",
+      "sec-websocket-key": key,
+      "sec-websocket-version": "13",
+      ...(protocols ? { "sec-websocket-protocol": protocols } : {}),
+      ...(transportId ? { [NODE_WEBSOCKET_UPGRADE_ID_HEADER]: transportId } : {}),
+    },
+  });
+}
+
 describe("NodeServerAdapter WebSocket upgrade", () => {
   it("returns an explicit non-DOM upgrade response signal", () => {
     const requestId = "dGhlIHNhbXBsZSBub25jZQ==";
     const adapter = new NodeServerAdapter();
 
-    const { response } = adapter.upgradeWebSocket(
-      new Request("http://localhost/_ws", {
-        headers: {
-          connection: "Upgrade",
-          upgrade: "websocket",
-          "sec-websocket-key": requestId,
-        },
-      }),
-    );
+    const { response } = adapter.upgradeWebSocket(websocketRequest(requestId));
 
     assertEquals(isWebSocketUpgradeResponse(response), true);
     assertEquals(response.status, 101);
@@ -67,22 +76,129 @@ describe("NodeServerAdapter WebSocket upgrade", () => {
   });
 
   it("uses the transport correlation id instead of the client handshake key", () => {
-    const handshakeKey = "shared-client-key";
+    const handshakeKey = "YWJjZGVmZ2hpamtsbW5vcA==";
     const transportId = "unique-transport-id";
     const adapter = new NodeServerAdapter();
 
     adapter.upgradeWebSocket(
-      new Request("http://localhost/_ws", {
-        headers: {
-          upgrade: "websocket",
-          "sec-websocket-key": handshakeKey,
-          [NODE_WEBSOCKET_UPGRADE_ID_HEADER]: transportId,
-        },
-      }),
+      websocketRequest(handshakeKey, undefined, transportId),
     );
 
     assertEquals(resolveWebSocketUpgrade(handshakeKey, createMockWs()), false);
     assertEquals(resolveWebSocketUpgrade(transportId, createMockWs()), true);
+  });
+
+  it("selects exactly one offered protocol and preserves application headers", () => {
+    const requestId = "MDEyMzQ1Njc4OWFiY2RlZg==";
+    const adapter = new NodeServerAdapter();
+
+    const { response } = adapter.upgradeWebSocket(
+      websocketRequest(requestId, "chat, hmr"),
+      {
+        protocol: "hmr",
+        headers: { "x-veryfront-handshake": "accepted" },
+        idleTimeout: 0,
+      },
+    );
+
+    assertEquals(response.headers.get("sec-websocket-protocol"), "hmr");
+    assertEquals(response.headers.get("x-veryfront-handshake"), "accepted");
+    assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  });
+
+  it("does not silently select a client protocol when the application selected none", () => {
+    const requestId = "YWJjZGVmZ2hpamtsbW5vcA==";
+    const adapter = new NodeServerAdapter();
+
+    const { response } = adapter.upgradeWebSocket(
+      websocketRequest(requestId, "chat, hmr"),
+    );
+
+    assertEquals(response.headers.get("sec-websocket-protocol"), null);
+    assertEquals(resolveWebSocketUpgrade(requestId, createMockWs()), true);
+  });
+
+  it("rejects malformed or unsupported upgrade options before registering transport state", () => {
+    const adapter = new NodeServerAdapter();
+    const request = websocketRequest(
+      "MDEyMzQ1Njc4OWFiY2RlZg==",
+      "chat, hmr",
+    );
+
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { protocol: "not offered" }),
+      Error,
+      "valid HTTP token",
+    );
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { protocol: "other" }),
+      Error,
+      "not offered",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(request, {
+          headers: { Upgrade: "different" },
+        }),
+      Error,
+      "manages the upgrade",
+    );
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { idleTimeout: Number.NaN }),
+      Error,
+      "non-negative finite",
+    );
+    assertThrows(
+      () => adapter.upgradeWebSocket(request, { idleTimeout: 30 }),
+      Error,
+      "does not support",
+    );
+
+    assertEquals(
+      resolveWebSocketUpgrade("MDEyMzQ1Njc4OWFiY2RlZg==", createMockWs()),
+      false,
+    );
+  });
+
+  it("rejects requests that are not valid RFC 6455 handshakes", () => {
+    const adapter = new NodeServerAdapter();
+
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          new Request("http://localhost/_ws", {
+            headers: {
+              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "sec-websocket-version": "13",
+            },
+          }),
+        ),
+      Error,
+      "Upgrade: websocket",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          websocketRequest("not-a-valid-websocket-key"),
+        ),
+      Error,
+      "Sec-WebSocket-Key",
+    );
+    assertThrows(
+      () =>
+        adapter.upgradeWebSocket(
+          new Request("http://localhost/_ws", {
+            headers: {
+              connection: "Upgrade",
+              upgrade: "websocket",
+              "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "sec-websocket-version": "12",
+            },
+          }),
+        ),
+      Error,
+      "Sec-WebSocket-Version",
+    );
   });
 
   it("rejects duplicate pending ids without replacing the original owner", async () => {
@@ -109,6 +225,40 @@ describe("NodeServerAdapter WebSocket upgrade", () => {
     );
     await assertRejects(() => pending, Error, "upgrade abandoned");
     assertEquals(rejectWebSocketUpgrade(requestId, new Error("again")), false);
+  });
+});
+
+describe("NodeWebSocket message handling", () => {
+  it("decodes text frames as strings", () => {
+    const { socket, ws } = attach();
+    let received: unknown;
+    socket.onmessage = (event) => {
+      received = event.data;
+    };
+
+    ws.emit("message", Buffer.from("hello"), false);
+
+    assertEquals(received, "hello");
+  });
+
+  it("preserves binary frames as exact ArrayBuffer copies", () => {
+    const { socket, ws } = attach();
+    let received: unknown;
+    socket.onmessage = (event) => {
+      received = event.data;
+    };
+
+    ws.emit(
+      "message",
+      [Buffer.from([0, 1]), Buffer.from([254, 255])],
+      true,
+    );
+
+    assertEquals(received instanceof ArrayBuffer, true);
+    assertEquals(
+      [...new Uint8Array(received as ArrayBuffer)],
+      [0, 1, 254, 255],
+    );
   });
 });
 
@@ -251,8 +401,8 @@ describe("NodeWebSocket EventTarget compatibility", () => {
     controller.abort();
     socket._attachRealSocket(ws);
 
-    ws.emit("message", Buffer.from("one"));
-    ws.emit("message", Buffer.from("two"));
+    ws.emit("message", Buffer.from("one"), false);
+    ws.emit("message", Buffer.from("two"), false);
 
     assertEquals(onceCalls, 1);
     assertEquals(abortedCalls, 0);

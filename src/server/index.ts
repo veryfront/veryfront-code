@@ -295,6 +295,9 @@ export async function createHandler(
     if (disposalStarted) throw new Error("Veryfront handler is already shutting down");
     const httpServer = server as import("node:http").Server;
     let wsServer: import("ws").WebSocketServer | null = null;
+    let handshakeController:
+      | import("#veryfront/platform/adapters/runtime/node/http-server.ts").NodeWebSocketHandshakeController
+      | null = null;
 
     const upgradeListener = (
       request: import("node:http").IncomingMessage,
@@ -302,22 +305,39 @@ export async function createHandler(
       head: Uint8Array,
     ): void => {
       let releaseSocket: (() => void) | undefined;
+      const requestAbort = new AbortController();
+      let requestId = "";
+      let rejectWebSocketUpgrade:
+        | ((requestId: string, error: Error) => boolean)
+        | undefined;
+      let socketReleased = false;
+      const releaseTrackedSocket = () => {
+        if (socketReleased) return;
+        socketReleased = true;
+        socket.off("close", onSocketClose);
+        handshakeController?.release(request);
+        releaseSocket?.();
+        releaseSocket = undefined;
+      };
+      const onSocketClose = () => {
+        const error = new DOMException("WebSocket client disconnected", "AbortError");
+        if (!requestAbort.signal.aborted) requestAbort.abort(error);
+        if (requestId) rejectWebSocketUpgrade?.(requestId, error);
+        releaseTrackedSocket();
+      };
       try {
         releaseSocket = nodeUpgradeLifecycle.trackSocket(socket);
+        socket.once("close", onSocketClose);
       } catch {
         socket.destroy();
         return;
       }
       void (async () => {
-        let requestId = "";
-        let rejectWebSocketUpgrade:
-          | ((requestId: string, error: Error) => boolean)
-          | undefined;
         try {
           const { WebSocketServer } = await import("ws");
-          if (nodeUpgradeLifecycle.isDisposed) {
+          if (nodeUpgradeLifecycle.isDisposed || requestAbort.signal.aborted) {
             socket.destroy();
-            releaseSocket?.();
+            releaseTrackedSocket();
             return;
           }
 
@@ -332,6 +352,7 @@ export async function createHandler(
           );
           requestId = crypto.randomUUID();
           rejectWebSocketUpgrade = upgradeRegistry.rejectWebSocketUpgrade;
+          handshakeController ??= new upgradeRegistry.NodeWebSocketHandshakeController();
 
           // Run the request through the handler pipeline so HMRHandler
           // registers the transport-level upgrade before it is completed.
@@ -350,7 +371,11 @@ export async function createHandler(
           if (webSocketKey) headersRecord["sec-websocket-key"] = webSocketKey;
           headersRecord[upgradeRegistry.NODE_WEBSOCKET_UPGRADE_ID_HEADER] = requestId;
           const upgradeResponse = await internalFetch(
-            new Request(url.toString(), { method: "GET", headers: headersRecord }),
+            new Request(url.toString(), {
+              method: "GET",
+              headers: headersRecord,
+              signal: requestAbort.signal,
+            }),
           );
           // The request pipeline is the authorization boundary. Only its
           // explicit upgrade sentinel permits the transport handshake; a 4xx,
@@ -361,23 +386,34 @@ export async function createHandler(
               new Error("Request handler did not authorize a WebSocket upgrade"),
             );
             socket.destroy();
-            releaseSocket();
+            releaseTrackedSocket();
             return;
           }
-          if (nodeUpgradeLifecycle.isDisposed) {
+          if (!upgradeRegistry.hasPendingWebSocketUpgrade(requestId)) {
+            socket.destroy();
+            releaseTrackedSocket();
+            return;
+          }
+          if (nodeUpgradeLifecycle.isDisposed || requestAbort.signal.aborted) {
             rejectWebSocketUpgrade(
               requestId,
               new Error("Veryfront handler stopped before WebSocket upgrade completed"),
             );
             socket.destroy();
-            releaseSocket();
+            releaseTrackedSocket();
             return;
           }
 
           if (!wsServer) {
-            wsServer = new WebSocketServer({ noServer: true });
+            const WebSocketServerConstructor = WebSocketServer as unknown as new (
+              options:
+                import("#veryfront/platform/adapters/runtime/node/http-server.ts").NodeWebSocketServerOptions,
+            ) => import("ws").WebSocketServer;
+            wsServer = new WebSocketServerConstructor(handshakeController.serverOptions);
+            handshakeController.attach(wsServer);
             nodeUpgradeLifecycle.track(wsServer);
           }
+          handshakeController.authorize(request, upgradeResponse);
 
           // Complete transport-level WebSocket upgrade.
           const ownedServer = wsServer;
@@ -386,7 +422,7 @@ export async function createHandler(
             socket,
             head,
             (ws: import("ws").WebSocket) => {
-              releaseSocket?.();
+              releaseTrackedSocket();
               if (!upgradeRegistry.resolveWebSocketUpgrade(requestId, ws)) {
                 ws.terminate();
                 return;
@@ -402,7 +438,7 @@ export async function createHandler(
             );
           }
           socket.destroy();
-          releaseSocket?.();
+          releaseTrackedSocket();
         }
       })();
     };

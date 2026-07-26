@@ -7,6 +7,7 @@ import {
   type WebSocketUpgradeResponse,
 } from "../../base.ts";
 import { DeferredWebSocket } from "../shared/deferred-websocket.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "../shared/websocket-upgrade.ts";
 import type {
   BunServer,
   BunServerWebSocket,
@@ -15,15 +16,6 @@ import type {
 } from "./types.ts";
 import { INVALID_ARGUMENT, NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry/server.ts";
-
-const HTTP_TOKEN_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-const BUN_MANAGED_WEBSOCKET_HEADERS = new Set([
-  "connection",
-  "sec-websocket-accept",
-  "sec-websocket-extensions",
-  "sec-websocket-protocol",
-  "upgrade",
-]);
 
 export interface BunWebSocketData {
   readonly socket: BunWebSocket;
@@ -52,63 +44,12 @@ export function resolveBunWebSocketUpgradeHeaders(
   request: Request,
   options: WebSocketUpgradeOptions = {},
 ): Headers {
-  if (request.headers.get("upgrade")?.trim().toLowerCase() !== "websocket") {
-    throw INVALID_ARGUMENT.create({
-      detail: "Bun WebSocket upgrade requires an Upgrade: websocket request",
-      context: { platform: "bun", operation: "upgradeWebSocket" },
-    });
-  }
-
-  if (
-    options.idleTimeout !== undefined &&
-    (!Number.isFinite(options.idleTimeout) || options.idleTimeout < 0)
-  ) {
-    throw INVALID_ARGUMENT.create({
-      detail: "Bun WebSocket idleTimeout must be a non-negative finite number",
-      context: { platform: "bun", operation: "upgradeWebSocket" },
-    });
-  }
-  if (options.idleTimeout !== undefined && options.idleTimeout !== 0) {
-    throw NOT_SUPPORTED.create({
-      detail:
-        "Bun configures WebSocket idle timeouts per server; this adapter supports only idleTimeout: 0",
-      context: { platform: "bun", operation: "upgradeWebSocket" },
-    });
-  }
-
-  const headers = new Headers(options.headers);
-  for (const name of BUN_MANAGED_WEBSOCKET_HEADERS) {
-    if (headers.has(name)) {
-      throw INVALID_ARGUMENT.create({
-        detail: `Bun manages the ${name} WebSocket handshake header`,
-        context: { platform: "bun", operation: "upgradeWebSocket", header: name },
-      });
-    }
-  }
-
-  const protocol = options.protocol;
-  if (protocol !== undefined) {
-    if (!HTTP_TOKEN_PATTERN.test(protocol)) {
-      throw INVALID_ARGUMENT.create({
-        detail: "Bun WebSocket protocol must be a valid HTTP token",
-        context: { platform: "bun", operation: "upgradeWebSocket" },
-      });
-    }
-
-    const offeredProtocols = request.headers.get("sec-websocket-protocol")
-      ?.split(",")
-      .map((value) => value.trim())
-      .filter(Boolean) ?? [];
-    if (!offeredProtocols.includes(protocol)) {
-      throw INVALID_ARGUMENT.create({
-        detail: "Bun WebSocket protocol was not offered by the client",
-        context: { platform: "bun", operation: "upgradeWebSocket" },
-      });
-    }
-    headers.set("Sec-WebSocket-Protocol", protocol);
-  }
-
-  return headers;
+  return resolvePortableWebSocketUpgradeHeaders(request, options, {
+    platform: "bun",
+    runtimeName: "Bun",
+    unsupportedIdleTimeoutDetail:
+      "Bun configures WebSocket idle timeouts per server; this adapter supports only idleTimeout: 0",
+  });
 }
 
 export async function dispatchBunRequest(

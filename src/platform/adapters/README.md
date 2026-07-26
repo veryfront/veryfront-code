@@ -146,6 +146,18 @@ interface RuntimeAdapter {
 }
 ```
 
+Node, Deno, and Bun adapters track every server returned by `serve()`. Stopping
+one returned server unregisters it; `adapter.shutdown()` concurrently stops all
+remaining servers. A startup that finishes during shutdown is immediately
+retired, concurrent shutdown callers share one promise, and failed stops remain
+tracked for retry.
+
+Portable WebSocket upgrade options preserve application response headers and
+select only an explicitly chosen client-offered subprotocol. The runtime owns
+`Connection`, `Upgrade`, and `Sec-WebSocket-*` handshake headers. Node, Bun, and
+Cloudflare accept `idleTimeout: 0` and fail closed for unsupported nonzero
+per-connection timeouts.
+
 `FileWatcher.close()` is idempotent. Breaking out of a `for await` loop closes
 the underlying watcher automatically. Callers that mutate files immediately
 after calling `watch()` should await `watcher.ready`; callers that need a

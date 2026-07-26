@@ -34,6 +34,18 @@ Primary source areas:
 - A WebSocket upgrade is authorized by the normal request handler before the
   transport commits it. Node and Bun use an explicit non-DOM upgrade signal;
   Cloudflare and Deno return their runtime-native upgrade responses.
+- Portable WebSocket options select at most one client-offered subprotocol and
+  can add application response headers. Runtime-managed handshake headers are
+  rejected. Node, Bun, and Cloudflare accept `idleTimeout: 0` as the portable
+  no-timeout sentinel and reject unsupported nonzero per-connection values.
+- Local runtime adapters own every server returned by `serve()`.
+  `Server.stop()` unregisters that server; adapter `shutdown()` retires all
+  remaining servers, shares concurrent shutdown calls, and keeps failed
+  resources available for an explicit retry.
+- Node validates the RFC 6455 request before registering transport state,
+  preserves text and binary frame identity, and force-closes active HTTP and
+  WebSocket transports during shutdown so a handler waiting on request abort
+  cannot deadlock the server.
 - Bun upgrades must use the original `Request` received by `Bun.serve`.
   `server.upgrade()` may invoke the native open callback synchronously, so
   consumers inspect `readyState` before waiting for `open`.

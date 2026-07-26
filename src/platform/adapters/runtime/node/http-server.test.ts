@@ -10,6 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createServer, request as nodeRequest } from "node:http";
 import { createConnection } from "node:net";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { createWebSocketUpgradeResponse } from "../../base.ts";
 import { createNodeServer, NodeServer } from "./http-server.ts";
 import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
@@ -187,6 +188,204 @@ describe("NodeServer lifecycle", () => {
       assertEquals(client.readyState, WebSocket.CLOSED);
     } finally {
       if (client.readyState !== WebSocket.CLOSED) client.terminate();
+      await server.stop();
+    }
+  });
+
+  it("honors the application's selected protocol and handshake headers on the wire", async () => {
+    if (!isNode) return;
+    const adapter = new NodeServerAdapter();
+    const server = await createNodeServer((request) => {
+      return adapter.upgradeWebSocket(request, {
+        protocol: "hmr",
+        headers: { "x-veryfront-handshake": "accepted" },
+        idleTimeout: 0,
+      }).response;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const { WebSocket } = await import("ws");
+    const client = new WebSocket(
+      `ws://127.0.0.1:${server.addr.port}/_ws`,
+      ["chat", "hmr"],
+    );
+    let handshakeHeader: string | string[] | undefined;
+    client.once("upgrade", (response) => {
+      handshakeHeader = response.headers["x-veryfront-handshake"];
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("open", resolve);
+        client.once("error", reject);
+      });
+
+      assertEquals(client.protocol, "hmr");
+      assertEquals(handshakeHeader, "accepted");
+    } finally {
+      if (client.readyState !== WebSocket.CLOSED) client.terminate();
+      await server.stop();
+    }
+  });
+
+  it("does not negotiate a client protocol unless the application selects it", async () => {
+    if (!isNode) return;
+    const adapter = new NodeServerAdapter();
+    const server = await createNodeServer((request) => {
+      return adapter.upgradeWebSocket(request).response;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+
+      const responseHeaders = new Promise<string>((resolve, reject) => {
+        let received = "";
+        const timeout = setTimeout(
+          () => reject(new Error("WebSocket handshake response timed out")),
+          1_000,
+        );
+        socket.on("data", (chunk) => {
+          received += chunk.toString();
+          const end = received.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          clearTimeout(timeout);
+          resolve(received.slice(0, end));
+        });
+        socket.once("error", (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+      socket.write(
+        "GET /_ws HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Protocol: chat, hmr\r\n\r\n",
+      );
+
+      const headers = (await responseHeaders).toLowerCase();
+      assertEquals(headers.includes("101 switching protocols"), true);
+      assertEquals(headers.includes("sec-websocket-protocol:"), false);
+    } finally {
+      socket.destroy();
+      await server.stop();
+    }
+  });
+
+  it("does not upgrade a forged sentinel without a registered application socket", async () => {
+    if (!isNode) return;
+    const server = await createNodeServer(
+      () => createWebSocketUpgradeResponse(),
+      {
+        hostname: "127.0.0.1",
+        port: 0,
+      },
+    );
+    const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
+    let received = "";
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      socket.on("data", (chunk) => {
+        received += chunk.toString();
+      });
+      socket.write(
+        "GET /_ws HTTP/1.1\r\n" +
+          "Host: 127.0.0.1\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Forged upgrade socket remained open")),
+          1_000,
+        );
+        socket.once("close", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        socket.once("error", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+
+      assertEquals(received.includes("101 Switching Protocols"), false);
+    } finally {
+      socket.destroy();
+      await server.stop();
+    }
+  });
+
+  it("returns an HTTP error instead of hanging on an upgrade sentinel in a normal request", async () => {
+    if (!isNode) return;
+    const server = await createNodeServer(
+      () => createWebSocketUpgradeResponse(),
+      {
+        hostname: "127.0.0.1",
+        port: 0,
+      },
+    );
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.addr.port}/not-an-upgrade`);
+      assertEquals(response.status, 500);
+      assertEquals(await response.text(), "Internal Server Error");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("force-closes an active HTTP connection so shutdown cannot deadlock", async () => {
+    if (!isNode) return;
+    const handlerStarted = Promise.withResolvers<void>();
+    const requestAborted = Promise.withResolvers<void>();
+    const server = await createNodeServer(async (request) => {
+      handlerStarted.resolve();
+      if (request.signal.aborted) requestAborted.resolve();
+      else request.signal.addEventListener("abort", () => requestAborted.resolve(), { once: true });
+      await requestAborted.promise;
+      return new Response("too late");
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const client = nodeRequest({
+      host: "127.0.0.1",
+      port: server.addr.port,
+      path: "/never-finishes",
+    });
+    client.on("error", () => {});
+    client.end();
+
+    try {
+      await handlerStarted.promise;
+      const stopped = server.stop().then(() => true);
+      const completedBeforeDeadline = await Promise.race([
+        stopped,
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 250)),
+      ]);
+
+      assertEquals(completedBeforeDeadline, true);
+      await requestAborted.promise;
+    } finally {
+      client.destroy();
       await server.stop();
     }
   });
