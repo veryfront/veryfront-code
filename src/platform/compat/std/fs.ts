@@ -1,14 +1,15 @@
 /**
- * Portable @std/fs shim for Node.js and Bun.
+ * Portable subset of `@std/fs` for Deno, Node.js, and Bun.
  *
- * In Deno: Uses @std/fs
- * In Node.js/Bun: Provides compatible implementations using node:fs
+ * Deno uses the pinned standard-library implementation. Node.js and Bun use
+ * the implementations below with matching failure and traversal semantics.
  *
  * @module
  */
 
-import { statSync } from "node:fs";
 import { isDeno } from "../runtime.ts";
+import * as nodeFs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export interface WalkEntry {
   path: string;
@@ -24,136 +25,263 @@ export interface WalkOptions {
   includeDirs?: boolean;
   includeSymlinks?: boolean;
   followSymlinks?: boolean;
+  canonicalize?: boolean;
   exts?: string[];
   match?: RegExp[];
   skip?: RegExp[];
 }
 
-async function nodeEnsureDir(dir: string): Promise<void> {
+export interface ExistsOptions {
+  isReadable?: boolean;
+  isDirectory?: boolean;
+  isFile?: boolean;
+}
+
+type PathLike = string | URL;
+
+async function nodeEnsureDir(directory: PathLike): Promise<void> {
   const { mkdir } = await import("node:fs/promises");
+  // Recursive mkdir already succeeds for an existing directory and rejects an
+  // existing non-directory. Do not suppress EEXIST: that distinction is the
+  // contract callers rely on.
+  await mkdir(directory, { recursive: true });
+}
+
+function validateExistsOptions(options: ExistsOptions | undefined): void {
+  if (options?.isDirectory && options.isFile) {
+    throw new TypeError(
+      "ExistsOptions.isDirectory and ExistsOptions.isFile must not both be true",
+    );
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = Reflect.get(error, "code");
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function isPermissionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = Reflect.get(error, "code");
+  return code === "EACCES" || code === "EPERM";
+}
+
+function nodeExistsSync(
+  path: PathLike,
+  options?: ExistsOptions,
+): boolean {
+  validateExistsOptions(options);
+
   try {
-    await mkdir(dir, { recursive: true });
+    const info = nodeFs.statSync(path);
+    if (options?.isDirectory && !info.isDirectory()) return false;
+    if (options?.isFile && !info.isFile()) return false;
+    if (options?.isReadable) nodeFs.accessSync(path, nodeFs.constants.R_OK);
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (isMissingPathError(error) || isPermissionError(error)) return false;
+    throw error;
   }
 }
 
-function nodeExistsSync(path: string): boolean {
-  try {
-    statSync(path);
-    return true;
-  } catch (_) {
-    /* expected: stat fails when path does not exist */
-    return false;
-  }
-}
+async function nodeExists(
+  path: PathLike,
+  options?: ExistsOptions,
+): Promise<boolean> {
+  validateExistsOptions(options);
+  const { access, stat } = await import("node:fs/promises");
 
-async function nodeExists(path: string): Promise<boolean> {
-  const { stat } = await import("node:fs/promises");
   try {
-    await stat(path);
+    const info = await stat(path);
+    if (options?.isDirectory && !info.isDirectory()) return false;
+    if (options?.isFile && !info.isFile()) return false;
+    if (options?.isReadable) await access(path, nodeFs.constants.R_OK);
     return true;
-  } catch (_) {
-    /* expected: stat fails when path does not exist */
-    return false;
+  } catch (error) {
+    if (isMissingPathError(error) || isPermissionError(error)) return false;
+    throw error;
   }
 }
 
 async function* nodeWalk(
-  root: string,
+  root: PathLike,
   options: WalkOptions = {},
 ): AsyncIterableIterator<WalkEntry> {
-  const { readdir, stat } = await import("node:fs/promises");
-  const { join, extname } = await import("node:path");
+  const { lstat, readdir, realpath } = await import("node:fs/promises");
+  const { basename, extname, join } = await import("node:path");
+  const rootPath = pathToString(root);
+  const maxDepth = options.maxDepth ?? Infinity;
+  const includeFiles = options.includeFiles ?? true;
+  const includeDirs = options.includeDirs ?? true;
+  const includeSymlinks = options.includeSymlinks ?? true;
+  const followSymlinks = options.followSymlinks ?? false;
+  const canonicalize = options.canonicalize ?? true;
+  const extensions = options.exts?.map((extension) =>
+    extension.startsWith(".") ? extension : `.${extension}`
+  );
+  const visitedDirectories = new Set<string>();
 
-  const {
-    maxDepth = Infinity,
-    includeFiles = true,
-    includeDirs = true,
-    includeSymlinks = true,
-    followSymlinks = false,
-    exts,
-    match,
-    skip,
-  } = options;
+  if (Number.isNaN(maxDepth)) {
+    throw new RangeError("WalkOptions.maxDepth must not be NaN");
+  }
+  if (maxDepth < 0) return;
 
-  async function* walkDir(
-    dir: string,
+  const rootInfo = await lstat(rootPath);
+  const rootEntry = toWalkEntry(rootPath, basename(rootPath), rootInfo);
+  if (!rootEntry.isDirectory) {
+    throw new TypeError(`Walk root is not a directory: ${rootPath}`);
+  }
+
+  const canonicalRoot = await realpath(rootPath);
+  visitedDirectories.add(canonicalRoot);
+
+  if (includeDirs && shouldInclude(rootPath, extensions, options.match, options.skip)) {
+    yield rootEntry;
+  }
+  if (maxDepth < 1 || matchesAny(rootPath, options.skip)) return;
+
+  yield* walkDirectory(rootPath, 1);
+
+  async function* walkDirectory(
+    directory: string,
     depth: number,
   ): AsyncIterableIterator<WalkEntry> {
-    if (depth > maxDepth) return;
+    const entries = await readdir(directory, { withFileTypes: true });
 
-    let entries: Array<{
-      name: string;
-      isFile: () => boolean;
-      isDirectory: () => boolean;
-      isSymbolicLink: () => boolean;
-    }>;
+    for (const dirEntry of entries) {
+      const unresolvedPath = join(directory, String(dirEntry.name));
+      if (matchesAny(unresolvedPath, options.skip)) continue;
 
-    try {
-      entries = (await readdir(dir, { withFileTypes: true })).map((e) => ({
-        name: String(e.name),
-        isFile: () => e.isFile(),
-        isDirectory: () => e.isDirectory(),
-        isSymbolicLink: () => e.isSymbolicLink(),
-      }));
-    } catch (_) {
-      /* expected: readdir may fail on inaccessible directories */
-      return;
-    }
-
-    for (const entry of entries) {
-      const name = entry.name;
-      const path = join(dir, name);
-
-      if (skip?.some((pattern) => pattern.test(path))) continue;
-
-      const isSymlink = entry.isSymbolicLink();
-      let isFile = entry.isFile();
-      let isDirectory = entry.isDirectory();
+      let outputPath = unresolvedPath;
+      let isFile = dirEntry.isFile();
+      let isDirectory = dirEntry.isDirectory();
+      const isSymlink = dirEntry.isSymbolicLink();
+      let canonicalDirectory: string | null = null;
 
       if (isSymlink && followSymlinks) {
-        try {
-          const stats = await stat(path);
-          isFile = stats.isFile();
-          isDirectory = stats.isDirectory();
-        } catch (_) {
-          /* expected: symlink target may not exist */
-          continue;
-        }
+        const resolvedPath = await realpath(unresolvedPath);
+        const targetInfo = await lstat(resolvedPath);
+        isFile = targetInfo.isFile();
+        isDirectory = targetInfo.isDirectory();
+        canonicalDirectory = isDirectory ? resolvedPath : null;
+        if (canonicalize) outputPath = resolvedPath;
       }
 
-      if (isFile && exts && !exts.includes(extname(name))) continue;
-      if (match && !match.some((pattern) => pattern.test(path))) continue;
-
-      const walkEntry: WalkEntry = {
-        path,
-        name,
+      const entry: WalkEntry = {
+        path: outputPath,
+        name: String(dirEntry.name),
         isFile,
         isDirectory,
         isSymlink,
       };
 
-      if (isFile) {
-        if (includeFiles) yield walkEntry;
-      } else if (isDirectory) {
-        if (includeDirs) yield walkEntry;
-      } else if (isSymlink && includeSymlinks && !followSymlinks) {
-        yield walkEntry;
+      if (isSymlink && !followSymlinks) {
+        if (
+          includeSymlinks &&
+          shouldInclude(outputPath, extensions, options.match, options.skip)
+        ) {
+          yield entry;
+        }
+        continue;
       }
 
-      if (isDirectory) yield* walkDir(path, depth + 1);
+      if (isDirectory) {
+        if (
+          includeDirs &&
+          shouldInclude(outputPath, extensions, options.match, options.skip)
+        ) {
+          yield entry;
+        }
+        if (depth >= maxDepth) continue;
+
+        canonicalDirectory ??= await realpath(unresolvedPath);
+        if (visitedDirectories.has(canonicalDirectory)) continue;
+        visitedDirectories.add(canonicalDirectory);
+        const traversalPath = isSymlink && canonicalize ? outputPath : unresolvedPath;
+        yield* walkDirectory(traversalPath, depth + 1);
+        continue;
+      }
+
+      if (
+        isFile &&
+        includeFiles &&
+        shouldInclude(outputPath, extensions, options.match, options.skip)
+      ) {
+        yield entry;
+      }
     }
   }
 
-  yield* walkDir(root, 0);
+  function shouldInclude(
+    path: string,
+    acceptedExtensions: readonly string[] | undefined,
+    match: readonly RegExp[] | undefined,
+    skip: readonly RegExp[] | undefined,
+  ): boolean {
+    if (
+      acceptedExtensions &&
+      !acceptedExtensions.some((extension) =>
+        path.endsWith(extension) || extname(path) === extension
+      )
+    ) {
+      return false;
+    }
+    if (match && !matchesAny(path, match)) return false;
+    return !matchesAny(path, skip);
+  }
 }
 
-export let ensureDir: (dir: string) => Promise<void>;
-export let exists: (path: string) => Promise<boolean>;
-export let existsSync: (path: string) => boolean;
+function matchesAny(
+  value: string,
+  patterns: readonly RegExp[] | undefined,
+): boolean {
+  if (!patterns) return false;
+  return patterns.some((pattern) => {
+    pattern.lastIndex = 0;
+    const matches = pattern.test(value);
+    pattern.lastIndex = 0;
+    return matches;
+  });
+}
+
+function toWalkEntry(
+  path: string,
+  name: string,
+  info: {
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+  },
+): WalkEntry {
+  return {
+    path,
+    name,
+    isFile: info.isFile(),
+    isDirectory: info.isDirectory(),
+    isSymlink: info.isSymbolicLink(),
+  };
+}
+
+function pathToString(path: PathLike): string {
+  if (typeof path === "string") return path;
+  if (path.protocol !== "file:") {
+    throw new TypeError(`Expected a file URL, received ${path.protocol}`);
+  }
+  return fileURLToPath(path);
+}
+
+export let ensureDir: (directory: PathLike) => Promise<void>;
+export let exists: (
+  path: PathLike,
+  options?: ExistsOptions,
+) => Promise<boolean>;
+export let existsSync: (
+  path: PathLike,
+  options?: ExistsOptions,
+) => boolean;
 export let walk: (
-  root: string,
+  root: PathLike,
   options?: WalkOptions,
 ) => AsyncIterableIterator<WalkEntry>;
 

@@ -7,6 +7,8 @@ export interface CommandResult {
   code: number;
   stdout?: string;
   stderr?: string;
+  /** True when captured output exceeded the configured byte limit. */
+  outputTruncated?: boolean;
 }
 
 export interface CommandOptions {
@@ -23,81 +25,164 @@ export interface CommandOptions {
   shell?: boolean;
   /** Kill the command if it exceeds this duration (milliseconds) */
   timeoutMs?: number;
+  /**
+   * Maximum combined stdout and stderr bytes retained when `capture` is true.
+   *
+   * @default 16777216
+   */
+  maxOutputBytes?: number;
 }
 
 const COMMAND_TIMEOUT_EXIT_CODE = 124;
+const COMMAND_OUTPUT_LIMIT_EXIT_CODE = 125;
 const FORCE_KILL_GRACE_MS = 250;
+const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-function createTimeoutResult(
-  timeoutMs: number,
+type TerminationReason = "output-limit" | "timeout";
+
+function createTerminationResult(
+  reason: TerminationReason,
+  detail: number,
   stdout?: string,
   stderr?: string,
 ): CommandResult {
+  const message = reason === "timeout"
+    ? `Command timed out after ${detail}ms`
+    : `Command output exceeded ${detail} bytes`;
   return {
     success: false,
-    code: COMMAND_TIMEOUT_EXIT_CODE,
+    code: reason === "timeout" ? COMMAND_TIMEOUT_EXIT_CODE : COMMAND_OUTPUT_LIMIT_EXIT_CODE,
     stdout,
-    stderr: `${stderr ?? ""}\nCommand timed out after ${timeoutMs}ms`.trim(),
+    stderr: `${stderr ?? ""}\n${message}`.trim(),
+    outputTruncated: reason === "output-limit" || undefined,
   };
 }
 
-function createProcessTimeout(
+function createProcessGuard(
   timeoutMs: number | undefined,
   terminate: () => void,
   forceTerminate: () => void,
-): { hasTimedOut: () => boolean; clear: () => void } {
-  let timedOut = false;
+): {
+  stop: (reason: TerminationReason) => void;
+  reason: () => TerminationReason | null;
+  clear: () => void;
+} {
+  let terminationReason: TerminationReason | null = null;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let forceKillId: ReturnType<typeof setTimeout> | undefined;
 
   if (timeoutMs && timeoutMs > 0) {
     timeoutId = setTimeout(() => {
-      timedOut = true;
-      try {
-        terminate();
-      } catch (_) {
-        /* expected: best-effort terminate may fail if process already exited */
-      }
-
-      forceKillId = setTimeout(() => {
-        try {
-          forceTerminate();
-        } catch (_) {
-          /* expected: best-effort force terminate may fail if process already exited */
-        }
-      }, FORCE_KILL_GRACE_MS);
+      stop("timeout");
     }, timeoutMs);
   }
 
   return {
-    hasTimedOut: () => timedOut,
+    stop,
+    reason: () => terminationReason,
     clear: () => {
       if (timeoutId) clearTimeout(timeoutId);
       if (forceKillId) clearTimeout(forceKillId);
     },
   };
+
+  function stop(reason: TerminationReason): void {
+    if (terminationReason !== null) return;
+    terminationReason = reason;
+    try {
+      terminate();
+    } catch (_) {
+      /* expected: best-effort terminate may fail if process already exited */
+    }
+
+    forceKillId = setTimeout(() => {
+      try {
+        forceTerminate();
+      } catch (_) {
+        /* expected: best-effort force terminate may fail if process already exited */
+      }
+    }, FORCE_KILL_GRACE_MS);
+  }
 }
 
-async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
+interface CaptureBudget {
+  remaining: number;
+  exceeded: boolean;
+  onExceeded: () => void;
+}
+
+function createCaptureBudget(
+  maxOutputBytes: number,
+  onExceeded: () => void,
+): CaptureBudget {
+  return {
+    remaining: maxOutputBytes,
+    exceeded: false,
+    onExceeded,
+  };
+}
+
+function captureChunk(
+  chunks: Uint8Array[],
+  chunk: Uint8Array,
+  budget: CaptureBudget,
+): void {
+  const available = budget.remaining;
+  if (available > 0) {
+    const retained = chunk.byteLength <= available ? chunk.slice() : chunk.slice(0, available);
+    chunks.push(retained);
+    budget.remaining -= retained.byteLength;
+  }
+
+  if (chunk.byteLength > available && !budget.exceeded) {
+    budget.exceeded = true;
+    budget.onExceeded();
+  }
+}
+
+function decodeChunks(chunks: readonly Uint8Array[]): string {
+  const total = chunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(merged);
+}
+
+async function readStreamToString(
+  stream: ReadableStream<Uint8Array>,
+  budget: CaptureBudget,
+): Promise<string> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (value) chunks.push(value);
+    if (value) captureChunk(chunks, value, budget);
   }
 
-  const total = chunks.reduce((acc, c) => acc + c.length, 0);
-  const merged = new Uint8Array(total);
-  let offset = 0;
+  return decodeChunks(chunks);
+}
 
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
+function resolveShellCommand(
+  cmd: string,
+  args: readonly string[],
+): { cmd: string; args: string[] } {
+  if (isWindowsPlatform()) {
+    return { cmd: "cmd", args: ["/d", "/s", "/c", cmd, ...args] };
   }
-
-  return new TextDecoder().decode(merged);
+  if (args.length === 0) {
+    return { cmd: "sh", args: ["-c", cmd] };
+  }
+  return {
+    cmd: "sh",
+    args: ["-c", 'exec "$@"', "sh", cmd, ...args],
+  };
 }
 
 /**
@@ -123,16 +208,22 @@ export async function runCommand(
     inherit = false,
     shell = false,
     timeoutMs,
+    maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
   } = options;
   const effectiveTimeoutMs = timeoutMs && timeoutMs > 0 ? Math.floor(timeoutMs) : undefined;
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) {
+    throw new RangeError("maxOutputBytes must be a positive safe integer");
+  }
 
   // Determine stdio mode: inherit > capture > null
-  const stdioMode = inherit ? "inherit" : capture ? "piped" : "null";
+  const shouldCapture = capture && !inherit;
+  const stdioMode = inherit ? "inherit" : shouldCapture ? "piped" : "null";
 
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) {
-    const command = new deno.Command(cmd, {
-      args,
+    const denoCommand = shell ? resolveShellCommand(cmd, args) : { cmd, args };
+    const command = new deno.Command(denoCommand.cmd, {
+      args: [...denoCommand.args],
       cwd: cmdCwd,
       env: cmdEnv,
       clearEnv,
@@ -142,21 +233,35 @@ export async function runCommand(
     });
 
     const child = command.spawn();
-    const timeout = createProcessTimeout(
+    const guard = createProcessGuard(
       effectiveTimeoutMs,
       () => child.kill("SIGTERM"),
       () => child.kill("SIGKILL"),
+    );
+    const captureBudget = createCaptureBudget(
+      maxOutputBytes,
+      () => guard.stop("output-limit"),
     );
 
     try {
       const [status, stdout, stderr] = await Promise.all([
         child.status,
-        capture && child.stdout ? readStreamToString(child.stdout) : Promise.resolve(undefined),
-        capture && child.stderr ? readStreamToString(child.stderr) : Promise.resolve(undefined),
+        shouldCapture && child.stdout
+          ? readStreamToString(child.stdout, captureBudget)
+          : Promise.resolve(undefined),
+        shouldCapture && child.stderr
+          ? readStreamToString(child.stderr, captureBudget)
+          : Promise.resolve(undefined),
       ]);
 
-      if (timeout.hasTimedOut()) {
-        return createTimeoutResult(effectiveTimeoutMs ?? 0, stdout, stderr);
+      const reason = guard.reason();
+      if (reason) {
+        return createTerminationResult(
+          reason,
+          reason === "timeout" ? effectiveTimeoutMs ?? 0 : maxOutputBytes,
+          stdout,
+          stderr,
+        );
       }
 
       return {
@@ -166,7 +271,7 @@ export async function runCommand(
         stderr,
       };
     } finally {
-      timeout.clear();
+      guard.clear();
     }
   }
 
@@ -188,16 +293,10 @@ export async function runCommand(
       };
     };
 
-    const bunStdio = inherit ? "inherit" : capture ? "pipe" : "ignore";
+    const bunStdio = inherit ? "inherit" : shouldCapture ? "pipe" : "ignore";
 
-    const isWindows = isWindowsPlatform();
-    const bunCmd = shell
-      ? args.length === 0
-        ? isWindows ? ["cmd", "/c", cmd] : ["sh", "-c", cmd]
-        : isWindows
-        ? ["cmd", "/c", cmd, ...args]
-        : ["sh", "-c", 'exec "$@"', "sh", cmd, ...args]
-      : [cmd, ...args];
+    const shellCommand = shell ? resolveShellCommand(cmd, args) : null;
+    const bunCmd = shellCommand ? [shellCommand.cmd, ...shellCommand.args] : [cmd, ...args];
 
     const proc = bunGlobal.Bun.spawn({
       cmd: bunCmd,
@@ -207,26 +306,40 @@ export async function runCommand(
       stderr: bunStdio,
     });
 
-    const timeout = createProcessTimeout(
+    const guard = createProcessGuard(
       effectiveTimeoutMs,
       () => proc.kill?.("SIGTERM"),
       () => proc.kill?.("SIGKILL"),
+    );
+    const captureBudget = createCaptureBudget(
+      maxOutputBytes,
+      () => guard.stop("output-limit"),
     );
 
     try {
       const [code, stdout, stderr] = await Promise.all([
         proc.exited,
-        capture && proc.stdout ? readStreamToString(proc.stdout) : Promise.resolve(undefined),
-        capture && proc.stderr ? readStreamToString(proc.stderr) : Promise.resolve(undefined),
+        shouldCapture && proc.stdout
+          ? readStreamToString(proc.stdout, captureBudget)
+          : Promise.resolve(undefined),
+        shouldCapture && proc.stderr
+          ? readStreamToString(proc.stderr, captureBudget)
+          : Promise.resolve(undefined),
       ]);
 
-      if (timeout.hasTimedOut()) {
-        return createTimeoutResult(effectiveTimeoutMs ?? 0, stdout, stderr);
+      const reason = guard.reason();
+      if (reason) {
+        return createTerminationResult(
+          reason,
+          reason === "timeout" ? effectiveTimeoutMs ?? 0 : maxOutputBytes,
+          stdout,
+          stderr,
+        );
       }
 
       return { success: code === 0, code, stdout, stderr };
     } finally {
-      timeout.clear();
+      guard.clear();
     }
   }
 
@@ -253,33 +366,40 @@ export async function runCommand(
       shell,
     });
 
-    let stdout = "";
-    let stderr = "";
-    const decoder = new TextDecoder();
-    const timeout = createProcessTimeout(
+    const stdoutChunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const guard = createProcessGuard(
       effectiveTimeoutMs,
       () => child.kill("SIGTERM"),
       () => child.kill("SIGKILL"),
     );
+    const captureBudget = createCaptureBudget(
+      maxOutputBytes,
+      () => guard.stop("output-limit"),
+    );
 
-    if (capture) {
+    if (shouldCapture) {
       child.stdout?.on("data", (data: Uint8Array) => {
-        stdout += decoder.decode(data);
+        captureChunk(stdoutChunks, data, captureBudget);
       });
       child.stderr?.on("data", (data: Uint8Array) => {
-        stderr += decoder.decode(data);
+        captureChunk(stderrChunks, data, captureBudget);
       });
     }
 
     child.on("close", (code) => {
-      timeout.clear();
+      guard.clear();
+      const stdout = shouldCapture ? decodeChunks(stdoutChunks) : undefined;
+      const stderr = shouldCapture ? decodeChunks(stderrChunks) : undefined;
 
-      if (timeout.hasTimedOut()) {
+      const reason = guard.reason();
+      if (reason) {
         resolve(
-          createTimeoutResult(
-            effectiveTimeoutMs ?? 0,
-            capture ? stdout : undefined,
-            capture ? stderr : undefined,
+          createTerminationResult(
+            reason,
+            reason === "timeout" ? effectiveTimeoutMs ?? 0 : maxOutputBytes,
+            stdout,
+            stderr,
           ),
         );
         return;
@@ -288,20 +408,22 @@ export async function runCommand(
       resolve({
         success: code === 0,
         code: code ?? 1,
-        stdout: capture ? stdout : undefined,
-        stderr: capture ? stderr : undefined,
+        stdout,
+        stderr,
       });
     });
 
     child.on("error", (spawnError: Error) => {
-      timeout.clear();
+      guard.clear();
+      const stdout = shouldCapture ? decodeChunks(stdoutChunks) : undefined;
+      const stderr = shouldCapture ? decodeChunks(stderrChunks) : undefined;
       // Include the spawn error message so callers can distinguish ENOENT
       // ("command not found"), EACCES ("permission denied"), etc.
       resolve({
         success: false,
         code: 1,
-        stdout: capture ? stdout : undefined,
-        stderr: capture
+        stdout,
+        stderr: shouldCapture
           ? (stderr
             ? `${stderr}\nSpawn error: ${spawnError.message}`
             : `Spawn error: ${spawnError.message}`)
