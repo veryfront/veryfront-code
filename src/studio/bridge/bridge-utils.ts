@@ -4,22 +4,30 @@
  * Small shared helpers used across bridge modules.
  */
 
-// deno-lint-ignore no-explicit-any -- generic debounce must accept any function signature
-export function debounce<T extends (...args: any[]) => void>(
-  fn: T,
+export interface DebouncedFunction<This, Args extends unknown[]> {
+  (this: This, ...args: Args): void;
+  cancel(): void;
+}
+
+export function debounce<This, Args extends unknown[]>(
+  fn: (this: This, ...args: Args) => void,
   ms: number,
-): T & { cancel(): void } {
+): DebouncedFunction<This, Args> {
+  if (!Number.isFinite(ms) || ms < 0) {
+    throw new RangeError("Debounce delay must be a finite non-negative number");
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined;
-  // deno-lint-ignore no-explicit-any -- preserving original this/args for forwarding
-  const debounced = function (this: any, ...args: any[]) {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      fn.apply(this, args);
-    }, ms);
-  } as unknown as T & { cancel(): void };
-  debounced.cancel = () => {
-    clearTimeout(timer);
+  const cancel = () => {
+    if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
   };
-  return debounced;
+  const debounced = function (this: This, ...args: Args): void {
+    cancel();
+    timer = setTimeout(() => {
+      timer = undefined;
+      fn.apply(this, args);
+    }, ms);
+  };
+  return Object.assign(debounced, { cancel });
 }

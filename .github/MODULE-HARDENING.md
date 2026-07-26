@@ -26,14 +26,14 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    16 |      27.6% | Current formal closure evidence remains valid       |
+| Closed                         |    17 |      29.3% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    38 |      65.5% | Substantive recovered or current work exists        |
-| Pending current review         |     2 |       3.4% | No current authoritative-branch review delta exists |
+| Pending current review         |     1 |       1.7% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
 Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 56/58 (96.6%). This is progress coverage, not a substitute for the
+coverage of 57/58 (98.3%). This is progress coverage, not a substitute for the
 stricter closure count.
 
 ### Closed
@@ -53,6 +53,7 @@ stricter closure count.
 - `runtime`
 - `sandbox`
 - `schemas`
+- `studio`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
@@ -104,7 +105,6 @@ stricter closure count.
 ### Pending current review
 
 - `chat`
-- `studio`
 
 ## Historical recovery context
 
@@ -122,7 +122,8 @@ every affected unit.
 
 The current closed review chain covers `config`, `embedding`, `eval`,
 `extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `provider`,
-`repositories`, `runs`, `runtime`, `sandbox`, `schemas`, and `version.ts`. The
+`repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, and
+`version.ts`. The
 latest independent adversarial knowledge, Markdown, MDX, provider,
 repositories, runs, runtime, and sandbox findings are remediated and
 revalidated. `prompt` and `resource` have now received deep current-state
@@ -132,9 +133,9 @@ consumer map, deep module-level review, adversarial boundary tests,
 public-contract documentation, and repository-wide static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
-unit. `studio` is the next pending current-state target after this checkpoint
-is committed, pushed, and synchronized with `origin/main`; it is the smaller
-and more dependency-local of the two remaining untouched units.
+unit. `chat` is the sole unit still lacking a current authoritative-branch
+review delta and is the next dependency-ordered target after the Studio
+checkpoint is committed, pushed, and synchronized with `origin/main`.
 
 ### Issues closure checkpoint
 
@@ -1599,5 +1600,142 @@ config finding remains open.
 The compatibility surfaces are also documented in `src/config/README.md` and
 the public configuration guide. A module-hardening pass must not erase them as
 incidental cleanup.
+
+### Studio closure checkpoint
+
+The `studio` audit unit owns four related internal contracts: the bounded
+renderer/Studio `postMessage` protocol and schemas, server-side element
+identity injection, the iframe bridge runtime, and the generated browser
+artifact served by the Studio handler. Its production consumers are the HTML
+rendering orchestrator, authored-HTML injection, Markdown preview generation,
+the runtime handler chain, and the Veryfront Studio iframe. It has no public
+root npm export. The current Studio consumer was inspected to distinguish live
+protocol behavior from obsolete bridge fields and no-op actions.
+
+The current Studio findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** runtime config, schemas, and
+  the current Studio consumer disagreed about nullable selection and retained
+  obsolete direct-Yjs, provider, layout, and no-op action fields. The source
+  was parallel hand-written contracts with no consumer reconciliation. The
+  consequence was rejected selection clears and compatibility claims for
+  behavior the bridge did not implement. The live nullable selection contract
+  is now shared and tested; retired fields and actions fail explicitly; HTML
+  emitters send only the supported project, page, path, nonce, and source-hash
+  state.
+- **Symptom -> Source -> Consequence -> Remedy:** an unvalidated first message
+  could establish the parent origin, startup messages used permissive delivery,
+  and caller-owned or oversized values entered an unbounded queue. The source
+  was origin capture before parsing plus direct `postMessage` forwarding. The
+  consequence was confused-deputy delivery, mutable queued state, memory
+  pressure, and lifecycle reordering. The bridge now authenticates the parent
+  source and exact hosted/localhost origin, validates before committing the
+  session, snapshots side-effect-free bounded data, applies byte/count/action
+  budgets, preserves critical ordering, coalesces superseded state, and never
+  broadcasts with `*`.
+- **Symptom -> Source -> Consequence -> Remedy:** selector injection missed
+  authored full documents, treated markup-shaped text as tags, rewrote raw
+  text and plaintext content, accepted unsafe options, and could collide with
+  authored identities. The source was regex-oriented scanning and assumptions
+  about fragment-only HTML. The consequence was an empty or corrupt Navigator
+  and selectors that did not resolve to one element. A quote-aware,
+  comment/raw-text-aware lexical scanner now preserves malformed input, limits
+  work to the real `#root` subtree, respects ignored subtrees and authored
+  ownership, validates bounded data-only options, and allocates collision-free
+  identifiers. The shared nonce rewriter now uses the same offset-safe
+  primitives, including Unicode and streamed split-tag regressions.
+- **Symptom -> Source -> Consequence -> Remedy:** Navigator traversal,
+  attributes, text, mutation streams, and generated identities were
+  effectively unbounded and unstable across remounts. The source was recursive
+  DOM walking, broad collection scans, and selector interpolation. The
+  consequence was stack/memory pressure, identity drift, stale overlays, and
+  unsafe selector evaluation. Iterative depth/node/collection budgets,
+  exact-attribute lookup, canonical session identities, bounded mutation work,
+  remount reconciliation, ignored-subtree pruning, and explicit disposal now
+  preserve a schema-valid tree and release retained DOM references.
+- **Symptom -> Source -> Consequence -> Remedy:** console and runtime-error
+  forwarding invoked getters, serialization hooks, and coercion while leaking
+  credentials, URL metadata, and local paths. The source was
+  `JSON.stringify`, `String`, and raw browser diagnostics at the trust
+  boundary. The consequence was attacker-controlled side effects, secret
+  disclosure, and unbounded protocol output. Descriptor-based bounded
+  formatting now treats arbitrary objects as opaque, contains proxies and
+  cycles, redacts nested and repeatedly encoded credential names, sanitizes
+  source paths, and installs/restores only bridge-owned wrappers and listeners.
+- **Symptom -> Source -> Consequence -> Remedy:** screenshot capture fetched a
+  mutable CDN script at runtime, trusted ambient globals, had no aggregate
+  dimension/data/deadline limits, and could leave scrolling or timed-out work
+  active. The consequence was CSP and supply-chain failure, memory exhaustion,
+  overlapping captures, and corrupted viewport state. The renderer is pinned
+  and embedded from an isolated browser workspace/SBOM boundary; core remains
+  third-party-free. Capture now uses one absolute deadline, bounded dimensions,
+  pixels, sections and PNG bytes, asynchronous encoding with cancellation,
+  exclusive scroll ownership, quarantine for uncooperative timed-out work, and
+  deterministic generic failures.
+- **Symptom -> Source -> Consequence -> Remedy:** the bridge handler depended
+  on the process working directory, rebuilt immutable production output,
+  accepted incomplete cache validators, and leaked build diagnostics. The
+  source was request-local source discovery and ad hoc response handling. The
+  consequence was packaged-runtime failure, unnecessary subprocess work,
+  incorrect 304 responses, and disclosure of local details. Packaged and
+  production requests now serve the bounded checked-in artifact; only local
+  non-production source mode rebuilds, concurrent builds coalesce, failures
+  retry cleanly, GET/HEAD and RFC-compatible weak validators are handled
+  explicitly, and errors return a generic no-sniff JavaScript response.
+- **Symptom -> Source -> Consequence -> Remedy:** initialization and tests left
+  listeners, overlays, observers, timers, console wrappers, browser subprocess
+  pipes, and esbuild services without awaited ownership. The source was
+  one-way setup and asynchronous cleanup hidden behind sanitizer opt-outs. The
+  consequence was duplicate lifecycle messages, BFCache drift, hanging builds,
+  and green tests that suppressed resource leaks. Initialization/disposal is
+  idempotent and activation-aware; owned resources are removed in reverse
+  order; the release bundler stops its service in `finally`; Chromium closure
+  awaits its Node bridge, pipes, reads, and process with sanitizers enabled.
+- **Symptom -> Source -> Consequence -> Remedy:** the checked-in bundle could
+  drift from source and an unused Studio type facade duplicated constants and
+  schema exports. The consequence was source/prebuilt behavior divergence and
+  dead compatibility surface. One cwd-independent entry now drives release
+  and local builds, deterministic regeneration is verified, source-mode output
+  is compared byte-for-byte with release output, and the unused facade was
+  removed.
+
+Reproducible checkpoint evidence:
+
+- The complete Studio, handler, HTML, rendering, Markdown-preview, logger, and
+  Playwright-helper regression surface passed 99 suites and 411 steps with zero
+  failures.
+- Direct `src/studio` coverage is 83.4 percent branches, 96.5 percent
+  functions, and 84.3 percent lines. Boundary tests include hostile accessors
+  and proxies, oversized/deep payloads and DOMs, queue floods, timeouts,
+  cancellation, lifecycle teardown, remounts, malformed HTML, and source-path
+  redaction.
+- A real Chromium iframe established the trusted parent session, emitted only
+  schema-valid lifecycle state, captured a PNG through the embedded renderer,
+  made no external dependency request, produced no browser diagnostic, and
+  closed with Deno resource and operation sanitizers enabled.
+- Two independent prebundle runs produced the same generated artifact:
+  SHA-256
+  `568a36a21bf53c2d4665387f17d87401d2e9425daf6c5c131c94a7627153448a`.
+  The JavaScript payload is 512,448 characters, below its 4 MiB limit, and
+  contains no mutable CDN reference, unresolved npm/JSR specifier, module
+  import/export, or local filesystem path.
+- Local source-mode output is byte-identical to the release builder and is
+  independent of the caller's working directory. The prebuilt loader,
+  in-flight build coalescing, retry behavior, GET/HEAD responses, strong/weak
+  ETags, malformed validators, and sanitized failure response are covered.
+- `deno task verify:quick` passed generated-manifest checks, formatting, root
+  and browser lint, style and test ratchets, core/dependency/module/extension
+  boundaries, documentation validation with all 736 links, the full root
+  typecheck, and the browser workspace typecheck.
+- The architecture support matrix and browser-boundary README document
+  dependency ownership and packaged-runtime behavior. The core and CLI SBOM
+  boundaries both remain at zero third-party npm components.
+
+No unresolved critical or high-confidence Studio production risk remains.
+One bounded third-party limitation is explicit: cross-origin or browser-unsafe
+page assets can make canvas capture fail. The bridge returns a correlated,
+schema-valid generic failure, restores owned scroll state, and does not fall
+back to a remote script or ambient renderer; changing remote asset policy
+requires a separate product and security decision.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

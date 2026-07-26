@@ -1,141 +1,69 @@
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
-
-function findTagEnd(html: string, start: number): number {
-  let activeQuote: '"' | "'" | null = null;
-
-  for (let index = start + 1; index < html.length; index++) {
-    const char = html[index];
-
-    if (activeQuote) {
-      if (char === activeQuote) activeQuote = null;
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      activeQuote = char;
-      continue;
-    }
-
-    if (char === ">") return index;
-  }
-
-  return -1;
-}
+import {
+  findHtmlAttribute,
+  findHtmlRawTextClosingTagStart,
+  findHtmlTagEnd,
+  getHtmlAttributeInsertionIndex,
+  getOpeningHtmlTagName,
+  isSelfClosingHtmlTag,
+} from "./tag-scanner.ts";
 
 function getOpeningTagName(tag: string): "script" | "style" | undefined {
-  const match = /^<\s*([a-zA-Z][\w:-]*)/u.exec(tag);
-  const tagName = match?.[1]?.toLowerCase();
+  const tagName = getOpeningHtmlTagName(tag);
   if (tagName === "script" || tagName === "style") return tagName;
   return undefined;
 }
 
-function isTagBoundary(char: string | undefined): boolean {
-  return char === undefined || /\s|\/|>/u.test(char);
-}
-
-function findRawTextClosingTagStart(
-  lowerHtml: string,
-  tagName: "script" | "style",
-  fromIndex: number,
-): number {
-  const needle = `</${tagName}`;
-  let searchIndex = fromIndex;
-
-  while (searchIndex < lowerHtml.length) {
-    const closingIndex = lowerHtml.indexOf(needle, searchIndex);
-    if (closingIndex === -1) return -1;
-
-    if (isTagBoundary(lowerHtml[closingIndex + needle.length])) {
-      return closingIndex;
-    }
-
-    searchIndex = closingIndex + needle.length;
-  }
-
-  return -1;
-}
-
-interface ParsedAttribute {
-  name: string;
-  start: number;
-  end: number;
-  value: string | null;
-}
-
-function findAttribute(tag: string, attributeName: string): ParsedAttribute | undefined {
-  const closeIndex = tag.lastIndexOf(">");
-  if (closeIndex <= 0) return undefined;
-
-  let index = 1;
-  while (index < closeIndex && !/\s|\/|>/u.test(tag[index] ?? "")) index++;
-
-  while (index < closeIndex) {
-    while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
-    if (index >= closeIndex) break;
-
-    const char = tag[index];
-    if (char === "/" || char === ">") break;
-
-    const start = index;
-    while (index < closeIndex && !/[\s=/>]/u.test(tag[index] ?? "")) index++;
-    const name = tag.slice(start, index);
-
-    while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
-
-    let value: string | null = null;
-    if (tag[index] === "=") {
-      index++;
-      while (index < closeIndex && /\s/u.test(tag[index] ?? "")) index++;
-
-      const quote = tag[index];
-      if (quote === '"' || quote === "'") {
-        index++;
-        const valueStart = index;
-        while (index < closeIndex && tag[index] !== quote) index++;
-        value = tag.slice(valueStart, index);
-        if (index < closeIndex) index++;
-      } else {
-        const valueStart = index;
-        while (index < closeIndex && !/[\s>]/u.test(tag[index] ?? "")) index++;
-        value = tag.slice(valueStart, index);
-      }
-    }
-
-    if (name.toLowerCase() === attributeName) {
-      return { name, start, end: index, value };
-    }
-  }
-
-  return undefined;
-}
-
 function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
-  const existingNonce = findAttribute(tag, "nonce");
+  const existingNonce = findHtmlAttribute(tag, "nonce");
   if (existingNonce) {
     return `${tag.slice(0, existingNonce.start)}nonce="${escapedNonce}"${
       tag.slice(existingNonce.end)
     }`;
   }
 
-  const closeIndex = tag.lastIndexOf(">");
-  if (closeIndex === -1) return tag;
-
-  const insertAt = /\/\s*>$/u.test(tag) ? closeIndex - 1 : closeIndex;
+  const insertAt = getHtmlAttributeInsertionIndex(tag);
+  if (insertAt === -1) return tag;
   return `${tag.slice(0, insertAt)} nonce="${escapedNonce}"${tag.slice(insertAt)}`;
+}
+
+type NonceTagCandidate = "script" | "style" | "incomplete" | null;
+
+function classifyNonceTagCandidate(
+  html: string,
+  start: number,
+  flush: boolean,
+): NonceTagCandidate {
+  const remaining = html.slice(start);
+  if (!flush && "<!--".startsWith(remaining)) return "incomplete";
+
+  const firstNameCharacter = html[start + 1];
+  if (firstNameCharacter === undefined) return flush ? null : "incomplete";
+  if (!/[a-z]/i.test(firstNameCharacter)) return null;
+
+  let nameEnd = start + 1;
+  while (nameEnd < html.length && /[\w:-]/u.test(html[nameEnd] ?? "")) nameEnd++;
+  const name = html.slice(start + 1, nameEnd).toLowerCase();
+  const candidates = ["script", "style"] as const;
+
+  if (nameEnd === html.length && !flush) {
+    return candidates.some((candidate) => candidate.startsWith(name)) ? "incomplete" : null;
+  }
+  if (!candidates.includes(name as "script" | "style")) return null;
+  return /\s|\/|>/u.test(html[nameEnd] ?? "") ? name as "script" | "style" : null;
 }
 
 export function addNonceToHtmlTags(html: string, nonce?: string): string {
   if (!nonce) return html;
 
   const escapedNonce = escapeHtml(nonce);
-  const lowerHtml = html.toLowerCase();
   let result = "";
   let index = 0;
   let rawTextTag: "script" | "style" | null = null;
 
   while (index < html.length) {
     if (rawTextTag) {
-      const closingIndex = findRawTextClosingTagStart(lowerHtml, rawTextTag, index);
+      const closingIndex = findHtmlRawTextClosingTagStart(html, rawTextTag, index);
       if (closingIndex === -1) {
         result += html.slice(index);
         break;
@@ -161,7 +89,7 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
       continue;
     }
 
-    const tagEnd = findTagEnd(html, index);
+    const tagEnd = findHtmlTagEnd(html, index);
     if (tagEnd === -1) {
       result += html.slice(index);
       break;
@@ -171,15 +99,18 @@ export function addNonceToHtmlTags(html: string, nonce?: string): string {
     const tagName = getOpeningTagName(tag);
 
     if (!tagName) {
-      result += tag;
-      index = tagEnd + 1;
+      // A text comparison such as `< 2` may precede a real tag before the
+      // next `>`. Consume only the non-tag `<` so that later markup remains
+      // discoverable and byte-for-byte preserved.
+      result += "<";
+      index++;
       continue;
     }
 
     result += injectNonceIntoOpeningTag(tag, escapedNonce);
     index = tagEnd + 1;
 
-    if (!/\/\s*>$/u.test(tag)) {
+    if (!isSelfClosingHtmlTag(tag)) {
       rawTextTag = tagName;
     }
   }
@@ -197,7 +128,6 @@ export function addNonceToHtmlStream(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
-  let lowerBuffer = "";
   let rawTextTag: "script" | "style" | null = null;
 
   function transformBuffer(flush: boolean): string {
@@ -206,7 +136,7 @@ export function addNonceToHtmlStream(
 
     while (index < buffer.length) {
       if (rawTextTag) {
-        const closingIndex = findRawTextClosingTagStart(lowerBuffer, rawTextTag, index);
+        const closingIndex = findHtmlRawTextClosingTagStart(buffer, rawTextTag, index);
         if (closingIndex === -1) {
           if (flush) {
             result += buffer.slice(index);
@@ -251,7 +181,15 @@ export function addNonceToHtmlStream(
         continue;
       }
 
-      const tagEnd = findTagEnd(buffer, index);
+      const candidate = classifyNonceTagCandidate(buffer, index, flush);
+      if (candidate === "incomplete") break;
+      if (candidate === null) {
+        result += "<";
+        index++;
+        continue;
+      }
+
+      const tagEnd = findHtmlTagEnd(buffer, index);
       if (tagEnd === -1) {
         if (flush) {
           result += buffer.slice(index);
@@ -272,14 +210,13 @@ export function addNonceToHtmlStream(
       result += injectNonceIntoOpeningTag(tag, escapedNonce);
       index = tagEnd + 1;
 
-      if (!/\/\s*>$/u.test(tag)) {
+      if (!isSelfClosingHtmlTag(tag)) {
         rawTextTag = tagName;
       }
     }
 
     if (index > 0) {
       buffer = buffer.slice(index);
-      lowerBuffer = buffer.toLowerCase();
     }
     return result;
   }
@@ -302,7 +239,6 @@ export function addNonceToHtmlStream(
           if (done) {
             const decoded = decoder.decode();
             buffer += decoded;
-            lowerBuffer += decoded.toLowerCase();
             const transformed = transformBuffer(true);
             if (transformed) controller.enqueue(encoder.encode(transformed));
             controller.close();
@@ -312,7 +248,6 @@ export function addNonceToHtmlStream(
 
           const decoded = decoder.decode(value, { stream: true });
           buffer += decoded;
-          lowerBuffer += decoded.toLowerCase();
           const transformed = transformBuffer(false);
           if (transformed) {
             controller.enqueue(encoder.encode(transformed));

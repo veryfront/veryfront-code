@@ -80,6 +80,7 @@ function buildStudioScript(
     pageId: canonicalPageId,
     pagePath: filePath,
   };
+  if (nonce) bridgeConfig.nonce = nonce;
 
   // Escape </script> sequences to prevent XSS breakout from inline JSON
   const safeJson = JSON.stringify(bridgeConfig).replace(/</g, "\\u003c");

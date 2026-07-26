@@ -107,15 +107,23 @@ export interface InjectHTMLContentOptions {
   projectId?: string;
   /** Page ID for Studio communication */
   pageId?: string;
+  /** Hash of the rendered source for Studio navigator synchronization */
+  sourceHash?: string;
   /** CSP nonce */
   nonce?: string;
   /** Deployment environment for hydration module selection */
   environment?: "preview" | "production";
   /** Whether the request is being served from a local project */
   isLocalProject?: boolean;
-  /** WebSocket URL for direct Yjs connection from the bridge */
+  /**
+   * @deprecated Retained for source compatibility. The Studio bridge no
+   * longer opens a direct Yjs connection.
+   */
   wsUrl?: string;
-  /** Yjs document GUID for the bridge to join the same room */
+  /**
+   * @deprecated Retained for source compatibility. The Studio bridge no
+   * longer joins Yjs rooms directly.
+   */
   yjsGuid?: string;
   /** Pre-built import map JSON for ESM module resolution (injected into <head>) */
   importMapJson?: string;
@@ -296,9 +304,11 @@ export function injectHTMLContent(
     const studioScripts = getStudioScripts({
       projectId: options.projectId ?? options.slug,
       pageId: options.pageId ?? options.slug,
+      pagePath: options.pagePath
+        ? toProjectRelativePath(options.pagePath, options.projectDir)
+        : undefined,
       nonce: options.nonce,
-      wsUrl: options.wsUrl,
-      yjsGuid: options.yjsGuid,
+      sourceHash: options.sourceHash,
     });
     html = replaceLiteral(html, /<\/body>/i, `${studioScripts}</body>`);
   }

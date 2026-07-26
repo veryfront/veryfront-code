@@ -335,6 +335,7 @@ const NORMALIZED_SENSITIVE_URL_PARAMS = new Set(SENSITIVE_URL_PARAMS.map(normali
 const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/|\/\/)([^/?#\s]+)@/gi;
 const HORIZONTAL_WHITESPACE_URL_USERINFO_RE =
   /(\b[a-z][a-z0-9+.-]*:\/\/|\/\/)([a-z0-9._~!$&'()*+,;=%-]+):([^/?#@\r\n \t]+[ \t][^/?#@\r\n]*)@/gi;
+const MAX_URL_PARAMETER_DECODE_PASSES = 3;
 
 interface RedactedAssignmentValue {
   end: number;
@@ -569,6 +570,21 @@ function isStandaloneUrlAuthorityBeforeWhitespace(
   }
 }
 
+function decodeUrlParameterName(value: string): string {
+  let decoded = value;
+  for (let pass = 0; pass < MAX_URL_PARAMETER_DECODE_PASSES; pass++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      break;
+    }
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded;
+}
+
 /**
  * Strip credentials from URL-shaped strings so they can be safely emitted in
  * free-form text (error messages, stacks, lifted `request_url` fields). Unlike
@@ -619,17 +635,11 @@ export function sanitizeUrlCredentials(input: string): string {
   // Match `?key=`, `#key=`, `&key=`, and `;key=` separators and stop at the
   // next delimiter. OAuth implicit-flow tokens commonly appear after `#`.
   out = out.replace(
-    /([?#&;])([a-z0-9_.%\-]+)=([^&#;\s]*)/gi,
+    /([?#&;])([-a-z0-9_.%\[\]]+)=([^&#;\s]*)/gi,
     (match, sep: string, key: string, _val: string) => {
-      let decodedKey = key;
-      try {
-        decodedKey = decodeURIComponent(key);
-      } catch {
-        // A malformed encoded key cannot be normalized more precisely.
-      }
-      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(
-        normalizeToAlphanumeric(decodedKey),
-      );
+      const decodedKey = decodeUrlParameterName(key);
+      const sensitive = NORMALIZED_SENSITIVE_URL_PARAMS.has(normalizeToAlphanumeric(decodedKey)) ||
+        isSensitiveKey(decodedKey);
       return sensitive ? `${sep}${key}=${REDACTED}` : match;
     },
   );

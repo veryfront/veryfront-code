@@ -83,6 +83,27 @@ describe("html/nonce-injection", () => {
     assertEquals(html.includes('<style nonce="nonce-123">.x{color:red}</style>'), false);
   });
 
+  it("does not let comparison text consume a later script tag", () => {
+    assertEquals(
+      addNonceToHtmlTags(
+        `Price < 2 and template <not-a-tag <script>window.__vf=1</script>`,
+        "nonce-123",
+      ),
+      `Price < 2 and template <not-a-tag <script nonce="nonce-123">window.__vf=1</script>`,
+    );
+  });
+
+  it("preserves Unicode raw text while finding ASCII case-insensitive closing tags", () => {
+    assertEquals(
+      addNonceToHtmlTags(
+        `<SCRIPT>const label = "İ";</ScRiPt><style>body{color:red}</style>`,
+        "nonce-123",
+      ),
+      `<SCRIPT nonce="nonce-123">const label = "İ";</ScRiPt>` +
+        `<style nonce="nonce-123">body{color:red}</style>`,
+    );
+  });
+
   it("does not treat data-nonce as an existing nonce attribute", () => {
     const html = addNonceToHtmlTags(
       `<script data-nonce="existing">window.__vf=1</script>`,
@@ -131,6 +152,30 @@ describe("html/nonce-injection", () => {
       html,
       '<script nonce="nonce-123">window.tpl="<style>.x{color:red}</style>";</script>' +
         '<style nonce="nonce-123">.chat{color:red}</style>',
+    );
+  });
+
+  it("streams non-tag less-than text without hiding later split tags", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (
+          const chunk of [
+            "Price < 2 and ",
+            "<not-a-tag without a close ",
+            "<scr",
+            "ipt>İ</SCRIPT>",
+          ]
+        ) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    assertEquals(
+      await readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123")),
+      `Price < 2 and <not-a-tag without a close <script nonce="nonce-123">İ</SCRIPT>`,
     );
   });
 

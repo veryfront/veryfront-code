@@ -180,13 +180,7 @@ export class HTMLGenerator {
     } else {
       html = await this.wrapHTMLFragment(context);
     }
-    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
-
-    if (context.options?.studioEmbed) {
-      logger.debug("Injected element selectors for Studio");
-    }
-
-    return addNonceToHtmlTags(finalHtml, context.options?.nonce);
+    return this.finalizeHTML(html, context.options);
   }
 
   async generateHTMLStream(
@@ -208,12 +202,12 @@ export class HTMLGenerator {
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
-      const fullHtml = addNonceToHtmlTags(
+      const fullHtml = this.finalizeHTML(
         await this.handleFullHTMLDocument({
           ...fullContext,
           html: reactContent,
         }),
-        context.options?.nonce,
+        context.options,
       );
 
       return new ReadableStream({
@@ -245,9 +239,9 @@ export class HTMLGenerator {
     );
 
     const encoder = new TextEncoder();
-    const fullHtml = addNonceToHtmlTags(
+    const fullHtml = this.finalizeHTML(
       `${start}${reactContent}${end}`,
-      context.options?.nonce,
+      context.options,
     );
 
     return new ReadableStream({
@@ -312,11 +306,24 @@ export class HTMLGenerator {
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
+      studioEmbed: htmlOptions.studioEmbed,
+      projectId: htmlOptions.projectId,
+      pageId: htmlOptions.pageId,
+      sourceHash: htmlOptions.sourceHash,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;
 
     return `<!DOCTYPE html>\n${injectedHtml}`;
+  }
+
+  private finalizeHTML(
+    html: string,
+    options: HTMLGenerationContext["options"],
+  ): string {
+    const withStudioSelectors = options?.studioEmbed ? injectElementSelectors(html) : html;
+    if (options?.studioEmbed) logger.debug("Injected element selectors for Studio");
+    return addNonceToHtmlTags(withStudioSelectors, options?.nonce);
   }
 
   private async resolveProjectStylesheetHref(

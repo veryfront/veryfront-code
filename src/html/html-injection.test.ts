@@ -24,6 +24,12 @@ function extractHydrationData(html: string): Record<string, unknown> {
   return JSON.parse(match[1]);
 }
 
+function extractBridgeConfig(html: string): Record<string, unknown> {
+  const match = html.match(/window\.__VF_BRIDGE_CONFIG__=(\{.*?\});<\/script>/);
+  assertExists(match?.[1], "expected Studio bridge config script in HTML");
+  return JSON.parse(match[1]);
+}
+
 describe("html/html-injection", () => {
   describe("injectHTMLContent", () => {
     it("should replace content placeholder", () => {
@@ -381,6 +387,33 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes("studio-bridge.js"), true);
+    });
+
+    it("passes a project-relative page path and CSP nonce to the Studio bridge", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          studioEmbed: true,
+          projectId: "p1",
+          pageId: "pg1",
+          pagePath: "/workspace/project/pages/index.tsx",
+          projectDir: "/workspace/project",
+          nonce: "nonce-123",
+          wsUrl: "wss://retired.example/socket",
+          yjsGuid: "retired-room",
+        },
+      );
+
+      assertEquals(extractBridgeConfig(html), {
+        projectId: "p1",
+        pageId: "pg1",
+        pagePath: "pages/index.tsx",
+        nonce: "nonce-123",
+      });
     });
 
     it("propagates the nonce to injected development styles and scripts", () => {

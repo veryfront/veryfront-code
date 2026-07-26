@@ -16,6 +16,12 @@ function makeOptions(overrides: Partial<Parameters<typeof generateMarkdownHtml>[
   };
 }
 
+function extractBridgeConfig(html: string): Record<string, unknown> {
+  const match = html.match(/window\.__VF_BRIDGE_CONFIG__=(\{.*?\});<\/script>/);
+  assert(match?.[1]);
+  return JSON.parse(match[1]);
+}
+
 describe("generateMarkdownHtml", () => {
   describe("XSS prevention", () => {
     it("escapes HTML in title", () => {
@@ -146,6 +152,7 @@ describe("generateMarkdownHtml", () => {
     assert(html.includes('<script nonce="nonce-123">window.__VF_BRIDGE_CONFIG__='));
     assert(html.includes('<script type="module" nonce="nonce-123">'));
     assert(html.includes('<script src="/_veryfront/preview-hmr.js" nonce="nonce-123"></script>'));
+    assert(extractBridgeConfig(html).nonce === "nonce-123");
   });
 
   it("uses the audited Mermaid pin and preserves readable source on render failures", () => {

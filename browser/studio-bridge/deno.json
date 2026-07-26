@@ -1,0 +1,13 @@
+{
+  "name": "@veryfront/studio-bridge-runtime",
+  "version": "0.1.0",
+  "exports": "./entry.ts",
+  "imports": {
+    "html2canvas-pro": "npm:html2canvas-pro@2.0.0"
+  },
+  "tasks": {
+    "check": "deno check entry.ts",
+    "lint": "deno lint .",
+    "test": "deno task check"
+  }
+}

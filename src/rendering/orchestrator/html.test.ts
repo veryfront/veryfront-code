@@ -33,6 +33,12 @@ type Head = {
 const REACT_HASH = "e".repeat(64);
 const REACT_CDN_URL = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
 
+function extractBridgeConfig(html: string): Record<string, unknown> {
+  const match = html.match(/window\.__VF_BRIDGE_CONFIG__=(\{.*?\});<\/script>/);
+  assertExists(match?.[1], "expected Studio bridge config script");
+  return JSON.parse(match[1]);
+}
+
 function releaseManifest(): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
@@ -300,6 +306,42 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateFullHTML", () => {
+    it("fully initializes Studio for authored HTML documents", async () => {
+      const html = await createHTMLGenerator().generateFullHTML(
+        createHTMLContext({
+          html:
+            '<!DOCTYPE html><html><head></head><body><div id="root"><main>Hello</main></div></body></html>',
+          pageInfo: {
+            entity: {
+              path: "/project/app/page.tsx",
+              content: "export default function Page() { return <main>Hello</main>; }",
+              frontmatter: {},
+            },
+          } as never,
+          options: {
+            studioEmbed: true,
+            projectId: "project-1",
+            pageId: "page-1",
+            nonce: "nonce-123",
+          },
+        }),
+      );
+
+      assertEquals(extractBridgeConfig(html), {
+        projectId: "project-1",
+        pageId: "page-1",
+        pagePath: "app/page.tsx",
+        nonce: "nonce-123",
+      });
+      assertStringIncludes(html, "window.__VERYFRONT_SOURCE_HASH__=");
+      assertStringIncludes(html, 'data-vf-selector="vf-div-1"');
+      assertStringIncludes(html, 'data-vf-selector="vf-main-2"');
+      assertStringIncludes(
+        html,
+        '<script type="module" src="/_veryfront/studio-bridge.js" nonce="nonce-123"></script>',
+      );
+    });
+
     it("applies collected metadata precedence to full HTML documents", async () => {
       const html = await createHTMLGenerator().generateFullHTML(
         createHTMLContext({
@@ -894,6 +936,33 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateHTMLStream", () => {
+    it("finalizes Studio selectors and bridge scripts for both streamed document shapes", async () => {
+      const generator = createHTMLGenerator();
+      for (
+        const source of [
+          '<!DOCTYPE html><html><head></head><body><div id="root"><main>Full</main></div></body></html>',
+          "<main>Fragment</main>",
+        ]
+      ) {
+        const responseStream = await generator.generateHTMLStream(
+          createSingleChunkStream(source),
+          createHTMLContext({
+            options: {
+              studioEmbed: true,
+              projectId: "project-1",
+              pageId: "page-1",
+              nonce: "nonce-123",
+            },
+          }),
+        );
+        const html = await new Response(responseStream).text();
+
+        assertStringIncludes(html, "/_veryfront/studio-bridge.js");
+        assertStringIncludes(html, 'data-vf-selector="vf-main-');
+        assertEquals(extractBridgeConfig(html).nonce, "nonce-123");
+      }
+    });
+
     it("preserves full-document layout output when streaming app-router pages", async () => {
       const mockAdapter = createMockAdapter(async () => `'use client';`);
 

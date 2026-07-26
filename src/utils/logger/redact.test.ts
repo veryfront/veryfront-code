@@ -456,6 +456,26 @@ describe("logger/redact", () => {
       );
     });
 
+    it("masks repeatedly encoded and bracket-notation credential parameters", () => {
+      const sanitized = sanitizeUrlCredentials(
+        "https://app.example.test/" +
+          "?%2561ccess%255Ftoken=double-encoded" +
+          "&access_token[]=array-secret" +
+          "&auth[token]=nested-secret" +
+          "&route_state=canvas",
+      );
+
+      assertEquals(
+        sanitized,
+        "https://app.example.test/" +
+          `?%2561ccess%255Ftoken=${REDACTED}` +
+          `&access_token[]=${REDACTED}` +
+          `&auth[token]=${REDACTED}` +
+          "&route_state=canvas",
+      );
+      assertEquals(sanitizeUrlCredentials(sanitized), sanitized);
+    });
+
     it("masks AWS and Google signed-URL credential parameters", () => {
       const sanitized = sanitizeUrlCredentials(
         "https://storage.example.test/object" +

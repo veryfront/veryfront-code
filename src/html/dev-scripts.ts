@@ -59,9 +59,15 @@ interface StudioScriptOptions {
   nonce?: string;
   /** Hash of source code for sync detection with Navigator tree */
   sourceHash?: string;
-  /** WebSocket URL for direct Yjs connection from the bridge */
+  /**
+   * @deprecated Retained for source compatibility. The Studio bridge no
+   * longer opens a direct Yjs connection.
+   */
   wsUrl?: string;
-  /** Yjs document GUID for the bridge to join the same room */
+  /**
+   * @deprecated Retained for source compatibility. The Studio bridge no
+   * longer joins Yjs rooms directly.
+   */
   yjsGuid?: string;
 }
 
@@ -73,8 +79,7 @@ export function getStudioScripts(options: StudioScriptOptions): string {
     pageId: options.pageId,
     pagePath: options.pagePath ?? options.pageId,
   };
-  if (options.wsUrl) bridgeConfig.wsUrl = options.wsUrl;
-  if (options.yjsGuid) bridgeConfig.yjsGuid = options.yjsGuid;
+  if (options.nonce) bridgeConfig.nonce = options.nonce;
 
   const sourceHashScript = options.sourceHash
     ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__=${

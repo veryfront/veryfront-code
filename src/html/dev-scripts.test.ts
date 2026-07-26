@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getDevScripts,
@@ -8,6 +8,12 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+
+function extractBridgeConfig(scripts: string): Record<string, unknown> {
+  const match = scripts.match(/window\.__VF_BRIDGE_CONFIG__=(\{.*?\});<\/script>/);
+  assertExists(match?.[1], "expected Studio bridge config script");
+  return JSON.parse(match[1]);
+}
 
 describe("html/dev-scripts", () => {
   describe("getPreviewStylesheetLink", () => {
@@ -81,27 +87,41 @@ describe("html/dev-scripts", () => {
   describe("getStudioScripts", () => {
     it("should include projectId and pageId", () => {
       const scripts = getStudioScripts({ projectId: "proj1", pageId: "page1" });
-      assertEquals(scripts.includes('"projectId":"proj1"'), true);
-      assertEquals(scripts.includes('"pageId":"page1"'), true);
+      assertEquals(extractBridgeConfig(scripts), {
+        projectId: "proj1",
+        pageId: "page1",
+        pagePath: "page1",
+      });
       assertEquals(scripts.includes("studio-bridge.js"), true);
     });
 
-    it("should include nonce when provided", () => {
+    it("should include nonce in both markup and runtime config", () => {
       const scripts = getStudioScripts({
         projectId: "p",
         pageId: "pg",
         nonce: "xyz",
       });
       assertEquals(scripts.includes('nonce="xyz"'), true);
+      assertEquals(extractBridgeConfig(scripts).nonce, "xyz");
     });
 
-    it("should escape nonce when provided", () => {
+    it("should encode nonce independently for HTML and inline JavaScript", () => {
       const scripts = getStudioScripts({
         projectId: "p",
         pageId: "pg",
-        nonce: '"x<y>"',
+        nonce: '"x</script><y>"',
       });
-      assertEquals(scripts.includes('nonce="&quot;x&lt;y&gt;&quot;"'), true);
+      assertEquals(
+        scripts.includes('nonce="&quot;x&lt;/script&gt;&lt;y&gt;&quot;"'),
+        true,
+      );
+      assertEquals(extractBridgeConfig(scripts).nonce, '"x</script><y>"');
+      assertEquals(
+        scripts.includes(
+          'window.__VF_BRIDGE_CONFIG__={"projectId":"p","pageId":"pg","pagePath":"pg","nonce":"\\"x</script>',
+        ),
+        false,
+      );
     });
 
     it("should include sourceHash script when provided", () => {
@@ -120,7 +140,20 @@ describe("html/dev-scripts", () => {
         pageId: "pg",
         pagePath: "/app/page.tsx",
       });
-      assertEquals(scripts.includes("pagePath"), true);
+      assertEquals(extractBridgeConfig(scripts).pagePath, "/app/page.tsx");
+    });
+
+    it("does not emit retired direct-Yjs config fields", () => {
+      const scripts = getStudioScripts({
+        projectId: "p",
+        pageId: "pg",
+        wsUrl: "wss://example.test/socket",
+        yjsGuid: "room-1",
+      });
+      const config = extractBridgeConfig(scripts);
+
+      assertEquals(Object.hasOwn(config, "wsUrl"), false);
+      assertEquals(Object.hasOwn(config, "yjsGuid"), false);
     });
   });
 });

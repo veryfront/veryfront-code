@@ -8,34 +8,54 @@
 import { logger } from "./bridge-logger.ts";
 import { state } from "./bridge-state.ts";
 import { getConfig } from "./bridge-config.ts";
-import { postToStudio } from "./bridge-messaging.ts";
+import { disposeMessaging, postToStudio } from "./bridge-messaging.ts";
 import { injectOverlayStyles } from "./bridge-styles.ts";
 import {
   createOverlay,
+  disposeInspector,
   setColorMode,
   setupInspectMode,
   setupMutationObserver,
 } from "./bridge-inspector.ts";
-import { setupConsoleCapture, setupErrorHandling } from "./bridge-console.ts";
-import { handleStudioMessage } from "./bridge-message-handler.ts";
+import {
+  disposeConsoleCapture,
+  disposeErrorHandling,
+  setupConsoleCapture,
+  setupErrorHandling,
+} from "./bridge-console.ts";
+import {
+  handleStudioMessage,
+  invalidateStudioMessageOperations,
+} from "./bridge-message-handler.ts";
+import { getStudioLocationHref } from "./bridge-location.ts";
 
-function notifyAppLoaded(): void {
+let initialized = false;
+let appLifecycleActive = false;
+let domContentLoadedListener: (() => void) | null = null;
+let ownedOverlayStyle: HTMLStyleElement | null = null;
+let ownedHoverOverlay: HTMLElement | null = null;
+let ownedSelectionOverlay: HTMLElement | null = null;
+
+function notifyAppLoaded(isInitialLoad: boolean): void {
+  if (appLifecycleActive) return;
   const config = getConfig();
+  const url = getStudioLocationHref();
+  appLifecycleActive = true;
 
-  postToStudio({ action: "appLoaded", url: window.location.href });
+  postToStudio({ action: "appLoaded", url });
 
   postToStudio({
     action: "appUpdated",
-    url: window.location.href,
+    url,
     id: config.pageId,
-    isInitialLoad: true,
+    isInitialLoad,
     errors: [],
     warnings: [],
   });
 
   postToStudio({
     action: "onPageTransitionEnd",
-    url: window.location.href,
+    url,
     projectId: config.projectId,
     id: config.pageId,
     params: {},
@@ -43,64 +63,110 @@ function notifyAppLoaded(): void {
 }
 
 function notifyAppUnloaded(): void {
-  postToStudio({ action: "appUnloaded", url: window.location.href });
+  if (!appLifecycleActive) return;
+  appLifecycleActive = false;
+  invalidateStudioMessageOperations();
+  postToStudio({ action: "appUnloaded", url: getStudioLocationHref() });
+}
+
+function handlePageHide(_event: PageTransitionEvent): void {
+  notifyAppUnloaded();
+}
+
+function handlePageShow(event: PageTransitionEvent): void {
+  // A non-persisted pageshow is the initial document activation, which the DOM
+  // readiness path already announces. A persisted pageshow restores this same
+  // bridge instance from the back-forward cache and starts a new active cycle.
+  if (!event.persisted || appLifecycleActive) return;
+  notifyAppLoaded(false);
+  setupMutationObserver();
 }
 
 export function init(): void {
-  const params = new URLSearchParams(window.location.search);
-  const studioEmbed = params.get("studio_embed") === "true";
-  const isStandalone = window.parent === window && !studioEmbed;
-
-  if (isStandalone) {
+  if (initialized) return;
+  if (globalThis.window.parent === globalThis.window) {
     logger.debug(
-      "[StudioBridge] Not in iframe and not studio_embed mode, skipping initialization",
+      "[StudioBridge] No parent browsing context, skipping initialization",
     );
     return;
   }
+  const params = new URLSearchParams(globalThis.window.location.search);
 
+  initialized = true;
   logger.debug("Initializing...");
-
-  // Only set up Studio interaction features when embedded in Studio
-  if (!isStandalone) {
-    injectOverlayStyles();
-    state.hoverOverlay = createOverlay("hover");
-    state.selectionOverlay = createOverlay("selection");
+  try {
+    ownedOverlayStyle = injectOverlayStyles(getConfig().nonce);
+    ownedHoverOverlay = createOverlay("hover");
+    ownedSelectionOverlay = createOverlay("selection");
+    state.hoverOverlay = ownedHoverOverlay;
+    state.selectionOverlay = ownedSelectionOverlay;
 
     setupConsoleCapture();
     setupErrorHandling();
     setupInspectMode();
-  }
 
-  // Intentionally permanent: message listener persists for the bridge's lifetime
-  window.addEventListener("message", handleStudioMessage);
+    globalThis.window.addEventListener("message", handleStudioMessage);
 
-  if (!isStandalone) {
     // IMPORTANT: notifyAppLoaded() must be called BEFORE setupMutationObserver()
     // because notifyAppLoaded sends onPageTransitionEnd which sets previewId,
     // and treeUpdated (from setupMutationObserver) requires previewId to be set
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", function () {
-        notifyAppLoaded();
+      domContentLoadedListener = () => {
+        domContentLoadedListener = null;
+        notifyAppLoaded(true);
         setupMutationObserver();
-      }, { once: true });
+      };
+      document.addEventListener("DOMContentLoaded", domContentLoadedListener, { once: true });
     } else {
-      notifyAppLoaded();
+      notifyAppLoaded(true);
       setupMutationObserver();
     }
 
-    window.addEventListener("beforeunload", notifyAppUnloaded, { once: true });
-  }
+    globalThis.window.addEventListener("pagehide", handlePageHide);
+    globalThis.window.addEventListener("pageshow", handlePageShow);
 
-  const colorMode = params.get("color_mode");
-  if (colorMode) setColorMode(colorMode);
+    const colorMode = params.get("color_mode");
+    if (colorMode) setColorMode(colorMode);
 
-  if (!isStandalone) {
     const inspectModeParam = params.get("inspect_mode");
     if (inspectModeParam === "true") {
       state.inspectMode = true;
       logger.debug("Inspect mode enabled from query param");
     }
-  }
 
-  logger.debug("Initialized successfully");
+    logger.debug("Initialized successfully");
+  } catch (error) {
+    dispose();
+    throw error;
+  }
+}
+
+/** Release every global listener and DOM node owned by the Studio bridge. */
+export function dispose(): void {
+  invalidateStudioMessageOperations();
+  if (domContentLoadedListener) {
+    document.removeEventListener("DOMContentLoaded", domContentLoadedListener);
+    domContentLoadedListener = null;
+  }
+  globalThis.window.removeEventListener("message", handleStudioMessage);
+  globalThis.window.removeEventListener("pagehide", handlePageHide);
+  globalThis.window.removeEventListener("pageshow", handlePageShow);
+  disposeInspector();
+  disposeErrorHandling();
+  disposeConsoleCapture();
+  disposeMessaging();
+
+  ownedOverlayStyle?.remove();
+  ownedHoverOverlay?.remove();
+  ownedSelectionOverlay?.remove();
+  if (state.hoverOverlay === ownedHoverOverlay) state.hoverOverlay = null;
+  if (state.selectionOverlay === ownedSelectionOverlay) state.selectionOverlay = null;
+  ownedOverlayStyle = null;
+  ownedHoverOverlay = null;
+  ownedSelectionOverlay = null;
+  state.inspectMode = false;
+  state.hoveredNodeId = null;
+  state.selectedNodeId = null;
+  appLifecycleActive = false;
+  initialized = false;
 }
