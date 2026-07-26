@@ -430,11 +430,10 @@ function loadAndTranspileModule(
       const allowedHosts = await loadSecurityConfig(projectDir, adapter);
       validateHTTPImports(source, allowedHosts);
 
-      const projectSourceFs = {
-        ...fs,
+      const projectSourceReader = {
         readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
       };
-      const allDeps = await readProjectDependencies(projectDir, projectSourceFs);
+      const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
