@@ -68,7 +68,7 @@ Execute a bash command in the sandbox and return buffered stdout/stderr plus the
 
 ### `sandbox.executeStream(command, options)`
 
-Execute a bash command and stream newline-delimited JSON (NDJSON) output events as they arrive.
+Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.
 
 **Returns:** <code>AsyncGenerator&lt;ExecStreamEvent&gt;</code>
 

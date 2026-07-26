@@ -1778,7 +1778,7 @@ const METHOD_DESCRIPTIONS: Record<
     },
     executeStream: {
       desc:
-        "Execute a bash command and stream newline-delimited JSON (NDJSON) output events as they arrive.",
+        "Execute a bash command in the sandbox and stream newline-delimited JSON (NDJSON) output events as they arrive.",
       params: { command: "Bash command string to execute in the sandbox." },
     },
     readFile: {
