@@ -149,6 +149,12 @@ describe("control-plane run route classification", () => {
       { method: "POST", pathname: "/api/control-plane/runs/run_1/execute" },
       { method: "GET", pathname: "/api/control-plane/runs/run_1/stream" },
       { method: "DELETE", pathname: "/api/control-plane/runs/run_1/extra" },
+      { method: "POST", pathname: "/api/control-plane/runs/run%2Fother/stream" },
+      { method: "POST", pathname: "/api/control-plane/runs/run.with-dot/stream" },
+      {
+        method: "POST",
+        pathname: `/api/control-plane/runs/${"r".repeat(129)}/stream`,
+      },
       { method: "POST", pathname: "/page" },
     ]
   ) {

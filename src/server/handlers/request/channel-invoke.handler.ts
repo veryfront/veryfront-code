@@ -55,7 +55,12 @@ export class ChannelInvokeHandler extends BaseHandler {
         return this.respond(dispatchRequest.response);
       }
 
-      const response = await executeChannelInvoke(dispatchRequest.payload, ctx, this.deps);
+      const response = await executeChannelInvoke(
+        dispatchRequest.payload,
+        ctx,
+        this.deps,
+        { abortSignal: req.signal },
+      );
       return this.respond(builder.json(response, 200));
     });
   }

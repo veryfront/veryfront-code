@@ -6,6 +6,7 @@ import { verifyDispatchJwsSignature } from "./control-plane.ts";
 
 const encoder = new TextEncoder();
 const MAX_AGE_SECONDS = 60;
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 function encodePem(label: string, der: ArrayBuffer): string {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
@@ -57,6 +58,19 @@ async function mintDispatchJws(
   };
 }
 
+function makeNonCanonicalSignatureEncoding(jws: string): string {
+  const parts = jws.split(".");
+  const signature = parts[2] ?? "";
+  const finalCharacter = signature.at(-1) ?? "";
+  const canonicalIndex = BASE64URL_ALPHABET.indexOf(finalCharacter);
+  if (canonicalIndex < 0 || canonicalIndex % 16 !== 0) {
+    throw new Error("Expected a canonical 64-byte Ed25519 base64url signature");
+  }
+
+  const nonCanonicalFinalCharacter = BASE64URL_ALPHABET[canonicalIndex + 1];
+  return `${parts[0]}.${parts[1]}.${signature.slice(0, -1)}${nonCanonicalFinalCharacter}`;
+}
+
 describe("verifyDispatchJwsSignature", () => {
   it("accepts a validly signed, fresh dispatch JWS", async () => {
     const { jws, publicKeyPem } = await mintDispatchJws();
@@ -97,6 +111,31 @@ describe("verifyDispatchJwsSignature", () => {
         false,
       );
     }
+  });
+
+  it("rejects a non-canonical base64url encoding of an otherwise valid signature", async () => {
+    const { jws, publicKeyPem } = await mintDispatchJws();
+
+    assertEquals(
+      await verifyDispatchJwsSignature(makeNonCanonicalSignatureEncoding(jws), {
+        publicKeyPem,
+        maxAgeSeconds: MAX_AGE_SECONDS,
+      }),
+      false,
+    );
+  });
+
+  it("rejects oversized compact JWS input before parsing it", async () => {
+    const { publicKeyPem } = await mintDispatchJws();
+    const oversized = `${"a".repeat(20_000)}.e30.AQ`;
+
+    assertEquals(
+      await verifyDispatchJwsSignature(oversized, {
+        publicKeyPem,
+        maxAgeSeconds: MAX_AGE_SECONDS,
+      }),
+      false,
+    );
   });
 
   it("rejects a dispatch JWS signed by a different key", async () => {
@@ -166,12 +205,14 @@ describe("verifyDispatchJwsSignature", () => {
   it("fails closed for an invalid maximum-age configuration", async () => {
     const { jws, publicKeyPem } = await mintDispatchJws();
 
-    assertEquals(
-      await verifyDispatchJwsSignature(jws, {
-        publicKeyPem,
-        maxAgeSeconds: -1,
-      }),
-      false,
-    );
+    for (const maxAgeSeconds of [-1, 60.5, Number.MAX_SAFE_INTEGER + 1]) {
+      assertEquals(
+        await verifyDispatchJwsSignature(jws, {
+          publicKeyPem,
+          maxAgeSeconds,
+        }),
+        false,
+      );
+    }
   });
 });

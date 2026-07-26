@@ -1,8 +1,31 @@
+/**
+ * Signed channel-invocation schemas, discovery helpers, and execution adapter.
+ *
+ * @module channels/invoke
+ *
+ * @example Verify and validate a channel payload before execution
+ * ```ts
+ * import {
+ *   ChannelInvokeRequestSchema,
+ *   verifyDispatchJws,
+ * } from "veryfront/channels/invoke";
+ *
+ * await verifyDispatchJws(jws, rawBody, {
+ *   audience: "project-slug",
+ *   expectedProjectId: "project-id",
+ *   expectedPlatform: "slack",
+ *   maxAgeSeconds: 60,
+ *   publicKeyPem,
+ * });
+ * const payload = ChannelInvokeRequestSchema.parse(JSON.parse(rawBody));
+ * ```
+ */
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
 import { fromError } from "#veryfront/errors";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   getAgent as getRegisteredAgent,
@@ -12,14 +35,24 @@ import { listRuntimeAgents, type RuntimeAgentDiscoveryDeps } from "./control-pla
 import { ensureProjectDiscovery as ensureProjectDiscoveryForProject } from "#veryfront/server/handlers/request/api/project-discovery.ts";
 
 const logger = serverLogger.component("channels-invoke");
-const persistentAgentInvocationTails = new WeakMap<Agent, Promise<void>>();
+const MAX_PERSISTENT_AGENT_INVOCATIONS = 32;
+const MAX_CHANNEL_RESPONSE_MESSAGES = 1_000;
+const MAX_CHANNEL_RESPONSE_MESSAGE_PARTS = 1_000;
+const MAX_CHANNEL_RESPONSE_TOOL_CALLS = 256;
+const MAX_DISCOVERED_AGENT_IDS_IN_LOG = 50;
+
+interface PersistentAgentInvocationState {
+  pending: number;
+  tail: Promise<void>;
+}
+
+const persistentAgentInvocations = new WeakMap<Agent, PersistentAgentInvocationState>();
 
 const getRawHistoryPartSchema = defineSchema((v) =>
   v.object({
     type: v.string(),
   }).passthrough()
 );
-const _rawHistoryPartSchema = lazySchema(getRawHistoryPartSchema);
 
 const getChannelAttachmentSchema = defineSchema((v) =>
   v.object({
@@ -143,7 +176,6 @@ const getChannelErrorPartSchema = defineSchema((v) =>
     message: v.string(),
   })
 );
-const _channelErrorPartSchema = lazySchema(getChannelErrorPartSchema);
 
 /** Zod schema for get channel response part. */
 export const getChannelResponsePartSchema = defineSchema((v) =>
@@ -241,13 +273,14 @@ function normalizeConversationPart(
     part.name.length > 0 &&
     part.input &&
     typeof part.input === "object" &&
-    !Array.isArray(part.input)
+    !Array.isArray(part.input) &&
+    !toolNamesById.has(part.id)
   ) {
     return {
       type: `tool-${part.name}`,
       toolCallId: part.id,
       toolName: part.name,
-      args: part.input as Record<string, unknown>,
+      args: snapshotJsonRecord(part.input, "Channel history tool input"),
     };
   }
 
@@ -265,7 +298,9 @@ function normalizeConversationPart(
       type: "tool-result",
       toolCallId: part.tool_call_id,
       toolName,
-      result: "output" in part ? part.output : undefined,
+      result: "output" in part
+        ? snapshotJsonValue(part.output, "Channel history tool result")
+        : undefined,
     };
   }
 
@@ -302,7 +337,9 @@ export function normalizeConversationHistoryForRuntime(
       role: message.role,
       parts,
       ...(timestamp !== undefined && Number.isFinite(timestamp) ? { timestamp } : {}),
-      ...(message.metadata ? { metadata: message.metadata } : {}),
+      ...(message.metadata
+        ? { metadata: snapshotJsonRecord(message.metadata, "Channel history metadata") }
+        : {}),
     };
   });
 }
@@ -324,6 +361,22 @@ function toChannelToolCallState(status: string): "pending" | "completed" | "erro
     default:
       return "pending";
   }
+}
+
+function snapshotJsonValue(value: unknown, label: string): BoundedJsonValue {
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (!snapshot.success) {
+    throw new TypeError(`${label} must be an acyclic, bounded, data-only JSON value`);
+  }
+  return snapshot.value;
+}
+
+function snapshotJsonRecord(value: unknown, label: string): Record<string, BoundedJsonValue> {
+  const snapshot = snapshotJsonValue(value, label);
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new TypeError(`${label} must be a JSON object`);
+  }
+  return snapshot;
 }
 
 function convertAssistantPartToChannelResponsePart(
@@ -359,7 +412,10 @@ function convertAssistantPartToChannelResponsePart(
       type: "tool_call",
       id: part.toolCallId,
       name: part.toolName,
-      input: "args" in part ? part.args : ("input" in part ? part.input : {}),
+      input: snapshotJsonRecord(
+        "args" in part ? part.args : ("input" in part ? part.input : {}),
+        "Channel assistant tool input",
+      ),
       state: "pending",
     });
   }
@@ -368,6 +424,12 @@ function convertAssistantPartToChannelResponsePart(
 }
 
 function findLastAssistantMessage(messages: Message[]): Message | undefined {
+  if (messages.length > MAX_CHANNEL_RESPONSE_MESSAGES) {
+    throw new RangeError(
+      `Channel response cannot contain more than ${MAX_CHANNEL_RESPONSE_MESSAGES} messages`,
+    );
+  }
+
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "assistant") {
       return messages[index];
@@ -379,6 +441,12 @@ function findLastAssistantMessage(messages: Message[]): Message | undefined {
 
 /** Builds channel response parts. */
 export function buildChannelResponseParts(response: AgentResponse): ChannelResponsePart[] {
+  if (response.toolCalls.length > MAX_CHANNEL_RESPONSE_TOOL_CALLS) {
+    throw new RangeError(
+      `Channel response cannot contain more than ${MAX_CHANNEL_RESPONSE_TOOL_CALLS} tool calls`,
+    );
+  }
+
   const responseParts: ChannelResponsePart[] = [];
   const knownToolCallIds = new Set<string>();
   let hasTextPart = false;
@@ -391,12 +459,13 @@ export function buildChannelResponseParts(response: AgentResponse): ChannelRespo
   }
 
   for (const toolCall of response.toolCalls) {
+    if (knownToolCallIds.has(toolCall.id)) continue;
     knownToolCallIds.add(toolCall.id);
     responseParts.push(channelToolCallPartSchema.parse({
       type: "tool_call",
       id: toolCall.id,
       name: toolCall.name,
-      input: toolCall.args,
+      input: snapshotJsonRecord(toolCall.args, "Channel tool input"),
       state: toChannelToolCallState(toolCall.status),
     }));
 
@@ -406,7 +475,9 @@ export function buildChannelResponseParts(response: AgentResponse): ChannelRespo
         tool_call_id: toolCall.id,
         output: toolCall.status === "error"
           ? { error: toolCall.error ?? "Tool execution failed" }
-          : toolCall.result,
+          : toolCall.result === undefined
+          ? null
+          : snapshotJsonValue(toolCall.result, "Channel tool result"),
         ...(toolCall.status === "error" ? { is_error: true } : {}),
       }));
     }
@@ -414,6 +485,11 @@ export function buildChannelResponseParts(response: AgentResponse): ChannelRespo
 
   const lastAssistantMessage = findLastAssistantMessage(response.messages);
   if (lastAssistantMessage) {
+    if (lastAssistantMessage.parts.length > MAX_CHANNEL_RESPONSE_MESSAGE_PARTS) {
+      throw new RangeError(
+        `Channel assistant response cannot contain more than ${MAX_CHANNEL_RESPONSE_MESSAGE_PARTS} parts`,
+      );
+    }
     for (const part of lastAssistantMessage.parts) {
       const converted = convertAssistantPartToChannelResponsePart(part, knownToolCallIds);
       if (converted) {
@@ -448,32 +524,112 @@ function classifyChannelInvokeError(error: unknown): ChannelInvokeResponse["erro
   return { code: "internal_error", retryable: true };
 }
 
+function parseSerializableChannelInvokeResponse(value: unknown): ChannelInvokeResponse {
+  const snapshot = snapshotJsonValue(value, "Channel invoke response");
+  return ChannelInvokeResponseSchema.parse(snapshot);
+}
+
+function discoveredAgentLogFields(
+  deps: Pick<ChannelInvokeDeps, "getAllAgentIds">,
+): Record<string, unknown> {
+  try {
+    const ids = deps.getAllAgentIds();
+    return {
+      discoveredAgentCount: ids.length,
+      discoveredAgentIds: ids.slice(0, MAX_DISCOVERED_AGENT_IDS_IN_LOG),
+    };
+  } catch (error) {
+    return {
+      discoveredAgentIds: "unavailable",
+      discoveryError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function usesPersistentMemory(agent: Agent): boolean {
   return agent.config.memory !== undefined && agent.config.memory.enabled !== false;
+}
+
+class PersistentAgentInvocationQueueFullError extends Error {
+  constructor() {
+    super("Persistent channel agent invocation queue is full");
+    this.name = "PersistentAgentInvocationQueueFullError";
+  }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ??
+    new DOMException("The channel invocation was aborted", "AbortError");
+}
+
+function waitForInvocation<T>(invocation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return invocation;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(abortReason(signal));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    invocation.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 async function runWithPersistentAgentIsolation<T>(
   agent: Agent,
   operation: () => Promise<T>,
+  abortSignal?: AbortSignal,
 ): Promise<T> {
-  if (!usesPersistentMemory(agent)) return await operation();
-
-  const previous = persistentAgentInvocationTails.get(agent) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  persistentAgentInvocationTails.set(agent, current);
-
-  await previous;
-  try {
+  if (!usesPersistentMemory(agent)) {
+    abortSignal?.throwIfAborted();
     return await operation();
-  } finally {
-    release();
-    if (persistentAgentInvocationTails.get(agent) === current) {
-      persistentAgentInvocationTails.delete(agent);
-    }
   }
+
+  let state = persistentAgentInvocations.get(agent);
+  if (!state) {
+    state = { pending: 0, tail: Promise.resolve() };
+    persistentAgentInvocations.set(agent, state);
+  }
+  if (state.pending >= MAX_PERSISTENT_AGENT_INVOCATIONS) {
+    throw new PersistentAgentInvocationQueueFullError();
+  }
+
+  state.pending += 1;
+  const invocation = state.tail.then(async () => {
+    abortSignal?.throwIfAborted();
+    return await operation();
+  });
+  const settled = invocation.then(
+    () => undefined,
+    () => undefined,
+  );
+  state.tail = settled;
+  void settled.then(() => {
+    state.pending -= 1;
+    if (state.pending === 0 && persistentAgentInvocations.get(agent) === state) {
+      persistentAgentInvocations.delete(agent);
+    }
+  });
+
+  return await waitForInvocation(invocation, abortSignal);
+}
+
+/** Optional execution controls for a channel invocation. */
+export interface ExecuteChannelInvokeOptions {
+  /** Cancels queued work and is forwarded to agent generation. */
+  abortSignal?: AbortSignal;
 }
 
 /** Execute channel invoke. */
@@ -481,27 +637,30 @@ export async function executeChannelInvoke(
   payload: ChannelInvokeRequest,
   ctx: HandlerContext,
   deps: ChannelInvokeDeps,
+  options: ExecuteChannelInvokeOptions = {},
 ): Promise<ChannelInvokeResponse> {
-  await deps.ensureProjectDiscovery(ctx);
-
-  const agent = resolveChannelInvokeAgent(payload.assistantId, deps);
-  if (!agent) {
-    logger.error("Channel invoke could not resolve a runtime agent for the request", {
-      requestedAssistantId: payload.assistantId,
-      discoveredAgentIds: deps.getAllAgentIds(),
-      projectSlug: ctx.projectSlug,
-      projectId: ctx.projectId,
-    });
-    return {
-      ignored: false,
-      error: {
-        code: "internal_error",
-        retryable: false,
-      },
-    };
-  }
-
   try {
+    options.abortSignal?.throwIfAborted();
+    await deps.ensureProjectDiscovery(ctx);
+    options.abortSignal?.throwIfAborted();
+
+    const agent = resolveChannelInvokeAgent(payload.assistantId, deps);
+    if (!agent) {
+      logger.error("Channel invoke could not resolve a runtime agent for the request", {
+        requestedAssistantId: payload.assistantId,
+        ...discoveredAgentLogFields(deps),
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+      });
+      return {
+        ignored: false,
+        error: {
+          code: "internal_error",
+          retryable: false,
+        },
+      };
+    }
+
     return await runWithPersistentAgentIsolation(agent, async () => {
       const normalizedHistory = normalizeConversationHistoryForRuntime(
         payload.conversationHistory,
@@ -523,40 +682,51 @@ export async function executeChannelInvoke(
             maxOutputTokens: payload.generation.maxResponseTokens,
           }
           : {}),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       });
 
-      return ChannelInvokeResponseSchema.parse({
+      return parseSerializableChannelInvokeResponse({
         ignored: false,
         responseParts: buildChannelResponseParts(result),
-        tokenUsage: result.usage
+        ...(result.usage
           ? {
-            inputTokens: result.usage.promptTokens,
-            outputTokens: result.usage.completionTokens,
-            totalTokens: result.usage.totalTokens,
-            ...(typeof result.usage.cachedInputTokens === "number"
-              ? { cachedInputTokens: result.usage.cachedInputTokens }
-              : {}),
-            ...(typeof result.usage.cacheCreationInputTokens === "number"
-              ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens }
-              : {}),
-            ...(typeof result.usage.cacheReadInputTokens === "number"
-              ? { cacheReadInputTokens: result.usage.cacheReadInputTokens }
-              : {}),
-            ...(typeof result.usage.reasoningTokens === "number"
-              ? { reasoningTokens: result.usage.reasoningTokens }
-              : {}),
+            tokenUsage: {
+              inputTokens: result.usage.promptTokens,
+              outputTokens: result.usage.completionTokens,
+              totalTokens: result.usage.totalTokens,
+              ...(typeof result.usage.cachedInputTokens === "number"
+                ? { cachedInputTokens: result.usage.cachedInputTokens }
+                : {}),
+              ...(typeof result.usage.cacheCreationInputTokens === "number"
+                ? { cacheCreationInputTokens: result.usage.cacheCreationInputTokens }
+                : {}),
+              ...(typeof result.usage.cacheReadInputTokens === "number"
+                ? { cacheReadInputTokens: result.usage.cacheReadInputTokens }
+                : {}),
+              ...(typeof result.usage.reasoningTokens === "number"
+                ? { reasoningTokens: result.usage.reasoningTokens }
+                : {}),
+            },
           }
-          : undefined,
+          : {}),
       });
-    });
+    }, options.abortSignal);
   } catch (error) {
-    logger.error("Channel invoke runtime execution failed", {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      projectSlug: ctx.projectSlug,
-      projectId: ctx.projectId,
-      dispatchId: payload.dispatchId,
-    });
+    if (error instanceof PersistentAgentInvocationQueueFullError) {
+      logger.warn("Channel invoke persistent agent queue is saturated", {
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        dispatchId: payload.dispatchId,
+      });
+    } else if (!options.abortSignal?.aborted) {
+      logger.error("Channel invoke runtime execution failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        dispatchId: payload.dispatchId,
+      });
+    }
 
     return {
       ignored: false,

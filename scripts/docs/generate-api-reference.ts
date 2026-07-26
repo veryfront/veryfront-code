@@ -788,12 +788,17 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
  * Each entry produces a `<slug>.md` page that hosts the deep imports listed
  * under that slug in `deno.json`.
  */
-const SYNTHETIC_PARENTS: Record<string, { description: string }> = {};
+const SYNTHETIC_PARENTS: Record<string, { description: string }> = {
+  channels: {
+    description: "Signed control-plane discovery and channel invocation contracts.",
+  },
+};
 
 const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront": "Core app config and routing.",
   "veryfront/agent": "Agents, AG-UI handlers, and memory.",
   "veryfront/chat": "Chat components and hooks.",
+  "veryfront/channels": "Signed control-plane and channel invocation contracts.",
   "veryfront/cli": "CLI runtime helpers.",
   "veryfront/context": "Page context.",
   "veryfront/embedding": "Embedding and retrieval helpers.",

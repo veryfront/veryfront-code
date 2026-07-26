@@ -27,8 +27,9 @@ Primary source areas:
 ## Runtime flow
 
 1. A trusted service signs a channel request with a canonical compact EdDSA JWS.
-2. The project runtime validates the protected header, signature, freshness,
-   body hash, project audience, and request shape.
+2. The project runtime bounds the envelope, verifies the Ed25519 signature,
+   then parses and validates the protected header, claims, freshness, body
+   hash, project audience, and request shape.
 3. Channel dispatch additionally binds the signed subject, project, and
    platform claims to the corresponding request-body fields.
 4. Dispatch handlers route the request to the intended control-plane operation.
@@ -38,14 +39,33 @@ Primary source areas:
 ## Boundaries
 
 - Control-plane channels are signed management surfaces, not public app routes.
-- Unsupported critical JWS header parameters and non-canonical base64url parts
-  are rejected. Non-critical metadata remains forward-compatible. Optional
-  expected claims are checked whenever supplied, including explicitly empty
-  values.
+- Compact JWS parts, verification keys, timestamps, and freshness policies are
+  bounded and canonical. Unsupported critical protected-header parameters are
+  rejected; non-critical metadata remains forward-compatible. Optional expected
+  claims are checked whenever supplied, including explicitly empty values.
+- Protected headers and claims are parsed after signature verification by the
+  same dependency-free boundary code in proxy and runtime contexts. Verification
+  does not depend on optional schema-extension registration or initialization
+  order.
+- The proxy accepts only the dispatch-token family on `/channels/invoke` and
+  only the control-plane-token family on control-plane/internal routes. This
+  proxy check establishes signature authenticity and freshness only; the
+  renderer still performs body, audience, project, subject, and surface binding
+  before consuming a request.
+- Signed request bodies are byte-capped before verification. Signature
+  verification precedes JSON/schema interpretation, so unauthenticated payloads
+  cannot drive protocol parsing or discovery.
 - Conversation-history timestamps use ISO 8601 date-time strings. Orphan tool
-  results are discarded rather than assigned a fabricated tool name.
+  results and duplicate tool-call identities are discarded rather than assigned
+  a fabricated or ambiguous tool name.
 - Invocations sharing an agent with persistent memory are serialized across the
-  memory reset and generation operation. Stateless agents remain concurrent.
+  memory reset and generation operation. Their queue is bounded, aborted queued
+  work never executes, and request cancellation reaches generation. Stateless
+  agents remain concurrent.
+- Invoke results cross the HTTP boundary only as bounded, acyclic, data-only
+  JSON. Tool inputs/results and response cardinality are checked before
+  serialization; discovery and runtime failures remain structured retry
+  decisions rather than escaping the invoke contract.
 - `POST /api/ag-ui` is the public AG-UI transport adapter.
 - `/api/runs*` is the sibling run-control API for hosted runtime lifecycle
   operations.
@@ -57,9 +77,11 @@ Primary source areas:
 ## Change checks
 
 - Preserve signature validation before any dispatch.
+- Keep proxy signature-family selection aligned with the downstream route.
 - Keep public app route handlers separate from control-plane handlers.
-- Add tests for invalid signatures, malformed payloads, and successful dispatch
-  paths when changing channel behavior.
+- Add tests for invalid/non-canonical signatures, malformed payloads, queue and
+  cancellation behavior, and successful dispatch paths when changing channel
+  behavior.
 
 ## Related guides
 

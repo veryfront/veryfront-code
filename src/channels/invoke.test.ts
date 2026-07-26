@@ -349,6 +349,51 @@ describe("channels/invoke", () => {
 
       assertEquals(normalized[0]?.parts, []);
     });
+
+    it("drops duplicate tool-call ids so later results cannot be rebound to another tool", () => {
+      const normalized = normalizeConversationHistoryForRuntime([
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool_call",
+              id: "tool-1",
+              name: "search",
+              input: { query: "docs" },
+            },
+            {
+              type: "tool_call",
+              id: "tool-1",
+              name: "delete",
+              input: { path: "/project" },
+            },
+          ],
+        },
+        {
+          id: "tool-result-1",
+          role: "tool",
+          parts: [{
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            output: "found",
+          }],
+        },
+      ]);
+
+      assertEquals(normalized[0]?.parts, [{
+        type: "tool-search",
+        toolCallId: "tool-1",
+        toolName: "search",
+        args: { query: "docs" },
+      }]);
+      assertEquals(normalized[1]?.parts, [{
+        type: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "search",
+        result: "found",
+      }]);
+    });
   });
 
   describe("listChannelAssistants", () => {
@@ -655,6 +700,25 @@ describe("channels/invoke", () => {
       });
     });
 
+    it("returns a structured error when project discovery fails", async () => {
+      const response = await executeChannelInvoke(
+        createPayload(),
+        createHandlerContext(),
+        {
+          ensureProjectDiscovery: () => Promise.reject(new Error("discovery unavailable")),
+          getAgent: () => {
+            throw new Error("agent lookup must not run after failed discovery");
+          },
+          getAllAgentIds: () => [],
+        },
+      );
+
+      assertEquals(response, {
+        ignored: false,
+        error: { code: "internal_error", retryable: true },
+      });
+    });
+
     it("returns a structured internal error when resetting agent memory fails", async () => {
       const agent = createAgent({
         clearMemory: async () => {
@@ -720,6 +784,176 @@ describe("channels/invoke", () => {
       assertEquals(responses.every((response) => response.error === undefined), true);
       assertEquals(clearMemoryCalls, 2);
       assertEquals(maximumActiveGenerations, 1);
+    });
+
+    it("fails fast when a persistent agent invocation queue is saturated", async () => {
+      let releaseFirstInvocation!: () => void;
+      const firstInvocationGate = new Promise<void>((resolve) => {
+        releaseFirstInvocation = resolve;
+      });
+      let firstInvocationStarted!: () => void;
+      const firstInvocationStart = new Promise<void>((resolve) => {
+        firstInvocationStarted = resolve;
+      });
+      let generationCalls = 0;
+      const agent = createAgent({
+        generate: async () => {
+          generationCalls += 1;
+          if (generationCalls === 1) {
+            firstInvocationStarted();
+            await firstInvocationGate;
+          }
+          return createAgentResponse();
+        },
+      });
+      agent.config = {
+        ...agent.config,
+        memory: { type: "conversation" },
+      } as Agent["config"];
+      const deps: ChannelInvokeDeps = {
+        ensureProjectDiscovery: async () => {},
+        getAgent: () => agent,
+        getAllAgentIds: () => ["agent-1"],
+      };
+
+      const first = executeChannelInvoke(
+        createPayload({ dispatchId: "dispatch-active" }),
+        createHandlerContext(),
+        deps,
+      );
+      await firstInvocationStart;
+      const queued = Array.from({ length: 31 }, (_, index) =>
+        executeChannelInvoke(
+          createPayload({ dispatchId: `dispatch-queued-${index}` }),
+          createHandlerContext(),
+          deps,
+        ));
+
+      const overflow = await executeChannelInvoke(
+        createPayload({ dispatchId: "dispatch-overflow" }),
+        createHandlerContext(),
+        deps,
+      );
+      assertEquals(overflow, {
+        ignored: false,
+        error: { code: "internal_error", retryable: true },
+      });
+
+      releaseFirstInvocation();
+      const accepted = await Promise.all([first, ...queued]);
+      assertEquals(accepted.every((response) => response.error === undefined), true);
+      assertEquals(generationCalls, 32);
+    });
+
+    it("forwards cancellation to generation", async () => {
+      const abortController = new AbortController();
+      let receivedSignal: AbortSignal | undefined;
+      const agent = createAgent({
+        generate: async (input) => {
+          receivedSignal = input.abortSignal;
+          return createAgentResponse();
+        },
+      });
+
+      const response = await executeChannelInvoke(
+        createPayload(),
+        createHandlerContext(),
+        {
+          ensureProjectDiscovery: async () => {},
+          getAgent: () => agent,
+          getAllAgentIds: () => ["agent-1"],
+        },
+        { abortSignal: abortController.signal },
+      );
+
+      assertEquals(response.error, undefined);
+      assertEquals(receivedSignal, abortController.signal);
+    });
+
+    it("removes aborted queued work without violating persistent-memory isolation", async () => {
+      let releaseFirstInvocation!: () => void;
+      const firstInvocationGate = new Promise<void>((resolve) => {
+        releaseFirstInvocation = resolve;
+      });
+      let firstInvocationStarted!: () => void;
+      const firstInvocationStart = new Promise<void>((resolve) => {
+        firstInvocationStarted = resolve;
+      });
+      let generationCalls = 0;
+      const agent = createAgent({
+        generate: async () => {
+          generationCalls += 1;
+          if (generationCalls === 1) {
+            firstInvocationStarted();
+            await firstInvocationGate;
+          }
+          return createAgentResponse();
+        },
+      });
+      agent.config = {
+        ...agent.config,
+        memory: { type: "conversation" },
+      } as Agent["config"];
+      const deps: ChannelInvokeDeps = {
+        ensureProjectDiscovery: async () => {},
+        getAgent: () => agent,
+        getAllAgentIds: () => ["agent-1"],
+      };
+
+      const first = executeChannelInvoke(createPayload(), createHandlerContext(), deps);
+      await firstInvocationStart;
+      const abortController = new AbortController();
+      const queued = executeChannelInvoke(
+        createPayload({ dispatchId: "dispatch-aborted" }),
+        createHandlerContext(),
+        deps,
+        { abortSignal: abortController.signal },
+      );
+      abortController.abort(new DOMException("request closed", "AbortError"));
+
+      assertEquals(await queued, {
+        ignored: false,
+        error: { code: "internal_error", retryable: true },
+      });
+      assertEquals(generationCalls, 1);
+
+      releaseFirstInvocation();
+      assertEquals((await first).error, undefined);
+      await Promise.resolve();
+      assertEquals(generationCalls, 1);
+    });
+
+    it("fails closed when a tool result is not serializable JSON", async () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+      const agent = createAgent({
+        generate: async () =>
+          createAgentResponse("", {
+            messages: [],
+            toolCalls: [{
+              id: "tool-1",
+              name: "search",
+              args: { query: "docs" },
+              status: "completed",
+              result: cyclic,
+            }],
+          }),
+      });
+
+      const response = await executeChannelInvoke(
+        createPayload(),
+        createHandlerContext(),
+        {
+          ensureProjectDiscovery: async () => {},
+          getAgent: () => agent,
+          getAllAgentIds: () => ["agent-1"],
+        },
+      );
+
+      assertEquals(response, {
+        ignored: false,
+        error: { code: "internal_error", retryable: true },
+      });
     });
 
     it("fails closed when the requested assistant is not registered on the runtime", async () => {

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/resource"
 description: "Declare and register resources exposable over MCP."
-order: 23
+order: 24
 ---
 
 ## Import
@@ -73,4 +73,4 @@ Create a typed resource definition.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `resourceRegistry` | Project-scoped resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L185) |
+| `resourceRegistry` | Project-scoped resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L212) |

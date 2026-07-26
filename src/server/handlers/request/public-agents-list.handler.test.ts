@@ -62,6 +62,25 @@ describe("server/handlers/request/public-agents-list.handler", () => {
     });
   });
 
+  it("uses agent ids to make equal-name ordering deterministic", async () => {
+    const handler = new PublicAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => createAgentWithConfig(id, { name: "Assistant", description: null }),
+      getAllAgentIds: () => ["agent-z", "agent-a"],
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/agents", { method: "GET" }),
+      createCtx(),
+    );
+
+    assertExists(result.response);
+    const response = await result.response.json() as {
+      agents: Array<{ id: string }>;
+    };
+    assertEquals(response.agents.map((agent) => agent.id), ["agent-a", "agent-z"]);
+  });
+
   it("returns an empty list when the project exposes no agents", async () => {
     const handler = new PublicAgentsListHandler({
       ensureProjectDiscovery: async () => {},

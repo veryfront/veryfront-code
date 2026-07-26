@@ -1,7 +1,7 @@
 ---
 title: "veryfront/ui"
 description: "`veryfront/ui` - the public UI primitive library. Dependency-light forks of Veryfront Studio's design system (cva/Slot inlined; colours remapped to veryfront's `[var(--token)]` vocabulary; zero external packages). These are the base layer the `veryfront/chat` components are built on: `chat` depends on `ui`, never the reverse."
-order: 35
+order: 36
 ---
 
 ## Import

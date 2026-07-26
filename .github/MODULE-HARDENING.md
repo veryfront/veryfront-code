@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    21 |      36.2% | Current formal closure evidence remains valid       |
+| Closed                         |    22 |      37.9% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    36 |      62.1% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    35 |      60.3% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -39,6 +39,7 @@ stricter closure count.
 ### Closed
 
 - `cache`
+- `channels`
 - `chat`
 - `config`
 - `embedding`
@@ -68,7 +69,6 @@ stricter closure count.
 
 - `agent`
 - `build`
-- `channels`
 - `client`
 - `data`
 - `discovery`
@@ -121,22 +121,24 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `cache`, `chat`, `config`, `embedding`,
-`eval`, `extensions`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`provider`, `prompt`, `registry`, `repositories`, `runs`, `runtime`, `sandbox`,
-`schemas`, `studio`, and `version.ts`. The latest Chat findings and the independent
-adversarial knowledge, Markdown, MDX, provider, repositories, runs, runtime,
-and sandbox findings are remediated and revalidated. `prompt` is closed after
-its cross-cutting registry, discovery, HMR, request-lifecycle, and MCP findings
-were remediated and revalidated. `registry` is closed after its scope
-lifecycle, request-generation isolation, transaction invalidation, and
+The current closed review chain covers `cache`, `channels`, `chat`, `config`,
+`embedding`, `eval`, `extensions`, `issues`, `knowledge`, `markdown`, `mdx`,
+`metrics`, `provider`, `prompt`, `registry`, `repositories`, `runs`, `runtime`,
+`sandbox`, `schemas`, `studio`, and `version.ts`. The latest Chat findings and
+the independent adversarial knowledge, Markdown, MDX, provider, repositories,
+runs, runtime, and sandbox findings are remediated and revalidated. `prompt` is
+closed after its cross-cutting registry, discovery, HMR, request-lifecycle, and
+MCP findings were remediated and revalidated. `registry` is closed after its
+scope lifecycle, request-generation isolation, transaction invalidation, and
 cross-entry validation findings were remediated and revalidated. `cache` is
 closed after its backend contracts, key identity and invalidation, portability,
 request lifecycle, multi-tier coordination, and dependency hashing findings
-were remediated and revalidated. `resource` has received a deep current-state
-review and substantial remediation, but remains open while its cache-policy
-breaking-change decision is unresolved. Each closure requires a complete
-consumer map, deep module-level review, adversarial boundary tests,
+were remediated and revalidated. `channels` is closed after its signed-envelope,
+proxy trust, route identity, invoke lifecycle, serialization, and consumer
+findings were remediated and revalidated. `resource` has received a deep
+current-state review and substantial remediation, but remains open while its
+cache-policy breaking-change decision is unresolved. Each closure requires a
+complete consumer map, deep module-level review, adversarial boundary tests,
 public-contract documentation, and repository-wide static verification.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
@@ -2077,5 +2079,125 @@ Read-through cache misses and explicitly configured asynchronous backfills
 remain availability-oriented by design: they are observable through logs and
 statistics but do not replace authoritative source failures. Mutation,
 identity, invalidation, credential, and lifecycle boundaries fail closed.
+
+### Channels closure checkpoint
+
+The `channels` audit unit owns signed control-plane envelopes, agent discovery
+metadata, Slack invoke wire schemas, conversation-history adaptation, invoke
+response normalization, and persistent-agent invocation isolation. Its direct
+dependencies are Agent runtime contracts, the shared schema and JSON snapshot
+primitives, structured errors, Skill discovery, project discovery, and Server
+handler context. Its production consumers are the internal agents-list,
+stream/resume/cancel/execute and channel-invoke handlers, proxy trust and
+routing invalidation, public agent metadata/list routes, runtime context/config
+classification, and Agent service routes. Both `veryfront/channels/control-plane`
+and `veryfront/channels/invoke` are published npm subpaths, so additive API
+controls preserve existing call signatures while the architecture explanation
+documents the strengthened runtime contract.
+
+The current Channels findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** alternate base64url encodings
+  of a valid Ed25519 signature verified, compact JWS parts and PEM input were
+  unbounded, fractional/unsafe freshness policies were accepted, and
+  attacker-controlled header/claim JSON was parsed before authenticity was
+  established. The consequence was a documented canonicality mismatch,
+  avoidable pre-authentication work, and inconsistent timestamp policy.
+  Verification now bounds every envelope component, requires the exact
+  canonical 64-byte Ed25519 encoding, validates safe-integer time policy,
+  verifies raw signing input before JSON parsing, and reuses one rotation-safe
+  imported-key cache.
+- **Symptom -> Source -> Consequence -> Remedy:** an authentic proxy request
+  failed when the optional schema-extension registry was not initialized. The
+  source was a lazy high-level schema dependency inside the cryptographic
+  verifier, even though proxy authentication runs before extension setup. The
+  consequence was a hidden bootstrap-order dependency at a fail-closed trust
+  boundary that could reject valid service traffic. Protected headers and both
+  claim families now use one bounded, exact, dependency-free JSON object parser
+  after signature verification; body-bound and authenticity-only verification
+  therefore enforce the same contract without consulting optional extensions.
+- **Symptom -> Source -> Consequence -> Remedy:** the proxy carried a second,
+  weaker control-plane JWS implementation, and either signature family could
+  unlock either internal route family before downstream rejection. The
+  consequence was crypto/claims behavior drifting across trust boundaries and
+  a dispatch token granting the wrong pre-renderer privilege. One audited
+  signature/freshness implementation now serves both claim families, and the
+  proxy selects the dispatch family only for `/channels/invoke` and the
+  control-plane family only for its corresponding routes. Downstream
+  body/audience/project authorization remains mandatory.
+- **Symptom -> Source -> Consequence -> Remedy:** config-optional run routing
+  compiled regexes per request and accepted arbitrary, percent-encoded, dotted,
+  or oversized path segments that the runtime run-ID schema rejected. The
+  consequence was middleware/config behavior disagreeing with the eventual
+  handler contract. Precompiled path classifiers now validate the captured
+  segment against the shared canonical run-ID schema.
+- **Symptom -> Source -> Consequence -> Remedy:** several signed consumers
+  parsed JSON and complex schemas before checking the body-bound signature.
+  The consequence was unauthenticated payloads driving avoidable protocol work
+  and inconsistent error precedence. Agent-list, stream, and execute consumers
+  now verify the capped raw body first, then parse and explicitly bind body
+  fields to the authenticated subject/project/surface; malformed path decoding
+  also fails as a controlled request error.
+- **Symptom -> Source -> Consequence -> Remedy:** project-discovery failures
+  escaped `executeChannelInvoke`, request cancellation never reached generation,
+  and a persistent agent had an unbounded promise tail. The consequence was
+  handler-level rejection instead of the documented structured response,
+  abandoned work continuing after disconnect, and unbounded retained payloads
+  behind a slow stateful agent. Discovery and execution share one structured
+  failure boundary, the handler forwards its abort signal, stateful work uses a
+  32-operation fail-fast queue, cancelled queued operations never execute, and
+  queue state is released after every terminal path.
+- **Symptom -> Source -> Consequence -> Remedy:** duplicate persisted tool-call
+  IDs could rebind a later result, duplicate runtime calls were emitted twice,
+  and cyclic/accessor/prototype-bearing or oversized tool data could reach
+  `Response.json`. The consequence was ambiguous tool history and late
+  serialization failures outside the invoke error contract. Duplicate
+  identities now retain the first unambiguous binding, tool and metadata values
+  cross a bounded data-only snapshot, response messages/parts/tool calls have
+  cardinality guards, and the complete response is snapshotted before schema
+  publication.
+- **Symptom -> Source -> Consequence -> Remedy:** the public agent-list handler
+  used locale-sensitive name-only ordering while the signed list used stable
+  code-point name-and-ID ordering. The consequence was platform-dependent
+  output and insertion-order drift for equal names. Both consumers now use one
+  exported deterministic comparator, and missing-agent diagnostics bound the
+  IDs they place in logs.
+
+Reproducible checkpoint evidence:
+
+- The complete `src/channels` suite passes 5 tests and 78 nested steps with zero
+  failures, including canonical envelope, route identity, history ambiguity,
+  JSON safety, queue saturation, cancellation, discovery failure, and response
+  normalization regressions.
+- The signed handler, proxy, routing-invalidation, and control-plane-auth matrix
+  passes 9 suites and 112 nested steps with zero failures, including the
+  complete large agent-stream and project-run-execute suites.
+- The complete proxy-handler suite passes 1 suite and 55 nested steps with zero
+  failures, including valid signed traffic after the extension registry has
+  been reset.
+- The public agent, runtime-context/config, Agent service-route, and AG-UI
+  fixture matrix passes 15 suites and 79 nested steps with zero failures.
+- The deterministic complete unit baseline
+  (`DENO_JOBS=1 deno task test:unit`) passes 3,231 tests and 24,690 nested steps
+  with zero failures; the existing one test and five nested steps remain
+  explicitly ignored. The single-job baseline is recorded because still-open
+  CLI/testing consumers contain process-global current-directory tests that
+  can make the default multi-worker runner itself exit nondeterministically.
+  This checkpoint also makes the touched root-entrypoint subprocess independent
+  of process-global current-directory changes.
+- `deno task docs`, `deno task docs:validate`, and
+  `deno task docs:coverage` generate 39 API-reference pages, validate 739
+  internal links, and account for all 3,967 published source links. The
+  Channels parent reference is generated and generator-regression tested.
+- `deno task typecheck:consumer` rebuilds the npm package and every extension,
+  then passes the documented consumer composition typecheck against the
+  generated declarations.
+
+No unresolved critical or high-confidence Channels production risk remains.
+The proxy's pre-renderer check deliberately establishes signature authenticity
+and freshness without consuming the streaming request body; every handler still
+performs authoritative body, audience, project, subject, and scoped-claim
+binding before acting. Proxy and Server consumer units changed here remain
+listed for their own top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

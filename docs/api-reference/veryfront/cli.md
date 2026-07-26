@@ -1,7 +1,7 @@
 ---
 title: "veryfront/cli"
 description: "Veryfront CLI entry point."
-order: 4
+order: 5
 ---
 
 ## Examples

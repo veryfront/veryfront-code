@@ -1,14 +1,43 @@
+/**
+ * Signed control-plane discovery, route, and JWS verification contracts.
+ *
+ * Signature-only helpers establish authenticity and freshness; request
+ * handlers must use the body-bound verifier before authorizing an operation.
+ *
+ * @module channels/control-plane
+ *
+ * @example Verify a body-bound control-plane request
+ * ```ts
+ * import { verifyControlPlaneJws } from "veryfront/channels/control-plane";
+ *
+ * const claims = await verifyControlPlaneJws(jws, rawBody, {
+ *   audience: "project-slug",
+ *   expectedProjectId: "project-id",
+ *   expectedSubject: "run_123",
+ *   expectedSurface: "studio",
+ *   maxAgeSeconds: 60,
+ *   publicKeyPem,
+ * });
+ * ```
+ */
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { Agent } from "#veryfront/agent/types.ts";
+import { getAgUiRuntimeRunIdSchema } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { base64urlDecodeBytes, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
-const BASE64URL_PART_PATTERN = /^[A-Za-z0-9_-]+$/;
+const MAX_COMPACT_JWS_CODE_UNITS = 16 * 1024;
+const MAX_COMPACT_JWS_HEADER_CODE_UNITS = 4 * 1024;
+const MAX_COMPACT_JWS_PAYLOAD_CODE_UNITS = 8 * 1024;
+const MAX_PUBLIC_KEY_PEM_CODE_UNITS = 8 * 1024;
+const ED25519_SIGNATURE_BYTES = 64;
+const ED25519_SIGNATURE_BASE64URL_CODE_UNITS = 86;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Encoder = new TextEncoder();
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
@@ -17,8 +46,14 @@ export const CONTROL_PLANE_RUNS_PATH_PREFIX = "/api/control-plane/runs/";
 /** Shared control plane run stream path value. */
 export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/stream";
 
-const CONTROL_PLANE_RUN_ID_PATH_SEGMENT = "[^/]+";
 const CONTROL_PLANE_RUNS_REGEX_PREFIX = CONTROL_PLANE_RUNS_PATH_PREFIX.replaceAll("/", "\\/");
+const CONTROL_PLANE_CANCEL_PATH_PATTERN = new RegExp(
+  `^${CONTROL_PLANE_RUNS_REGEX_PREFIX}([^/]+)$`,
+);
+const CONTROL_PLANE_STREAM_OR_RESUME_PATH_PATTERN = new RegExp(
+  `^${CONTROL_PLANE_RUNS_REGEX_PREFIX}([^/]+)\\/(?:stream|resume)$`,
+);
+const controlPlaneRunIdSchema = lazySchema(getAgUiRuntimeRunIdSchema);
 
 /**
  * True for control-plane run surfaces that can dispatch without project config.
@@ -34,29 +69,14 @@ export function isConfigOptionalControlPlaneRunRequest(
   const normalizedMethod = method.toUpperCase();
   const requestPath = pathname ?? "";
 
-  if (normalizedMethod === "DELETE") {
-    return new RegExp(`^${CONTROL_PLANE_RUNS_REGEX_PREFIX}${CONTROL_PLANE_RUN_ID_PATH_SEGMENT}$`)
-      .test(requestPath);
-  }
+  const match = normalizedMethod === "DELETE"
+    ? CONTROL_PLANE_CANCEL_PATH_PATTERN.exec(requestPath)
+    : normalizedMethod === "POST"
+    ? CONTROL_PLANE_STREAM_OR_RESUME_PATH_PATTERN.exec(requestPath)
+    : null;
 
-  if (normalizedMethod !== "POST") {
-    return false;
-  }
-
-  return new RegExp(
-    `^${CONTROL_PLANE_RUNS_REGEX_PREFIX}${CONTROL_PLANE_RUN_ID_PATH_SEGMENT}\\/(?:stream|resume)$`,
-  ).test(requestPath);
+  return match?.[1] !== undefined && controlPlaneRunIdSchema.safeParse(match[1]).success;
 }
-
-const getCompactJwsHeaderSchema = defineSchema((v) =>
-  v.object({
-    alg: v.literal("EdDSA"),
-    crit: v.array(v.string()).optional(),
-    typ: v.string().optional(),
-    kid: v.string().optional(),
-  }).passthrough()
-);
-const compactJwsHeaderSchema = lazySchema(getCompactJwsHeaderSchema);
 
 const getAvatarUrlSchema = defineSchema((v) => v.string().url());
 const avatarUrlSchema = lazySchema(getAvatarUrlSchema);
@@ -151,36 +171,6 @@ export const getRuntimeAgentListResponseSchema = defineSchema((v) =>
 /** Zod schema for runtime agent list response. */
 export const RuntimeAgentListResponseSchema = lazySchema(getRuntimeAgentListResponseSchema);
 
-/** Zod schema for get dispatch claims. */
-const getDispatchClaimsSchema = defineSchema((v) =>
-  v.object({
-    iss: v.string(),
-    aud: v.string(),
-    sub: v.string(),
-    project_id: v.string(),
-    platform: v.string(),
-    body_sha256: v.string(),
-    iat: v.number().int(),
-    exp: v.number().int(),
-  })
-);
-const dispatchClaimsSchema = lazySchema(getDispatchClaimsSchema);
-
-/** Zod schema for get control plane claims. */
-const getControlPlaneClaimsSchema = defineSchema((v) =>
-  v.object({
-    iss: v.string(),
-    aud: v.string(),
-    sub: v.string(),
-    surface: getControlPlaneSurfaceSchema(),
-    project_id: v.string(),
-    request_hash: v.string(),
-    iat: v.number().int(),
-    exp: v.number().int(),
-  })
-);
-const controlPlaneClaimsSchema = lazySchema(getControlPlaneClaimsSchema);
-
 /** Public API contract for control plane surface (literal union, not widened to `string`). */
 export type ControlPlaneSurface = (typeof CONTROL_PLANE_SURFACES)[number];
 /** Request payload for control plane agents list. */
@@ -209,9 +199,9 @@ export type RuntimeAgentListResponse = InferSchema<
   ReturnType<typeof getRuntimeAgentListResponseSchema>
 >;
 /** Public API contract for dispatch claims. */
-export type DispatchClaims = InferSchema<ReturnType<typeof getDispatchClaimsSchema>>;
+export type DispatchClaims = ReturnType<typeof parseDispatchClaims>;
 /** Public API contract for control plane claims. */
-export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneClaimsSchema>>;
+export type ControlPlaneClaims = ReturnType<typeof parseControlPlaneClaims>;
 
 /** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
@@ -232,10 +222,18 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Compare runtime metadata by stable code-point name and id order. */
+export function compareRuntimeAgentMetadata(
+  left: { id: string; name: string },
+  right: { id: string; name: string },
+): number {
+  return compareStrings(left.name, right.name) || compareStrings(left.id, right.id);
+}
+
 function assertValidMaxAgeSeconds(maxAgeSeconds: number): void {
-  if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds < 0) {
+  if (!Number.isSafeInteger(maxAgeSeconds) || maxAgeSeconds < 0) {
     throw SECURITY_VIOLATION.create({
-      detail: "Control-plane signature max age must be a finite non-negative number",
+      detail: "Control-plane signature max age must be a non-negative safe integer",
     });
   }
 }
@@ -245,6 +243,11 @@ function validateSignedRequestFreshness(
   maxAgeSeconds: number,
 ): void {
   assertValidMaxAgeSeconds(maxAgeSeconds);
+  if (!Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp)) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature timestamps must be safe integers",
+    });
+  }
 
   const now = Math.floor(Date.now() / 1000);
   if (claims.exp <= claims.iat) {
@@ -264,16 +267,11 @@ function validateSignedRequestFreshness(
 }
 
 function base64urlDecodeToBytes(input: string): ArrayBuffer {
-  if (!BASE64URL_PART_PATTERN.test(input) || input.length % 4 === 1) {
+  const bytes = base64urlDecodeBytes(input);
+  if (!bytes) {
     throw new TypeError("Invalid base64url encoding in compact JWS");
   }
-
-  const normalized = input
-    .replaceAll("-", "+")
-    .replaceAll("_", "/")
-    .padEnd(Math.ceil(input.length / 4) * 4, "=");
-
-  return toArrayBuffer(Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0)));
+  return toArrayBuffer(bytes);
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -286,11 +284,95 @@ function parseCompactJwsPart<T>(encodedPart: string): T {
   return JSON.parse(utf8Decoder.decode(base64urlDecodeToBytes(encodedPart))) as T;
 }
 
+function parseCompactJwsObject(
+  encodedPart: string,
+  label: string,
+): Record<string, unknown> {
+  const value = parseCompactJwsPart<unknown>(encodedPart);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`Compact JWS ${label} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readStringField(value: Record<string, unknown>, field: string): string {
+  const candidate = value[field];
+  if (typeof candidate !== "string") {
+    throw new TypeError(`Compact JWS field "${field}" must be a string`);
+  }
+  return candidate;
+}
+
+function readIntegerField(value: Record<string, unknown>, field: string): number {
+  const candidate = value[field];
+  if (typeof candidate !== "number" || !Number.isInteger(candidate)) {
+    throw new TypeError(`Compact JWS field "${field}" must be an integer`);
+  }
+  return candidate;
+}
+
+function parseCompactJwsProtectedHeader(encodedHeader: string): void {
+  const header = parseCompactJwsObject(encodedHeader, "protected header");
+  if (header.alg !== "EdDSA") {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature must use the EdDSA algorithm",
+    });
+  }
+  if ("crit" in header) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature uses unsupported critical header parameters",
+    });
+  }
+  if (header.typ !== undefined && typeof header.typ !== "string") {
+    throw new TypeError('Compact JWS field "typ" must be a string');
+  }
+  if (header.kid !== undefined && typeof header.kid !== "string") {
+    throw new TypeError('Compact JWS field "kid" must be a string');
+  }
+}
+
+function parseDispatchClaims(encodedPayload: string) {
+  const claims = parseCompactJwsObject(encodedPayload, "payload");
+  return {
+    iss: readStringField(claims, "iss"),
+    aud: readStringField(claims, "aud"),
+    sub: readStringField(claims, "sub"),
+    project_id: readStringField(claims, "project_id"),
+    platform: readStringField(claims, "platform"),
+    body_sha256: readStringField(claims, "body_sha256"),
+    iat: readIntegerField(claims, "iat"),
+    exp: readIntegerField(claims, "exp"),
+  };
+}
+
+function parseControlPlaneClaims(encodedPayload: string) {
+  const claims = parseCompactJwsObject(encodedPayload, "payload");
+  const surface = readStringField(claims, "surface");
+  if (!CONTROL_PLANE_SURFACES.includes(surface as ControlPlaneSurface)) {
+    throw new TypeError('Compact JWS field "surface" is not supported');
+  }
+
+  return {
+    iss: readStringField(claims, "iss"),
+    aud: readStringField(claims, "aud"),
+    sub: readStringField(claims, "sub"),
+    surface: surface as ControlPlaneSurface,
+    project_id: readStringField(claims, "project_id"),
+    request_hash: readStringField(claims, "request_hash"),
+    iat: readIntegerField(claims, "iat"),
+    exp: readIntegerField(claims, "exp"),
+  };
+}
+
 function pemToDer(pem: string, label: string): ArrayBuffer {
   const begin = `-----BEGIN ${label}-----`;
   const end = `-----END ${label}-----`;
   const normalizedPem = pem.trim();
-  if (!normalizedPem.startsWith(begin) || !normalizedPem.endsWith(end)) {
+  if (
+    normalizedPem.length > MAX_PUBLIC_KEY_PEM_CODE_UNITS ||
+    !normalizedPem.startsWith(begin) ||
+    !normalizedPem.endsWith(end)
+  ) {
     throw new TypeError(`Invalid ${label} PEM envelope`);
   }
 
@@ -302,19 +384,89 @@ function pemToDer(pem: string, label: string): ArrayBuffer {
   return toArrayBuffer(Uint8Array.from(atob(body), (char) => char.charCodeAt(0)));
 }
 
-async function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
+let cachedEd25519PublicKey:
+  | { pem: string; promise: Promise<CryptoKey> }
+  | undefined;
+
+function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
+  if (cachedEd25519PublicKey?.pem === pem) {
+    return cachedEd25519PublicKey.promise;
+  }
+
+  const promise = crypto.subtle.importKey(
     "spki",
     pemToDer(pem, "PUBLIC KEY"),
     "Ed25519",
     false,
     ["verify"],
   );
+  cachedEd25519PublicKey = { pem, promise };
+  void promise.catch(() => {
+    if (cachedEd25519PublicKey?.promise === promise) {
+      cachedEd25519PublicKey = undefined;
+    }
+  });
+  return promise;
 }
 
 async function sha256Base64url(body: string): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  const hash = await crypto.subtle.digest("SHA-256", utf8Encoder.encode(body));
   return base64urlEncodeBytes(new Uint8Array(hash));
+}
+
+type CompactJwsParts = readonly [
+  encodedHeader: string,
+  encodedPayload: string,
+  encodedSignature: string,
+];
+
+function parseCompactJwsEnvelope(jws: string): CompactJwsParts {
+  if (jws.length > MAX_COMPACT_JWS_CODE_UNITS) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature is too large" });
+  }
+
+  const parts = jws.split(".");
+  if (parts.length !== 3) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must be a compact JWS" });
+  }
+
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  if (!encodedHeader || !encodedPayload || !encodedSignature) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature must include header, payload, and signature",
+    });
+  }
+  if (
+    encodedHeader.length > MAX_COMPACT_JWS_HEADER_CODE_UNITS ||
+    encodedPayload.length > MAX_COMPACT_JWS_PAYLOAD_CODE_UNITS ||
+    encodedSignature.length !== ED25519_SIGNATURE_BASE64URL_CODE_UNITS
+  ) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature has an invalid compact JWS part size",
+    });
+  }
+
+  return [encodedHeader, encodedPayload, encodedSignature];
+}
+
+async function verifyCompactJwsEnvelope(
+  parts: CompactJwsParts,
+  publicKeyPem: string,
+): Promise<void> {
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const signature = base64urlDecodeToBytes(encodedSignature);
+  if (signature.byteLength !== ED25519_SIGNATURE_BYTES) {
+    throw SECURITY_VIOLATION.create({
+      detail: "Control-plane signature has an invalid Ed25519 signature size",
+    });
+  }
+
+  const signingInput = utf8Encoder.encode(`${encodedHeader}.${encodedPayload}`);
+  const publicKey = await importEd25519PublicKey(publicKeyPem);
+  const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
+  if (!verified) {
+    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature verification failed" });
+  }
 }
 
 async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
@@ -322,7 +474,7 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   body: string,
   options: {
     audience: string;
-    claimsSchema: Schema<TClaims>;
+    parseClaims: (encodedPayload: string) => TClaims;
     expectedProjectId?: string;
     expectedSubject?: string;
     hashClaimKey: keyof TClaims & string;
@@ -337,36 +489,12 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
 ): Promise<TClaims> {
   assertValidMaxAgeSeconds(options.maxAgeSeconds);
 
-  const parts = jws.split(".");
-  if (parts.length !== 3) {
-    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must be a compact JWS" });
-  }
+  const parts = parseCompactJwsEnvelope(jws);
+  await verifyCompactJwsEnvelope(parts, options.publicKeyPem);
+  const [encodedHeader, encodedPayload] = parts;
 
-  const encodedHeader = parts[0];
-  const encodedPayload = parts[1];
-  const encodedSignature = parts[2];
-  if (!encodedHeader || !encodedPayload || !encodedSignature) {
-    throw SECURITY_VIOLATION.create({
-      detail: "Control-plane signature must include header, payload, and signature",
-    });
-  }
-
-  const header = compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
-  if (header.crit !== undefined) {
-    throw SECURITY_VIOLATION.create({
-      detail: "Control-plane signature uses unsupported critical header parameters",
-    });
-  }
-  const claims = options.claimsSchema.parse(parseCompactJwsPart(encodedPayload));
-
-  const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
-  const signature = base64urlDecodeToBytes(encodedSignature);
-  const publicKey = await importEd25519PublicKey(options.publicKeyPem);
-  const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
-
-  if (!verified) {
-    throw SECURITY_VIOLATION.create({ detail: "Control-plane signature verification failed" });
-  }
+  parseCompactJwsProtectedHeader(encodedHeader);
+  const claims = options.parseClaims(encodedPayload);
 
   if (claims.iss !== "veryfront-api") {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane issuer mismatch" });
@@ -407,6 +535,12 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   return claims;
 }
 
+/**
+ * Resolve the skills visible to an agent and return stable, public metadata.
+ *
+ * Owner-aware registry filtering prevents an agent from advertising skills it
+ * cannot resolve during execution.
+ */
 export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
   // Owner-aware: the agent's metadata advertises exactly what the agent can
   // resolve at runtime — unowned skills plus its own.
@@ -421,9 +555,7 @@ export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
         ...(skill.metadata.description ? { description: skill.metadata.description } : {}),
       })
     )
-    .sort((left, right) =>
-      compareStrings(left.name, right.name) || compareStrings(left.id, right.id)
-    );
+    .sort(compareRuntimeAgentMetadata);
 }
 
 /** Get browser-safe runtime metadata for an agent. */
@@ -479,9 +611,7 @@ export async function listRuntimeAgents(
     .map((id) => ({ id, agent: deps.getAgent(id) }))
     .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
     .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent))
-    .sort((left, right) =>
-      compareStrings(left.name, right.name) || compareStrings(left.id, right.id)
-    );
+    .sort(compareRuntimeAgentMetadata);
 
   return RuntimeAgentListResponseSchema.parse({ agents });
 }
@@ -510,22 +640,43 @@ export async function verifyDispatchJwsSignature(
     maxAgeSeconds: number;
   },
 ): Promise<boolean> {
+  return await verifySignedRequestJwsSignature(jws, parseDispatchClaims, options);
+}
+
+/**
+ * Verify the signature and freshness of a control-plane JWS without granting
+ * body, audience, project, subject, or surface authorization.
+ *
+ * This has the same authenticity-only contract as
+ * {@link verifyDispatchJwsSignature}; request handlers must still perform the
+ * body-bound {@link verifyControlPlaneJws} check before consuming a request.
+ */
+export async function verifyControlPlaneJwsSignature(
+  jws: string,
+  options: {
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+  },
+): Promise<boolean> {
+  return await verifySignedRequestJwsSignature(jws, parseControlPlaneClaims, options);
+}
+
+async function verifySignedRequestJwsSignature<TClaims extends SignedRequestClaims>(
+  jws: string,
+  parseClaims: (encodedPayload: string) => TClaims,
+  options: {
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+  },
+): Promise<boolean> {
   try {
     assertValidMaxAgeSeconds(options.maxAgeSeconds);
-    const parts = jws.split(".");
-    if (parts.length !== 3) return false;
-    const [encodedHeader, encodedPayload, encodedSignature] = parts;
-    if (!encodedHeader || !encodedPayload || !encodedSignature) return false;
+    const parts = parseCompactJwsEnvelope(jws);
+    await verifyCompactJwsEnvelope(parts, options.publicKeyPem);
+    const [encodedHeader, encodedPayload] = parts;
 
-    const header = compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
-    if (header.crit !== undefined) return false;
-    const claims = dispatchClaimsSchema.parse(parseCompactJwsPart(encodedPayload));
-
-    const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
-    const signature = base64urlDecodeToBytes(encodedSignature);
-    const publicKey = await importEd25519PublicKey(options.publicKeyPem);
-    const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
-    if (!verified) return false;
+    parseCompactJwsProtectedHeader(encodedHeader);
+    const claims = parseClaims(encodedPayload);
 
     if (claims.iss !== "veryfront-api") return false;
 
@@ -552,7 +703,7 @@ export async function verifyDispatchJws(
 ): Promise<DispatchClaims> {
   return verifySignedRequestJws(jws, body, {
     audience: options.audience,
-    claimsSchema: dispatchClaimsSchema,
+    parseClaims: parseDispatchClaims,
     expectedProjectId: options.expectedProjectId,
     ...(options.expectedSubject !== undefined ? { expectedSubject: options.expectedSubject } : {}),
     hashClaimKey: "body_sha256",
@@ -585,7 +736,7 @@ export async function verifyControlPlaneJws(
 ): Promise<ControlPlaneClaims> {
   return verifySignedRequestJws(jws, body, {
     audience: options.audience,
-    claimsSchema: controlPlaneClaimsSchema,
+    parseClaims: parseControlPlaneClaims,
     expectedProjectId: options.expectedProjectId,
     ...(options.expectedSubject !== undefined ? { expectedSubject: options.expectedSubject } : {}),
     hashClaimKey: "request_hash",

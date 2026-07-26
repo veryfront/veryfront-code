@@ -54,6 +54,9 @@ describe("generate-api-reference", () => {
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
+      const channelsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/channels.md`,
+      );
       const providerTypesSource = await Deno.readTextFile(
         new URL("../../src/provider/types.ts", import.meta.url),
       );
@@ -89,6 +92,22 @@ describe("generate-api-reference", () => {
         providerReference,
         `| \`ModelRuntimeGenerateResult\` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L${modelRuntimeGenerateResultLine}) |`,
         "generated source anchors must match the declaration's current source line",
+      );
+      assertStringIncludes(
+        channelsReference,
+        '`veryfront/channels/control-plane`',
+      );
+      assertStringIncludes(
+        channelsReference,
+        '`veryfront/channels/invoke`',
+      );
+      assertStringIncludes(
+        channelsReference,
+        "`verifyControlPlaneJwsSignature`",
+      );
+      assertStringIncludes(
+        channelsReference,
+        "`ExecuteChannelInvokeOptions`",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-read
 
-const SYNTHETIC_PARENTS = new Set<string>();
+const SYNTHETIC_PARENTS = new Set(["channels"]);
 
 export interface DocsCoverageReport {
   publicExports: {

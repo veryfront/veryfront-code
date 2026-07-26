@@ -1,4 +1,5 @@
 import {
+  compareRuntimeAgentMetadata,
   getRuntimeAgentPublicMetadata,
   type RuntimeAgentDiscoveryDeps,
   type RuntimeAgentPublicMetadata,
@@ -49,7 +50,7 @@ export class PublicAgentsListHandler extends BaseHandler {
           Boolean(entry.agent)
         )
         .map(({ id, agent }) => getRuntimeAgentPublicMetadata(id, agent))
-        .sort((left, right) => left.name.localeCompare(right.name));
+        .sort(compareRuntimeAgentMetadata);
 
       return this.respond(builder.json({ agents }, 200));
     });

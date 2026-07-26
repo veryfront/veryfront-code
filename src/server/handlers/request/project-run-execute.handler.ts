@@ -1471,11 +1471,11 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        const request = parseExecuteRequest(JSON.parse(rawBody), runId);
         const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
         });
+        const request = parseExecuteRequest(JSON.parse(rawBody), runId);
 
         if (
           request.projectId !== claims.project_id ||

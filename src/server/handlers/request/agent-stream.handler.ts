@@ -569,7 +569,12 @@ function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamReques
 
 function getPathRunId(pathname: string): string | null {
   const match = RUN_STREAM_PATH_REGEX.exec(pathname);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 export class AgentStreamHandler extends BaseHandler {
@@ -650,18 +655,21 @@ export class AgentStreamHandler extends BaseHandler {
 
     try {
       const pathRunId = getPathRunId(new URL(req.url).pathname);
+      if (!pathRunId) {
+        return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
+      }
       const rawBody = await readInternalAgentRequestBody(
         req,
         INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
       );
-      const payload = parseAgentStreamPayload(JSON.parse(rawBody));
-      if (!pathRunId || pathRunId !== payload.runId) {
-        return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
-      }
       const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
-        expectedSubject: payload.runId,
+        expectedSubject: pathRunId,
         expectedSurface: "studio",
       });
+      const payload = parseAgentStreamPayload(JSON.parse(rawBody));
+      if (pathRunId !== payload.runId) {
+        return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
+      }
       const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
         getHostEnv("VERYFRONT_API_TOKEN") || "";
       const requestScopedContext: HandlerContext = {

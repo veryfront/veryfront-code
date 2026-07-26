@@ -22,7 +22,7 @@
 const ROOT = Deno.cwd();
 
 /** Slugs that own only deep imports and have no top-level barrel JSDoc. */
-const SYNTHETIC_PARENTS = new Set<string>();
+const SYNTHETIC_PARENTS = new Set(["channels"]);
 
 interface ValidationError {
   exportPath: string;

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/provider"
 description: "Model provider registry and runtime resolution."
-order: 22
+order: 23
 ---
 
 ## Import

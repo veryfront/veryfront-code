@@ -1,7 +1,7 @@
 ---
 title: "veryfront/tool"
 description: "Define tools with schema-backed inputs for agents and MCP."
-order: 33
+order: 34
 ---
 
 ## Import

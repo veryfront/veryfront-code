@@ -11,6 +11,7 @@ order: 1
 |--------|-------------|
 | [`veryfront`](./veryfront/index.md) | Core app config and routing. |
 | [`veryfront/agent`](./veryfront/agent.md) | Agents, AG-UI handlers, and memory. |
+| [`veryfront/channels`](./veryfront/channels.md) | Signed control-plane and channel invocation contracts. |
 | [`veryfront/chat`](./veryfront/chat.md) | Chat components and hooks. |
 | [`veryfront/cli`](./veryfront/cli.md) | CLI runtime helpers. |
 | [`veryfront/context`](./veryfront/context.md) | Page context. |

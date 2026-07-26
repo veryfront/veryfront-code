@@ -1,6 +1,9 @@
 import { assertEquals } from "#std/assert";
+import { fromFileUrl, join } from "#std/path";
 import type { MDXFrontmatterValue as ClientFrontmatterValue } from "./index.client.ts";
 import type { MDXFrontmatterValue as RootFrontmatterValue } from "./index.ts";
+
+const REPOSITORY_ROOT = fromFileUrl(new URL("../", import.meta.url));
 
 const rootFrontmatterValue: RootFrontmatterValue = {
   nested: [true, null, new Date("2026-07-23T00:00:00.000Z")],
@@ -59,7 +62,14 @@ const expectedRootExports = [
 
 async function documentedExports(path: string): Promise<readonly string[]> {
   const output = await new Deno.Command(Deno.execPath(), {
-    args: ["doc", "--json", "--frozen", "--lock=deno.lock", path],
+    args: [
+      "doc",
+      "--json",
+      "--frozen",
+      `--lock=${join(REPOSITORY_ROOT, "deno.lock")}`,
+      join(REPOSITORY_ROOT, path),
+    ],
+    cwd: REPOSITORY_ROOT,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
