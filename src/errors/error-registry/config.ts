@@ -83,7 +83,7 @@ export const SCHEDULE_CONFIG_INVALID = defineError({
   status: 400,
   title: "Invalid schedule configuration",
   suggestion:
-    "Check schedule definition fields, cron expression, target settings, and positive-integer limits",
+    "Use a five-field cron expression, an IANA timezone, a canonical target, positive duration limits, and a non-negative retry count",
 });
 
 /** Trigger ID format and input serialization validation failures */

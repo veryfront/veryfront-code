@@ -1,6 +1,7 @@
 import { SCHEDULE_CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
-import { isTriggerTarget, type TriggerTarget } from "#veryfront/trigger/target.ts";
-import { isTriggerId, snapshotSerializable } from "#veryfront/trigger/validation.ts";
+import { snapshotTriggerTarget, type TriggerTarget } from "#veryfront/trigger/target.ts";
+import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
+import { isSupportedIanaTimezone, normalizeCronExpression } from "./calendar.ts";
 import type {
   ScheduleConcurrencyPolicy,
   ScheduleDefinition,
@@ -24,6 +25,30 @@ const MAX_INTEGRATION_NAME_LENGTH = 255;
 const MAX_RESOURCE_KIND_LENGTH = 64;
 const MAX_SCOPE_LENGTH = 255;
 const MAX_RESOURCE_ID_LENGTH = 512;
+const MAX_NAME_LENGTH = 256;
+const MAX_DESCRIPTION_LENGTH = 4_096;
+const MAX_SCHEDULE_EXPRESSION_LENGTH = 256;
+const MAX_TIMEZONE_LENGTH = 255;
+const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
+const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
+
+const CONFIG_KEYS = [
+  "id",
+  "name",
+  "description",
+  "schedule",
+  "cron",
+  "timezone",
+  "target",
+  "input",
+  "timeoutSeconds",
+  "backoffLimit",
+  "concurrencyPolicy",
+  "maxRuns",
+  "health",
+  "integrationRequirements",
+] as const;
+const DEFINITION_KEYS = CONFIG_KEYS.filter((key) => key !== "cron");
 
 type ValidationMode = "config" | "definition";
 
@@ -34,44 +59,70 @@ function invalid(detail: string, cause?: unknown): never {
   });
 }
 
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
+function truncateDiagnosticKey(key: string): string {
+  if (key.length <= MAX_DIAGNOSTIC_KEY_LENGTH) return key;
+  let prefix = key.slice(0, MAX_DIAGNOSTIC_KEY_LENGTH);
+  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
+    prefix = prefix.slice(0, -1);
+  }
+  return `${prefix}…`;
+}
+
+function formatDiagnosticProperty(label: string, key: string): string {
+  const boundedKey = truncateDiagnosticKey(key);
+  return SIMPLE_DIAGNOSTIC_KEY_PATTERN.test(boundedKey)
+    ? `${label}.${boundedKey}`
+    : `${label}[${JSON.stringify(boundedKey)}]`;
+}
+
+function snapshotDataRecord(
+  value: unknown,
+  label: string,
+  allowedKeys: readonly string[],
+): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     invalid(`${label} must be an object.`);
   }
-  return value as Record<string, unknown>;
-}
 
-function getOwn(
-  record: Record<string, unknown>,
-  key: string,
-  mode: ValidationMode = "config",
-): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(record, key);
-  if (descriptor === undefined) {
-    if (mode === "definition" && key in record) {
-      invalid(`Schedule ${key} must be an own property.`);
-    }
-    return undefined;
+  const prototype = Reflect.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    invalid(`${label} must be a plain object.`);
   }
-  if (mode === "definition") {
-    if (!("value" in descriptor)) {
-      invalid(`Schedule ${key} must be a data property.`);
+
+  const allowed = new Set(allowedKeys);
+  const ownKeys = Reflect.ownKeys(value);
+  for (const key of ownKeys) {
+    if (typeof key === "symbol") {
+      invalid(`${label} must not define symbol properties.`);
     }
-    return descriptor.value;
+    if (!allowed.has(key)) {
+      invalid(`${formatDiagnosticProperty(label, key)} is not supported.`);
+    }
   }
-  return record[key];
+
+  const listedKeys = new Set(ownKeys);
+  const snapshot: Record<string, unknown> = Object.create(null);
+  for (const key of allowedKeys) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    const listed = listedKeys.has(key);
+    const descriptorExists = descriptor !== undefined;
+    if (listed !== descriptorExists) {
+      invalid(`${label} is invalid.`);
+    }
+    if (descriptor === undefined) continue;
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      invalid(`${label}.${key} must be an own enumerable data property.`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
 }
 
 function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
+  if (typeof value !== "string" || value.length === 0) {
     invalid(`${label} is required.`);
   }
-  return value;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") invalid(`${label} must be a string.`);
   return value;
 }
 
@@ -86,21 +137,57 @@ function optionalPositiveInteger(value: unknown, label: string): number | undefi
   return value === undefined ? undefined : requirePositiveInteger(value, label);
 }
 
+function requireNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    invalid(`${label} must be a non-negative integer within the safe integer range.`);
+  }
+  return value;
+}
+
+function optionalNonNegativeInteger(value: unknown, label: string): number | undefined {
+  return value === undefined ? undefined : requireNonNegativeInteger(value, label);
+}
+
+function assertNoControlCharacters(value: string, label: string): void {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) {
+      invalid(`${label} must not contain control characters.`);
+    }
+  }
+}
+
 function requireContractString(
   value: unknown,
   label: string,
   maxLength: number,
   mode: ValidationMode,
 ): string {
-  const original = requireString(value, label);
-  const normalized = original.trim();
-  if (normalized.length > maxLength) {
+  if (typeof value !== "string" || value.length === 0) {
+    invalid(`${label} is required.`);
+  }
+  if (value.length > maxLength) {
     invalid(`${label} must be at most ${maxLength} characters.`);
   }
+  const original = value;
+  const normalized = original.trim();
+  if (normalized.length === 0) invalid(`${label} is required.`);
+  assertNoControlCharacters(normalized, label);
   if (mode === "definition" && normalized !== original) {
     invalid(`${label} must not include leading or trailing whitespace.`);
   }
   return normalized;
+}
+
+function optionalContractString(
+  value: unknown,
+  label: string,
+  maxLength: number,
+  mode: ValidationMode,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") invalid(`${label} must be a string.`);
+  return requireContractString(value, label, maxLength, mode);
 }
 
 function requireIntegrationName(
@@ -132,59 +219,98 @@ function requireRequirementKind(
   return normalized;
 }
 
-function assertOnlyKeys(
-  record: Record<string, unknown>,
-  allowedKeys: readonly string[],
+function snapshotDataArray(
+  value: unknown,
   label: string,
-): void {
-  const allowed = new Set(allowedKeys);
-  const unknownKey = Object.keys(record).find((key) => !allowed.has(key));
-  if (unknownKey !== undefined) invalid(`${label}.${unknownKey} is not supported.`);
+  maxLength: number,
+): unknown[] {
+  if (!Array.isArray(value)) invalid(`${label} must be an array.`);
+  if (Reflect.getPrototypeOf(value) !== Array.prototype) {
+    invalid(`${label} must be a plain array.`);
+  }
+
+  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+  const lengthValue = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    typeof lengthValue !== "number" ||
+    !Number.isSafeInteger(lengthValue) ||
+    lengthValue < 0
+  ) {
+    invalid(`${label} has an invalid length.`);
+  }
+  const length = lengthValue;
+  if (length > maxLength) {
+    invalid(`${label} must contain at most ${maxLength} entries.`);
+  }
+
+  const allowedKeys = new Set<PropertyKey>(["length"]);
+  for (let index = 0; index < length; index++) {
+    allowedKeys.add(String(index));
+  }
+  if (Reflect.ownKeys(value).some((key) => !allowedKeys.has(key))) {
+    invalid(`${label} must not define custom properties.`);
+  }
+
+  const snapshot: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !("value" in descriptor)
+    ) {
+      invalid(`${label}[${index}] must be an enumerable data property.`);
+    }
+    snapshot.push(descriptor.value);
+  }
+  return snapshot;
 }
 
-function mapArray<T>(
-  values: unknown[],
+function normalizeCron(
+  value: unknown,
+  label: string,
   mode: ValidationMode,
-  label: string,
-  mapValue: (value: unknown, index: number) => T,
-): T[] {
-  if (mode === "definition") {
-    if (Object.getPrototypeOf(values) !== Array.prototype) {
-      invalid(`${label} must be a plain array.`);
-    }
-    const allowedKeys = new Set<PropertyKey>(["length"]);
-    for (let index = 0; index < values.length; index++) {
-      allowedKeys.add(String(index));
-    }
-    if (Reflect.ownKeys(values).some((key) => !allowedKeys.has(key))) {
-      invalid(`${label} must not define custom properties.`);
-    }
+): string {
+  const original = requireString(value, label);
+  if (original.length > MAX_SCHEDULE_EXPRESSION_LENGTH) {
+    invalid(`${label} must be at most ${MAX_SCHEDULE_EXPRESSION_LENGTH} characters.`);
   }
+  if (original.trim().length === 0) invalid(`${label} is required.`);
+  assertNoControlCharacters(original, label);
 
-  const mapped: T[] = [];
-  for (let index = 0; index < values.length; index++) {
-    let value: unknown;
-    if (mode === "definition") {
-      const descriptor = Object.getOwnPropertyDescriptor(values, String(index));
-      if (descriptor === undefined || !("value" in descriptor)) {
-        invalid(`${label}[${index}] must be a data property.`);
-      }
-      value = descriptor.value;
-    } else {
-      value = values[index];
-    }
-    mapped.push(mapValue(value, index));
+  const normalized = normalizeCronExpression(original);
+  if (normalized === null) {
+    invalid("Schedule schedule must be a five-field POSIX cron expression.");
   }
-  return mapped;
+  if (mode === "definition" && normalized !== original) {
+    invalid("Schedule schedule must use canonical five-field POSIX cron syntax.");
+  }
+  return normalized;
 }
 
-function normalizeTarget(value: unknown, mode: ValidationMode): TriggerTarget {
-  const target = requireRecord(value, "Schedule target");
-  const candidate = {
-    kind: getOwn(target, "kind", mode),
-    id: getOwn(target, "id", mode),
-  };
-  if (!isTriggerTarget(candidate)) {
+function normalizeTimezone(
+  value: unknown,
+  mode: ValidationMode,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const timezone = requireContractString(
+    value,
+    "Schedule timezone",
+    MAX_TIMEZONE_LENGTH,
+    mode,
+  );
+  if (!isSupportedIanaTimezone(timezone)) {
+    invalid("Schedule timezone must be a supported IANA timezone name.");
+  }
+  return timezone;
+}
+
+function normalizeTarget(value: unknown): TriggerTarget {
+  const target = snapshotDataRecord(value, "Schedule target", ["kind", "id"]);
+  const candidate = snapshotTriggerTarget(target);
+  if (candidate === null) {
     invalid("Schedule target must specify a valid task, workflow, or agent id.");
   }
   return candidate;
@@ -192,9 +318,11 @@ function normalizeTarget(value: unknown, mode: ValidationMode): TriggerTarget {
 
 function normalizeInput(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
-  const input = requireRecord(value, "Schedule input");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    invalid("Schedule input must be an object.");
+  }
   try {
-    return snapshotSerializable(input, "Schedule input") as Record<string, unknown>;
+    return snapshotSerializable(value, "Schedule input") as Record<string, unknown>;
   } catch (error) {
     const detail = error instanceof VeryfrontError && error.detail
       ? error.detail
@@ -205,14 +333,12 @@ function normalizeInput(value: unknown): Record<string, unknown> | undefined {
 
 function normalizeScheduleHealth(
   value: unknown,
-  mode: ValidationMode,
 ): ScheduleHealth | undefined {
   if (value === undefined) return undefined;
-  const health = requireRecord(value, "Schedule health");
-  assertOnlyKeys(health, ["maxStalenessSeconds"], "Schedule health");
+  const health = snapshotDataRecord(value, "Schedule health", ["maxStalenessSeconds"]);
   return {
     maxStalenessSeconds: requirePositiveInteger(
-      getOwn(health, "maxStalenessSeconds", mode),
+      health.maxStalenessSeconds,
       "Schedule health.maxStalenessSeconds",
     ),
   };
@@ -228,12 +354,11 @@ function normalizeIntegrationResourceParent(
 
   const label =
     `Schedule integrationRequirements[${requirementIndex}].resources[${resourceIndex}].parent`;
-  const parent = requireRecord(value, label);
-  assertOnlyKeys(parent, ["kind", "id"], label);
+  const parent = snapshotDataRecord(value, label, ["kind", "id"]);
   return {
-    kind: requireRequirementKind(getOwn(parent, "kind", mode), `${label}.kind`, mode),
+    kind: requireRequirementKind(parent.kind, `${label}.kind`, mode),
     id: requireContractString(
-      getOwn(parent, "id", mode),
+      parent.id,
       `${label}.id`,
       MAX_RESOURCE_ID_LENGTH,
       mode,
@@ -248,19 +373,18 @@ function normalizeIntegrationResource(
   mode: ValidationMode,
 ): ScheduleIntegrationResource {
   const label = `Schedule integrationRequirements[${requirementIndex}].resources[${resourceIndex}]`;
-  const resource = requireRecord(value, label);
-  assertOnlyKeys(resource, ["kind", "id", "parent"], label);
+  const resource = snapshotDataRecord(value, label, ["kind", "id", "parent"]);
 
   const parent = normalizeIntegrationResourceParent(
-    getOwn(resource, "parent", mode),
+    resource.parent,
     requirementIndex,
     resourceIndex,
     mode,
   );
   return {
-    kind: requireRequirementKind(getOwn(resource, "kind", mode), `${label}.kind`, mode),
+    kind: requireRequirementKind(resource.kind, `${label}.kind`, mode),
     id: requireContractString(
-      getOwn(resource, "id", mode),
+      resource.id,
       `${label}.id`,
       MAX_RESOURCE_ID_LENGTH,
       mode,
@@ -274,21 +398,23 @@ function normalizeIntegrationRequirements(
   mode: ValidationMode,
 ): ScheduleIntegrationRequirement[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) invalid("Schedule integrationRequirements must be an array.");
-  if (value.length > MAX_INTEGRATION_REQUIREMENTS) {
-    invalid(
-      `Schedule integrationRequirements must contain at most ${MAX_INTEGRATION_REQUIREMENTS} entries.`,
-    );
-  }
+  const requirements = snapshotDataArray(
+    value,
+    "Schedule integrationRequirements",
+    MAX_INTEGRATION_REQUIREMENTS,
+  );
 
   const integrations = new Set<string>();
-  return mapArray(value, mode, "Schedule integrationRequirements", (value, index) => {
+  return requirements.map((value, index) => {
     const label = `Schedule integrationRequirements[${index}]`;
-    const requirement = requireRecord(value, label);
-    assertOnlyKeys(requirement, ["integration", "requiredScopes", "resources"], label);
+    const requirement = snapshotDataRecord(value, label, [
+      "integration",
+      "requiredScopes",
+      "resources",
+    ]);
 
     const integration = requireIntegrationName(
-      getOwn(requirement, "integration", mode),
+      requirement.integration,
       `${label}.integration`,
       mode,
     );
@@ -297,102 +423,141 @@ function normalizeIntegrationRequirements(
     }
     integrations.add(integration);
 
-    const requiredScopesValue = getOwn(requirement, "requiredScopes", mode);
+    const requiredScopesValue = requirement.requiredScopes;
     if (mode === "definition" && requiredScopesValue === undefined) {
       invalid(`${label}.requiredScopes must be an array.`);
     }
-    const requiredScopes = requiredScopesValue === undefined ? [] : requiredScopesValue;
-    if (!Array.isArray(requiredScopes)) invalid(`${label}.requiredScopes must be an array.`);
-    if (requiredScopes.length > MAX_SCOPES_PER_REQUIREMENT) {
-      invalid(
-        `${label}.requiredScopes must contain at most ${MAX_SCOPES_PER_REQUIREMENT} entries.`,
-      );
-    }
+    const requiredScopes = snapshotDataArray(
+      requiredScopesValue === undefined ? [] : requiredScopesValue,
+      `${label}.requiredScopes`,
+      MAX_SCOPES_PER_REQUIREMENT,
+    );
 
-    const resourcesValue = getOwn(requirement, "resources", mode);
+    const resourcesValue = requirement.resources;
     if (mode === "definition" && resourcesValue === undefined) {
       invalid(`${label}.resources must be an array.`);
     }
-    const resources = resourcesValue === undefined ? [] : resourcesValue;
-    if (!Array.isArray(resources)) invalid(`${label}.resources must be an array.`);
-    if (resources.length > MAX_RESOURCES_PER_REQUIREMENT) {
-      invalid(
-        `${label}.resources must contain at most ${MAX_RESOURCES_PER_REQUIREMENT} entries.`,
-      );
+    const resources = snapshotDataArray(
+      resourcesValue === undefined ? [] : resourcesValue,
+      `${label}.resources`,
+      MAX_RESOURCES_PER_REQUIREMENT,
+    );
+
+    const normalizedScopes = requiredScopes.map((scope, scopeIndex) =>
+      requireContractString(
+        scope,
+        `${label}.requiredScopes[${scopeIndex}]`,
+        MAX_SCOPE_LENGTH,
+        mode,
+      )
+    );
+    const scopes = new Set<string>();
+    for (const scope of normalizedScopes) {
+      if (scopes.has(scope)) {
+        invalid(`${label}.requiredScopes contains duplicate scope ${scope}.`);
+      }
+      scopes.add(scope);
+    }
+
+    const normalizedResources = resources.map((resource, resourceIndex) =>
+      normalizeIntegrationResource(resource, index, resourceIndex, mode)
+    );
+    const resourceIdentities = new Set<string>();
+    for (const resource of normalizedResources) {
+      const identity = JSON.stringify([
+        resource.kind,
+        resource.id,
+        resource.parent?.kind ?? null,
+        resource.parent?.id ?? null,
+      ]);
+      if (resourceIdentities.has(identity)) {
+        invalid(`${label}.resources contains a duplicate resource identity.`);
+      }
+      resourceIdentities.add(identity);
     }
 
     return {
       integration,
-      requiredScopes: mapArray(
-        requiredScopes,
-        mode,
-        `${label}.requiredScopes`,
-        (scope, scopeIndex) =>
-          requireContractString(
-            scope,
-            `${label}.requiredScopes[${scopeIndex}]`,
-            MAX_SCOPE_LENGTH,
-            mode,
-          ),
-      ),
-      resources: mapArray(
-        resources,
-        mode,
-        `${label}.resources`,
-        (resource, resourceIndex) =>
-          normalizeIntegrationResource(resource, index, resourceIndex, mode),
-      ),
+      requiredScopes: normalizedScopes,
+      resources: normalizedResources,
     };
   });
 }
 
 function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): ScheduleDefinition {
-  const config = requireRecord(value, "Schedule configuration");
+  const config = snapshotDataRecord(
+    value,
+    "Schedule configuration",
+    mode === "config" ? CONFIG_KEYS : DEFINITION_KEYS,
+  );
 
-  const id = requireString(getOwn(config, "id", mode), "Schedule id");
-  if (!isTriggerId(id)) {
+  const id = requireString(config.id, "Schedule id");
+  try {
+    validateTriggerId(id, "Schedule");
+  } catch (error) {
+    const detail = error instanceof VeryfrontError && error.detail
+      ? error.detail
+      : "Schedule id must be a canonical slash-separated lowercase identifier.";
+    invalid(detail, error);
+  }
+
+  const scheduleValue = config.schedule;
+  const cronValue = config.cron;
+  if (scheduleValue === undefined && cronValue === undefined) {
     invalid(
-      "Schedule id must start with a lowercase letter or number and use lowercase letters, numbers, dots, underscores, slashes, or hyphens.",
+      mode === "definition"
+        ? "Schedule schedule is required."
+        : "Schedule schedule or cron is required.",
     );
   }
-
-  const scheduleValue = getOwn(config, "schedule", mode);
-  const cronValue = getOwn(config, "cron", mode);
-  if (scheduleValue !== undefined && cronValue !== undefined && scheduleValue !== cronValue) {
+  const normalizedSchedule = scheduleValue === undefined
+    ? undefined
+    : normalizeCron(scheduleValue, "Schedule schedule", mode);
+  const normalizedCron = cronValue === undefined
+    ? undefined
+    : normalizeCron(cronValue, "Schedule cron", mode);
+  if (
+    normalizedSchedule !== undefined &&
+    normalizedCron !== undefined &&
+    normalizedSchedule !== normalizedCron
+  ) {
     invalid("Schedule schedule and cron must match when both are provided.");
   }
-  const scheduleExpression = mode === "definition" ? scheduleValue : scheduleValue ?? cronValue;
-  const schedule = requireString(
-    scheduleExpression,
-    mode === "definition" ? "Schedule schedule" : "Schedule schedule or cron",
-  );
+  const schedule = normalizedSchedule ?? normalizedCron;
+  if (schedule === undefined) {
+    invalid("Schedule schedule or cron is required.");
+  }
 
-  const name = optionalString(getOwn(config, "name", mode), "Schedule name");
-  const description = optionalString(
-    getOwn(config, "description", mode),
-    "Schedule description",
+  const name = optionalContractString(
+    config.name,
+    "Schedule name",
+    MAX_NAME_LENGTH,
+    mode,
   );
-  const timezoneValue = getOwn(config, "timezone", mode);
-  const timezone = timezoneValue === undefined
-    ? undefined
-    : requireString(timezoneValue, "Schedule timezone");
-  const target = normalizeTarget(getOwn(config, "target", mode), mode);
-  const input = normalizeInput(getOwn(config, "input", mode));
+  const description = optionalContractString(
+    config.description,
+    "Schedule description",
+    MAX_DESCRIPTION_LENGTH,
+    mode,
+  );
+  const timezone = normalizeTimezone(config.timezone, mode);
+  const target = normalizeTarget(config.target);
+  const input = normalizeInput(config.input);
 
   const timeoutSeconds = optionalPositiveInteger(
-    getOwn(config, "timeoutSeconds", mode),
+    config.timeoutSeconds,
     "Schedule timeoutSeconds",
   );
-  const backoffLimit = optionalPositiveInteger(
-    getOwn(config, "backoffLimit", mode),
+  const backoffLimit = optionalNonNegativeInteger(
+    config.backoffLimit,
     "Schedule backoffLimit",
   );
   const maxRuns = optionalPositiveInteger(
-    getOwn(config, "maxRuns", mode),
+    config.maxRuns,
     "Schedule maxRuns",
   );
 
-  const concurrencyPolicy = getOwn(config, "concurrencyPolicy", mode);
+  const concurrencyPolicy = config.concurrencyPolicy;
   if (
     concurrencyPolicy !== undefined &&
     !CONCURRENCY_POLICIES.has(concurrencyPolicy as ScheduleConcurrencyPolicy)
@@ -400,9 +565,9 @@ function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): Schedule
     invalid("Schedule concurrencyPolicy must be Allow, Forbid, or Replace.");
   }
 
-  const health = normalizeScheduleHealth(getOwn(config, "health", mode), mode);
+  const health = normalizeScheduleHealth(config.health);
   const integrationRequirements = normalizeIntegrationRequirements(
-    getOwn(config, "integrationRequirements", mode),
+    config.integrationRequirements,
     mode,
   );
 

@@ -7,13 +7,19 @@ import {
 import { isScheduleDefinition, type ScheduleDefinition } from "./types.ts";
 import { normalizeScheduleDefinition } from "./validation.ts";
 
+/** Inputs for deterministic source schedule discovery. */
 export interface ScheduleDiscoveryOptions {
+  /** Project root containing the schedule source directory. */
   projectDir: string;
+  /** Runtime adapter used to enumerate and import project source. */
   adapter: RuntimeAdapter;
+  /** Optional project configuration used during source loading. */
   config?: VeryfrontConfig;
+  /** Schedule directory relative to `projectDir`; defaults to `schedules`. */
   schedulesDir?: string;
 }
 
+/** Valid schedules and bounded per-file discovery diagnostics. */
 export type ScheduleDiscoveryResult = SourceTriggerDiscoveryResult<ScheduleDefinition>;
 
 /** Discover and validate canonical schedule definitions from a project directory. */

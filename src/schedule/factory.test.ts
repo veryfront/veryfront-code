@@ -85,6 +85,168 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("accepts bounded POSIX cron fields, IANA timezones, and zero retries", () => {
+    const definition = schedule({
+      id: "calendar-sweep",
+      schedule: "*/15 0,12 1-15/2 jan,mar mon-fri",
+      timezone: "Europe/Stockholm",
+      target: { kind: "task", id: "run-calendar-sweep" },
+      backoffLimit: 0,
+    });
+
+    assertEquals(definition.schedule, "*/15 0,12 1-15/2 JAN,MAR MON-FRI");
+    assertEquals(definition.timezone, "Europe/Stockholm");
+    assertEquals(definition.backoffLimit, 0);
+    assertEquals(isScheduleDefinition(definition), true);
+  });
+
+  it("canonicalizes authored metadata and cron whitespace", () => {
+    const definition = schedule({
+      id: "daily-triage",
+      name: "  Daily triage  ",
+      description: "  Review the priority queue.  ",
+      schedule: "  0   8  *  *  1-5  ",
+      timezone: "  Europe/Stockholm  ",
+      target: { kind: "task", id: "sync-helpdesk" },
+    });
+
+    assertEquals(definition.name, "Daily triage");
+    assertEquals(definition.description, "Review the priority queue.");
+    assertEquals(definition.schedule, "0 8 * * 1-5");
+    assertEquals(definition.timezone, "Europe/Stockholm");
+  });
+
+  it("rejects malformed cron expressions and unknown timezones", () => {
+    for (
+      const expression of [
+        "not a cron",
+        "60 0 * * *",
+        "0 24 * * *",
+        "0 0 0 * *",
+        "0 0 * FOO *",
+        "0 0 * * 8",
+        "*/0 0 * * *",
+        "10-5 0 * * *",
+        "0,,1 0 * * *",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          schedule({
+            id: "invalid-calendar",
+            schedule: expression,
+            target: { kind: "task", id: "run-calendar-sweep" },
+          }),
+        VeryfrontError,
+        "Schedule schedule must be a five-field POSIX cron expression.",
+      );
+    }
+
+    for (const timezone of ["Mars/Olympus", "+02:00"]) {
+      assertThrows(
+        () =>
+          schedule({
+            id: "invalid-timezone",
+            schedule: "0 8 * * *",
+            timezone,
+            target: { kind: "task", id: "run-calendar-sweep" },
+          }),
+        VeryfrontError,
+        "Schedule timezone must be a supported IANA timezone name.",
+      );
+    }
+  });
+
+  it("bounds schedule metadata and rejects unknown top-level fields", () => {
+    const base = {
+      id: "bounded-schedule",
+      schedule: "0 8 * * *",
+      target: { kind: "task", id: "run-bounded-schedule" },
+    } as const;
+
+    for (
+      const [config, message] of [
+        [{ ...base, name: "x".repeat(257) }, "Schedule name must be at most 256 characters."],
+        [
+          { ...base, description: "x".repeat(4_097) },
+          "Schedule description must be at most 4096 characters.",
+        ],
+        [
+          { ...base, timezone: "Europe/Stockholm\u0000" },
+          "Schedule timezone must not contain control characters.",
+        ],
+        [
+          { ...base, schedule: " ".repeat(257) },
+          "Schedule schedule must be at most 256 characters.",
+        ],
+        [
+          { ...base, owner: "runtime" },
+          "Schedule configuration.owner is not supported.",
+        ],
+        [
+          { ...base, ["line\nbreak"]: true },
+          'Schedule configuration["line\\nbreak"] is not supported.',
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => schedule(config as never),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("never executes accessors while reading public configuration", () => {
+    let scheduleReads = 0;
+    const config = Object.defineProperties({}, {
+      id: { value: "accessor-schedule", enumerable: true },
+      schedule: {
+        get() {
+          scheduleReads++;
+          return "0 8 * * *";
+        },
+        enumerable: true,
+      },
+      target: {
+        value: { kind: "task", id: "run-accessor-schedule" },
+        enumerable: true,
+      },
+    });
+
+    assertThrows(
+      () => schedule(config as never),
+      VeryfrontError,
+      "Schedule configuration.schedule must be an own enumerable data property.",
+    );
+    assertEquals(scheduleReads, 0);
+
+    let scopeReads = 0;
+    const scopes: string[] = [];
+    Object.defineProperty(scopes, "0", {
+      get() {
+        scopeReads++;
+        return "read";
+      },
+      enumerable: true,
+    });
+    assertThrows(
+      () =>
+        schedule({
+          id: "accessor-scopes",
+          schedule: "0 8 * * *",
+          target: { kind: "task", id: "run-accessor-schedule" },
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: scopes,
+          }],
+        }),
+      VeryfrontError,
+      "Schedule integrationRequirements[0].requiredScopes[0] must be an enumerable data property.",
+    );
+    assertEquals(scopeReads, 0);
+  });
+
   it("normalizes schedule health configuration", () => {
     const definition = schedule({
       id: "triage-sweep",
@@ -159,6 +321,38 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("copies nested integration requirements before retaining them", () => {
+    const requirement = {
+      integration: "slack",
+      requiredScopes: ["channels:read"],
+      resources: [{
+        kind: "channel",
+        id: "C012345",
+        parent: { kind: "workspace", id: "T012345" },
+      }],
+    };
+    const definition = schedule({
+      id: "slack-digest",
+      schedule: "0 9 * * 1-5",
+      target: { kind: "workflow", id: "post-slack-digest" },
+      integrationRequirements: [requirement],
+    });
+
+    requirement.requiredScopes[0] = "mutated";
+    requirement.resources[0]!.id = "mutated";
+    requirement.resources[0]!.parent.id = "mutated";
+
+    assertEquals(definition.integrationRequirements, [{
+      integration: "slack",
+      requiredScopes: ["channels:read"],
+      resources: [{
+        kind: "channel",
+        id: "C012345",
+        parent: { kind: "workspace", id: "T012345" },
+      }],
+    }]);
+  });
+
   it("allows empty required scopes and resources", () => {
     const definition = schedule({
       id: "empty-requirements",
@@ -190,7 +384,7 @@ describe("schedule/factory", () => {
           target: { kind: "workflow", id: "escalate-ticket" },
         }),
       VeryfrontError,
-      "Schedule id must start",
+      "Schedule id must be at most 256 characters",
     );
 
     assertThrows(
@@ -355,6 +549,41 @@ describe("schedule/factory", () => {
         }),
       Error,
       "duplicate integration slack",
+    );
+  });
+
+  it("rejects duplicate scopes and resource identities", () => {
+    assertThrows(
+      () =>
+        schedule({
+          id: "duplicate-scopes",
+          schedule: "0 9 * * 1-5",
+          target: { kind: "workflow", id: "post-slack-digest" },
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["channels:read", "channels:read"],
+          }],
+        }),
+      VeryfrontError,
+      "Schedule integrationRequirements[0].requiredScopes contains duplicate scope channels:read.",
+    );
+
+    assertThrows(
+      () =>
+        schedule({
+          id: "duplicate-resources",
+          schedule: "0 9 * * 1-5",
+          target: { kind: "workflow", id: "post-slack-digest" },
+          integrationRequirements: [{
+            integration: "slack",
+            resources: [
+              { kind: "channel", id: "C012345" },
+              { kind: "channel", id: "C012345" },
+            ],
+          }],
+        }),
+      VeryfrontError,
+      "Schedule integrationRequirements[0].resources contains a duplicate resource identity.",
     );
   });
 
@@ -558,7 +787,7 @@ describe("schedule/factory", () => {
             target: { kind: "workflow", id: "escalate-ticket" },
             integrationRequirements: forgedRequirements,
           },
-          "Schedule integrationRequirements[0].integration is required.",
+          "Schedule integrationRequirements must not define custom properties.",
         ],
         [hostileConfig, "Schedule configuration is invalid."],
       ] as const
@@ -687,6 +916,26 @@ describe("schedule/factory", () => {
           target: { kind: "workflow", id: "escalate-ticket" },
           health: { maxStalenessSeconds: Number.MAX_SAFE_INTEGER + 1 },
         },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          cron: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+        },
+        {
+          id: "daily-triage",
+          schedule: "0 8 * * 1-5",
+          target: { kind: "workflow", id: "escalate-ticket" },
+          unsupported: true,
+        },
+        Object.assign(
+          Object.create({ unsupported: true }) as Record<string, unknown>,
+          {
+            id: "daily-triage",
+            schedule: "0 8 * * 1-5",
+            target: { kind: "workflow", id: "escalate-ticket" },
+          },
+        ),
       ]
     ) {
       assertEquals(isScheduleDefinition(value), false);

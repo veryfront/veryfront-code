@@ -8,7 +8,7 @@ export const scheduleHelp: CommandHelp = {
   options: [
     {
       flag: "--input <file>",
-      description: "JSON input file to override the schedule input",
+      description: "JSON object file to override the schedule input",
     },
     {
       flag: "--remote",

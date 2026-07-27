@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    29 |      50.0% | Current formal closure evidence remains valid       |
+| Closed                         |    30 |      51.7% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    27 |      46.6% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    26 |      44.8% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -61,6 +61,7 @@ stricter closure count.
 - `runs`
 - `runtime`
 - `sandbox`
+- `schedule`
 - `schemas`
 - `studio`
 - `task`
@@ -92,7 +93,6 @@ stricter closure count.
 - `react`
 - `rendering`
 - `routing`
-- `schedule`
 - `security`
 - `server`
 - `skill`
@@ -124,8 +124,8 @@ every affected unit.
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
-`release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`,
-`studio`, `task`, `trigger`, `types`, and `version.ts`.
+`release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
+`schemas`, `studio`, `task`, `trigger`, `types`, and `version.ts`.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -153,6 +153,10 @@ contracts, and cross-runtime consumers were remediated and revalidated.
 input, deterministic duplicate handling, local task/workflow/agent execution,
 cancellation, lifecycle, public surface, and direct consumers were remediated
 and revalidated.
+`schedule` is closed after its calendar grammar, data-only configuration
+boundary, canonical definition ownership, integration requirements, local and
+remote execution controls, public surface, documentation, and direct consumers
+were remediated and revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -3388,5 +3392,103 @@ unresolved critical or high-confidence release-assets production risk remains;
 the `release-assets` audit unit is closed. Build, Modules, Proxy, Rendering, and
 Server remain listed for their own top-level revalidation because their source
 or generated consumers changed during this checkpoint.
+
+### Schedule closure checkpoint
+
+The `schedule` audit unit owns the public recurring-schedule factory and types,
+canonical calendar and timezone validation, source discovery, definition
+guards, integration access requirements, and the handoff to local or remote
+target execution. Its direct dependencies are errors, configuration, platform
+adapters, and trigger discovery/execution. Direct consumers are the general
+project discovery engine, the `schedule` and `schedules` CLI commands, the runs
+client, generated API documentation, and task, workflow, or agent targets.
+
+The current schedule findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** public configuration reads
+  executed getters, accepted custom prototypes and unknown top-level fields,
+  and retained mutable nested records. The source was a split validation path
+  that used direct property access for authored config and descriptor checks
+  only for discovered definitions. The consequence was user code running
+  during validation, prototype-sensitive behavior, silently ignored policy
+  fields, and definitions changing after registration. One fail-closed
+  data-only snapshot boundary now accepts only plain records and dense plain
+  arrays, rejects accessors, symbols, custom fields, and sparse or custom
+  arrays, captures each value once, and returns owned target, input, health,
+  and integration snapshots.
+- **Symptom -> Source -> Consequence -> Remedy:** any non-empty schedule or
+  timezone string crossed the public boundary, and metadata was unbounded.
+  The consequence was invalid or nonportable calendars reaching deployment,
+  inconsistent whitespace identity, large diagnostic work, and unsafe control
+  characters. Source schedules now use a bounded canonical five-field cron
+  grammar with field ranges, lists, ranges, positive steps, and month or
+  weekday names. Timezones must be `UTC` or runtime-recognized IANA names; raw
+  offsets are rejected. IDs reuse the trigger identifier contract, metadata is
+  trimmed and bounded before expensive normalization, and diagnostics escape
+  and truncate hostile property names.
+- **Symptom -> Source -> Consequence -> Remedy:** `backoffLimit: 0` was
+  rejected even though the runs contract defines zero as no retries, while
+  duplicate scopes and resource identities were accepted. The consequence was
+  an inconsistent retry API and redundant access declarations whose meaning
+  depended on downstream deduplication. Backoff is now a non-negative safe
+  integer, duration and run limits remain positive, and integration names,
+  scopes, resources, and parent-qualified identities are bounded, normalized,
+  copied, and unique.
+- **Symptom -> Source -> Consequence -> Remedy:** local schedule execution
+  ignored `timeoutSeconds`, primitive `--input` values were silently discarded
+  for agents or reshaped for other targets, and cloud-returned timeout and
+  target metadata was trusted. The consequence was local work outliving its
+  authored budget, caller input changing meaning by target kind, and malformed
+  hosted metadata appearing as a valid run. Local execution now requires a
+  JSON object override, propagates a disposable cooperative timeout signal,
+  chains bounded timer chunks so long durations cannot be truncated by host
+  coercion, and always clears its timer. Remote polling validates positive safe
+  timeout metadata, falls back from invalid per-run timeout values, and accepts
+  only canonical task, workflow, or agent targets.
+- **Symptom -> Source -> Consequence -> Remedy:** the general discovery handler
+  validated a schedule but registered the original mutable definition. The
+  consequence was a second discovery path bypassing schedule ownership even
+  though dedicated source discovery copied definitions. General discovery now
+  registers the same canonical owned snapshot, with a mutation regression over
+  target, input, scopes, and resources.
+- **Symptom -> Source -> Consequence -> Remedy:** public types and concepts did
+  not state the recurring calendar grammar, IANA timezone boundary, retry-zero
+  semantics, or the difference between platform one-time schedules and
+  source-defined recurrence. The public JSDoc, generated API reference, concept
+  guide, CLI help, and error recovery guidance now describe the implemented
+  contract.
+
+Current schedule verification evidence:
+
+- The affected schedule, trigger, discovery, runs, and CLI set checks 23 test
+  files and passes 55 suites with 189 nested steps and zero failures. It
+  includes real temporary-project execution proving a configured schedule
+  timeout reaches task code, deterministic source discovery, canonical
+  ownership, remote polling deadlines, and public export identity.
+- The narrow error-guidance change typechecks through the production error
+  entrypoints, and all 30 error suites pass 512 runtime steps. The separately
+  recorded pre-existing test-fixture cast diagnostic remains confined to its
+  test and is not part of the production graph.
+- Documentation validation passes all 40 generated API pages, 66 guides, 111
+  public docs, executable guide contracts and examples, and all 744 links.
+- Two complete generation passes produce identical manifests and bundles. The
+  schedule-aware RSC bundle remains stable at SHA-256
+  `b0d5fdba92ab47bd81559957a315eef514034788c07a38dc0fbfe3634e15a093`.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,403
+  configured files, lint across 4,309 source files, every style, dependency,
+  module, and extension ratchet, zero cyclic module edges, documentation
+  validation, and every configured production and browser entrypoint
+  typecheck.
+- `deno task typecheck:consumer` rebuilds the root npm package and every
+  extension from the current source, reports zero npm vulnerabilities, passes
+  the root import lifecycle, and verifies the published declaration
+  composition with `tsc --noEmit`.
+
+No unresolved critical or high-confidence schedule production risk remains;
+the `schedule` audit unit is closed. Discovery remains listed for its own
+top-level revalidation because its registration consumer changed during this
+checkpoint. The generated server bundle does not reopen Server, and the narrow
+error guidance remains covered by the complete current error verification
+above.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

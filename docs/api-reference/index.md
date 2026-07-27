@@ -37,7 +37,7 @@ order: 1
 | [`veryfront/router`](./veryfront/router.md) | Client navigation and route context. |
 | [`veryfront/runs`](./veryfront/runs.md) | Canonical durable task and workflow runs. |
 | [`veryfront/sandbox`](./veryfront/sandbox.md) | Isolated execution. |
-| [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined schedules for Veryfront projects. |
+| [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined recurring schedules for Veryfront projects. |
 | [`veryfront/schemas`](./veryfront/schemas.md) | Validation schemas. |
 | [`veryfront/server`](./veryfront/server.md) | Server runtime helpers. |
 | [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files following the agentskills.io specification. |
