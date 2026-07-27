@@ -37,7 +37,11 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should throw for non-existent path", () => {
-      assertThrows(() => createAdapter().statSync("./non-existent-file-12345.txt"), Error);
+      const error = assertThrows(
+        () => createAdapter().statSync("./non-existent-file-12345.txt"),
+        Error,
+      ) as NodeJS.ErrnoException;
+      assertEquals(error.code, "ENOENT");
     });
   });
 
@@ -55,7 +59,11 @@ describe("NodeBasedShellAdapter", () => {
     });
 
     it("should throw for non-existent file", () => {
-      assertThrows(() => createAdapter().readFileSync("./non-existent-file-12345.txt"), Error);
+      const error = assertThrows(
+        () => createAdapter().readFileSync("./non-existent-file-12345.txt"),
+        Error,
+      ) as NodeJS.ErrnoException;
+      assertEquals(error.code, "ENOENT");
     });
   });
 });

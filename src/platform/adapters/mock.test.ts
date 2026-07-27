@@ -294,6 +294,15 @@ describe("MockAdapter", () => {
       assertEquals(tempDir.startsWith("/tmp/test"), true);
       assertEquals(await adapter.fs.exists(tempDir), true);
     });
+
+    it("rejects path-bearing prefixes", async () => {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () => adapter.fs.makeTempDir("../escape-"),
+        TypeError,
+        "must not contain",
+      );
+    });
   });
 
   describe("env", () => {

@@ -52,7 +52,6 @@
     "cycle-sensitive:src/platform/adapters/runtime/bun/filesystem-adapter.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/runtime/bun/http-server.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/runtime/node/filesystem-adapter.ts -> #veryfront/utils",
-    "cycle-sensitive:src/platform/adapters/runtime/shared/node-based-shell-adapter.ts -> #veryfront/errors",
     "cycle-sensitive:src/platform/adapters/token/factory.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/token/integration.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/adapters/token/veryfront/adapter.ts -> #veryfront/errors",

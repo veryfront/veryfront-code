@@ -8,6 +8,7 @@ import type {
 } from "../../base.ts";
 import { createFileWatcher, createWatcherIterator, setupNodeFsWatcher } from "./shared-watcher.ts";
 import { makeNodeTempDir } from "./temp-dir.ts";
+import { isNotFoundError } from "../../../compat/fs.ts";
 
 export interface NodeFileSystemLogger {
   error(message: string, context?: Record<string, unknown>): void;
@@ -52,8 +53,9 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     try {
       await fs.access(path);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
     }
   }
 

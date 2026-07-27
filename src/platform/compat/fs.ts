@@ -1,6 +1,7 @@
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
+import { validateTempDirectoryPrefix } from "./temp-directory-prefix.ts";
 
 const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
 const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
@@ -8,18 +9,6 @@ const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "ENOTSUP",
   "EOPNOTSUPP",
 ]);
-
-function validateTempDirectoryPrefix(prefix: unknown): string {
-  if (typeof prefix !== "string") {
-    throw new TypeError("Temporary directory prefix must be a string");
-  }
-  if (prefix.includes("/") || prefix.includes("\\") || prefix.includes("\0")) {
-    throw new TypeError(
-      "Temporary directory prefix must not contain path separators or null bytes",
-    );
-  }
-  return prefix;
-}
 
 function isUnsupportedChmodError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;

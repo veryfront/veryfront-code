@@ -65,7 +65,7 @@ describe("Embedded Polyfills", () => {
     }
 
     const nodeNoop = EMBEDDED_POLYFILLS["_veryfront/platform/polyfills/node-noop"] ?? "";
-    assertEquals(nodeNoop.includes("const nodeNoop = {}"), true);
+    assertEquals(nodeNoop.includes("const nodeNoop = Object.freeze({})"), true);
     assertEquals(
       nodeNoop.includes("export { nodeNoop, nodeNoop as default }"),
       true,

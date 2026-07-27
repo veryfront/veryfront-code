@@ -154,6 +154,10 @@ if (isDeno) {
         assertEquals(exists, false);
       });
 
+      it("should propagate invalid path errors", async () => {
+        await assertRejects(() => denoAdapter.fs.exists("\0"), TypeError);
+      });
+
       it("should stat a file", async () => {
         const info = await denoAdapter.fs.stat(testFilePath);
         assertExists(info);
@@ -296,12 +300,10 @@ if (isDeno) {
       });
 
       it("should throw for statSync of non-existent path", () => {
-        try {
-          denoAdapter.shell.statSync("/nonexistent/path/12345");
-          assertEquals(true, false, "Should have thrown");
-        } catch (e) {
-          assertExists(e);
-        }
+        assertThrows(
+          () => denoAdapter.shell.statSync("/nonexistent/path/12345"),
+          Deno.errors.NotFound,
+        );
       });
 
       it("should readFileSync a file", () => {
@@ -311,12 +313,10 @@ if (isDeno) {
       });
 
       it("should throw for readFileSync of non-existent file", () => {
-        try {
-          denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts");
-          assertEquals(true, false, "Should have thrown");
-        } catch (e) {
-          assertExists(e);
-        }
+        assertThrows(
+          () => denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts"),
+          Deno.errors.NotFound,
+        );
       });
     });
 

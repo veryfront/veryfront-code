@@ -10,6 +10,7 @@ import type {
 import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { createFileWatcher } from "../shared/watcher-queue.ts";
 import { resolve, sep } from "../../../compat/path/index.ts";
+import { validateTempDirectoryPrefix } from "../../../compat/temp-directory-prefix.ts";
 
 function assertDenoRuntime(method: string): void {
   if (typeof Deno === "undefined") {
@@ -98,12 +99,13 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
   }
 
   async exists(path: string): Promise<boolean> {
-    if (typeof Deno === "undefined") return false;
+    assertDenoRuntime("exists");
     try {
       await Deno.stat(path);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return false;
+      throw error;
     }
   }
 
@@ -146,7 +148,7 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
 
   async makeTempDir(prefix: string): Promise<string> {
     assertDenoRuntime("makeTempDir");
-    return Deno.makeTempDir({ prefix });
+    return Deno.makeTempDir({ prefix: validateTempDirectoryPrefix(prefix) });
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {

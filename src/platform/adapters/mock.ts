@@ -1,5 +1,6 @@
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { validateTempDirectoryPrefix } from "#veryfront/platform/compat/temp-directory-prefix.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
@@ -224,11 +225,12 @@ export function createMockAdapter(): MockRuntimeAdapter {
 
         return Promise.resolve();
       },
-      makeTempDir: (prefix: string) => {
-        const path = `/tmp/${prefix}-${crypto.randomUUID()}`;
-        directories.add(path);
-        return Promise.resolve(path);
-      },
+      makeTempDir: (prefix: string) =>
+        Promise.resolve().then(() => {
+          const path = `/tmp/${validateTempDirectoryPrefix(prefix)}${crypto.randomUUID()}`;
+          directories.add(path);
+          return path;
+        }),
       watch: (_paths: string | string[], _options?: WatchOptions): FileWatcher => ({
         async *[Symbol.asyncIterator](): AsyncIterator<FileChangeEvent> {
           // Mock watcher doesn't emit events

@@ -1,9 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeCompatibleFileSystemAdapter } from "./node-filesystem-adapter.ts";
 
 describe("NodeCompatibleFileSystemAdapter", () => {
+  it("does not disguise invalid paths as missing", async () => {
+    const adapter = new NodeCompatibleFileSystemAdapter();
+    await assertRejects(() => adapter.exists("\0"), TypeError);
+  });
+
   it("provides consistent text, byte, metadata, and symlink operations", async () => {
     const root = await Deno.makeTempDir({ prefix: "veryfront-node-fs-" });
     try {

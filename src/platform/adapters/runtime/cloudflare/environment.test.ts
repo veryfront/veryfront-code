@@ -32,4 +32,23 @@ describe("CloudflareEnvironmentAdapter", () => {
       FILES: "request-local-shadow",
     });
   });
+
+  it("snapshots own string bindings and preserves special keys as data", () => {
+    const inherited = { INHERITED: "not-a-binding" };
+    const bindings = Object.create(inherited) as CloudflareEnv;
+    bindings.API_URL = "https://initial.example.com";
+    Object.defineProperty(bindings, "__proto__", {
+      value: "literal",
+      enumerable: true,
+      configurable: true,
+    });
+
+    const environment = new CloudflareEnvironmentAdapter(bindings);
+    bindings.API_URL = "https://mutated.example.com";
+
+    assertEquals(environment.get("API_URL"), "https://initial.example.com");
+    assertEquals(environment.get("INHERITED"), undefined);
+    assertEquals(environment.get("__proto__"), "literal");
+    assertEquals(Object.hasOwn(environment.toObject(), "__proto__"), true);
+  });
 });
