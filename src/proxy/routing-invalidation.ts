@@ -1,5 +1,10 @@
 import { verifyDispatchJws } from "#veryfront/channels/control-plane.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  isCanonicalOpaqueProjectIdentifier,
+  isCanonicalProjectSlug,
+} from "#veryfront/utils/project-identity.ts";
+import { ProxyResponseBodyError, readProxyResponseText } from "./response-body.ts";
 
 export const PROXY_ROUTING_INVALIDATION_PATH = "/_proxy/internal/routing-invalidation";
 export const PROXY_ROUTING_INVALIDATION_PLATFORM = "proxy-routing";
@@ -9,25 +14,27 @@ const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
 const PUBLIC_KEY_ENV_VAR = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const MAX_SIGNATURE_AGE_SECONDS = 60;
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
+const DEFAULT_REQUEST_BODY_TIMEOUT_MS = 5_000;
+const MAX_REQUEST_BODY_TIMEOUT_MS = 60_000;
 
 export interface ProxyRoutingInvalidationRequest {
-  version: 1;
-  projectId: string;
-  projectSlug: string;
-  deploymentId: string;
-  environmentId: string;
-  environmentName: string;
-  releaseId: string;
+  readonly version: 1;
+  readonly projectId: string;
+  readonly projectSlug: string;
+  readonly deploymentId: string;
+  readonly environmentId: string;
+  readonly environmentName: string;
+  readonly releaseId: string;
 }
 
 export interface ProxyRoutingInvalidationEvent extends ProxyRoutingInvalidationRequest {
-  eventId: string;
+  readonly eventId: string;
 }
 
 export interface ProxyRoutingInvalidationPublishResult {
-  acknowledged: number;
-  converged: boolean;
-  recipients: number;
+  readonly acknowledged: number;
+  readonly converged: boolean;
+  readonly recipients: number;
 }
 
 export interface ProxyRoutingInvalidationPublisher {
@@ -37,6 +44,7 @@ export interface ProxyRoutingInvalidationPublisher {
 }
 
 interface ProxyRoutingInvalidationHandlerOptions {
+  bodyReadTimeoutMs?: number;
   createEventId?: () => string;
   publicKeyPem?: string;
   publisher: ProxyRoutingInvalidationPublisher | null;
@@ -49,45 +57,107 @@ function jsonResponse(status: number, body: Record<string, unknown>): Response {
   });
 }
 
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
+function ownDataValue(
+  descriptors: PropertyDescriptorMap,
+  key: string,
+): unknown {
+  const descriptor = descriptors[key];
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0;
 }
 
 async function readBoundedRequestBody(
   req: Request,
-): Promise<{ body: string } | { error: "too-large" | "unreadable" }> {
-  if (!req.body) return { body: "" };
-
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-
+  timeoutMs: number,
+): Promise<
+  { body: string } | { error: "timeout" | "too-large" | "unreadable" }
+> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromRequest = (): void => {
+    controller.abort(req.signal.reason);
+  };
+  if (req.signal.aborted) abortFromRequest();
+  else req.signal.addEventListener("abort", abortFromRequest, { once: true });
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(
+      new DOMException(
+        "Routing invalidation request body timed out",
+        "TimeoutError",
+      ),
+    );
+  }, timeoutMs);
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-
-      totalBytes += value.byteLength;
-      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
-        await reader.cancel("Request body is too large").catch(() => undefined);
-        return { error: "too-large" };
-      }
-      chunks.push(value);
+    const response = new Response(req.body, { headers: req.headers });
+    return {
+      body: await readProxyResponseText(
+        response,
+        MAX_REQUEST_BODY_BYTES,
+        controller.signal,
+      ),
+    };
+  } catch (error) {
+    if (timedOut) return { error: "timeout" };
+    if (
+      error instanceof ProxyResponseBodyError &&
+      (error.failure === "too-large" ||
+        error.failure === "too-many-chunks")
+    ) {
+      return { error: "too-large" };
     }
-  } catch {
     return { error: "unreadable" };
   } finally {
-    reader.releaseLock();
+    clearTimeout(timeoutId);
+    req.signal.removeEventListener("abort", abortFromRequest);
+  }
+}
+
+function snapshotProxyRoutingInvalidationRequest(
+  value: unknown,
+): ProxyRoutingInvalidationRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const version = ownDataValue(descriptors, "version");
+  const projectId = ownDataValue(descriptors, "projectId");
+  const projectSlug = ownDataValue(descriptors, "projectSlug");
+  const deploymentId = ownDataValue(descriptors, "deploymentId");
+  const environmentId = ownDataValue(descriptors, "environmentId");
+  const environmentName = ownDataValue(descriptors, "environmentName");
+  const releaseId = ownDataValue(descriptors, "releaseId");
+  if (
+    version !== 1 ||
+    !isCanonicalOpaqueProjectIdentifier(projectId) ||
+    typeof projectSlug !== "string" ||
+    !isCanonicalProjectSlug(projectSlug) ||
+    projectSlug !== projectSlug.toLowerCase() ||
+    !isCanonicalOpaqueProjectIdentifier(deploymentId) ||
+    !isCanonicalOpaqueProjectIdentifier(environmentId) ||
+    !isCanonicalOpaqueProjectIdentifier(environmentName) ||
+    !isCanonicalOpaqueProjectIdentifier(releaseId)
+  ) {
+    return null;
   }
 
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { body: new TextDecoder().decode(bytes) };
+  return Object.freeze({
+    version: 1,
+    projectId,
+    projectSlug,
+    deploymentId,
+    environmentId,
+    environmentName,
+    releaseId,
+  });
 }
 
 export function parseProxyRoutingInvalidationRequest(
@@ -95,34 +165,74 @@ export function parseProxyRoutingInvalidationRequest(
 ): ProxyRoutingInvalidationRequest | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(body);
+    parsed = JSON.parse(body) as unknown;
   } catch {
     return null;
   }
+  return snapshotProxyRoutingInvalidationRequest(parsed);
+}
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const input = parsed as Record<string, unknown>;
+export function parseProxyRoutingInvalidationEvent(
+  value: unknown,
+): ProxyRoutingInvalidationEvent | null {
+  const request = snapshotProxyRoutingInvalidationRequest(value);
+  if (!request || !value || typeof value !== "object") return null;
+  let eventId: unknown;
+  try {
+    eventId = ownDataValue(
+      Object.getOwnPropertyDescriptors(value),
+      "eventId",
+    );
+  } catch {
+    return null;
+  }
+  if (!isCanonicalOpaqueProjectIdentifier(eventId)) return null;
+  return Object.freeze({ eventId, ...request });
+}
+
+export function parseProxyRoutingInvalidationPublishResult(
+  value: unknown,
+): ProxyRoutingInvalidationPublishResult | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const acknowledged = ownDataValue(descriptors, "acknowledged");
+  const converged = ownDataValue(descriptors, "converged");
+  const recipients = ownDataValue(descriptors, "recipients");
   if (
-    input.version !== 1 ||
-    !nonEmptyString(input.projectId) ||
-    !nonEmptyString(input.projectSlug) ||
-    !nonEmptyString(input.deploymentId) ||
-    !nonEmptyString(input.environmentId) ||
-    !nonEmptyString(input.environmentName) ||
-    !nonEmptyString(input.releaseId)
+    !isNonNegativeSafeInteger(acknowledged) ||
+    !isNonNegativeSafeInteger(recipients) ||
+    acknowledged > recipients ||
+    typeof converged !== "boolean" ||
+    (converged &&
+      (recipients === 0 ||
+        acknowledged < recipients))
   ) {
     return null;
   }
+  return Object.freeze({
+    acknowledged,
+    converged,
+    recipients,
+  });
+}
 
-  return {
-    version: 1,
-    projectId: input.projectId,
-    projectSlug: input.projectSlug,
-    deploymentId: input.deploymentId,
-    environmentId: input.environmentId,
-    environmentName: input.environmentName,
-    releaseId: input.releaseId,
-  };
+function resolveBodyReadTimeout(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_REQUEST_BODY_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > MAX_REQUEST_BODY_TIMEOUT_MS
+  ) {
+    throw new RangeError(
+      `Routing invalidation body timeout must be an integer between 1 and ${MAX_REQUEST_BODY_TIMEOUT_MS}`,
+    );
+  }
+  return value;
 }
 
 export async function handleProxyRoutingInvalidationRequest(
@@ -138,14 +248,15 @@ export async function handleProxyRoutingInvalidationRequest(
     return jsonResponse(503, { error: "Routing invalidation is unavailable" });
   }
 
-  const declaredLength = Number(req.headers.get("content-length") ?? 0);
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
-    return jsonResponse(413, { error: "Request body is too large" });
-  }
-
-  const bodyResult = await readBoundedRequestBody(req);
+  const bodyResult = await readBoundedRequestBody(
+    req,
+    resolveBodyReadTimeout(options.bodyReadTimeoutMs),
+  );
   if ("error" in bodyResult && bodyResult.error === "too-large") {
     return jsonResponse(413, { error: "Request body is too large" });
+  }
+  if ("error" in bodyResult && bodyResult.error === "timeout") {
+    return jsonResponse(408, { error: "Routing invalidation request timed out" });
   }
   if ("error" in bodyResult) {
     return jsonResponse(400, { error: "Invalid routing invalidation request" });
@@ -173,10 +284,17 @@ export async function handleProxyRoutingInvalidationRequest(
 
   try {
     const createEventId = options.createEventId ?? (() => crypto.randomUUID());
-    const result = await options.publisher.publish({
+    const event = parseProxyRoutingInvalidationEvent({
       eventId: createEventId(),
       ...input,
     });
+    if (!event) throw new TypeError("Routing invalidation event is invalid");
+    const result = parseProxyRoutingInvalidationPublishResult(
+      await options.publisher.publish(event),
+    );
+    if (!result) {
+      throw new TypeError("Routing invalidation publisher returned an invalid result");
+    }
     return jsonResponse(result.converged ? 200 : 503, { ...result });
   } catch {
     return jsonResponse(503, { error: "Routing invalidation did not converge" });

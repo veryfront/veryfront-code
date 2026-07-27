@@ -228,6 +228,21 @@ and acknowledges only after observing the expected environment and release.
 Generation fencing prevents an older in-flight lookup from repopulating the
 cache. The TTL remains a recovery path when immediate fan-out cannot converge.
 
+The signed HTTP ingress accepts at most 16 KiB of strict UTF-8 and has a
+five-second body-read deadline. Project slugs and deployment, environment,
+release, project, event, and replica identifiers are bounded and validated as
+canonical at every HTTP and Redis boundary. Redis event and acknowledgement envelopes use
+separate HMAC-SHA256 domains, exact signature lengths, a 60-second replay
+window, and five seconds of future-clock tolerance. Startup rejects malformed
+Redis URLs, replica counts, acknowledgement timeouts, clocks, client contracts,
+and adapter return values.
+
+The bus retains at most 1,000 completed event IDs and permits at most 100 active
+event applications and 100 active publications. Concurrent reuse of one event
+ID is rejected. Timed-out acknowledgement waiters detach immediately, partial
+client construction destroys already-created clients, and every caller shares
+the same in-flight close operation.
+
 Release-backed production page-data requests use a fresh cache window plus a
 bounded stale-while-revalidate window. The cache key includes the project,
 environment, release content source, slug, and canonical query. The canonical

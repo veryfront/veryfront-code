@@ -33,11 +33,11 @@ function createFakeRedisServer() {
         const channels = subscriptions.get(client) ?? new Map<string, Listener>();
         channels.set(channel, listener);
         subscriptions.set(client, channels);
-        return Promise.resolve(1);
+        return Promise.resolve();
       },
       unsubscribe: (channel) => {
         subscriptions.get(client)?.delete(channel);
-        return Promise.resolve(0);
+        return Promise.resolve();
       },
       close: () => {
         subscriptions.delete(client);

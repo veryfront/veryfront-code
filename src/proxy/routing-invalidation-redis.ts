@@ -1,11 +1,16 @@
 import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils";
+import {
+  hasProjectIdentityControlCharacters,
+  isCanonicalOpaqueProjectIdentifier,
+} from "#veryfront/utils/project-identity.ts";
 import type {
   ProxyRoutingInvalidationEvent,
   ProxyRoutingInvalidationPublisher,
   ProxyRoutingInvalidationPublishResult,
 } from "./routing-invalidation.ts";
+import { parseProxyRoutingInvalidationEvent } from "./routing-invalidation.ts";
 
 const ROUTING_INVALIDATION_CHANNEL = "vf-proxy-routing-invalidations-v1";
 const ROUTING_INVALIDATION_ACK_PREFIX = `${ROUTING_INVALIDATION_CHANNEL}:ack:`;
@@ -13,6 +18,12 @@ const DEFAULT_ACKNOWLEDGEMENT_TIMEOUT_MS = 1_500;
 const DEFAULT_CONNECT_TIMEOUT_MS = 3_000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const MAX_RECENT_EVENT_IDS = 1_000;
+const MAX_ACTIVE_EVENT_PROCESSING = 100;
+const MAX_ACTIVE_PUBLISHES = 100;
+const MAX_REPLICA_COUNT = 10_000;
+const MAX_ACKNOWLEDGEMENT_TIMEOUT_MS = 60_000;
+const MAX_REDIS_URL_CODE_UNITS = 4_096;
+const MAX_INTEGRITY_SECRET_CODE_UNITS = 64 * 1_024;
 const MAX_SIGNED_ENVELOPE_BYTES = 24 * 1024;
 const MAX_SIGNED_PAYLOAD_BYTES = 16 * 1024;
 const DEFAULT_MAX_ENVELOPE_AGE_MS = 60_000;
@@ -20,6 +31,8 @@ const DEFAULT_MAX_ENVELOPE_FUTURE_MS = 5_000;
 const INTEGRITY_SECRET_ENV_VAR = "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET";
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
+const HMAC_SHA256_SIGNATURE_BYTES = 32;
+const HMAC_SHA256_SIGNATURE_BASE64URL_CODE_UNITS = 43;
 
 type RedisListener = (message: string, channel: string) => void;
 type SignatureDomain = "event" | "ack";
@@ -27,8 +40,8 @@ type SignatureDomain = "event" | "ack";
 export interface RoutingInvalidationRedisClient {
   connect(): Promise<void>;
   publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string, listener: RedisListener): Promise<number>;
-  unsubscribe(channel: string): Promise<number>;
+  subscribe(channel: string, listener: RedisListener): Promise<void>;
+  unsubscribe(channel: string): Promise<void>;
   close(): Promise<void>;
   destroy(): void;
   on?(event: "error", listener: (error: unknown) => void): unknown;
@@ -70,17 +83,265 @@ interface SignedRoutingInvalidationEnvelope {
   signature: string;
 }
 
-function positiveInteger(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+const START_OPTION_NAMES = new Set([
+  "acknowledgementTimeoutMs",
+  "createClient",
+  "expectedReplicas",
+  "now",
+  "logger",
+  "onInvalidate",
+  "integritySecret",
+  "redisUrl",
+  "replicaId",
+]);
+
+function assertPlainStartOptions(
+  options: StartProxyRoutingInvalidationBusOptions,
+): void {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("Routing invalidation bus options must be an object");
+  }
+  let prototype: object | null;
+  let keys: PropertyKey[];
+  try {
+    prototype = Object.getPrototypeOf(options);
+    keys = Reflect.ownKeys(options);
+  } catch (error) {
+    throw new TypeError("Routing invalidation bus options are unreadable", {
+      cause: error,
+    });
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Routing invalidation bus options must be a plain object");
+  }
+  if (keys.some((key) => typeof key !== "string" || !START_OPTION_NAMES.has(key))) {
+    throw new TypeError("Routing invalidation bus options contain an unknown option");
+  }
+}
+
+function readOwnOption(
+  options: StartProxyRoutingInvalidationBusOptions,
+  key: keyof StartProxyRoutingInvalidationBusOptions,
+): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(options, key);
+  if (!descriptor) return undefined;
+  if (!("value" in descriptor)) {
+    throw new TypeError(`Routing invalidation bus option ${key} must be a data property`);
+  }
+  return descriptor.value;
+}
+
+function resolveInteger(
+  value: unknown,
+  fallback: number,
+  label: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (value === undefined || value === "") return fallback;
+  let parsed: number;
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string" && /^\d+$/.test(value)) {
+    parsed = Number(value);
+  } else {
+    throw new TypeError(`${label} must be a decimal integer`);
+  }
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < minimum ||
+    parsed > maximum
+  ) {
+    throw new RangeError(
+      `${label} must be between ${minimum} and ${maximum}`,
+    );
+  }
+  return parsed;
+}
+
+function requireRedisUrl(value: unknown): string | null {
+  if (value === undefined || value === "") return null;
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_REDIS_URL_CODE_UNITS ||
+    value !== value.trim() ||
+    value.includes("\\") ||
+    hasProjectIdentityControlCharacters(value)
+  ) {
+    throw new TypeError("Routing invalidation REDIS_URL is invalid");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new TypeError("Routing invalidation REDIS_URL is invalid");
+  }
+  if (
+    (parsed.protocol !== "redis:" && parsed.protocol !== "rediss:") ||
+    !parsed.hostname ||
+    parsed.hash
+  ) {
+    throw new TypeError(
+      "Routing invalidation REDIS_URL must use redis:// or rediss:// with a host",
+    );
+  }
+  return value;
+}
+
+function requireIntegritySecret(value: unknown): string | null {
+  if (value === undefined || value === "") return null;
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_INTEGRITY_SECRET_CODE_UNITS
+  ) {
+    throw new TypeError("Routing invalidation integrity secret is invalid");
+  }
+  return value;
+}
+
+function requireFunction<TFunction extends (...args: never[]) => unknown>(
+  value: unknown,
+  fallback: TFunction,
+  label: string,
+): TFunction {
+  if (value === undefined) return fallback;
+  if (typeof value !== "function") {
+    throw new TypeError(`${label} must be a function`);
+  }
+  return value as TFunction;
+}
+
+function requireConfiguredFunction<
+  TFunction extends (...args: never[]) => unknown,
+>(
+  value: unknown,
+  label: string,
+): TFunction {
+  if (typeof value !== "function") {
+    throw new TypeError(`${label} must be a function`);
+  }
+  return value as TFunction;
+}
+
+function readClock(now: () => number): number {
+  const value = now();
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError("Routing invalidation clock must return a positive safe integer");
+  }
+  return value;
+}
+
+function validateReplicaId(value: unknown): string {
+  if (!isCanonicalOpaqueProjectIdentifier(value)) {
+    throw new TypeError("Routing invalidation replica ID is invalid");
+  }
+  return value;
+}
+
+function safeDestroyUnknown(client: unknown): void {
+  try {
+    if (!client || typeof client !== "object") return;
+    const destroy = Reflect.get(client, "destroy");
+    if (typeof destroy === "function") Reflect.apply(destroy, client, []);
+  } catch {
+    // Construction failure remains the actionable startup error.
+  }
+}
+
+function snapshotRedisClient(
+  value: unknown,
+  label: string,
+): RoutingInvalidationRedisClient {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} returned an invalid Redis client`);
+  }
+  const operation = (
+    name: string,
+    required = true,
+  ): ((...args: never[]) => unknown) | undefined => {
+    let candidate: unknown;
+    try {
+      candidate = Reflect.get(value, name);
+    } catch (error) {
+      throw new TypeError(`${label} Redis client ${name} is unreadable`, {
+        cause: error,
+      });
+    }
+    if (candidate === undefined && !required) return undefined;
+    if (typeof candidate !== "function") {
+      throw new TypeError(`${label} Redis client ${name} must be a function`);
+    }
+    return candidate as (...args: never[]) => unknown;
+  };
+  const connect = operation("connect")!;
+  const publish = operation("publish")!;
+  const subscribe = operation("subscribe")!;
+  const unsubscribe = operation("unsubscribe")!;
+  const close = operation("close")!;
+  const destroy = operation("destroy")!;
+  const on = operation("on", false);
+  const requireSubscriberCount = (result: unknown): number => {
+    if (
+      typeof result !== "number" ||
+      !Number.isSafeInteger(result) ||
+      result < 0 ||
+      result > MAX_REPLICA_COUNT
+    ) {
+      throw new TypeError(`${label} Redis client publish returned an invalid count`);
+    }
+    return result;
+  };
+
+  return Object.freeze({
+    async connect(): Promise<void> {
+      await Reflect.apply(connect, value, []);
+    },
+    async publish(channel: string, message: string): Promise<number> {
+      return requireSubscriberCount(
+        await Reflect.apply(publish, value, [channel, message]),
+      );
+    },
+    async subscribe(channel: string, listener: RedisListener): Promise<void> {
+      await Reflect.apply(subscribe, value, [channel, listener]);
+    },
+    async unsubscribe(channel: string): Promise<void> {
+      await Reflect.apply(unsubscribe, value, [channel]);
+    },
+    async close(): Promise<void> {
+      await Reflect.apply(close, value, []);
+    },
+    destroy(): void {
+      Reflect.apply(destroy, value, []);
+    },
+    ...(on
+      ? {
+        on(event: "error", listener: (error: unknown) => void): unknown {
+          return Reflect.apply(on, value, [event, listener]);
+        },
+      }
+      : {}),
+  });
 }
 
 function encodedByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+function isWithinEncodedLimit(value: string, maximumBytes: number): boolean {
+  return value.length <= maximumBytes &&
+    encodedByteLength(value) <= maximumBytes;
+}
+
+function ownDataValue(
+  descriptors: PropertyDescriptorMap,
+  key: string,
+): unknown {
+  const descriptor = descriptors[key];
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
 function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope | null {
-  if (encodedByteLength(message) > MAX_SIGNED_ENVELOPE_BYTES) return null;
+  if (!isWithinEncodedLimit(message, MAX_SIGNED_ENVELOPE_BYTES)) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(message);
@@ -88,21 +349,34 @@ function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const envelope = parsed as Record<string, unknown>;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(parsed);
+  } catch {
+    return null;
+  }
+  const version = ownDataValue(descriptors, "version");
+  const issuedAtMs = ownDataValue(descriptors, "issuedAtMs");
+  const payload = ownDataValue(descriptors, "payload");
+  const signature = ownDataValue(descriptors, "signature");
   if (
-    envelope.version !== 1 ||
-    typeof envelope.issuedAtMs !== "number" ||
-    !Number.isInteger(envelope.issuedAtMs) ||
-    envelope.issuedAtMs <= 0 ||
-    typeof envelope.payload !== "string" ||
-    encodedByteLength(envelope.payload) > MAX_SIGNED_PAYLOAD_BYTES ||
-    typeof envelope.signature !== "string" ||
-    envelope.signature.length < 32 ||
-    envelope.signature.length > 128
+    version !== 1 ||
+    typeof issuedAtMs !== "number" ||
+    !Number.isSafeInteger(issuedAtMs) ||
+    issuedAtMs <= 0 ||
+    typeof payload !== "string" ||
+    !isWithinEncodedLimit(payload, MAX_SIGNED_PAYLOAD_BYTES) ||
+    typeof signature !== "string" ||
+    signature.length !== HMAC_SHA256_SIGNATURE_BASE64URL_CODE_UNITS
   ) {
     return null;
   }
-  return envelope as unknown as SignedRoutingInvalidationEnvelope;
+  return Object.freeze({
+    version: 1,
+    issuedAtMs,
+    payload,
+    signature,
+  });
 }
 
 function signatureDomainPrefix(domain: SignatureDomain): string {
@@ -160,7 +434,10 @@ async function verifyPayloadSignature(
   signature: string,
 ): Promise<boolean> {
   const signatureBytes = base64UrlDecode(signature);
-  if (!signatureBytes) return false;
+  if (
+    !signatureBytes ||
+    signatureBytes.byteLength !== HMAC_SHA256_SIGNATURE_BYTES
+  ) return false;
   return await crypto.subtle.verify(
     "HMAC",
     key,
@@ -175,10 +452,10 @@ async function serializeSignedEnvelope(
   payload: string,
   now: () => number,
 ): Promise<string> {
-  if (encodedByteLength(payload) > MAX_SIGNED_PAYLOAD_BYTES) {
+  if (!isWithinEncodedLimit(payload, MAX_SIGNED_PAYLOAD_BYTES)) {
     throw new Error("Proxy routing invalidation payload is too large");
   }
-  const issuedAtMs = Math.trunc(now());
+  const issuedAtMs = readClock(now);
   return JSON.stringify(
     {
       version: 1,
@@ -197,7 +474,7 @@ async function verifySignedEnvelope(
 ): Promise<string | null> {
   const envelope = parseSignedEnvelope(message);
   if (!envelope) return null;
-  const currentTimeMs = now();
+  const currentTimeMs = readClock(now);
   if (
     envelope.issuedAtMs < currentTimeMs - DEFAULT_MAX_ENVELOPE_AGE_MS ||
     envelope.issuedAtMs > currentTimeMs + DEFAULT_MAX_ENVELOPE_FUTURE_MS
@@ -215,32 +492,18 @@ async function verifySignedEnvelope(
 }
 
 function parseEvent(message: string): ProxyRoutingInvalidationEvent | null {
-  if (encodedByteLength(message) > MAX_SIGNED_PAYLOAD_BYTES) return null;
+  if (!isWithinEncodedLimit(message, MAX_SIGNED_PAYLOAD_BYTES)) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(message);
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const event = parsed as Record<string, unknown>;
-  if (
-    event.version !== 1 ||
-    typeof event.eventId !== "string" || !event.eventId ||
-    typeof event.projectId !== "string" || !event.projectId ||
-    typeof event.projectSlug !== "string" || !event.projectSlug ||
-    typeof event.deploymentId !== "string" || !event.deploymentId ||
-    typeof event.environmentId !== "string" || !event.environmentId ||
-    typeof event.environmentName !== "string" || !event.environmentName ||
-    typeof event.releaseId !== "string" || !event.releaseId
-  ) {
-    return null;
-  }
-  return event as unknown as ProxyRoutingInvalidationEvent;
+  return parseProxyRoutingInvalidationEvent(parsed);
 }
 
 function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgement | null {
-  if (encodedByteLength(message) > MAX_SIGNED_PAYLOAD_BYTES) return null;
+  if (!isWithinEncodedLimit(message, MAX_SIGNED_PAYLOAD_BYTES)) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(message);
@@ -248,14 +511,21 @@ function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgeme
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const acknowledgement = parsed as Record<string, unknown>;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(parsed);
+  } catch {
+    return null;
+  }
+  const eventId = ownDataValue(descriptors, "eventId");
+  const replicaId = ownDataValue(descriptors, "replicaId");
   if (
-    typeof acknowledgement.eventId !== "string" || !acknowledgement.eventId ||
-    typeof acknowledgement.replicaId !== "string" || !acknowledgement.replicaId
+    !isCanonicalOpaqueProjectIdentifier(eventId) ||
+    !isCanonicalOpaqueProjectIdentifier(replicaId)
   ) {
     return null;
   }
-  return acknowledgement as unknown as RoutingInvalidationAcknowledgement;
+  return Object.freeze({ eventId, replicaId });
 }
 
 async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidationRedisClient> {
@@ -282,6 +552,47 @@ async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidatio
   });
 }
 
+function logInfo(
+  logger: RoutingInvalidationLogger | undefined,
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  try {
+    logger?.info(message, extra);
+  } catch {
+    // Diagnostic callbacks cannot own the routing lifecycle.
+  }
+}
+
+function logWarn(
+  logger: RoutingInvalidationLogger | undefined,
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  try {
+    logger?.warn(message, extra);
+  } catch {
+    // Diagnostic callbacks cannot own the routing lifecycle.
+  }
+}
+
+function logError(
+  logger: RoutingInvalidationLogger | undefined,
+  message: string,
+  error: unknown,
+  extra?: Record<string, unknown>,
+): void {
+  try {
+    logger?.error(
+      message,
+      error instanceof Error ? error : new Error(String(error)),
+      extra,
+    );
+  } catch {
+    // Diagnostic callbacks cannot own the routing lifecycle.
+  }
+}
+
 async function closeClient(
   client: RoutingInvalidationRedisClient,
   logger?: RoutingInvalidationLogger,
@@ -289,8 +600,12 @@ async function closeClient(
   try {
     await client.close();
   } catch (error) {
-    client.destroy();
-    logger?.warn("Failed to close routing invalidation Redis client cleanly", {
+    try {
+      client.destroy();
+    } catch {
+      // The process-level cleanup deadline remains authoritative.
+    }
+    logWarn(logger, "Failed to close routing invalidation Redis client cleanly", {
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -299,36 +614,122 @@ async function closeClient(
 export async function startProxyRoutingInvalidationBus(
   options: StartProxyRoutingInvalidationBusOptions,
 ): Promise<ProxyRoutingInvalidationBus | null> {
-  const redisUrl = options.redisUrl === undefined ? getEnv("REDIS_URL") : options.redisUrl;
-  if (!redisUrl) return null;
-  const integritySecret = options.integritySecret ?? getEnv(INTEGRITY_SECRET_ENV_VAR) ?? "";
-  if (!integritySecret) return null;
+  assertPlainStartOptions(options);
+  const configuredRedisUrl = readOwnOption(options, "redisUrl");
+  const redisUrl = requireRedisUrl(
+    configuredRedisUrl === undefined ? getEnv("REDIS_URL") : configuredRedisUrl,
+  );
+  if (redisUrl === null) return null;
+  const configuredIntegritySecret = readOwnOption(options, "integritySecret");
+  const integritySecret = requireIntegritySecret(
+    configuredIntegritySecret === undefined
+      ? getEnv(INTEGRITY_SECRET_ENV_VAR)
+      : configuredIntegritySecret,
+  );
+  if (integritySecret === null) return null;
 
-  const expectedReplicas = positiveInteger(
-    options.expectedReplicas ?? getEnv("VERYFRONT_PROXY_EXPECTED_REPLICAS"),
+  const configuredExpectedReplicas = readOwnOption(
+    options,
+    "expectedReplicas",
+  );
+  const expectedReplicas = resolveInteger(
+    configuredExpectedReplicas === undefined
+      ? getEnv("VERYFRONT_PROXY_EXPECTED_REPLICAS")
+      : configuredExpectedReplicas,
     1,
+    "Routing invalidation expected replicas",
+    1,
+    MAX_REPLICA_COUNT,
   );
-  const acknowledgementTimeoutMs = positiveInteger(
-    options.acknowledgementTimeoutMs,
+  const acknowledgementTimeoutMs = resolveInteger(
+    readOwnOption(options, "acknowledgementTimeoutMs"),
     DEFAULT_ACKNOWLEDGEMENT_TIMEOUT_MS,
+    "Routing invalidation acknowledgement timeout",
+    1,
+    MAX_ACKNOWLEDGEMENT_TIMEOUT_MS,
   );
-  const replicaId = options.replicaId ?? getEnv("HOSTNAME") ?? crypto.randomUUID();
-  const createClient = options.createClient ?? createDefaultClient;
-  const publishClient = await createClient(redisUrl);
-  const subscribeClient = await createClient(redisUrl);
+  const configuredReplicaId = readOwnOption(options, "replicaId");
+  const replicaId = validateReplicaId(
+    configuredReplicaId === undefined
+      ? getEnv("HOSTNAME") ?? crypto.randomUUID()
+      : configuredReplicaId,
+  );
+  const createClient = requireFunction(
+    readOwnOption(options, "createClient"),
+    createDefaultClient,
+    "Routing invalidation Redis client factory",
+  ) as (
+    redisUrl: string,
+  ) => RoutingInvalidationRedisClient | Promise<RoutingInvalidationRedisClient>;
+  const onInvalidate = requireConfiguredFunction(
+    readOwnOption(options, "onInvalidate"),
+    "Routing invalidation callback",
+  ) as (
+    event: ProxyRoutingInvalidationEvent,
+  ) => unknown | Promise<unknown>;
+  const now = requireFunction(
+    readOwnOption(options, "now"),
+    () => Date.now(),
+    "Routing invalidation clock",
+  ) as () => number;
+  readClock(now);
+  const logger = readOwnOption(options, "logger") as
+    | RoutingInvalidationLogger
+    | undefined;
+
+  let rawPublishClient: unknown;
+  let rawSubscribeClient: unknown;
+  let publishClient: RoutingInvalidationRedisClient;
+  let subscribeClient: RoutingInvalidationRedisClient;
+  let hmacKey: CryptoKey;
+  try {
+    rawPublishClient = await createClient(redisUrl);
+    publishClient = snapshotRedisClient(
+      rawPublishClient,
+      "Routing invalidation publish",
+    );
+    rawSubscribeClient = await createClient(redisUrl);
+    subscribeClient = snapshotRedisClient(
+      rawSubscribeClient,
+      "Routing invalidation subscribe",
+    );
+    hmacKey = await createHmacKey(integritySecret);
+  } catch (error) {
+    safeDestroyUnknown(rawPublishClient);
+    if (rawSubscribeClient !== rawPublishClient) {
+      safeDestroyUnknown(rawSubscribeClient);
+    }
+    throw error;
+  }
+
   const processedEventIds = new Set<string>();
   const eventProcessing = new Map<string, Promise<void>>();
-  const hmacKey = await createHmacKey(integritySecret);
-  const now = options.now ?? (() => Date.now());
   const acknowledgementListeners = new Map<string, Set<RedisListener>>();
   const activeAcknowledgementChannels = new Set<string>();
+  const activePublishEventIds = new Set<string>();
   const closeWaiters = new Set<() => void>();
 
   let closed = false;
-  const waitForClose = (): Promise<void> => {
-    if (closed) return Promise.resolve();
-    return new Promise((resolve) => {
-      closeWaiters.add(resolve);
+  let closePromise: Promise<void> | null = null;
+
+  const createCloseWaiter = (): Readonly<{
+    promise: Promise<void>;
+    dispose: () => void;
+  }> => {
+    if (closed) {
+      return Object.freeze({
+        promise: Promise.resolve(),
+        dispose: () => undefined,
+      });
+    }
+    let resolve!: () => void;
+    const promise = new Promise<void>((innerResolve) => {
+      resolve = innerResolve;
+    });
+    closeWaiters.add(resolve);
+    return Object.freeze({
+      promise,
+      dispose: () => closeWaiters.delete(resolve),
     });
   };
 
@@ -345,12 +746,26 @@ export async function startProxyRoutingInvalidationBus(
     if (!listeners) {
       listeners = new Set();
       acknowledgementListeners.set(channel, listeners);
-      await subscribeClient.subscribe(channel, (message, receivedChannel) => {
-        if (receivedChannel !== channel) return;
-        for (const acknowledgementListener of listeners ?? []) {
-          acknowledgementListener(message, receivedChannel);
+      try {
+        await subscribeClient.subscribe(channel, (message, receivedChannel) => {
+          if (receivedChannel !== channel) return;
+          for (const acknowledgementListener of listeners ?? []) {
+            acknowledgementListener(message, receivedChannel);
+          }
+        });
+      } catch (error) {
+        acknowledgementListeners.delete(channel);
+        throw error;
+      }
+      if (closed) {
+        acknowledgementListeners.delete(channel);
+        try {
+          await subscribeClient.unsubscribe(channel);
+        } catch {
+          // The bus close path owns the underlying connection.
         }
-      });
+        throw new Error("Proxy routing invalidation bus is closed");
+      }
     }
     listeners.add(listener);
     activeAcknowledgementChannels.add(channel);
@@ -383,9 +798,14 @@ export async function startProxyRoutingInvalidationBus(
     if (processedEventIds.has(event.eventId)) return Promise.resolve();
     const existing = eventProcessing.get(event.eventId);
     if (existing) return existing;
+    if (eventProcessing.size >= MAX_ACTIVE_EVENT_PROCESSING) {
+      return Promise.reject(
+        new Error("Proxy routing invalidation processing capacity is exhausted"),
+      );
+    }
 
     const processing = Promise.resolve()
-      .then(() => options.onInvalidate(event))
+      .then(() => onInvalidate(event))
       .then(
         () => {
           rememberProcessedEvent(event.eventId);
@@ -401,15 +821,16 @@ export async function startProxyRoutingInvalidationBus(
   };
 
   const logRedisError = (error: unknown) => {
-    options.logger?.error(
+    logError(
+      logger,
       "Proxy routing invalidation Redis error",
-      error instanceof Error ? error : new Error(String(error)),
+      error,
     );
   };
-  publishClient.on?.("error", logRedisError);
-  subscribeClient.on?.("error", logRedisError);
 
   try {
+    publishClient.on?.("error", logRedisError);
+    subscribeClient.on?.("error", logRedisError);
     await Promise.all([publishClient.connect(), subscribeClient.connect()]);
     await subscribeClient.subscribe(ROUTING_INVALIDATION_CHANNEL, (message, channel) => {
       if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
@@ -428,26 +849,42 @@ export async function startProxyRoutingInvalidationBus(
           });
         })
         .catch((error) => {
-          options.logger?.error(
+          logError(
+            logger,
             "Failed to apply proxy routing invalidation",
-            error instanceof Error ? error : new Error(String(error)),
+            error,
           );
         });
     });
+    logInfo(logger, "Proxy routing invalidation bus connected", {
+      expectedReplicas,
+      replicaId,
+    });
   } catch (error) {
-    publishClient.destroy();
-    subscribeClient.destroy();
+    safeDestroyUnknown(rawPublishClient);
+    if (rawSubscribeClient !== rawPublishClient) {
+      safeDestroyUnknown(rawSubscribeClient);
+    }
     throw error;
   }
 
-  options.logger?.info("Proxy routing invalidation bus connected", {
-    expectedReplicas,
-    replicaId,
-  });
-
-  return {
-    async publish(event): Promise<ProxyRoutingInvalidationPublishResult> {
+  const bus: ProxyRoutingInvalidationBus = {
+    async publish(eventValue): Promise<ProxyRoutingInvalidationPublishResult> {
       if (closed) throw new Error("Proxy routing invalidation bus is closed");
+      const event = parseProxyRoutingInvalidationEvent(eventValue);
+      if (!event) {
+        throw new TypeError("Proxy routing invalidation event is invalid");
+      }
+      if (activePublishEventIds.has(event.eventId)) {
+        throw new Error(
+          `Proxy routing invalidation event ${event.eventId} is already publishing`,
+        );
+      }
+      if (activePublishEventIds.size >= MAX_ACTIVE_PUBLISHES) {
+        throw new Error("Proxy routing invalidation publish capacity is exhausted");
+      }
+      activePublishEventIds.add(event.eventId);
+
       const acknowledgementChannel = `${ROUTING_INVALIDATION_ACK_PREFIX}${event.eventId}`;
       const acknowledgedReplicas = new Set<string>();
       let recipients = 0;
@@ -463,23 +900,28 @@ export async function startProxyRoutingInvalidationBus(
             if (!payload) return;
             const acknowledgement = parseAcknowledgement(payload);
             if (!acknowledgement || acknowledgement.eventId !== event.eventId) return;
-            acknowledgedReplicas.add(acknowledgement.replicaId);
+            if (acknowledgedReplicas.size < MAX_REPLICA_COUNT) {
+              acknowledgedReplicas.add(acknowledgement.replicaId);
+            }
             if (recipients > 0 && acknowledgedReplicas.size >= recipients) {
               resolveAcknowledged?.();
             }
           })
           .catch((error) => {
-            options.logger?.error(
+            logError(
+              logger,
               "Failed to verify proxy routing invalidation acknowledgement",
-              error instanceof Error ? error : new Error(String(error)),
+              error,
               { eventId: event.eventId },
             );
           });
       };
 
-      await subscribeAcknowledgement(acknowledgementChannel, acknowledgementListener);
-
+      let subscribed = false;
       try {
+        await subscribeAcknowledgement(acknowledgementChannel, acknowledgementListener);
+        subscribed = true;
+
         const eventPayload = JSON.stringify(event);
         try {
           recipients = await publishClient.publish(
@@ -488,54 +930,74 @@ export async function startProxyRoutingInvalidationBus(
           );
         } catch (error) {
           if (!closed) throw error;
-          return {
-            acknowledged: acknowledgedReplicas.size,
+          return Object.freeze({
+            acknowledged: Math.min(acknowledgedReplicas.size, recipients),
             converged: false,
             recipients,
-          };
+          });
         }
         if (recipients > 0 && acknowledgedReplicas.size >= recipients) resolveAcknowledged?.();
 
         if (recipients > 0) {
-          let timeout: number | undefined;
-          await Promise.race([
-            acknowledgementReceived,
-            waitForClose(),
-            new Promise<void>((resolve) => {
-              timeout = setTimeout(resolve, acknowledgementTimeoutMs);
-            }),
-          ]);
-          if (timeout !== undefined) clearTimeout(timeout);
+          const closeWaiter = createCloseWaiter();
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              acknowledgementReceived,
+              closeWaiter.promise,
+              new Promise<void>((resolve) => {
+                timeoutId = setTimeout(resolve, acknowledgementTimeoutMs);
+              }),
+            ]);
+          } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+            closeWaiter.dispose();
+          }
         }
 
-        const acknowledged = acknowledgedReplicas.size;
-        return {
+        const acknowledged = Math.min(acknowledgedReplicas.size, recipients);
+        return Object.freeze({
           acknowledged,
           converged: recipients >= expectedReplicas && acknowledged >= recipients,
           recipients,
-        };
+        });
       } finally {
-        await unsubscribeAcknowledgement(acknowledgementChannel, acknowledgementListener);
+        try {
+          if (subscribed) {
+            await unsubscribeAcknowledgement(
+              acknowledgementChannel,
+              acknowledgementListener,
+            );
+          }
+        } finally {
+          activePublishEventIds.delete(event.eventId);
+        }
       }
     },
 
-    async close() {
-      if (closed) return;
+    close(): Promise<void> {
+      if (closePromise) return closePromise;
       closed = true;
       resolveCloseWaiters();
-      try {
-        await Promise.allSettled([
-          subscribeClient.unsubscribe(ROUTING_INVALIDATION_CHANNEL),
-          ...[...activeAcknowledgementChannels].map((channel) =>
-            subscribeClient.unsubscribe(channel)
-          ),
-        ]);
-      } finally {
-        await Promise.all([
-          closeClient(publishClient, options.logger),
-          closeClient(subscribeClient, options.logger),
-        ]);
-      }
+      closePromise = (async () => {
+        try {
+          await Promise.allSettled([
+            subscribeClient.unsubscribe(ROUTING_INVALIDATION_CHANNEL),
+            ...[...activeAcknowledgementChannels].map((channel) =>
+              subscribeClient.unsubscribe(channel)
+            ),
+          ]);
+        } finally {
+          const clients = rawPublishClient === rawSubscribeClient
+            ? [publishClient]
+            : [publishClient, subscribeClient];
+          await Promise.all(
+            clients.map((client) => closeClient(client, logger)),
+          );
+        }
+      })();
+      return closePromise;
     },
   };
+  return Object.freeze(bus);
 }

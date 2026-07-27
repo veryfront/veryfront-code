@@ -113,6 +113,7 @@ describe("proxy routing invalidation ingress", () => {
       environmentName: "production",
       releaseId: "release-1",
     }]);
+    assertEquals(Object.isFrozen(events[0]), true);
   });
 
   it("rejects a valid signature when the signed project does not match the body", async () => {
@@ -233,5 +234,136 @@ describe("proxy routing invalidation ingress", () => {
     assertEquals(response.status, 413);
     assertEquals(cancelled, true);
     assertEquals(pulls < 10, true);
+  });
+
+  it("rejects non-canonical signed routing identities before publication", async () => {
+    const body = JSON.stringify({
+      ...JSON.parse(createBody()),
+      projectSlug: "Demo-Project",
+    });
+    let published = false;
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body,
+      }),
+      {
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () => {
+            published = true;
+            return Promise.resolve({
+              acknowledged: 1,
+              converged: true,
+              recipients: 1,
+            });
+          },
+        },
+      },
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(published, false);
+  });
+
+  it("rejects invalid UTF-8 instead of verifying replacement-decoded bytes", async () => {
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body: new Uint8Array([0xc3, 0x28]),
+      }),
+      {
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () =>
+            Promise.resolve({
+              acknowledged: 1,
+              converged: true,
+              recipients: 1,
+            }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 400);
+  });
+
+  it("bounds a stalled request body and cancels its reader", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body,
+      }),
+      {
+        bodyReadTimeoutMs: 5,
+        publicKeyPem: "configured",
+        publisher: {
+          publish: () =>
+            Promise.resolve({
+              acknowledged: 1,
+              converged: true,
+              recipients: 1,
+            }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 408);
+    assertEquals(cancelled, true);
+  });
+
+  it("fails closed on invalid event IDs and publisher results", async () => {
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    let published = false;
+    const invalidEventResponse = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": jws },
+        body,
+      }),
+      {
+        publicKeyPem,
+        createEventId: () => " event-1 ",
+        publisher: {
+          publish: () => {
+            published = true;
+            return Promise.resolve({
+              acknowledged: 1,
+              converged: true,
+              recipients: 1,
+            });
+          },
+        },
+      },
+    );
+    assertEquals(invalidEventResponse.status, 503);
+    assertEquals(published, false);
+
+    const invalidResultResponse = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": jws },
+        body,
+      }),
+      {
+        publicKeyPem,
+        publisher: {
+          publish: () =>
+            Promise.resolve({
+              acknowledged: 2,
+              converged: true,
+              recipients: 1,
+            }),
+        },
+      },
+    );
+    assertEquals(invalidResultResponse.status, 503);
   });
 });

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type RoutingInvalidationRedisClient,
@@ -39,11 +39,11 @@ function createFakeRedisServer() {
         const channels = subscriptions.get(client) ?? new Map<string, RedisListener>();
         channels.set(channel, listener);
         subscriptions.set(client, channels);
-        return Promise.resolve(1);
+        return Promise.resolve();
       },
       unsubscribe: (channel) => {
         subscriptions.get(client)?.delete(channel);
-        return Promise.resolve(0);
+        return Promise.resolve();
       },
       close: () => {
         subscriptions.delete(client);
@@ -480,5 +480,223 @@ describe("proxy routing invalidation Redis bus", () => {
 
     assertEquals(bus, null);
     assertEquals(redis.clients.length, 0);
+  });
+
+  it("rejects malformed startup policy before creating clients", async () => {
+    const redis = createFakeRedisServer();
+    const base = {
+      redisUrl: "redis://example.test:6379",
+      createClient: redis.createClient,
+      integritySecret: createIntegritySecret(),
+      onInvalidate: () => {},
+    };
+
+    await assertRejects(
+      () =>
+        startProxyRoutingInvalidationBus({
+          ...base,
+          expectedReplicas: 0,
+        }),
+      RangeError,
+      "expected replicas",
+    );
+    await assertRejects(
+      () =>
+        startProxyRoutingInvalidationBus({
+          ...base,
+          acknowledgementTimeoutMs: Number.NaN,
+        }),
+      RangeError,
+      "between 1 and 60000",
+    );
+    await assertRejects(
+      () =>
+        startProxyRoutingInvalidationBus({
+          ...base,
+          replicaId: " replica-a ",
+        }),
+      TypeError,
+      "replica ID",
+    );
+    await assertRejects(
+      () =>
+        startProxyRoutingInvalidationBus({
+          ...base,
+          redisUrl: "https://example.test",
+        }),
+      TypeError,
+      "redis:// or rediss://",
+    );
+    await assertRejects(
+      () =>
+        startProxyRoutingInvalidationBus({
+          ...base,
+          now: () => Number.NaN,
+        }),
+      TypeError,
+      "clock",
+    );
+    assertEquals(redis.clients.length, 0);
+  });
+
+  it("destroys a partially constructed client set when later construction fails", async () => {
+    let calls = 0;
+    let destroyed = 0;
+    const firstClient: RoutingInvalidationRedisClient = {
+      connect: () => Promise.resolve(),
+      publish: () => Promise.resolve(0),
+      subscribe: () => Promise.resolve(),
+      unsubscribe: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      destroy: () => {
+        destroyed++;
+      },
+    };
+
+    await assertRejects(
+      () =>
+        startProxyRoutingInvalidationBus({
+          redisUrl: "redis://example.test:6379",
+          createClient: () => {
+            calls++;
+            if (calls === 1) return firstClient;
+            throw new Error("second client failed");
+          },
+          integritySecret: createIntegritySecret(),
+          onInvalidate: () => {},
+        }),
+      Error,
+      "second client failed",
+    );
+    assertEquals(destroyed, 1);
+  });
+
+  it("rejects a concurrent duplicate event ID and returns frozen results", async () => {
+    const redis = createFakeRedisServer();
+    const publishStarted = deferred();
+    const releasePublish = deferred();
+    redis.setOnPublish(async (channel) => {
+      if (channel !== ROUTING_INVALIDATION_CHANNEL) return;
+      publishStarted.resolve();
+      await releasePublish.promise;
+    });
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      expectedReplicas: 1,
+      replicaId: "replica-a",
+      acknowledgementTimeoutMs: 100,
+      createClient: redis.createClient,
+      integritySecret: createIntegritySecret(),
+      onInvalidate: () => {},
+    });
+    assert(bus);
+
+    const first = bus.publish(createEvent());
+    await publishStarted.promise;
+    await assertRejects(
+      () => bus.publish(createEvent()),
+      Error,
+      "already publishing",
+    );
+    releasePublish.resolve();
+    const result = await first;
+
+    assertEquals(result, { acknowledged: 1, converged: true, recipients: 1 });
+    assertEquals(Object.isFrozen(result), true);
+    await bus.close();
+  });
+
+  it("returns the same in-flight close promise to every caller", async () => {
+    const closeGate = deferred();
+    let closeCalls = 0;
+    const createClient = (): RoutingInvalidationRedisClient => ({
+      connect: () => Promise.resolve(),
+      publish: () => Promise.resolve(0),
+      subscribe: () => Promise.resolve(),
+      unsubscribe: () => Promise.resolve(),
+      close: async () => {
+        closeCalls++;
+        await closeGate.promise;
+      },
+      destroy: () => {},
+    });
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      createClient,
+      integritySecret: createIntegritySecret(),
+      replicaId: "replica-a",
+      onInvalidate: () => {},
+    });
+    assert(bus);
+
+    const first = bus.close();
+    const second = bus.close();
+    assert(first === second);
+    closeGate.resolve();
+    await first;
+    assertEquals(closeCalls, 2);
+  });
+
+  it("validates events and Redis publish counts at the adapter boundary", async () => {
+    const createClient = (): RoutingInvalidationRedisClient => ({
+      connect: () => Promise.resolve(),
+      publish: () => Promise.resolve(-1),
+      subscribe: () => Promise.resolve(),
+      unsubscribe: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      destroy: () => {},
+    });
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      createClient,
+      integritySecret: createIntegritySecret(),
+      replicaId: "replica-a",
+      onInvalidate: () => {},
+    });
+    assert(bus);
+
+    await assertRejects(
+      () => bus.publish(createEvent(" event-1 ")),
+      TypeError,
+      "event is invalid",
+    );
+    await assertRejects(
+      () => bus.publish(createEvent()),
+      TypeError,
+      "returned an invalid count",
+    );
+    await bus.close();
+  });
+
+  it("does not let diagnostic logger failures own the bus lifecycle", async () => {
+    const redis = createFakeRedisServer();
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      expectedReplicas: 1,
+      replicaId: "replica-a",
+      acknowledgementTimeoutMs: 100,
+      createClient: redis.createClient,
+      integritySecret: createIntegritySecret(),
+      logger: {
+        info: () => {
+          throw new Error("logger failed");
+        },
+        warn: () => {
+          throw new Error("logger failed");
+        },
+        error: () => {
+          throw new Error("logger failed");
+        },
+      },
+      onInvalidate: () => {},
+    });
+    assert(bus);
+
+    assertEquals(await bus.publish(createEvent()), {
+      acknowledged: 1,
+      converged: true,
+      recipients: 1,
+    });
+    await bus.close();
   });
 });
