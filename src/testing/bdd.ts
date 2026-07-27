@@ -2,8 +2,10 @@
  * Portable BDD testing utilities (describe, it, beforeEach, afterEach).
  *
  * Delegates to `@std/testing/bdd` in Deno, `node:test` in Node.js, and
- * `bun:test` in Bun. Each test gets an async-context environment overlay so
- * concurrent tests cannot leak environment mutations into one another.
+ * `bun:test` in Bun. Test bodies are isolated from process-environment leaks in
+ * every runtime. In Bun, lifecycle-hook mutations share that scope when hooks
+ * are declared inside a `describe` suite; root-level hooks follow Bun's native
+ * process-wide behavior.
  *
  * @module
  */
@@ -11,6 +13,14 @@
 import "./init.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getEnvOverlayStorage } from "#veryfront/platform/compat/process.ts";
+import {
+  assertBunTestModule,
+  type BunTestModule,
+  installBunEnvironmentIsolation,
+  registerBunSuite,
+  registerBunTest,
+  withBunEnvironmentIsolation,
+} from "./bun-adapter.ts";
 
 /** Test function that can be sync or async */
 type TestFn = () => void | Promise<void>;
@@ -258,10 +268,6 @@ async function installEnvOverlayStorage(): Promise<void> {
   else installProcessEnvOverlayFacade();
 }
 
-function beginEnvOverlay(): void {
-  getEnvOverlayStorage()?.enterWith?.(new Map<string, string | null>());
-}
-
 const nodeEnvOverlays = new WeakMap<object, EnvOverlayStore>();
 
 function prepareNodeEnvOverlay(context?: BddTestContext): void {
@@ -430,21 +436,6 @@ function createNodeImpl(nodeTest: {
   };
 }
 
-interface BunTestModule {
-  describe: ((name: string, fn: () => void) => void) & {
-    skip?: (name: string, fn: () => void) => void;
-    only?: (name: string, fn: () => void) => void;
-  };
-  it: ((name: string, optionsOrFn: { timeout?: number } | TestFn, fn?: TestFn) => void) & {
-    skip?: (name: string, fn: TestFn) => void;
-    only?: (name: string, fn: TestFn) => void;
-  };
-  beforeEach: (fn: HookFn) => void;
-  afterEach: (fn: HookFn) => void;
-  beforeAll: (fn: HookFn) => void;
-  afterAll: (fn: HookFn) => void;
-}
-
 function createBunImpl(bunTest: BunTestModule): BddImpl {
   const defaultTimeout = (() => {
     const env = (globalThis as Record<string, unknown>).process as
@@ -455,55 +446,47 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
   })();
 
-  bunTest.beforeEach(beginEnvOverlay);
+  let describeDepth = 0;
+
+  function withSuiteEnvironmentIsolation(
+    fn: () => void,
+    isTopLevelSuite: boolean,
+  ): () => void {
+    return () => {
+      if (isTopLevelSuite) installBunEnvironmentIsolation(bunTest);
+
+      describeDepth++;
+      try {
+        fn();
+      } finally {
+        describeDepth--;
+      }
+    };
+  }
 
   return {
     describe(nameOrOptions, optionsOrFn, fn): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
       if (!testFn) throw new Error("describe requires a test function");
-
-      if ((options.skip || options.ignore) && bunTest.describe.skip) {
-        bunTest.describe.skip(name, testFn);
-        return;
-      }
-
-      if (options.only && bunTest.describe.only) {
-        bunTest.describe.only(name, testFn);
-        return;
-      }
-
-      bunTest.describe(name, testFn);
+      registerBunSuite(
+        bunTest,
+        name,
+        options,
+        withSuiteEnvironmentIsolation(testFn, describeDepth === 0),
+      );
     },
 
     it(nameOrOptions, optionsOrFn, fn): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
       if (!testFn) throw new Error("it requires a test function");
 
-      const testWithEnv = withEnvOverlay(testFn);
-      const isSkip = options.skip || options.ignore;
-
-      type TestRunner = (
-        name: string,
-        optionsOrFn: { timeout?: number } | TestFn,
-        fn?: TestFn,
-      ) => void;
-
-      let runner: TestRunner = bunTest.it;
-      if (isSkip) runner = (bunTest.it.skip ?? bunTest.it) as TestRunner;
-      else if (options.only && bunTest.it.only) runner = bunTest.it.only as TestRunner;
-
-      if (isSkip) {
-        runner(name, testWithEnv);
-        return;
-      }
-
-      const timeout = options.timeout ?? defaultTimeout;
-      if (Number.isFinite(timeout) && timeout > 0) {
-        runner(name, { timeout }, testWithEnv);
-        return;
-      }
-
-      runner(name, testWithEnv);
+      registerBunTest(
+        bunTest,
+        name,
+        options,
+        withBunEnvironmentIsolation(testFn),
+        defaultTimeout,
+      );
     },
 
     beforeEach: bunTest.beforeEach,
@@ -517,11 +500,10 @@ async function getImpl(): Promise<BddImpl> {
   if (_impl) return _impl;
 
   if (isBun) {
-    const importBunTest = new Function("return import('bun:test')") as () => Promise<{
-      default: BunTestModule;
-    }>;
+    const importBunTest = new Function("return import('bun:test')") as () => Promise<unknown>;
     const bunTestModule = await importBunTest();
-    _impl = createBunImpl(bunTestModule.default);
+    assertBunTestModule(bunTestModule);
+    _impl = createBunImpl(bunTestModule);
     return _impl;
   }
 

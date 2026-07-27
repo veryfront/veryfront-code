@@ -9,6 +9,7 @@ import {
   assert,
   assertEquals,
   assertExists,
+  assertObjectMatch,
   assertRejects,
   assertStrictEquals,
   assertThrows,
@@ -18,6 +19,7 @@ import {
   getEnv,
   makeTempDir,
   makeTempFile,
+  waitFor,
   withEnv,
   withTempDir,
   withTempFile,
@@ -39,6 +41,33 @@ describe("testing/assert", () => {
   it("assertEquals works with objects", () => {
     assertEquals({ a: 1 }, { a: 1 });
     assertEquals([1, 2, 3], [1, 2, 3]);
+  });
+
+  it("keeps equality semantics consistent across runtimes", () => {
+    const nullPrototypeRecord = Object.assign(Object.create(null) as Record<string, number>, {
+      value: 1,
+    });
+
+    assertEquals(-0, 0);
+    assertEquals(nullPrototypeRecord, { value: 1 });
+  });
+
+  it("matches cyclic object subsets without overflowing the stack", () => {
+    const actual: { value: number; self?: unknown } = { value: 1 };
+    actual.self = actual;
+    const expected: { value: number; self?: unknown } = { value: 1 };
+    expected.self = expected;
+
+    assertObjectMatch(actual, expected);
+  });
+
+  it("matches repeated object references by structure rather than alias identity", () => {
+    const shared = { value: 1, extra: true };
+
+    assertObjectMatch(
+      { first: shared, second: shared },
+      { first: { value: 1 }, second: { value: 1 } },
+    );
   });
 
   it("assertExists detects defined values", () => {
@@ -209,5 +238,26 @@ describe("testing/deno-compat", () => {
     );
 
     assertEquals(getEnv(key), original);
+  });
+
+  it("does not sleep past the polling deadline when the interval is longer", async () => {
+    const startedAt = performance.now();
+
+    await assertRejects(
+      () =>
+        waitFor(() => false, {
+          timeout: 20,
+          interval: 1500,
+          message: "deadline regression",
+        }),
+      Error,
+      "deadline regression",
+    );
+
+    const elapsedMs = performance.now() - startedAt;
+    assert(
+      elapsedMs < 750,
+      `Expected the polling deadline near 20ms, but it took ${Math.round(elapsedMs)}ms`,
+    );
   });
 });

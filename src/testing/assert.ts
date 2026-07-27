@@ -100,30 +100,13 @@ function createNodeAssertImpl(): AssertImpl {
     expected: Record<string, unknown>,
     msg?: string,
   ): void {
-    for (const key of Object.keys(expected)) {
-      const actualVal = actual[key];
-      const expectedVal = expected[key];
-
-      if (typeof expectedVal === "object" && expectedVal !== null) {
-        if (typeof actualVal !== "object" || actualVal === null) {
-          throw new Error(msg || `Expected ${key} to be an object`);
-        }
-
-        assertObjectMatch(
-          actualVal as Record<string, unknown>,
-          expectedVal as Record<string, unknown>,
-          msg,
-        );
-        continue;
-      }
-
-      if (actualVal === expectedVal) continue;
-
-      throw new Error(
-        msg ||
-          `Expected ${key} to be ${JSON.stringify(expectedVal)}, got ${JSON.stringify(actualVal)}`,
-      );
-    }
+    if (matchesObjectSubset(actual, expected)) return;
+    throw new Error(
+      msg ||
+        `Expected ${safeStringify(actual)} to contain matching properties ${
+          safeStringify(expected)
+        }`,
+    );
   }
 
   return {
@@ -256,6 +239,103 @@ function createNodeAssertImpl(): AssertImpl {
       throw new Error(msg || `Expected ${actual} to be less than or equal to ${expected}`);
     },
   };
+}
+
+type ObjectSubsetState = {
+  comparedPairs: WeakMap<object, WeakSet<object>>;
+};
+
+function matchesObjectSubset(
+  actual: unknown,
+  expected: unknown,
+  state: ObjectSubsetState = {
+    comparedPairs: new WeakMap(),
+  },
+): boolean {
+  if (actual === expected || Object.is(actual, expected)) return true;
+  if (
+    actual === null ||
+    expected === null ||
+    typeof actual !== "object" ||
+    typeof expected !== "object"
+  ) {
+    return deepEquals(actual, expected);
+  }
+
+  let comparedExpected = state.comparedPairs.get(actual);
+  if (comparedExpected?.has(expected)) return true;
+  if (!comparedExpected) {
+    comparedExpected = new WeakSet();
+    state.comparedPairs.set(actual, comparedExpected);
+  }
+  comparedExpected.add(expected);
+
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected)) return false;
+    if (actual.length < expected.length) return false;
+    for (let index = 0; index < expected.length; index++) {
+      if (!matchesObjectSubset(actual[index], expected[index], state)) return false;
+    }
+    return true;
+  }
+
+  if (actual instanceof Map || expected instanceof Map) {
+    if (!(actual instanceof Map) || !(expected instanceof Map)) return false;
+    return matchesMapSubset(actual, expected, state);
+  }
+
+  if (actual instanceof Set || expected instanceof Set) {
+    if (!(actual instanceof Set) || !(expected instanceof Set)) return false;
+    return matchesSetSubset(actual, expected, state);
+  }
+
+  if (
+    actual instanceof Date ||
+    expected instanceof Date ||
+    actual instanceof RegExp ||
+    expected instanceof RegExp
+  ) {
+    return deepEquals(actual, expected);
+  }
+
+  for (const key of Reflect.ownKeys(expected)) {
+    if (!Object.prototype.hasOwnProperty.call(actual, key)) return false;
+    if (
+      !matchesObjectSubset(
+        (actual as Record<PropertyKey, unknown>)[key],
+        (expected as Record<PropertyKey, unknown>)[key],
+        state,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function matchesMapSubset(
+  actual: Map<unknown, unknown>,
+  expected: Map<unknown, unknown>,
+  state: ObjectSubsetState,
+): boolean {
+  if (actual.size < expected.size) return false;
+  for (const [expectedKey, expectedValue] of expected) {
+    if (!actual.has(expectedKey)) return false;
+    if (!matchesObjectSubset(actual.get(expectedKey), expectedValue, state)) return false;
+  }
+  return true;
+}
+
+function matchesSetSubset(
+  actual: Set<unknown>,
+  expected: Set<unknown>,
+  _state: ObjectSubsetState,
+): boolean {
+  if (actual.size < expected.size) return false;
+  for (const expectedValue of expected) {
+    if (!actual.has(expectedValue)) return false;
+  }
+  return true;
 }
 
 let impl: AssertImpl;

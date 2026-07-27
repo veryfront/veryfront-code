@@ -4,6 +4,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { deepEquals, safeStringify } from "./utils.ts";
 
 describe("testing/utils", () => {
+  it("matches the portable assertion semantics for signed zero and record prototypes", () => {
+    const nullPrototypeRecord = Object.assign(Object.create(null) as Record<string, number>, {
+      value: 1,
+    });
+
+    assertEquals(deepEquals(-0, 0), true);
+    assertEquals(deepEquals(nullPrototypeRecord, { value: 1 }), true);
+  });
+
   it("distinguishes unequal built-in values", () => {
     assertEquals(deepEquals(new Date(0), new Date(1)), false);
     assertEquals(deepEquals(new Map([["key", 1]]), new Map([["key", 2]])), false);

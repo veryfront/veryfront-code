@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    33 |      56.9% | Current formal closure evidence remains valid       |
+| Closed                         |    34 |      58.6% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    23 |      39.7% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    22 |      37.9% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -67,6 +67,7 @@ stricter closure count.
 - `schemas`
 - `studio`
 - `task`
+- `testing`
 - `trigger`
 - `types`
 - `webhook`
@@ -97,7 +98,6 @@ stricter closure count.
 - `security`
 - `server`
 - `skill`
-- `testing`
 - `tool`
 - `transforms`
 - `workflow`
@@ -126,6 +126,9 @@ The current closed review chain covers `agent`, `cache`, `channels`, `chat`, `co
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, and `version.ts`.
+The chain also covers `testing` after its portable assertions, BDD adapters,
+process-global test helpers, timing, documentation, and direct consumers were
+remediated and revalidated.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -3923,5 +3926,108 @@ boundary, not a hidden fallback.
 
 No known unresolved critical or high-confidence Agent production risk remains.
 The `agent` audit unit is closed at 33 of 58 formal units.
+
+### Testing cross-runtime semantics and isolation closure checkpoint
+
+The `testing` audit unit owns the public `veryfront/testing` and
+`veryfront/testing/assert` surfaces, Deno/Node/Bun BDD adaptation, portable
+assertions, process-environment and global-fetch isolation, temporary
+filesystem helpers, polling and timing behavior, and application-wide test
+cleanup. Its direct production dependencies are the platform runtime, process,
+filesystem, and time-scale compatibility layers, the shared error catalog, and
+the default bundler-contract initializer. Its consumers span 1,800-plus source
+and test files, with especially direct dependencies in platform expectations,
+agent, embedding, integrations, observability, server, tool, and transform
+tests.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** Node and Bun considered
+  signed zero unequal and rejected a null-prototype record that Deno's
+  `@std/assert` accepted. The source was delegating portable equality to
+  Node's stricter `isDeepStrictEqual`. The consequence was assertions and
+  expectation matchers changing meaning by runtime. The compatibility helper
+  now follows the pinned `@std/assert` 1.0.19 value semantics in every runtime,
+  preserves the historical third argument, carries the upstream MIT notice,
+  and has explicit signed-zero, prototype, built-in, and cyclic-graph
+  regressions.
+- **Symptom -> Source -> Consequence -> Remedy:** Node and Bun
+  `assertObjectMatch` recursively revisited matching cyclic objects until the
+  stack overflowed and treated shared object identity as structure. The source
+  was naive recursion with no compared-pair state. The consequence was a
+  portable assertion crashing on valid cyclic subsets and producing
+  runtime-specific outcomes. The matcher now tracks compared object pairs,
+  handles arrays and keyed collections deliberately, compares Date and RegExp
+  values, accepts repeated references by structure, and emits bounded safe
+  diagnostics.
+- **Symptom -> Source -> Consequence -> Remedy:** nesting `withMockFetch`
+  waited for the outer scope to release a queue that the nested callback itself
+  blocked, while independent callers still needed exclusive ownership of the
+  process-global fetch descriptor. The consequence was deterministic nested
+  deadlock or cross-test fetch corruption. An active async owner now permits
+  re-entrant scopes, rejects stale inherited ownership after the outer scope
+  settles, keeps independent calls serialized, and restores the exact original
+  property descriptor even when callback and restoration failures combine.
+- **Symptom -> Source -> Consequence -> Remedy:** `waitFor` slept for the full
+  polling interval even when only a few milliseconds remained. A 20 ms timeout
+  with a 1,500 ms interval therefore took about 1.5 seconds. The helper now
+  uses a monotonic deadline and caps every sleep to the remaining budget, so
+  timeout behavior is bounded without a busy loop.
+- **Symptom -> Source -> Consequence -> Remedy:** the Bun adapter read a
+  nonexistent default `bun:test` export and passed timeout options in the Node
+  position instead of Bun's third positional argument. Skip/only capabilities
+  were optional and unsupported runtimes could fail later during registration.
+  The consequence was Bun initialization failure, ignored timeout policy, or
+  partial modifier behavior. A separately testable adapter now validates all
+  required named exports and modifiers up front, preserves explicit zero and
+  infinite timeouts, uses the supported positional timeout, and registers
+  portable tests through Bun's explicit serial runner.
+- **Symptom -> Source -> Consequence -> Remedy:** Bun lifecycle hooks execute
+  in async contexts that do not carry an `AsyncLocalStorage` overlay into the
+  test body. Hook and test environment mutations could therefore leak across
+  suites, and an initial global-hook repair attached to the first importing
+  test file and deadlocked nested suites. Top-level suites now install scoped
+  before/after snapshots at suite-registration time, nested suites reuse that
+  ownership without a second lock, raw test bodies receive their own queued
+  snapshot, and restoration aggregates failures without hiding the test error.
+  The public reference states the remaining Bun root-hook behavior instead of
+  promising isolation that the host cannot provide.
+
+Current Testing verification evidence:
+
+- The complete unit passes across all supported hosts, including the exact
+  CI-pinned Bun 1.3.14 runtime and Bun's four-way runner setting. The final Bun
+  pass covers 46 tests with one intentional Node-only resolver skip; Deno and
+  Node cover the same portable contracts, including nested suites, raw tests,
+  cyclic assertions, fetch re-entrancy, environment restoration, deadlines,
+  and adapter registration.
+- All 19 Testing source and test files pass Deno typecheck, lint, and format
+  checks. The focused-test and skipped-test ratchets remain at zero new focused
+  tests and the existing 20-test skipped baseline.
+- Twenty direct high-impact consumer files pass 30 Deno tests with 521 nested
+  steps across agent, embedding, integrations, observability, platform,
+  server, tool, and transforms. Representative Node and Bun consumer runs each
+  pass 42 cases for expectation, object-subset, and remote-fetch behavior.
+- The npm package rebuild and documented consumer `tsc --noEmit` gate pass
+  against the emitted declarations. The regenerated Testing API reference
+  describes the cross-runtime contract and passes validation with all 40
+  reference pages, 67 guides, 112 public documentation files, executable
+  examples, and 746 links.
+- `deno task verify:quick` passes fresh manifests, formatting, lint, every
+  style, dependency, module, extension, sanitizer, focused-test, and
+  skipped-test ratchet, documentation validation, and all configured
+  production and browser entrypoint typechecks. The module baseline remains 62
+  broad imports with zero baselined cyclic edges.
+
+Bun root-level lifecycle hooks retain Bun's native process-wide environment
+semantics because a shared imported adapter cannot safely install a per-file
+root hook without caller-stack inference or cross-file global ownership.
+Tests that mutate environment state in hooks must place those hooks inside a
+`describe` suite to receive the verified snapshot boundary. Raw test bodies
+remain isolated. This is an explicit low residual and documented usage
+constraint; no hidden fallback is used.
+
+No known unresolved critical or high-confidence Testing production risk
+remains. The `testing` audit unit is closed at 34 of 58 formal units.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

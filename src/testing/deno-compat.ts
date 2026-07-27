@@ -136,12 +136,15 @@ export async function waitFor(
   const timeout = scaleMs(options?.timeout ?? 5000, 10);
   const interval = scaleMs(options?.interval ?? 100, 5);
   const message = options?.message ?? "Condition not met within timeout";
-  const start = Date.now();
+  const deadline = performance.now() + timeout;
 
-  while (Date.now() - start < timeout) {
+  while (true) {
     if (await condition()) return;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+
     // no cleanup needed: one-shot
-    await new Promise<void>((resolve) => setTimeout(resolve, interval));
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(interval, remaining)));
   }
 
   throw TIMEOUT_ERROR.create({ detail: `${message} (timeout: ${timeout}ms)` });
