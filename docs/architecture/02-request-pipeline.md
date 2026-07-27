@@ -137,6 +137,26 @@ Default routing cache controls:
 `0` disables routing-cache retention. Invalid or out-of-range values stop proxy
 construction instead of silently selecting a different policy.
 
+### Dedicated server routing
+
+For each resolved environment, the standalone proxy asks the control plane
+whether traffic belongs on a managed dedicated server before it selects a
+shared renderer. Concurrent lookups for the same environment share one request.
+Only an explicit `running` server with a canonical hostname becomes an upstream
+origin; an explicit absence or inactive server selects the shared renderer.
+
+Successful answers, including explicit absence, stay in a process-local LRU
+cache for 30 seconds, with at most 10,000 environment entries. Transient
+control-plane failures are not cached. Lookups have a five-second end-to-end
+deadline, a shared limit of 200 in-flight requests, and a 64 KiB JSON response
+limit. The API base URL, optional Basic credentials, response envelope, server
+identifiers, status, and hostname are validated before use. Capacity exhaustion,
+timeouts, invalid responses, and upstream errors select the shared renderer for
+that request; malformed local environment identifiers are rejected.
+
+Shutdown aborts outstanding lookups and generation-fences late responses so
+they cannot repopulate the cache after the resolver closes.
+
 After a deployment pointer commits, the control plane sends an authenticated,
 project-scoped invalidation through the proxy-owned Redis bus. Every subscribed
 proxy evicts the matching routing entries, refreshes the authoritative metadata,
