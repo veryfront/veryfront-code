@@ -4045,7 +4045,7 @@ the helper boundary.
 No known unresolved critical or high-confidence Testing production risk
 remains. The `testing` audit unit is closed at 34 of 58 formal units.
 
-### Data execution and cache closure checkpoint (broad gates in progress)
+### Data execution and cache closure checkpoint (breaking cache policy pending)
 
 The `data` audit unit owns page-loader selection, request-time and static
 execution, static-path production, result control objects, execution admission,
@@ -4157,6 +4157,14 @@ Current reproducible focused evidence:
   configuration inputs, source-generation changes where only an imported
   dependency changes, exact worker-key framing, leased scope rotation,
   deterministic reusable keys, and unique unversioned workers.
+- The Data integration portfolio passes its 83-step production-flow suite.
+  The upstream merge reconciliation adds 34 tests with 303 nested steps across
+  deploy, release assets, route derivation, hydration, and browser-process
+  cleanup, all green.
+- The final merged tree passes repository formatting, lint and architecture
+  ratchets, generated-manifest checks, all 112 public-document checks with 746
+  links, every configured entrypoint typecheck, and the built npm consumer
+  `tsc --noEmit` contract.
 - The authored Data reference and task-oriented data-fetching guide document
   cache, timeout, admission, and isolated-generation contracts without
   publishing internal worker controls as an application API.
@@ -4172,11 +4180,11 @@ object-identity and value-policy change, so it requires explicit breaking-change
 approval; deep-freezing, shallow copying, or remeasuring on reads would be
 incomplete fallbacks and are not accepted as closure.
 
-Formal Data closure still requires that cache-ownership decision plus
-formatting, lint, typecheck, documentation generation/validation, integration,
-and repository quick-verification gates on the final rebased source state.
-Until then, `data` remains in `Touched, revalidation required`; the 34-of-58
-closure count is unchanged. This section records reviewed remediation and
-reproducible evidence, not premature certification.
+Formal Data closure now requires only the cache-ownership decision and the
+resulting isolation/value-policy regressions. All non-breaking remediation and
+the final merged-source gates are complete. Until that decision is approved
+and implemented, `data` remains in `Touched, revalidation required`; the
+34-of-58 closure count is unchanged. This section records reviewed remediation
+and reproducible evidence, not premature certification.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
