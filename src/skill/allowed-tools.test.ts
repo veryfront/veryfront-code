@@ -1,12 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  filterToolNamesForSkill,
   filterToolsForSkill,
   isToolAllowedBySkill,
   matchesAllowedTool,
   validateAllowedToolPatterns,
+  validateStrictAllowedToolPatterns,
 } from "./allowed-tools.ts";
+import { SKILL_TOOL_IDS } from "./types.ts";
 
 describe("src/skill/allowed-tools", () => {
   describe("matchesAllowedTool", () => {
@@ -126,7 +129,46 @@ describe("src/skill/allowed-tools", () => {
     });
   });
 
+  describe("filterToolNamesForSkill", () => {
+    it("applies exact and prefix policies to name-only tool inventories", () => {
+      assertEquals(
+        filterToolNamesForSkill(
+          ["web_search", "mail:read", "mail:send"],
+          ["web_search", "mail:*"],
+        ),
+        ["web_search", "mail:read", "mail:send"],
+      );
+      assertEquals(
+        filterToolNamesForSkill(
+          ["web_search", "mail:read"],
+          ["mail:*"],
+        ),
+        ["mail:read"],
+      );
+    });
+
+    it("denies every non-infrastructure tool for an explicit empty policy", () => {
+      assertEquals(filterToolNamesForSkill(["web_search", "web_fetch"], []), []);
+    });
+
+    it("preserves unrestricted name-only inventories when no policy is active", () => {
+      assertEquals(
+        filterToolNamesForSkill(["web_search", "web_fetch"], undefined),
+        ["web_search", "web_fetch"],
+      );
+    });
+  });
+
   describe("isToolAllowedBySkill", () => {
+    it("does not let mutations of the public tool-id snapshot alter enforcement", () => {
+      SKILL_TOOL_IDS.delete("load_skill");
+      try {
+        assertEquals(isToolAllowedBySkill("load_skill", []), true);
+      } finally {
+        SKILL_TOOL_IDS.add("load_skill");
+      }
+    });
+
     it("should allow all tools when no policy", () => {
       assertEquals(isToolAllowedBySkill("anything", undefined), true);
     });
@@ -230,6 +272,26 @@ describe("src/skill/allowed-tools", () => {
 
     it("should accept empty array", () => {
       assertEquals(validateAllowedToolPatterns([]), []);
+    });
+
+    it("preserves legacy unbounded valid pattern acceptance", () => {
+      const patterns = Array.from({ length: 101 }, () => "Read");
+      const overlongPattern = "a".repeat(257);
+      assertEquals(validateAllowedToolPatterns(patterns), patterns);
+      assertEquals(validateAllowedToolPatterns([overlongPattern]), [overlongPattern]);
+    });
+
+    it("strict validation rejects pattern lists and entries over their resource budgets", () => {
+      assertThrows(
+        () => validateStrictAllowedToolPatterns(Array.from({ length: 101 }, () => "Read")),
+        RangeError,
+        "at most 100",
+      );
+      assertThrows(
+        () => validateStrictAllowedToolPatterns(["a".repeat(257)]),
+        RangeError,
+        "at most 256",
+      );
     });
   });
 });

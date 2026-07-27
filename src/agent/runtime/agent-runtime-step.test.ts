@@ -301,6 +301,65 @@ describe("agent/runtime-step", () => {
     ]);
   });
 
+  it("narrows load_skill to exact active references after submitted form input", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillId: "plan",
+      activeSkillPolicy: ["load_skill", "invoke_agent"],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md", "assets/template.md"],
+        scripts: [],
+      },
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages: [{
+        id: "submitted-form",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "submitted-form-call",
+          toolName: "form_input",
+          result: { submitted: true },
+        }],
+      }],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 2,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+        toolDefinition("invoke_agent"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools, [
+      {
+        name: "load_skill",
+        description: "load_skill tool",
+        parameters: {
+          type: "object",
+          properties: {
+            skillId: { type: "string", enum: ["plan"] },
+            file: {
+              type: "string",
+              enum: ["references/guide.md", "assets/template.md"],
+            },
+          },
+          required: ["skillId", "file"],
+          additionalProperties: false,
+        },
+      },
+      toolDefinition("invoke_agent"),
+    ]);
+  });
+
   it("does not treat submitted form input before the latest user message as active intake state", async () => {
     const messages: Message[] = [
       {

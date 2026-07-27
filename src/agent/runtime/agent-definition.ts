@@ -3,7 +3,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
-import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import { buildStrictRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
@@ -275,7 +275,7 @@ export function createRuntimeAgentSystemMessages(
 
   if (input.skills?.length) {
     staticParts.push(
-      buildRuntimeAvailableSkillsPromptBlock(input.skills, {
+      buildStrictRuntimeAvailableSkillsPromptBlock(input.skills, {
         availableToolNames: input.availableToolNames,
       }),
     );

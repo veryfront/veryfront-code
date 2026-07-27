@@ -1549,6 +1549,10 @@ describe("chat-stream-handler", () => {
         output: { results: [{ title: "Veryfront" }] },
         providerExecuted: true,
       }]);
+      assertEquals(
+        state.toolCalls.get("tc-provider-result-inferred")?.synthesizedFromResult,
+        true,
+      );
       assertEquals(events, [
         {
           type: "tool-input-start",

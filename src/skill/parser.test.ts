@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";
+import {
+  parseSkillFileFrontmatter,
+  parseSkillFrontmatter,
+  validateSkillFileMetadata,
+  validateSkillMetadata,
+} from "./parser.ts";
+import { SKILL_NAME_REGEX } from "./types.ts";
 
 describe("src/skill/parser", () => {
   describe("parseSkillFrontmatter", () => {
@@ -47,6 +53,41 @@ Body text.`;
       const result = await parseSkillFrontmatter("");
       assertEquals(result.body, "");
     });
+
+    it("preserves legacy fallback parsing for malformed YAML", async () => {
+      const result = await parseSkillFrontmatter(`---
+name: malformed
+description: [unterminated
+---
+Body`);
+      assertEquals(result.frontmatter, {
+        name: "malformed",
+        description: "[unterminated",
+      });
+      assertEquals(result.body, "Body");
+    });
+
+    it("preserves legacy unbounded document parsing", async () => {
+      const content = "x".repeat(1_048_577);
+      assertEquals((await parseSkillFrontmatter(content)).body, content);
+    });
+
+    it("strict file parsing rejects malformed and oversized documents", async () => {
+      await assertRejects(
+        () =>
+          parseSkillFileFrontmatter(`---
+name: malformed
+description: [unterminated
+---
+Body`),
+        Error,
+      );
+      await assertRejects(
+        () => parseSkillFileFrontmatter("x".repeat(1_048_577)),
+        RangeError,
+        "exceeds",
+      );
+    });
   });
 
   describe("validateSkillMetadata", () => {
@@ -57,6 +98,27 @@ Body text.`;
       );
       assertEquals(result.name, "my-skill");
       assertEquals(result.description, "A skill");
+    });
+
+    it("returns detached metadata through the historical mutable public contract", () => {
+      const allowedTools = ["Read"];
+      const metadata = { author: "Veryfront" };
+      const result = validateSkillMetadata(
+        {
+          name: "my-skill",
+          description: "A skill",
+          "allowed-tools": allowedTools,
+          metadata,
+        },
+        "my-skill",
+      );
+
+      result.allowedTools?.push("Write");
+      if (result.metadata) result.metadata.author = "Changed";
+      assertEquals(result.allowedTools, ["Read", "Write"]);
+      assertEquals(result.metadata, { author: "Changed" });
+      assertEquals(allowedTools, ["Read"]);
+      assertEquals(metadata, { author: "Veryfront" });
     });
 
     it("should fall back to directory name when name is missing", () => {
@@ -101,6 +163,16 @@ Body text.`;
       }
     });
 
+    it("preserves the historical public name matcher", () => {
+      assertEquals(SKILL_NAME_REGEX.source, "^[a-z0-9][a-z0-9-]{0,63}$");
+      for (const name of ["trailing-", "double--hyphen"]) {
+        assertEquals(
+          validateSkillMetadata({ name, description: "desc" }, name).name,
+          name,
+        );
+      }
+    });
+
     it("should parse allowed-tools from space-delimited string", () => {
       const result = validateSkillMetadata(
         { description: "desc", "allowed-tools": "Read Write Bash" },
@@ -137,12 +209,33 @@ Body text.`;
       }
     });
 
-    it("should handle empty allowed-tools", () => {
+    it("preserves legacy empty allowed-tools omission", () => {
       const result = validateSkillMetadata(
         { description: "desc", "allowed-tools": "" },
         "test",
       );
       assertEquals(result.allowedTools, undefined);
+    });
+
+    it("preserves legacy null and canonical alias precedence", () => {
+      assertEquals(
+        validateSkillMetadata(
+          { description: "desc", "allowed-tools": null },
+          "test",
+        ).allowedTools,
+        undefined,
+      );
+      assertEquals(
+        validateSkillMetadata(
+          {
+            description: "desc",
+            "allowed-tools": "Read",
+            allowed_tools: "Write",
+          },
+          "test",
+        ).allowedTools,
+        ["Read"],
+      );
     });
 
     it("should reject non-string non-array allowed-tools (fail closed)", () => {
@@ -242,10 +335,20 @@ Body text.`;
 
     it("should parse metadata as string map", () => {
       const result = validateSkillMetadata(
-        { description: "desc", metadata: { author: "test", version: 2 } },
+        { description: "desc", metadata: { author: "test", version: "2" } },
         "test",
       );
       assertEquals(result.metadata, { author: "test", version: "2" });
+    });
+
+    it("coerces metadata values through the historical public contract", () => {
+      assertEquals(
+        validateSkillMetadata(
+          { description: "desc", metadata: { version: 2, stable: true } },
+          "test",
+        ).metadata,
+        { version: "2", stable: "true" },
+      );
     });
 
     it("should pass through license and compatibility", () => {
@@ -257,13 +360,91 @@ Body text.`;
       assertEquals(result.compatibility, ">=1.0");
     });
 
-    it("should trim description to max length", () => {
+    it("truncates descriptions through the historical public contract", () => {
       const longDesc = "x".repeat(2000);
-      const result = validateSkillMetadata(
-        { description: longDesc },
-        "test",
+      assertEquals(
+        validateSkillMetadata(
+          { description: longDesc },
+          "test",
+        ).description,
+        "x".repeat(1024),
       );
-      assertEquals(result.description.length, 1024);
+    });
+
+    it("preserves unbounded compatibility through the historical public contract", () => {
+      assertEquals(
+        validateSkillMetadata(
+          { description: "desc", compatibility: "x".repeat(501) },
+          "test",
+        ).compatibility,
+        "x".repeat(501),
+      );
+    });
+  });
+
+  describe("validateSkillFileMetadata", () => {
+    it("retains strict file-boundary metadata validation", () => {
+      assertEquals(
+        validateSkillFileMetadata(
+          {
+            name: "test",
+            description: "desc",
+            "allowed-tools": [],
+          },
+          "test",
+        ).allowedTools,
+        [],
+      );
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              "allowed-tools": "Read",
+              allowed_tools: "Write",
+            },
+            "test",
+          ),
+        TypeError,
+        "must not declare both",
+      );
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "desc",
+              metadata: { version: 2 },
+            },
+            "test",
+          ),
+        TypeError,
+        "metadata values must be strings",
+      );
+      assertThrows(
+        () =>
+          validateSkillFileMetadata(
+            {
+              name: "test",
+              description: "x".repeat(2000),
+            },
+            "test",
+          ),
+        RangeError,
+        "description exceeds",
+      );
+      for (const name of ["trailing-", "double--hyphen"]) {
+        assertThrows(
+          () =>
+            validateSkillFileMetadata(
+              { name, description: "desc" },
+              name,
+            ),
+          Error,
+          "Invalid skill name",
+        );
+      }
     });
   });
 });

@@ -26,6 +26,13 @@ the instructions and supporting files for that capability. Tools still own
 actions. The skill policy limits which tools are available while the skill is
 active.
 
+With conversation memory, the latest successfully loaded skill remains active
+across later user messages until another skill body is loaded. A stateless run
+starts without an active skill because it has no prior tool history. Messages
+that say a skill is "already loaded in this turn" describe duplicate-load
+suppression in the current runtime context; they do not define a deactivation
+boundary.
+
 This keeps task-specific agent behavior discoverable without hiding it inside a
 large system prompt.
 

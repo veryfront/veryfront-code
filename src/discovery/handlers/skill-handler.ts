@@ -7,7 +7,8 @@
 import { join } from "#veryfront/compat/path";
 import { agentLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors";
-import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/parser.ts";
+import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
+import { SKILL_TEXT_FILE_MAX_BYTES } from "#veryfront/skill/limits.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import type { Skill } from "#veryfront/skill";
 import type { DiscoveryError, FileDiscoveryContext } from "../types.ts";
@@ -15,6 +16,7 @@ import {
   discoveryFileExists,
   listDiscoveryDirectoryEntries,
   readDiscoveryTextFile,
+  resolveRuntimeDiscoveryRoot,
 } from "../file-discovery.ts";
 
 const logger = agentLogger.component("skill-discovery");
@@ -54,16 +56,13 @@ export async function discoverSkills(
         continue;
       }
 
-      const content = await readDiscoveryTextFile(skillMdPath, context);
-      const parsed = await parseSkillFrontmatter(content);
-      const metadata = validateSkillMetadata(parsed.frontmatter, entry.name);
+      const content = await readDiscoveryTextFile(skillMdPath, context, {
+        maxBytes: SKILL_TEXT_FILE_MAX_BYTES,
+      });
+      const parsed = await parseSkillFileFrontmatter(content);
+      const metadata = validateSkillFileMetadata(parsed.frontmatter, entry.name);
       const skillId = entry.name;
-
-      if (metadata.name !== entry.name) {
-        logger.warn(
-          `Skill "${metadata.name}" in directory "${entry.name}" — using directory name as ID`,
-        );
-      }
+      const runtimeRoot = resolveRuntimeDiscoveryRoot(skillDir, context);
 
       if (skills.has(skillId)) {
         errors.push({
@@ -79,8 +78,8 @@ export async function discoverSkills(
       const skill: Skill = {
         id: skillId,
         metadata,
-        rootPath: skillDir,
-        ...(context.fsAdapter ? { fsAdapter: context.fsAdapter } : {}),
+        rootPath: runtimeRoot.rootPath,
+        ...(runtimeRoot.fsAdapter ? { fsAdapter: runtimeRoot.fsAdapter } : {}),
       };
       skills.set(skillId, skill);
 

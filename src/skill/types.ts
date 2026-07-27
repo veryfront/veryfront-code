@@ -1,7 +1,8 @@
 /**
  * Skill type definitions
  *
- * Follows the agentskills.io specification.
+ * Implements the Agent Skills metadata format. Veryfront intentionally uses a
+ * documented, fail-closed subset of the experimental allowed-tools syntax.
  * Pure type/const file — no runtime dependencies.
  *
  * @module
@@ -11,8 +12,14 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 // ── Constants ───────────────────────────────────────────────────────────
 
-/** Valid skill name: lowercase alphanumeric + hyphens, 1-64 chars */
+/** Historical public skill-name matcher. */
 export const SKILL_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * Strict filesystem skill-name matcher: 1-64 lowercase alphanumeric
+ * characters or single hyphens, without leading or trailing hyphens.
+ */
+export const SKILL_STRICT_NAME_REGEX = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** Valid allowed-tool pattern: exact ID or prefix wildcard (e.g. "api:*") */
 export const SKILL_ALLOWED_TOOL_PATTERN_REGEX =
@@ -21,21 +28,52 @@ export const SKILL_ALLOWED_TOOL_PATTERN_REGEX =
 /** Maximum description length in characters */
 export const SKILL_DESCRIPTION_MAX_LENGTH = 1024;
 
+/** Maximum compatibility declaration length from the Agent Skills specification. */
+export const SKILL_COMPATIBILITY_MAX_LENGTH = 500;
+
+/** Framework resource budgets for optional skill metadata. */
+export const SKILL_LICENSE_MAX_LENGTH = 256;
+export const SKILL_METADATA_MAX_ENTRIES = 64;
+export const SKILL_METADATA_KEY_MAX_LENGTH = 128;
+export const SKILL_METADATA_VALUE_MAX_LENGTH = 2_048;
+
 /** Standard SKILL.md filename per agentskills.io spec */
 export const SKILL_MD_FILENAME = "SKILL.md";
 
-/** Tool IDs that belong to the skill system (single source of truth) */
-export const SKILL_TOOL_IDS = new Set([
+const SKILL_TOOL_ID_VALUES = [
   "load_skill",
   "load_skill_reference",
   "execute_skill_script",
-]);
+] as const;
+
+const INTERNAL_SKILL_TOOL_IDS = new Set<string>(SKILL_TOOL_ID_VALUES);
+
+/**
+ * Public snapshot of tool IDs that belong to the skill system.
+ *
+ * Mutating this compatibility value does not alter framework authorization
+ * policy. Use it only for inspection.
+ */
+export const SKILL_TOOL_IDS = new Set<string>(SKILL_TOOL_ID_VALUES);
+
+/** Framework-owned membership check that cannot be changed by public Set mutation. */
+export function isSkillInfrastructureToolId(toolId: string): boolean {
+  return INTERNAL_SKILL_TOOL_IDS.has(toolId);
+}
 
 /** Conventional subdirectory names */
 export const SKILL_SCRIPTS_DIR = "scripts";
 export const SKILL_REFERENCES_DIR = "references";
 export const SKILL_RESOURCES_DIR = "resources";
 export const SKILL_ASSETS_DIR = "assets";
+/** Canonical read-only skill directories exposed through reference loading. */
+export const SKILL_READABLE_DIRS = Object.freeze(
+  [
+    SKILL_REFERENCES_DIR,
+    SKILL_RESOURCES_DIR,
+    SKILL_ASSETS_DIR,
+  ] as const,
+);
 
 // ── Interfaces ──────────────────────────────────────────────────────────
 
@@ -101,9 +139,24 @@ export interface SkillScriptExecutorInput {
   scriptPath: string;
   scriptContent?: string;
   args?: string[];
+  /** Passed as structured environment data, never embedded in a shell command. */
   env?: Record<string, string>;
+  /**
+   * Local execution working directory. Cloud execution maps this intent to a
+   * fresh remote directory containing only the selected uploaded script.
+   */
   cwd?: string;
+  /**
+   * Canonical source-containment root supplied after framework path validation.
+   * Local execution uses it to create an identity-checked snapshot beside the
+   * selected script so runtime-relative imports retain their normal meaning.
+   * Omit it for generic executor calls that do not carry that validation
+   * contract.
+   */
+  validatedSourceRoot?: string;
   timeoutMs?: number;
+  /** Cooperative cancellation propagated from the active tool request. */
+  abortSignal?: AbortSignal;
 }
 
 /** Script executor interface */

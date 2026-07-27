@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import type { BunFile } from "./types.ts";
 import { BunFileSystemAdapter, type BunFileSystemRuntime } from "./filesystem-adapter.ts";
 
@@ -22,6 +23,25 @@ function runtimeFor(file: BunFile): {
 }
 
 describe("BunFileSystemAdapter", () => {
+  it("marks only direct built-in instances as native", () => {
+    class DerivedAdapter extends BunFileSystemAdapter {}
+    const fake = runtimeFor({
+      size: 0,
+      exists: () => Promise.resolve(true),
+      text: () => Promise.resolve(""),
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    });
+
+    assertEquals(
+      isNativeFileSystemAdapter(new BunFileSystemAdapter(fake.runtime)),
+      true,
+    );
+    assertEquals(
+      isNativeFileSystemAdapter(new DerivedAdapter(fake.runtime)),
+      false,
+    );
+  });
+
   it("uses Bun-native text and byte reads plus writes", async () => {
     let bytesCalls = 0;
     const fake = runtimeFor({

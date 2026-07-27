@@ -208,9 +208,11 @@ Deno.test("execute_skill_script rejects another agent's owned skill", async () =
 
 Deno.test("load_skill loads the caller's own skill via its short name", async () => {
   const tempDir = await Deno.makeTempDir();
+  const skillDir = `${tempDir}/cite`;
   try {
+    await Deno.mkdir(skillDir);
     await Deno.writeTextFile(
-      `${tempDir}/SKILL.md`,
+      `${skillDir}/SKILL.md`,
       `---\nname: cite\ndescription: Cite sources properly\n---\n\nAlways cite primary sources.\n`,
     );
 
@@ -219,7 +221,7 @@ Deno.test("load_skill loads the caller's own skill via its short name", async ()
       "researcher--cite",
       makeSkill({
         id: "researcher--cite",
-        rootPath: tempDir,
+        rootPath: skillDir,
         ownerAgentId: "researcher",
         shortName: "cite",
       }),

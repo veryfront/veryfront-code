@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { resolve } from "node:path";
+import {
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SUBDIR_MAX_ENTRIES,
+  SKILL_TEXT_FILE_MAX_BYTES,
+} from "#veryfront/skill/limits.ts";
 import {
   listRuntimeBuiltinSkillReferenceFiles,
   listRuntimeBuiltinSkillReferences,
+  readRuntimeBuiltinDirectorySkill,
   readRuntimeBuiltinFlatSkill,
   readRuntimeBuiltinSkill,
   readRuntimeBuiltinSkillEntries,
@@ -50,18 +56,32 @@ Deno.test("resolveRuntimeBuiltinSkillsDir falls back to the first candidate", ()
   });
 });
 
-Deno.test("readRuntimeBuiltinSkillEntries reports entries and read errors", () => {
+Deno.test("readRuntimeBuiltinSkillEntries sorts entries and distinguishes missing roots", () => {
   withTempDir((rootDir) => {
     Deno.writeTextFileSync(resolve(rootDir, "build.md"), "body");
+    Deno.writeTextFileSync(resolve(rootDir, "zeta.md"), "body");
+    Deno.writeTextFileSync(resolve(rootDir, "alpha.md"), "body");
 
     const result = readRuntimeBuiltinSkillEntries(rootDir);
     assertEquals(result.ok, true);
     if (result.ok) {
-      assertEquals(result.entries.map((entry) => entry.name), ["build.md"]);
+      assertEquals(result.entries.map((entry) => entry.name), [
+        "alpha.md",
+        "build.md",
+        "zeta.md",
+      ]);
     }
 
     const missing = readRuntimeBuiltinSkillEntries(resolve(rootDir, "missing"));
-    assertEquals(missing.ok, false);
+    assertEquals(missing, { ok: true, entries: [] });
+
+    const notDirectory = resolve(rootDir, "not-a-directory");
+    Deno.writeTextFileSync(notDirectory, "body");
+    const invalid = readRuntimeBuiltinSkillEntries(notDirectory);
+    assertEquals(invalid.ok, false);
+    if (!invalid.ok) {
+      assertStringIncludes(invalid.errorMessage, "must be a directory");
+    }
   });
 });
 
@@ -79,10 +99,17 @@ Deno.test("readRuntimeBuiltinSkill prefers directory skills over flat skills", (
 Deno.test("runtime builtin skill reference helpers reject traversal and read valid files", () => {
   withTempDir((rootDir) => {
     const refsDir = resolve(rootDir, "writer", "references");
-    Deno.mkdirSync(refsDir, { recursive: true });
+    const resourcesDir = resolve(rootDir, "writer", "resources");
+    const assetsDir = resolve(rootDir, "writer", "assets");
+    Deno.mkdirSync(resolve(refsDir, "nested"), { recursive: true });
+    Deno.mkdirSync(resolve(resourcesDir, "schemas"), { recursive: true });
+    Deno.mkdirSync(assetsDir, { recursive: true });
     Deno.writeTextFileSync(resolve(refsDir, "guide.md"), "guide");
     Deno.writeTextFileSync(resolve(refsDir, "notes.md"), "notes");
-    Deno.mkdirSync(resolve(refsDir, "nested"));
+    Deno.writeTextFileSync(resolve(refsDir, "nested", "details.md"), "details");
+    Deno.writeTextFileSync(resolve(resourcesDir, "schemas", "input.json"), "schema");
+    Deno.writeTextFileSync(resolve(assetsDir, "template.txt"), "template");
+    Deno.writeTextFileSync(resolve(assetsDir, "empty.txt"), "");
 
     assertEquals(
       resolveRuntimeBuiltinSkillReferenceFilePath(rootDir, "writer", "references/guide.md"),
@@ -93,8 +120,28 @@ Deno.test("runtime builtin skill reference helpers reject traversal and read val
       null,
     );
     assertEquals(
+      resolveRuntimeBuiltinSkillReferenceFilePath(rootDir, "writer", "references/missing.md"),
+      null,
+    );
+    assertEquals(
       readRuntimeBuiltinSkillReferenceFile(rootDir, "writer", "references/guide.md"),
       "guide",
+    );
+    assertEquals(
+      readRuntimeBuiltinSkillReferenceFile(
+        rootDir,
+        "writer",
+        "resources/schemas/input.json",
+      ),
+      "schema",
+    );
+    assertEquals(
+      readRuntimeBuiltinSkillReferenceFile(rootDir, "writer", "assets/template.txt"),
+      "template",
+    );
+    assertEquals(
+      readRuntimeBuiltinSkillReferenceFile(rootDir, "writer", "assets/empty.txt"),
+      "",
     );
     assertEquals(
       readRuntimeBuiltinSkillReferenceFile(rootDir, "writer", "references/missing.md"),
@@ -105,8 +152,226 @@ Deno.test("runtime builtin skill reference helpers reject traversal and read val
       "notes.md",
     ]);
     assertEquals(listRuntimeBuiltinSkillReferences(rootDir, "writer"), [
+      "assets/empty.txt",
+      "assets/template.txt",
       "references/guide.md",
+      "references/nested/details.md",
       "references/notes.md",
+      "resources/schemas/input.json",
     ]);
+  });
+});
+
+Deno.test("runtime builtin skill helpers reject invalid and escaping identifiers", () => {
+  withTempDir((rootDir) => {
+    const skillsDir = resolve(rootDir, "skills");
+    const outsideDir = resolve(rootDir, "outside");
+    Deno.mkdirSync(outsideDir, { recursive: true });
+    Deno.writeTextFileSync(resolve(outsideDir, "SKILL.md"), "outside directory skill");
+    Deno.writeTextFileSync(resolve(rootDir, "outside.md"), "outside flat skill");
+
+    const invalidIds = [
+      "../outside",
+      resolve(rootDir, "outside"),
+      "UPPERCASE",
+      "under_score",
+      "a".repeat(65),
+    ];
+    for (const skillId of invalidIds) {
+      assertEquals(readRuntimeBuiltinDirectorySkill(skillsDir, skillId), null);
+      assertEquals(readRuntimeBuiltinFlatSkill(skillsDir, skillId), null);
+      assertEquals(readRuntimeBuiltinSkill(skillsDir, skillId), null);
+      assertEquals(listRuntimeBuiltinSkillReferenceFiles(skillsDir, skillId), []);
+      assertEquals(
+        resolveRuntimeBuiltinSkillReferenceFilePath(
+          skillsDir,
+          skillId,
+          "references/guide.md",
+        ),
+        null,
+      );
+    }
+
+    for (
+      const reference of [
+        "../outside.md",
+        "references/../../outside.md",
+        resolve(rootDir, "outside.md"),
+        `references/${"x".repeat(SKILL_RELATIVE_PATH_MAX_LENGTH)}`,
+      ]
+    ) {
+      assertEquals(
+        resolveRuntimeBuiltinSkillReferenceFilePath(skillsDir, "writer", reference),
+        null,
+      );
+      assertEquals(
+        readRuntimeBuiltinSkillReferenceFile(skillsDir, "writer", reference),
+        null,
+      );
+    }
+  });
+});
+
+Deno.test("runtime builtin skill reads enforce the shared text-file budget", () => {
+  withTempDir((rootDir) => {
+    const largeContent = "x".repeat(SKILL_TEXT_FILE_MAX_BYTES + 1);
+    Deno.mkdirSync(resolve(rootDir, "directory-skill", "references"), { recursive: true });
+    Deno.writeTextFileSync(resolve(rootDir, "directory-skill", "SKILL.md"), largeContent);
+    Deno.writeTextFileSync(resolve(rootDir, "flat-skill.md"), largeContent);
+    Deno.writeTextFileSync(
+      resolve(rootDir, "directory-skill", "references", "large.md"),
+      largeContent,
+    );
+
+    assertThrows(
+      () => readRuntimeBuiltinDirectorySkill(rootDir, "directory-skill"),
+      RangeError,
+      `exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
+    );
+    assertThrows(
+      () => readRuntimeBuiltinFlatSkill(rootDir, "flat-skill"),
+      RangeError,
+      `exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
+    );
+    assertThrows(
+      () =>
+        readRuntimeBuiltinSkillReferenceFile(
+          rootDir,
+          "directory-skill",
+          "references/large.md",
+        ),
+      RangeError,
+      `exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
+    );
+  });
+});
+
+Deno.test("runtime builtin skill reads reject malformed UTF-8", () => {
+  withTempDir((rootDir) => {
+    Deno.writeFileSync(resolve(rootDir, "writer.md"), new Uint8Array([0xc3, 0x28]));
+
+    assertThrows(
+      () => readRuntimeBuiltinFlatSkill(rootDir, "writer"),
+      TypeError,
+      "must contain valid UTF-8",
+    );
+  });
+});
+
+Deno.test("runtime builtin skill helpers reject symlinked roots, skills, and references", () => {
+  if (Deno.build.os === "windows") return;
+
+  withTempDir((rootDir) => {
+    const realSkillsDir = resolve(rootDir, "real-skills");
+    const linkedSkillsDir = resolve(rootDir, "linked-skills");
+    const outsideDir = resolve(rootDir, "outside");
+    Deno.mkdirSync(resolve(realSkillsDir, "writer", "references"), { recursive: true });
+    Deno.mkdirSync(outsideDir, { recursive: true });
+    Deno.writeTextFileSync(resolve(outsideDir, "SKILL.md"), "outside");
+    Deno.writeTextFileSync(resolve(outsideDir, "secret.md"), "secret");
+    Deno.symlinkSync(realSkillsDir, linkedSkillsDir);
+    Deno.symlinkSync(outsideDir, resolve(realSkillsDir, "linked-skill"));
+    Deno.symlinkSync(
+      resolve(outsideDir, "SKILL.md"),
+      resolve(realSkillsDir, "linked-flat.md"),
+    );
+    Deno.symlinkSync(
+      resolve(outsideDir, "secret.md"),
+      resolve(realSkillsDir, "writer", "references", "linked.md"),
+    );
+    Deno.mkdirSync(resolve(realSkillsDir, "linked-references"));
+    Deno.symlinkSync(
+      outsideDir,
+      resolve(realSkillsDir, "linked-references", "references"),
+    );
+
+    const linkedRootEntries = readRuntimeBuiltinSkillEntries(linkedSkillsDir);
+    assertEquals(linkedRootEntries.ok, false);
+    assertThrows(
+      () => readRuntimeBuiltinSkill(linkedSkillsDir, "writer"),
+      TypeError,
+      "must not be a symlink",
+    );
+
+    assertThrows(
+      () => readRuntimeBuiltinDirectorySkill(realSkillsDir, "linked-skill"),
+      TypeError,
+      "must not contain symlinks",
+    );
+    assertThrows(
+      () => readRuntimeBuiltinFlatSkill(realSkillsDir, "linked-flat"),
+      TypeError,
+      "must not contain symlinks",
+    );
+    assertThrows(
+      () =>
+        resolveRuntimeBuiltinSkillReferenceFilePath(
+          realSkillsDir,
+          "writer",
+          "references/linked.md",
+        ),
+      TypeError,
+      "must not contain symlinks",
+    );
+    assertThrows(
+      () => listRuntimeBuiltinSkillReferenceFiles(realSkillsDir, "writer"),
+      TypeError,
+      "must not contain symlinks",
+    );
+    assertThrows(
+      () => listRuntimeBuiltinSkillReferenceFiles(realSkillsDir, "linked-references"),
+      TypeError,
+      "must not contain symlinks",
+    );
+
+    const rootEntries = readRuntimeBuiltinSkillEntries(realSkillsDir);
+    assertEquals(rootEntries.ok, false);
+
+    const resolverBaseDir = resolve(rootDir, "resolver-base");
+    Deno.mkdirSync(resolve(resolverBaseDir, "skills"), { recursive: true });
+    Deno.symlinkSync(
+      resolve(outsideDir, "secret.md"),
+      resolve(resolverBaseDir, "skills", "build.md"),
+    );
+    assertThrows(
+      () => resolveRuntimeBuiltinSkillsDir(resolverBaseDir),
+      TypeError,
+      "must not contain symlinks",
+    );
+  });
+});
+
+Deno.test("runtime builtin skill directory enumeration is capped", () => {
+  withTempDir((rootDir) => {
+    const skillsDir = resolve(rootDir, "skills");
+    Deno.mkdirSync(skillsDir, { recursive: true });
+    for (let index = 0; index <= SKILL_SUBDIR_MAX_ENTRIES; index += 1) {
+      Deno.writeTextFileSync(resolve(skillsDir, `skill-${index}.md`), "");
+    }
+
+    const entries = readRuntimeBuiltinSkillEntries(skillsDir);
+    assertEquals(entries.ok, false);
+    if (!entries.ok) {
+      assertStringIncludes(
+        entries.errorMessage,
+        `at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      );
+    }
+  });
+});
+
+Deno.test("runtime builtin reference enumeration is capped", () => {
+  withTempDir((rootDir) => {
+    const refsDir = resolve(rootDir, "writer", "references");
+    Deno.mkdirSync(refsDir, { recursive: true });
+    for (let index = 0; index <= SKILL_SUBDIR_MAX_ENTRIES; index += 1) {
+      Deno.writeTextFileSync(resolve(refsDir, `reference-${index}.md`), "");
+    }
+
+    assertThrows(
+      () => listRuntimeBuiltinSkillReferenceFiles(rootDir, "writer"),
+      RangeError,
+      `at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+    );
   });
 });

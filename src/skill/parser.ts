@@ -2,15 +2,25 @@
  * Skill frontmatter parser
  *
  * Parses SKILL.md files with YAML frontmatter.
- * Primary parser: gray-matter shim (#std/front-matter/yaml.ts)
- * Fallback: regex + line-by-line parser
  *
  * @module
  */
 
 import { createError, toError } from "#veryfront/errors";
-import { validateAllowedToolPatterns } from "./allowed-tools.ts";
-import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_REGEX, type SkillMetadata } from "./types.ts";
+import { validateAllowedToolPatterns, validateStrictAllowedToolPatterns } from "./allowed-tools.ts";
+import { SKILL_DOCUMENT_MAX_CHARACTERS } from "./limits.ts";
+import {
+  SKILL_COMPATIBILITY_MAX_LENGTH,
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_LICENSE_MAX_LENGTH,
+  SKILL_METADATA_KEY_MAX_LENGTH,
+  SKILL_METADATA_MAX_ENTRIES,
+  SKILL_METADATA_VALUE_MAX_LENGTH,
+  SKILL_NAME_REGEX,
+  SKILL_STRICT_NAME_REGEX,
+  type SkillMetadata,
+} from "./types.ts";
+import { isWellFormedUtf16 } from "./string-safety.ts";
 
 /** Result of parsing a SKILL.md file */
 interface ParsedSkillContent {
@@ -20,28 +30,36 @@ interface ParsedSkillContent {
 
 /**
  * Parse SKILL.md content into frontmatter + body.
- *
- * Uses gray-matter shim as primary parser with a regex fallback
- * for environments where gray-matter is not available.
  */
 export async function parseSkillFrontmatter(content: string): Promise<ParsedSkillContent> {
-  // Try primary parser: gray-matter shim
   try {
     const { extract } = await import("#std/front-matter/yaml.ts");
     const result = extract<Record<string, unknown>>(content);
     return { frontmatter: result.attrs, body: result.body };
   } catch {
-    // expected: front-matter parser unavailable, fall through to regex fallback
+    return parseFrontmatterFallback(content);
   }
-
-  // Fallback: regex-based parser
-  return parseFrontmatterFallback(content);
 }
 
-/**
- * Regex-based fallback parser for YAML frontmatter.
- * Handles simple key: value pairs (no nested YAML).
- */
+/** Parse and bound an untrusted SKILL.md document read from a filesystem boundary. */
+export async function parseSkillFileFrontmatter(content: string): Promise<ParsedSkillContent> {
+  if (typeof content !== "string") {
+    throw new TypeError("Skill document content must be a string");
+  }
+  if (!isWellFormedUtf16(content)) {
+    throw new TypeError("Skill document content must contain well-formed UTF-16");
+  }
+  if (content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Skill document exceeds ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
+    );
+  }
+
+  const { extract } = await import("#std/front-matter/yaml.ts");
+  const result = extract<Record<string, unknown>>(content);
+  return { frontmatter: result.attrs, body: result.body };
+}
+
 function parseFrontmatterFallback(content: string): ParsedSkillContent {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) {
@@ -67,6 +85,46 @@ function parseFrontmatterFallback(content: string): ParsedSkillContent {
   return { frontmatter, body };
 }
 
+function ownDataValue(
+  record: Record<string, unknown>,
+  key: string,
+): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor) return undefined;
+  if (!("value" in descriptor)) {
+    throw new TypeError(`Skill frontmatter field "${key}" must be a data property`);
+  }
+  return descriptor.value;
+}
+
+function ownDataField(
+  record: Record<string, unknown>,
+  key: string,
+): { present: boolean; value: unknown } {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor) return { present: false, value: undefined };
+  if (!("value" in descriptor)) {
+    throw new TypeError(`Skill frontmatter field "${key}" must be a data property`);
+  }
+  return { present: true, value: descriptor.value };
+}
+
+function optionalBoundedString(
+  value: unknown,
+  field: string,
+  maxLength: number,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new TypeError(`Skill ${field} must be a string`);
+  }
+  const normalized = value.trim();
+  if (normalized.length > maxLength) {
+    throw new RangeError(`Skill ${field} exceeds ${maxLength} characters`);
+  }
+  return normalized || undefined;
+}
+
 /**
  * Validate and normalize parsed frontmatter into SkillMetadata.
  *
@@ -77,7 +135,6 @@ export function validateSkillMetadata(
   frontmatter: Record<string, unknown>,
   directoryName: string,
 ): SkillMetadata {
-  // Name: from frontmatter or directory name
   const rawName = typeof frontmatter.name === "string" ? frontmatter.name.trim() : directoryName;
 
   if (!SKILL_NAME_REGEX.test(rawName)) {
@@ -90,7 +147,6 @@ export function validateSkillMetadata(
     );
   }
 
-  // Description: required
   const rawDescription = frontmatter.description;
   if (!rawDescription || typeof rawDescription !== "string" || !rawDescription.trim()) {
     throw toError(
@@ -102,20 +158,12 @@ export function validateSkillMetadata(
   }
 
   const description = rawDescription.trim().slice(0, SKILL_DESCRIPTION_MAX_LENGTH);
-
-  // Allowed-tools: parse from space-delimited string or array
   const allowedToolPatterns = frontmatter["allowed-tools"] ?? frontmatter.allowed_tools;
   const allowedTools = parseAllowedTools(allowedToolPatterns, rawName);
-
-  // License: optional string passthrough
   const license = typeof frontmatter.license === "string" ? frontmatter.license.trim() : undefined;
-
-  // Compatibility: optional string passthrough
   const compatibility = typeof frontmatter.compatibility === "string"
     ? frontmatter.compatibility.trim()
     : undefined;
-
-  // Metadata: convert nested object values to strings
   const metadata = parseMetadata(frontmatter.metadata);
 
   return {
@@ -126,6 +174,120 @@ export function validateSkillMetadata(
     ...(compatibility && { compatibility }),
     ...(metadata && { metadata }),
   };
+}
+
+/** Validate bounded, untrusted skill metadata at filesystem boundaries. */
+function validateStrictSkillMetadata(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+): SkillMetadata {
+  if (
+    !frontmatter ||
+    typeof frontmatter !== "object" ||
+    Array.isArray(frontmatter)
+  ) {
+    throw new TypeError("Skill frontmatter must be an object");
+  }
+  if (typeof directoryName !== "string") {
+    throw new TypeError("Skill directory name must be a string");
+  }
+
+  // Name: from frontmatter or directory name
+  const declaredName = ownDataValue(frontmatter, "name");
+  if (declaredName !== undefined && typeof declaredName !== "string") {
+    throw new TypeError("Skill name must be a string");
+  }
+  const rawName = typeof declaredName === "string" ? declaredName.trim() : directoryName;
+
+  if (!SKILL_STRICT_NAME_REGEX.test(rawName)) {
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `Invalid skill name "${rawName}": must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens`,
+      }),
+    );
+  }
+
+  // Description: required
+  const rawDescription = ownDataValue(frontmatter, "description");
+  if (!rawDescription || typeof rawDescription !== "string" || !rawDescription.trim()) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill "${rawName}" is missing a required "description" field`,
+      }),
+    );
+  }
+
+  const description = rawDescription.trim();
+  if (description.length > SKILL_DESCRIPTION_MAX_LENGTH) {
+    throw new RangeError(
+      `Skill "${rawName}" description exceeds ${SKILL_DESCRIPTION_MAX_LENGTH} characters`,
+    );
+  }
+
+  // Allowed-tools: parse from space-delimited string or array
+  const canonicalAllowedTools = ownDataField(frontmatter, "allowed-tools");
+  const compatibilityAllowedTools = ownDataField(frontmatter, "allowed_tools");
+  if (canonicalAllowedTools.present && compatibilityAllowedTools.present) {
+    throw new TypeError(
+      `Skill "${rawName}" must not declare both "allowed-tools" and "allowed_tools"`,
+    );
+  }
+  const hasAllowedTools = canonicalAllowedTools.present || compatibilityAllowedTools.present;
+  const allowedToolPatterns = canonicalAllowedTools.present
+    ? canonicalAllowedTools.value
+    : compatibilityAllowedTools.value;
+  const allowedTools = hasAllowedTools
+    ? parseStrictAllowedTools(allowedToolPatterns, rawName)
+    : undefined;
+
+  const license = optionalBoundedString(
+    ownDataValue(frontmatter, "license"),
+    "license",
+    SKILL_LICENSE_MAX_LENGTH,
+  );
+  const compatibility = optionalBoundedString(
+    ownDataValue(frontmatter, "compatibility"),
+    "compatibility",
+    SKILL_COMPATIBILITY_MAX_LENGTH,
+  );
+
+  const metadata = parseStrictMetadata(ownDataValue(frontmatter, "metadata"));
+
+  return {
+    name: rawName,
+    description,
+    ...(allowedTools && { allowedTools }),
+    ...(license && { license }),
+    ...(compatibility && { compatibility }),
+    ...(metadata && { metadata }),
+  };
+}
+
+/**
+ * Validate metadata loaded from a filesystem skill. The public normalizer keeps
+ * its historical directory-name fallback for programmatic callers, while file
+ * discovery follows the Agent Skills requirement that `name` is declared and
+ * matches the parent directory.
+ */
+export function validateSkillFileMetadata(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+): SkillMetadata {
+  const declaredName = ownDataValue(frontmatter, "name");
+  if (typeof declaredName !== "string" || declaredName.trim().length === 0) {
+    throw new TypeError(`Skill in directory "${directoryName}" is missing required field "name"`);
+  }
+
+  const metadata = validateStrictSkillMetadata(frontmatter, directoryName);
+  if (metadata.name !== directoryName) {
+    throw new TypeError(
+      `Skill name "${metadata.name}" must match its directory "${directoryName}"`,
+    );
+  }
+  return metadata;
 }
 
 /**
@@ -191,7 +353,66 @@ function parseAllowedTools(
   }
 }
 
-/** Convert metadata object values to strings */
+/** Parse and bound allowed tools declared by an untrusted skill file. */
+function parseStrictAllowedTools(
+  value: unknown,
+  skillName: string,
+): string[] | undefined {
+  if (value === undefined || value === null) {
+    throw new TypeError("Allowed-tools must be a string or array of strings");
+  }
+
+  let patterns: string[];
+
+  if (typeof value === "string") {
+    patterns = value.split(/\s+/).filter(Boolean);
+  } else if (Array.isArray(value)) {
+    patterns = [];
+    for (const rawPattern of value) {
+      if (typeof rawPattern !== "string") {
+        throw toError(
+          createError({
+            type: "agent",
+            message:
+              `Skill "${skillName}" has invalid allowed-tools value: expected all entries to be strings`,
+          }),
+        );
+      }
+      const pattern = rawPattern.trim();
+      if (!pattern) {
+        throw toError(
+          createError({
+            type: "agent",
+            message: `Skill "${skillName}" has invalid allowed-tools pattern: empty value`,
+          }),
+        );
+      }
+      patterns.push(pattern);
+    }
+  } else {
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
+      }),
+    );
+  }
+
+  try {
+    return validateStrictAllowedToolPatterns([...patterns]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill "${skillName}" has ${message.charAt(0).toLowerCase()}${message.slice(1)}`,
+      }),
+    );
+  }
+}
+
+/** Convert metadata object values to strings through the historical public contract. */
 function parseMetadata(
   value: unknown,
 ): Record<string, string> | undefined {
@@ -201,8 +422,46 @@ function parseMetadata(
   if (entries.length === 0) return undefined;
 
   const result: Record<string, string> = {};
-  for (const [k, v] of entries) {
-    result[k] = String(v);
+  for (const [key, metadataValue] of entries) {
+    result[key] = String(metadataValue);
+  }
+  return result;
+}
+
+/** Validate optional string-to-string metadata without coercing caller values. */
+function parseStrictMetadata(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Skill metadata must be an object with string values");
+  }
+
+  const entries = Object.entries(
+    Object.getOwnPropertyDescriptors(value),
+  ).filter(([, descriptor]) => descriptor.enumerable);
+  if (entries.length === 0) return undefined;
+  if (entries.length > SKILL_METADATA_MAX_ENTRIES) {
+    throw new RangeError(`Skill metadata accepts at most ${SKILL_METADATA_MAX_ENTRIES} entries`);
+  }
+
+  const result: Record<string, string> = {};
+  for (const [k, descriptor] of entries) {
+    if (k.length === 0 || k.length > SKILL_METADATA_KEY_MAX_LENGTH) {
+      throw new RangeError(
+        `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} characters`,
+      );
+    }
+    if (!("value" in descriptor) || typeof descriptor.value !== "string") {
+      throw new TypeError("Skill metadata values must be strings");
+    }
+    const metadataValue = descriptor.value;
+    if (metadataValue.length > SKILL_METADATA_VALUE_MAX_LENGTH) {
+      throw new RangeError(
+        `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} characters`,
+      );
+    }
+    result[k] = metadataValue;
   }
   return result;
 }

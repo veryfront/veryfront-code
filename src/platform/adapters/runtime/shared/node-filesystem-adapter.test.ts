@@ -1,9 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeCompatibleFileSystemAdapter } from "./node-filesystem-adapter.ts";
 
 describe("NodeCompatibleFileSystemAdapter", () => {
+  it("marks only direct built-in instances as native", () => {
+    class DerivedAdapter extends NodeCompatibleFileSystemAdapter {}
+
+    assertEquals(
+      isNativeFileSystemAdapter(new NodeCompatibleFileSystemAdapter()),
+      true,
+    );
+    assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
+  });
+
   it("does not disguise invalid paths as missing", async () => {
     const adapter = new NodeCompatibleFileSystemAdapter();
     await assertRejects(() => adapter.exists("\0"), TypeError);
@@ -13,14 +24,37 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     const root = await Deno.makeTempDir({ prefix: "veryfront-node-fs-" });
     try {
       const adapter = new NodeCompatibleFileSystemAdapter();
+      assertEquals(isNativeFileSystemAdapter(adapter), true);
       const file = `${root}/file.txt`;
+      const largeFile = `${root}/large.bin`;
       const link = `${root}/file-link.txt`;
 
       await adapter.writeFile(file, "hello");
+      const largeBytes = new Uint8Array(70_000);
+      for (let index = 0; index < largeBytes.byteLength; index++) {
+        largeBytes[index] = index % 251;
+      }
+      await Deno.writeFile(largeFile, largeBytes);
       await Deno.symlink(file, link);
 
       assertEquals(await adapter.readFile(file), "hello");
       assertEquals([...await adapter.readFileBytes(file)], [104, 101, 108, 108, 111]);
+      assertEquals(
+        [...await adapter.readFileBytesBounded(file, 3)],
+        [104, 101, 108],
+      );
+      assertEquals(
+        [...await adapter.readFileBytesBounded(file, 8)],
+        [104, 101, 108, 108, 111],
+      );
+      await assertRejects(
+        () => adapter.readFileBytesBounded(file, 0),
+        RangeError,
+        "positive safe integer",
+      );
+      const largePrefix = await adapter.readFileBytesBounded(largeFile, 65_537);
+      assertEquals(largePrefix.byteLength, 65_537);
+      assertEquals(largePrefix[65_536], largeBytes[65_536]);
       assertEquals((await adapter.stat(link)).isSymlink, false);
       assertEquals((await adapter.lstat(link)).isSymlink, true);
       assertEquals(await adapter.realPath(link), await Deno.realPath(file));

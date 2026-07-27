@@ -12,6 +12,8 @@ import type {
   RuntimeProjectSkillContext,
   RuntimeProjectSkillLoader,
 } from "./project-skill-loader.ts";
+import { createRuntimeProjectSkillLoader } from "./project-skill-loader.ts";
+import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
 import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
 
 const PROJECT_CONTEXT: RuntimeProjectSkillContext = {
@@ -98,6 +100,115 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
     referenceNote:
       "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
   });
+});
+
+Deno.test("a claimed project skill never falls through to a builtin with the same id", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: ["plan"],
+      skillSourcePaths: { plan: "skills/plan/SKILL.md" },
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([["plan", "# Builtin plan"]]),
+    }),
+  });
+
+  assertEquals(await tool.execute({ skillId: "plan" }), {
+    error:
+      'Project skill "plan" is unavailable or no longer satisfies its validated catalog contract.',
+  });
+});
+
+Deno.test("an invalid catalog override cannot re-enable a builtin with the same id", async () => {
+  const invalidOverride =
+    "---\nname: different\ndescription: Invalid shared override\n---\n\n# Invalid";
+  const getProjectFiles = () => Promise.resolve([{ path: "skills/shared/SKILL.md" }]);
+  const getProjectFile = ({ path }: { path: string }) =>
+    Promise.resolve(
+      path === "skills/shared/SKILL.md" ? { path, content: invalidOverride } : null,
+    );
+  const catalog = await getRuntimeProjectSkillCatalog({
+    projectId: "project-1",
+    authToken: "auth-token",
+    branchId: "branch-1",
+    builtinSkills: [{
+      id: "shared",
+      name: "shared",
+      description: "Builtin shared",
+      instructions: "# Builtin shared",
+    }],
+    getProjectFiles,
+    getProjectFile,
+  });
+  assertEquals(catalog, []);
+
+  let builtinReads = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: catalog.map((skill) => skill.id),
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createRuntimeProjectSkillLoader({
+      getProjectFiles,
+      getProjectFile,
+    }),
+    builtinSkillIds: ["shared"],
+    builtinStore: {
+      ...createBuiltinStore({}),
+      readSkill: () => {
+        builtinReads += 1;
+        return "# Builtin shared";
+      },
+    },
+  });
+
+  assertEquals(await tool.execute({ skillId: "shared" }), {
+    error: "Skill not found: shared. Available skills: none",
+  });
+  assertEquals(builtinReads, 0);
+});
+
+Deno.test("builtin fallback remains available when the project catalog is unavailable", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinSkillIds: ["plan"],
+    builtinStore: createBuiltinStore({
+      skills: new Map([["plan", "# Builtin plan"]]),
+    }),
+  });
+
+  assertEquals(
+    expectLoadedSkillResponse(await tool.execute({ skillId: "plan" })).instructions,
+    "# Builtin plan",
+  );
+});
+
+Deno.test("a claimed project reference never falls through to a builtin reference", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableSkillIds: ["plan"],
+      skillSourcePaths: { plan: "skills/plan/SKILL.md" },
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["plan", { instructions: "# Project plan", references: ["references/guide.md"] }],
+      ]),
+    }),
+    builtinStore: createBuiltinStore({
+      references: new Map([["plan/references/guide.md", "builtin secret"]]),
+    }),
+  });
+
+  await tool.execute({ skillId: "plan" });
+  assertEquals(
+    await tool.execute({ skillId: "plan", file: "references/guide.md" }),
+    { error: "Project skill reference not found: plan/references/guide.md" },
+  );
 });
 
 Deno.test("createRuntimeLoadSkillTool accepts a lowercase .md skill alias at the boundary", async () => {
@@ -256,6 +367,33 @@ Write carefully.`,
   assertEquals(result.unavailableCurrentRunTools, ["write_file"]);
   assertEquals(result.model, "sonnet");
   assertEquals(result.maxSteps, 8);
+});
+
+Deno.test("createRuntimeLoadSkillTool enforces an explicitly empty allowed-tools policy", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableToolNames: ["read_file"],
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinStore: createBuiltinStore({
+      skills: new Map([
+        [
+          "read-only",
+          `---
+allowed-tools: []
+---
+Read without direct tools.`,
+        ],
+      ]),
+    }),
+  });
+
+  const result = expectLoadedSkillResponse(await tool.execute({ skillId: "read-only" }));
+
+  assertEquals(result.allowedTools, []);
+  assertEquals(result.delegationTools, []);
+  assertStringIncludes(result.note ?? "", "intentionally empty");
 });
 
 Deno.test("createRuntimeLoadSkillTool names scoped delegates and omits override forwarding", async () => {
@@ -764,7 +902,7 @@ Deno.test("createRuntimeLoadSkillTool reloads same skill after project context c
   assertEquals(secondResult.references, ["references/project-2.md"]);
 });
 
-Deno.test("createRuntimeLoadSkillTool removes form_input from same-skill reload policy", async () => {
+Deno.test("createRuntimeLoadSkillTool preserves policy on a duplicate body load", async () => {
   const context = createProjectContext({
     availableToolNames: ["form_input", "studio_suggestions", "list_files", "create_file"],
   });
@@ -800,7 +938,12 @@ Use one form, then write the plan.`,
     "list_files",
     "create_file",
   ]);
-  assertEquals(secondResult.allowedTools, ["studio_suggestions", "list_files", "create_file"]);
+  assertEquals(secondResult.allowedTools, [
+    "form_input",
+    "studio_suggestions",
+    "list_files",
+    "create_file",
+  ]);
   assertEquals(secondResult.delegationTools, [
     "form_input",
     "studio_suggestions",
@@ -834,20 +977,117 @@ Deno.test("createRuntimeLoadSkillTool rejects reference files before the skill b
   });
 });
 
+Deno.test("createRuntimeLoadSkillTool authorizes an advertised reference after a resumed form continuation", async () => {
+  const projectSkillLoader = createProjectSkillLoader({
+    skills: new Map([
+      [
+        "research",
+        {
+          instructions: "# Research",
+          references: ["resources/schema.json", "assets/template.txt"],
+        },
+      ],
+    ]),
+    references: new Map([
+      ["research/resources/schema.json", '{"type":"object"}'],
+      ["research/assets/template.txt", "template"],
+    ]),
+  });
+  const initialTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["research"] }),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+  const loaded = expectLoadedSkillResponse(
+    await initialTool.execute({ skillId: "research" }),
+  );
+
+  // Default-chat task continuations recreate the tool closure after form input,
+  // while the runtime hydrates the active skill into ToolExecutionContext.
+  const resumedTool = createRuntimeLoadSkillTool({
+    context: createProjectContext({ availableSkillIds: ["research"] }),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+  const resumedExecutionContext = {
+    activeSkillId: loaded.skillId,
+    activeSkillToolAvailability: {
+      hasActiveSkill: true,
+      references: loaded.references,
+      scripts: [],
+    },
+  };
+
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "resources/schema.json" },
+      resumedExecutionContext,
+    ),
+    {
+      skillId: "research",
+      file: "resources/schema.json",
+      content: '{"type":"object"}',
+    },
+  );
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: "assets/template.txt" },
+      { ...resumedExecutionContext, activeSkillId: "other" },
+    ),
+    {
+      error:
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with only {"skillId":"research"} first, then request one of the listed reference files.',
+    },
+  );
+  assertEquals(
+    await resumedTool.execute(
+      { skillId: "research", file: " assets/template.txt " },
+      resumedExecutionContext,
+    ),
+    {
+      error:
+        'Skill "research" must be loaded before reference file "assets/template.txt". Call load_skill with only {"skillId":"research"} first, then request one of the listed reference files.',
+    },
+  );
+});
+
 Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files after body load", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: createProjectContext(),
     skillsDir: "/skills",
     projectSkillLoader: createProjectSkillLoader({
       skills: new Map([
-        ["plan", { instructions: "# Plan", references: ["references/project.md"] }],
+        [
+          "plan",
+          {
+            instructions: "# Plan",
+            references: [
+              "references/project.md",
+              "references/empty.md",
+              "resources/schema.json",
+              "assets/template.txt",
+            ],
+          },
+        ],
       ]),
-      references: new Map([["plan/references/project.md", "project reference"]]),
+      references: new Map([
+        ["plan/references/project.md", "project reference"],
+        ["plan/references/empty.md", ""],
+        ["plan/resources/schema.json", "project resource"],
+        ["plan/assets/template.txt", "project asset"],
+      ]),
     }),
     builtinStore: createBuiltinStore({
       skills: new Map([["build", "# Build"]]),
-      references: new Map([["build/references/builtin.md", "builtin reference"]]),
-      referenceLists: new Map([["build", ["references/builtin.md"]]]),
+      references: new Map([
+        ["build/references/builtin.md", "builtin reference"],
+        ["build/references/empty.md", ""],
+      ]),
+      referenceLists: new Map([
+        ["build", ["references/builtin.md", "references/empty.md"]],
+      ]),
     }),
   });
 
@@ -857,11 +1097,31 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files 
     file: "references/project.md",
     content: "project reference",
   });
+  assertEquals(await tool.execute({ skillId: "plan", file: "references/empty.md" }), {
+    skillId: "plan",
+    file: "references/empty.md",
+    content: "",
+  });
+  assertEquals(await tool.execute({ skillId: "plan", file: "resources/schema.json" }), {
+    skillId: "plan",
+    file: "resources/schema.json",
+    content: "project resource",
+  });
+  assertEquals(await tool.execute({ skillId: "plan", file: "assets/template.txt" }), {
+    skillId: "plan",
+    file: "assets/template.txt",
+    content: "project asset",
+  });
   await tool.execute({ skillId: "build" });
   assertEquals(await tool.execute({ skillId: "build", file: "references/builtin.md" }), {
     skillId: "build",
     file: "references/builtin.md",
     content: "builtin reference",
+  });
+  assertEquals(await tool.execute({ skillId: "build", file: "references/empty.md" }), {
+    skillId: "build",
+    file: "references/empty.md",
+    content: "",
   });
 });
 

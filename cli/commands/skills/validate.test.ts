@@ -5,11 +5,14 @@ import { join } from "#std/path.ts";
 import { validateSkillDirectory } from "./validate.ts";
 
 async function withTempSkill(
+  skillName: string,
   files: Record<string, string>,
   fn: (dir: string) => Promise<void>,
 ): Promise<void> {
-  const dir = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const root = await Deno.makeTempDir({ prefix: "vf-skill-validate-" });
+  const dir = join(root, skillName);
   try {
+    await Deno.mkdir(dir, { recursive: true });
     for (const [path, content] of Object.entries(files)) {
       const target = join(dir, path);
       await Deno.mkdir(join(target, ".."), { recursive: true });
@@ -17,17 +20,17 @@ async function withTempSkill(
     }
     await fn(dir);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(root, { recursive: true });
   }
 }
 
 describe("Skills Validate", () => {
   it("accepts a project skill with SKILL.md frontmatter", async () => {
-    await withTempSkill({
+    await withTempSkill("code-review", {
       "SKILL.md": `---
 name: code-review
 description: Review code changes.
-allowed_tools: load_skill load_skill_reference
+allowed-tools: load_skill load_skill_reference
 ---
 
 # Code Review
@@ -41,14 +44,14 @@ Review the submitted changes.
   });
 
   it("reports a missing SKILL.md", async () => {
-    await withTempSkill({}, async (dir) => {
+    await withTempSkill("missing", {}, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "error", message: "SKILL.md not found" }]);
     });
   });
 
   it("reports invalid SKILL.md frontmatter", async () => {
-    await withTempSkill({
+    await withTempSkill("bad-name", {
       "SKILL.md": `---
 name: BadName
 description: Invalid name.
@@ -65,7 +68,7 @@ description: Invalid name.
   });
 
   it("warns when SKILL.md has no instruction body", async () => {
-    await withTempSkill({
+    await withTempSkill("empty-body", {
       "SKILL.md": `---
 name: empty-body
 description: Empty instruction body.
@@ -74,6 +77,45 @@ description: Empty instruction body.
     }, async (dir) => {
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
+    });
+  });
+
+  it("reports a missing or directory-mismatched skill name", async () => {
+    await withTempSkill("expected-name", {
+      "SKILL.md": `---
+description: Missing name.
+---
+
+# Missing
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues[0]?.severity, "error");
+      assertEquals(issues[0]?.message.includes("missing required field"), true);
+    });
+
+    await withTempSkill("expected-name", {
+      "SKILL.md": `---
+name: different-name
+description: Mismatched name.
+---
+
+# Mismatch
+`,
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues[0]?.severity, "error");
+      assertEquals(issues[0]?.message.includes("must match"), true);
+    });
+  });
+
+  it("reports skill documents over the runtime byte budget", async () => {
+    await withTempSkill("oversized", {
+      "SKILL.md": "x".repeat(1_048_577),
+    }, async (dir) => {
+      const issues = await validateSkillDirectory(dir);
+      assertEquals(issues[0]?.severity, "error");
+      assertEquals(issues[0]?.message.includes("exceeds 1048576 bytes"), true);
     });
   });
 });

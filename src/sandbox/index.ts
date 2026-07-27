@@ -61,3 +61,4 @@ export {
   type HostedSandboxToolsResult,
   unwrapSandboxWorkingDirectoryCommand,
 } from "./agent-service-tools.ts";
+export { isSandboxOutputLimitError } from "./request-payload.ts";

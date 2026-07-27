@@ -991,7 +991,7 @@ describe("Guide: skills.md", () => {
     assertStringIncludes(guide, "description: Review code changes");
     assertStringIncludes(
       guide,
-      "allowed_tools: load_skill load_skill_reference execute_skill_script",
+      "allowed-tools: load_skill load_skill_reference execute_skill_script",
     );
     assertStringIncludes(guide, "veryfront skills validate skills/my-skill");
   });

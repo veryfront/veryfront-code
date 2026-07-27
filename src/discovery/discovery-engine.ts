@@ -8,7 +8,7 @@
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { agentLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { join } from "#veryfront/compat/path";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { promptRegistry } from "#veryfront/prompt/registry.ts";
@@ -271,7 +271,7 @@ async function discoverSnapshot(snapshot: ProjectDiscoveryConfig): Promise<Disco
   // the previous generation until all discovery work finishes.
   agentRegistry.clear();
   toolRegistry.clear();
-  skillRegistry.clear();
+  skillRegistryInternal.clear();
   promptRegistry.clear();
   resourceRegistry.clear();
   workflowRegistry.clear();
@@ -310,7 +310,11 @@ async function discoverSnapshot(snapshot: ProjectDiscoveryConfig): Promise<Disco
         }
         continue;
       }
-      registerSkill(id, skill);
+      skillRegistryInternal.register(id, skill);
+      const registeredSkill = skillRegistryInternal.get(id);
+      if (registeredSkill === undefined) {
+        throw new Error(`Skill "${id}" was not available after registration`);
+      }
       result.skills.set(id, skill);
     }
     result.errors.push(...skillResult.errors);

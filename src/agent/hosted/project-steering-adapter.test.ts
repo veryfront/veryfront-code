@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { join } from "node:path";
 import { createHostedProjectSteeringAdapter } from "./project-steering-adapter.ts";
 import type {
@@ -17,7 +17,7 @@ async function createSkillsDir(): Promise<string> {
   await Deno.writeTextFile(
     join(skillDir, "SKILL.md"),
     `---
-name: Builtin
+name: builtin
 description: Builtin skill
 ---
 Use builtin instructions.`,
@@ -62,7 +62,7 @@ Deno.test("hosted project steering adapter loads instructions and project skills
             return {
               path: options.path,
               content: `---
-name: Project Skill
+name: project
 description: Project skill
 ---
 Use project instructions.`,
@@ -98,6 +98,31 @@ Use project instructions.`,
   });
 });
 
+Deno.test("hosted project steering adapter uses the strict default project files client", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    let fetchCalls = 0;
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    await assertRejects(
+      () =>
+        adapter.getProjectInstructions({
+          projectId: "..",
+          authToken: "token-1",
+        }),
+      TypeError,
+      "route-safe",
+    );
+    assertEquals(fetchCalls, 0);
+  });
+});
+
 Deno.test("hosted project steering adapter creates load_skill and refreshes project skill ids", async () => {
   await withSkillsDir(async (skillsDir) => {
     const adapter = createHostedProjectSteeringAdapter({
@@ -109,7 +134,7 @@ Deno.test("hosted project steering adapter creates load_skill and refreshes proj
             ? {
               path,
               content: `---
-name: Project Skill
+name: project
 description: Project skill
 ---
 Use project instructions.`,
@@ -172,7 +197,7 @@ Deno.test("hosted project steering adapter accepts a custom builtin skill store"
       projectId: null,
       authToken: "token-1",
       branchId: null,
-      availableSkillIds: [],
+      availableSkillIds: ["custom"],
     });
     const result = await loadSkillTool.execute({ skillId: "custom" });
 
@@ -196,15 +221,21 @@ Body.`;
       apiUrl: "https://api.example.test",
       skillsDir,
       projectFilesClient: createProjectFilesClient({
-        getProjectFile: async ({ path }) =>
-          path === "skills/global/SKILL.md" ||
-            path === "agents/researcher/skills/cite/SKILL.md" ||
-            path === "agents/writer/skills/style/SKILL.md"
-            ? { path, content: skillMd(path) }
-            : null,
+        getProjectFile: async ({ path }) => {
+          const skillName = path === "skills/global/SKILL.md"
+            ? "global"
+            : path === "agents/researcher/skills/cite/SKILL.md"
+            ? "cite"
+            : path === "agents/writer/skills/style/SKILL.md"
+            ? "style"
+            : null;
+          return skillName ? { path, content: skillMd(skillName) } : null;
+        },
         getProjectFiles: async () => [
           { path: "skills/global/SKILL.md" },
+          { path: "agents/researcher/AGENT.md" },
           { path: "agents/researcher/skills/cite/SKILL.md" },
+          { path: "agents/writer/AGENT.md" },
           { path: "agents/writer/skills/style/SKILL.md" },
         ],
       }),

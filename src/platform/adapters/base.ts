@@ -214,6 +214,16 @@ export interface FileSystemAdapter {
   readFile(path: string): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
+  /**
+   * Read a prefix without materializing more than `byteLimit` bytes.
+   *
+   * Implementations must enforce the limit while reading from their backing
+   * store and continue until EOF or `byteLimit`; reading the complete object
+   * and slicing afterward does not satisfy this capability. Callers can
+   * request their accepted maximum plus one byte to distinguish an exact-size
+   * file from an oversized file.
+   */
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
   /** Atomically replace a path when the runtime supports same-filesystem rename. */
   rename?(from: string, to: string): Promise<void>;
@@ -255,6 +265,11 @@ export interface FileSystemAdapter {
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
+
+/** A filesystem adapter that advertises genuine bounded byte reads. */
+export type BoundedFileSystemAdapter =
+  & FileSystemAdapter
+  & Required<Pick<FileSystemAdapter, "readFileBytesBounded">>;
 
 export interface ResolveFileOptions {
   allowPagesPrefix?: boolean;

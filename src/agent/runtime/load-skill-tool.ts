@@ -1,7 +1,8 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool } from "#veryfront/tool/types.ts";
+import { SKILL_LOADABLE_REFERENCE_MAX_ENTRIES } from "#veryfront/skill/limits.ts";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_CONTINUE_SAME_TURN,
@@ -21,13 +22,12 @@ import type {
   RuntimeProjectSkillLoader,
 } from "./project-skill-loader.ts";
 import {
-  buildRuntimeLoadedSkillResponse,
-  normalizeRuntimeSkillReferencePath,
+  buildStrictRuntimeLoadedSkillResponse,
+  normalizeStrictRuntimeSkillReferencePath,
   type RuntimeLoadedSkillResponse,
   type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
-import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
 /** Legacy continuation-note fallback used when runtime tool inventory is unavailable. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
@@ -108,6 +108,12 @@ function buildUnavailableCurrentRunToolsDelegationNote(
 export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   /** Agent identity used to enforce owner-scoped skill visibility. */
   agentId?: string;
+  /**
+   * Authoritative completed catalog snapshot when defined. An empty array
+   * means the catalog was available but exposed no loadable skills. Omit this
+   * field only when the catalog was unavailable or was not evaluated, which
+   * permits direct builtin fallback.
+   */
   availableSkillIds?: readonly string[];
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
@@ -212,7 +218,7 @@ function buildLoadedSkillResponse(input: {
   instructions: string;
   references?: readonly string[];
 }): RuntimeLoadedSkillResponse {
-  return buildRuntimeLoadedSkillResponse({
+  return buildStrictRuntimeLoadedSkillResponse({
     skillId: input.skillId,
     instructions: input.instructions,
     nextStep: input.options.nextStep ??
@@ -228,8 +234,6 @@ function buildAlreadyLoadedSkillResponse(
   skillId: string,
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
-  const finishAllowedTools = narrowPolicyAfterSubmittedForm(skillId, response.allowedTools);
-
   return {
     ...response,
     instructions:
@@ -238,14 +242,6 @@ function buildAlreadyLoadedSkillResponse(
       "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
     nextStep:
       "Continue now. Do not reload this skill or restart intake; use the existing context and finish the current turn.",
-    ...(finishAllowedTools
-      ? {
-        allowedTools: finishAllowedTools,
-        note: finishAllowedTools.length > 0
-          ? response.note
-          : "IMPORTANT: Intake is complete for this turn. Do not call form_input again; finish with the existing context.",
-      }
-      : {}),
     references: response.references,
   };
 }
@@ -254,11 +250,7 @@ function buildMissingSkillError(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
 ): RuntimeLoadSkillErrorOutput {
-  const knownIds = new Set([
-    ...(options.context.availableSkillIds ?? []),
-    ...(options.builtinSkillIds ?? []),
-  ]);
-  const available = [...knownIds].sort().join(", ");
+  const available = getKnownRuntimeSkillIds(options)?.join(", ") || "none";
   return {
     error: `Skill not found: ${skillId}. Available skills: ${available}`,
   };
@@ -300,35 +292,100 @@ function buildRuntimeSkillReferenceCacheKey(
   ]);
 }
 
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function executionContextAdvertisesReference(
+  context: ToolExecutionContext | undefined,
+  skillId: string,
+  file: string,
+  normalizedFile: string,
+): boolean {
+  if (
+    file !== normalizedFile ||
+    readOwnDataProperty(context, "activeSkillId") !== skillId
+  ) {
+    return false;
+  }
+
+  const availability = readOwnDataProperty(context, "activeSkillToolAvailability");
+  const references = readOwnDataProperty(availability, "references");
+  if (!Array.isArray(references)) {
+    return false;
+  }
+
+  try {
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(references, "length");
+    const length = lengthDescriptor && "value" in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined;
+    if (
+      typeof length !== "number" ||
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES
+    ) {
+      return false;
+    }
+
+    let isAdvertised = false;
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(references, index);
+      const reference = descriptor && "value" in descriptor ? descriptor.value : undefined;
+      if (
+        typeof reference !== "string" ||
+        normalizeStrictRuntimeSkillReferencePath(reference) !== reference
+      ) {
+        return false;
+      }
+      isAdvertised ||= reference === normalizedFile;
+    }
+    return isAdvertised;
+  } catch {
+    return false;
+  }
+}
+
+function hasClaimedProjectSkill(
+  context: RuntimeLoadSkillToolContext,
+  skillId: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(context.skillSourcePaths ?? {}, skillId);
+}
+
 function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions): string {
   if (options.description) {
     return options.description;
   }
 
-  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+  const knownIds = getKnownRuntimeSkillIds(options);
+  if (knownIds === null) {
     return RUNTIME_LOAD_SKILL_DESCRIPTION;
   }
 
-  const knownIds = new Set([
-    ...(options.context.availableSkillIds ?? []),
-    ...(options.builtinSkillIds ?? []),
-  ]);
-  const available = [...knownIds].sort().join(", ") || "none";
+  const available = knownIds.join(", ") || "none";
 
   return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Available skill IDs: ${available}. Do not invent skill IDs. Only call load_skill with one of these IDs.`;
 }
 
 function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
-  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+  const knownIds = options.context.availableSkillIds !== undefined
+    ? options.context.availableSkillIds
+    : options.builtinSkillIds;
+  if (knownIds === undefined) {
     return null;
   }
 
-  return [
-    ...new Set([
-      ...(options.context.availableSkillIds ?? []),
-      ...(options.builtinSkillIds ?? []),
-    ]),
-  ].sort();
+  return [...new Set(knownIds)].sort();
 }
 
 function getLoadedRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] {
@@ -490,22 +547,31 @@ async function loadRuntimeSkillReferenceFile(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
   file: string,
+  executionContext?: ToolExecutionContext,
 ): Promise<RuntimeLoadSkillReferenceFileOutput | RuntimeLoadSkillErrorOutput> {
-  const normalizedFile = normalizeRuntimeSkillReferencePath(file);
+  const normalizedFile = normalizeStrictRuntimeSkillReferencePath(file);
   if (!normalizedFile) {
     return { error: `Invalid reference file path: ${file}` };
   }
 
   const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
   const loadedSkillResponse = options.context.loadedSkillResponses?.[loadedSkillKey];
-  if (!loadedSkillResponse) {
+  const resumedReferenceIsAdvertised = !loadedSkillResponse &&
+    executionContextAdvertisesReference(
+      executionContext,
+      skillId,
+      file,
+      normalizedFile,
+    );
+  if (!loadedSkillResponse && !resumedReferenceIsAdvertised) {
     return {
       error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
         `Call load_skill with only {"skillId":"${skillId}"} first, then request one of the listed reference files.`,
     };
   }
 
-  const advertisedReferences = loadedSkillResponse.references ?? [];
+  const advertisedReferences = loadedSkillResponse?.references ??
+    (resumedReferenceIsAdvertised ? [normalizedFile] : []);
   if (!advertisedReferences.includes(normalizedFile)) {
     const availableReferences = advertisedReferences.length > 0
       ? advertisedReferences.join(", ")
@@ -531,10 +597,14 @@ async function loadRuntimeSkillReferenceFile(
     skillId,
     normalizedFile,
   );
-  if (projectFileContent) {
+  if (projectFileContent !== null) {
     const response = { skillId, file: normalizedFile, content: projectFileContent };
     loadedSkillReferenceResponses[referenceKey] = response;
     return response;
+  }
+
+  if (hasClaimedProjectSkill(options.context, skillId)) {
+    return { error: `Project skill reference not found: ${skillId}/${normalizedFile}` };
   }
 
   const localContent = getBuiltinStore(options).readReferenceFile(
@@ -542,7 +612,7 @@ async function loadRuntimeSkillReferenceFile(
     skillId,
     normalizedFile,
   );
-  if (localContent) {
+  if (localContent !== null) {
     const response = { skillId, file: normalizedFile, content: localContent };
     loadedSkillReferenceResponses[referenceKey] = response;
     return response;
@@ -564,7 +634,10 @@ export function createRuntimeLoadSkillTool(
 ): Tool<RuntimeLoadSkillToolInput, RuntimeLoadSkillToolOutput> {
   const builtinStore = getBuiltinStore(options);
 
-  async function execute({ skillId, file }: RuntimeLoadSkillToolInput) {
+  async function execute(
+    { skillId, file }: RuntimeLoadSkillToolInput,
+    executionContext?: ToolExecutionContext,
+  ) {
     let parsed: RuntimeLoadSkillToolInput;
     try {
       parsed = buildRuntimeLoadSkillInputSchema(options).parse(
@@ -580,8 +653,18 @@ export function createRuntimeLoadSkillTool(
     skillId = normalizeRuntimeLoadSkillInputSkillId(options, parsed.skillId);
     file = parsed.file;
 
+    const knownSkillIds = getKnownRuntimeSkillIds(options);
+    if (knownSkillIds !== null && !knownSkillIds.includes(skillId)) {
+      return buildMissingSkillError(options, skillId);
+    }
+
     if (file) {
-      return await loadRuntimeSkillReferenceFile(options, skillId, file);
+      return await loadRuntimeSkillReferenceFile(
+        options,
+        skillId,
+        file,
+        executionContext,
+      );
     }
 
     const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
@@ -603,8 +686,15 @@ export function createRuntimeLoadSkillTool(
       return response;
     }
 
+    if (hasClaimedProjectSkill(options.context, skillId)) {
+      return {
+        error:
+          `Project skill "${skillId}" is unavailable or no longer satisfies its validated catalog contract.`,
+      };
+    }
+
     const localContent = builtinStore.readSkill(options.skillsDir, skillId);
-    if (localContent) {
+    if (localContent !== null) {
       const response = buildLoadedSkillResponse({
         options,
         skillId,

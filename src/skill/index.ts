@@ -3,7 +3,8 @@
  *
  * Public API for the agent skills system.
  * Skills are project-level capabilities defined as SKILL.md files
- * following the agentskills.io specification.
+ * using the Agent Skills metadata format and Veryfront's documented,
+ * fail-closed allowed-tools subset.
  *
  * @module
  *
@@ -33,11 +34,13 @@ export {
   SKILL_DESCRIPTION_MAX_LENGTH,
   SKILL_MD_FILENAME,
   SKILL_NAME_REGEX,
+  SKILL_READABLE_DIRS,
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
   SKILL_TOOL_IDS,
 } from "./types.ts";
+export { SKILL_TEXT_FILE_MAX_BYTES } from "./limits.ts";
 
 // Registry
 export {
@@ -50,7 +53,11 @@ export {
 } from "./registry.ts";
 
 // Parser
-export { parseSkillFrontmatter, validateSkillMetadata } from "./parser.ts";
+export {
+  parseSkillFrontmatter,
+  validateSkillFileMetadata,
+  validateSkillMetadata,
+} from "./parser.ts";
 
 // Path Safety
 export { listSkillSubdir, validateSkillPath } from "./path-safety.ts";

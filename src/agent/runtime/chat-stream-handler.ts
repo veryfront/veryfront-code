@@ -58,6 +58,8 @@ export interface StreamingToolCall {
   providerExecuted?: boolean;
   dynamic?: boolean;
   supportsDeferredResults?: boolean;
+  /** True when a delayed result synthesized display input without a call in this response. */
+  synthesizedFromResult?: boolean;
 }
 
 export interface StreamingToolResult {
@@ -65,6 +67,8 @@ export interface StreamingToolResult {
   toolName: string;
   output?: unknown;
   error?: unknown;
+  /** Runtime policy error substituted before an unauthorized delayed payload was exposed. */
+  authorizationError?: string;
   providerExecuted?: boolean;
   dynamic?: boolean;
   supportsDeferredResults?: boolean;
@@ -138,6 +142,10 @@ export interface ChatStreamCallbacks {
   }) => void;
   providerExecutedToolNames?: readonly string[];
   availableToolNames?: readonly string[];
+  authorizeDeferredProviderResult?: (input: {
+    toolCallId: string;
+    toolName: string;
+  }) => { allowed: true } | { allowed: false; error: string };
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
   traceSpanName?: string;
@@ -538,6 +546,7 @@ export function processStream(
           ...(providerExecuted !== undefined ? { providerExecuted } : {}),
           ...(dynamic ? { dynamic: true } : {}),
           ...(part.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+          synthesizedFromResult: true,
           inputAnnounced: true,
         });
         sendSSE(controller, encoder, {
@@ -588,6 +597,59 @@ export function processStream(
           : {}),
         ...(existing.dynamic ? { dynamic: true } : {}),
       });
+    };
+
+    const rejectUnauthorizedDeferredProviderResult = (
+      part: {
+        toolCallId: string;
+        toolName: string;
+        input?: unknown;
+        dynamic?: boolean;
+        supportsDeferredResults?: boolean;
+      },
+      providerExecuted: boolean | undefined,
+    ): boolean => {
+      const knownCall = state.toolCalls.get(part.toolCallId);
+      if (
+        providerExecuted !== true ||
+        knownCall !== undefined && knownCall.synthesizedFromResult !== true
+      ) {
+        return false;
+      }
+
+      const authorization = callbacks?.authorizeDeferredProviderResult?.({
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+      });
+      if (authorization === undefined || authorization.allowed) {
+        return false;
+      }
+
+      ensureToolLifecycle({
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input,
+        providerExecuted,
+        dynamic: part.dynamic,
+        supportsDeferredResults: part.supportsDeferredResults,
+      });
+      state.toolResults.push({
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        error: authorization.error,
+        authorizationError: authorization.error,
+        providerExecuted: true,
+        ...(part.dynamic ? { dynamic: true } : {}),
+        ...(part.supportsDeferredResults === true ? { supportsDeferredResults: true } : {}),
+      });
+      sendSSE(controller, encoder, {
+        type: "tool-output-error",
+        toolCallId: part.toolCallId,
+        errorText: authorization.error,
+        providerExecuted: true,
+        ...(part.dynamic ? { dynamic: true } : {}),
+      });
+      return true;
     };
 
     throwIfAborted(abortSignal);
@@ -907,6 +969,9 @@ export function processStream(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
+          if (rejectUnauthorizedDeferredProviderResult(typedPart, providerExecuted)) {
+            break;
+          }
           ensureToolLifecycle({
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
@@ -990,6 +1055,9 @@ export function processStream(
             typedPart.toolName,
             typedPart.providerExecuted,
           );
+          if (rejectUnauthorizedDeferredProviderResult(typedPart, providerExecuted)) {
+            break;
+          }
           ensureToolLifecycle({
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,

@@ -5,8 +5,310 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
+import type { Message } from "../types.ts";
+import { isToolResultPart } from "./tool-result-continuation.ts";
+
+function runtimeToolNames(options: unknown): string[] {
+  const tools = (options as {
+    tools?: Record<string, unknown> | Array<{ name?: string; id?: string }>;
+  }).tools;
+  return (
+    Array.isArray(tools)
+      ? tools.map((entry) => entry.name ?? entry.id ?? "").filter(Boolean)
+      : Object.keys(tools ?? {})
+  ).sort();
+}
+
+function loadedSkillMessages(allowedTools: string[]): Message[] {
+  return [
+    {
+      id: "skill-user",
+      role: "user",
+      parts: [{ type: "text", text: "Continue the loaded skill" }],
+      timestamp: 1,
+    },
+    {
+      id: "skill-assistant",
+      role: "assistant",
+      parts: [{
+        type: "tool-load_skill",
+        toolCallId: "load-skill-policy",
+        toolName: "load_skill",
+        args: { skillId: "restricted-skill" },
+      }],
+      timestamp: 2,
+    },
+    {
+      id: "skill-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "load-skill-policy",
+        toolName: "load_skill",
+        result: {
+          skillId: "restricted-skill",
+          instructions: "# Restricted skill",
+          allowedTools,
+          references: [],
+          scripts: [],
+        },
+      }],
+      timestamp: 3,
+    },
+  ];
+}
 
 describe("agent runtime provider tools in generate mode", () => {
+  it("does not advertise a provider-native tool denied by a hydrated skill policy", async () => {
+    const advertisedToolNames: string[][] = [];
+    const localWebSearch = tool({
+      id: "web_search",
+      description: "Local search fallback",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: () => ({ source: "local" }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        const names = runtimeToolNames(options);
+        advertisedToolNames.push(names);
+        if (names.includes("web_search")) {
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "forbidden-provider-search",
+                toolName: "web_search",
+                input: '{"query":"secret"}',
+              },
+              {
+                type: "tool-result",
+                toolCallId: "forbidden-provider-search",
+                toolName: "web_search",
+                result: [{ type: "web_search_result", title: "forbidden" }],
+              },
+            ],
+            finishReason: "stop",
+          };
+        }
+        return {
+          content: [{ type: "text", text: "Provider search is unavailable." }],
+          finishReason: "stop",
+        };
+      },
+      async doStream() {
+        throw new Error("not used");
+      },
+    };
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Honor the loaded skill policy.",
+      tools: { web_search: localWebSearch },
+      providerTools: ["web_search"],
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({
+      input: loadedSkillMessages(["create_file"]),
+    });
+
+    assertEquals(advertisedToolNames.length, 1);
+    assertEquals(advertisedToolNames[0]?.includes("web_search"), false);
+    assertEquals(result.text, "Provider search is unavailable.");
+    assertEquals(result.toolCalls, []);
+  });
+
+  it("does not accept a forbidden provider result emitted despite the planning filter", async () => {
+    const localWebSearch = tool({
+      id: "web_search",
+      description: "Local search fallback",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: () => ({ source: "local" }),
+    });
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "contradictory-provider-search",
+              toolName: "web_search",
+              input: '{"query":"secret"}',
+              providerExecuted: true,
+            },
+            {
+              type: "tool-result",
+              toolCallId: "contradictory-provider-search",
+              toolName: "web_search",
+              result: [{ type: "web_search_result", title: "must not be accepted" }],
+              providerExecuted: true,
+            },
+          ],
+          finishReason: "stop",
+        };
+      },
+      async doStream() {
+        throw new Error("not used");
+      },
+    };
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Honor the loaded skill policy.",
+      tools: { web_search: localWebSearch },
+      providerTools: ["web_search"],
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({
+      input: loadedSkillMessages(["create_file"]),
+    });
+
+    assertEquals(result.toolCalls.length, 1);
+    assertEquals(result.toolCalls[0]?.status, "error");
+    assertEquals(
+      result.toolCalls[0]?.error?.includes("not allowed by the active skill policy"),
+      true,
+    );
+  });
+
+  it("rejects a delayed provider result whose original call was not authorized", async () => {
+    const localWebSearch = tool({
+      id: "web_search",
+      description: "Local search fallback",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      execute: () => ({ source: "local" }),
+    });
+    const localCreateFile = tool({
+      id: "create_file",
+      description: "Create a local file",
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+      execute: () => ({ created: true }),
+    });
+    const priorProviderCall: Message = {
+      id: "prior-provider-call",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-web_search",
+          toolCallId: "delayed-provider-search",
+          toolName: "web_search",
+          args: { query: "secret" },
+          providerExecuted: true,
+          supportsDeferredResults: true,
+        },
+        {
+          type: "tool-create_file",
+          toolCallId: "prior-local-create",
+          toolName: "create_file",
+          args: { path: "notes.md" },
+        },
+      ],
+      timestamp: 1,
+    };
+    const priorLocalResult: Message = {
+      id: "prior-local-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "prior-local-create",
+        toolName: "create_file",
+        result: { created: true },
+      }],
+      timestamp: 2,
+    };
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [
+            { type: "text", text: "A delayed result arrived." },
+            {
+              type: "tool-result",
+              toolCallId: "delayed-provider-search",
+              toolName: "web_search",
+              result: [{ type: "web_search_result", title: "must not be accepted" }],
+              providerExecuted: true,
+            },
+          ],
+          finishReason: "stop",
+        };
+      },
+      async doStream() {
+        throw new Error("not used");
+      },
+    };
+    const assistant = agent({
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Honor the currently active skill policy.",
+      tools: { web_search: localWebSearch, create_file: localCreateFile },
+      providerTools: ["web_search"],
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+    const laterPermissiveSkill: Message[] = [
+      {
+        id: "later-skill-call",
+        role: "assistant",
+        parts: [{
+          type: "tool-load_skill",
+          toolCallId: "load-later-skill",
+          toolName: "load_skill",
+          args: { skillId: "permissive-skill" },
+        }],
+        timestamp: 4,
+      },
+      {
+        id: "later-skill-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "load-later-skill",
+          toolName: "load_skill",
+          result: {
+            skillId: "permissive-skill",
+            instructions: "# Permissive skill",
+            allowedTools: ["web_search"],
+            references: [],
+            scripts: [],
+          },
+        }],
+        timestamp: 5,
+      },
+    ];
+
+    const result = await assistant.generate({
+      input: [
+        ...loadedSkillMessages(["create_file"]),
+        priorProviderCall,
+        priorLocalResult,
+        ...laterPermissiveSkill,
+      ],
+    });
+
+    assertEquals(result.toolCalls.length, 1);
+    assertEquals(result.toolCalls[0]?.status, "error");
+    assertEquals(
+      result.toolCalls[0]?.error?.includes("not allowed by the active skill policy"),
+      true,
+    );
+    assertEquals(
+      result.messages.some((message) =>
+        message.role === "tool" &&
+        message.parts.some((part) =>
+          isToolResultPart(part) &&
+          JSON.stringify(part.result).includes("must not be accepted")
+        )
+      ),
+      false,
+    );
+  });
+
   it("returns a terminal provider call, result, and final text without another model call", async () => {
     let localExecutions = 0;
     let modelCalls = 0;

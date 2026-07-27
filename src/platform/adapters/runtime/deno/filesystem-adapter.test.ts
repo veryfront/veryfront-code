@@ -9,10 +9,46 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { join } from "#veryfront/compat/path";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { DenoFileSystemAdapter } from "./filesystem-adapter.ts";
 
 if (isDeno) {
   describe("Deno filesystem adapter", () => {
+    it("marks only direct built-in instances as native", () => {
+      class DerivedAdapter extends DenoFileSystemAdapter {}
+
+      assertEquals(
+        isNativeFileSystemAdapter(new DenoFileSystemAdapter()),
+        true,
+      );
+      assertEquals(isNativeFileSystemAdapter(new DerivedAdapter()), false);
+    });
+
+    it("reads a genuinely bounded byte prefix", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-deno-bounded-read-" });
+      const path = join(root, "file.txt");
+      try {
+        await Deno.writeTextFile(path, "hello");
+        const adapter = new DenoFileSystemAdapter();
+
+        assertEquals(
+          [...await adapter.readFileBytesBounded(path, 3)],
+          [104, 101, 108],
+        );
+        assertEquals(
+          [...await adapter.readFileBytesBounded(path, 8)],
+          [104, 101, 108, 108, 111],
+        );
+        await assertRejects(
+          () => adapter.readFileBytesBounded(path, 0),
+          RangeError,
+          "positive safe integer",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
     it("uses the native watcher and surfaces observed paths", async () => {
       const root = await Deno.makeTempDir({ prefix: "vf-deno-watch-" });
       const path = join(root, "created.txt");

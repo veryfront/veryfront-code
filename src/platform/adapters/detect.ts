@@ -33,6 +33,7 @@ export { nodeAdapter } from "./node.ts";
 export { bunAdapter } from "./bun.ts";
 
 export type {
+  BoundedFileSystemAdapter,
   EnvironmentAdapter,
   FileSystemAdapter,
   RuntimeAdapter,

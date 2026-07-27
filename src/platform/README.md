@@ -360,14 +360,31 @@ operational errors are propagated. Temporary-directory prefixes are filename
 fragments, not paths: `/`, `\`, and null bytes are rejected before a prefix is
 combined with the operating-system temp root.
 
+`FileSystemAdapter.readFileBytesBounded(path, byteLimit)` is an optional,
+additive capability. Node, Deno, and Bun read through native handles in bounded
+chunks and return either EOF or exactly the requested prefix. Hosted wrappers
+expose the method only when their underlying adapter implements the same
+contract. The Veryfront API, GitHub, and Cloudflare KV adapters intentionally
+omit it because their current upstream APIs return whole objects; advertising a
+post-read slice as a bounded read would be misleading. Consumers must retain a
+compatible, post-validated path for third-party adapters that omit the method.
+
 ### Commands
 
 `runCommand()` passes `args` separately unless `shell: true` is explicitly
 requested. `clearEnv: true` starts the child with an empty environment before
 applying the provided values. Captured stdout and stderr share a bounded byte
-budget, which defaults to 16 MiB. A timeout returns exit code 124; exceeding the
-capture budget terminates the child and returns exit code 125 with
-`outputTruncated: true`.
+budget, which defaults to 16 MiB. `timeoutMs` is disabled when omitted or set to
+`0`; any other value must be a positive safe integer no greater than
+`2147483647`. A timeout returns exit code 124, caller cancellation returns exit
+code 130, and exceeding the capture budget terminates the child and returns
+exit code 125 with `outputTruncated: true`.
+
+Termination targets the runtime-owned POSIX process group or a Windows
+`taskkill /T` tree and escalates after a bounded grace period. Capture streams
+are then closed so detached descendants that retain inherited pipes cannot
+delay the result indefinitely. This cleanup is best effort: hostile detached
+descendants can escape operating-system process-group or tree discovery.
 
 ```typescript
 import { runCommand } from "veryfront/platform";

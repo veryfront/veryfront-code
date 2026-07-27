@@ -36,7 +36,7 @@ import {
   type ToolExecutionContext,
   toolRegistry,
 } from "#veryfront/tool";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
   addSpanEvent,
   setSpanAttributes,
@@ -466,7 +466,7 @@ function applyRuntimeToolAllowlist(
     // rather than silently skipping enforcement.
     return {};
   }
-  const hasVisibleSkills = skillRegistry.hasVisibleSkills({ agentId: agent.id });
+  const hasVisibleSkills = skillRegistryInternal.hasVisibleSkills({ agentId: agent.id });
   const allowedToolNames = resolveHostedRuntimeAllowedToolNames({
     allowedToolNames: toolAllowlist,
     localToolNames: Object.keys(mergedTools),

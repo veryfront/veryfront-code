@@ -6,6 +6,7 @@
 
 // Core types from base.ts — only the frequently-imported interfaces/types
 export type {
+  BoundedFileSystemAdapter,
   DirEntry,
   EnvironmentAdapter,
   FileChangeEvent,

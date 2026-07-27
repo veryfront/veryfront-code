@@ -449,6 +449,9 @@ function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileS
     readFileBytes: fs.readFileBytes
       ? (path: string) => fs.readFileBytes!(resolvePath(path))
       : undefined,
+    readFileBytesBounded: fs.readFileBytesBounded
+      ? (path: string, byteLimit: number) => fs.readFileBytesBounded!(resolvePath(path), byteLimit)
+      : undefined,
     writeFile: (path: string, content: string) => fs.writeFile(resolvePath(path), content),
     exists: (path: string) => fs.exists(resolvePath(path)),
     readDir: (path: string) => fs.readDir(resolvePath(path)),

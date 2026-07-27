@@ -8,14 +8,18 @@
  * @module
  */
 
-import { SKILL_ALLOWED_TOOL_PATTERN_REGEX, SKILL_TOOL_IDS } from "./types.ts";
+import { isSkillInfrastructureToolId, SKILL_ALLOWED_TOOL_PATTERN_REGEX } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
+} from "./limits.ts";
 
 /** Active skill file-backed capabilities available to skill infrastructure tools. */
 export type SkillToolAvailability = {
-  hasActiveSkill?: boolean;
-  references?: readonly string[];
-  scripts?: readonly string[];
+  readonly hasActiveSkill?: boolean;
+  readonly references?: readonly string[];
+  readonly scripts?: readonly string[];
 };
 
 const LOAD_SKILL_TOOL_ID = "load_skill";
@@ -26,7 +30,7 @@ function isSkillInfrastructureToolAllowed(
   toolName: string,
   availability: SkillToolAvailability = {},
 ): boolean | undefined {
-  if (!SKILL_TOOL_IDS.has(toolName)) {
+  if (!isSkillInfrastructureToolId(toolName)) {
     return undefined;
   }
 
@@ -122,6 +126,17 @@ export function isToolAllowedBySkill(
   return allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern));
 }
 
+/** Filter provider-native or other name-only tool inventories through the same policy boundary. */
+export function filterToolNamesForSkill(
+  toolNames: readonly string[],
+  allowedTools: string[] | undefined,
+  skillToolAvailability?: SkillToolAvailability,
+): string[] {
+  return toolNames.filter((toolName) =>
+    isToolAllowedBySkill(toolName, allowedTools, skillToolAvailability)
+  );
+}
+
 /**
  * Validate allowed-tool patterns at parse time.
  *
@@ -145,4 +160,44 @@ export function validateAllowedToolPatterns(patterns: string[]): string[] {
     }
   }
   return patterns;
+}
+
+/** Validate bounded allowed-tool patterns at filesystem and runtime trust boundaries. */
+export function validateStrictAllowedToolPatterns(patterns: string[]): string[] {
+  if (!Array.isArray(patterns)) {
+    throw new TypeError("Allowed-tools patterns must be an array");
+  }
+  if (patterns.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
+    );
+  }
+
+  for (const pattern of patterns) {
+    if (typeof pattern !== "string") {
+      throw new TypeError("Allowed-tools patterns must be strings");
+    }
+    if (pattern.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
+      throw new RangeError(
+        `Allowed-tools patterns must be at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+      );
+    }
+    if (!SKILL_ALLOWED_TOOL_PATTERN_REGEX.test(pattern)) {
+      throw toError(
+        createError({
+          type: "agent",
+          message: `Invalid allowed-tools pattern "${pattern}". ` +
+            `Only exact tool IDs (e.g. "Read") and prefix wildcards (e.g. "api:*") are supported.`,
+        }),
+      );
+    }
+  }
+  return patterns;
+}
+
+/** Validate, detach, and freeze an active authorization policy. */
+export function snapshotAllowedToolPatterns(patterns: readonly string[]): string[] {
+  const snapshot = [...patterns];
+  validateStrictAllowedToolPatterns(snapshot);
+  return Object.freeze(snapshot) as string[];
 }

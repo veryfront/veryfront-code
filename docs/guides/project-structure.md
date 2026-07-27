@@ -135,7 +135,10 @@ partial replacement.
 Agent discovery also supports `agents/assistant.md`. Use frontmatter for
 metadata and the markdown body for system instructions.
 
-For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
+For skills, the directory name is the skill ID and the required frontmatter
+`name` must match it exactly. For example,
+`skills/incident-response/SKILL.md` registers as `"incident-response"` when its
+frontmatter declares `name: incident-response`.
 
 Verify discovery by starting the dev server after adding an agent, tool, or
 workflow:

@@ -15,8 +15,8 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { buildStrictSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -174,12 +174,12 @@ export function agent(config: AgentConfig): Agent {
     // Owner-aware: omitted selectors advertise every skill visible to this
     // agent (unowned project skills plus its own). Explicit lists, including
     // an empty list, retain their authored catalog selection.
-    const currentSkills = skillRegistry.resolveForAgent(skillsConfig, { agentId: id });
+    const currentSkills = skillRegistryInternal.resolveForAgent(skillsConfig, { agentId: id });
     const basePrompt =
       (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
         "You are a helpful assistant.";
     if (!currentSkills.size) return basePrompt;
-    return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
+    return `${basePrompt}\n\n${buildStrictSkillManifestPrompt(currentSkills)}`;
   };
 
   const resolvedMiddleware = resolveSecurityMiddleware(config);

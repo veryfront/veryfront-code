@@ -74,6 +74,9 @@ agents/
 
 The directory name is the agent id. The flat `agents/{id}.md` form still works
 for agents that do not own skills or tools, and both layouts can coexist.
+If the directory includes a root `SKILL.md`, the agent id must also be a valid
+skill name: 1-64 lowercase letters, digits, or single hyphens. The
+`SKILL.md` frontmatter `name` must exactly match that directory.
 
 Colocated capabilities are registered with owner metadata and namespaced
 `{agentId}--{name}`. Ownership controls visibility everywhere: an agent only
@@ -249,6 +252,10 @@ When an agent uses a skill, the flow is:
    `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
+When conversation memory replays prior messages, the latest successful skill
+body load remains active across later user messages until another skill body is
+loaded. Stateless calls have no prior active skill.
+
 The runtime enforces that non-skill tools cannot run before a successful
 `load_skill` when both are emitted in the same step.
 
@@ -274,6 +281,20 @@ subprocesses.
   `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
 - Script execution timeout defaults to `60000` ms and is capped at `300000` ms.
+- Local cancellation signals the runtime-owned POSIX process group or uses
+  Windows process-tree termination, then closes capture pipes after a bounded
+  force-kill grace period. Detached descendants can escape discovery, so local
+  scripts are trusted development code rather than a hostile-code sandbox.
+- Cloud scripts run in a fresh remote directory containing only the selected
+  uploaded script; a local `cwd` and sibling skill files are not copied.
+  Environment values use structured sandbox options rather than command text.
+- Remote cancellation attempts process termination and session deletion. If
+  both cleanup paths fail, execution rejects instead of reporting a successful
+  cleanup exit code. Provisioning and file-transfer requests retain their
+  bounded request deadlines before session cleanup.
+- Script content and captured output are capped at 1 MiB.
+- Outside Deno, TypeScript scripts require an existing `tsx` installation;
+  execution uses `npx --no-install` and never installs a package implicitly.
 
 ## Connect to a route
 

@@ -180,6 +180,7 @@ describe("agent runtime refresh hooks", () => {
 
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
+    let finishedResponse: AgentResponse | undefined;
     let callCount = 0;
     const model: ModelRuntime = {
       provider: "hosted",
@@ -231,7 +232,12 @@ describe("agent runtime refresh hooks", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    await (await assistant.stream({ input: "Build an agent" })).toDataStreamResponse().text();
+    await (await assistant.stream({
+      input: "Build an agent",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
 
     assertEquals(callCount, 2);
     const retryPrompt = observedPrompts[1] ?? [];
@@ -241,6 +247,17 @@ describe("agent runtime refresh hooks", () => {
         "ignored unavailable tool call(s): stale_tool",
       ),
       true,
+    );
+    assertEquals(
+      finishedResponse?.messages.some((message) =>
+        message.parts.some((part) =>
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string" &&
+          part.text.includes("Runtime recovery: ignored unavailable tool call(s)")
+        )
+      ),
+      false,
     );
   });
 
@@ -1383,13 +1400,21 @@ describe("agent runtime refresh hooks", () => {
 
         if (callCount === 2) {
           return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "invoke-1",
-              toolName: "invoke_agent",
-              input:
-                '{"description":"Research reference system","prompt":"Research reference docs","max_steps":10}',
-            }],
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "load-build-reference-1",
+                toolName: "load_skill",
+                input: '{"skillId":"build","file":"references/guide.md"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "invoke-1",
+                toolName: "invoke_agent",
+                input:
+                  '{"description":"Research reference system","prompt":"Research reference docs","max_steps":10}',
+              },
+            ],
             finishReason: "tool-calls",
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           };
@@ -1408,8 +1433,25 @@ describe("agent runtime refresh hooks", () => {
     const loadSkill = tool({
       id: "load_skill",
       description: "Load a skill",
-      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", maxSteps: 160 }),
+      inputSchema: defineSchema((v) =>
+        v.object({
+          skillId: v.string(),
+          file: v.string().optional(),
+        })
+      )(),
+      execute: ({ file }) =>
+        file
+          ? {
+            skillId: "build",
+            file,
+            content: "# Build reference",
+          }
+          : {
+            skillId: "build",
+            instructions: "# Build",
+            references: ["references/guide.md"],
+            maxSteps: 160,
+          },
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -1484,6 +1526,12 @@ describe("agent runtime refresh hooks", () => {
             stream: createRuntimeStream([
               {
                 type: "tool-call",
+                toolCallId: "load-build-reference-stream-1",
+                toolName: "load_skill",
+                input: '{"skillId":"build","file":"references/guide.md"}',
+              },
+              {
+                type: "tool-call",
                 toolCallId: "invoke-stream-1",
                 toolName: "invoke_agent",
                 input:
@@ -1509,8 +1557,25 @@ describe("agent runtime refresh hooks", () => {
     const loadSkill = tool({
       id: "load_skill",
       description: "Load a skill",
-      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: () => ({ skillId: "build", maxSteps: 160 }),
+      inputSchema: defineSchema((v) =>
+        v.object({
+          skillId: v.string(),
+          file: v.string().optional(),
+        })
+      )(),
+      execute: ({ file }) =>
+        file
+          ? {
+            skillId: "build",
+            file,
+            content: "# Build reference",
+          }
+          : {
+            skillId: "build",
+            instructions: "# Build",
+            references: ["references/guide.md"],
+            maxSteps: 160,
+          },
     });
     const invokeAgent = tool({
       id: "invoke_agent",
@@ -1639,6 +1704,7 @@ describe("agent runtime refresh hooks", () => {
           toolName: "load_skill",
           result: {
             skillId: "supplier-invoice-processing",
+            instructions: "# Supplier invoice processing",
             allowedTools: ["invoke_agent"],
             maxSteps: 160,
           },

@@ -408,6 +408,31 @@ describe("FSAdapterWrapper", () => {
     });
   });
 
+  describe("readFileBytesBounded", () => {
+    it("advertises and forwards a genuine underlying bounded-read capability", async () => {
+      let received: { path: string; byteLimit: number } | undefined;
+      const fsAdapter = createMockFSAdapter({
+        readFileBytesBounded(path, byteLimit) {
+          received = { path, byteLimit };
+          return Promise.resolve(new Uint8Array([1, 2, 3]));
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(
+        [...await wrapper.readFileBytesBounded!("/bounded.bin", 4)],
+        [1, 2, 3],
+      );
+      assertEquals(received, { path: "/bounded.bin", byteLimit: 4 });
+    });
+
+    it("does not claim bounded reads when the underlying adapter cannot provide them", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+
+      assertEquals(wrapper.readFileBytesBounded, undefined);
+    });
+  });
+
   describe("writeFile", () => {
     it("should write file when writeFile is supported", async () => {
       let written: { path: string; content: string } | null = null;

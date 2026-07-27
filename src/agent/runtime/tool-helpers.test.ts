@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   executeConfiguredTool,
@@ -424,6 +425,31 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("does not let public skill-tool metadata mutations change tool visibility", async () => {
+      toolRegistryInternal.clearAll();
+      try {
+        toolRegistryInternal.registerShared(
+          "load_skill_reference",
+          tool({
+            id: "load_skill_reference",
+            description: "Load a reference",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => ({ ok: true }),
+          }),
+        );
+        SKILL_TOOL_IDS.delete("load_skill_reference");
+
+        const defs = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+        });
+
+        assertEquals(defs.some((definition) => definition.name === "load_skill_reference"), false);
+      } finally {
+        SKILL_TOOL_IDS.add("load_skill_reference");
         toolRegistryInternal.clearAll();
       }
     });

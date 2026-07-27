@@ -14,6 +14,9 @@ import {
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import type { DiscoveryResult, FileDiscoveryContext } from "./types.ts";
 import { registerSkill, skillRegistry, skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
+import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
+import { resolve } from "#veryfront/compat/path";
 import { agentRegistry } from "../agent/composition/index.ts";
 
 function emptyResult(): DiscoveryResult {
@@ -101,6 +104,46 @@ Deno.test("directory and flat agents discover side by side with owned skills reg
     skillRegistryInternal.clearAll();
     cleanupAgents(["lead", "researcher"]);
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("relative adapter roots keep directory-agent skills loadable", async () => {
+  skillRegistryInternal.clearAll();
+  const adapter = createSkillTestAdapter({
+    "agents/researcher/AGENT.md":
+      `---\nname: Researcher\nskills: true\n---\nResearch thoroughly.\n`,
+    "agents/researcher/SKILL.md":
+      `---\nname: researcher\ndescription: Research methodology\n---\nFollow the method.\n`,
+  });
+  try {
+    const result = await discoverAll({
+      baseDir: "",
+      toolDirs: [],
+      agentDirs: ["agents"],
+      skillDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      scheduleDirs: [],
+      webhookDirs: [],
+      evalDirs: [],
+      fsAdapter: adapter,
+    });
+
+    const skill = result.skills.get("researcher");
+    assertEquals(skill?.rootPath, resolve("agents/researcher"));
+    assertEquals(skill?.fsAdapter === adapter, false);
+    assertEquals(result.errors, []);
+
+    const loaded = await createLoadSkillTool().execute(
+      { skillId: "researcher" },
+      { agentId: "researcher" },
+    );
+    assertEquals(loaded.instructions.trim(), "Follow the method.");
+  } finally {
+    skillRegistryInternal.clearAll();
+    cleanupAgents(["researcher"]);
   }
 });
 
@@ -210,6 +253,15 @@ Deno.test("agent ids that sanitize to the same namespace report a collision erro
       String(entry.error).includes("shares the sanitized capability namespace")
     );
     assertEquals(collisions.length, 1);
+    assertEquals(result.skills.has("a.b"), false);
+    assertEquals(
+      result.errors.some((entry) =>
+        entry.code === "load_error" &&
+        entry.sourceKind === "skill" &&
+        entry.sourceId === "a.b"
+      ),
+      true,
+    );
   } finally {
     skillRegistryInternal.clearAll();
     cleanupAgents(["a.b", "a_b"]);

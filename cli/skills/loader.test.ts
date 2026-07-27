@@ -25,7 +25,7 @@ async function withTempDir(
 const PROJECT_SKILL = `---
 name: code-review
 description: Review code changes.
-allowed_tools: load_skill load_skill_reference
+allowed-tools: load_skill load_skill_reference
 metadata:
   version: "1.0"
 ---
@@ -65,6 +65,25 @@ describe("Skill Loader", () => {
       assertEquals(skill?.metadata.allowedTools, ["load_skill", "load_skill_reference"]);
       assertEquals(skill?.metadata.metadata?.version, "1.0");
       assertEquals(skill?.skillMd.includes("# Code Review"), true);
+    });
+  });
+
+  it("does not load a skill whose declared name mismatches its directory", async () => {
+    await withTempDir({
+      "skills/code-review/SKILL.md": PROJECT_SKILL.replace(
+        "name: code-review",
+        "name: other-name",
+      ),
+    }, async (dir) => {
+      assertEquals(await loadSkill(join(dir, "skills", "code-review")), null);
+    });
+  });
+
+  it("does not load a skill document over the runtime byte budget", async () => {
+    await withTempDir({
+      "skills/oversized/SKILL.md": "x".repeat(1_048_577),
+    }, async (dir) => {
+      assertEquals(await loadSkill(join(dir, "skills", "oversized")), null);
     });
   });
 

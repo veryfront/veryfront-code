@@ -71,7 +71,7 @@ describe("agent factory", () => {
       : effectiveSystem ?? "";
     assertStringIncludes(
       prompt,
-      "**support-triage**: Triage incoming support requests",
+      '- skillId="support-triage"; description="Triage incoming support requests"',
     );
     assertEquals(prompt.includes("researcher--cite"), false);
 

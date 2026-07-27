@@ -11,6 +11,7 @@ import {
   chmod,
   createFileSystem,
   exists,
+  getPathIdentity,
   isAlreadyExistsError,
   isNotFoundError,
   lstat,
@@ -24,6 +25,7 @@ import {
   symlink,
   writeFile,
   writeTextFile,
+  writeTextFileExclusive,
 } from "./fs.ts";
 import { join } from "./path/index.ts";
 
@@ -79,6 +81,35 @@ describe("Filesystem Compat", () => {
 
     it("should handle unicode content", async () => {
       await assertWriteReadTextFile("test-unicode.txt", "こんにちは 🌍 مرحبا");
+    });
+  });
+
+  describe("writeTextFileExclusive", () => {
+    it("creates a new file without replacing an existing entry", async () => {
+      const filePath = join(testDir, "exclusive-text.txt");
+
+      await writeTextFileExclusive(filePath, "first");
+      assertEquals(await readTextFile(filePath), "first");
+
+      let collision: unknown;
+      try {
+        await writeTextFileExclusive(filePath, "replacement");
+      } catch (error) {
+        collision = error;
+      }
+      assertEquals(isAlreadyExistsError(collision), true);
+      assertEquals(await readTextFile(filePath), "first");
+    });
+
+    it("rejects invalid file modes before touching the filesystem", async () => {
+      const filePath = join(testDir, "invalid-exclusive-mode.txt");
+
+      await assertRejects(
+        () => writeTextFileExclusive(filePath, "content", { mode: 0o1000 }),
+        RangeError,
+        "File mode",
+      );
+      assertEquals(await exists(filePath), false);
     });
   });
 
@@ -149,6 +180,19 @@ describe("Filesystem Compat", () => {
       const info = await stat(testDir);
       assertEquals(info.isFile, false);
       assertEquals(info.isDirectory, true);
+    });
+  });
+
+  describe("getPathIdentity", () => {
+    it("returns a stable identity for a path", async () => {
+      const filePath = join(testDir, "identity-test.txt");
+      await writeTextFile(filePath, "identity");
+
+      const first = await getPathIdentity(filePath);
+      const second = await getPathIdentity(filePath);
+
+      assertExists(first);
+      assertEquals(second, first);
     });
   });
 

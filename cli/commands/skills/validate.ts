@@ -7,9 +7,11 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { logError, logSuccess } from "#cli/utils";
-import { createFileSystem } from "veryfront/platform";
 import { basename } from "#std/path.ts";
-import { parseSkillFrontmatter, validateSkillMetadata } from "veryfront/skill";
+import { isNotFoundError } from "veryfront/fs";
+import { validateSkillFileMetadata } from "veryfront/skill";
+import { parseSkillFileFrontmatter } from "#veryfront/skill/parser.ts";
+import { readSkillDocument } from "../../skills/read-skill-document.ts";
 
 interface ValidationIssue {
   severity: "error" | "warning";
@@ -25,18 +27,20 @@ export async function validateSkill(args: ParsedArgs): Promise<void> {
 
 export async function validateSkillDirectory(dir: string): Promise<ValidationIssue[]> {
   const issues: ValidationIssue[] = [];
-  const fs = createFileSystem();
-
   let content: string;
   try {
-    content = await fs.readTextFile(`${dir}/SKILL.md`);
-  } catch {
-    return [{ severity: "error", message: "SKILL.md not found" }];
+    content = await readSkillDocument(`${dir}/SKILL.md`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return [{
+      severity: "error",
+      message: isNotFoundError(error) ? "SKILL.md not found" : message,
+    }];
   }
 
   try {
-    const parsed = await parseSkillFrontmatter(content);
-    validateSkillMetadata(parsed.frontmatter, basename(dir));
+    const parsed = await parseSkillFileFrontmatter(content);
+    validateSkillFileMetadata(parsed.frontmatter, basename(dir));
     if (!parsed.body.trim()) {
       issues.push({ severity: "warning", message: "SKILL.md body is empty" });
     }

@@ -21,9 +21,10 @@
 import type { Tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import type { Skill } from "#veryfront/skill";
-import { parseSkillFrontmatter, validateSkillMetadata } from "#veryfront/skill/parser.ts";
-import { getSkill, registerSkill } from "#veryfront/skill/registry.ts";
+import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
+import { SKILL_TEXT_FILE_MAX_BYTES } from "#veryfront/skill/limits.ts";
 import { registerTool } from "#veryfront/mcp";
 import { ensureError } from "#veryfront/errors";
 import { filenameToId } from "./discovery-utils.ts";
@@ -33,6 +34,7 @@ import {
   findTypeScriptFiles,
   listDiscoveryDirectoryEntries,
   readDiscoveryTextFile,
+  resolveRuntimeDiscoveryRoot,
 } from "./file-discovery.ts";
 import { importModule } from "./transpiler.ts";
 import type { DiscoveryResult, FileDiscoveryContext } from "./types.ts";
@@ -113,7 +115,7 @@ function reportShadowedGlobalCapability(input: {
 }): void {
   const global = input.kind === "tool"
     ? toolRegistry.get(input.shortName)
-    : getSkill(input.shortName);
+    : skillRegistryInternal.get(input.shortName);
   if (global && (global as { ownerAgentId?: string }).ownerAgentId === undefined) {
     input.result?.errors.push({
       file: input.file,
@@ -242,17 +244,20 @@ async function buildSkillFromDir(input: {
     return null;
   }
 
-  const content = await readDiscoveryTextFile(skillMdPath, input.context);
-  const parsed = await parseSkillFrontmatter(content);
-  const metadata = validateSkillMetadata(parsed.frontmatter, input.id);
+  const content = await readDiscoveryTextFile(skillMdPath, input.context, {
+    maxBytes: SKILL_TEXT_FILE_MAX_BYTES,
+  });
+  const parsed = await parseSkillFileFrontmatter(content);
+  const metadata = validateSkillFileMetadata(parsed.frontmatter, input.shortName);
+  const runtimeRoot = resolveRuntimeDiscoveryRoot(input.skillDir, input.context);
 
   return {
     id: input.id,
     metadata,
-    rootPath: input.skillDir.replace(/^file:\/\//, ""),
+    rootPath: runtimeRoot.rootPath,
     ownerAgentId: input.ownerAgentId,
     shortName: input.shortName,
-    ...(input.context.fsAdapter ? { fsAdapter: input.context.fsAdapter } : {}),
+    ...(runtimeRoot.fsAdapter ? { fsAdapter: runtimeRoot.fsAdapter } : {}),
   };
 }
 
@@ -306,7 +311,11 @@ export async function registerAgentColocatedSkills(
         file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
         result: input.result,
       });
-      registerSkill(skill.id, skill);
+      skillRegistryInternal.register(skill.id, skill);
+      const registeredSkill = skillRegistryInternal.get(skill.id);
+      if (registeredSkill === undefined) {
+        throw new Error(`Skill "${skill.id}" was not available after registration`);
+      }
       input.result?.skills.set(skill.id, skill);
       registeredIds.push(skill.id);
     } catch (error) {

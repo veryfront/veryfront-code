@@ -42,6 +42,7 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { resolveHostedToolExecutionIdentity } from "./runtime-state-resolver.ts";
+import { FORM_INPUT_TOOL_ID } from "../runtime/skill-policy-enforcement.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -134,9 +135,8 @@ function filterPostFormInputLocalTools(
     return tools;
   }
 
-  const blockedToolNames = new Set(["form_input", "load_skill"]);
   return Object.fromEntries(
-    Object.entries(tools).filter(([toolName]) => !blockedToolNames.has(toolName)),
+    Object.entries(tools).filter(([toolName]) => toolName !== FORM_INPUT_TOOL_ID),
   );
 }
 

@@ -12,8 +12,8 @@ import {
   createAgentServiceSandboxTools,
   createProjectScopedExecOptions,
   createSandboxShellTools,
+  isSandboxOutputLimitError,
   normalizeBashToolSet,
-  renameSandboxFileTools,
 } from "veryfront/sandbox";
 ```
 
@@ -183,6 +183,7 @@ Streaming event emitted during command execution.
 | `createAgentServiceSandboxTools` | Create agent service sandbox tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L202) |
 | `createProjectScopedExecOptions` | Options accepted by create project scoped exec. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L69) |
 | `createSandboxShellTools` | Create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L474) |
+| `isSandboxOutputLimitError` | Whether buffered sandbox command collection exceeded its configured limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/request-payload.ts#L35) |
 | `normalizeBashToolSet` | Normalizes bash tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L413) |
 | `renameSandboxFileTools` | Rename sandbox file tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L436) |
 | `resolveDefaultSandboxRuntimeEndpoint` | Resolves default sandbox runtime endpoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/lazy-sandbox.ts#L124) |

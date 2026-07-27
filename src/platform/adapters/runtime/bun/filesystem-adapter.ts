@@ -1,4 +1,5 @@
 import { NodeCompatibleFileSystemAdapter } from "../shared/node-filesystem-adapter.ts";
+import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import type { BunNamespace } from "./types.ts";
 import { getBunRuntime } from "./types.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
@@ -14,6 +15,9 @@ export type BunFileSystemRuntime = Pick<BunNamespace, "file" | "write">;
 export class BunFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
   constructor(private readonly runtime: BunFileSystemRuntime | null = getBunRuntime() ?? null) {
     super(serverLogger);
+    if (new.target === BunFileSystemAdapter) {
+      markNativeFileSystemAdapter(this);
+    }
   }
 
   override async readFile(path: string): Promise<string> {

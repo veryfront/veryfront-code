@@ -7,65 +7,147 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import {
+  type SkillMetadata as ValidatedSkillMetadata,
+  validateSkillFileMetadata,
+} from "veryfront/skill";
+import { listStrictSkillSubdir, validateStrictSkillPath } from "#veryfront/skill/path-safety.ts";
+import { parseSkillFileFrontmatter } from "#veryfront/skill/parser.ts";
+import { SKILL_STRICT_NAME_REGEX } from "#veryfront/skill/types.ts";
+import {
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
+import { readSkillDocument } from "../../skills/read-skill-document.ts";
 import type { MCPTool } from "../tools.ts";
-import { directoryExists, fileExists, formatError, getFs } from "./helpers.ts";
-
-function parseSkillFrontmatter(
-  content: string,
-): { metadata: Record<string, unknown>; body: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { metadata: {}, body: content };
-
-  const [, yamlContent = "", body = ""] = match;
-  const metadata: Record<string, unknown> = {};
-
-  for (const line of yamlContent.split("\n")) {
-    const colonIndex = line.indexOf(":");
-    if (colonIndex === -1) continue;
-
-    const key = line.slice(0, colonIndex).trim();
-    let value: unknown = line.slice(colonIndex + 1).trim();
-
-    if (typeof value === "string" && value.startsWith('"') && value.endsWith('"')) {
-      value = value.slice(1, -1);
-    }
-
-    metadata[key] = value;
-  }
-
-  return { metadata, body: body.trim() };
-}
+import { directoryExists, formatError, getFs } from "./helpers.ts";
 
 function getSkillsDir(): string {
   return join(cwd(), "cli/mcp/skills");
 }
 
-function parseToolsFromMetadata(metadata: Record<string, unknown>): string[] | undefined {
-  const tools = (metadata.metadata as Record<string, unknown> | undefined)?.tools;
+function parseToolsFromMetadata(metadata: ValidatedSkillMetadata): string[] | undefined {
+  const tools = metadata.metadata?.tools;
   if (!tools) return undefined;
-  return String(tools)
+  const parsed = tools
     .split(",")
-    .map((t) => t.trim());
+    .map((toolName) => toolName.trim())
+    .filter((toolName) => toolName.length > 0);
+  return parsed.length > 0 ? parsed : undefined;
 }
 
-async function getSkillReferences(skillName: string): Promise<string[] | undefined> {
-  const fs = getFs();
-  const refsDir = join(getSkillsDir(), skillName, "references");
-  if (!await directoryExists(refsDir)) return undefined;
+type DiscoveredBundledSkill = {
+  id: string;
+  directory: string;
+  metadata: ValidatedSkillMetadata;
+  body: string;
+  references: string[];
+};
 
-  const references: string[] = [];
-  for await (const entry of fs.readDir(refsDir)) {
-    if (entry.isFile && entry.name.endsWith(".md")) {
-      references.push(`references/${entry.name}`);
+async function isNonSymlinkDirectory(path: string): Promise<boolean> {
+  const fs = getFs();
+  const info = fs.lstat ? await fs.lstat(path) : await fs.stat(path);
+  return info.isDirectory && !info.isSymlink;
+}
+
+async function loadBundledSkill(
+  skillsDir: string,
+  entry: { name: string; isDirectory: boolean; isSymlink?: boolean },
+): Promise<DiscoveredBundledSkill | null> {
+  if (
+    !entry.isDirectory ||
+    entry.isSymlink === true ||
+    !SKILL_STRICT_NAME_REGEX.test(entry.name)
+  ) {
+    return null;
+  }
+
+  const directory = join(skillsDir, entry.name);
+  try {
+    if (!await isNonSymlinkDirectory(directory)) {
+      return null;
+    }
+    const skillPath = await validateStrictSkillPath(directory, "SKILL.md", []);
+    const content = await readSkillDocument(skillPath);
+    const parsed = await parseSkillFileFrontmatter(content);
+    const metadata = validateSkillFileMetadata(parsed.frontmatter, entry.name);
+    const references = (await listStrictSkillSubdir(directory, "references"))
+      .filter((reference) => reference.endsWith(".md"));
+
+    return {
+      id: entry.name,
+      directory,
+      metadata,
+      body: parsed.body.trim(),
+      references,
+    };
+  } catch {
+    // Invalid, oversized, or unsafe bundled skills are unavailable.
+    return null;
+  }
+}
+
+async function discoverBundledSkills(
+  skillsDir: string,
+): Promise<Map<string, DiscoveredBundledSkill>> {
+  const discovered = new Map<string, DiscoveredBundledSkill>();
+  if (!await directoryExists(skillsDir) || !await isNonSymlinkDirectory(skillsDir)) {
+    return discovered;
+  }
+
+  let entryCount = 0;
+  for await (const entry of getFs().readDir(skillsDir)) {
+    entryCount += 1;
+    if (entryCount > SKILL_SUBDIR_MAX_ENTRIES) {
+      throw new RangeError(
+        `Bundled skill directory may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+      );
+    }
+
+    const skill = await loadBundledSkill(skillsDir, entry);
+    if (skill) {
+      discovered.set(skill.id, skill);
     }
   }
 
-  return references.length ? references : undefined;
+  return discovered;
+}
+
+async function loadBundledSkillById(
+  skillsDir: string,
+  skillId: string,
+): Promise<DiscoveredBundledSkill | null> {
+  if (
+    !isValidSkillId(skillId) ||
+    !await directoryExists(skillsDir) ||
+    !await isNonSymlinkDirectory(skillsDir)
+  ) {
+    return null;
+  }
+
+  return await loadBundledSkill(skillsDir, {
+    name: skillId,
+    isDirectory: true,
+    isSymlink: false,
+  });
+}
+
+function isValidSkillId(value: unknown): value is string {
+  return typeof value === "string" && SKILL_STRICT_NAME_REGEX.test(value);
+}
+
+function isValidReferenceRequest(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= SKILL_RELATIVE_PATH_MAX_LENGTH;
 }
 
 const getSkillsInput = lazySchema(defineSchema((v) =>
   v.object({
-    name: v.string().optional().describe(
+    name: v.string().regex(
+      SKILL_STRICT_NAME_REGEX,
+      "Skill name must be a lowercase directory-matching identifier",
+    ).optional().describe(
       "Specific skill name to get full content for (omit for list of all skills)",
     ),
   })
@@ -92,77 +174,75 @@ interface GetSkillsResult {
   error?: string;
 }
 
-export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
-  name: "vf_get_skills",
-  title: "Get Skills",
-  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-  description:
-    "Use this when you need to discover available Agent Skills or load a specific skill's procedural knowledge. Returns skill names and descriptions, or full skill content when name is provided. Do not use for skill reference docs — use vf_get_skill_reference instead.",
-  inputSchema: getSkillsInput,
-  execute: (input) =>
-    withSpan(
-      "cli.mcp.tool.vf_get_skills",
-      async () => {
-        const fs = getFs();
-        const skillsDir = getSkillsDir();
-
-        try {
-          if (input.name) {
-            const skillPath = join(skillsDir, input.name, "SKILL.md");
-            const content = await fs.readTextFile(skillPath);
-            const { metadata, body } = parseSkillFrontmatter(content);
-
-            return {
-              skill: {
-                name: String(metadata.name || input.name),
-                description: String(metadata.description || ""),
-                license: metadata.license ? String(metadata.license) : undefined,
-                compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-                tools: parseToolsFromMetadata(metadata),
-                content: body,
-                references: await getSkillReferences(input.name),
-              },
-            };
-          }
-
-          if (!await directoryExists(skillsDir)) return { skills: [] };
-
-          const skills: SkillMetadata[] = [];
-          for await (const entry of fs.readDir(skillsDir)) {
-            if (!entry.isDirectory) continue;
-
-            const skillPath = join(skillsDir, entry.name, "SKILL.md");
-            if (!await fileExists(skillPath)) continue;
-
-            try {
-              const content = await fs.readTextFile(skillPath);
-              const { metadata } = parseSkillFrontmatter(content);
-
-              skills.push({
-                name: String(metadata.name || entry.name),
-                description: String(metadata.description || "No description"),
-                license: metadata.license ? String(metadata.license) : undefined,
-                compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-                tools: parseToolsFromMetadata(metadata),
-              });
-            } catch {
-              // Skip invalid skills
+/** Create the bundled-skill discovery/load tool for a specific immutable root. */
+export function createVfGetSkills(
+  skillsDir: string = getSkillsDir(),
+): MCPTool<GetSkillsInput, GetSkillsResult> {
+  return {
+    name: "vf_get_skills",
+    title: "Get Skills",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    description:
+      "Use this when you need to discover available Agent Skills or load a specific skill's procedural knowledge. Returns skill names and descriptions, or full skill content when name is provided. Do not use for skill reference docs — use vf_get_skill_reference instead.",
+    inputSchema: getSkillsInput,
+    execute: (input) =>
+      withSpan(
+        "cli.mcp.tool.vf_get_skills",
+        async () => {
+          try {
+            if (input.name !== undefined && !isValidSkillId(input.name)) {
+              return { error: "Invalid skill name" };
             }
-          }
 
-          return { skills };
-        } catch (error) {
-          return { error: formatError(error) };
-        }
-      },
-      { "tool.skill_name": input.name ?? "list_all" },
-    ),
-};
+            if (input.name !== undefined) {
+              const skill = await loadBundledSkillById(skillsDir, input.name);
+              if (!skill) {
+                return { error: `Skill not found: ${input.name}` };
+              }
+
+              return {
+                skill: {
+                  name: skill.metadata.name,
+                  description: skill.metadata.description,
+                  license: skill.metadata.license,
+                  compatibility: skill.metadata.compatibility,
+                  tools: parseToolsFromMetadata(skill.metadata),
+                  content: skill.body,
+                  references: skill.references.length > 0 ? [...skill.references] : undefined,
+                },
+              };
+            }
+
+            const discovered = await discoverBundledSkills(skillsDir);
+            return {
+              skills: [...discovered.values()]
+                .map((skill): SkillMetadata => ({
+                  name: skill.metadata.name,
+                  description: skill.metadata.description,
+                  license: skill.metadata.license,
+                  compatibility: skill.metadata.compatibility,
+                  tools: parseToolsFromMetadata(skill.metadata),
+                }))
+                .sort((left, right) => left.name.localeCompare(right.name)),
+            };
+          } catch (error) {
+            return { error: formatError(error) };
+          }
+        },
+        { "tool.skill_name": input.name ?? "list_all" },
+      ),
+  };
+}
 
 const getSkillReferenceInput = lazySchema(defineSchema((v) =>
   v.object({
-    skill: v.string().describe("Skill name"),
-    reference: v.string().describe("Reference file path (e.g., 'references/ROUTES.md')"),
+    skill: v.string().regex(
+      SKILL_STRICT_NAME_REGEX,
+      "Skill name must be a lowercase directory-matching identifier",
+    ).describe("Skill name"),
+    reference: v.string().min(1).max(SKILL_RELATIVE_PATH_MAX_LENGTH).describe(
+      "Reference file path (e.g., 'references/ROUTES.md')",
+    ),
   })
 ));
 
@@ -173,22 +253,40 @@ interface GetSkillReferenceResult {
   error?: string;
 }
 
-export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillReferenceResult> = {
-  name: "vf_get_skill_reference",
-  title: "Get Skill Reference",
-  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-  description:
-    "Use this when you need to load a specific reference document from a skill. Returns the document content as text. Do not use for skill discovery — use vf_get_skills instead.",
-  inputSchema: getSkillReferenceInput,
-  execute: async (input) => {
-    const fs = getFs();
-    const refPath = join(getSkillsDir(), input.skill, input.reference);
+/** Create the bundled-skill reference tool for a specific immutable root. */
+export function createVfGetSkillReference(
+  skillsDir: string = getSkillsDir(),
+): MCPTool<GetSkillReferenceInput, GetSkillReferenceResult> {
+  return {
+    name: "vf_get_skill_reference",
+    title: "Get Skill Reference",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    description:
+      "Use this when you need to load a specific reference document from a skill. Returns the document content as text. Do not use for skill discovery — use vf_get_skills instead.",
+    inputSchema: getSkillReferenceInput,
+    execute: async (input) => {
+      if (!isValidSkillId(input.skill) || !isValidReferenceRequest(input.reference)) {
+        return { error: "Invalid skill reference request" };
+      }
 
-    try {
-      const content = await fs.readTextFile(refPath);
-      return { content };
-    } catch (error) {
-      return { error: formatError(error) };
-    }
-  },
-};
+      try {
+        const skill = await loadBundledSkillById(skillsDir, input.skill);
+        if (!skill || !skill.references.includes(input.reference)) {
+          return { error: `Skill reference not found: ${input.skill}/${input.reference}` };
+        }
+
+        const referencePath = await validateStrictSkillPath(
+          skill.directory,
+          input.reference,
+          ["references"],
+        );
+        return { content: await readSkillDocument(referencePath) };
+      } catch (error) {
+        return { error: formatError(error) };
+      }
+    },
+  };
+}
+
+export const vfGetSkills = createVfGetSkills();
+export const vfGetSkillReference = createVfGetSkillReference();

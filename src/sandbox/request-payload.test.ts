@@ -2,6 +2,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import {
   collectSandboxExecResult,
+  isSandboxOutputLimitError,
   normalizeSandboxExecRequest,
   normalizeSandboxFiles,
 } from "./request-payload.ts";
@@ -123,4 +124,40 @@ Deno.test("collectSandboxExecResult requires a terminal exit and enforces its by
     VeryfrontError,
     "runtime unavailable",
   );
+});
+
+Deno.test("isSandboxOutputLimitError recognizes only the typed output-limit cause", async () => {
+  let outputLimitError: unknown;
+  try {
+    await collectSandboxExecResult(
+      events([
+        { type: "stdout", data: "too large" },
+        { type: "exit", exitCode: 0 },
+      ]),
+      4,
+    );
+  } catch (error) {
+    outputLimitError = error;
+  }
+
+  assertEquals(isSandboxOutputLimitError(outputLimitError), true);
+  assertEquals(
+    isSandboxOutputLimitError(
+      new Error("Sandbox command output exceeded 4 bytes; use executeStream()"),
+    ),
+    false,
+  );
+  assertEquals(
+    isSandboxOutputLimitError(
+      new Error("Sandbox command output exceeded 4 bytes", {
+        cause: Object.assign(
+          new Error("Sandbox command output exceeded 4 bytes"),
+          { name: "SandboxOutputLimitCause" },
+        ),
+      }),
+    ),
+    false,
+  );
+  assertEquals(isSandboxOutputLimitError(new Error("other sandbox failure")), false);
+  assertEquals(isSandboxOutputLimitError(null), false);
 });

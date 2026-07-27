@@ -11,6 +11,8 @@ import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { createFileWatcher } from "../shared/watcher-queue.ts";
 import { resolve, sep } from "../../../compat/path/index.ts";
 import { validateTempDirectoryPrefix } from "../../../compat/temp-directory-prefix.ts";
+import { readBoundedFilePrefix } from "../../bounded-file-read.ts";
+import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 
 function assertDenoRuntime(method: string): void {
   if (typeof Deno === "undefined") {
@@ -78,6 +80,12 @@ function createClosedWatcher(): FileWatcher {
 }
 
 export class DenoFileSystemAdapter implements FileSystemAdapter {
+  constructor() {
+    if (new.target === DenoFileSystemAdapter) {
+      markNativeFileSystemAdapter(this);
+    }
+  }
+
   async readFile(path: string): Promise<string> {
     assertDenoRuntime("readFile");
     return Deno.readTextFile(path);
@@ -86,6 +94,17 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
   async readFileBytes(path: string): Promise<Uint8Array> {
     assertDenoRuntime("readFileBytes");
     return Deno.readFile(path);
+  }
+
+  async readFileBytesBounded(path: string, byteLimit: number): Promise<Uint8Array> {
+    assertDenoRuntime("readFileBytesBounded");
+    return await readBoundedFilePrefix(async () => {
+      const file = await Deno.open(path, { read: true });
+      return {
+        close: () => file.close(),
+        read: (buffer: Uint8Array) => file.read(buffer),
+      };
+    }, byteLimit);
   }
 
   async writeFile(path: string, content: string): Promise<void> {

@@ -24,7 +24,7 @@ import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { Agent } from "#veryfront/agent/types.ts";
 import { getAgUiRuntimeRunIdSchema } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import type { HandlerContext } from "#veryfront/types/server.ts";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { base64urlDecodeBytes, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
@@ -546,7 +546,7 @@ export function resolveAgentSkills(agent: Agent): RuntimeAgentSkill[] {
   // resolve at runtime — unowned skills plus its own.
   const skillsConfig = agent.config.skills === false ? [] : agent.config.skills ?? true;
   return Array.from(
-    skillRegistry.resolveForAgent(skillsConfig, { agentId: agent.id }).values(),
+    skillRegistryInternal.resolveForAgent(skillsConfig, { agentId: agent.id }).values(),
   )
     .map((skill) =>
       RuntimeAgentSkillSchema.parse({

@@ -20,6 +20,7 @@ import type {
 } from "./text-generation-runtime-message-types.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
+import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -551,7 +552,7 @@ export function convertToTextGenerationRuntimeMessages(
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
   const providerExecutedToolCallIds = new Set<string>();
-  const lastUserMessageIndex = messages.findLastIndex((message) => message.role === "user");
+  const lastUserMessageIndex = messages.findLastIndex(isGenuineUserTurnMessage);
   const settledProviderToolCallIds = new Set(
     messages.slice(lastUserMessageIndex + 1).flatMap((message) =>
       message.parts.flatMap((part) => {
@@ -562,7 +563,7 @@ export function convertToTextGenerationRuntimeMessages(
   );
 
   for (const [messageIndex, message] of messages.entries()) {
-    if (message.role === "user" || message.role === "system") {
+    if (isGenuineUserTurnMessage(message) || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
 

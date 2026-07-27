@@ -18,8 +18,25 @@ import {
   ScopedRegistryView,
 } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import {
+  cloneSkillDefinition,
+  normalizeSkillDefinition,
+  validateSkillRegistryCandidate,
+} from "./validation.ts";
 
-const skillManager = new ProjectScopedRegistryManager<Skill>("skill");
+const skillManager = new ProjectScopedRegistryManager<Skill>("skill", {
+  validateRegistryCandidate: validateSkillRegistryCandidate,
+});
+const publicSkillViews = new WeakMap<Skill, Skill>();
+
+function getPublicSkillView(snapshot: Skill): Skill {
+  let view = publicSkillViews.get(snapshot);
+  if (!view) {
+    view = cloneSkillDefinition(snapshot);
+    publicSkillViews.set(snapshot, view);
+  }
+  return view;
+}
 
 /** Caller scope used for owner-aware capability resolution. */
 export type AgentCapabilityScope = {
@@ -33,6 +50,20 @@ export function isSkillVisibleTo(skill: Skill, scope?: AgentCapabilityScope): bo
 }
 
 class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
+  override register(id: string, skill: Skill): void {
+    super.register(id, normalizeSkillDefinition(id, skill));
+  }
+
+  registerPublic(id: string, skill: Skill): void {
+    const snapshot = normalizeSkillDefinition(id, skill);
+    super.register(id, snapshot);
+    publicSkillViews.set(snapshot, skill);
+  }
+
+  override registerShared(id: string, skill: Skill): void {
+    super.registerShared(id, normalizeSkillDefinition(id, skill));
+  }
+
   /**
    * Resolve skills for an agent configuration.
    *
@@ -119,23 +150,82 @@ class SkillRegistry extends ScopedRegistryView<Skill> {
     this.#registry = registry;
   }
 
+  override register(id: string, skill: Skill): void {
+    this.#registry.registerPublic(id, skill);
+  }
+
+  override get(id: string): Skill | undefined {
+    const skill = this.#registry.get(id);
+    return skill ? getPublicSkillView(skill) : undefined;
+  }
+
+  override getOwn(id: string): Skill | undefined {
+    const skill = this.#registry.getOwn(id);
+    return skill ? getPublicSkillView(skill) : undefined;
+  }
+
+  override getAll(): Map<string, Skill> {
+    return new Map(
+      [...this.#registry.getAll()].map(([id, skill]) => [
+        id,
+        getPublicSkillView(skill),
+      ]),
+    );
+  }
+
   resolveForAgent(
     skillsConfig: true | string[],
     scope?: AgentCapabilityScope,
   ): Map<string, Skill> {
-    return this.#registry.resolveForAgent(skillsConfig, scope);
+    const result = new Map<string, Skill>();
+    if (skillsConfig === true) {
+      for (const [id, skill] of this.getAll()) {
+        if (isSkillVisibleTo(skill, scope)) {
+          result.set(id, skill);
+        }
+      }
+      return result;
+    }
+
+    for (const requested of skillsConfig) {
+      const skill = this.resolveVisibleSkill(requested, scope);
+      if (skill) {
+        result.set(skill.id, skill);
+      }
+    }
+    return result;
   }
 
   resolveVisibleSkill(requested: string, scope?: AgentCapabilityScope): Skill | undefined {
-    return this.#registry.resolveVisibleSkill(requested, scope);
+    if (scope?.agentId !== undefined) {
+      for (const skill of this.getAll().values()) {
+        if (skill.ownerAgentId === scope.agentId && skill.shortName === requested) {
+          return skill;
+        }
+      }
+    }
+
+    const skill = this.get(requested);
+    return skill && isSkillVisibleTo(skill, scope) ? skill : undefined;
   }
 
   getVisibleSkillIds(scope?: AgentCapabilityScope): string[] {
-    return this.#registry.getVisibleSkillIds(scope);
+    const ids: string[] = [];
+    for (const [id, skill] of this.getAll()) {
+      if (isSkillVisibleTo(skill, scope)) {
+        ids.push(id);
+      }
+    }
+    return ids;
   }
 
   hasVisibleSkills(scope?: AgentCapabilityScope): boolean {
-    return this.#registry.hasVisibleSkills(scope);
+    for (const skill of this.getAll().values()) {
+      if (isSkillVisibleTo(skill, scope)) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 

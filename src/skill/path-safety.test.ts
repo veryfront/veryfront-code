@@ -10,8 +10,14 @@ import {
   symlink,
   writeTextFile,
 } from "#veryfront/platform/compat/fs.ts";
-import { listSkillSubdir, validateSkillPath } from "./path-safety.ts";
+import {
+  listSkillSubdir,
+  listStrictSkillSubdir,
+  validateSkillPath,
+  validateStrictSkillPath,
+} from "./path-safety.ts";
 import { createSkillTestAdapter } from "./testing.ts";
+import { SKILL_ALLOWED_SUBDIR_MAX_ENTRIES, SKILL_SUBDIR_MAX_ENTRIES } from "./limits.ts";
 
 describe("src/skill/path-safety", () => {
   describe("validateSkillPath", () => {
@@ -42,6 +48,44 @@ describe("src/skill/path-safety", () => {
       }
     });
 
+    it("requires an absolute root while preserving the public allowed-directory contract", async () => {
+      await assertRejects(
+        () => validateSkillPath("relative/skill", "references/guide.md", ["references"]),
+        TypeError,
+        "absolute",
+      );
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/guide.md": "Guide",
+      });
+      const allowedSubdirs = [
+        "references",
+        ...Array.from(
+          { length: SKILL_ALLOWED_SUBDIR_MAX_ENTRIES },
+          (_unused, index) => `dir-${index}`,
+        ),
+      ];
+      assertEquals(
+        await validateSkillPath(
+          "/project/skills/test",
+          "references/guide.md",
+          allowedSubdirs,
+          adapter,
+        ),
+        "/project/skills/test/references/guide.md",
+      );
+      await assertRejects(
+        () =>
+          validateStrictSkillPath(
+            "/project/skills/test",
+            "references/guide.md",
+            allowedSubdirs,
+            adapter,
+          ),
+        RangeError,
+        `${SKILL_ALLOWED_SUBDIR_MAX_ENTRIES}`,
+      );
+    });
+
     it("should validate existing files with fsAdapter", async () => {
       const adapter = createSkillTestAdapter({
         "/project/skills/test/references/guide.md": "Guide",
@@ -53,6 +97,68 @@ describe("src/skill/path-safety", () => {
         adapter,
       );
       assertEquals(validated, "/project/skills/test/references/guide.md");
+    });
+
+    it("uses adapter lstat and realPath capabilities to reject escapes", async () => {
+      const root = "/project/skills/test";
+      const file = `${root}/references/guide.md`;
+      const adapter = createSkillTestAdapter({ [file]: "Guide" });
+
+      await assertRejects(
+        () =>
+          validateStrictSkillPath(root, "references/guide.md", ["references"], {
+            ...adapter,
+            async lstat(path) {
+              const info = await adapter.stat(path);
+              return {
+                ...info,
+                isSymlink: path === `${root}/references`,
+              };
+            },
+          }),
+        Error,
+        "symlink",
+      );
+
+      await assertRejects(
+        () =>
+          validateSkillPath(root, "references/guide.md", ["references"], {
+            ...adapter,
+            async lstat(path) {
+              return await adapter.stat(path);
+            },
+            async realPath(path) {
+              return path === root ? root : `/outside/${path.split("/").at(-1)}`;
+            },
+          }),
+        Error,
+        "escapes root",
+      );
+    });
+
+    it("caps fallback adapter enumeration used for symlink detection", async () => {
+      const root = "/project/skills/test";
+      const file = `${root}/references/guide.md`;
+      const adapter = createSkillTestAdapter({ [file]: "Guide" });
+
+      await assertRejects(
+        () =>
+          validateStrictSkillPath(root, "references/guide.md", ["references"], {
+            ...adapter,
+            async *readDir() {
+              for (let index = 0; index <= SKILL_SUBDIR_MAX_ENTRIES; index += 1) {
+                yield {
+                  name: `entry-${index}`,
+                  isFile: true,
+                  isDirectory: false,
+                  isSymlink: false,
+                };
+              }
+            },
+          }),
+        RangeError,
+        `${SKILL_SUBDIR_MAX_ENTRIES}`,
+      );
     });
 
     it("should reject symlinked files in local skills", async () => {
@@ -124,9 +230,149 @@ describe("src/skill/path-safety", () => {
       const adapter = createSkillTestAdapter({
         "/project/skills/test/references/a.md": "A",
         "/project/skills/test/references/b.md": "B",
+        "/project/skills/test/references/release notes.md": "Notes",
+        "/project/skills/test/references/översikt.md": "Overview",
       });
       const result = await listSkillSubdir("/project/skills/test", "references", adapter);
-      assertEquals(result.sort(), ["references/a.md", "references/b.md"]);
+      assertEquals(result, [
+        "references/a.md",
+        "references/b.md",
+        "references/översikt.md",
+        "references/release notes.md",
+      ]);
+    });
+
+    it("rejects traversal in the requested subdirectory before enumeration", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/outside/secret.md": "secret",
+      });
+
+      await assertRejects(
+        () => listSkillSubdir("/project/skills/test", "../outside", adapter),
+        Error,
+        "subdirectory",
+      );
+    });
+
+    it("rejects unsafe adapter entry names", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/ok.md": "ok",
+      });
+
+      await assertRejects(
+        () =>
+          listSkillSubdir("/project/skills/test", "references", {
+            ...adapter,
+            async *readDir() {
+              yield {
+                name: "../secret.md",
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+              };
+            },
+          }),
+        Error,
+        "entry name",
+      );
+    });
+
+    it("preserves public adapter order while strict listings sort deterministically", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/a.md": "A",
+      });
+      const unorderedAdapter = {
+        ...adapter,
+        async *readDir() {
+          yield { name: "z.md", isFile: true, isDirectory: false, isSymlink: false };
+          yield { name: "a.md", isFile: true, isDirectory: false, isSymlink: false };
+        },
+      };
+
+      assertEquals(
+        await listSkillSubdir(
+          "/project/skills/test",
+          "references",
+          unorderedAdapter,
+        ),
+        ["references/z.md", "references/a.md"],
+      );
+      assertEquals(
+        await listStrictSkillSubdir(
+          "/project/skills/test",
+          "references",
+          unorderedAdapter,
+        ),
+        ["references/a.md", "references/z.md"],
+      );
+    });
+
+    it("keeps the entry cap on strict listings only", async () => {
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/a.md": "A",
+      });
+      const largeAdapter = {
+        ...adapter,
+        async *readDir() {
+          for (let index = 0; index < 1_001; index++) {
+            yield {
+              name: `file-${index}.md`,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          }
+        },
+      };
+
+      assertEquals(
+        (
+          await listSkillSubdir(
+            "/project/skills/test",
+            "references",
+            largeAdapter,
+          )
+        ).length,
+        1_001,
+      );
+      await assertRejects(
+        () =>
+          listStrictSkillSubdir(
+            "/project/skills/test",
+            "references",
+            largeAdapter,
+          ),
+        RangeError,
+        "at most 1000",
+      );
+    });
+
+    it("rejects symlinked local subdirectories instead of listing their targets", async () => {
+      const tempDir = await makeTempDir({ prefix: "vf-skill-list-" });
+      const skillRoot = join(tempDir, "skill");
+      const outsideDir = join(tempDir, "outside");
+      const linkedDir = join(skillRoot, "references");
+
+      try {
+        await mkdir(skillRoot, { recursive: true });
+        await mkdir(outsideDir, { recursive: true });
+        await writeTextFile(join(outsideDir, "secret.md"), "secret");
+
+        try {
+          await symlink(outsideDir, linkedDir);
+        } catch {
+          console.warn("[SKIP] symlink directory test: OS denied symlink creation — skipping");
+          return;
+        }
+
+        await assertRejects(
+          () => listSkillSubdir(skillRoot, "references"),
+          Error,
+          "symlink",
+        );
+      } finally {
+        await remove(tempDir, { recursive: true });
+      }
     });
   });
 });

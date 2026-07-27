@@ -23,8 +23,21 @@ export interface CommandOptions {
   inherit?: boolean;
   /** Use shell to run the command (needed for .cmd files on Windows) */
   shell?: boolean;
-  /** Kill the command if it exceeds this duration (milliseconds) */
+  /**
+   * Kill the command after this duration in milliseconds. Positive values are
+   * floored to whole milliseconds and clamped to the portable timer maximum;
+   * `undefined`, non-positive values, and NaN disable the timeout.
+   */
   timeoutMs?: number;
+  /** Terminate the command when the caller cancels. */
+  signal?: AbortSignal;
+  /**
+   * Best-effort process-tree cleanup after the managed command settles.
+   * Disabled by default so generic callers retain normal daemon/background
+   * process behavior. Sandboxed or otherwise lifecycle-owning callers can
+   * enable it to prevent ordinary descendants from outliving the command.
+   */
+  terminateProcessTreeOnExit?: boolean;
   /**
    * Maximum combined stdout and stderr bytes retained when `capture` is true.
    *
@@ -35,33 +48,206 @@ export interface CommandOptions {
 
 const COMMAND_TIMEOUT_EXIT_CODE = 124;
 const COMMAND_OUTPUT_LIMIT_EXIT_CODE = 125;
+const COMMAND_ABORT_EXIT_CODE = 130;
 const FORCE_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const MAX_COMMAND_TIMEOUT_MS = 2_147_483_647;
 
-type TerminationReason = "output-limit" | "timeout";
+type TerminationReason = "abort" | "output-limit" | "timeout";
+type TerminationSignal = "SIGKILL" | "SIGTERM";
+
+interface BunCommandProcess {
+  exited: Promise<number>;
+  stdout: ReadableStream<Uint8Array> | null;
+  stderr: ReadableStream<Uint8Array> | null;
+  pid: number;
+  kill?: (signal?: string | number) => void;
+  unref?: () => void;
+}
+
+interface BunCommandRuntime {
+  spawn: (options: {
+    cmd: string[];
+    cwd?: string;
+    detached?: boolean;
+    env?: Record<string, string>;
+    stdout?: "pipe" | "inherit" | "ignore";
+    stderr?: "pipe" | "inherit" | "ignore";
+  }) => BunCommandProcess;
+}
 
 function createTerminationResult(
   reason: TerminationReason,
   detail: number,
   stdout?: string,
   stderr?: string,
+  outputTruncated = reason === "output-limit",
 ): CommandResult {
   const message = reason === "timeout"
     ? `Command timed out after ${detail}ms`
-    : `Command output exceeded ${detail} bytes`;
+    : reason === "output-limit"
+    ? `Command output exceeded ${detail} bytes`
+    : "Command aborted";
   return {
     success: false,
-    code: reason === "timeout" ? COMMAND_TIMEOUT_EXIT_CODE : COMMAND_OUTPUT_LIMIT_EXIT_CODE,
+    code: reason === "timeout"
+      ? COMMAND_TIMEOUT_EXIT_CODE
+      : reason === "output-limit"
+      ? COMMAND_OUTPUT_LIMIT_EXIT_CODE
+      : COMMAND_ABORT_EXIT_CODE,
     stdout,
     stderr: `${stderr ?? ""}\n${message}`.trim(),
-    outputTruncated: reason === "output-limit" || undefined,
+    outputTruncated: outputTruncated || undefined,
   };
+}
+
+function validateAbortSignal(signal: unknown): asserts signal is AbortSignal | undefined {
+  if (signal === undefined) return;
+  if (typeof AbortSignal === "undefined" || !(signal instanceof AbortSignal)) {
+    throw new TypeError("signal must be an AbortSignal");
+  }
+}
+
+function resolveCommandTimeoutMs(timeoutMs: unknown): number | undefined {
+  if (typeof timeoutMs !== "number" || !(timeoutMs > 0)) return undefined;
+  return Math.min(Math.floor(timeoutMs), MAX_COMMAND_TIMEOUT_MS);
+}
+
+/** @internal Exported so Windows tree-termination arguments can be tested on every host. */
+export function buildWindowsTaskkillArgs(pid: number, force: boolean): string[] {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new RangeError("Windows taskkill pid must be a positive safe integer");
+  }
+  return ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])];
+}
+
+function tryDirectSignal(
+  signalDirect: (signal: TerminationSignal) => void,
+  signal: TerminationSignal,
+): void {
+  try {
+    signalDirect(signal);
+  } catch {
+    // The target may have exited before taskkill failure became observable.
+  }
+}
+
+function tryForceSettledProcessTree(
+  signalTree: (signal: TerminationSignal) => void,
+): void {
+  try {
+    signalTree("SIGKILL");
+  } catch {
+    // A settled command with no remaining descendants has no process group or
+    // live direct handle. Cleanup is intentionally idempotent in that case.
+  }
+}
+
+function signalWindowsTreeWithDeno(
+  deno: typeof Deno,
+  pid: number | undefined,
+  force: boolean,
+  signalDirect: (signal: TerminationSignal) => void,
+): void {
+  const signal = force ? "SIGKILL" : "SIGTERM";
+  if (!Number.isSafeInteger(pid) || (pid ?? 0) <= 0) {
+    tryDirectSignal(signalDirect, signal);
+    return;
+  }
+
+  try {
+    const taskkill = new deno.Command("taskkill", {
+      args: buildWindowsTaskkillArgs(pid as number, force),
+      stdin: "null",
+      stdout: "null",
+      stderr: "null",
+    }).spawn();
+    void taskkill.status.then((status) => {
+      if (!status.success) tryDirectSignal(signalDirect, signal);
+    }).catch(() => tryDirectSignal(signalDirect, signal));
+  } catch {
+    tryDirectSignal(signalDirect, signal);
+  }
+}
+
+function signalWindowsTreeWithBun(
+  bun: BunCommandRuntime,
+  pid: number | undefined,
+  force: boolean,
+  signalDirect: (signal: TerminationSignal) => void,
+): void {
+  const signal = force ? "SIGKILL" : "SIGTERM";
+  if (!Number.isSafeInteger(pid) || (pid ?? 0) <= 0) {
+    tryDirectSignal(signalDirect, signal);
+    return;
+  }
+
+  try {
+    const taskkill = bun.spawn({
+      cmd: ["taskkill", ...buildWindowsTaskkillArgs(pid as number, force)],
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    taskkill.unref?.();
+    void taskkill.exited.then((code) => {
+      if (code !== 0) tryDirectSignal(signalDirect, signal);
+    }).catch(() => tryDirectSignal(signalDirect, signal));
+  } catch {
+    tryDirectSignal(signalDirect, signal);
+  }
+}
+
+function signalWindowsTreeWithNode(
+  spawn: typeof import("node:child_process").spawn,
+  pid: number | undefined,
+  force: boolean,
+  signalDirect: (signal: TerminationSignal) => void,
+): void {
+  const signal = force ? "SIGKILL" : "SIGTERM";
+  if (!Number.isSafeInteger(pid) || (pid ?? 0) <= 0) {
+    tryDirectSignal(signalDirect, signal);
+    return;
+  }
+
+  try {
+    const taskkill = spawn("taskkill", buildWindowsTaskkillArgs(pid as number, force), {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    taskkill.once("error", () => tryDirectSignal(signalDirect, signal));
+    taskkill.once("close", (code) => {
+      if (code !== 0) tryDirectSignal(signalDirect, signal);
+    });
+  } catch {
+    tryDirectSignal(signalDirect, signal);
+  }
+}
+
+function signalProcessTree(
+  pid: number | undefined,
+  signal: TerminationSignal,
+  detachedProcessGroup: boolean,
+  signalGroup: (processGroupId: number, signal: TerminationSignal) => void,
+  signalDirect: (signal: TerminationSignal) => void,
+): void {
+  if (detachedProcessGroup && Number.isSafeInteger(pid) && (pid ?? 0) > 0) {
+    try {
+      signalGroup(-(pid as number), signal);
+      return;
+    } catch (_) {
+      // The child may have exited before its process group became observable.
+      // Fall through to the direct handle so cancellation remains best effort.
+    }
+  }
+  signalDirect(signal);
 }
 
 function createProcessGuard(
   timeoutMs: number | undefined,
+  signal: AbortSignal | undefined,
   terminate: () => void,
   forceTerminate: () => void,
+  releaseAfterForce: () => void,
 ): {
   stop: (reason: TerminationReason) => void;
   reason: () => TerminationReason | null;
@@ -70,11 +256,17 @@ function createProcessGuard(
   let terminationReason: TerminationReason | null = null;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let forceKillId: ReturnType<typeof setTimeout> | undefined;
+  let forceTerminationCompleted = false;
+  const abortListener = () => stop("abort");
 
   if (timeoutMs && timeoutMs > 0) {
     timeoutId = setTimeout(() => {
       stop("timeout");
     }, timeoutMs);
+  }
+  if (signal) {
+    signal.addEventListener("abort", abortListener, { once: true });
+    if (signal.aborted) stop("abort");
   }
 
   return {
@@ -82,7 +274,17 @@ function createProcessGuard(
     reason: () => terminationReason,
     clear: () => {
       if (timeoutId) clearTimeout(timeoutId);
-      if (forceKillId) clearTimeout(forceKillId);
+      signal?.removeEventListener("abort", abortListener);
+      if (terminationReason === null) {
+        if (forceKillId) clearTimeout(forceKillId);
+        return;
+      }
+
+      // The directly managed process may settle after SIGTERM while a child in
+      // its process group remains alive. Do not cancel escalation on that
+      // abnormal settlement; force it immediately before releasing lifecycle
+      // ownership.
+      forceTerminateOnce();
     },
   };
 
@@ -95,13 +297,23 @@ function createProcessGuard(
       /* expected: best-effort terminate may fail if process already exited */
     }
 
-    forceKillId = setTimeout(() => {
-      try {
-        forceTerminate();
-      } catch (_) {
-        /* expected: best-effort force terminate may fail if process already exited */
-      }
-    }, FORCE_KILL_GRACE_MS);
+    forceKillId = setTimeout(forceTerminateOnce, FORCE_KILL_GRACE_MS);
+  }
+
+  function forceTerminateOnce(): void {
+    if (forceTerminationCompleted) return;
+    forceTerminationCompleted = true;
+    if (forceKillId) {
+      clearTimeout(forceKillId);
+      forceKillId = undefined;
+    }
+    try {
+      forceTerminate();
+    } catch (_) {
+      /* expected: best-effort force terminate may fail if process already exited */
+    } finally {
+      releaseAfterForce();
+    }
   }
 }
 
@@ -153,20 +365,45 @@ function decodeChunks(chunks: readonly Uint8Array[]): string {
   return new TextDecoder().decode(merged);
 }
 
-async function readStreamToString(
+interface StreamCapture {
+  readonly result: Promise<string>;
+  cancel(reason?: unknown): void;
+}
+
+function captureStreamToString(
   stream: ReadableStream<Uint8Array>,
   budget: CaptureBudget,
-): Promise<string> {
+): StreamCapture {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
+  let cancelled = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) captureChunk(chunks, value, budget);
-  }
-
-  return decodeChunks(chunks);
+  return {
+    result: (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) captureChunk(chunks, value, budget);
+        }
+      } catch (error) {
+        if (!cancelled) throw error;
+      } finally {
+        reader.releaseLock();
+      }
+      return decodeChunks(chunks);
+    })(),
+    cancel: (reason?: unknown) => {
+      if (cancelled) return;
+      cancelled = true;
+      try {
+        const cancellation = reader.cancel(reason);
+        void cancellation.catch(() => {});
+      } catch {
+        // The stream may already have closed between termination and release.
+      }
+    },
+  };
 }
 
 function resolveShellCommand(
@@ -208,16 +445,32 @@ export async function runCommand(
     inherit = false,
     shell = false,
     timeoutMs,
+    signal,
+    terminateProcessTreeOnExit = false,
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
   } = options;
-  const effectiveTimeoutMs = timeoutMs && timeoutMs > 0 ? Math.floor(timeoutMs) : undefined;
+  validateAbortSignal(signal);
+  if (typeof terminateProcessTreeOnExit !== "boolean") {
+    throw new TypeError("terminateProcessTreeOnExit must be a boolean");
+  }
+  const effectiveTimeoutMs = resolveCommandTimeoutMs(timeoutMs);
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new RangeError("maxOutputBytes must be a positive safe integer");
+  }
+  if (signal?.aborted) {
+    return createTerminationResult("abort", 0);
   }
 
   // Determine stdio mode: inherit > capture > null
   const shouldCapture = capture && !inherit;
   const stdioMode = inherit ? "inherit" : shouldCapture ? "piped" : "null";
+  const detachedProcessGroup = !isWindowsPlatform() &&
+    (
+      effectiveTimeoutMs !== undefined ||
+      signal !== undefined ||
+      shouldCapture ||
+      terminateProcessTreeOnExit
+    );
 
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) {
@@ -230,28 +483,55 @@ export async function runCommand(
       stdin: inherit ? "inherit" : "null",
       stdout: stdioMode,
       stderr: stdioMode,
+      detached: detachedProcessGroup,
     });
 
     const child = command.spawn();
+    const windowsPlatform = isWindowsPlatform();
+    const directSignal = (terminationSignal: TerminationSignal) => child.kill(terminationSignal);
+    const signalChild = (terminationSignal: TerminationSignal) =>
+      windowsPlatform
+        ? signalWindowsTreeWithDeno(
+          deno,
+          child.pid,
+          terminationSignal === "SIGKILL",
+          directSignal,
+        )
+        : signalProcessTree(
+          child.pid,
+          terminationSignal,
+          detachedProcessGroup,
+          (processGroupId, groupSignal) => deno.kill(processGroupId, groupSignal),
+          directSignal,
+        );
+    const captures: { stdout?: StreamCapture; stderr?: StreamCapture } = {};
     const guard = createProcessGuard(
       effectiveTimeoutMs,
-      () => child.kill("SIGTERM"),
-      () => child.kill("SIGKILL"),
+      signal,
+      () => signalChild("SIGTERM"),
+      () => signalChild("SIGKILL"),
+      () => {
+        const reason = new Error("Command capture closed after forced termination");
+        captures.stdout?.cancel(reason);
+        captures.stderr?.cancel(reason);
+      },
     );
     const captureBudget = createCaptureBudget(
       maxOutputBytes,
       () => guard.stop("output-limit"),
     );
+    captures.stdout = shouldCapture && child.stdout
+      ? captureStreamToString(child.stdout, captureBudget)
+      : undefined;
+    captures.stderr = shouldCapture && child.stderr
+      ? captureStreamToString(child.stderr, captureBudget)
+      : undefined;
 
     try {
       const [status, stdout, stderr] = await Promise.all([
         child.status,
-        shouldCapture && child.stdout
-          ? readStreamToString(child.stdout, captureBudget)
-          : Promise.resolve(undefined),
-        shouldCapture && child.stderr
-          ? readStreamToString(child.stderr, captureBudget)
-          : Promise.resolve(undefined),
+        captures.stdout?.result ?? Promise.resolve(undefined),
+        captures.stderr?.result ?? Promise.resolve(undefined),
       ]);
 
       const reason = guard.reason();
@@ -261,6 +541,7 @@ export async function runCommand(
           reason === "timeout" ? effectiveTimeoutMs ?? 0 : maxOutputBytes,
           stdout,
           stderr,
+          captureBudget.exceeded,
         );
       }
 
@@ -271,26 +552,16 @@ export async function runCommand(
         stderr,
       };
     } finally {
+      if (terminateProcessTreeOnExit && guard.reason() === null) {
+        tryForceSettledProcessTree(signalChild);
+      }
       guard.clear();
     }
   }
 
   if (IS_BUN) {
     const bunGlobal = globalThis as unknown as {
-      Bun: {
-        spawn: (options: {
-          cmd: string[];
-          cwd?: string;
-          env?: Record<string, string>;
-          stdout?: "pipe" | "inherit" | "ignore";
-          stderr?: "pipe" | "inherit" | "ignore";
-        }) => {
-          exited: Promise<number>;
-          stdout: ReadableStream<Uint8Array> | null;
-          stderr: ReadableStream<Uint8Array> | null;
-          kill?: (signal?: string | number) => void;
-        };
-      };
+      Bun: BunCommandRuntime;
     };
 
     const bunStdio = inherit ? "inherit" : shouldCapture ? "pipe" : "ignore";
@@ -301,30 +572,60 @@ export async function runCommand(
     const proc = bunGlobal.Bun.spawn({
       cmd: bunCmd,
       cwd: cmdCwd,
+      detached: detachedProcessGroup,
       env: clearEnv ? cmdEnv ?? {} : cmdEnv,
       stdout: bunStdio,
       stderr: bunStdio,
     });
 
+    const windowsPlatform = isWindowsPlatform();
+    const directSignal = (terminationSignal: TerminationSignal) => proc.kill?.(terminationSignal);
+    const signalChild = (terminationSignal: TerminationSignal) =>
+      windowsPlatform
+        ? signalWindowsTreeWithBun(
+          bunGlobal.Bun,
+          proc.pid,
+          terminationSignal === "SIGKILL",
+          directSignal,
+        )
+        : signalProcessTree(
+          proc.pid,
+          terminationSignal,
+          detachedProcessGroup,
+          (processGroupId, groupSignal) => {
+            if (!runtimeProcess) throw new Error("Runtime process unavailable");
+            runtimeProcess.kill(processGroupId, groupSignal);
+          },
+          directSignal,
+        );
+    const captures: { stdout?: StreamCapture; stderr?: StreamCapture } = {};
     const guard = createProcessGuard(
       effectiveTimeoutMs,
-      () => proc.kill?.("SIGTERM"),
-      () => proc.kill?.("SIGKILL"),
+      signal,
+      () => signalChild("SIGTERM"),
+      () => signalChild("SIGKILL"),
+      () => {
+        const reason = new Error("Command capture closed after forced termination");
+        captures.stdout?.cancel(reason);
+        captures.stderr?.cancel(reason);
+      },
     );
     const captureBudget = createCaptureBudget(
       maxOutputBytes,
       () => guard.stop("output-limit"),
     );
+    captures.stdout = shouldCapture && proc.stdout
+      ? captureStreamToString(proc.stdout, captureBudget)
+      : undefined;
+    captures.stderr = shouldCapture && proc.stderr
+      ? captureStreamToString(proc.stderr, captureBudget)
+      : undefined;
 
     try {
       const [code, stdout, stderr] = await Promise.all([
         proc.exited,
-        shouldCapture && proc.stdout
-          ? readStreamToString(proc.stdout, captureBudget)
-          : Promise.resolve(undefined),
-        shouldCapture && proc.stderr
-          ? readStreamToString(proc.stderr, captureBudget)
-          : Promise.resolve(undefined),
+        captures.stdout?.result ?? Promise.resolve(undefined),
+        captures.stderr?.result ?? Promise.resolve(undefined),
       ]);
 
       const reason = guard.reason();
@@ -334,11 +635,15 @@ export async function runCommand(
           reason === "timeout" ? effectiveTimeoutMs ?? 0 : maxOutputBytes,
           stdout,
           stderr,
+          captureBudget.exceeded,
         );
       }
 
       return { success: code === 0, code, stdout, stderr };
     } finally {
+      if (terminateProcessTreeOnExit && guard.reason() === null) {
+        tryForceSettledProcessTree(signalChild);
+      }
       guard.clear();
     }
   }
@@ -347,6 +652,9 @@ export async function runCommand(
   const process = runtimeProcess;
 
   const { spawn } = await dynamicImport<typeof import("node:child_process")>("node:child_process");
+  if (signal?.aborted) {
+    return createTerminationResult("abort", 0);
+  }
 
   const nodeStdio: [
     "ignore" | "inherit" | "pipe",
@@ -364,19 +672,53 @@ export async function runCommand(
       env: clearEnv ? cmdEnv ?? {} : cmdEnv ? { ...process.env, ...cmdEnv } : undefined,
       stdio: nodeStdio,
       shell,
+      detached: detachedProcessGroup,
     });
 
     const stdoutChunks: Uint8Array[] = [];
     const stderrChunks: Uint8Array[] = [];
+    const windowsPlatform = isWindowsPlatform();
+    const directSignal = (terminationSignal: TerminationSignal) => child.kill(terminationSignal);
+    const signalChild = (terminationSignal: TerminationSignal) =>
+      windowsPlatform
+        ? signalWindowsTreeWithNode(
+          spawn,
+          child.pid,
+          terminationSignal === "SIGKILL",
+          directSignal,
+        )
+        : signalProcessTree(
+          child.pid,
+          terminationSignal,
+          detachedProcessGroup,
+          (processGroupId, groupSignal) => process.kill(processGroupId, groupSignal),
+          directSignal,
+        );
     const guard = createProcessGuard(
       effectiveTimeoutMs,
-      () => child.kill("SIGTERM"),
-      () => child.kill("SIGKILL"),
+      signal,
+      () => signalChild("SIGTERM"),
+      () => signalChild("SIGKILL"),
+      () => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      },
     );
     const captureBudget = createCaptureBudget(
       maxOutputBytes,
       () => guard.stop("output-limit"),
     );
+    let resultSettled = false;
+
+    const settleProcessOwnership = (): boolean => {
+      if (resultSettled) return false;
+      resultSettled = true;
+      if (terminateProcessTreeOnExit && guard.reason() === null) {
+        tryForceSettledProcessTree(signalChild);
+      }
+      guard.clear();
+      return true;
+    };
 
     if (shouldCapture) {
       child.stdout?.on("data", (data: Uint8Array) => {
@@ -388,7 +730,7 @@ export async function runCommand(
     }
 
     child.on("close", (code) => {
-      guard.clear();
+      if (!settleProcessOwnership()) return;
       const stdout = shouldCapture ? decodeChunks(stdoutChunks) : undefined;
       const stderr = shouldCapture ? decodeChunks(stderrChunks) : undefined;
 
@@ -400,6 +742,7 @@ export async function runCommand(
             reason === "timeout" ? effectiveTimeoutMs ?? 0 : maxOutputBytes,
             stdout,
             stderr,
+            captureBudget.exceeded,
           ),
         );
         return;
@@ -414,7 +757,7 @@ export async function runCommand(
     });
 
     child.on("error", (spawnError: Error) => {
-      guard.clear();
+      if (!settleProcessOwnership()) return;
       const stdout = shouldCapture ? decodeChunks(stdoutChunks) : undefined;
       const stderr = shouldCapture ? decodeChunks(stderrChunks) : undefined;
       // Include the spawn error message so callers can distinguish ENOENT

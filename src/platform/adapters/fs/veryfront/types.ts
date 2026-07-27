@@ -8,6 +8,14 @@ export type { DirectoryEntry };
 
 export interface FSAdapter {
   readFile(path: string): Promise<Uint8Array | string>;
+  /**
+   * Read through EOF or at most `byteLimit` bytes directly from the backing
+   * store.
+   *
+   * Adapters must omit this capability when their upstream API only supports
+   * whole-object reads.
+   */
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
   readTextFile?(path: string): Promise<string>;
   readOptionalTextFile?(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;

@@ -34,6 +34,18 @@ describe("agent/streamed-assistant-message", () => {
             providerExecuted: true,
           },
         ],
+        [
+          "delayed_result_only",
+          {
+            id: "delayed_result_only",
+            name: "web_search",
+            arguments: '{"q":"earlier request"}',
+            inputAvailable: true,
+            providerExecuted: true,
+            supportsDeferredResults: true,
+            synthesizedFromResult: true,
+          },
+        ],
       ]),
       suppressedToolCalls: [],
       toolResults: [],

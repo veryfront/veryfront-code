@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeAdapter, nodeAdapter } from "./adapter.ts";
 
 function createAdapter(): NodeAdapter {
@@ -35,7 +36,9 @@ describe("NodeAdapter", () => {
     });
 
     it("should have fs adapter", () => {
-      assertExists(createAdapter().fs);
+      const fsAdapter = createAdapter().fs;
+      assertExists(fsAdapter);
+      assertEquals(isNativeFileSystemAdapter(fsAdapter), true);
     });
 
     it("should have env adapter", () => {

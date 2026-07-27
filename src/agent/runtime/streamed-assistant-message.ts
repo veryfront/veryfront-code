@@ -40,6 +40,9 @@ export function buildStreamedAssistantMessage(
   }
 
   for (const toolCall of state.toolCalls.values()) {
+    if (toolCall.synthesizedFromResult === true) {
+      continue;
+    }
     if (shouldOmitRecoverablePlaceholderToolCall(state, toolCall)) {
       continue;
     }

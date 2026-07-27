@@ -24,6 +24,18 @@ const encoder = new TextEncoder();
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ownKeys = Reflect.ownKeys;
 
+class SandboxOutputLimitCause extends Error {
+  constructor(readonly maxOutputBytes: number) {
+    super(`Sandbox command output exceeded ${maxOutputBytes} bytes`);
+    this.name = "SandboxOutputLimitCause";
+  }
+}
+
+/** Whether buffered sandbox command collection exceeded its configured limit. */
+export function isSandboxOutputLimitError(error: unknown): boolean {
+  return error instanceof Error && error.cause instanceof SandboxOutputLimitCause;
+}
+
 export interface NormalizedSandboxExecRequest {
   payload: {
     command: string;
@@ -281,6 +293,7 @@ function addOutputChunk(
     throw REQUEST_ERROR.create({
       detail:
         `Sandbox command output exceeded ${maxOutputBytes} bytes; use executeStream() or raise maxOutputBytes`,
+      cause: new SandboxOutputLimitCause(maxOutputBytes),
     });
   }
   chunks.push(chunk);

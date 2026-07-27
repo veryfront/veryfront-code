@@ -109,7 +109,15 @@ export async function prepareAgentRuntimeStep(
       input.activeSkillToolAvailability,
     );
   }
-  tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
+  tools = filterToolsAfterSubmittedFormInput(
+    tools,
+    input.messages,
+    runtimeState.context,
+    {
+      id: input.activeSkillId,
+      toolAvailability: input.activeSkillToolAvailability,
+    },
+  );
 
   return {
     runtimeContext: runtimeState.context,

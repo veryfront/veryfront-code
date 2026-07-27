@@ -40,7 +40,7 @@ order: 1
 | [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined recurring schedules for Veryfront projects. |
 | [`veryfront/schemas`](./veryfront/schemas.md) | Validation schemas. |
 | [`veryfront/server`](./veryfront/server.md) | Server runtime helpers. |
-| [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files following the agentskills.io specification. |
+| [`veryfront/skill`](./veryfront/skill.md) | Agent skills. Public API for the agent skills system. Skills are project-level capabilities defined as SKILL.md files using the Agent Skills metadata format and Veryfront's documented, fail-closed allowed-tools subset. |
 | [`veryfront/task`](./veryfront/task.md) | Source-defined tasks for Veryfront projects. |
 | [`veryfront/testing`](./veryfront/testing.md) | Test utilities. |
 | [`veryfront/tool`](./veryfront/tool.md) | Tool definitions and execution. |

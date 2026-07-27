@@ -23,6 +23,10 @@ describe("BunFileSystemAdapter native integration", () => {
       await adapter.writeFile(file, "hello");
       assertEquals(await adapter.readFile(file), "hello");
       assertEquals((await adapter.readFileBytes(file)).length, 5);
+      assertEquals(
+        [...await adapter.readFileBytesBounded(file, 3)],
+        [104, 101, 108],
+      );
 
       watcher = adapter.watch(root, { recursive: false });
       const eventPromise = watcher[Symbol.asyncIterator]().next();
