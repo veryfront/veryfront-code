@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -95,6 +95,139 @@ describe(
       }
 
       assertEquals(resolvedImportMap, importMap);
+    });
+
+    it("matches only the configured path boundary and handles malformed IDs", () => {
+      const modules = new VirtualModuleSystem(
+        "/_veryfront/modules",
+        createMockAdapter(),
+        { importMap: { imports: {}, scopes: {} } },
+      );
+
+      assertEquals(
+        modules.handleRequest(
+          new Request("http://local/_veryfront/modules-evil/component"),
+        ),
+        null,
+      );
+      assertEquals(
+        modules.handleRequest(
+          new Request("http://local/_veryfront/modules/%E0%A4%A"),
+        )?.status,
+        400,
+      );
+    });
+
+    it("admits only GET, HEAD, and OPTIONS requests", async () => {
+      const modules = new VirtualModuleSystem(
+        "/_veryfront/modules",
+        createMockAdapter(),
+        { importMap: { imports: {}, scopes: {} } },
+      );
+      const url = await modules.registerModule(
+        "method-test",
+        "export const value = 1;",
+        "/project",
+        "ts",
+      );
+
+      const post = modules.handleRequest(
+        new Request(`http://local${url}`, { method: "POST" }),
+      );
+      const head = modules.handleRequest(
+        new Request(`http://local${url}`, { method: "HEAD" }),
+      );
+      const options = modules.handleRequest(
+        new Request(`http://local${url}`, { method: "OPTIONS" }),
+      );
+
+      assertEquals(post?.status, 405);
+      assertEquals(post?.headers.get("allow"), "GET, HEAD, OPTIONS");
+      assertEquals(head?.status, 200);
+      assertEquals(await head?.text(), "");
+      assertEquals(options?.status, 204);
+    });
+
+    it("normalizes its base URL and rewrites relative imports to that base", async () => {
+      const modules = new VirtualModuleSystem(
+        "/_custom/modules/",
+        createMockAdapter(),
+        { importMap: { imports: {}, scopes: {} } },
+      );
+
+      const url = await modules.registerModule(
+        "component:entry",
+        'import Button from "./my-button"; export default Button;',
+        "/project",
+        "ts",
+      );
+
+      assertEquals(url, "/_custom/modules/component%3Aentry");
+      assert(
+        modules.getModule("component:entry")?.transformed?.includes(
+          '"/_custom/modules/component:my-button"',
+        ),
+      );
+    });
+
+    it("rejects invalid base URLs, module IDs, and oversized sources", async () => {
+      const adapter = createMockAdapter();
+      assertThrows(
+        () => new VirtualModuleSystem("relative/modules", adapter),
+        TypeError,
+        "absolute path",
+      );
+      assertThrows(
+        () => new VirtualModuleSystem("/modules/../escape", adapter),
+        TypeError,
+        "canonical",
+      );
+
+      const modules = new VirtualModuleSystem("/_veryfront/modules", adapter, {
+        importMap: { imports: {}, scopes: {} },
+      });
+      await assertRejects(
+        () => modules.registerModule("", "export {};", "/project", "ts"),
+        TypeError,
+        "module ID",
+      );
+      await assertRejects(
+        () =>
+          modules.registerModule(
+            "oversized",
+            "x".repeat(5 * 1024 * 1024 + 1),
+            "/project",
+            "ts",
+          ),
+        RangeError,
+        "source byte limit",
+      );
+    });
+
+    it("does not expose mutable retained modules or permissive CORS headers", async () => {
+      const modules = new VirtualModuleSystem(
+        "/_veryfront/modules",
+        createMockAdapter(),
+        { importMap: { imports: {}, scopes: {} } },
+      );
+      const url = await modules.registerModule(
+        "immutable",
+        "export const original = true;",
+        "/project",
+        "ts",
+      );
+      const exposed = modules.getModule("immutable") as
+        | { transformed?: string }
+        | undefined;
+      if (!exposed) throw new Error("Expected registered module");
+      exposed.transformed = "export const poisoned = true;";
+
+      const response = modules.handleRequest(new Request(`http://local${url}`));
+      const source = await response?.text();
+
+      assertEquals(source?.includes("poisoned"), false);
+      assertEquals(response?.headers.get("access-control-allow-origin"), null);
+      assertEquals(response?.headers.get("access-control-allow-methods"), null);
     });
   },
 );
