@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    25 |      43.1% | Current formal closure evidence remains valid       |
+| Closed                         |    26 |      44.8% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    31 |      53.4% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    30 |      51.7% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -52,6 +52,7 @@ stricter closure count.
 - `markdown`
 - `mdx`
 - `metrics`
+- `platform`
 - `provider`
 - `prompt`
 - `registry`
@@ -84,7 +85,6 @@ stricter closure count.
 - `modules`
 - `oauth`
 - `observability`
-- `platform`
 - `proxy`
 - `react`
 - `release-assets`
@@ -123,8 +123,9 @@ every affected unit.
 
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
-`markdown`, `mdx`, `metrics`, `provider`, `prompt`, `registry`, `repositories`,
-`runs`, `runtime`, `sandbox`, `schemas`, `studio`, `types`, and `version.ts`.
+`markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
+`repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, `types`,
+and `version.ts`.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -144,6 +145,10 @@ diagnostic redaction, cross-runtime compatibility, and direct consumer findings
 were remediated and revalidated. `types` is closed after its shared server and
 RSC contracts, runtime consumers, package surface, dependency direction, and
 type-level regressions were remediated and revalidated.
+`platform` is closed after its runtime registry, capabilities, local and hosted
+adapters, filesystem, HTTP and WebSocket lifecycle, KV and cache behavior,
+native compatibility, environment, process, path, test-support, public
+contracts, and cross-runtime consumers were remediated and revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -2554,7 +2559,7 @@ Platform, routing, sandbox, and the build-script surface changed or were
 extended by this checkpoint and remain listed for their own top-level
 revalidation.
 
-### Platform in-progress checkpoint
+### Platform closure checkpoint
 
 The `platform` audit unit owns runtime detection and capabilities, adapter
 lifecycle and selection, filesystem, HTTP, KV, process, path, and native-host
@@ -2941,9 +2946,145 @@ Current compatibility-HTTP verification evidence:
   architecture ratchet, 66 public guides, all 739 documentation links, and
   every configured source and browser entrypoint typecheck.
 
-Platform remains open. The next wave must complete the hosted-adapter and
-residual adapter review before formal closure. Agent and Server remain listed
-for their own module-level revalidation because this checkpoint verified only
-their Platform contract consumers.
+The hosted-adapter and public-client wave is complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the Veryfront transports,
+  API clients, and token adapters accepted weak endpoint, identifier, cursor,
+  payload, and response contracts; request cancellation and singleton
+  replacement could leak work or commit stale state; memory token adapters
+  shared mutable storage across instances. The source was duplicated optimistic
+  boundary code without one lifecycle or validation policy. The consequence
+  was unbounded reads, ambiguous pagination, stale credentials, cross-instance
+  state leakage, and requests surviving their owner. Hosted clients now require
+  validated HTTP(S) endpoints and bounded inputs and responses, use explicit
+  timeout and abort ownership, reject stalled cursor progress, classify
+  retryable failures, coalesce initialization by generation, and dispose or
+  replace only the state they own. Memory-backed token storage is instance
+  local and snapshots caller data.
+- **Symptom -> Source -> Consequence -> Remedy:** GitHub paths, refs, cache
+  identities, response bodies, and error classification were permissive, and
+  cached file metadata could cross repository boundaries. The consequence was
+  traversal-shaped input reaching remote calls, ambiguous ref/path identity,
+  unbounded error consumption, false not-found results, and one repository
+  observing another repository's cache entry. Paths and refs now normalize
+  before I/O, cache keys include repository and ref identity, response and
+  diagnostic bodies are bounded, pagination is validated, and only an actual
+  not-found response maps to absence.
+- **Symptom -> Source -> Consequence -> Remedy:** the hosted filesystem mixed
+  partial file indexes, mutable source context, permissive path normalization,
+  stale release manifests, and fallback reads whose authority was unclear. The
+  consequence was false negative existence checks, inconsistent read/stat/list
+  snapshots, path aliases, and cached data outliving its project or release.
+  Hosted paths now use one bounded forward-slash identity, snapshot generations
+  and content context are explicit, index completeness controls fallback
+  behavior, directory and file collisions fail closed, and release-manifest
+  caches are scoped to their owning release identity.
+- **Symptom -> Source -> Consequence -> Remedy:** realtime invalidation retained
+  request credentials as background authority, accepted loosely shaped
+  messages and cursors, and let reconnect, abort, and replacement races leave a
+  stale socket active. The consequence was authority surviving its request,
+  malformed invalidations changing cache state, duplicate reconnect work, and
+  stale generations publishing events. Tokens are now project-bound,
+  invalidation messages use strict schemas, one generation owns each connection
+  and cursor, reconnect work is bounded, and every abort, replacement, close,
+  and failed-open path deterministically retires its resources.
+- **Symptom -> Source -> Consequence -> Remedy:** Redis module loading and cloud
+  project resolution accepted ambiguous runtime shapes and identifiers and
+  treated operational failures as missing optional state. The consequence was
+  late type failures, inconsistent cloud selection, and silent degradation.
+  Runtime exports and configuration are now validated before use, project
+  identity is normalized once, optional absence is distinguished from
+  operational failure, and unsupported configurations fail with actionable
+  errors.
+
+The residual cache, compatibility, and local-adapter wave is complete:
+
+- **Symptom -> Source -> Consequence -> Remedy:** filesystem caches relied on
+  lossy serialization and incomplete request identity; retry and circuit
+  helpers admitted unsafe numeric policy and overlapping timers; invalidation
+  metrics duplicated mutable state. The consequence was corrupted snapshots,
+  incorrect in-flight deduplication, mutation after caching, retry storms, and
+  request state surviving its owner. A strict entry codec now rejects
+  unsupported values and snapshots supported data, dedupe keys include the
+  complete operation identity, retry and circuit policy is bounded and
+  monotonic, and request invalidation state has one generation-scoped owner.
+- **Symptom -> Source -> Consequence -> Remedy:** runtime detection trusted
+  overlapping globals, environment snapshots lost special own keys, dotenv
+  parsing admitted unbounded or partial input, and Cloudflare environment
+  bindings could be mistaken for mutable process state. The consequence was
+  incorrect adapter selection, prototype-sensitive environment behavior,
+  partial configuration commits, and mutation of deployment bindings. Runtime
+  detection now validates coherent signals, local auto-detection is distinct
+  from explicitly supplied hosted adapters, environment snapshots preserve all
+  own string keys as inert data, dotenv input and expansion are bounded and
+  atomic, and hosted writes use a local overlay.
+- **Symptom -> Source -> Consequence -> Remedy:** command execution could buffer
+  without a limit or outlive its caller; flags and filesystem shims inherited
+  host coercion, prototype, regular-expression, traversal, and option drift;
+  path behavior varied with the host operating system. The consequence was
+  memory exhaustion, hung child processes, prototype-sensitive options,
+  recursive cycles, and nonportable Windows/POSIX results. Command output,
+  duration, cleanup, and errors are now bounded and explicit; shim inputs and
+  recursion are validated; and a host-independent path implementation owns the
+  portable semantics. The public POSIX namespace is loaded from the actual
+  Deno POSIX module or Node/Bun `path.posix` and is immutable.
+- **Symptom -> Source -> Consequence -> Remedy:** global-error conversion,
+  standard-input multiplexing, transform initialization, virtual and framework
+  source paths, React source resolution, and esbuild temporary work relied on
+  optimistic throwable, concurrency, path, or cleanup assumptions. The
+  consequence was secondary failures while reporting errors, concurrent-reader
+  races, initialization races, source-root escape, predictable temporary
+  artifacts, and leaked files. These boundaries now normalize hostile values
+  without invoking unsafe user code, serialize or reject conflicting
+  operations, enforce canonical roots and file URLs, allocate protected
+  temporary state, and clean up on every terminal path.
+- **Symptom -> Source -> Consequence -> Remedy:** mock filesystem behavior
+  diverged from production adapters, runtime shells rewrote native errors,
+  temporary prefixes admitted separators, local `exists()` hid operational
+  failures, and production modules exposed test-only hooks while assertion
+  helpers could report false success. The consequence was tests certifying
+  behavior that production did not implement and callers losing actionable
+  failure identity. Mocks now implement production collision, ownership, and
+  error semantics; only true not-found maps to `false`; native errors remain
+  intact; temporary names stay under the runtime temp root; test-only mutation
+  hooks are removed; and assertion helpers fail closed.
+
+The public documentation now states the actual runtime-detection, adapter,
+filesystem, watcher, command, dotenv, path, environment, error, and hosted
+storage contracts. Generated API references and the runtime-adapter
+architecture guide were refreshed from the current source.
+
+Final closure evidence:
+
+- Direct formatting checks all 376 Platform files, direct lint checks all 373
+  applicable Platform files, and direct type checking covers every Platform
+  TypeScript file with zero failures.
+- The complete Deno Platform suite passes 206 suites and 2,724 nested steps
+  with zero failures.
+- The supported Node harness passes all four Platform shards: 374, 553, 445,
+  and 458 tests, totaling 1,830 tests with zero failures or skips.
+- Bun is not installed in the final closure environment, so the final wave
+  could not be rerun natively there. The current branch's earlier Bun 1.3.14
+  evidence remains recorded above; later Bun-shared runtime paths execute the
+  same Node-compatible implementation revalidated by the Node harness, and
+  Deno covers the portable branch.
+- Architecture, core-dependency, dependency-boundary, and module-boundary
+  checks pass. The module-boundary baseline is reduced to 62 broad imports and
+  two cycle edges. The 14 architecture size warnings are all owned by other
+  open units.
+- `deno task lint:platform` still reports 27 platform-agnostic portability
+  findings, all outside `src/platform`, in modules that remain open for their
+  own review; Platform itself contributes zero findings.
+- Documentation validation passes all 66 guides and 739 links.
+  `deno task verify:quick` passes manifest freshness, formatting across 4,369
+  configured files, lint across 4,276 configured files, every enforced style
+  and architecture ratchet, extension contracts, documentation validation,
+  and every configured source and browser entrypoint typecheck.
+
+No unresolved critical or high-confidence Platform production risk remains.
+The `platform` audit unit is closed. Agent, Modules, Release-assets, Server,
+Transforms, Utils, and Workflow remain listed for their own top-level
+revalidation because their source changed as a Platform consumer or supporting
+boundary during this checkpoint.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
