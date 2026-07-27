@@ -609,6 +609,94 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("bounds an in-flight refresh when no release becomes active", async () => {
+      let routingLookups = 0;
+      let releaseFirstLookup!: () => void;
+      let markFirstLookupStarted!: () => void;
+      let markLookupsJoined!: () => void;
+      let joinedLookups = 0;
+      const firstLookupStarted = new Promise<void>((resolve) => {
+        markFirstLookupStarted = resolve;
+      });
+      const lookupsJoined = new Promise<void>((resolve) => {
+        markLookupsJoined = resolve;
+      });
+      const firstLookupRelease = new Promise<void>((resolve) => {
+        releaseFirstLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          joinedLookups++;
+          if (joinedLookups === 2) markLookupsJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          if (routingLookups === 1) {
+            markFirstLookupStarted();
+            await firstLookupRelease;
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: null,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        const first = handler.processRequest(req());
+        await firstLookupStarted;
+        const second = handler.processRequest(req());
+        const third = handler.processRequest(req());
+        await lookupsJoined;
+        releaseFirstLookup();
+
+        const results = await Promise.all([first, second, third]);
+        assertEquals(results.map((result) => result.error?.status), [404, 404, 404]);
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        releaseFirstLookup();
+        await server.shutdown();
+      }
+    });
+
     it("invalidates routing metadata only for the targeted project", async () => {
       const routingLookups = new Map<string, number>();
       const { server, port } = createMockServer((req: Request) => {

@@ -83,6 +83,7 @@ interface ProjectRoutingCacheEntry {
 
 interface ProjectRoutingInflightEntry {
   generation: number;
+  isRefreshAfterIncompleteResult: boolean;
   promise: Promise<ProjectRoutingLookupResult | null>;
 }
 
@@ -608,6 +609,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       routingLookupCache.delete(cacheKey);
       logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
     };
+    let refreshAfterIncompleteResult = false;
 
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
@@ -618,7 +620,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
         }
-        if (cached) discardIncompleteResult();
+        if (cached) {
+          discardIncompleteResult();
+          refreshAfterIncompleteResult = true;
+        }
 
         while (true) {
           const existingLookup = routingLookupInflight.get(cacheKey);
@@ -626,9 +631,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
           logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
           const result = await existingLookup.promise;
-          if (canUseResult(result)) return result;
+          if (existingLookup.isRefreshAfterIncompleteResult || canUseResult(result)) return result;
 
           discardIncompleteResult();
+          refreshAfterIncompleteResult = true;
           if (routingLookupInflight.get(cacheKey) === existingLookup) {
             routingLookupInflight.delete(cacheKey);
           }
@@ -676,6 +682,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         })();
         const inflightEntry: ProjectRoutingInflightEntry = {
           generation: routingLookupGeneration,
+          isRefreshAfterIncompleteResult: refreshAfterIncompleteResult,
           promise: lookupPromise,
         };
         routingLookupInflight.set(cacheKey, inflightEntry);
