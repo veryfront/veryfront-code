@@ -599,32 +599,39 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     lookupKey: string,
     token: string,
     timing?: ProxyServerTiming,
-    isCachedResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
+    isResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
   ): Promise<ProjectRoutingLookupResult | null> {
     const cacheKey = normalizeProjectLookupKey(lookupKey);
+    const canUseResult = (result: ProjectRoutingLookupResult | null): boolean =>
+      !result || !isResultUsable || isResultUsable(result);
+    const discardIncompleteResult = (): void => {
+      routingLookupCache.delete(cacheKey);
+      logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
+    };
+
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.routing_lookup",
       async () => {
         const cached = getCachedRoutingLookup(cacheKey);
-        if (cached && (!isCachedResultUsable || isCachedResultUsable(cached))) {
+        if (cached && canUseResult(cached)) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
         }
-        if (cached) {
-          routingLookupCache.delete(cacheKey);
-          logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
-        }
+        if (cached) discardIncompleteResult();
 
-        const existingLookup = routingLookupInflight.get(cacheKey);
-        if (existingLookup?.generation === routingLookupGeneration) {
+        while (true) {
+          const existingLookup = routingLookupInflight.get(cacheKey);
+          if (!existingLookup || existingLookup.generation !== routingLookupGeneration) break;
+
           logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
           const result = await existingLookup.promise;
-          if (!result || !isCachedResultUsable || isCachedResultUsable(result)) {
-            return result;
+          if (canUseResult(result)) return result;
+
+          discardIncompleteResult();
+          if (routingLookupInflight.get(cacheKey) === existingLookup) {
+            routingLookupInflight.delete(cacheKey);
           }
-          routingLookupCache.delete(cacheKey);
-          logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
         }
 
         const lookupPromise = (async () => {

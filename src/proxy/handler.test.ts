@@ -507,17 +507,18 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("refreshes an in-flight routing result without an active release", async () => {
+    it("single-flights refreshes after an in-flight result without an active release", async () => {
       let routingLookups = 0;
       let activeReleaseId: string | null = null;
-      let releaseFirstLookup: (() => void) | undefined;
+      let releaseFirstLookup!: () => void;
       let markFirstLookupStarted!: () => void;
-      let markLookupJoined!: () => void;
+      let markLookupsJoined!: () => void;
+      let joinedLookups = 0;
       const firstLookupStarted = new Promise<void>((resolve) => {
         markFirstLookupStarted = resolve;
       });
-      const lookupJoined = new Promise<void>((resolve) => {
-        markLookupJoined = resolve;
+      const lookupsJoined = new Promise<void>((resolve) => {
+        markLookupsJoined = resolve;
       });
       const firstLookupRelease = new Promise<void>((resolve) => {
         releaseFirstLookup = resolve;
@@ -527,7 +528,8 @@ describe("Proxy Handler", () => {
       logger.debug = (message, extra) => {
         recordDebug(message, extra);
         if (message === "Proxy routing metadata lookup joined in-flight request") {
-          markLookupJoined();
+          joinedLookups++;
+          if (joinedLookups === 2) markLookupsJoined();
         }
       };
 
@@ -580,19 +582,29 @@ describe("Proxy Handler", () => {
         const beforeActivation = handler.processRequest(req());
         await firstLookupStarted;
         activeReleaseId = "rel-456";
-        const afterActivation = handler.processRequest(req());
-        await lookupJoined;
+        const afterActivationA = handler.processRequest(req());
+        const afterActivationB = handler.processRequest(req());
+        await lookupsJoined;
         releaseFirstLookup();
 
         assertEquals((await beforeActivation).error?.status, 404);
-        const afterActivationResult = await afterActivation;
-        assertEquals(afterActivationResult.error, undefined);
-        assertEquals(afterActivationResult.releaseId, "rel-456");
+        const [afterActivationResultA, afterActivationResultB] = await Promise.all([
+          afterActivationA,
+          afterActivationB,
+        ]);
+        assertEquals(afterActivationResultA.error, undefined);
+        assertEquals(afterActivationResultA.releaseId, "rel-456");
+        assertEquals(afterActivationResultB.error, undefined);
+        assertEquals(afterActivationResultB.releaseId, "rel-456");
+
+        const cachedResult = await handler.processRequest(req());
+        assertEquals(cachedResult.error, undefined);
+        assertEquals(cachedResult.releaseId, "rel-456");
         assertEquals(routingLookups, 2);
 
         await handler.close();
       } finally {
-        releaseFirstLookup?.();
+        releaseFirstLookup();
         await server.shutdown();
       }
     });
