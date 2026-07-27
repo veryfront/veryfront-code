@@ -6,6 +6,7 @@ import {
   determineClientModuleStrategy,
   getHydrationReactImportSpecifiers,
   resolveClientModuleStrategy,
+  resolveReleaseAssetModuleUrl,
 } from "./client-module-strategy.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
@@ -51,6 +52,29 @@ describe("rendering/rsc/client-module-strategy", () => {
         version: "abc123",
       }),
       "/_veryfront/rsc/module?rel=app%2Fpage.tsx&v=abc123",
+    );
+  });
+
+  it("prefers release asset urls for remote client modules", () => {
+    assertEquals(
+      buildClientModuleUrl({
+        strategy: "rsc-module",
+        rel: "app/page.tsx",
+        releaseAssetModules: {
+          "app/page.tsx": "/_vf/assets/page-hash.js",
+        },
+      }),
+      "/_vf/assets/page-hash.js",
+    );
+  });
+
+  it("resolves release asset urls from module endpoint paths", () => {
+    assertEquals(
+      resolveReleaseAssetModuleUrl(
+        { "app/page.tsx": "/_vf/assets/page-hash.js" },
+        "/_vf_modules/app/page.js",
+      ),
+      "/_vf/assets/page-hash.js",
     );
   });
 

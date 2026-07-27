@@ -311,6 +311,7 @@ export class HTMLGenerator {
       nonce: context.options?.nonce,
       importMapJson,
       projectStylesheetHref,
+      releaseAssetManifest,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;

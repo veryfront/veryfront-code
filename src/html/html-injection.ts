@@ -19,6 +19,8 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
+import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -57,6 +59,8 @@ export interface InjectHTMLContentOptions {
   importMapJson?: string;
   /** Framework-generated project stylesheet for production shells */
   projectStylesheetHref?: string;
+  /** Ready release asset manifest used to hydrate full HTML client pages */
+  releaseAssetManifest?: ReleaseAssetManifest | null;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -142,6 +146,7 @@ export function injectHTMLContent(
         isLocalProject: options.isLocalProject ?? options.mode === "development",
         environment: options.environment,
       }),
+      releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
     });
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =

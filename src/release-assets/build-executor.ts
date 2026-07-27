@@ -75,8 +75,8 @@ const logger = serverLogger.component("release-asset-build");
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories used as browser graph entry seeds. Imports may reach any project directory. */
-const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
-const PROJECT_IMPORT_ROOTS = ["app/", ...BROWSER_MODULE_DIRS];
+const BROWSER_MODULE_DIRS = ["components/", "layouts/", "lib/", "src/"];
+const PROJECT_IMPORT_ROOTS = ["app/", "pages/", ...BROWSER_MODULE_DIRS];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react",

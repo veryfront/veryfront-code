@@ -3,6 +3,14 @@ export function routeForPage(logicalPath: string): string | null {
   if (logicalPath.startsWith("pages/")) {
     const withoutPrefix = logicalPath.slice("pages/".length);
     const withoutExt = withoutPrefix.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
+    const segments = withoutExt.split("/").filter(Boolean);
+    if (
+      segments.length === 0 ||
+      segments[0] === "api" ||
+      segments.some((segment) => segment.startsWith("_"))
+    ) {
+      return null;
+    }
     const route = withoutExt.replace(/\/index$/, "").replace(/^index$/, "");
     return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
   }

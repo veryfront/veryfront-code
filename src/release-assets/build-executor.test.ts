@@ -180,6 +180,8 @@ describe("release asset build executor", () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/api/hello.ts", content: "export function GET() {}" },
+      { path: "pages/_app.tsx", content: "export default ({ Component }) => <Component />;" },
       { path: "components/Button.tsx", content: "export const Button = () => null;" },
       { path: "README.md", content: "# docs" },
     ];
@@ -203,6 +205,9 @@ describe("release asset build executor", () => {
     assertExists(manifest.modules["components/Button.tsx"]);
     // README is not a browser module — excluded.
     assertEquals(manifest.modules["README.md"], undefined);
+    // Pages Router API and reserved framework files are not browser routes.
+    assertEquals(manifest.modules["pages/api/hello.ts"], undefined);
+    assertEquals(manifest.modules["pages/_app.tsx"], undefined);
     // Page route maps to its module (single module, no imports).
     assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
     // No CSS pipeline injected → css empty + gap recorded.
@@ -1935,6 +1940,11 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage("pages/blog/index.tsx"), "/blog");
     assertEquals(routeForPage("pages/blog/post.tsx"), "/blog/post");
     assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
+    assertEquals(routeForPage("pages/api/hello.ts"), null);
+    assertEquals(routeForPage("pages/api/users/[id].ts"), null);
+    assertEquals(routeForPage("pages/_app.tsx"), null);
+    assertEquals(routeForPage("pages/_document.tsx"), null);
+    assertEquals(routeForPage("pages/blog/_draft.tsx"), null);
     assertEquals(routeForPage("app/page.tsx"), "/");
     assertEquals(routeForPage("app/(marketing)/page.tsx"), "/");
     assertEquals(routeForPage("app/(marketing)/blog/page.tsx"), "/blog");
