@@ -7,6 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { createError, toError } from "#veryfront/errors";
 import {
   chmod,
   createFileSystem,
@@ -313,6 +314,28 @@ describe("Filesystem Compat", () => {
       error.name = "VeryfrontError";
       error.slug = "file-not-found";
       assertEquals(isNotFoundError(error), true);
+    });
+
+    it("recognizes legacy structured file-not-found errors", () => {
+      const error = toError(
+        createError({
+          type: "file",
+          message: "File not found: app/layout.mdx",
+        }),
+      );
+
+      assertEquals(isNotFoundError(error), true);
+    });
+
+    it("does not classify legacy operational file errors as absence", () => {
+      const error = toError(
+        createError({
+          type: "file",
+          message: "Failed to stat app/layout.mdx: storage unavailable",
+        }),
+      );
+
+      assertEquals(isNotFoundError(error), false);
     });
 
     it("should return true when not-found is wrapped in an Error cause chain", () => {

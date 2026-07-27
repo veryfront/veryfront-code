@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -163,6 +164,52 @@ describe("ReadOperations", () => {
   });
 
   describe("readTextFile", () => {
+    it("normalizes a terminal draft API 404 to filesystem absence", async () => {
+      const upstream = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+      });
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getFileContent: () => Promise.reject(upstream),
+        }),
+        false,
+        createBranchContext(),
+      );
+
+      const error = await assertRejects(
+        () => readOps.readTextFile("app/globals.css"),
+        Error,
+        "404 Not Found: app/globals.css",
+      );
+
+      assertEquals((error as Error & { code?: string }).code, "ENOENT");
+      assertEquals(error.cause === upstream, true);
+    });
+
+    it("normalizes a terminal published API 404 to filesystem absence", async () => {
+      const upstream = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+      });
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContent: () => Promise.reject(upstream),
+        }),
+        false,
+        createReleaseContext("rel-missing-css"),
+      );
+
+      const error = await assertRejects(
+        () => readOps.readTextFile("app/globals.css"),
+        Error,
+        "404 Not Found: app/globals.css",
+      );
+
+      assertEquals((error as Error & { code?: string }).code, "ENOENT");
+      assertEquals(error.cause === upstream, true);
+    });
+
     it("should fetch draft content for branch context", async () => {
       let fetchedPath: string | undefined;
       const client = createMockClient({
@@ -198,6 +245,28 @@ describe("ReadOperations", () => {
       assertEquals(content, "published content here");
       assertEquals(fetchedPath, "pages/index.tsx");
       assertEquals(fetchedReleaseId, "rel-abc");
+    });
+
+    it("preserves non-404 API read failures", async () => {
+      const upstream = API_CLIENT_ERROR.create({
+        detail: "storage unavailable",
+        status: 503,
+      });
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getFileContent: () => Promise.reject(upstream),
+        }),
+        false,
+        createBranchContext(),
+      );
+
+      const error = await assertRejects(
+        () => readOps.readTextFile("pages/index.tsx"),
+        Error,
+        "storage unavailable",
+      );
+
+      assertEquals(error === upstream, true);
     });
 
     it("should hit request-scoped cache within a single request context", async () => {
@@ -945,6 +1014,53 @@ describe("ReadOperations", () => {
       });
 
       assertEquals(settled, { status: "resolved", value: "fast ts content" });
+    });
+  });
+
+  describe("readOptionalTextFile", () => {
+    it("normalizes an expected API 404 without hiding the upstream cause", async () => {
+      const upstream = API_CLIENT_ERROR.create({
+        detail: "API request failed: 404 Not Found",
+        status: 404,
+      });
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getOptionalFileContent: () => Promise.reject(upstream),
+        }),
+        false,
+        createBranchContext(),
+      );
+
+      const error = await assertRejects(
+        () => readOps.readOptionalTextFile("app/globals.css"),
+        Error,
+        "404 Not Found: app/globals.css",
+      );
+
+      assertEquals((error as Error & { code?: string }).code, "ENOENT");
+      assertEquals(error.cause === upstream, true);
+    });
+
+    it("preserves operational optional-read failures", async () => {
+      const upstream = API_CLIENT_ERROR.create({
+        detail: "upstream unavailable",
+        status: 503,
+      });
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getOptionalFileContent: () => Promise.reject(upstream),
+        }),
+        false,
+        createBranchContext(),
+      );
+
+      const error = await assertRejects(
+        () => readOps.readOptionalTextFile("app/globals.css"),
+        Error,
+        "upstream unavailable",
+      );
+
+      assertEquals(error === upstream, true);
     });
   });
 

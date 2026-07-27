@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createError, toError } from "#veryfront/errors";
 import { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
 
 describe("rendering/orchestrator/file-resolver/candidates", () => {
@@ -46,6 +47,19 @@ describe("rendering/orchestrator/file-resolver/candidates", () => {
     it("should return null for empty candidates", async () => {
       const statFn = () => Promise.resolve({});
       assertEquals(await findFirstExisting([], statFn), null);
+    });
+
+    it("continues after a hosted adapter reports a structured missing path", async () => {
+      const missing = toError(
+        createError({
+          type: "file",
+          message: "File not found: /a.ts",
+        }),
+      );
+      const statFn = (path: string) =>
+        path === "/a.ts" ? Promise.reject(missing) : Promise.resolve({});
+
+      assertEquals(await findFirstExisting(["/a.ts", "/b.ts"], statFn), "/b.ts");
     });
 
     it("should return first match when multiple exist", async () => {

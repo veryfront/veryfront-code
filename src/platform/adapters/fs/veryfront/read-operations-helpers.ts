@@ -110,8 +110,14 @@ export function isNotFoundLikeError(error: unknown): boolean {
   return typeof error === "string" && isLegacyNotFoundMessage(error);
 }
 
-export function createNotFoundLikeError(path: string): NotFoundLikeError {
-  return Object.assign(new Error(`404 Not Found: ${path}`), { code: "ENOENT" });
+export function createNotFoundLikeError(
+  path: string,
+  cause?: unknown,
+): NotFoundLikeError {
+  const error = cause === undefined
+    ? new Error(`404 Not Found: ${path}`)
+    : new Error(`404 Not Found: ${path}`, { cause });
+  return Object.assign(error, { code: "ENOENT" });
 }
 
 function isLegacyNotFoundMessage(message: string): boolean {

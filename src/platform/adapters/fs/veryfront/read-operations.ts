@@ -96,7 +96,14 @@ export class ReadOperations {
         const normalizedPath = this.normalizer.normalize(path);
         const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
         logger.debug("readOptionalTextFile called", { path, normalizedPath, apiPath });
-        return await this.client.getOptionalFileContent(apiPath);
+        try {
+          return await this.client.getOptionalFileContent(apiPath);
+        } catch (error) {
+          if (isNotFoundLikeError(error)) {
+            throw createNotFoundLikeError(normalizedPath, error);
+          }
+          throw error;
+        }
       },
       { "fs.path": path },
     );
@@ -282,6 +289,11 @@ export class ReadOperations {
         });
 
         return result;
+      } catch (error) {
+        if (isNotFoundLikeError(error)) {
+          throw createNotFoundLikeError(normalizedPath, error);
+        }
+        throw error;
       } finally {
         this.inFlightRequests.delete(cacheKey, fetchIdentity);
       }
