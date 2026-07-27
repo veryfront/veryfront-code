@@ -14,7 +14,7 @@ describe("webhook/factory", () => {
       eventFilter: {
         mode: "all",
         conditions: [
-          { path: "$.type", operator: "equals", value: "ticket.created" },
+          { path: "type", operator: "equals", value: "ticket.created" },
         ],
       },
     });
@@ -26,7 +26,7 @@ describe("webhook/factory", () => {
       eventFilter: {
         mode: "all",
         conditions: [
-          { path: "$.type", operator: "equals", value: "ticket.created" },
+          { path: "type", operator: "equals", value: "ticket.created" },
         ],
       },
     });
@@ -61,6 +61,71 @@ describe("webhook/factory", () => {
         }),
       VeryfrontError,
       "Agent webhooks must define agentMessage.promptTemplate.",
+    );
+  });
+
+  it("normalizes cloud-compatible agent conversation metadata", () => {
+    const definition = webhook({
+      id: "agent-ticket-created",
+      target: { kind: "agent", id: "support-agent" },
+      agentMessage: {
+        promptTemplate: "Triage {{payload.summary}}.",
+        conversationMode: "existing",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+      },
+    });
+
+    assertEquals(definition.agentMessage, {
+      promptTemplate: "Triage {{payload.summary}}.",
+      conversationMode: "existing",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("supports every hosted filter operator and an empty match-all filter", () => {
+    const definition = webhook({
+      id: "ticket-created",
+      target: { kind: "task", id: "process-ticket" },
+      eventFilter: {
+        mode: "all",
+        conditions: [
+          { path: "action", operator: "equals", value: "opened" },
+          { path: "draft", operator: "not_equals", value: true },
+          { path: "action", operator: "in", value: ["opened", "reopened"] },
+          { path: "number", operator: "exists" },
+          { path: "labels", operator: "contains", value: "backend" },
+        ],
+      },
+    });
+    const matchAll = webhook({
+      id: "all-events",
+      target: { kind: "workflow", id: "process-event" },
+      eventFilter: { mode: "any", conditions: [] },
+    });
+
+    assertEquals(
+      definition.eventFilter?.conditions.map((condition) => condition.operator),
+      ["equals", "not_equals", "in", "exists", "contains"],
+    );
+    assertEquals(matchAll.eventFilter, { mode: "any", conditions: [] });
+  });
+
+  it("trims filter paths before enforcing the hosted length bound", () => {
+    const definition = webhook({
+      id: "ticket-created",
+      target: { kind: "task", id: "process-ticket" },
+      eventFilter: {
+        mode: "all",
+        conditions: [{
+          path: ` ${"p".repeat(255)} `,
+          operator: "exists",
+        }],
+      },
+    });
+
+    assertEquals(
+      definition.eventFilter?.conditions[0]?.path,
+      "p".repeat(255),
     );
   });
 
@@ -190,5 +255,277 @@ describe("webhook/factory", () => {
     ) {
       assertEquals(isWebhookDefinition(value), false);
     }
+  });
+
+  it("rejects unsupported fields, accessors, custom prototypes, and sparse arrays", () => {
+    let getterCalls = 0;
+    const accessorConfig = {
+      target: { kind: "workflow", id: "escalate-ticket" },
+    };
+    Object.defineProperty(accessorConfig, "id", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "ticket-created";
+      },
+    });
+    const inheritedCondition = Object.create({
+      path: "action",
+      operator: "equals",
+      value: "opened",
+    });
+    const sparseConditions = Array(1);
+
+    for (
+      const [config, message] of [
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            unsupported: true,
+          },
+          "Webhook configuration.unsupported is not supported.",
+        ],
+        [
+          accessorConfig,
+          "Webhook configuration.id must be an own enumerable data property.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "workflow", id: "escalate-ticket", extra: true },
+          },
+          "Webhook target.extra is not supported.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            eventFilter: {
+              mode: "all",
+              conditions: [inheritedCondition],
+            },
+          },
+          "Webhook eventFilter condition 0 must be a plain object.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "workflow", id: "escalate-ticket" },
+            eventFilter: { mode: "all", conditions: sparseConditions },
+          },
+          "Webhook eventFilter conditions[0] must be an enumerable data property.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => webhook(config as never),
+        VeryfrontError,
+        message,
+      );
+    }
+    assertEquals(getterCalls, 0);
+  });
+
+  it("enforces hosted reconciliation bounds", () => {
+    const condition = { path: "action", operator: "exists" } as const;
+    for (
+      const [config, message] of [
+        [
+          {
+            id: "a".repeat(129),
+            target: { kind: "task", id: "process-ticket" },
+          },
+          "Webhook id must be at most 128 characters.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            name: "n".repeat(121),
+            target: { kind: "task", id: "process-ticket" },
+          },
+          "Webhook name must be at most 120 characters.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "task", id: "t".repeat(256) },
+          },
+          "Webhook target must specify a task, workflow, or agent id of at most 255 characters",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "task", id: "process-ticket" },
+            eventFilter: {
+              mode: "all",
+              conditions: [{ path: "p".repeat(256), operator: "exists" }],
+            },
+          },
+          "Webhook eventFilter condition 0 path must be at most 255 characters.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "task", id: "process-ticket" },
+            eventFilter: {
+              mode: "all",
+              conditions: Array.from({ length: 51 }, () => condition),
+            },
+          },
+          "Webhook eventFilter conditions must contain at most 50 entries.",
+        ],
+        [
+          {
+            id: "agent-ticket-created",
+            target: { kind: "agent", id: "support-agent" },
+            agentMessage: { promptTemplate: "p".repeat(20_001) },
+          },
+          "Webhook agentMessage.promptTemplate must be at most 20000 characters.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => webhook(config as never),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("rejects control characters in identifiers, labels, and filter paths", () => {
+    for (
+      const [config, message] of [
+        [
+          {
+            id: "ticket-created\u0000",
+            target: { kind: "task", id: "process-ticket" },
+          },
+          "Webhook id must not contain control characters.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            name: "Ticket\u0007created",
+            target: { kind: "task", id: "process-ticket" },
+          },
+          "Webhook name must not contain control characters.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "task", id: "process-ticket" },
+            eventFilter: {
+              mode: "all",
+              conditions: [{ path: "action\nkind", operator: "exists" }],
+            },
+          },
+          "Webhook eventFilter condition 0 path must not contain control characters.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => webhook(config as never),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("rejects misleading agent mappings and invalid conversation relationships", () => {
+    for (
+      const [config, message] of [
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "task", id: "process-ticket" },
+            agentMessage: { promptTemplate: "Unused." },
+          },
+          "Webhook agentMessage is supported only for agent targets.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "agent", id: "support-agent" },
+            agentMessage: {
+              promptTemplate: "Triage.",
+              conversationMode: "existing",
+            },
+          },
+          "Webhook agentMessage.conversationId is required when conversationMode is existing.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "agent", id: "support-agent" },
+            agentMessage: {
+              promptTemplate: "Triage.",
+              conversationMode: "none",
+              conversationId: "11111111-1111-4111-8111-111111111111",
+            },
+          },
+          "Webhook agentMessage.conversationId is allowed only when conversationMode is existing.",
+        ],
+        [
+          {
+            id: "ticket-created",
+            target: { kind: "agent", id: "support-agent" },
+            agentMessage: {
+              promptTemplate: "Triage.",
+              conversationMode: "existing",
+              conversationId: "not-a-uuid",
+            },
+          },
+          "Webhook agentMessage.conversationId must be a UUID or null.",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => webhook(config as never),
+        VeryfrontError,
+        message,
+      );
+    }
+  });
+
+  it("owns nested target, filter, and agent mapping state", () => {
+    const target = { kind: "agent" as const, id: "support-agent" };
+    const conditions = [
+      { path: "action", operator: "equals" as const, value: "opened" },
+    ];
+    const agentMessage = {
+      promptTemplate: "Review {{payload.action}}.",
+      conversationMode: "none" as const,
+    };
+    const definition = webhook({
+      id: "ticket-created",
+      target,
+      eventFilter: { mode: "all", conditions },
+      agentMessage,
+    });
+
+    target.id = "mutated-agent";
+    conditions[0]!.path = "mutated";
+    conditions.push({
+      path: "extra",
+      operator: "equals",
+      value: "extra",
+    });
+    agentMessage.promptTemplate = "Mutated.";
+
+    assertEquals(definition, {
+      id: "ticket-created",
+      target: { kind: "agent", id: "support-agent" },
+      eventFilter: {
+        mode: "all",
+        conditions: [
+          { path: "action", operator: "equals", value: "opened" },
+        ],
+      },
+      agentMessage: {
+        promptTemplate: "Review {{payload.action}}.",
+        conversationMode: "none",
+      },
+    });
   });
 });

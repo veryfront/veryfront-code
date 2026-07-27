@@ -26,6 +26,7 @@ clear.
 | [Workflow](./workflow.md)                             | Multi-step work with visible process state.                |
 | [Run](./run.md)                                       | Durable records for background execution.                  |
 | [Schedule](./schedule.md)                             | Triggers that create runs.                                 |
+| [Webhook](./webhook.md)                               | Filtered external events that start targets.               |
 | [Integration](./integration.md)                       | External service access, auth, and remote tools.           |
 | [Salesforce integration](./salesforce-integration.md) | Why Salesforce is routed through Veryfront's tool policy.  |
 | [MCP server](./mcp-server.md)                         | Tools, prompts, and resources exposed to assistants.       |

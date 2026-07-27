@@ -33,7 +33,7 @@ export default schedule({
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `discoverSchedules` | Discover and validate canonical schedule definitions from a project directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L26) |
+| `discoverSchedules` | Discover and validate canonical schedule definitions from a project directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L27) |
 | `isScheduleDefinition` | Return true only when every schedule field and nested invariant is valid. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L92) |
 | `schedule` | Validate and normalize a source-defined schedule configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/factory.ts#L12) |
 
@@ -44,8 +44,8 @@ export default schedule({
 | `ScheduleConcurrencyPolicy` | Behavior when a scheduled occurrence overlaps an active run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L5) |
 | `ScheduleConfig` | Author-facing recurring schedule configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L82) |
 | `ScheduleDefinition` | Validated, canonical source definition for one recurring schedule. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L48) |
-| `ScheduleDiscoveryOptions` | Inputs for deterministic source schedule discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L11) |
-| `ScheduleDiscoveryResult` | Valid schedules and bounded per-file discovery diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L23) |
+| `ScheduleDiscoveryOptions` | Inputs for deterministic source schedule discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L12) |
+| `ScheduleDiscoveryResult` | Valid schedules and bounded per-file discovery diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L24) |
 | `ScheduleHealth` | Marks a schedule unhealthy when it has not succeeded within the given budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L8) |
 | `ScheduleIntegrationRequirement` | Canonical integration access required before a scheduled run can start. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L28) |
 | `ScheduleIntegrationRequirementConfig` | Author-facing integration requirement; omitted collections default to empty. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L38) |

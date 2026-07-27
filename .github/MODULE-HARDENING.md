@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    30 |      51.7% | Current formal closure evidence remains valid       |
+| Closed                         |    31 |      53.4% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    26 |      44.8% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    25 |      43.1% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -67,6 +67,7 @@ stricter closure count.
 - `task`
 - `trigger`
 - `types`
+- `webhook`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
@@ -99,7 +100,6 @@ stricter closure count.
 - `testing`
 - `tool`
 - `transforms`
-- `webhook`
 - `workflow`
 - `index.ts`
 
@@ -125,7 +125,7 @@ The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `trigger`, `types`, and `version.ts`.
+`schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, and `version.ts`.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -157,6 +157,12 @@ and revalidated.
 boundary, canonical definition ownership, integration requirements, local and
 remote execution controls, public surface, documentation, and direct consumers
 were remediated and revalidated.
+`webhook` is closed after its data-only definition and payload boundaries,
+hosted filter and prompt semantics, target-specific local execution, source
+discovery, public surface, documentation, and direct consumers were remediated
+and revalidated. The shared trigger and schedule discovery changes made during
+that closure received complete affected-suite and repository-boundary
+revalidation, so both previously closed units remain closed.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -3490,5 +3496,111 @@ top-level revalidation because its registration consumer changed during this
 checkpoint. The generated server bundle does not reopen Server, and the narrow
 error guidance remains covered by the complete current error verification
 above.
+
+### Webhook closure checkpoint
+
+The `webhook` audit unit owns the public source-definition factory and types,
+canonical definition validation, source discovery, event filtering, agent
+prompt mapping, payload preparation, and the local CLI handoff to task,
+workflow, or agent execution. Its direct dependencies are errors, schemas,
+configuration, platform adapters, trigger discovery and execution, and project
+discovery configuration. Direct consumers are the general project discovery
+engine, the `webhook` and `webhooks` CLI commands, hosted reconciliation,
+generated API documentation, and task, workflow, or agent targets.
+
+The current webhook findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** definitions accepted
+  inherited fields, accessors, custom prototypes, sparse arrays, unknown
+  properties, unbounded metadata, and caller-owned nested state. The source was
+  optimistic shape checking followed by direct property reads. The consequence
+  was executable validation, prototype-sensitive behavior, misleading ignored
+  configuration, resource abuse, and definitions changing after registration.
+  One fail-closed normalization boundary now accepts exact plain records and
+  dense plain arrays, captures data properties once without invoking getters,
+  rejects symbols and unknown fields, bounds identifiers, metadata, filters,
+  paths, prompts, and diagnostics, and returns owned target, filter, and agent
+  mapping snapshots.
+- **Symptom -> Source -> Consequence -> Remedy:** the public filter contract
+  omitted hosted `in` comparisons, examples used a misleading `$.` path,
+  agent conversation metadata was absent, and non-agent targets silently
+  retained dead agent mappings. The consequence was source accepted locally
+  behaving differently after reconciliation and configuration that could
+  never take effect. The source model now matches the hosted operators,
+  dot-path traversal, 50-condition and path limits, 20,000-character prompt
+  limit, conversation modes, UUID relationship, and agent-only mapping rule.
+  Filter paths are trimmed before their hosted length check.
+- **Symptom -> Source -> Consequence -> Remedy:** local webhook execution sent
+  every fixture directly to its target without applying the event filter or
+  prompt template. The consequence was filtered events running locally,
+  workflow and agent inputs diverging from hosted runs, and local tests
+  providing false confidence. A shared prepared-invocation boundary now owns
+  and limits payloads to 64 KiB, implements structural filter equality and all
+  hosted operators, shapes task and workflow inputs consistently, renders
+  recognized payload placeholders, appends context only when no placeholder
+  exists, and isolates agent context. Non-matching events return the hosted
+  ignored reason without discovering or starting the target.
+- **Symptom -> Source -> Consequence -> Remedy:** prompt rendering inferred
+  placeholder presence by comparing the rendered and original strings. A
+  payload value identical to its placeholder therefore looked unrendered and
+  received an unexpected appended payload. Rendering now records regex matches
+  explicitly, with a regression covering an identity-preserving replacement.
+  Existing hosted conversations are rejected for standalone local runs rather
+  than silently ignored.
+- **Symptom -> Source -> Consequence -> Remedy:** dedicated schedule and webhook
+  discovery ignored configured custom or disabled paths, while the shared
+  trigger scanner handled only one directory. The consequence was default
+  directories loading despite project policy and no correct multi-root
+  duplicate namespace. Dedicated discovery now consumes the same project
+  discovery configuration as file watching and general discovery. The shared
+  scanner validates a bounded data-only directory collection, treats all roots
+  as one deterministic duplicate-safe namespace, de-duplicates overlapping
+  roots, and preserves per-root errors. Explicit singular overrides remain
+  supported.
+- **Symptom -> Source -> Consequence -> Remedy:** the general discovery handler
+  registered the validated webhook object without taking ownership, and the CLI
+  reached into private framework files. The consequence was a mutable second
+  registration path and a forbidden architectural dependency. General
+  discovery now registers a new canonical snapshot. Identifier validation and
+  prepared invocation are documented public `veryfront/webhook` APIs, with
+  exact export-identity and built-package consumer checks.
+- **Symptom -> Source -> Consequence -> Remedy:** the public docs did not state
+  payload limits, target-specific input shapes, exact operators, prompt
+  substitution, conversation constraints, or the fact that payload text is
+  untrusted prompt content. Public JSDoc, generated API reference, architecture
+  notes, CLI help, and a Diátaxis concept page now describe the implemented
+  boundary. The page is indexed and protected by content-contract and runnable
+  example tests.
+
+Current webhook verification evidence:
+
+- The final affected webhook, trigger, schedule, discovery, and CLI set checks
+  25 test files and passes 57 suites with 185 nested steps and zero failures.
+  It includes exact 64 KiB acceptance and overflow rejection, hostile
+  accessors, structural filter semantics, identity-preserving placeholders,
+  filtered target suppression, real local agent prompt/context execution,
+  owned general registration, custom and disabled paths, multi-root duplicate
+  rejection, overlapping-root de-duplication, and public export identity.
+- Documentation generation reports all 40 API module groups and complete JSDoc
+  for the new public webhook declarations. Validation passes all 67 public
+  guides, 112 public docs, every guide contract and executable example, and all
+  746 links.
+- Core dependency, dependency boundary, CLI boundary, and module boundary
+  checks pass with zero new violations and zero cyclic edges. The module
+  baseline remains 62 broad imports.
+- Two consecutive `deno task verify:quick` passes cover manifest freshness,
+  formatting across 4,407 configured files, lint across 4,313 source files,
+  every style, dependency, module, extension, documentation, and production or
+  browser entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilds the npm package and every extension
+  from current source, reports zero npm vulnerabilities, passes root import
+  lifecycle checks, and verifies published composition declarations with
+  `tsc --noEmit`.
+
+No unresolved critical or high-confidence webhook production risk remains;
+the `webhook` audit unit is closed. `trigger` and `schedule` remain closed after
+complete affected-suite revalidation. Discovery remains listed for its own
+top-level revalidation because shared discovery configuration and registration
+consumers changed during this checkpoint.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

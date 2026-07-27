@@ -2,7 +2,7 @@ import { join } from "@std/path";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { normalizeDiscoveryPath } from "#veryfront/discovery/discovery-utils.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
-import { TRIGGER_CONFIG_INVALID } from "#veryfront/errors";
+import { TRIGGER_CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/index.ts";
@@ -16,6 +16,7 @@ const TRIGGER_IGNORE_PATTERNS = [
   "*.test.*",
   "*.spec.*",
 ] as const;
+const MAX_TRIGGER_DIRECTORIES = 100;
 
 /** Source definition families handled by shared trigger discovery. */
 export type SourceTriggerKind = "schedule" | "webhook";
@@ -55,19 +56,32 @@ export interface SourceTriggerDiscoveryResult<T> {
   errors: SourceTriggerDiscoveryError[];
 }
 
-/** Shared filesystem and source-kind options for trigger discovery. */
-export interface TriggerDiscoveryOptions {
+interface TriggerDiscoveryBaseOptions {
   /** Project root used to resolve local source paths and module imports. */
   projectDir: string;
   /** Runtime-specific filesystem and module execution adapter. */
   adapter: RuntimeAdapter;
   /** Optional project configuration, including virtual filesystem mode. */
   config?: VeryfrontConfig;
-  /** Source directory relative to the project or virtual filesystem root. */
-  triggerDir: string;
   /** Source definition kind used in diagnostics. */
   sourceKind: SourceTriggerKind;
 }
+
+/** Shared filesystem, directory, and source-kind options for trigger discovery. */
+export type TriggerDiscoveryOptions =
+  & TriggerDiscoveryBaseOptions
+  & (
+    | {
+      /** One source directory relative to the project or virtual filesystem root. */
+      triggerDir: string;
+      triggerDirs?: never;
+    }
+    | {
+      triggerDir?: never;
+      /** Multiple source directories searched as one deterministic namespace. */
+      triggerDirs: readonly string[];
+    }
+  );
 
 /** Minimum contract required for source trigger de-duplication. */
 export interface TriggerDefinitionWithId {
@@ -76,13 +90,14 @@ export interface TriggerDefinitionWithId {
 }
 
 /** Validation and normalization contract for source trigger discovery. */
-export interface SourceTriggerDiscoveryOptions<T extends TriggerDefinitionWithId>
-  extends TriggerDiscoveryOptions {
-  /** Reject module exports that are not definitions of the expected kind. */
-  validate: (value: unknown) => value is T;
-  /** Copy and normalize a validated definition before returning it. */
-  normalize?: (value: T) => T;
-}
+export type SourceTriggerDiscoveryOptions<T extends TriggerDefinitionWithId> =
+  & TriggerDiscoveryOptions
+  & {
+    /** Reject module exports that are not definitions of the expected kind. */
+    validate: (value: unknown) => value is T;
+    /** Copy and normalize a validated definition before returning it. */
+    normalize?: (value: T) => T;
+  };
 
 function invalidDiscoveryConfiguration(detail: string, cause?: unknown): never {
   throw TRIGGER_CONFIG_INVALID.create({
@@ -132,6 +147,102 @@ function normalizeTriggerDirectory(value: unknown): string {
     );
   }
   return normalized;
+}
+
+function normalizeTriggerDirectoriesUnsafe(
+  triggerDir: unknown,
+  triggerDirs: unknown,
+): string[] {
+  if (triggerDir !== undefined && triggerDirs !== undefined) {
+    invalidDiscoveryConfiguration(
+      "Trigger discovery accepts either triggerDir or triggerDirs, not both.",
+    );
+  }
+  if (triggerDir !== undefined) {
+    return [normalizeTriggerDirectory(triggerDir)];
+  }
+  if (!Array.isArray(triggerDirs)) {
+    invalidDiscoveryConfiguration(
+      "Trigger discovery requires a source directory or directory collection.",
+    );
+  }
+  if (Reflect.getPrototypeOf(triggerDirs) !== Array.prototype) {
+    invalidDiscoveryConfiguration(
+      "Trigger source directories must be a plain array.",
+    );
+  }
+
+  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(
+    triggerDirs,
+    "length",
+  );
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    typeof length !== "number" ||
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > MAX_TRIGGER_DIRECTORIES
+  ) {
+    invalidDiscoveryConfiguration(
+      `Trigger discovery accepts at most ${MAX_TRIGGER_DIRECTORIES} source directories.`,
+    );
+  }
+
+  const allowedKeys = new Set<PropertyKey>(["length"]);
+  for (let index = 0; index < length; index++) {
+    allowedKeys.add(String(index));
+  }
+  if (Reflect.ownKeys(triggerDirs).some((key) => !allowedKeys.has(key))) {
+    invalidDiscoveryConfiguration(
+      "Trigger source directories must not define custom properties.",
+    );
+  }
+
+  const normalizedDirectories: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < length; index++) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(
+      triggerDirs,
+      String(index),
+    );
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !("value" in descriptor)
+    ) {
+      invalidDiscoveryConfiguration(
+        `Trigger source directories[${index}] must be an enumerable data property.`,
+      );
+    }
+    const normalized = normalizeTriggerDirectory(descriptor.value);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      normalizedDirectories.push(normalized);
+    }
+  }
+  return normalizedDirectories;
+}
+
+function normalizeTriggerDirectories(
+  triggerDir: unknown,
+  triggerDirs: unknown,
+): string[] {
+  try {
+    return normalizeTriggerDirectoriesUnsafe(triggerDir, triggerDirs);
+  } catch (error) {
+    if (
+      error instanceof VeryfrontError &&
+      error.slug === TRIGGER_CONFIG_INVALID.slug
+    ) {
+      throw error;
+    }
+    invalidDiscoveryConfiguration(
+      "Trigger source directories are invalid.",
+      error,
+    );
+  }
 }
 
 function validateDiscoveryProjectDir(value: unknown): asserts value is string {
@@ -256,6 +367,7 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
     adapter,
     config,
     triggerDir,
+    triggerDirs,
     sourceKind,
     validate,
     normalize = (value: T): T => value,
@@ -269,84 +381,86 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
       "Trigger discovery requires callable validation and normalization contracts.",
     );
   }
-  const baseDir = resolveTriggerBaseDir(
-    projectDir,
-    normalizeTriggerDirectory(triggerDir),
-    config,
+  const baseDirs = normalizeTriggerDirectories(triggerDir, triggerDirs).map(
+    (directory) => resolveTriggerBaseDir(projectDir, directory, config),
   );
   const candidates: Array<{ definition: T; sourcePath: string }> = [];
   const errors: SourceTriggerDiscoveryError[] = [];
+  const seenSourcePaths = new Set<string>();
 
-  try {
-    const dirExists = await adapter.fs.exists(baseDir);
-    if (!dirExists) return { items: [], errors };
+  for (const baseDir of baseDirs) {
+    try {
+      const dirExists = await adapter.fs.exists(baseDir);
+      if (!dirExists) continue;
 
-    const files = await collectTriggerFiles(baseDir, adapter);
-    for (const file of files) {
-      try {
-        const module = await importDiscoveryModule(file.path, {
-          adapter,
-          projectDir,
-        }) as Record<string, unknown>;
-        const triggerExport = selectTriggerExport(module, validate);
-
-        if (triggerExport.kind === "missing") {
-          errors.push(createError({
-            sourceKind,
-            sourcePath: file.path,
-            code: "invalid_definition",
-            message: `File must export a valid ${sourceKind} definition.`,
-          }));
-          continue;
-        }
-        if (triggerExport.kind === "ambiguous") {
-          errors.push(createError({
-            sourceKind,
-            sourcePath: file.path,
-            code: "invalid_definition",
-            message: `File exports multiple distinct ${sourceKind} definitions: ${
-              triggerExport.exportNames.join(", ")
-            }. Export exactly one definition.`,
-            details: { exportNames: [...triggerExport.exportNames] },
-          }));
-          continue;
-        }
-
-        let definition: T;
+      const files = await collectTriggerFiles(baseDir, adapter);
+      for (const file of files) {
+        const sourcePathKey = file.path.replaceAll("\\", "/");
+        if (seenSourcePaths.has(sourcePathKey)) continue;
+        seenSourcePaths.add(sourcePathKey);
         try {
-          definition = normalize(triggerExport.definition);
+          const module = await importDiscoveryModule(file.path, {
+            adapter,
+            projectDir,
+          }) as Record<string, unknown>;
+          const triggerExport = selectTriggerExport(module, validate);
+
+          if (triggerExport.kind === "missing") {
+            errors.push(createError({
+              sourceKind,
+              sourcePath: file.path,
+              code: "invalid_definition",
+              message: `File must export a valid ${sourceKind} definition.`,
+            }));
+            continue;
+          }
+          if (triggerExport.kind === "ambiguous") {
+            errors.push(createError({
+              sourceKind,
+              sourcePath: file.path,
+              code: "invalid_definition",
+              message: `File exports multiple distinct ${sourceKind} definitions: ${
+                triggerExport.exportNames.join(", ")
+              }. Export exactly one definition.`,
+              details: { exportNames: [...triggerExport.exportNames] },
+            }));
+            continue;
+          }
+
+          let definition: T;
+          try {
+            definition = normalize(triggerExport.definition);
+          } catch (error) {
+            errors.push(createError({
+              sourceKind,
+              sourcePath: file.path,
+              sourceId: triggerExport.definition.id,
+              code: "invalid_definition",
+              message: toErrorMessage(error),
+            }));
+            continue;
+          }
+
+          candidates.push({ definition, sourcePath: file.path });
         } catch (error) {
           errors.push(createError({
             sourceKind,
             sourcePath: file.path,
-            sourceId: triggerExport.definition.id,
-            code: "invalid_definition",
+            code: "parse_error",
             message: toErrorMessage(error),
           }));
-          continue;
         }
-
-        candidates.push({ definition, sourcePath: file.path });
-      } catch (error) {
-        errors.push(createError({
-          sourceKind,
-          sourcePath: file.path,
-          code: "parse_error",
-          message: toErrorMessage(error),
-        }));
       }
+    } catch (error) {
+      errors.push(createError({
+        sourceKind,
+        sourcePath: baseDir,
+        code: "parse_error",
+        message: toErrorMessage(error),
+      }));
     }
-
-    return finalizeDiscoveryResult(candidates, errors, sourceKind);
-  } catch (error) {
-    errors.push(createError({
-      sourceKind,
-      sourcePath: baseDir,
-      code: "parse_error",
-      message: toErrorMessage(error),
-    }));
-    return finalizeDiscoveryResult(candidates, errors, sourceKind);
   }
+  return finalizeDiscoveryResult(candidates, errors, sourceKind);
 }
 
 function finalizeDiscoveryResult<T extends TriggerDefinitionWithId>(

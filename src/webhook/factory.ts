@@ -1,5 +1,5 @@
 import type { WebhookConfig, WebhookDefinition } from "./types.ts";
-import { normalizeWebhookDefinition } from "./validation.ts";
+import { normalizeWebhookConfig } from "./validation.ts";
 
 /**
  * Validate and normalize a source-defined webhook configuration.
@@ -8,5 +8,5 @@ import { normalizeWebhookDefinition } from "./validation.ts";
  * the definition can enter discovery or trigger execution.
  */
 export function webhook(config: WebhookConfig): WebhookDefinition {
-  return normalizeWebhookDefinition(config);
+  return normalizeWebhookConfig(config);
 }

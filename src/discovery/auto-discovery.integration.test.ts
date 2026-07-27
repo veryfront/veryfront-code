@@ -347,6 +347,86 @@ describe(
       }
     });
 
+    it("honors configured and disabled source-trigger discovery paths", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("/project/automation/schedules", {
+        recursive: true,
+      });
+      await adapter.fs.mkdir("/project/automation/hooks", {
+        recursive: true,
+      });
+      await adapter.fs.mkdir("/project/webhooks", { recursive: true });
+      await adapter.fs.writeFile(
+        "/project/automation/schedules/daily.ts",
+        [
+          'import { schedule } from "veryfront/schedule";',
+          "export default schedule({",
+          '  id: "daily",',
+          '  schedule: "0 8 * * *",',
+          '  target: { kind: "task", id: "daily-task" },',
+          "});",
+        ].join("\n"),
+      );
+      await adapter.fs.writeFile(
+        "/project/automation/hooks/ticket.ts",
+        [
+          'import { webhook } from "veryfront/webhook";',
+          "export default webhook({",
+          '  id: "ticket",',
+          '  target: { kind: "task", id: "ticket-task" },',
+          "});",
+        ].join("\n"),
+      );
+      await adapter.fs.writeFile(
+        "/project/webhooks/default-must-not-load.ts",
+        [
+          'import { webhook } from "veryfront/webhook";',
+          "export default webhook({",
+          '  id: "default-must-not-load",',
+          '  target: { kind: "task", id: "default-task" },',
+          "});",
+        ].join("\n"),
+      );
+
+      const schedules = await discoverSchedules({
+        projectDir: "/project",
+        adapter,
+        config: {
+          ai: {
+            schedules: {
+              discovery: { paths: ["automation/schedules"] },
+            },
+          },
+        },
+      });
+      const webhooks = await discoverWebhooks({
+        projectDir: "/project",
+        adapter,
+        config: {
+          ai: {
+            webhooks: {
+              discovery: { paths: ["automation/hooks"] },
+            },
+          },
+        },
+      });
+      const disabledWebhooks = await discoverWebhooks({
+        projectDir: "/project",
+        adapter,
+        config: {
+          ai: {
+            webhooks: { discovery: { enabled: false } },
+          },
+        },
+      });
+
+      assertEquals(schedules.items.map((item) => item.id), ["daily"]);
+      assertEquals(schedules.errors, []);
+      assertEquals(webhooks.items.map((item) => item.id), ["ticket"]);
+      assertEquals(webhooks.errors, []);
+      assertEquals(disabledWebhooks, { items: [], errors: [] });
+    });
+
     it("reports invalid source-defined schedule files", async () => {
       const adapter = createMockAdapter();
       await adapter.fs.mkdir("/project/schedules", { recursive: true });

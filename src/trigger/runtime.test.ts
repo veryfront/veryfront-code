@@ -150,6 +150,67 @@ describe("trigger runtime", () => {
     assertEquals(result.items.map((item) => item.id), ["a-first", "z-last"]);
   });
 
+  it("treats multiple source directories as one duplicate-safe namespace", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/hooks/first.ts": 'export default { id: "shared", marker: "first" };\n',
+      "/project/hooks/unique.ts": 'export default { id: "alpha", marker: "unique" };\n',
+      "/project/other-hooks/second.ts": 'export default { id: "shared", marker: "second" };\n',
+      "/project/other-hooks/last.ts": 'export default { id: "zeta", marker: "last" };\n',
+    });
+
+    const result = await discoverSourceTriggers({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      triggerDirs: ["hooks", "other-hooks", "hooks"],
+      sourceKind: "webhook",
+      validate: isFixtureTrigger,
+    });
+
+    assertEquals(result.items.map((item) => item.id), ["alpha", "zeta"]);
+    assertEquals(
+      result.errors.map((error) => ({
+        path: error.sourcePath,
+        code: error.code,
+        sourceId: error.sourceId,
+        paths: error.details?.sourcePaths,
+      })),
+      [
+        {
+          path: "hooks/first.ts",
+          code: "duplicate_source_id",
+          sourceId: "shared",
+          paths: ["hooks/first.ts", "other-hooks/second.ts"],
+        },
+        {
+          path: "other-hooks/second.ts",
+          code: "duplicate_source_id",
+          sourceId: "shared",
+          paths: ["hooks/first.ts", "other-hooks/second.ts"],
+        },
+      ],
+    );
+  });
+
+  it("loads files beneath overlapping source directories only once", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/hooks/root.ts": 'export default { id: "root", marker: "root" };\n',
+      "/project/hooks/nested/child.ts": 'export default { id: "child", marker: "child" };\n',
+    });
+
+    const result = await discoverSourceTriggers({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      triggerDirs: ["hooks", "hooks/nested"],
+      sourceKind: "webhook",
+      validate: isFixtureTrigger,
+    });
+
+    assertEquals(result.items.map((item) => item.id), ["child", "root"]);
+    assertEquals(result.errors, []);
+  });
+
   it("rejects distinct definitions in one file but accepts aliases", async () => {
     const adapter = createRuntimeAdapter({
       "/project/schedules/aliased.ts": [
@@ -216,6 +277,48 @@ describe("trigger runtime", () => {
         "Trigger source directory",
       );
     }
+    assertEquals(existsCalls, 0);
+  });
+
+  it("rejects ambiguous and non-data directory collections before adapter access", async () => {
+    let existsCalls = 0;
+    const adapter = createRuntimeAdapter({}, () => existsCalls++);
+    const sparseDirectories = Array(1);
+    const customDirectories = ["webhooks"];
+    Object.defineProperty(customDirectories, "extra", {
+      enumerable: true,
+      value: "other",
+    });
+
+    for (const triggerDirs of [sparseDirectories, customDirectories]) {
+      await assertRejects(
+        () =>
+          discoverSourceTriggers({
+            projectDir: "/project",
+            adapter,
+            config: { fs: { type: "veryfront-api" } },
+            triggerDirs,
+            sourceKind: "webhook",
+            validate: isFixtureTrigger,
+          }),
+        Error,
+        "Trigger source directories",
+      );
+    }
+    await assertRejects(
+      () =>
+        discoverSourceTriggers({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          triggerDir: "webhooks",
+          triggerDirs: ["other-webhooks"],
+          sourceKind: "webhook",
+          validate: isFixtureTrigger,
+        } as never),
+      Error,
+      "either triggerDir or triggerDirs",
+    );
     assertEquals(existsCalls, 0);
   });
 

@@ -60,9 +60,12 @@ flowchart TD
    project runs, reading events, and cancelling execution.
 4. Public schemas validate run and event response shapes.
 5. Cloud execution is delegated to the configured runtime adapter.
-6. Local schedule and webhook execution validates a canonical target, snapshots
-   bounded JSON input, performs unified runtime discovery, and dispatches the
-   task, workflow, or agent with the caller's cancellation signal.
+6. Local schedule and webhook execution validates a canonical target,
+   snapshots bounded JSON input, and performs unified runtime discovery.
+   Webhook execution first applies its cloud-compatible filter and agent prompt
+   mapping; a non-matching event is ignored without discovering its target.
+   Matching triggers dispatch the task, workflow, or agent with the caller's
+   cancellation signal.
 
 Schedule APIs live outside the runs client. A schedule eventually creates a
 canonical run, after which the same run detail, event, and cancellation

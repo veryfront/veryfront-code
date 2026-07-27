@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import {
   discoverSourceTriggers,
   type SourceTriggerDiscoveryResult,
@@ -9,13 +10,13 @@ import { normalizeScheduleDefinition } from "./validation.ts";
 
 /** Inputs for deterministic source schedule discovery. */
 export interface ScheduleDiscoveryOptions {
-  /** Project root containing the schedule source directory. */
+  /** Project root containing configured schedule source directories. */
   projectDir: string;
   /** Runtime adapter used to enumerate and import project source. */
   adapter: RuntimeAdapter;
   /** Optional project configuration used during source loading. */
   config?: VeryfrontConfig;
-  /** Schedule directory relative to `projectDir`; defaults to `schedules`. */
+  /** Explicit schedule directory override relative to `projectDir`. */
   schedulesDir?: string;
 }
 
@@ -26,11 +27,17 @@ export type ScheduleDiscoveryResult = SourceTriggerDiscoveryResult<ScheduleDefin
 export async function discoverSchedules(
   options: ScheduleDiscoveryOptions,
 ): Promise<ScheduleDiscoveryResult> {
+  const triggerDirs = options.schedulesDir === undefined
+    ? createProjectDiscoveryConfig({
+      projectDir: options.projectDir,
+      config: options.config,
+    }).scheduleDirs
+    : [options.schedulesDir];
   return await discoverSourceTriggers({
     projectDir: options.projectDir,
     adapter: options.adapter,
     config: options.config,
-    triggerDir: options.schedulesDir ?? "schedules",
+    triggerDirs,
     sourceKind: "schedule",
     validate: isScheduleDefinition,
     normalize: normalizeScheduleDefinition,

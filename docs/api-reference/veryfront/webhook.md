@@ -7,7 +7,13 @@ order: 39
 ## Import
 
 ```ts
-import { discoverWebhooks, isWebhookDefinition, webhook } from "veryfront/webhook";
+import {
+  discoverWebhooks,
+  isWebhookDefinition,
+  isWebhookId,
+  prepareWebhookInvocation,
+  webhook,
+} from "veryfront/webhook";
 ```
 
 ## Examples
@@ -36,20 +42,24 @@ export default webhook({
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `discoverWebhooks` | Discover and validate source-defined webhooks beneath the configured directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L20) |
-| `isWebhookDefinition` | Return true only when every webhook field and nested invariant is valid. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L39) |
+| `discoverWebhooks` | Discover and validate source-defined webhooks across configured directories. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L27) |
+| `isWebhookDefinition` | Return true only when every webhook field and nested invariant is valid. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L69) |
+| `isWebhookId` | Return true for source webhook identifiers accepted by hosted reconciliation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/validation.ts#L246) |
+| `prepareWebhookInvocation` | Revalidate and own a definition and payload before local webhook execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L168) |
 | `webhook` | Validate and normalize a source-defined webhook configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/factory.ts#L10) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `WebhookAgentMessageMapping` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L23) |
-| `WebhookConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L36) |
-| `WebhookDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L27) |
-| `WebhookDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L10) |
-| `WebhookDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L17) |
-| `WebhookEventFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L18) |
-| `WebhookEventFilterCondition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L12) |
-| `WebhookEventFilterMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L4) |
-| `WebhookEventFilterOperator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L6) |
+| `PreparedWebhookInvocation` | Owned, cloud-compatible inputs for one local webhook target run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/runtime.ts#L16) |
+| `WebhookAgentConversationMode` | Hosted conversation behavior for an agent-target webhook. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L34) |
+| `WebhookAgentMessageMapping` | Prompt and optional hosted conversation mapping for an agent target. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L40) |
+| `WebhookConfig` | Author-facing webhook configuration accepted by `webhook`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L66) |
+| `WebhookDefinition` | Validated source definition for one webhook trigger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L50) |
+| `WebhookDiscoveryOptions` | Inputs for deterministic source webhook discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L12) |
+| `WebhookDiscoveryResult` | Valid webhooks and bounded per-file discovery diagnostics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L24) |
+| `WebhookEventFilter` | Optional gate evaluated before a webhook target starts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L26) |
+| `WebhookEventFilterCondition` | One dot-path comparison against the webhook JSON payload. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L16) |
+| `WebhookEventFilterMode` | Whether every filter condition or at least one condition must match. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L5) |
+| `WebhookEventFilterOperator` | Comparisons supported by hosted and local webhook filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L8) |

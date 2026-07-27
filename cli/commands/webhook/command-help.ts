@@ -8,7 +8,7 @@ export const webhookHelp: CommandHelp = {
   options: [
     {
       flag: "--payload <file>",
-      description: "JSON payload fixture",
+      description: "JSON payload fixture (64 KiB maximum; filters and agent templates are applied)",
     },
     {
       flag: "--json",
