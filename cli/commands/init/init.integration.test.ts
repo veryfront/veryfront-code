@@ -204,7 +204,8 @@ describe("init command integration", () => {
       const result = await runInitCommand([projectName, "--skip-install"]);
 
       assertEquals(result.code, 0);
-      assertEquals(await exists(join(projectDir, "public", "favicon.ico")), true);
+      assertEquals(await exists(join(projectDir, "public", "favicon.svg")), true);
+      assertEquals(await exists(join(projectDir, "public", "favicon.ico")), false);
     });
 
     it("creates coding-agent instructions for every starter template", async () => {

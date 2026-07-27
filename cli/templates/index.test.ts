@@ -106,10 +106,6 @@ describe("cli/templates", () => {
     const page = await Deno.readTextFile(
       new URL("./files/ai-agent/app/page.tsx", import.meta.url),
     );
-    const faviconFallback = await Deno.readTextFile(
-      new URL("./files/ai-agent/public/favicon.ico", import.meta.url),
-    );
-
     assertEquals(
       agent.includes(
         'prompt: "Create a concise plan for building and launching a small web application."',
@@ -131,7 +127,6 @@ describe("cli/templates", () => {
     assertEquals(page.includes('className="h-screen"'), true);
     assertEquals(page.includes("api="), false);
     assertEquals(page.includes("placeholder="), false);
-    assertEquals(faviconFallback.includes("<svg"), true);
   });
 
   it("uses the current app-mode chat surface in starter templates", async () => {
