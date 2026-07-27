@@ -27,7 +27,7 @@ function manifest(dependencies: ReleaseAssetManifest["dependencies"]): ReleaseAs
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "test",
-    sourceContentHash: "source",
+    sourceContentHash: "c".repeat(64),
     createdAt: new Date(0).toISOString(),
     assetBasePath: "/_vf/assets",
     modules: {},

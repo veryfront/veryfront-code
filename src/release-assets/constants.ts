@@ -11,22 +11,44 @@ export const RELEASE_ASSET_MANIFEST_SCHEMA_VERSION = 1 as const;
 export const RELEASE_ASSET_BASE_PATH = "/_vf/assets" as const;
 
 /** Content types permitted for release assets. */
-export const RELEASE_ASSET_CONTENT_TYPES = {
-  js: "text/javascript",
-  css: "text/css",
-} as const;
+export const RELEASE_ASSET_CONTENT_TYPES = Object.freeze(
+  {
+    js: "text/javascript",
+    css: "text/css",
+  } as const,
+);
 
 export type ReleaseAssetExtension = keyof typeof RELEASE_ASSET_CONTENT_TYPES;
 export type ReleaseAssetContentType = (typeof RELEASE_ASSET_CONTENT_TYPES)[ReleaseAssetExtension];
 
 /** Allowlist of accepted content types (upstream + upload validation). */
-export const RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST: readonly ReleaseAssetContentType[] = [
-  RELEASE_ASSET_CONTENT_TYPES.js,
-  RELEASE_ASSET_CONTENT_TYPES.css,
-];
+export const RELEASE_ASSET_CONTENT_TYPE_ALLOWLIST: readonly ReleaseAssetContentType[] = Object
+  .freeze([
+    RELEASE_ASSET_CONTENT_TYPES.js,
+    RELEASE_ASSET_CONTENT_TYPES.css,
+  ]);
 
 /** Maximum size (bytes) for a single uploaded asset (10 MB). */
 export const RELEASE_ASSET_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+/** Work and memory bounds enforced by every manifest producer and consumer. */
+export const RELEASE_ASSET_MANIFEST_LIMITS = Object.freeze(
+  {
+    identifierLength: 256,
+    builderVersionLength: 128,
+    manifestKeyLength: 2_048,
+    styleProfileHashLength: 256,
+    gapLength: 4_096,
+    moduleEntries: 20_000,
+    dependencyEntries: 10_000,
+    cssEntries: 512,
+    routeEntries: 20_000,
+    routeModules: 20_000,
+    routeCssEntries: 512,
+    fallbackGaps: 20_000,
+    totalRouteReferences: 200_000,
+  } as const,
+);
 
 /** Immutable cache max-age in seconds (1 year). */
 export const RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS = 31_536_000;
@@ -49,6 +71,12 @@ export const RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG =
 
 /** Map a 64-hex content hash + extension to its public asset URL. */
 export function releaseAssetUrl(contentHash: string, extension: ReleaseAssetExtension): string {
+  if (!isValidContentHash(contentHash)) {
+    throw new TypeError("Release asset content hash must be 64 lowercase hexadecimal characters");
+  }
+  if (!contentTypeForExtension(extension)) {
+    throw new TypeError(`Unsupported release asset extension: ${String(extension)}`);
+  }
   return `${RELEASE_ASSET_BASE_PATH}/${contentHash}.${extension}`;
 }
 

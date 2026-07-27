@@ -26,6 +26,7 @@ import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
@@ -116,8 +117,8 @@ describe("cache/keys", () => {
       releaseId: "rel_456",
       releaseVersion: 1,
       builderVersion: "0.1.765",
-      sourceContentHash: "abc123",
-      createdAt: "2026-06-12T00:00:00Z",
+      sourceContentHash: "a".repeat(64),
+      createdAt: "2026-06-12T00:00:00.000Z",
       assetBasePath: "/_vf/assets",
       modules: {},
       css: [],
@@ -159,21 +160,18 @@ describe("cache/keys", () => {
     it("flag on + ready manifest: cache prefix gains :m{manifestVersion} suffix", async () => {
       Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
 
-      let resolvePromise!: () => void;
-      const fetchDone = new Promise<void>((r) => {
-        resolvePromise = r;
-      });
-      configureReleaseAssetManifestFetcher(async () => {
-        resolvePromise();
-        return { state: "ready", manifest: makeManifest() };
-      });
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve({ state: "ready", manifest: makeManifest() })
+      );
 
       // First call: cache miss → background fetch scheduled → returns null
       assertEquals(getReadyManifestForRender("rel_456"), null);
 
-      // Wait for the background fetch to complete
-      await fetchDone;
-      await Promise.resolve();
+      // Join the in-flight fetch instead of depending on a microtask count.
+      assertEquals(
+        (await getReadyManifestForRenderAsync("rel_456"))?.manifestVersion,
+        1,
+      );
 
       // Second call: cache hit → returns manifest
       const cached = getReadyManifestForRender("rel_456");

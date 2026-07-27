@@ -71,14 +71,21 @@ function dependencyAssetUrl(
   manifest: ReleaseAssetManifest,
   specifier: string,
 ): string | null {
-  const direct = manifest.dependencies[specifier] ??
-    manifest.dependencies[specifier.replace(/[?#].*$/, "")];
+  const direct = ownDependency(manifest, specifier) ??
+    ownDependency(manifest, specifier.replace(/[?#].*$/, ""));
   if (direct) return releaseAssetUrl(direct.contentHash, "js");
 
   const normalized = normalizeHttpUrl(specifier);
-  const normalizedEntry = manifest.dependencies[normalized] ??
-    manifest.dependencies[normalized.replace(/[?#].*$/, "")];
+  const normalizedEntry = ownDependency(manifest, normalized) ??
+    ownDependency(manifest, normalized.replace(/[?#].*$/, ""));
   return normalizedEntry ? releaseAssetUrl(normalizedEntry.contentHash, "js") : null;
+}
+
+function ownDependency(
+  manifest: ReleaseAssetManifest,
+  key: string,
+): ReleaseAssetManifest["dependencies"][string] | undefined {
+  return Object.hasOwn(manifest.dependencies, key) ? manifest.dependencies[key] : undefined;
 }
 
 function localHttpBundlePath(specifier: string): string | null {

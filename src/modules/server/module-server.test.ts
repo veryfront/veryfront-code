@@ -120,15 +120,18 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     return match?.[1] ?? "";
   }
 
-  function manifest(dependencies: ReleaseAssetManifest["dependencies"]): ReleaseAssetManifest {
+  function manifest(
+    dependencies: ReleaseAssetManifest["dependencies"],
+    releaseId = "release-id",
+  ): ReleaseAssetManifest {
     return {
       schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
       projectId: "project-id",
-      releaseId: "release-id",
+      releaseId,
       releaseVersion: 1,
       manifestVersion: 1,
       builderVersion: "test",
-      sourceContentHash: "source",
+      sourceContentHash: "a".repeat(64),
       createdAt: new Date(0).toISOString(),
       assetBasePath: "/_vf/assets",
       modules: {},
@@ -1003,7 +1006,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
               size: 100,
               contentType: "text/javascript",
             },
-          }),
+          }, releaseId),
         })
       );
 
@@ -1052,7 +1055,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
       configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: manifest({}) })
+        Promise.resolve({ state: "ready", manifest: manifest({}, releaseId) })
       );
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
@@ -1176,7 +1179,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
                   size: 100,
                   contentType: "text/javascript",
                 },
-              }),
+              }, releaseId),
             }
             : { state: "building", manifest: null },
         )

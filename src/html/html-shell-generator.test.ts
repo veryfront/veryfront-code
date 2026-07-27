@@ -357,7 +357,7 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("escapes release-manifest URLs in modulepreload attributes", async () => {
+    it("omits malformed release-manifest URLs from modulepreload attributes", async () => {
       const hostileHash = 'hash"><script>alert(1)</script>';
       const manifest: ReleaseAssetManifest = {
         schemaVersion: 1,
@@ -366,7 +366,7 @@ describe("html-generation/html-shell-generator", () => {
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "test",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-01-01T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -396,12 +396,8 @@ describe("html-generation/html-shell-generator", () => {
         options,
       );
 
-      assertStringIncludes(
-        result,
-        'href="/_vf/assets/hash&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
-      );
       assertEquals(
-        result.includes('href="/_vf/assets/hash"><script>alert(1)</script>.js"'),
+        result.includes("/_vf/assets/hash"),
         false,
       );
     });

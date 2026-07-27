@@ -10,6 +10,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
@@ -25,7 +26,7 @@ import {
   routeForPage,
   runReleaseAssetBuild,
 } from "./build-executor.ts";
-import { parseReleaseAssetManifest } from "./manifest-schema.ts";
+import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 interface Recorded {
@@ -72,7 +73,7 @@ function baseInput(
     releaseId: "rel-uuid",
     releaseVersion: 5,
     releaseVersionRef: "rel-uuid",
-    adapter: {},
+    adapter: {} as RuntimeAdapter,
     client,
     transform,
     vendorHttpImports: fakeVendorHttpImports,
@@ -82,8 +83,7 @@ function baseInput(
 function fakeHttpCachePath(url: string): string {
   const hash = Array.from(new TextEncoder().encode(url))
     .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 32);
+    .join("");
   return `/tmp/veryfront-http-bundle/http-${hash}.mjs`;
 }
 
@@ -881,7 +881,11 @@ describe("release asset build executor", () => {
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
     assertExists(manifest.modules["pages/index.tsx"]);
-    assert(manifest.fallback.gaps.includes("dependency-finalize-failed"));
+    assert(
+      manifest.fallback.gaps.includes(
+        "module-dependency-vendor-failed:pages/index.tsx",
+      ),
+    );
     const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
     assertExists(pageHash);
     const pageUpload = rec.uploads.find((u) => u.hash === pageHash);
@@ -997,7 +1001,7 @@ describe("release asset build executor", () => {
       }
       if (sourceFile.endsWith("components/Header.tsx")) {
         return Promise.resolve(
-          'import { BreakpointsProvider } from "../../custom-client/BreakpointsProvider.js"; export { BreakpointsProvider };',
+          'import { BreakpointsProvider } from "../custom-client/BreakpointsProvider.js"; export { BreakpointsProvider };',
         );
       }
       return Promise.resolve("export const BreakpointsProvider = ({ children }) => children;");
@@ -1015,7 +1019,7 @@ describe("release asset build executor", () => {
     const headerUpload = rec.uploads.find((u) => u.hash === headerHash);
     assertExists(headerUpload);
     assert(headerUpload.text.includes(`"/_vf/assets/${providerHash}.js"`));
-    assert(!headerUpload.text.includes("../../custom-client/BreakpointsProvider.js"));
+    assert(!headerUpload.text.includes("../custom-client/BreakpointsProvider.js"));
 
     const routeModules = manifest.routes["/"]?.modules ?? [];
     assert(routeModules.includes("custom-client/BreakpointsProvider.tsx"));
@@ -1887,6 +1891,155 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(manifest.manifestVersion, 42);
   });
 
+  it("hashes release file contents, not only the file-name set", async () => {
+    async function build(content: string): Promise<ReleaseAssetManifest> {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient([{ path: "pages/index.tsx", content }], rec);
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+      assertEquals(result.success, true);
+      const parsed = parseReleaseAssetManifest(rec.manifest);
+      assertExists(parsed);
+      return parsed;
+    }
+
+    const first = await build("export default 1;");
+    const second = await build("export default 2;");
+
+    assert(first.sourceContentHash !== second.sourceContentHash);
+  });
+
+  it("fails closed when an upload is not acknowledged", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        uploadReleaseAsset: () => Promise.resolve({ stored: false, existed: false }),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("fails closed when PUT does not acknowledge the expected manifest", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        putReleaseAssetManifest: (_version, manifest) => {
+          rec.manifest = manifest;
+          return Promise.resolve({ state: "failed", manifest_version: 99 });
+        },
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(result.state, "failed");
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("rejects unsafe manifest versions before materializing release files", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let listed = false;
+    const client = makeClient([], rec, {
+      beginReleaseAssetManifestBuild: () =>
+        Promise.resolve({ id: "build-1", manifest_version: Number.NaN, state: "building" }),
+      listAllReleaseFiles: () => {
+        listed = true;
+        return Promise.resolve([]);
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(listed, false);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("rejects non-canonical and aliased release file paths", async () => {
+    for (const path of ["pages/./index.tsx", "pages//index.tsx", "pages\\index.tsx"]) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient([{ path, content: "export default null;" }], rec);
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, false, path);
+      assertEquals(rec.manifest, null, path);
+    }
+  });
+
+  it("uploads equal JavaScript and CSS bytes under both content identities", async () => {
+    const shared = "same release asset bytes";
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "source" }],
+      rec,
+      {
+        compileProjectCss: () => Promise.resolve({ css: shared, styleProfileHash: "profile-1" }),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, () => Promise.resolve(shared)),
+      await tmp(),
+    );
+    assertEquals(result.success, true);
+
+    const sharedUploads = rec.uploads.filter(({ text }) => text === shared);
+    assertEquals(
+      sharedUploads.map(({ contentType }) => contentType).sort(),
+      ["text/css", "text/javascript"],
+    );
+  });
+
+  it("keeps oversized CSS out of uploads and records the fallback", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const oversizedCss = "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1);
+    const client = makeClient(
+      [{ path: "pages/index.tsx", content: "export default null;" }],
+      rec,
+      {
+        compileProjectCss: () =>
+          Promise.resolve({ css: oversizedCss, styleProfileHash: "profile-1" }),
+      },
+    );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+    const parsed = parseReleaseAssetManifest(rec.manifest);
+    assertExists(parsed);
+
+    assertEquals(result.success, true);
+    assertEquals(parsed.css, []);
+    assert(parsed.fallback.gaps.includes("css:oversized"));
+    assertEquals(rec.uploads.some(({ text }) => text.length > RELEASE_ASSET_MAX_SIZE_BYTES), false);
+  });
+
   // M2: modules exceeding the 10 MB limit are skipped with a gap.
   it("skips oversized modules with a gap instead of uploading (M2)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
@@ -1914,6 +2067,56 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage("pages/blog/post.tsx"), "/blog/post");
     assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
     assertEquals(routeForPage("components/Button.tsx"), null);
+    assertEquals(routeForPage("pages/../secret.tsx"), null);
+    assertEquals(routeForPage("pages/not-a-module.txt"), null);
+    assertEquals(routeForPage("pages//index.tsx"), null);
+    assertEquals(routeForPage(`pages/${"a".repeat(2_048)}.tsx`), null);
+  });
+
+  it("bounds oversized cycle diagnostics without failing the manifest", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const firstUrl = `https://example.com/${"a".repeat(1_400)}`;
+    const secondUrl = `https://example.com/${"b".repeat(1_400)}`;
+    const firstPath = "/tmp/veryfront-http-bundle/http-long-a.mjs";
+    const secondPath = "/tmp/veryfront-http-bundle/http-long-b.mjs";
+    const files = [{
+      path: "pages/index.tsx",
+      content: "export default null;",
+    }];
+    const client = makeClient(files, rec);
+    const input = {
+      ...baseInput(
+        client,
+        () => Promise.resolve(`import value from "${firstUrl}"; export default value;`),
+      ),
+      vendorHttpImports: withFakeReactVendor((code: string) =>
+        Promise.resolve({
+          code: code.replace(firstUrl, `file://${firstPath}`),
+          dependencies: [
+            {
+              specifier: `file://${firstPath}`,
+              manifestKey: firstUrl,
+              sourcePath: firstPath,
+              code: 'import value from "./http-long-b.mjs"; export default value;',
+            },
+            {
+              specifier: `file://${secondPath}`,
+              manifestKey: secondUrl,
+              sourcePath: secondPath,
+              code: 'import value from "./http-long-a.mjs"; export default value;',
+            },
+          ],
+        })
+      ),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+
+    assertEquals(result.success, true, result.error);
+    assertExists(manifest);
+    assert(manifest.fallback.gaps.includes("gaps:detail-limit-exceeded"));
   });
 });
 

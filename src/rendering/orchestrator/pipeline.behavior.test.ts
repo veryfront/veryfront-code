@@ -144,7 +144,7 @@ function releaseManifestWithCss(): ReleaseAssetManifest {
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.793",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {},
@@ -1217,7 +1217,7 @@ describe("RenderPipeline behavior", () => {
       "pages/behavior-release-modules.mdx": {
         contentHash: "a".repeat(64),
         size: 100,
-        contentType: "application/javascript",
+        contentType: "text/javascript",
       },
     };
 

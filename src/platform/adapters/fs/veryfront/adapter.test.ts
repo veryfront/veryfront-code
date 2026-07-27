@@ -599,7 +599,7 @@ describe("VeryfrontFSAdapter", () => {
             releaseVersion: 1,
             manifestVersion: 2,
             builderVersion: "0.1.765",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -699,7 +699,7 @@ describe("VeryfrontFSAdapter", () => {
             releaseVersion: 1,
             manifestVersion: 3,
             builderVersion: "0.1.792",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
@@ -755,7 +755,7 @@ describe("VeryfrontFSAdapter", () => {
             releaseVersion: 1,
             manifestVersion: 1,
             builderVersion: "0.1.765",
-            sourceContentHash: "",
+            sourceContentHash: "a".repeat(64),
             createdAt: "2026-06-12T00:00:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {

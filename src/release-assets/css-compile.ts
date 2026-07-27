@@ -18,8 +18,8 @@
  *   `compiler.build(candidates)` with no cross-request/distributed state.
  * - Work is bounded: one compile over the candidate set the executor already
  *   gathered, output minified, no background tasks.
- * - It is defensive by construction: every failure path returns `null` so the
- *   executor keeps its `css:no-pipeline` / `css:compile-failed` gap and proceeds.
+ * - Configuration is validated synchronously. Once configured, compile-time
+ *   failures return `null` so the executor records a CSS gap and proceeds.
  *
  * @module release-assets/css-compile
  */
@@ -28,8 +28,14 @@ import { serverLogger } from "#veryfront/utils";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { generateTailwindCSS, hashCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
+import { RELEASE_ASSET_MAX_SIZE_BYTES } from "./constants.ts";
+import { hasControlCharacters } from "./string-validation.ts";
 
 const logger = serverLogger.component("release-asset-css-compile");
+const MAX_PROJECT_SCOPE_LENGTH = 256;
+const MAX_CSS_CANDIDATES = 100_000;
+const MAX_CSS_CANDIDATE_LENGTH = 2_048;
+const textEncoder = new TextEncoder();
 
 export interface CompileProjectCssResult {
   css: string;
@@ -53,8 +59,9 @@ export interface CompileProjectCssRuntimeOptions {
  *
  * The returned function matches the build executor's injected client signature:
  * `(candidates, stylesheet, options) => Promise<{ css, styleProfileHash } | null>`. It
- * NEVER throws — any failure resolves to `null` so the executor records a CSS
- * gap and proceeds.
+ * The factory rejects invalid configuration synchronously. The returned
+ * function never throws: compile failures resolve to `null` so the executor
+ * records a CSS gap and proceeds.
  */
 export function createCompileProjectCss(
   options: CompileProjectCssOptions,
@@ -63,16 +70,63 @@ export function createCompileProjectCss(
   stylesheet: string | undefined,
   runtimeOptions?: CompileProjectCssRuntimeOptions,
 ) => Promise<CompileProjectCssResult | null> {
+  if (
+    !options ||
+    typeof options !== "object" ||
+    typeof options.projectScope !== "string" ||
+    options.projectScope.length === 0 ||
+    options.projectScope.length > MAX_PROJECT_SCOPE_LENGTH ||
+    options.projectScope.trim() !== options.projectScope ||
+    hasControlCharacters(options.projectScope)
+  ) {
+    throw new TypeError("Release CSS project scope is invalid");
+  }
+
   return async (
     candidates: Set<string>,
     stylesheet: string | undefined,
     runtimeOptions?: CompileProjectCssRuntimeOptions,
   ): Promise<CompileProjectCssResult | null> => {
     try {
+      if (!(candidates instanceof Set) || candidates.size > MAX_CSS_CANDIDATES) {
+        logger.warn("Release asset CSS candidates exceed the supported boundary", {
+          projectScope: options.projectScope,
+          candidateCount: candidates instanceof Set ? candidates.size : null,
+          limit: MAX_CSS_CANDIDATES,
+        });
+        return null;
+      }
+      const candidateSnapshot = new Set<string>();
+      for (const candidate of candidates) {
+        if (
+          typeof candidate !== "string" ||
+          candidate.length === 0 ||
+          candidate.length > MAX_CSS_CANDIDATE_LENGTH ||
+          hasControlCharacters(candidate)
+        ) {
+          logger.warn("Release asset CSS candidate is invalid", {
+            projectScope: options.projectScope,
+          });
+          return null;
+        }
+        candidateSnapshot.add(candidate);
+      }
+      if (
+        stylesheet !== undefined &&
+        (typeof stylesheet !== "string" ||
+          textEncoder.encode(stylesheet).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES)
+      ) {
+        logger.warn("Release asset stylesheet exceeds the supported boundary", {
+          projectScope: options.projectScope,
+          limit: RELEASE_ASSET_MAX_SIZE_BYTES,
+        });
+        return null;
+      }
+
       // A stylesheet can emit base/custom CSS without any utility candidates
       // (CSS variables, global rules), so only skip when there is neither a
       // stylesheet nor any candidates to compile.
-      if (candidates.size === 0 && !stylesheet) {
+      if (candidateSnapshot.size === 0 && !stylesheet) {
         logger.debug("No CSS candidates or stylesheet for release; skipping compile", {
           projectScope: options.projectScope,
         });
@@ -81,7 +135,7 @@ export function createCompileProjectCss(
 
       const styleProfile = createStyleScopeProfile(runtimeOptions?.config ?? options.config);
 
-      const result = await generateTailwindCSS(stylesheet, candidates, {
+      const result = await generateTailwindCSS(stylesheet, candidateSnapshot, {
         minify: true,
         environment: "production",
         buildMode: "production",
@@ -95,10 +149,17 @@ export function createCompileProjectCss(
         });
         return null;
       }
+      if (textEncoder.encode(result.css).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+        logger.warn("Release asset CSS compile output exceeds the asset limit", {
+          projectScope: options.projectScope,
+          limit: RELEASE_ASSET_MAX_SIZE_BYTES,
+        });
+        return null;
+      }
 
       logger.debug("Release asset CSS compiled", {
         projectScope: options.projectScope,
-        candidateCount: candidates.size,
+        candidateCount: candidateSnapshot.size,
         cssLength: result.css.length,
         cssHash: hashCSS(result.css),
         styleProfileHash: styleProfile.hash,

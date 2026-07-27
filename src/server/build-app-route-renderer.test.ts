@@ -199,7 +199,7 @@ Deno.test({
         releaseVersion: 0,
         manifestVersion: 1,
         builderVersion: "0.1.810",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-15T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {},

@@ -1100,7 +1100,10 @@ export class Renderer {
     try {
       const elapsedAdmissionMs = performance.now() - admissionStartedAt;
       const globalWaitMs = waitForCapacity
-        ? Math.max(0, RENDER_ACQUIRE_TIMEOUT_MS - elapsedAdmissionMs)
+        ? Math.max(
+          0,
+          Math.floor(RENDER_ACQUIRE_TIMEOUT_MS - elapsedAdmissionMs),
+        )
         : 0;
       globalAcquired = await renderSemaphore.tryAcquire(globalWaitMs, {
         ...(admissionSignal ? { signal: admissionSignal } : {}),

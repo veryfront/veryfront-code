@@ -2,7 +2,7 @@
  * Release Asset Manifest — in-process consumption cache (production HTML).
  *
  * Fetches manifests from the project-scoped GET endpoint once per release and
- * caches them keyed by `${releaseId}:${manifestVersion}`. Ready manifests are
+ * caches them under collision-free release/version tuple identities. Ready manifests are
  * cached for a bounded TTL (15 min) so superseded manifests are eventually
  * replaced; non-ready / missing results are cached for a short TTL so the
  * common "no manifest" case stays cheap.
@@ -28,8 +28,9 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { markRequestProfilePhase, profilePhase } from "#veryfront/observability";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "./constants.ts";
+import { RELEASE_ASSET_MANIFEST_ENV_FLAG, RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
 import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
+import { hasControlCharacters } from "./string-validation.ts";
 
 const logger = serverLogger.component("release-asset-manifest");
 
@@ -43,8 +44,13 @@ const NON_READY_REVALIDATE_MS = 5_000;
 const READY_TTL_MS = 15 * 60 * 1000;
 /** Background revalidation interval for ready manifests (1 min). */
 const READY_REVALIDATE_MS = 60_000;
+/** A manifest fetch must not hold an HTML render or in-flight slot forever. */
+const MANIFEST_FETCH_TIMEOUT_MS = 10_000;
+const MAX_REGISTERED_FETCHERS = 10_000;
 
 interface CacheEntry {
+  releaseId: string;
+  ownerToken: symbol;
   manifest: ReleaseAssetManifest | null;
   /** Absolute expiry timestamp. */
   expiresAt: number;
@@ -56,8 +62,10 @@ const manifestCache = new LRUCache<string, CacheEntry>({ maxEntries: MAX_CACHED_
 registerLRUCache("release-asset-manifest-cache", manifestCache);
 
 interface InFlightFetch {
-  generation: number;
+  generation: symbol;
   token: symbol;
+  ownerToken: symbol;
+  controller: AbortController;
   promise: Promise<ReleaseAssetManifest | null>;
 }
 
@@ -73,7 +81,12 @@ export interface ReadyManifestReadOptions {
 /** In-flight fetches, deduped per releaseId. */
 const inFlight = new Map<string, InFlightFetch>();
 /** Monotonic guard that invalidates pending fetch writers after cache clears. */
-let cacheGeneration = 0;
+let cacheGeneration = Symbol("release-asset-manifest-cache-generation");
+
+export interface ReleaseAssetManifestFetchContext {
+  /** Aborted when the fetch times out or its fetcher loses ownership. */
+  readonly signal: AbortSignal;
+}
 
 /**
  * Fetcher used to retrieve a manifest for a release. Registered per-releaseId
@@ -81,15 +94,50 @@ let cacheGeneration = 0;
  * token is always used. Returns null when the manifest is unavailable.
  */
 export interface ReleaseAssetManifestFetcher {
-  (releaseId: string): Promise<
+  (
+    releaseId: string,
+    context: ReleaseAssetManifestFetchContext,
+  ): Promise<
     { state: string; manifest: ReleaseAssetManifest | null } | null
   >;
 }
 
 export type ReleaseAssetManifestFetcherCleanup = () => void;
 
+interface FetcherRegistration {
+  fetcher: ReleaseAssetManifestFetcher;
+  token: symbol;
+}
+
 /** Per-releaseId fetcher registry (keyed by releaseId). */
-const fetcherRegistry = new Map<string, ReleaseAssetManifestFetcher>();
+const fetcherRegistry = new Map<string, FetcherRegistration>();
+/** Optional fallback for simple single-project/test setups. */
+let fallbackFetcher: FetcherRegistration | undefined;
+
+function isValidReleaseId(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= RELEASE_ASSET_MANIFEST_LIMITS.identifierLength &&
+    value.trim() === value &&
+    !hasControlCharacters(value);
+}
+
+function requireValidReleaseId(value: string): string {
+  if (!isValidReleaseId(value)) {
+    throw new TypeError(
+      `releaseId must be non-empty, trimmed text up to ${RELEASE_ASSET_MANIFEST_LIMITS.identifierLength} characters`,
+    );
+  }
+  return value;
+}
+
+function retireStaleInFlightFetches(): void {
+  for (const [releaseId, fetch] of inFlight) {
+    if (resolveFetcher(releaseId)?.token === fetch.ownerToken) continue;
+    inFlight.delete(releaseId);
+    fetch.controller.abort(new Error("Release manifest fetcher ownership changed"));
+  }
+}
 
 /**
  * Register a project-scoped manifest fetcher for the given releaseId.
@@ -102,13 +150,29 @@ export function registerManifestFetcherForRelease(
   releaseId: string,
   fetcher: ReleaseAssetManifestFetcher,
 ): ReleaseAssetManifestFetcherCleanup {
-  fetcherRegistry.set(releaseId, fetcher);
+  const validReleaseId = requireValidReleaseId(releaseId);
+  if (typeof fetcher !== "function") {
+    throw new TypeError("Manifest fetcher must be a function");
+  }
+  if (
+    !fetcherRegistry.has(validReleaseId) &&
+    fetcherRegistry.size >= MAX_REGISTERED_FETCHERS
+  ) {
+    throw new Error(`Manifest fetcher registry is limited to ${MAX_REGISTERED_FETCHERS} releases`);
+  }
+  const registration: FetcherRegistration = {
+    fetcher,
+    token: Symbol(validReleaseId),
+  };
+  fetcherRegistry.set(validReleaseId, registration);
+  retireStaleInFlightFetches();
   let active = true;
   return () => {
     if (!active) return;
     active = false;
-    if (fetcherRegistry.get(releaseId) === fetcher) {
-      fetcherRegistry.delete(releaseId);
+    if (fetcherRegistry.get(validReleaseId)?.token === registration.token) {
+      fetcherRegistry.delete(validReleaseId);
+      retireStaleInFlightFetches();
     }
   };
 }
@@ -121,7 +185,8 @@ export function registerManifestFetcherForRelease(
  * adapter cannot remove a newer registration for the same release.
  */
 export function unregisterManifestFetcherForRelease(releaseId: string): void {
-  fetcherRegistry.delete(releaseId);
+  fetcherRegistry.delete(requireValidReleaseId(releaseId));
+  retireStaleInFlightFetches();
 }
 
 /**
@@ -134,17 +199,21 @@ export function configureReleaseAssetManifestFetcher(
   fetcher: ReleaseAssetManifestFetcher | undefined,
 ): void {
   if (fetcher) {
-    fetcherRegistry.set("*", fetcher);
+    if (typeof fetcher !== "function") {
+      throw new TypeError("Manifest fetcher must be a function");
+    }
+    fallbackFetcher = { fetcher, token: Symbol("fallback-manifest-fetcher") };
   } else {
-    fetcherRegistry.delete("*");
+    fallbackFetcher = undefined;
   }
+  retireStaleInFlightFetches();
 }
 
 /** Resolve the fetcher for a releaseId: prefer per-releaseId, then global fallback. */
 function resolveFetcher(
   releaseId: string,
-): ReleaseAssetManifestFetcher | undefined {
-  return fetcherRegistry.get(releaseId) ?? fetcherRegistry.get("*");
+): FetcherRegistration | undefined {
+  return fetcherRegistry.get(releaseId) ?? fallbackFetcher;
 }
 
 /** True when production manifest consumption is enabled via env flag. */
@@ -157,17 +226,17 @@ export function isReleaseAssetManifestEnabled(): boolean {
 
 /** Build the cache key from releaseId + the latest known manifestVersion. */
 function cacheKey(releaseId: string, manifestVersion?: number): string {
-  return manifestVersion !== undefined ? `${releaseId}:${manifestVersion}` : releaseId;
+  return JSON.stringify([releaseId, manifestVersion ?? null]);
 }
 
 function markManifestDecision(decision: string): void {
   markRequestProfilePhase(`release_manifest.${decision}`);
 }
 
-function findCachedReadyEntry(releaseId: string): CacheEntry | null {
+function findCachedReadyEntry(releaseId: string, ownerToken: symbol): CacheEntry | null {
   let best: CacheEntry | null = null;
-  for (const [k, v] of manifestCache.entries()) {
-    if (k !== releaseId && !k.startsWith(`${releaseId}:`)) continue;
+  for (const [, v] of manifestCache.entries()) {
+    if (v.releaseId !== releaseId || v.ownerToken !== ownerToken) continue;
     if (v.expiresAt > Date.now() && v.manifest) {
       const existingVersion = best?.manifest?.manifestVersion ?? -1;
       if ((v.manifest.manifestVersion ?? 0) > existingVersion) {
@@ -200,16 +269,21 @@ export function getReadyManifestForRender(
     markManifestDecision("no_release_id");
     return null;
   }
+  if (!isValidReleaseId(releaseId)) {
+    markManifestDecision("invalid_release_id");
+    return null;
+  }
   if (!isReleaseAssetManifestEnabled()) {
     markManifestDecision("disabled");
     return null;
   }
-  if (!resolveFetcher(releaseId)) {
+  const activeFetcher = resolveFetcher(releaseId);
+  if (!activeFetcher) {
     markManifestDecision("no_fetcher");
     return null;
   }
 
-  const best = findCachedReadyEntry(releaseId);
+  const best = findCachedReadyEntry(releaseId, activeFetcher.token);
   if (best) {
     markManifestDecision("cached_ready");
     maybeScheduleReadyRefresh(releaseId, best);
@@ -217,8 +291,12 @@ export function getReadyManifestForRender(
   }
 
   // Also check the plain releaseId slot (non-ready / null entry).
-  const plain = manifestCache.get(releaseId);
-  if (plain && plain.expiresAt > Date.now()) {
+  const plain = manifestCache.get(cacheKey(releaseId));
+  if (
+    plain &&
+    plain.ownerToken === activeFetcher.token &&
+    plain.expiresAt > Date.now()
+  ) {
     // Non-ready entry still warm — return null without scheduling another fetch.
     markManifestDecision("cached_null");
     return null;
@@ -245,16 +323,21 @@ export async function getReadyManifestForRenderAsync(
     markManifestDecision("no_release_id");
     return null;
   }
+  if (!isValidReleaseId(releaseId)) {
+    markManifestDecision("invalid_release_id");
+    return null;
+  }
   if (!isReleaseAssetManifestEnabled()) {
     markManifestDecision("disabled");
     return null;
   }
-  if (!resolveFetcher(releaseId)) {
+  const activeFetcher = resolveFetcher(releaseId);
+  if (!activeFetcher) {
     markManifestDecision("no_fetcher");
     return null;
   }
 
-  const best = findCachedReadyEntry(releaseId);
+  const best = findCachedReadyEntry(releaseId, activeFetcher.token);
   if (best) {
     markManifestDecision("cached_ready");
     maybeScheduleReadyRefresh(releaseId, best);
@@ -262,8 +345,12 @@ export async function getReadyManifestForRenderAsync(
   }
 
   const now = Date.now();
-  const plain = manifestCache.get(releaseId);
-  if (plain && plain.expiresAt > now) {
+  const plain = manifestCache.get(cacheKey(releaseId));
+  if (
+    plain &&
+    plain.ownerToken === activeFetcher.token &&
+    plain.expiresAt > now
+  ) {
     if (options.refreshCachedNull && (plain.refreshAfter ?? plain.expiresAt) <= now) {
       markManifestDecision("cached_null_refresh");
       return await fetchManifest(releaseId);
@@ -281,39 +368,51 @@ function scheduleFetch(releaseId: string): void {
 }
 
 function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> {
-  const existing = inFlight.get(releaseId);
-  if (existing) {
-    markManifestDecision("await_inflight");
-    return existing.promise;
-  }
   const active = resolveFetcher(releaseId);
   if (!active) {
     markManifestDecision("no_fetcher");
     return Promise.resolve(null);
   }
+  const existing = inFlight.get(releaseId);
+  if (
+    existing &&
+    existing.generation === cacheGeneration &&
+    existing.ownerToken === active.token
+  ) {
+    markManifestDecision("await_inflight");
+    return existing.promise;
+  }
+  if (existing) {
+    inFlight.delete(releaseId);
+    existing.controller.abort(new Error("Release manifest fetch superseded"));
+  }
   const fetchGeneration = cacheGeneration;
   const token = Symbol(releaseId);
+  const controller = new AbortController();
 
   const promise = profilePhase("release_manifest.fetch", async () => {
     try {
-      const result = await active(releaseId);
-      if (fetchGeneration !== cacheGeneration) return null;
+      const result = await invokeManifestFetcher(active, releaseId, controller);
+      if (!isCurrentFetchOwner(releaseId, fetchGeneration, active.token)) return null;
 
       if (!result) {
         markManifestDecision("fetch_missing");
-        cacheNonReadyManifest(releaseId);
+        cacheNonReadyManifest(releaseId, active.token);
         return null;
       }
 
-      const manifestState = normalizeManifestState(result.state);
-      const manifest = isUsableManifestState(result.state) && result.manifest
+      const state = typeof result.state === "string" ? result.state : "invalid";
+      const manifestState = normalizeManifestState(state);
+      const manifest = isUsableManifestState(state) && result.manifest
         ? parseReleaseAssetManifest(result.manifest)
         : null;
 
-      if (manifest) {
+      if (manifest?.releaseId === releaseId) {
         markManifestDecision(manifestState === "partial" ? "fetch_partial" : "fetch_ready");
         const key = cacheKey(releaseId, manifest.manifestVersion);
         manifestCache.set(key, {
+          releaseId,
+          ownerToken: active.token,
           manifest,
           expiresAt: Date.now() + READY_TTL_MS,
           refreshAfter: Date.now() + READY_REVALIDATE_MS,
@@ -321,36 +420,93 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         logger.debug("Cached ready manifest", {
           releaseId,
           manifestVersion: manifest.manifestVersion,
-          state: result.state,
+          state,
           ttlMs: READY_TTL_MS,
           refreshMs: READY_REVALIDATE_MS,
         });
         return manifest;
       } else {
+        if (manifest && manifest.releaseId !== releaseId) {
+          markManifestDecision("fetch_release_mismatch");
+        }
         markManifestDecision(`fetch_${manifestState}`);
         markManifestDecision("fetch_not_ready");
-        cacheNonReadyManifest(releaseId);
+        cacheNonReadyManifest(releaseId, active.token);
         return null;
       }
     } catch (error) {
+      if (!isCurrentFetchOwner(releaseId, fetchGeneration, active.token)) return null;
       logger.debug("Manifest fetch failed", {
         releaseId,
         error: error instanceof Error ? error.message : String(error),
       });
-      if (fetchGeneration !== cacheGeneration) return null;
       markManifestDecision("fetch_failed");
-      cacheNonReadyManifest(releaseId);
+      cacheNonReadyManifest(releaseId, active.token);
       return null;
     } finally {
       const current = inFlight.get(releaseId);
-      if (current?.token === token && current.generation === fetchGeneration) {
+      if (
+        current?.token === token &&
+        current.generation === fetchGeneration &&
+        current.ownerToken === active.token
+      ) {
         inFlight.delete(releaseId);
       }
     }
   });
 
-  inFlight.set(releaseId, { generation: fetchGeneration, token, promise });
+  inFlight.set(releaseId, {
+    generation: fetchGeneration,
+    token,
+    ownerToken: active.token,
+    controller,
+    promise,
+  });
   return promise;
+}
+
+function isCurrentFetchOwner(
+  releaseId: string,
+  generation: symbol,
+  ownerToken: symbol,
+): boolean {
+  return generation === cacheGeneration && resolveFetcher(releaseId)?.token === ownerToken;
+}
+
+async function invokeManifestFetcher(
+  registration: FetcherRegistration,
+  releaseId: string,
+  controller: AbortController,
+): Promise<{ state: string; manifest: ReleaseAssetManifest | null } | null> {
+  if (controller.signal.aborted) {
+    const reason = controller.signal.reason;
+    throw reason instanceof Error ? reason : new Error("Release manifest fetch aborted");
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    abortListener = () => {
+      const reason = controller.signal.reason;
+      reject(reason instanceof Error ? reason : new Error("Release manifest fetch aborted"));
+    };
+    controller.signal.addEventListener("abort", abortListener, { once: true });
+    timeoutId = setTimeout(() => {
+      controller.abort(
+        new Error(`Release manifest fetch exceeded ${MANIFEST_FETCH_TIMEOUT_MS}ms`),
+      );
+    }, MANIFEST_FETCH_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => registration.fetcher(releaseId, { signal: controller.signal })),
+      cancellation,
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    if (abortListener) controller.signal.removeEventListener("abort", abortListener);
+  }
 }
 
 function isUsableManifestState(state: string): boolean {
@@ -358,12 +514,15 @@ function isUsableManifestState(state: string): boolean {
 }
 
 function normalizeManifestState(state: string): string {
-  return state.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 32) || "unknown";
+  return state.slice(0, 64).toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 32) ||
+    "unknown";
 }
 
-function cacheNonReadyManifest(releaseId: string): void {
+function cacheNonReadyManifest(releaseId: string, ownerToken: symbol): void {
   const now = Date.now();
-  manifestCache.set(releaseId, {
+  manifestCache.set(cacheKey(releaseId), {
+    releaseId,
+    ownerToken,
     manifest: null,
     expiresAt: now + NON_READY_TTL_MS,
     refreshAfter: now + NON_READY_REVALIDATE_MS,
@@ -372,8 +531,11 @@ function cacheNonReadyManifest(releaseId: string): void {
 
 /** Clear cached manifest bodies while keeping registered fetchers intact. */
 export function clearCachedReleaseAssetManifests(): void {
-  cacheGeneration++;
+  cacheGeneration = Symbol("release-asset-manifest-cache-generation");
   manifestCache.clear();
+  for (const fetch of inFlight.values()) {
+    fetch.controller.abort(new Error("Release manifest cache cleared"));
+  }
   inFlight.clear();
 }
 
@@ -381,4 +543,5 @@ export function clearCachedReleaseAssetManifests(): void {
 export function clearReleaseAssetManifestCache(): void {
   clearCachedReleaseAssetManifests();
   fetcherRegistry.clear();
+  fallbackFetcher = undefined;
 }

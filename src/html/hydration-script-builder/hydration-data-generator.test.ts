@@ -165,7 +165,7 @@ describe("hydration-data-generator", () => {
         releaseVersion: 1,
         manifestVersion: 5,
         builderVersion: "0.1.784",
-        sourceContentHash: "",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-13T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {

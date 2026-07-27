@@ -53,7 +53,7 @@ function manifest(): ReleaseAssetManifest {
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.765",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {

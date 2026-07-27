@@ -33,7 +33,7 @@ function manifest(contentHash = MOD_HASH, manifestVersion = 3): ReleaseAssetMani
     releaseVersion: 1,
     manifestVersion,
     builderVersion: "0.1.765",
-    sourceContentHash: "",
+    sourceContentHash: "f".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {
@@ -90,6 +90,40 @@ describe("html consumption helpers", () => {
 
   it("returns no preloads for an uncovered route", () => {
     assertEquals(resolveManifestRoutePreloadUrls(manifest(), "/other"), []);
+  });
+
+  it("ignores inherited route and module entries", () => {
+    const inheritedRoutes = Object.create({
+      "/inherited": { modules: ["pages/index.tsx"], css: [] },
+    }) as ReleaseAssetManifest["routes"];
+    const inheritedModules = Object.create({
+      "pages/inherited.tsx": {
+        contentHash: MOD_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    }) as ReleaseAssetManifest["modules"];
+    const value = manifest();
+    value.routes = inheritedRoutes;
+    value.modules = inheritedModules;
+
+    assertEquals(resolveManifestRoutePreloadUrls(value, "/inherited"), []);
+    assertEquals(resolveManifestModuleUrl(value, "pages/inherited.tsx"), null);
+  });
+
+  it("deduplicates repeated preload identities", () => {
+    const value = manifest();
+    value.routes["/"]!.modules.push("pages/index.tsx");
+    assertEquals(resolveManifestRoutePreloadUrls(value, "/"), [
+      `/_vf/assets/${MOD_HASH}.js`,
+    ]);
+  });
+
+  it("falls back instead of emitting a malformed content hash", () => {
+    const value = manifest();
+    value.modules["pages/index.tsx"]!.contentHash = "../asset";
+    assertEquals(resolveManifestModuleUrl(value, "pages/index.tsx"), null);
+    assertEquals(resolveManifestRoutePreloadUrls(value, "/"), []);
   });
 });
 

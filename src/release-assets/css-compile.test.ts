@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 // `generateTailwindCSS` compile path resolves a real compiler.
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createCompileProjectCss } from "./css-compile.ts";
 
@@ -62,5 +62,17 @@ describe("release-assets/css-compile", () => {
     // Either an empty/error compile (null) or a degraded-but-valid compile is
     // acceptable; the load-bearing guarantee is that it did not throw.
     assert(result === null || typeof result.css === "string");
+  });
+
+  it("rejects invalid project scopes at configuration time", () => {
+    assertThrows(() => createCompileProjectCss({ projectScope: "bad\nscope" }));
+    assertThrows(() => createCompileProjectCss(null as never));
+  });
+
+  it("returns null for malformed candidate input", async () => {
+    const compile = createCompileProjectCss({ projectScope: "project-1" });
+    const candidates = new Set<string>(["text-red-500", "bad\u0000candidate"]);
+
+    assertEquals(await compile(candidates, undefined), null);
   });
 });
