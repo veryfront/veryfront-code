@@ -34,6 +34,7 @@ import {
   withServerTimingHeader,
 } from "#veryfront/observability/request-profiler.ts";
 import { profilePhase } from "#veryfront/observability";
+import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.handler.ts";
 import { MemoryDebugHandler } from "../handlers/monitoring/memory.handler.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.handler.ts";
@@ -70,6 +71,7 @@ import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 import {
   endRequestTracing,
   executeWithTracingContext,
+  getRequestTraceContext,
   setProjectAttributes,
   setRequestAttributes,
   SpanNames,
@@ -681,6 +683,15 @@ export function createVeryfrontHandler(
           req.method,
           { signal: req.signal },
         );
+
+        if (error) {
+          captureApplicationError(error, {
+            boundary: "renderer.request",
+            method: req.method,
+            requestId: lifecycle.requestId,
+            ...getRequestTraceContext(spanInfo.span),
+          });
+        }
 
         endRequestTracing(spanInfo.span, response.status, error);
 

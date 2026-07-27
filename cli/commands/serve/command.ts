@@ -49,6 +49,13 @@ async function runProxy(options: ServeOptions): Promise<void> {
 async function runProductionServer(options: ServeOptions): Promise<void> {
   showLogo();
 
+  const {
+    captureApplicationError,
+    flushApplicationErrors,
+    initializeSentryFromEnv,
+  } = await import("veryfront/observability/sentry");
+  await initializeSentryFromEnv();
+
   const { clearAllLocalCaches } = await import(
     "veryfront/transforms/mdx-cache"
   );
@@ -97,8 +104,10 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
         logger: cliLogger,
       });
     } catch (error) {
+      captureApplicationError(error, { boundary: "process.shutdown" });
       cliLogger.warn("Error while shutting down production server:", error);
     } finally {
+      await flushApplicationErrors();
       exitProcess(0);
     }
   };

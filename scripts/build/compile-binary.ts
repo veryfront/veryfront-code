@@ -24,6 +24,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-eval-report-http/src/index.ts",
   "extensions/ext-eval-report-mlflow/src/index.ts",
   "extensions/ext-observability-opentelemetry/src/index.ts",
+  "extensions/ext-observability-sentry/src/index.ts",
   "extensions/ext-parser-babel/src/index.ts",
   "extensions/ext-parser-babel/src/parser-only.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",

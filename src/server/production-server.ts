@@ -624,6 +624,13 @@ export function startLocalCliProxyProductionServer(
 }
 
 if (import.meta.main) {
+  const {
+    captureApplicationError,
+    flushApplicationErrors,
+  } = await import("#veryfront/observability/application-errors.ts");
+  const { initializeSentryFromEnv } = await import("#veryfront/observability/sentry.ts");
+  await initializeSentryFromEnv();
+
   // Register global error handlers FIRST to prevent process crashes from application errors
   // This ensures the renderer stays up even if user code throws unhandled exceptions
   onGlobalError((error, type) => {
@@ -641,6 +648,10 @@ if (import.meta.main) {
       error.message.includes("allocation failed");
 
     const isFatal = isStackOverflow || isOOM;
+
+    captureApplicationError(error, {
+      boundary: `process.${type}`,
+    });
 
     globalLog.error(`${type}: Application error caught`, {
       message: error.message,
@@ -726,10 +737,12 @@ if (import.meta.main) {
         stop: server.stop,
         logger,
       });
+      await flushApplicationErrors();
     };
 
     const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
       void shutdown(signal).catch((error) => {
+        captureApplicationError(error, { boundary: "process.shutdown" });
         logger.warn("Unhandled error while shutting down production server", { signal, error });
       });
     };
@@ -737,7 +750,9 @@ if (import.meta.main) {
     onSignal("SIGINT", () => handleSignal("SIGINT"));
     onSignal("SIGTERM", () => handleSignal("SIGTERM"));
   } catch (e) {
+    captureApplicationError(e, { boundary: "process.startup" });
     logger.error("Failed to start production server:", e);
+    await flushApplicationErrors();
     // Re-throw so the process exits with a non-zero code. A running process with no HTTP
     // listener causes K8s readiness probes to fail eventually, but crashing immediately
     // signals the orchestrator to restart the pod faster.

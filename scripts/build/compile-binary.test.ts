@@ -28,6 +28,15 @@ Deno.test("compiled CLI embeds the Worker-safe Babel parser entry", () => {
   );
 });
 
+Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
+  assertEquals(
+    DEFAULT_INCLUDES.includes(
+      "extensions/ext-observability-sentry/src/index.ts",
+    ),
+    true,
+  );
+});
+
 Deno.test("compiled CLI embeds the declarative evaluator worker entry", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(

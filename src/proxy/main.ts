@@ -52,6 +52,7 @@ import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import {
   endSpan,
   extractContext,
+  getTraceContext,
   initializeOTLPWithApis,
   injectContext,
   ProxySpanNames,
@@ -106,6 +107,13 @@ import {
 import { cancelProxyResponseBody } from "./response-body.ts";
 import { ProxyRequestHostError } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
+import {
+  captureApplicationError,
+  flushApplicationErrors,
+} from "#veryfront/observability/application-errors.ts";
+import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
+
+await initializeSentryFromEnv("veryfront-proxy");
 
 const startupConfig = readProxyStartupConfig();
 const config = startupConfig.proxyConfig;
@@ -466,6 +474,11 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
         lifecycle.end(400, normalizedError);
         throw error;
       }
+      captureApplicationError(normalizedError, {
+        boundary: "proxy.request",
+        method: req.method,
+        ...getTraceContext(),
+      });
       proxyLogger.error(`500 ${req.method} ${url.pathname}`, { ms }, normalizedError);
       lifecycle.end(500, normalizedError);
       return withProxyTiming(
@@ -676,6 +689,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     }
   } catch (error) {
     shutdownFailed = true;
+    captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Proxy request drain failed", { signal }, error);
   }
 
@@ -714,6 +728,10 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       name: "telemetry",
       run: async () => await shutdownOTLP(),
     },
+    {
+      name: "application-errors",
+      run: async () => await flushApplicationErrors(),
+    },
   ], SHUTDOWN_CLEANUP_TIMEOUT_MS);
 
   for (const failure of cleanupFailures) {
@@ -750,8 +768,9 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
 
 const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
   void shutdown(signal).catch((error) => {
+    captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Unhandled shutdown error", { signal }, error);
-    exit(1);
+    void flushApplicationErrors().finally(() => exit(1));
   });
 };
 
