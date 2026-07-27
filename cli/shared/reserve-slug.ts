@@ -10,6 +10,7 @@ import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { randomSuffix } from "#cli/shared/slug";
 import { getApiUrl } from "#cli/shared/constants";
+import { ApiErrorSchema, formatApiError } from "./config.ts";
 
 function slugToName(slug: string): string {
   return capitalizeSeparatedWords(slug, "-", " ");
@@ -30,16 +31,6 @@ export class ProjectSlugConflictError extends Error {
     super(`Project slug "${slug}" is already in use.`);
     this.name = "ProjectSlugConflictError";
   }
-}
-
-interface ApiError {
-  error?: string;
-  message?: string;
-  detail?: string;
-  title?: string;
-  suggestion?: string;
-  code?: string;
-  slug?: string;
 }
 
 interface CreateProjectResult {
@@ -112,12 +103,11 @@ async function tryCreateProject(
       return { success: false, isSlugTaken: true };
     }
 
-    const error = (await response.json().catch(() => ({}))) as ApiError;
-    const message = error.message ?? error.detail ?? error.error ?? error.title ??
-      `HTTP ${response.status}`;
+    const fallback = `HTTP ${response.status}`;
+    const parsed = ApiErrorSchema.safeParse(await response.json().catch(() => ({})));
     return {
       success: false,
-      error: error.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${error.suggestion}` : message,
+      error: parsed.success ? formatApiError(parsed.data, fallback) : fallback,
     };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };

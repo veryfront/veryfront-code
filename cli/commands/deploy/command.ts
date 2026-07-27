@@ -775,7 +775,10 @@ function assertReadyManifestCoversPageRoutes(
   }
 
   const moduleCount = Object.keys(manifest.modules).length;
-  const missingRoutes = expectedRoutes.filter((route) => !manifest.routes[route]);
+  const missingRoutes = expectedRoutes.filter((route) => {
+    const modules = manifest.routes[route]?.modules;
+    return !modules || modules.length === 0;
+  });
   if (expectedRoutes.length > 0 && (moduleCount === 0 || missingRoutes.length > 0)) {
     throw new Error(
       `Release assets for ${releaseId} are ready but do not include browser modules for this app. ${
