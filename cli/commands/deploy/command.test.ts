@@ -227,8 +227,10 @@ describe("environment URL readiness", () => {
         ),
     );
 
-    assertEquals(error?.includes("https://my-project.production.veryfront.com"), true);
-    assertEquals(error?.includes("last response: HTTP 404"), true);
+    assertEquals(
+      error,
+      "Environment URL https://my-project.production.veryfront.com did not become ready within 1s (last response: HTTP 404). Check the deployment and run deploy again.",
+    );
   });
 });
 
