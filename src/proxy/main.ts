@@ -57,7 +57,7 @@ import {
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
-import { RendererRouter } from "./renderer-router.ts";
+import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
 import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
@@ -136,15 +136,9 @@ if (!serverUrlFromEnv && isProduction()) {
 }
 const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
 
-const discoveryHost = getEnv("VERYFRONT_SERVER_DISCOVERY_HOST");
-const staticTargets = getEnv("VERYFRONT_SERVER_TARGETS");
-const rendererRouter = (discoveryHost || staticTargets)
-  ? new RendererRouter(
-    discoveryHost || "static-targets",
-    PRODUCTION_SERVER_URL,
-    parseInt(getEnv("VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS") || "15000") || 15_000,
-  )
-  : null;
+const rendererRouter = createRendererRouterFromEnvironment(
+  PRODUCTION_SERVER_URL,
+);
 
 // Dedicated server resolver: routes environments to their dedicated server if assigned
 const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;

@@ -157,6 +157,29 @@ that request; malformed local environment identifiers are rejected.
 Shutdown aborts outstanding lookups and generation-fences late responses so
 they cannot repopulate the cache after the resolver closes.
 
+### Shared renderer routing
+
+When renderer discovery is enabled, the proxy consistently hashes each
+canonical project slug across a sorted, deduplicated snapshot of renderer IPv4
+addresses. Adding or removing a renderer remaps only the projects assigned by
+the jump-hash algorithm. `VERYFRONT_SERVER_TARGETS` supplies a static
+comma-separated snapshot and bypasses DNS; static targets remain valid for the
+life of the process. Otherwise, `VERYFRONT_SERVER_DISCOVERY_HOST` is resolved
+on startup and at the configured refresh interval.
+
+| Environment variable                     | Default | Allowed range  |
+| ---------------------------------------- | ------- | -------------- |
+| `VERYFRONT_SERVER_PORT`                  | `20000` | `1..65535`     |
+| `VERYFRONT_SERVER_DISCOVERY_INTERVAL_MS` | `15000` | `1000..300000` |
+
+Static and DNS target snapshots contain at most 4,096 canonical IPv4 addresses.
+Malformed hosts, targets, fallback origins, ports, and refresh intervals stop
+construction. A DNS refresh has a five-second deadline and overlapping refreshes
+coalesce into one underlying lookup. Failed or malformed refreshes retain the last
+valid snapshot for at most five minutes, then routing uses
+`VERYFRONT_SERVER_URL`. A close operation stops periodic discovery and
+generation-fences any DNS result that arrives afterward.
+
 After a deployment pointer commits, the control plane sends an authenticated,
 project-scoped invalidation through the proxy-owned Redis bus. Every subscribed
 proxy evicts the matching routing entries, refreshes the authoritative metadata,
