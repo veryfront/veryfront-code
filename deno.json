@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1162",
+  "version": "0.1.1163",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -52,6 +52,7 @@
     "./extensions/ext-parser-babel",
     "./extensions/ext-sandbox-shell-tools",
     "./extensions/ext-observability-opentelemetry",
+    "./extensions/ext-observability-sentry",
     "./extensions/ext-eval-report-mlflow",
     "./extensions/ext-eval-report-http",
     "./extensions/ext-content-mdx",
@@ -111,6 +112,7 @@
     "./mcp": "./src/mcp/index.ts",
     "./middleware": "./src/middleware/index.ts",
     "./observability": "./src/observability/index.ts",
+    "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
     "./utils": "./src/utils/index.ts",
     "./oauth": "./src/oauth/index.ts",
@@ -198,6 +200,7 @@
     "veryfront/proxy/cache": "./src/proxy/cache/index.ts",
     "veryfront/transforms/mdx-cache": "./src/transforms/mdx/esm-module-loader/cache/index.ts",
     "veryfront/observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
+    "veryfront/observability/sentry": "./src/observability/sentry.ts",
     "veryfront/platform/esbuild-init": "./src/platform/compat/esbuild-init.ts",
     "veryfront/platform/path": "./src/platform/compat/path/index.ts",
     "veryfront/platform/http": "./src/platform/compat/http/index.ts",
