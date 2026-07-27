@@ -63,8 +63,5 @@
     "cycle-sensitive:src/platform/adapters/veryfront-api-client/operations.ts -> #veryfront/utils",
     "cycle-sensitive:src/platform/compat/kv/factory.ts -> #veryfront/utils"
   ],
-  "cycleEdges": [
-    "src/proxy/logger.ts -> src/proxy/tracing.ts",
-    "src/proxy/tracing.ts -> src/proxy/logger.ts"
-  ]
+  "cycleEdges": []
 }

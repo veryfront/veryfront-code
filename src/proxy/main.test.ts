@@ -30,9 +30,17 @@ describe("proxy main request URL parsing", () => {
     );
 
     const drainIndex = source.indexOf("await proxyRequestDrainTracker.waitForDrain");
+    const webSocketCloseIndex = source.indexOf(
+      "run: () => proxyWebSocketBridgeRegistry.close()",
+    );
     const closeIndex = source.indexOf("await closeProxyServerWithin");
     assertEquals(drainIndex >= 0, true);
-    assertEquals(closeIndex > drainIndex, true);
+    assertEquals(webSocketCloseIndex > drainIndex, true);
+    assertEquals(closeIndex > webSocketCloseIndex, true);
+    assertStringIncludes(
+      source,
+      "proxyWebSocketBridgeRegistry.track(bridge)",
+    );
   });
 
   it("starts acknowledged routing invalidation fan-out and handles signed ingress", async () => {

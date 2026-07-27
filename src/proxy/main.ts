@@ -36,10 +36,12 @@ import {
 } from "./retry.ts";
 import {
   authorizeWebSocketRequest,
-  closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
-  getClientWebSocketErrorLogLevel,
-  getServerWebSocketErrorLogLevel,
+  createProxyWebSocketBridge,
+  createProxyWebSocketTargetUrl,
+  isProxyWebSocketUpgrade,
+  PROXY_WEBSOCKET_CONNECTION_TIMEOUT_MS,
+  ProxyWebSocketBridgeRegistry,
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
@@ -107,7 +109,6 @@ const serverResolver = new ServerResolver(
 );
 
 const { hostname: HOST, port: PORT } = startupConfig.binding;
-const WS_CONNECT_TIMEOUT_MS = 30_000;
 const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
 const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = startupConfig.serverRequestTimeoutMs;
 const VERYFRONT_SERVER_RETRY_COUNT = startupConfig.serverRetryCount;
@@ -116,6 +117,7 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = startupConfig.shutdownDrainTimeoutMs;
 const SHUTDOWN_CLEANUP_TIMEOUT_MS = startupConfig.shutdownCleanupTimeoutMs;
 const routingInvalidationSecret = startupConfig.routingInvalidationSecret;
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
+const proxyWebSocketBridgeRegistry = new ProxyWebSocketBridgeRegistry();
 let shuttingDown = false;
 
 const authProvider = await importFirstPartyExtensionModule<unknown>(
@@ -198,11 +200,12 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
   const scope = context.environment;
   const projectSlug = context.projectSlug;
 
-  const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
-  const safePath = url.pathname.replace(/^\/\/+/, "/");
-  const targetUrl = new URL(`${serverWsUrl}${safePath}${url.search}`);
-  targetUrl.searchParams.set("x-project-slug", projectSlug || "");
-  targetUrl.searchParams.set("x-environment", scope);
+  const targetUrl = createProxyWebSocketTargetUrl(
+    PRODUCTION_SERVER_URL,
+    url,
+    projectSlug || "",
+    scope,
+  );
 
   proxyLogger.info("[WebSocket] Upgrade request received", {
     host,
@@ -210,7 +213,6 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     projectSlug,
     environment: scope,
     parsedEnvironment: context.parsedDomain.environment,
-    targetUrl: targetUrl.toString(),
   });
 
   const { socket: clientSocket, response } = upgradeWebSocket(
@@ -218,115 +220,17 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     createProxyClientWebSocketUpgradeOptions(),
   );
 
-  let serverSocket: WebSocket | null = null;
-  let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  let timedOut = false;
-
-  const clearConnectTimeout = (): void => {
-    if (!connectTimeoutId) return;
-    clearTimeout(connectTimeoutId);
-    connectTimeoutId = null;
-  };
-
-  clientSocket.onopen = () => {
-    proxyLogger.info("[WebSocket] Client connected, bridging to server", {
-      targetUrl: targetUrl.toString(),
-    });
-
-    try {
-      serverSocket = new WebSocket(targetUrl.toString());
-    } catch (error) {
-      proxyLogger.error("[WebSocket] Failed to create server WebSocket", {
-        error: error instanceof Error ? error.message : String(error),
-        targetUrl: targetUrl.toString(),
-      });
-      clientSocket.close(1011, "Failed to connect to server");
-      return;
-    }
-
-    connectTimeoutId = setTimeout(() => {
-      timedOut = true;
-      proxyLogger.error("[WebSocket] Server connection timeout", {
-        targetUrl: targetUrl.toString(),
-        timeoutMs: WS_CONNECT_TIMEOUT_MS,
-      });
-      serverSocket?.close();
-      if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.close(1001, "Server connection timeout");
-      }
-    }, WS_CONNECT_TIMEOUT_MS);
-
-    serverSocket.onopen = () => {
-      clearConnectTimeout();
-      if (timedOut) {
-        serverSocket?.close();
-        return;
-      }
-      proxyLogger.info("[WebSocket] Server connected, bridge established", {
-        projectSlug,
-        environment: scope,
-      });
-    };
-
-    serverSocket.onmessage = (event) => {
-      if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.send(event.data);
-      }
-    };
-
-    serverSocket.onerror = (event) => {
-      clearConnectTimeout();
-      const error = event instanceof ErrorEvent ? event.message : "Unknown error";
-      const logLevel = getServerWebSocketErrorLogLevel(error);
-      proxyLogger[logLevel]("[WebSocket] Server connection error", {
-        projectSlug,
-        environment: scope,
-        targetUrl: targetUrl.toString(),
-        error,
-      });
-      closeBridgePeer(clientSocket, 1011, "Server connection error");
-      closeBridgePeer(serverSocket, 1011, "Server connection error");
-    };
-
-    serverSocket.onclose = (event) => {
-      clearConnectTimeout();
-      proxyLogger.info("[WebSocket] Server connection closed", {
-        code: event.code,
-        reason: event.reason,
-        wasClean: event.wasClean,
-      });
-      if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.close(event.code, event.reason);
-      }
-    };
-  };
-
-  clientSocket.onmessage = (event) => {
-    if (serverSocket?.readyState === WebSocket.OPEN) {
-      serverSocket.send(event.data);
-    }
-  };
-
-  clientSocket.onerror = (event) => {
-    clearConnectTimeout();
-    const error = event instanceof ErrorEvent ? event.message : "Unknown error";
-    const logLevel = getClientWebSocketErrorLogLevel(error);
-    proxyLogger[logLevel]("[WebSocket] Client connection error", {
-      error,
-    });
-  };
-
-  clientSocket.onclose = (event) => {
-    clearConnectTimeout();
-    proxyLogger.info("[WebSocket] Client connection closed", {
-      code: event.code,
-      reason: event.reason,
-      wasClean: event.wasClean,
-    });
-    if (serverSocket?.readyState === WebSocket.OPEN) {
-      serverSocket.close();
-    }
-  };
+  const bridge = createProxyWebSocketBridge({
+    clientSocket,
+    connectTimeoutMs: PROXY_WEBSOCKET_CONNECTION_TIMEOUT_MS,
+    createServerSocket: (serverTargetUrl) => new WebSocket(serverTargetUrl),
+    logger: proxyLogger.child({
+      environment: scope,
+      projectSlug,
+    }),
+    targetUrl,
+  });
+  proxyWebSocketBridgeRegistry.track(bridge);
 
   return response;
 }
@@ -653,7 +557,7 @@ async function router(req: Request): Promise<Response> {
 
   try {
     let response: Response;
-    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    if (isProxyWebSocketUpgrade(req)) {
       response = await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
       response = await handleProxyRoutingInvalidationRequest(req, {
@@ -689,6 +593,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   let shutdownFailed = false;
 
   proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
+    activeWebSocketBridges: proxyWebSocketBridgeRegistry.size,
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
   });
@@ -720,6 +625,10 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     {
       name: "routing-invalidation-bus",
       run: async () => await routingInvalidationBus?.close(),
+    },
+    {
+      name: "websocket-bridges",
+      run: () => proxyWebSocketBridgeRegistry.close(),
     },
     {
       name: "http-server",

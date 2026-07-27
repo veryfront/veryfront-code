@@ -120,6 +120,26 @@ token/cache handler, and telemetry exporter. A cleanup rejection or deadline
 overrun produces a non-zero process exit after the remaining actions have been
 attempted.
 
+### WebSocket bridge lifecycle
+
+WebSocket upgrades pass through the normal proxy authorization path before the
+HTTP connection is upgraded. The accepted browser socket and renderer socket
+are then owned by a symmetric bridge: an error, close, timeout, invalid message,
+or send race on either side closes both peers. The accepted browser connection
+and the renderer connection must each open within 30 seconds.
+
+Client messages received while the renderer connects are retained in order,
+not dropped. The pre-open queue holds at most 64 messages and 1 MiB total; each
+message is limited to 1 MiB. Binary queue entries are copied before retention.
+Both forwarding directions also enforce a 1 MiB `bufferedAmount` ceiling so a
+slow peer cannot create unbounded process memory. Queue, message, or
+backpressure violations close the bridge with an explicit WebSocket status.
+
+Live bridges have process-level ownership independent of the completed HTTP
+upgrade response. Graceful shutdown closes every tracked bridge before closing
+the HTTP listener, and late bridges cannot register after bridge shutdown has
+started.
+
 ## Runtime caches
 
 ### OAuth token cache
