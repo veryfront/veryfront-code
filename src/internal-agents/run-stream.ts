@@ -52,7 +52,7 @@ import {
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
-import { createInternalAgentRunSystemPromptResolver } from "./run-system-prompt.ts";
+import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
@@ -208,7 +208,7 @@ export function buildMergedTools(
     for (const toolName of sourceAllowedRemoteToolNames) {
       merged[toolName] = true;
     }
-    return { ...merged, ...injectedTools };
+    return { ...injectedTools, ...merged };
   }
 
   const merged: Record<string, Tool | boolean> = {};
@@ -242,7 +242,7 @@ export function buildMergedTools(
     }
   }
 
-  const filtered = { ...merged, ...injectedTools };
+  const filtered = { ...injectedTools, ...merged };
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
@@ -623,13 +623,13 @@ async function getDeclaredRemoteSourceToolNames(input: {
 
 function compactRuntimeMessagesForStream(
   messages: Message[],
-  mergedTools: Agent["config"]["tools"],
+  systemPrompt: string,
+  toolCount: number,
 ): Message[] {
-  const toolCount = mergedTools && mergedTools !== true ? Object.keys(mergedTools).length : 0;
   return convertProviderMessagesToAgentRuntimeMessages(
     compactForStep(
       convertAgentRuntimeMessagesToProviderMessages(messages),
-      estimateOverhead("", toolCount),
+      estimateOverhead(systemPrompt, toolCount),
     ),
   ) as Message[];
 }
@@ -754,17 +754,18 @@ export async function createRuntimeAgentStreamResponse(
         requiredToolNames: localToolNames,
       },
     );
+    const systemPrompt = await composeInternalAgentRunSystemPrompt({
+      agent,
+      runInput: input,
+      projectId: deps.projectAgentSandbox?.projectId ?? null,
+      branchId: deps.projectAgentSandbox?.branchId,
+      toolNames: runtimeToolNames,
+    });
     const runtimeAgent: RuntimeFilteredAgent = {
       ...agent,
       config: {
         ...agent.config,
-        system: createInternalAgentRunSystemPromptResolver({
-          agent,
-          runInput: input,
-          projectId: deps.projectAgentSandbox?.projectId ?? null,
-          branchId: deps.projectAgentSandbox?.branchId,
-          toolNames: runtimeToolNames,
-        }),
+        system: systemPrompt,
         tools: mergedTools,
         ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
         ...(allowedRemoteToolNames !== undefined
@@ -779,10 +780,11 @@ export async function createRuntimeAgentStreamResponse(
       new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
     const runtimeMessages = compactRuntimeMessagesForStream(
       normalizeAgUiRuntimeMessages(input.messages),
-      mergedTools,
+      systemPrompt,
+      runtimeToolNames.length,
     );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
-    runtimeStream = await runtime.stream(
+    const candidateRuntimeStream = await runtime.stream(
       runtimeMessages,
       {
         threadId: input.threadId,
@@ -804,6 +806,10 @@ export async function createRuntimeAgentStreamResponse(
       maxOutputTokens,
       abortSignal,
     );
+    if (candidateRuntimeStream.locked) {
+      throw new TypeError("Internal agent runtime returned a locked stream");
+    }
+    runtimeStream = candidateRuntimeStream;
     logger.info("Internal agent runtime stream attached", {
       runId: input.runId,
       threadId: input.threadId,
@@ -998,27 +1004,37 @@ export async function createRuntimeAgentStreamResponse(
             for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
             }
-            deps.sessionManager.completeRun(input.runId);
+            const finalStatus = state.sawTerminalError ? "failed" : "completed";
+            if (state.sawTerminalError) {
+              deps.sessionManager.failRun(input.runId);
+            } else {
+              deps.sessionManager.completeRun(input.runId);
+            }
             setSpanAttributes(runSpan, {
               ...buildInternalAgentRunTraceAttributes({
                 runInput: input,
                 agent,
                 deps,
-                status: "completed",
+                status: finalStatus,
               }),
-              "agent.run.final_status": "completed",
+              "agent.run.final_status": finalStatus,
               "agent.run.saw_visible_output": state.sawVisibleOutput,
               "agent.run.saw_terminal_error": state.sawTerminalError,
+              ...(state.sawTerminalError ? { "error.type": "AgentRunTerminalError" } : {}),
               ...buildRuntimeUsageTraceAttributes(completedResponse?.usage),
               ...(state.metadata.finishReason
                 ? { "gen_ai.response.finish_reasons": state.metadata.finishReason }
                 : {}),
             });
-            addSpanEvent(runSpan, "agent.run.completed");
+            addSpanEvent(
+              runSpan,
+              state.sawTerminalError ? "agent.run.failed" : "agent.run.completed",
+            );
             logger.info("Internal agent runtime stream finalized", {
               runId: input.runId,
               threadId: input.threadId,
               agentId: agent.id,
+              status: finalStatus,
               sawVisibleOutput: state.sawVisibleOutput,
               sawTerminalError: state.sawTerminalError,
               finishReason: state.metadata.finishReason,

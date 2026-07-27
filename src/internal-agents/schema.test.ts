@@ -137,6 +137,43 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("rejects malformed forwarded output-token caps instead of dropping them", () => {
+    for (const maxOutputTokens of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1200"]) {
+      assertThrows(
+        () =>
+          getInternalAgentStreamRequestSchema().parse({
+            agentId: "agent_1",
+            threadId: "10000000-1000-4000-8000-100000000001",
+            runId: "run_1",
+            agentSource: { type: "branch", branch: "main" },
+            messages: [],
+            forwardedProps: { maxOutputTokens },
+          }),
+        Error,
+        "forwardedProps.maxOutputTokens must be a positive safe integer",
+      );
+    }
+  });
+
+  it("rejects duplicate injected tool names instead of silently replacing definitions", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          agentSource: { type: "branch", branch: "main" },
+          messages: [],
+          tools: [
+            { name: "focus_component", description: "First definition" },
+            { name: "focus_component", description: "Conflicting definition" },
+          ],
+        }),
+      Error,
+      "Injected tool name focus_component must be unique",
+    );
+  });
+
   it("defaults resume signals to non-error tool results", () => {
     assertEquals(
       getResumeSignalSchema().parse({
@@ -481,6 +518,37 @@ describe("internal-agents/schema", () => {
           }],
         },
       ],
+    );
+  });
+
+  it("rejects malformed streamed tool input instead of executing with empty arguments", () => {
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      agentSource: { type: "branch", branch: "main" },
+      messages: [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-call",
+              toolCallId: "tool_1",
+              toolName: "create_file",
+              args: {},
+              inputText: '{"path":"plans/report.md"',
+            },
+          ],
+        },
+      ],
+      context: [],
+    });
+
+    assertThrows(
+      () => toRuntimeRunAgentInput(internalRequest),
+      SyntaxError,
+      "Malformed streamed tool input for tool call",
     );
   });
 
