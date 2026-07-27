@@ -4045,4 +4045,138 @@ the helper boundary.
 No known unresolved critical or high-confidence Testing production risk
 remains. The `testing` audit unit is closed at 34 of 58 formal units.
 
+### Data execution and cache closure checkpoint (broad gates in progress)
+
+The `data` audit unit owns page-loader selection, request-time and static
+execution, static-path production, result control objects, execution admission,
+static-data caching and revalidation, and the isolated data-worker boundary.
+Its correctness identity comes from Rendering's request-local project and
+content source, while its execution limits and worker lifecycle cross the
+Security sandbox and shared Utils primitives.
+
+The current deep review has remediated these findings:
+
+- **Symptom -> Source -> Consequence -> Remedy:** mutable loader exports,
+  project identities, cache scopes, and request-local content identities could
+  be read more than once or after module loading had awaited. An accessor or
+  caller mutation could therefore select one hook while dispatching another,
+  admit work for one tenant and publish it under another cache scope, or load
+  modules from one source while executing data under a later source. Loader
+  exports and every execution-identity input are now read once, validated, and
+  frozen at the public boundary. Rendering threads the resulting immutable
+  request identity through module loading, data execution, CSS identity, and
+  recovery.
+- **Symptom -> Source -> Consequence -> Remedy:** timeout and cancellation
+  paths released capacity when the HTTP caller stopped waiting even though
+  project code, validation, or cache publication was still running. Slow or
+  non-cooperative hooks could bypass concurrency ceilings and accumulate
+  detached work. All three data hooks now use one fail-closed global and
+  per-project admission controller. A lease remains held for the raw producer
+  lifetime; server body preparation and isolated execution share one deadline,
+  while caller cancellation detaches only the caller.
+- **Symptom -> Source -> Consequence -> Remedy:** static cache identity,
+  invalidation, and quota accounting did not form one atomic generation
+  contract. Delimiter-bearing identities could alias, a noisy project could
+  displace peers, a cleared or evicted in-flight load could repopulate stale
+  data, and a failed size estimate could evict valid entries before rejecting
+  publication. Cache keys now frame complete project, mode, source, module,
+  URL, and canonical route-parameter identity. Per-project entry and byte
+  ceilings enforce fair local eviction, writes prepare accounting before
+  mutation, and generation-fenced single-flight, clear, replacement, and
+  revalidation operations cannot resurrect superseded work.
+- **Symptom -> Source -> Consequence -> Remedy:** uncached static loads and
+  background revalidations bypassed or fragmented dependency circuit state.
+  Repeated failures could continue hitting an unhealthy dependency by changing
+  routes or disabling cache publication. Every static execution path now uses
+  the same bounded project circuit. Failed revalidations keep the live value,
+  back off before retrying, and cannot overwrite a newer cache generation.
+- **Symptom -> Source -> Consequence -> Remedy:** isolated request bodies could
+  consume unbounded memory, malformed length headers were partially parsed,
+  worker concurrency lacked a strict production ceiling, and local pool
+  shedding could be misclassified as a project dependency failure. The worker
+  boundary now validates declared and actual body size against one 10 MiB
+  limit, cancels oversized streams, requires an exact source-integration
+  policy, enforces a strictly configured per-worker active-request cap, and
+  keeps host admission failures neutral to project circuit health.
+- **Symptom -> Source -> Consequence -> Remedy:** a project-directory worker
+  key retained the worker's imported dependency graph across source changes.
+  Editing only an imported module could therefore execute stale code even
+  though the root module path was unchanged. Reusable workers now require a
+  paired host-owned scope and immutable source-generation identity. A changed
+  generation selects a fresh import graph, unversioned execution uses a unique
+  single-use worker, and renderer invalidation or context disposal retires the
+  entire scope after active work finishes.
+- **Symptom -> Source -> Consequence -> Remedy:** worker-generation keys used
+  raw delimiter-bearing scope text and did not frame the execution kind.
+  Distinct Data and SSR workers could collide, while invalidating one nested
+  scope could retire another. Reusable keys now frame the execution kind,
+  exact UTF-16 scope identity, and immutable generation digest. Retirement
+  parses and compares complete scope fields, with exact compatibility handling
+  for already-issued legacy keys.
+- **Symptom -> Source -> Consequence -> Remedy:** Rendering could reread a
+  mutable Request, URL, renderer context, configuration, or SSR option graph
+  after asynchronous hashing and module loading. Persistence policy, worker
+  identity, and the actual executed request could therefore disagree. Public
+  render entrypoints now synchronously snapshot the request and relevant
+  configuration graph; SSR validates an owned structured snapshot before its
+  first await. A host-owned execution-scope lease spans the complete render,
+  replacement is published before retirement, and active old generations
+  drain before eviction.
+- **Symptom -> Source -> Consequence -> Remedy:** unsigned routing headers were
+  read outside the trusted-topology boundary, including by the managed
+  project-run endpoint. An internet caller could influence project, release,
+  environment, content-source, or sibling-endpoint routing. Proxy-owned
+  metadata is now accepted only on a trusted topology, and managed run routing
+  uses signed control-plane claims plus the actual request origin instead of
+  unsigned forwarding headers.
+- **Symptom -> Source -> Consequence -> Remedy:** static-path hooks ran outside
+  the shared admission policy and returned mutable, incompletely validated
+  results. A large, late, or malformed producer could consume capacity after
+  its caller had timed out and could mutate routing inputs after validation.
+  Static-path execution now has explicit opt-in deadline semantics, retains its
+  lease through late production and validation, and returns a validated
+  snapshot of every path, parameter record, array, and fallback value.
+- **Symptom -> Source -> Consequence -> Remedy:** negative revalidation
+  intervals passed validation and were interpreted inconsistently as
+  immediately stale. They can cause an unbounded refresh loop rather than a
+  meaningful cache policy. Runtime validation and the public result schemas
+  now reject negative values deterministically while preserving zero as the
+  explicit immediately-stale interval.
+
+Current reproducible focused evidence:
+
+- The assembled affected portfolio passes 48 top-level Deno tests with 907
+  nested steps and zero failures across Cache, Data, Rendering, Security,
+  Server, and Utils. It covers admission, branded result controls, exact cache
+  identity and fairness, server and static execution, static paths,
+  invalidation, detached producer lifetime, request-body limits, circuit
+  classification, trusted routing, renderer snapshots, worker lifecycle, and
+  real isolated-worker dependency changes.
+- The focused Rendering portfolio independently passes eight tests with 150
+  nested steps. These regressions cover out-of-order mutable request and
+  configuration inputs, source-generation changes where only an imported
+  dependency changes, exact worker-key framing, leased scope rotation,
+  deterministic reusable keys, and unique unversioned workers.
+- The authored Data reference and task-oriented data-fetching guide document
+  cache, timeout, admission, and isolated-generation contracts without
+  publishing internal worker controls as an application API.
+
+One production-policy decision remains open. Static-cache entries currently
+retain and return the hook's original object graph. A caller or the loader can
+mutate that graph after retained-size accounting, leaking state to later
+requests and making byte quotas advisory. Preserving shared reference identity
+is incompatible with isolation. The recommended contract is a framework-owned
+bounded snapshot, a fresh graph for every caller and cold single-flight waiter,
+and deterministic rejection of unsafe values. That is an observable
+object-identity and value-policy change, so it requires explicit breaking-change
+approval; deep-freezing, shallow copying, or remeasuring on reads would be
+incomplete fallbacks and are not accepted as closure.
+
+Formal Data closure still requires that cache-ownership decision plus
+formatting, lint, typecheck, documentation generation/validation, integration,
+and repository quick-verification gates on the final rebased source state.
+Until then, `data` remains in `Touched, revalidation required`; the 34-of-58
+closure count is unchanged. This section records reviewed remediation and
+reproducible evidence, not premature certification.
+
 Update this ledger in the same commit that closes or reopens an audit unit.

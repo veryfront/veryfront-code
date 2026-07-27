@@ -4,7 +4,9 @@ description: "Server data, static generation, and client-side fetching."
 order: 13
 ---
 
-Veryfront pages can load data three ways: `getServerData` on every request, `getStaticData` at build time, or `fetch` from a client component. Each one has its place.
+Veryfront pages can load data three ways: `getServerData` on every request,
+`getStaticData` during static generation and cacheable production requests, or
+`fetch` from a client component. Each one has its place.
 
 Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
@@ -42,39 +44,67 @@ entirely, including their top-level side effects. Put client initialization in a
 separate client-referenced module or a bare side-effect import that is not only
 used by a server data hook.
 
-The `props` you return are passed to the page component. To read them from a
-layout or a nested component without prop-drilling, use `usePageContext().data`
-(see [Pages and routing](./pages-and-routing.md)). It holds the same `props`
-object on the server render, in the hydration markup, and after client-side
-navigation.
+The `props` you return are passed to the page component. To read the same props
+data from a layout or nested component without prop-drilling, use
+`usePageContext().data` (see
+[Pages and routing](./pages-and-routing.md)). Veryfront serializes that data
+into hydration markup and restores it after client-side navigation; do not rely
+on JavaScript object identity surviving serialization.
 
 The `DataContext` provides:
 
-| Property  | Type                     | Description                                 |
-| --------- | ------------------------ | ------------------------------------------- |
-| `request` | `Request`                | The incoming HTTP request                   |
-| `params`  | `Record<string, string>` | Route parameters (e.g. `{ slug: "hello" }`) |
-| `query`   | `URLSearchParams`        | Query string parameters                     |
+| Property  | Type                                 | Description                                 |
+| --------- | ------------------------------------ | ------------------------------------------- |
+| `request` | `Request`                            | The incoming HTTP request                   |
+| `params`  | `Record<string, string \| string[]>` | Route parameters (e.g. `{ slug: "hello" }`) |
+| `query`   | `URLSearchParams`                    | Query string parameters                     |
+| `url`     | `URL`                                | Parsed request URL                          |
+
+## Deploy changed isolated server data
+
+If data-worker isolation is enabled, publish changed project source under a new
+immutable release or content-source identity. Do not reuse an existing identity
+for different source bytes.
+
+Use the normal project/content invalidation path when replacing source in a
+long-running renderer. Veryfront then retires the context's worker scope after
+active requests finish. Requests for the new immutable identity use a new
+worker and import graph.
+
+No application hook changes are required. The built-in renderer supplies the
+paired worker scope and generation identity when it has an exact source
+identity; otherwise it uses a single-use worker. A custom framework integration
+that cannot prove an immutable source generation should likewise omit both
+internal generation fields. Never supply only one field or invent a stable
+generation for mutable source.
 
 ## Static data
 
-`getStaticData` runs at build time. Use it for content that doesn't change per request:
+`getStaticData` supplies cacheable data for production requests and static
+builds. Use it for content that does not depend on request headers, cookies, or
+request bodies. It can vary by the complete URL, including query parameters
+read through `url.searchParams`:
 
 ```tsx
 // app/blog/[slug]/page.tsx
+import type { DataContext } from "veryfront";
+
 const posts = [
   { slug: "hello", title: "Hello" },
   { slug: "workflow", title: "Workflow notes" },
 ];
 
-export async function getStaticData({ params }: { params: { slug: string } }) {
-  const post = posts.find((item) => item.slug === params.slug);
+export async function getStaticData(
+  { params }: Pick<DataContext, "params" | "url">,
+) {
+  const post = posts.find((item) => item.slug === String(params.slug));
   return { props: { post } };
 }
 
 export async function getStaticPaths() {
   return {
     paths: posts.map((p) => ({ params: { slug: p.slug } })),
+    fallback: false,
   };
 }
 
@@ -85,9 +115,35 @@ export default function BlogPost({ post }: { post: { title: string } }) {
 
 For dynamic routes, pair `getStaticData` with `getStaticPaths` to tell the framework which pages to generate.
 
+`getStaticData` receives `params` and `url`. It does not receive `request`,
+request headers, cookies, a body, or a separate `query` property. Read query
+parameters from `url.searchParams`; the complete URL participates in static
+cache identity.
+
+## Revalidate static data
+
+Set `revalidate` to a finite, non-negative number of seconds to refresh static
+data after it becomes stale:
+
+```tsx
+export async function getStaticData() {
+  const response = await fetch("https://api.example.com/posts");
+  const posts = await response.json();
+
+  return {
+    props: { posts },
+    revalidate: 60,
+  };
+}
+```
+
+Veryfront serves the cached result while one background refresh runs. A failed
+refresh keeps the live cached result. Omit `revalidate` or set it to `false` to
+disable background refreshes.
+
 ## Redirects and 404s
 
-Return `redirect()` or `notFound()` from any data function:
+Return `redirect()` or `notFound()` from `getServerData` or `getStaticData`:
 
 ```tsx
 import { type DataContext, notFound, redirect } from "veryfront";
@@ -136,8 +192,13 @@ For data that loads after the page renders, fetch in a client component:
 
 import { useEffect, useState } from "react";
 
+interface SearchResult {
+  id: string;
+  title: string;
+}
+
 export default function Search() {
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
 
   useEffect(() => {
     fetch("/api/search?q=react")
