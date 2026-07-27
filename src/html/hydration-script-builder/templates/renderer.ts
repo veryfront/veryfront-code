@@ -122,8 +122,7 @@ export const getRendererScript = () => `
           data.clientModuleStrategy === 'rsc-module' &&
           !hasReleaseAssetModules &&
           isAppRouterPath(normalizedPagePath);
-        const isolatedClientPage =
-          shouldRenderRscClientPage && data.isolatedClientPage === true;
+        const isolatedClientPage = data.isolatedClientPage === true;
 
         async function loadHydrationComponent(path, preferRscModule) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';

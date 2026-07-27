@@ -700,6 +700,10 @@ function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
   return route === "/" ? probeUrl.origin : probeUrl.href;
 }
 
+function buildReadyEnvironmentUrl(baseUrl: string, route: string | null): string {
+  return route ? buildEnvironmentProbeUrl(baseUrl, route) : baseUrl;
+}
+
 function secureEnvironmentProbeUrl(url: string): string {
   const secureUrl = new URL(url);
   secureUrl.protocol = "https:";
@@ -1247,14 +1251,18 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       sourceDigest: source.sourceDigest,
     }, { verifiedRelease });
 
-    environmentUrl = buildEnvironmentUrl(verification.projectSlug, environment);
+    const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
+    environmentUrl = buildReadyEnvironmentUrl(
+      buildEnvironmentUrl(verification.projectSlug, environment),
+      readinessRoute,
+    );
     spinner.update(`Waiting for ${env} URL...`);
     await waitForEnvironmentReady(
       {
         projectSlug: verification.projectSlug,
         environmentName: environment.name,
         url: environmentUrl,
-        route: expectedPageRoutes.find((route) => !route.includes("[")) ?? null,
+        route: readinessRoute,
         protected: environment.protected,
         apiToken: config.apiToken,
       },
@@ -1465,14 +1473,18 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }, { verifiedRelease });
     streamJsonLine({ type: "step", name: "verify-deployment", status: "completed" });
 
-    const environmentUrl = buildEnvironmentUrl(verification.projectSlug, environment);
+    const readinessRoute = expectedPageRoutes.find((route) => !route.includes("[")) ?? null;
+    const environmentUrl = buildReadyEnvironmentUrl(
+      buildEnvironmentUrl(verification.projectSlug, environment),
+      readinessRoute,
+    );
     streamJsonLine({ type: "step", name: "wait-environment-url", status: "started" });
     await waitForEnvironmentReady(
       {
         projectSlug: verification.projectSlug,
         environmentName: environment.name,
         url: environmentUrl,
-        route: expectedPageRoutes.find((route) => !route.includes("[")) ?? null,
+        route: readinessRoute,
         protected: environment.protected,
         apiToken: config.apiToken,
       },
