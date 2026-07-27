@@ -1452,25 +1452,27 @@ async function traceStrictProjectFilesRequest<T>(
   }
 
   let traceSettled = false;
+  let operationInvoked = false;
   let operationPromise: Promise<T> | undefined;
   let invocationError: TypeError | undefined;
-  const rejectClosedInvocation = (): Promise<T> => {
-    const promise = Promise.reject<T>(
-      new TypeError("trace invoked the project files operation after settling"),
-    );
+  const rejectInvocation = (error: TypeError): Promise<T> => {
+    const promise = Promise.reject<T>(error);
     consumeStrictProjectFilesPromise(promise);
     return promise;
   };
   const invokeOperation = (): Promise<T> => {
     if (traceSettled) {
-      return rejectClosedInvocation();
+      return rejectInvocation(
+        new TypeError("trace invoked the project files operation after settling"),
+      );
     }
-    if (operationPromise) {
+    if (operationInvoked) {
       invocationError ??= new TypeError(
         "trace must invoke the project files operation exactly once",
       );
-      return operationPromise;
+      return rejectInvocation(invocationError);
     }
+    operationInvoked = true;
     try {
       operationPromise = Promise.resolve(fn());
     } catch (error) {
@@ -1502,7 +1504,7 @@ async function traceStrictProjectFilesRequest<T>(
   }
 
   traceSettled = true;
-  if (!operationPromise) {
+  if (!operationInvoked || !operationPromise) {
     throw new TypeError("trace must invoke the project files operation exactly once");
   }
   const result = await operationPromise;

@@ -1333,6 +1333,35 @@ Deno.test("strict trace returns the validated operation result instead of its ow
   assertEquals(result, { path: "src/index.ts", content: "validated" });
 });
 
+Deno.test("strict trace re-entry cannot launch the operation twice", async () => {
+  let invokeOperation: (() => Promise<unknown>) | undefined;
+  let fetchCalls = 0;
+
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      fetch: () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) {
+          void invokeOperation?.();
+        }
+        return Promise.resolve(
+          jsonResponse({ path: "src/index.ts", content: "validated" }),
+        );
+      },
+      path: "src/index.ts",
+      trace: <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        invokeOperation = operation as () => Promise<unknown>;
+        return operation();
+      },
+    })
+  );
+
+  assertEquals(error instanceof TypeError, true);
+  assertStringIncludes(getErrorMessage(error), "exactly once");
+  assertEquals(fetchCalls, 1);
+});
+
 Deno.test("strict request aborts work started by a noncooperative trace wrapper", async () => {
   let fetchSignal: AbortSignal | undefined;
 

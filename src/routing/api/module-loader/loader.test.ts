@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
+import { basename, join } from "#veryfront/compat/path";
 import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -391,13 +391,15 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ].join("\n"),
     );
 
-    let readCount = 0;
+    let moduleReadCount = 0;
     const countingAdapter: RuntimeAdapter = {
       ...adapter,
       fs: {
         ...adapter.fs,
         readFile: (path: string) => {
-          readCount++;
+          if (basename(path) === basename(modulePath)) {
+            moduleReadCount++;
+          }
           return adapter.fs.readFile(path);
         },
       },
@@ -411,7 +413,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     }
 
     assertMatch(caught, /Cannot find module 'config'/);
-    assertEquals(readCount, 1, "the broken module was read more than once");
+    assertEquals(moduleReadCount, 1, "the broken module was read more than once");
   });
 
   it("does not coerce hostile adapter rejections while wrapping the load failure", async () => {

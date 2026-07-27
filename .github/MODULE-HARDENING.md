@@ -3771,8 +3771,8 @@ The current findings are remediated:
   isolation. Strict requests now use monotonic per-request and aggregate
   deadlines, exact caller reasons, disposable listener/timer scopes, bounded
   response reads, late-response cancellation, immediate reader-lock release,
-  and request-scoped signals carried through hosted preparation. Concurrent
-  calls through the cached adapter remain isolated.
+  and request-scoped signals carried through initial hosted preparation.
+  Concurrent calls through the cached adapter remain isolated.
 - **Symptom -> Source -> Consequence -> Remedy:** a custom strict trace wrapper
   could start its callback and then reject, hang, or resolve a fabricated
   value independently. The consequence was a stranded fetch or an unvalidated
@@ -3794,11 +3794,12 @@ The current findings are remediated:
 Current verification evidence:
 
 - The hosted project-files, steering, request-context, and route portfolio
-  passes 97 tests with sanitizers and zero failures. The project-files client
-  contributes 64 cases, including early trace rejection and success,
-  fabricated results, noncooperative tracing and streams, synchronous
-  deadline starvation, late responses, exact cancellation identity, timer
-  disposal, pagination limits, and cached-call isolation.
+  passes 98 tests with sanitizers and zero failures. The project-files client
+  contributes 65 cases, including early trace rejection and success,
+  re-entrant duplicate invocation, fabricated results, noncooperative tracing
+  and streams, synchronous deadline starvation, late responses, exact
+  cancellation identity, timer disposal, pagination limits, and cached-call
+  isolation.
 - The affected Skill, filesystem compatibility, sandbox, and Agent runtime
   portfolio passes 65 suites with 333 nested steps and zero failures. It
   covers conflicting working-directory paths, omitted working directories and
@@ -3817,11 +3818,16 @@ Current verification evidence:
   new violation.
 
 No known critical or high-confidence risk remains in the narrowed execution
-and hosted project-files paths above. The `skill` unit remains in
-touched/revalidation-required status because reserving framework Skill tool
-IDs and replacing persisted-history activation with freshly re-derived trusted
-state require an explicitly approved compatibility decision. The `agent` unit
-also remains in revalidation until its complete top-level gate passes. This
-checkpoint therefore does not change the formal 32-of-58 closure count.
+and initial hosted project-files paths above. Later runtime steering refresh,
+child-agent configuration, Skill refresh, and project `load_skill` calls are
+strictly deadline-bounded but do not yet receive the enclosing run or tool
+abort signal, so they may finish after that caller is cancelled. This warning
+must be resolved or explicitly accepted before closing the complete `agent`
+unit. The `skill` unit remains in touched/revalidation-required status because
+reserving framework Skill tool IDs and replacing persisted-history activation
+with freshly re-derived trusted state require an explicitly approved
+compatibility decision. The `agent` unit also remains in revalidation until
+its complete top-level gate passes. This checkpoint therefore does not change
+the formal 32-of-58 closure count.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

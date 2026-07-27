@@ -247,7 +247,6 @@ async function buildModule(args: {
     resolved.modulePath,
     resolved.projectDir,
     args.adapter,
-    args.fs,
     args.config,
     args.strictRemoteImports,
   );
@@ -582,7 +581,6 @@ function buildAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  fs: FileSystem,
   config?: VeryfrontConfig,
   strictRemoteImports = false,
 ): Promise<Omit<BuiltHandlerModule, "projectDir">> {
