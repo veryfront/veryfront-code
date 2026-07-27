@@ -62,7 +62,12 @@ import {
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
   releaseAssetUrl,
 } from "./constants.ts";
-import { routeForPage } from "./route-path.ts";
+import {
+  configuredRoutePath,
+  normalizeLogicalPath,
+  routeForConfiguredPage,
+  routeForPage,
+} from "./route-path.ts";
 export { routeForPage } from "./route-path.ts";
 import type {
   ReleaseAssetCssEntry,
@@ -294,40 +299,6 @@ function isBrowserModule(path: string, directories: ReleaseRouterDirectories): b
     BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
 }
 
-function configuredRoutePath(
-  path: string,
-  directories: ReleaseRouterDirectories,
-  routeRoot: "app" | "pages",
-): string | null {
-  const relativePath = pathBelowRoot(path, directories[routeRoot]);
-  return relativePath === null ? null : `${routeRoot}/${relativePath}`;
-}
-
-function pathBelowRoot(path: string, root: string): string | null {
-  const normalizedPath = normalizeLogicalPath(path);
-  const normalizedRoot = normalizeLogicalPath(root);
-  if (normalizedRoot === "") return normalizedPath;
-  if (normalizedPath === normalizedRoot) return "";
-  const prefix = `${normalizedRoot}/`;
-  return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : null;
-}
-
-function routeForConfiguredPage(
-  path: string,
-  directories: ReleaseRouterDirectories,
-): string | null {
-  const appPath = configuredRoutePath(path, directories, "app");
-  if (appPath) {
-    const route = routeForPage(appPath);
-    if (route !== null) return route;
-  }
-
-  const pagesPath = configuredRoutePath(path, directories, "pages");
-  if (pagesPath) return routeForPage(pagesPath);
-
-  return null;
-}
-
 function isConfiguredAppRouterLayout(path: string, directories: ReleaseRouterDirectories): boolean {
   const appPath = configuredRoutePath(path, directories, "app");
   if (!appPath?.startsWith("app/")) return false;
@@ -389,19 +360,6 @@ function resolveKnownModulePath(path: string, knownPaths: Set<string>): string |
   }
 
   return null;
-}
-
-function normalizeLogicalPath(path: string): string {
-  const parts: string[] = [];
-  for (const part of path.replace(/\\/g, "/").split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") {
-      parts.pop();
-      continue;
-    }
-    parts.push(part);
-  }
-  return parts.join("/");
 }
 
 function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {
@@ -1603,8 +1561,9 @@ async function runBuildInner(
 
   for (const file of files) {
     if (typeof file.content !== "string") continue;
-    const abs = resolveMaterializedReleasePath(tempDir, file.path);
-    sourceByPath.set(file.path, file.content);
+    const logicalPath = file.path.replace(/\\/g, "/");
+    const abs = resolveMaterializedReleasePath(tempDir, logicalPath);
+    sourceByPath.set(normalizeLogicalPath(logicalPath), file.content);
     await fs.mkdir(dirname(abs), { recursive: true });
     await fs.writeTextFile(abs, file.content);
   }

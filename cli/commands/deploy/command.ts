@@ -10,7 +10,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { createFileSystem, cwd, runtime } from "veryfront/platform";
-import { join, relative } from "veryfront/platform/path";
+import { join, relative, resolve } from "veryfront/platform/path";
 import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
 import {
   type ApiClient,
@@ -40,6 +40,7 @@ import {
 } from "../../shared/deployment-provenance.ts";
 import type { ReleaseAssetManifestResponse } from "#veryfront/release-assets/manifest-schema.ts";
 import { routeForPage } from "#veryfront/release-assets/route-path.ts";
+import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
 
 /**
  * Schema factory for deploy command arguments
@@ -730,9 +731,38 @@ async function getProjectRouteDirectories(
   const adapter = await runtime.get();
   const config = await getConfig(projectDir, adapter);
   return {
-    app: config.directories?.app ?? "app",
-    pages: config.directories?.pages ?? "pages",
+    app: normalizeConfiguredRouteDirectory(config.directories?.app ?? "app"),
+    pages: normalizeConfiguredRouteDirectory(config.directories?.pages ?? "pages"),
   };
+}
+
+function normalizeConfiguredRouteDirectory(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function isAbsoluteConfiguredRouteDirectory(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
+}
+
+function resolveProjectRouteDirectory(
+  projectDir: string,
+  directory: string,
+  name: "app" | "pages",
+): string {
+  if (isAbsoluteConfiguredRouteDirectory(directory)) {
+    throw new Error(
+      `Configured ${name} directory "${directory}" must be project-relative. Set directories.${name} to a path inside the project, for example "${name}" or "src/${name}".`,
+    );
+  }
+
+  const projectRoot = normalizePath(projectDir);
+  const routeRoot = normalizePath(resolve(projectRoot, directory));
+  if (!isWithinDirectory(projectRoot, routeRoot)) {
+    throw new Error(
+      `Configured ${name} directory "${directory}" resolves outside the project directory. Set directories.${name} to a project-relative path inside the project.`,
+    );
+  }
+  return routeRoot;
 }
 
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
@@ -766,8 +796,8 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
     }
   }
 
-  const appDir = join(projectDir, directories.app);
-  const pagesDir = join(projectDir, directories.pages);
+  const appDir = resolveProjectRouteDirectory(projectDir, directories.app, "app");
+  const pagesDir = resolveProjectRouteDirectory(projectDir, directories.pages, "pages");
   await Promise.all([
     walk(appDir, appDir, "app"),
     walk(pagesDir, pagesDir, "pages"),

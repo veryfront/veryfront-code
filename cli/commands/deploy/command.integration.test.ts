@@ -598,7 +598,7 @@ it("collects configured app and pages routes when projectDir has a trailing slas
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(
       `${projectDir}/veryfront.config.ts`,
-      'export default { projectSlug: "my-project", directories: { app: "src/site", pages: "src/pages" } };\n',
+      'export default { projectSlug: "my-project", directories: { app: "src\\\\site", pages: "src\\\\pages" } };\n',
     );
     await Deno.writeTextFile(
       `${projectDir}/src/site/page.tsx`,
@@ -741,6 +741,265 @@ it("collects configured app and pages routes when projectDir has a trailing slas
     });
     _resetEnvironmentConfig();
     await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("rejects configured route directories outside projectDir before walking", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const requests: string[] = [];
+  const releaseSource = "export const value = 1;\n";
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(
+      `${projectDir}/veryfront.config.ts`,
+      'export default { projectSlug: "my-project", directories: { app: "../outside", pages: "src/pages" } };\n',
+    );
+    await Deno.writeTextFile(`${projectDir}/app.ts`, releaseSource);
+    const actualSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: releaseSource },
+    ]);
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: actualSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}`);
+
+      if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
+        return Promise.resolve(Response.json({ id: PROJECT_ID, slug: "my-project" }));
+      }
+      if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+        return Promise.resolve(Response.json({
+          data: [{
+            id: ENVIRONMENT_ID,
+            name: "production",
+            project_id: PROJECT_ID,
+            protected: false,
+            deployment: null,
+          }],
+        }));
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+        return Promise.resolve(Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }, { status: 201 }));
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+        return Promise.resolve(Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }));
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+      ) {
+        return Promise.resolve(Response.json({
+          data: [{
+            path: "app.ts",
+            data: JSON.stringify({ body: releaseSource, path: "app.ts" }),
+          }],
+          page_info: {},
+        }));
+      }
+      return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+    }, () =>
+      assertRejects(
+        () =>
+          deployCommand({
+            projectDir,
+            branch: "main",
+            env: "production",
+            releaseName: `github-main-${actualSha}`,
+            dryRun: false,
+            force: true,
+            quiet: true,
+            skipSourcePush: true,
+          }),
+        Error,
+        'Configured app directory "../outside" resolves outside the project directory',
+      ));
+
+    assertEquals(
+      requests.some((request) => request.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)),
+      false,
+    );
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("rejects absolute configured route directories before walking", async () => {
+  const cases = [
+    {
+      app: "/project/src/site",
+      message: 'Configured app directory "/project/src/site" must be project-relative',
+    },
+    {
+      app: "C:/project/src/site",
+      message: 'Configured app directory "C:/project/src/site" must be project-relative',
+    },
+    {
+      app: "\\\\server\\share\\site",
+      message: 'Configured app directory "//server/share/site" must be project-relative',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const projectDir = await Deno.makeTempDir();
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+    const releaseSource = "export const value = 1;\n";
+
+    try {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `export default { projectSlug: "my-project", directories: { app: ${
+          JSON.stringify(testCase.app)
+        }, pages: "src/pages" } };\n`,
+      );
+      await Deno.writeTextFile(`${projectDir}/app.ts`, releaseSource);
+      const actualSha = await commitProject(projectDir);
+      const sourceDigest = await computeSourceDigest([
+        { path: "app.ts", content: releaseSource },
+      ]);
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: PROJECT_ID,
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha: actualSha,
+        sourceDigest,
+        clean: true,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+
+      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_PROJECT_ID");
+      _resetEnvironmentConfig();
+
+      await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+
+        if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
+          return Promise.resolve(Response.json({ id: PROJECT_ID, slug: "my-project" }));
+        }
+        if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+          return Promise.resolve(Response.json({
+            data: [{
+              id: ENVIRONMENT_ID,
+              name: "production",
+              project_id: PROJECT_ID,
+              protected: false,
+              deployment: null,
+            }],
+          }));
+        }
+        if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+          return Promise.resolve(Response.json({
+            id: RELEASE_ID,
+            name: `github-main-${actualSha}`,
+            version: "0.0.41",
+            project_id: PROJECT_ID,
+          }, { status: 201 }));
+        }
+        if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+          return Promise.resolve(Response.json({
+            id: RELEASE_ID,
+            name: `github-main-${actualSha}`,
+            version: "0.0.41",
+            project_id: PROJECT_ID,
+          }));
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+        ) {
+          return Promise.resolve(Response.json({
+            data: [{
+              path: "app.ts",
+              data: JSON.stringify({ body: releaseSource, path: "app.ts" }),
+            }],
+            page_info: {},
+          }));
+        }
+        return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+      }, () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              releaseName: `github-main-${actualSha}`,
+              dryRun: false,
+              force: true,
+              quiet: true,
+              skipSourcePush: true,
+            }),
+          Error,
+          testCase.message,
+        ));
+
+      assertEquals(
+        requests.some((request) => request.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)),
+        false,
+      );
+    } finally {
+      envKeys.forEach((key, index) => {
+        const value = savedEnv[index];
+        if (value === undefined) Deno.env.delete(key);
+        else Deno.env.set(key, value);
+      });
+      _resetEnvironmentConfig();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   }
 });
 
