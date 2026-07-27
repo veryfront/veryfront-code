@@ -605,6 +605,43 @@ describe("server/services/rendering/ssr.service", () => {
         }
       });
 
+      it("captures app-router error-boundary failures before returning boundary HTML", async () => {
+        const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
+        setApplicationErrorReporter({
+          capture(error, context) {
+            captured.push({ error, context });
+            return "event-id";
+          },
+          flush: () => Promise.resolve(true),
+        });
+        const renderError = Object.assign(new Error("App router render failed"), {
+          errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
+        });
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw renderError;
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        try {
+          const result = await service.renderPage(makeCtx(), makeRenderOptions());
+          assertEquals(result.status, 500);
+          assertEquals(result.errorType, "app-router-error-boundary");
+          assertEquals(result.html, renderError.errorBoundaryHtml);
+          assertEquals(captured.length, 1);
+          assertEquals((captured[0]?.error as Error).message, "App router render failed");
+          assertEquals(captured[0]?.context, {
+            boundary: "ssr.app-router-error-boundary",
+            method: "GET",
+          });
+        } finally {
+          setApplicationErrorReporter(undefined);
+        }
+      });
+
       it("returns 503 for service-overloaded errors", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
