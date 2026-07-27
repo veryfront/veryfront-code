@@ -92,6 +92,7 @@ configuration.
 | Environment variable                  | Default                  | Allowed value or range                                         |
 | ------------------------------------- | ------------------------ | -------------------------------------------------------------- |
 | `VERYFRONT_PROXY_API_BASE_URL`        | Veryfront Cloud API      | Canonical HTTP(S) URL, optional path                           |
+| `LOCAL_PROJECTS`                      | unset                    | Canonical absolute-path map; development only                  |
 | `VERYFRONT_SERVER_URL`                | localhost in development | HTTP(S) origin; required in production                         |
 | `VERYFRONT_PROXY_URL`                 | unset                    | HTTP(S) bind origin; mutually exclusive with `HOST` and `PORT` |
 | `HOST`                                | `0.0.0.0`                | Canonical hostname or IP address                               |

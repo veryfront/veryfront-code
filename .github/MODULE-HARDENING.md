@@ -178,7 +178,8 @@ The current proxy findings are otherwise remediated:
   and bidirectional removal of standard and `Connection`-owned hop-by-hop
   headers;
 - request Host authorities, upstream origins, API base paths, and origin-form
-  paths are canonicalized without protocol-relative URL interpretation;
+  paths are canonicalized without protocol-relative URL interpretation, and
+  local filesystem projects are rejected in production;
 - renderer retries and BFF API calls use bounded, request-linked cancellation;
   retry timers are cleaned up, late fetch responses are canceled, API redirects
   are rejected, and trace URLs exclude query strings;

@@ -307,6 +307,9 @@ export function readProxyStartupConfig(
     read("VERYFRONT_PROXY_API_BASE_URL") || DEFAULT_API_BASE_URL,
   );
   const localProjects = parseLocalProjects(read("LOCAL_PROJECTS"));
+  if (production && Object.keys(localProjects).length > 0) {
+    throw new Error("LOCAL_PROJECTS is development-only and cannot be configured in production");
+  }
 
   const serverUrlValue = read("VERYFRONT_SERVER_URL");
   if (!serverUrlValue && production) {

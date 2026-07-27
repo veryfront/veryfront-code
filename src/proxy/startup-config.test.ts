@@ -146,6 +146,20 @@ Deno.test("proxy startup configuration", async (t) => {
       Error,
       "must contain at least 32 bytes",
     );
+    assertThrows(
+      () =>
+        readProxyStartupConfig(
+          environment({
+            ...values,
+            LOCAL_PROJECTS: JSON.stringify({
+              project: "/srv/projects/project",
+            }),
+          }),
+          true,
+        ),
+      Error,
+      "LOCAL_PROJECTS is development-only",
+    );
   });
 
   await t.step("rejects malformed local project maps", () => {

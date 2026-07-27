@@ -611,7 +611,7 @@ async function router(req: Request): Promise<Response> {
       });
     } else if (url.pathname === "/_proxy/stats") {
       response = Object.keys(proxyHandler.localProjects).length === 0
-        ? new Response("Forbidden", { status: 403 })
+        ? jsonErrorResponse(403, { error: "Forbidden" })
         : await handleStats();
     } else if (
       url.pathname === API_PROXY_PATH_PREFIX ||
