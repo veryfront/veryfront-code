@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { devLogger, logger, prodLogger, sanitizeHeaderForLog } from "./logger.ts";
 
@@ -31,6 +31,24 @@ function getFirstLog(logs: string[]): string {
 
 describe("middleware/builtin/logger", () => {
   describe("logger", () => {
+    it("should reject invalid logger configuration", () => {
+      assertThrows(
+        () => logger({ format: "invalid" as never }),
+        TypeError,
+        "format",
+      );
+      assertThrows(
+        () => logger({ skip: "invalid" as never }),
+        TypeError,
+        "skip",
+      );
+      assertThrows(
+        () => logger({ log: "invalid" as never }),
+        TypeError,
+        "log",
+      );
+    });
+
     it("should pass through and return response unchanged", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "tiny", log: (msg) => logs.push(msg) });
@@ -194,7 +212,7 @@ describe("middleware/builtin/logger", () => {
       assertEquals(logs.length, 1);
     });
 
-    it("should log 500 when next returns undefined", async () => {
+    it("should log the pipeline's 404 status when next returns undefined", async () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
 
@@ -202,8 +220,8 @@ describe("middleware/builtin/logger", () => {
 
       assertEquals(res, undefined);
       const entry = JSON.parse(getFirstLog(logs));
-      assertEquals(entry.http.status, 500);
-      assertEquals(entry.level, "error");
+      assertEquals(entry.http.status, 404);
+      assertEquals(entry.level, "warn");
     });
 
     it("should log 500 and rethrow when next throws", async () => {
@@ -221,6 +239,44 @@ describe("middleware/builtin/logger", () => {
       assertEquals(logs.length, 1);
       const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.status, 500);
+    });
+
+    it("should preserve a successful response when the custom log sink throws", async () => {
+      let logCalls = 0;
+      const mw = logger({
+        format: "tiny",
+        log: () => {
+          logCalls++;
+          throw new Error("sink unavailable");
+        },
+      });
+
+      const response = await mw(makeCtx(), nextOk);
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "ok");
+      assertEquals(logCalls, 1);
+    });
+
+    it("should preserve the downstream error and invoke a failing sink once", async () => {
+      let logCalls = 0;
+      const mw = logger({
+        format: "tiny",
+        log: () => {
+          logCalls++;
+          throw new Error("sink unavailable");
+        },
+      });
+      let caught: Error | undefined;
+
+      try {
+        await mw(makeCtx(), () => Promise.reject(new Error("downstream failed")));
+      } catch (error) {
+        caught = error instanceof Error ? error : new Error(String(error));
+      }
+
+      assertEquals(caught?.message, "downstream failed");
+      assertEquals(logCalls, 1);
     });
 
     it("should use x-real-ip when x-forwarded-for is absent", async () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { securityHeaders } from "./security-headers.ts";
 
@@ -33,6 +33,48 @@ describe("middleware/builtin/security/security-headers", () => {
         res?.headers.get("Permissions-Policy"),
         "geolocation=(), microphone=(), camera=()",
       );
+    });
+
+    it("should add X-XSS-Protection only when explicitly enabled", async () => {
+      const enabled = await securityHeaders({ xssProtection: true })(
+        makeCtx(),
+        nextOk,
+      );
+      const defaults = await securityHeaders()(makeCtx(), nextOk);
+
+      assertEquals(enabled?.headers.get("X-XSS-Protection"), "1; mode=block");
+      assertEquals(defaults?.headers.get("X-XSS-Protection"), null);
+    });
+
+    it("should reject invalid HSTS max-age configuration", () => {
+      for (const maxAge of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => securityHeaders({ hsts: { maxAge } }),
+          RangeError,
+          "maxAge",
+        );
+      }
+    });
+
+    it("should reject invalid runtime option types", () => {
+      for (
+        const options of [
+          { noSniff: "false" },
+          { xssProtection: 1 },
+          { frameOptions: false },
+          { referrerPolicy: 42 },
+          { permissionsPolicy: [] },
+          { contentSecurityPolicy: false },
+          { hsts: null },
+          { hsts: { maxAge: 60, includeSubDomains: "yes" } },
+          { hsts: { maxAge: 60, preload: 1 } },
+        ]
+      ) {
+        assertThrows(
+          () => securityHeaders(options as never),
+          TypeError,
+        );
+      }
     });
 
     it("should allow custom X-Frame-Options", async () => {
@@ -94,9 +136,26 @@ describe("middleware/builtin/security/security-headers", () => {
 
     it("should handle undefined response from next", async () => {
       const mw = securityHeaders();
-      const res = await mw(makeCtx(), () => Promise.resolve(undefined as Response));
+      const res = await mw(makeCtx(), () => Promise.resolve(undefined));
 
       assertEquals(res, undefined);
+    });
+
+    it("should preserve response status text", async () => {
+      const mw = securityHeaders();
+      const res = await mw(
+        makeCtx(),
+        () =>
+          Promise.resolve(
+            new Response("created", {
+              status: 201,
+              statusText: "Created by middleware",
+            }),
+          ),
+      );
+
+      assertEquals(res?.status, 201);
+      assertEquals(res?.statusText, "Created by middleware");
     });
   });
 });

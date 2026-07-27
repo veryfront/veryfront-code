@@ -7,6 +7,8 @@ import {
   getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
+import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 
 const logger = serverLogger.component("timeout");
 
@@ -26,7 +28,41 @@ export interface TimeoutOptions {
 }
 
 function isExcludedPath(pathname: string, exclude: string[]): boolean {
-  return exclude.some((path) => pathname === path || pathname.startsWith(path));
+  return exclude.some((path) =>
+    path === "/" ||
+    pathname === path ||
+    pathname.startsWith(`${path}/`)
+  );
+}
+
+function normalizeExcludePaths(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError("Timeout exclude must be an array of absolute paths");
+  }
+
+  return value.map((path, index) => {
+    if (
+      typeof path !== "string" ||
+      !path.startsWith("/") ||
+      path.startsWith("//")
+    ) {
+      throw new TypeError(
+        `Timeout exclude[${index}] must be an absolute path`,
+      );
+    }
+    if (path.includes("?") || path.includes("#")) {
+      throw new TypeError(
+        `Timeout exclude[${index}] must not contain a query or fragment`,
+      );
+    }
+    if (path.length > MAX_PATH_LENGTH_CHARS) {
+      throw new RangeError(
+        `Timeout exclude[${index}] exceeds ${MAX_PATH_LENGTH_CHARS} characters`,
+      );
+    }
+
+    return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  });
 }
 
 function timeoutResponse(pathname: string, timeoutMs: number, message: string): Response {
@@ -38,7 +74,10 @@ function timeoutResponse(pathname: string, timeoutMs: number, message: string): 
     }),
     {
       status: HTTP_GATEWAY_TIMEOUT,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+      },
     },
   );
 }
@@ -50,9 +89,27 @@ function timeoutResponse(pathname: string, timeoutMs: number, message: string): 
  * returns a 504 Gateway Timeout response.
  */
 export function timeout(options?: TimeoutOptions): Middleware {
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  if (
+    options !== undefined &&
+    (typeof options !== "object" || options === null || Array.isArray(options))
+  ) {
+    throw new TypeError("Timeout configuration must be an options object");
+  }
+
+  const timeoutMs = normalizeTimerDurationMs(
+    options?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    "Timeout timeoutMs",
+  );
+  if (
+    options?.message !== undefined &&
+    typeof options.message !== "string"
+  ) {
+    throw new TypeError("Timeout message must be a string");
+  }
   const message = options?.message ?? "Request timeout";
-  const exclude = options?.exclude ?? DEFAULT_EXCLUDE_PATHS;
+  const exclude = normalizeExcludePaths(
+    options?.exclude ?? DEFAULT_EXCLUDE_PATHS,
+  );
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
@@ -81,7 +138,7 @@ export function timeout(options?: TimeoutOptions): Middleware {
 
       return timeoutResponse(pathname, timeoutMs, message);
     } finally {
-      if (timeoutId) clearTimeout(timeoutId);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   };
 }
@@ -93,7 +150,17 @@ export function timeout(options?: TimeoutOptions): Middleware {
  */
 export function getTimeoutFromEnv(env: EnvironmentConfig = getEnvironmentConfig()): number {
   const timeoutMs = env.requestTimeoutMs;
-  return timeoutMs && timeoutMs > 0 ? timeoutMs : DEFAULT_REQUEST_TIMEOUT_MS;
+  if (timeoutMs === undefined) return DEFAULT_REQUEST_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new RangeError(
+      `Environment requestTimeoutMs must be an integer between 1 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+  return timeoutMs;
 }
 
 /**

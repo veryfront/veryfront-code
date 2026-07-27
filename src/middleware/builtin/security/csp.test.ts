@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { contentSecurityPolicy } from "./csp.ts";
 import { MiddlewareContext } from "../../core/context.ts";
@@ -53,6 +53,37 @@ describe("contentSecurityPolicy", () => {
     assertStringIncludes(getCsp(response), "'nonce-abc123'");
   });
 
+  it("should add a nonce only to the exact script-src directive", async () => {
+    const middleware = contentSecurityPolicy(
+      { "script-src-elem": "'self'" },
+      { nonce: "abc123" },
+    );
+    const response = await runMiddleware(middleware, new Response("OK"));
+
+    assertEquals(getCsp(response), "script-src-elem 'self'");
+  });
+
+  it("should reject an unsafe nonce at registration", () => {
+    assertThrows(
+      () =>
+        contentSecurityPolicy(
+          { "script-src": "'self'" },
+          { nonce: "abc'; object-src *" },
+        ),
+      TypeError,
+      "nonce",
+    );
+  });
+
+  it("should snapshot directives at registration", async () => {
+    const policies = { "default-src": "'self'" };
+    const middleware = contentSecurityPolicy(policies);
+    policies["default-src"] = "*";
+
+    const response = await runMiddleware(middleware, new Response("OK"));
+    assertEquals(getCsp(response), "default-src 'self'");
+  });
+
   it("should merge with existing CSP", async () => {
     const middleware = contentSecurityPolicy(
       { "default-src": "'self'" },
@@ -70,10 +101,11 @@ describe("contentSecurityPolicy", () => {
     const middleware = contentSecurityPolicy({ "default-src": "'self'" });
     const response = await runMiddleware(
       middleware,
-      new Response("Created", { status: 201 }),
+      new Response("Created", { status: 201, statusText: "Created by middleware" }),
     );
 
     assertEquals(response?.status, 201);
+    assertEquals(response?.statusText, "Created by middleware");
   });
 
   it("should preserve original response body", async () => {

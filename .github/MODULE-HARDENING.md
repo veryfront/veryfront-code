@@ -27,8 +27,8 @@ Generated-only changes do not count as module review evidence.
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
 | Closed                         |    35 |      60.3% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     3 |       5.2% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    20 |      34.5% | Substantive recovered or current work exists        |
+| Deep reviewed, fixes pending   |     4 |       6.9% | Reviewed remediation or design work remains open    |
+| Touched, revalidation required |    19 |      32.8% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -77,6 +77,7 @@ stricter closure count.
 ### Deep reviewed, fixes pending
 
 - `html`
+- `middleware`
 - `resource`
 - `utils`
 
@@ -88,7 +89,6 @@ stricter closure count.
 - `integrations`
 - `internal-agents`
 - `mcp`
-- `middleware`
 - `modules`
 - `oauth`
 - `observability`
@@ -4365,5 +4365,77 @@ workflow it is classified as **Reference** with high confidence, but authored
 restructuring awaits explicit confirmation. Until that reference is replaced
 and documentation validation passes, `html` remains `Deep reviewed, fixes
 pending`; this checkpoint does not increment formal closure.
+
+### Middleware deep-review checkpoint (reference update pending)
+
+The `middleware` audit unit owns request context, scoped composition, terminal
+handler execution, response-body teardown, built-in logging, CORS, timeouts,
+security headers, CSRF protection, and in-memory and Redis-backed rate
+limiting. Its production consumers include the development and hosted server
+runtimes, Cloudflare workers, project middleware discovery, and the public
+`veryfront/middleware` package surface.
+
+The current implementation review remediated these findings:
+
+- **Symptom -> Source -> Consequence -> Remedy:** composed middleware could
+  observe stale request aliases, mutable regular expressions, or registration
+  arrays, while terminal handlers received the original request. Context
+  request aliases are synchronized, incoming header forms are preserved,
+  patterns and registration state are snapshotted, registrations are
+  validated, and terminal handlers receive the current middleware request.
+- **Symptom -> Source -> Consequence -> Remedy:** synthesized failures,
+  timeouts, CSRF denials, and denied preflights were cacheable by default, and
+  execution errors could expose request URLs. Generated 404, 403, 500, and 504
+  responses now declare `Cache-Control: no-store`; error reporting no longer
+  includes sensitive URLs; and response teardown runs across body completion,
+  cancellation, failure, locked bodies, and handler exceptions.
+- **Symptom -> Source -> Consequence -> Remedy:** CORS registration accepted
+  unsafe origins, preflight responses lost status text or `Vary` semantics,
+  and simple CORS handled preflight as an ordinary request. Origins and nested
+  security-header options are validated and snapshotted at registration;
+  preflight behavior, status text, actual-request headers, and `Vary` merging
+  now follow the configured contract.
+- **Symptom -> Source -> Consequence -> Remedy:** rate-limit cleanup ignored
+  the documented interval-disable host flag and repeated store failures could
+  flood logs. The memory store honors both supported lifecycle flags, validates
+  portable timer bounds, and throttles repeated store diagnostics per
+  middleware instance without changing fail-closed behavior.
+- **Symptom -> Source -> Consequence -> Remedy:** Redis module loading,
+  connection, commands, and shutdown could wait forever; stale clients could
+  cross reconnect generations; and a failed disconnect was forgotten.
+  Connection and operation deadlines are explicit, bounded, and validated;
+  node-Redis reconnects are disabled; timed-out clients are invalidated;
+  destroy cancels pending connects; lifecycle generations fence stale events;
+  disconnects are deduplicated; and failed cleanup remains retryable.
+- **Symptom -> Source -> Consequence -> Remedy:** invalid environment timeout
+  values were handled inconsistently and generated timeout responses could be
+  cached. Defined invalid values now fail registration deterministically,
+  validated options are immutable snapshots, and timeout responses are
+  explicitly non-cacheable.
+
+Current reproducible evidence:
+
+- all 15 middleware suites pass 265 nested steps with zero failures, including
+  stalled Redis loading/connect/command paths, prompt destruction, cleanup
+  retries, generation fencing, registration mutation, response teardown,
+  adversarial origins, and cache-safety assertions;
+- eight affected Server, Platform, Discovery, and documentation consumer tests
+  pass 128 nested steps;
+- the complete middleware test tree typechecks without execution, and both
+  public middleware entrypoints pass direct source typechecking;
+- the npm package and first-party extensions rebuild, audit cleanly, and the
+  published consumer composition compiles against emitted declarations;
+- documentation generation and validation pass all 40 API pages, 67 guides,
+  112 public documentation files, executable examples, and 746 links; and
+- `deno task verify:quick` passes formatting, lint, policy and dependency
+  ratchets, zero module cycles, fresh manifests, documentation contracts, and
+  every configured production and browser entrypoint typecheck.
+
+No known unresolved critical or high-confidence middleware implementation risk
+remains. The authored `src/middleware/README.md` was materially stale and a
+replacement reference has been prepared, but its Diátaxis restructuring still
+awaits explicit confirmation. Until that reference is accepted and revalidated,
+`middleware` remains `Deep reviewed, fixes pending`; this checkpoint does not
+increment formal closure.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { MiddlewareContext } from "../context.ts";
 import { MiddlewarePipeline } from "./pipeline.ts";
 import type { MiddlewareHandler } from "../types.ts";
 
@@ -37,6 +44,17 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.use(mw1).use(mw2);
 
       assertEquals(pipeline.getMiddleware().length, 2);
+    });
+
+    it("should reject non-function middleware during registration", () => {
+      const pipeline = new MiddlewarePipeline();
+
+      assertThrows(
+        () => pipeline.use(undefined as unknown as MiddlewareHandler),
+        TypeError,
+        "Middleware must be a function",
+      );
+      assertEquals(pipeline.getMiddleware(), []);
     });
   });
 
@@ -75,6 +93,26 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       await pipeline.execute(new Request("http://localhost/home"));
       assertEquals(order, ["global"]);
     });
+
+    it("should reject invalid scoped registrations without retaining them", () => {
+      const pipeline = new MiddlewarePipeline();
+      const middleware: MiddlewareHandler = (_ctx, next) => next();
+
+      assertThrows(
+        () => pipeline.useFor(null as unknown as RegExp, middleware),
+        TypeError,
+        "Middleware route pattern must be a RegExp",
+      );
+      assertThrows(
+        () =>
+          pipeline.useFor(
+            /^\/api/,
+            undefined as unknown as MiddlewareHandler,
+          ),
+        TypeError,
+        "Middleware must be a function",
+      );
+    });
   });
 
   describe("compose", () => {
@@ -85,6 +123,32 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       const handler = pipeline.compose();
 
       assertEquals(typeof handler, "function");
+    });
+
+    it("should not change an existing composition after later registrations", async () => {
+      const pipeline = new MiddlewarePipeline();
+      const order: string[] = [];
+      pipeline.use(async (_ctx, next) => {
+        order.push("first");
+        return await next();
+      });
+      const composed = pipeline.compose();
+
+      pipeline.use(async (_ctx, next) => {
+        order.push("late");
+        return await next();
+      });
+      pipeline.useFor(/.*/, async (_ctx, next) => {
+        order.push("late-scoped");
+        return await next();
+      });
+
+      await composed(
+        new MiddlewareContext(new Request("http://localhost/")),
+        () => new Response("ok"),
+      );
+
+      assertEquals(order, ["first"]);
     });
   });
 
@@ -159,6 +223,16 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
   });
 
   describe("onTeardown", () => {
+    it("should reject non-function teardown callbacks", () => {
+      const pipeline = new MiddlewarePipeline();
+
+      assertThrows(
+        () => pipeline.onTeardown("invalid" as never),
+        TypeError,
+        "callback",
+      );
+    });
+
     it("should register teardown callback and return this", () => {
       const pipeline = new MiddlewarePipeline();
 

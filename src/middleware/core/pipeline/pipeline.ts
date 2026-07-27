@@ -14,16 +14,24 @@ export class MiddlewarePipeline {
   constructor(_options: MiddlewarePipelineOptions = {}) {}
 
   use(middleware: MiddlewareHandler): this {
+    this.requireMiddleware(middleware);
     this.middlewares.push(middleware);
     return this;
   }
 
   useFor(pattern: RegExp, ...handlers: MiddlewareHandler[]): this {
+    if (!(pattern instanceof RegExp)) {
+      throw new TypeError("Middleware route pattern must be a RegExp");
+    }
+    for (const handler of handlers) this.requireMiddleware(handler);
     this.registry.push({ pattern, use: handlers });
     return this;
   }
 
   onTeardown(cb: () => void | Promise<void>): this {
+    if (typeof cb !== "function") {
+      throw new TypeError("Middleware teardown callback must be a function");
+    }
     this.teardownCallbacks.push(cb);
     return this;
   }
@@ -132,7 +140,9 @@ export class MiddlewarePipeline {
       try {
         await cb();
       } catch (e) {
-        serverLogger.warn("middleware teardown failed", e);
+        serverLogger.warn("middleware teardown failed", {
+          errorName: e instanceof Error ? e.name : typeof e,
+        });
       }
     }
   }
@@ -239,7 +249,9 @@ export class MiddlewarePipeline {
       try {
         await cb();
       } catch (e) {
-        serverLogger.warn("middleware teardown failed", e);
+        serverLogger.warn("middleware teardown failed", {
+          errorName: e instanceof Error ? e.name : typeof e,
+        });
       }
     }
   }
@@ -249,5 +261,11 @@ export class MiddlewarePipeline {
       name: mw.name ?? "anonymous",
       order,
     }));
+  }
+
+  private requireMiddleware(middleware: MiddlewareHandler): void {
+    if (typeof middleware !== "function") {
+      throw new TypeError("Middleware must be a function");
+    }
   }
 }

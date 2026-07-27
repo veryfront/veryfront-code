@@ -47,6 +47,29 @@ Forwarded client-address headers are ignored by default. If the app is not
 behind a trusted reverse proxy, use `keyGenerator` with a trusted client or
 account identifier.
 
+For limits that must be shared across processes, use the Redis store. Connection
+attempts and commands are bounded independently; an unavailable or stalled store
+fails closed with a non-cacheable 503 response rather than allowing the request:
+
+```ts
+import { rateLimit, RedisRateLimitStore } from "veryfront/middleware";
+
+const store = new RedisRateLimitStore({
+  url: "rediss://redis.example.com:6379",
+  connectTimeoutMs: 5_000,
+  operationTimeoutMs: 5_000,
+});
+
+const distributedLimiter = rateLimit({
+  maxRequests: 100,
+  windowMs: 60_000,
+  store,
+});
+```
+
+Call `await store.destroy()` during server shutdown. A failed disconnect remains
+tracked so a later shutdown attempt can retry it.
+
 ### Logging
 
 ```ts

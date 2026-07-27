@@ -73,7 +73,7 @@ describe("composeMiddleware", () => {
     const composed = composeMiddleware([middleware], []);
 
     await assertRejects(
-      () => composed(createContext(), finalResponse("OK")),
+      async () => await composed(createContext(), finalResponse("OK")),
       Error,
       "next() called multiple times",
     );
@@ -136,5 +136,53 @@ describe("composeMiddleware", () => {
     const response = await composed(createContext(), finalResponse("Final"));
 
     assertEquals(await response?.text(), "Final");
+  });
+
+  it("should match global and sticky patterns deterministically without mutating callers", async () => {
+    for (const pattern of [/^\/api/g, /^\/api/y]) {
+      const matches: string[] = [];
+      const scoped: MiddlewareHandler = async (_ctx, next) => {
+        matches.push("matched");
+        return await next();
+      };
+      pattern.lastIndex = 3;
+
+      const composed = composeMiddleware([], [{ pattern, use: [scoped] }]);
+
+      await composed(createContext("/api/users"), finalResponse("OK"));
+      await composed(createContext("/api/users"), finalResponse("OK"));
+      await composed(createContext("/api/users"), finalResponse("OK"));
+
+      assertEquals(matches, ["matched", "matched", "matched"]);
+      assertEquals(pattern.lastIndex, 3);
+    }
+  });
+
+  it("should snapshot middleware and scoped registrations when composed", async () => {
+    const order: string[] = [];
+    const first: MiddlewareHandler = async (_ctx, next) => {
+      order.push("first");
+      return await next();
+    };
+    const scoped: MiddlewareHandler = async (_ctx, next) => {
+      order.push("scoped");
+      return await next();
+    };
+    const late: MiddlewareHandler = async (_ctx, next) => {
+      order.push("late");
+      return await next();
+    };
+    const globalMiddlewares = [first];
+    const scopedMiddlewares = [scoped];
+    const registry = [{ pattern: /^\/api/, use: scopedMiddlewares }];
+    const composed = composeMiddleware(globalMiddlewares, registry);
+
+    globalMiddlewares.push(late);
+    scopedMiddlewares.push(late);
+    registry.push({ pattern: /.*/, use: [late] });
+
+    await composed(createContext("/api/users"), finalResponse("OK"));
+
+    assertEquals(order, ["first", "scoped"]);
   });
 });

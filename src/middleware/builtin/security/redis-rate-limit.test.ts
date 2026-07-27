@@ -1,7 +1,29 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { RedisRateLimitStore } from "./redis-rate-limit.ts";
+import { type RedisRateLimitOptions, RedisRateLimitStore } from "./redis-rate-limit.ts";
+
+async function outcomeWithin(
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<"resolved" | "rejected" | "pending"> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<"pending">((resolve) => {
+    timeoutId = setTimeout(() => resolve("pending"), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      promise.then(
+        () => "resolved" as const,
+        () => "rejected" as const,
+      ),
+      guard,
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
 
 function createMockRedisClient(): {
   connect: () => Promise<void>;
@@ -19,6 +41,8 @@ function createMockRedisClient(): {
   _evalCalls: number;
   _incrCalls: number;
   _pExpireCalls: number;
+  _connectCalls: number;
+  _disconnectCalls: number;
   _store: Map<string, { count: number; ttl: number }>;
 } {
   const store = new Map<string, { count: number; ttl: number }>();
@@ -26,10 +50,18 @@ function createMockRedisClient(): {
   let evalCalls = 0;
   let incrCalls = 0;
   let pExpireCalls = 0;
+  let connectCalls = 0;
+  let disconnectCalls = 0;
 
   return {
-    connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
+    connect: () => {
+      connectCalls += 1;
+      return Promise.resolve();
+    },
+    disconnect: () => {
+      disconnectCalls += 1;
+      return Promise.resolve();
+    },
     eval: (_script: string, options: { keys: string[]; arguments: string[] }) => {
       evalCalls += 1;
       const key = options.keys[0];
@@ -80,12 +112,18 @@ function createMockRedisClient(): {
     get _pExpireCalls() {
       return pExpireCalls;
     },
+    get _connectCalls() {
+      return connectCalls;
+    },
+    get _disconnectCalls() {
+      return disconnectCalls;
+    },
     _store: store,
   };
 }
 
 function createStoreWithMock(
-  options?: { keyPrefix?: string },
+  options?: RedisRateLimitOptions,
 ): {
   rateStore: RedisRateLimitStore;
   mockClient: ReturnType<typeof createMockRedisClient>;
@@ -116,6 +154,34 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const store = new RedisRateLimitStore({ keyPrefix: "custom:" });
         // deno-lint-ignore no-explicit-any
         assertEquals((store as any).keyPrefix, "custom:");
+      });
+
+      it("should reject invalid options before connecting", () => {
+        assertThrows(
+          () =>
+            new RedisRateLimitStore({
+              keyPrefix: "x".repeat(1025),
+            }),
+          RangeError,
+          "1024",
+        );
+        assertThrows(
+          () => new RedisRateLimitStore({ url: 42 as never }),
+          TypeError,
+          "url",
+        );
+        for (const timeout of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+          assertThrows(
+            () => new RedisRateLimitStore({ connectTimeoutMs: timeout }),
+            RangeError,
+            "connectTimeoutMs",
+          );
+          assertThrows(
+            () => new RedisRateLimitStore({ operationTimeoutMs: timeout }),
+            RangeError,
+            "operationTimeoutMs",
+          );
+        }
       });
     });
 
@@ -182,6 +248,50 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const diff = entry.resetAt - before;
         assertEquals(diff >= 59000 && diff <= 61000, true);
       });
+
+      it("should reject invalid keys and windows before Redis evaluation", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+
+        await assertRejects(
+          () => rateStore.increment("x".repeat(1025), 1000),
+          RangeError,
+          "1024",
+        );
+        await assertRejects(
+          () => rateStore.increment("key", 0),
+          RangeError,
+          "windowMs",
+        );
+        assertEquals(mockClient._evalCalls, 0);
+      });
+
+      it("should reject unsafe Redis counter results", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+        mockClient.eval = () => Promise.resolve([Number.MAX_SAFE_INTEGER + 1, 1000]);
+
+        await assertRejects(
+          () => rateStore.increment("key", 1000),
+          Error,
+          "invalid count",
+        );
+      });
+
+      it("should bound commands and retire a client that stops responding", async () => {
+        const { rateStore, mockClient } = createStoreWithMock({
+          operationTimeoutMs: 1,
+        });
+        mockClient.eval = () => new Promise<never>(() => {});
+
+        const outcome = await outcomeWithin(
+          rateStore.increment("key", 1000),
+          50,
+        );
+
+        assertEquals(outcome, "rejected");
+        assertEquals(mockClient._disconnectCalls, 1);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, null);
+      });
     });
 
     describe("reset", () => {
@@ -202,10 +312,11 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
 
     describe("destroy", () => {
       it("should disconnect the client", async () => {
-        const { rateStore } = createStoreWithMock();
+        const { rateStore, mockClient } = createStoreWithMock();
         await rateStore.destroy();
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, null);
+        assertEquals(mockClient._disconnectCalls, 1);
       });
 
       it("should be safe to call when no client exists", async () => {
@@ -219,6 +330,26 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         await rateStore.destroy();
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, null);
+      });
+
+      it("should retain a failed disconnect so shutdown can retry it", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+        let disconnectAttempts = 0;
+        mockClient.disconnect = () => {
+          disconnectAttempts++;
+          return disconnectAttempts === 1
+            ? Promise.reject(new Error("disconnect unavailable"))
+            : Promise.resolve();
+        };
+
+        await assertRejects(
+          () => rateStore.destroy(),
+          Error,
+          "disconnect unavailable",
+        );
+        await rateStore.destroy();
+
+        assertEquals(disconnectAttempts, 2);
       });
     });
 
@@ -243,17 +374,188 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         assertEquals((rateStore as any).client, null);
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).clientPromise, null);
+        assertEquals(mockClient._disconnectCalls, 1);
 
         // deno-lint-ignore no-explicit-any
         (rateStore as any).client = mockClient;
         // deno-lint-ignore no-explicit-any
         (rateStore as any).clientPromise = Promise.resolve(mockClient);
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).attachClientLifecycleHandlers(mockClient);
 
         mockClient._emit("end");
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).client, null);
         // deno-lint-ignore no-explicit-any
         assertEquals((rateStore as any).clientPromise, null);
+      });
+
+      it("should share one pending connection across concurrent operations", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const mockClient = createMockRedisClient();
+        let factoryCalls = 0;
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () =>
+          Promise.resolve(() => {
+            factoryCalls++;
+            return mockClient;
+          });
+
+        await Promise.all([
+          rateStore.increment("a", 1000),
+          rateStore.increment("b", 1000),
+        ]);
+
+        assertEquals(factoryCalls, 1);
+        assertEquals(mockClient._connectCalls, 1);
+        assertEquals(mockClient._evalCalls, 2);
+      });
+
+      it("should configure a bounded non-reconnecting client connection", async () => {
+        const rateStore = new RedisRateLimitStore({ connectTimeoutMs: 1_250 });
+        const mockClient = createMockRedisClient();
+        let factoryOptions: {
+          url?: string;
+          socket?: {
+            connectTimeout?: number;
+            reconnectStrategy?: false;
+          };
+        } | undefined;
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () =>
+          Promise.resolve((options: typeof factoryOptions) => {
+            factoryOptions = options;
+            return mockClient;
+          });
+
+        await rateStore.increment("bounded", 1000);
+
+        assertEquals(factoryOptions?.socket?.connectTimeout, 1_250);
+        assertEquals(factoryOptions?.socket?.reconnectStrategy, false);
+      });
+
+      it("should disconnect a connection that finishes after destroy", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const mockClient = createMockRedisClient();
+        let connectStarted = false;
+        let resolveConnect!: () => void;
+        mockClient.connect = () => {
+          connectStarted = true;
+          return new Promise<void>((resolve) => {
+            resolveConnect = resolve;
+          });
+        };
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+        const incrementPromise = rateStore.increment("pending", 1000);
+        for (let attempt = 0; attempt < 10 && !connectStarted; attempt++) {
+          await Promise.resolve();
+        }
+        assertEquals(connectStarted, true);
+
+        const destroyPromise = rateStore.destroy();
+        resolveConnect();
+
+        await assertRejects(
+          () => incrementPromise,
+          Error,
+          "superseded",
+        );
+        await destroyPromise;
+
+        assertEquals(mockClient._disconnectCalls, 1);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, null);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).clientPromise, null);
+      });
+
+      it("should reconnect after destroy without stale events clearing the replacement", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const firstClient = createMockRedisClient();
+        const secondClient = createMockRedisClient();
+        const clients = [firstClient, secondClient];
+        let factoryCalls = 0;
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () =>
+          Promise.resolve(() => {
+            const client = clients[factoryCalls++];
+            if (!client) throw new Error("Unexpected Redis client factory call");
+            return client;
+          });
+
+        await rateStore.increment("first", 1000);
+        await rateStore.destroy();
+        await rateStore.increment("second", 1000);
+
+        firstClient._emit("end");
+
+        assertEquals(factoryCalls, 2);
+        assertEquals(firstClient._disconnectCalls, 1);
+        // deno-lint-ignore no-explicit-any
+        assertEquals((rateStore as any).client, secondClient);
+      });
+
+      it("should keep one pending client through transient connection errors", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const mockClient = createMockRedisClient();
+        let factoryCalls = 0;
+        let resolveConnect!: () => void;
+        mockClient.connect = () =>
+          new Promise<void>((resolve) => {
+            resolveConnect = resolve;
+          });
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () =>
+          Promise.resolve(() => {
+            factoryCalls++;
+            return mockClient;
+          });
+
+        const first = rateStore.increment("first", 1000);
+        for (let attempt = 0; attempt < 10 && factoryCalls === 0; attempt++) {
+          await Promise.resolve();
+        }
+        mockClient._emit("error", new Error("transient connect failure"));
+        const second = rateStore.increment("second", 1000);
+        resolveConnect();
+
+        await Promise.all([first, second]);
+        assertEquals(factoryCalls, 1);
+        assertEquals(mockClient._connectCalls, 0);
+        assertEquals(mockClient._evalCalls, 2);
+      });
+
+      it("should not wait indefinitely for a pending connection during destroy", async () => {
+        const rateStore = new RedisRateLimitStore();
+        const mockClient = createMockRedisClient();
+        let connectStarted = false;
+        mockClient.connect = () => {
+          connectStarted = true;
+          return new Promise<void>(() => {});
+        };
+
+        // deno-lint-ignore no-explicit-any
+        (rateStore as any).loadClientFactory = () => Promise.resolve(() => mockClient);
+
+        const incrementPromise = rateStore.increment("pending", 1000);
+        incrementPromise.catch(() => {});
+        for (let attempt = 0; attempt < 10 && !connectStarted; attempt++) {
+          await Promise.resolve();
+        }
+
+        await rateStore.destroy();
+
+        assertEquals(connectStarted, true);
+        assertEquals(mockClient._disconnectCalls, 1);
+        const outcome = await outcomeWithin(incrementPromise, 50);
+        assertEquals(outcome, "rejected");
       });
     });
   });

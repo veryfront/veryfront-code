@@ -1,6 +1,7 @@
 import type { Middleware } from "./types.ts";
 import { getRequest } from "./types.ts";
 import {
+  HTTP_NOT_FOUND,
   HTTP_SERVER_ERROR,
   HTTP_STATUS_CLIENT_ERROR_MIN,
   HTTP_STATUS_REDIRECT_MIN,
@@ -19,6 +20,15 @@ export interface LoggerOptions {
   skip?: (req: Request) => boolean;
   log?: (message: string) => void;
 }
+
+const LOG_FORMATS = new Set<LogFormat>([
+  "combined",
+  "common",
+  "dev",
+  "short",
+  "tiny",
+  "json",
+]);
 
 interface RequestLogDetails {
   method: string;
@@ -183,12 +193,28 @@ function formatLog(format: LogFormat, req: Request, status: number, duration: nu
     case "tiny":
       return `${method} ${pathname} ${status} ${durationText}`;
     default:
-      return formatLog("dev", req, status, duration);
+      throw new TypeError(`Unsupported log format: ${format}`);
   }
 }
 
 /** Create request logging middleware. */
 export function logger(options?: LoggerOptions): Middleware {
+  if (
+    options !== undefined &&
+    (typeof options !== "object" || options === null || Array.isArray(options))
+  ) {
+    throw new TypeError("Logger configuration must be an options object");
+  }
+  if (options?.format !== undefined && !LOG_FORMATS.has(options.format)) {
+    throw new TypeError(`Unsupported logger format: ${String(options.format)}`);
+  }
+  if (options?.skip !== undefined && typeof options.skip !== "function") {
+    throw new TypeError("Logger skip must be a function");
+  }
+  if (options?.log !== undefined && typeof options.log !== "function") {
+    throw new TypeError("Logger log must be a function");
+  }
+
   const format = options?.format ?? "dev";
   const skip = options?.skip;
   const isJson = format === "json";
@@ -220,23 +246,36 @@ export function logger(options?: LoggerOptions): Middleware {
     });
   }
 
+  function logSafely(req: Request, status: number, duration: number): void {
+    try {
+      logMessage(req, status, duration);
+    } catch {
+      try {
+        serverLogger.warn("Middleware request logging failed");
+      } catch {
+        // Logging must never replace the downstream response or error.
+      }
+    }
+  }
+
   return async (ctx, next) => {
     const req = getRequest(ctx);
     if (skip?.(req)) return next();
 
     const start = performance.now();
+    let response: Response | undefined;
 
     try {
-      const response = await next();
-      const duration = performance.now() - start;
-
-      logMessage(req, response?.status ?? HTTP_SERVER_ERROR, duration);
-      return response;
+      response = await next();
     } catch (error) {
       const duration = performance.now() - start;
-      logMessage(req, HTTP_SERVER_ERROR, duration);
+      logSafely(req, HTTP_SERVER_ERROR, duration);
       throw error;
     }
+
+    const duration = performance.now() - start;
+    logSafely(req, response?.status ?? HTTP_NOT_FOUND, duration);
+    return response;
   };
 }
 

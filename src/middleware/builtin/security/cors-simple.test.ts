@@ -1,12 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { corsSimple } from "./cors-simple.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 
 describe("corsSimple", () => {
-  function createContext(method = "GET", origin?: string): MiddlewareContext {
+  function createContext(
+    method = "GET",
+    origin?: string,
+    preflight = method === "OPTIONS",
+  ): MiddlewareContext {
     const headers: Record<string, string> = origin ? { origin } : {};
+    if (preflight) headers["access-control-request-method"] = "GET";
     return new MiddlewareContext(
       new Request("https://example.com/api/test", { method, headers }),
     );
@@ -56,7 +61,29 @@ describe("corsSimple", () => {
 
       assertEquals(response?.status, 403);
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), null);
+      assertEquals(response?.headers.get("Cache-Control"), "no-store");
       assertEquals(calledNext, false);
+    });
+
+    it("should pass non-CORS OPTIONS requests to downstream middleware", async () => {
+      const middleware = corsSimple("https://allowed.com");
+      const ctx = createContext("OPTIONS", undefined, false);
+      let calledNext = false;
+
+      const response = await middleware(ctx, () => {
+        calledNext = true;
+        return Promise.resolve(
+          new Response("handled options", {
+            status: 200,
+            statusText: "Handled downstream",
+          }),
+        );
+      });
+
+      assertEquals(calledNext, true);
+      assertEquals(response?.status, 200);
+      assertEquals(response?.statusText, "Handled downstream");
+      assertEquals(await response?.text(), "handled options");
     });
   });
 
@@ -68,6 +95,19 @@ describe("corsSimple", () => {
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
+    });
+
+    it("should vary cache entries when reflecting a specific origin", async () => {
+      const middleware = corsSimple("https://allowed.example");
+      const response = await middleware(
+        createContext("GET", "https://allowed.example"),
+        () => Promise.resolve(new Response("OK", { headers: { Vary: "Accept-Encoding" } })),
+      );
+
+      assertEquals(
+        response?.headers.get("Vary"),
+        "Accept-Encoding, Origin",
+      );
     });
 
     it("should preserve original response body", async () => {
@@ -88,10 +128,17 @@ describe("corsSimple", () => {
 
       const response = await middleware(
         ctx,
-        () => Promise.resolve(new Response("Created", { status: 201 })),
+        () =>
+          Promise.resolve(
+            new Response("Created", {
+              status: 201,
+              statusText: "Created by middleware",
+            }),
+          ),
       );
 
       assertEquals(response?.status, 201);
+      assertEquals(response?.statusText, "Created by middleware");
     });
 
     it("should handle undefined response from next", async () => {
@@ -136,6 +183,19 @@ describe("corsSimple", () => {
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
       assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
+    });
+
+    it("should reject invalid configured origins at registration", () => {
+      assertThrows(
+        () => corsSimple({ origin: 42 as never }),
+        TypeError,
+        "origin",
+      );
+      assertThrows(
+        () => corsSimple("https://allowed.example\r\nx-injected: yes"),
+        TypeError,
+        "origin",
+      );
     });
   });
 });

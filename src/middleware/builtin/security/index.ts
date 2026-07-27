@@ -13,10 +13,12 @@ export type {
 } from "./types.ts";
 export { contentSecurityPolicy } from "./csp.ts";
 export { corsSimple } from "./cors-simple.ts";
-export { csrfProtection } from "./csrf.ts";
+export { csrfProtection, type CsrfTokenValidator } from "./csrf.ts";
 export {
   authRateLimit,
   type AuthRateLimitOptions,
+  MemoryRateLimitStore,
+  type MemoryRateLimitStoreOptions,
   rateLimit,
   type RateLimitOptions,
 } from "./rate-limit.ts";

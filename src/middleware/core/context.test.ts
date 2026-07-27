@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewareContext } from "./context.ts";
 
@@ -19,6 +19,34 @@ describe("MiddlewareContext", () => {
 
       assertEquals(ctx.req, req);
       assertEquals(ctx.request, req);
+    });
+
+    it("should keep request aliases synchronized when either alias is replaced", () => {
+      const ctx = createCtx();
+      const firstReplacement = new Request("https://example.com/first");
+      const secondReplacement = new Request("https://example.com/second");
+
+      ctx.req = firstReplacement;
+      assertEquals(ctx.request, firstReplacement);
+
+      ctx.request = secondReplacement;
+      assertEquals(ctx.req, secondReplacement);
+    });
+
+    it("should reject invalid request replacements without corrupting the context", () => {
+      const ctx = createCtx();
+      const original = ctx.req;
+
+      assertThrows(
+        () => {
+          ctx.request = undefined as unknown as Request;
+        },
+        TypeError,
+        "Middleware context request must be a Request",
+      );
+
+      assertEquals(ctx.req, original);
+      assertEquals(ctx.request, original);
     });
 
     it("should initialize with env", () => {
@@ -86,6 +114,27 @@ describe("MiddlewareContext", () => {
 
       assertEquals(response.status, 201);
     });
+
+    it("should preserve record, tuple, and Headers instances", () => {
+      const ctx = createCtx();
+      const recordResponse = ctx.text("record", {
+        headers: { "x-record": "yes" },
+      });
+      const tupleResponse = ctx.text("tuple", {
+        headers: [["x-tuple", "yes"]],
+      });
+      const sourceHeaders = new Headers({
+        "content-type": "text/custom",
+        "x-headers": "yes",
+      });
+      const headersResponse = ctx.text("headers", { headers: sourceHeaders });
+
+      assertEquals(recordResponse.headers.get("x-record"), "yes");
+      assertEquals(tupleResponse.headers.get("x-tuple"), "yes");
+      assertEquals(headersResponse.headers.get("x-headers"), "yes");
+      assertEquals(headersResponse.headers.get("content-type"), "text/custom");
+      assertEquals(sourceHeaders.get("content-type"), "text/custom");
+    });
   });
 
   describe("html", () => {
@@ -103,6 +152,30 @@ describe("MiddlewareContext", () => {
       const response = ctx.html("<h1>Error</h1>", { status: 500 });
 
       assertEquals(response.status, 500);
+    });
+
+    it("should preserve every HeadersInit form and caller content types", () => {
+      const ctx = createCtx();
+      const recordResponse = ctx.html("record", {
+        headers: { "x-record": "yes" },
+      });
+      const tupleResponse = ctx.html("tuple", {
+        headers: [["x-tuple", "yes"]],
+      });
+      const sourceHeaders = new Headers({
+        "content-type": "application/xhtml+xml",
+        "x-headers": "yes",
+      });
+      const headersResponse = ctx.html("headers", { headers: sourceHeaders });
+
+      assertEquals(recordResponse.headers.get("x-record"), "yes");
+      assertEquals(tupleResponse.headers.get("x-tuple"), "yes");
+      assertEquals(headersResponse.headers.get("x-headers"), "yes");
+      assertEquals(
+        headersResponse.headers.get("content-type"),
+        "application/xhtml+xml",
+      );
+      assertEquals(sourceHeaders.get("content-type"), "application/xhtml+xml");
     });
   });
 

@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 import { authRateLimit, MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
 
@@ -67,6 +73,77 @@ describe("MemoryRateLimitStore", () => {
       await store.reset("non-existent");
     });
   });
+
+  it("should reject new identities at capacity without evicting active limits", async () => {
+    const boundedStore = new MemoryRateLimitStore(60000, { maxEntries: 1 });
+
+    try {
+      await boundedStore.increment("existing", 60000);
+
+      await assertRejects(
+        () => boundedStore.increment("overflow", 60000),
+        RangeError,
+        "capacity",
+      );
+
+      const existing = await boundedStore.increment("existing", 60000);
+      assertEquals(existing.count, 2);
+    } finally {
+      boundedStore.destroy();
+    }
+  });
+
+  it("should release retained entries when destroyed", async () => {
+    const boundedStore = new MemoryRateLimitStore(60000, { maxEntries: 1 });
+    await boundedStore.increment("first", 60000);
+
+    boundedStore.destroy();
+
+    const replacement = await boundedStore.increment("second", 60000);
+    assertEquals(replacement.count, 1);
+    boundedStore.destroy();
+  });
+
+  it("should honor the host cleanup-disable flag", () => {
+    const globals = globalThis as Record<string, unknown>;
+    const previousGlobalFlag = globals.__vfDisableLruInterval;
+    const previousHostFlag = getHostEnv("VF_DISABLE_LRU_INTERVAL");
+    globals.__vfDisableLruInterval = false;
+    setEnv("VF_DISABLE_LRU_INTERVAL", "1");
+
+    const disabledStore = new MemoryRateLimitStore(60000);
+    try {
+      const internals = disabledStore as unknown as {
+        cleanupInterval?: ReturnType<typeof setInterval>;
+      };
+      assertEquals(internals.cleanupInterval, undefined);
+    } finally {
+      disabledStore.destroy();
+      if (previousGlobalFlag === undefined) {
+        delete globals.__vfDisableLruInterval;
+      } else {
+        globals.__vfDisableLruInterval = previousGlobalFlag;
+      }
+      if (previousHostFlag === undefined) {
+        deleteEnv("VF_DISABLE_LRU_INTERVAL");
+      } else {
+        setEnv("VF_DISABLE_LRU_INTERVAL", previousHostFlag);
+      }
+    }
+  });
+
+  it("should reject invalid capacity and window configuration", () => {
+    for (const maxEntries of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => new MemoryRateLimitStore(60000, { maxEntries }),
+        RangeError,
+      );
+    }
+
+    for (const windowMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new MemoryRateLimitStore(windowMs), RangeError);
+    }
+  });
 });
 
 describe("rateLimit middleware", () => {
@@ -120,6 +197,116 @@ describe("rateLimit middleware", () => {
     const response = await middleware(createContext(), () => Promise.resolve(new Response("OK")));
 
     assertEquals(response?.status, 200);
+  });
+
+  it("should validate numeric configuration before creating middleware", () => {
+    for (const maxRequests of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => rateLimit({ maxRequests }),
+        RangeError,
+      );
+    }
+
+    for (const windowMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => rateLimit({ windowMs }),
+        RangeError,
+      );
+    }
+  });
+
+  it("should fail closed when the rate-limit store is unavailable", async () => {
+    let nextCalled = false;
+    const middleware = rateLimit({
+      store: {
+        increment: () => Promise.reject(new Error("backend unavailable")),
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(createContext(), () => {
+      nextCalled = true;
+      return Promise.resolve(new Response("OK"));
+    });
+
+    assertEquals(response?.status, 503);
+    assertEquals(response?.headers.get("Retry-After"), "60");
+    assertEquals(response?.headers.get("Cache-Control"), "no-store");
+    assertEquals(nextCalled, false);
+  });
+
+  it("should throttle repeated rate-limit store failure logs", async () => {
+    const originalConsoleError = console.error;
+    let loggedFailures = 0;
+    console.error = () => {
+      loggedFailures++;
+    };
+
+    try {
+      const middleware = rateLimit({
+        store: {
+          increment: () => Promise.reject(new Error("backend unavailable")),
+          reset: () => Promise.resolve(),
+        },
+      });
+
+      const first = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+      const second = await middleware(
+        createContext(),
+        () => Promise.resolve(new Response("OK")),
+      );
+
+      assertEquals(first?.status, 503);
+      assertEquals(second?.status, 503);
+      assertEquals(loggedFailures, 1);
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
+  it("should fail closed when a store returns an invalid counter", async () => {
+    const middleware = rateLimit({
+      store: {
+        increment: () => Promise.resolve({ count: Number.NaN, resetAt: Date.now() + 1000 }),
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    const response = await middleware(
+      createContext(),
+      () => Promise.resolve(new Response("OK")),
+    );
+
+    assertEquals(response?.status, 503);
+  });
+
+  it("should reject oversized custom keys before calling the store", async () => {
+    let incrementCalled = false;
+    const middleware = rateLimit({
+      keyGenerator: () => "x".repeat(1025),
+      store: {
+        increment: () => {
+          incrementCalled = true;
+          return Promise.resolve({ count: 1, resetAt: Date.now() + 1000 });
+        },
+        reset: () => Promise.resolve(),
+      },
+    });
+
+    await assertRejects(
+      async () => {
+        await middleware(
+          createContext(),
+          () => Promise.resolve(new Response("OK")),
+        );
+      },
+      RangeError,
+      "1024",
+    );
+    assertEquals(incrementCalled, false);
   });
 
   it("should use custom key generator", async () => {

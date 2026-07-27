@@ -1,12 +1,20 @@
 import type { ExecutionContext, MiddlewareHandler } from "../types.ts";
 import { MiddlewareContext } from "../context.ts";
-import { HTTP_NOT_FOUND, HTTP_SERVER_ERROR, serverLogger } from "#veryfront/utils";
+import {
+  HTTP_NOT_FOUND,
+  HTTP_SERVER_ERROR,
+  sanitizeUrlForSpan,
+  serverLogger,
+} from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { ensureError, getErrorMessage } from "#veryfront/errors";
+import { ensureError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 function notFoundResponse(): Response {
-  return new Response("Not Found", { status: HTTP_NOT_FOUND });
+  return new Response("Not Found", {
+    status: HTTP_NOT_FOUND,
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 export function executeMiddlewarePipeline(
@@ -24,7 +32,7 @@ export function executeMiddlewarePipeline(
 
       try {
         const next = finalHandler
-          ? () => Promise.resolve(finalHandler(req))
+          ? () => Promise.resolve(finalHandler(context.req))
           : () => Promise.resolve(notFoundResponse());
 
         const response = await composedMiddleware(
@@ -35,19 +43,26 @@ export function executeMiddlewarePipeline(
         return response ?? notFoundResponse();
       } catch (error) {
         const normalizedError = ensureError(error);
+        const request = context.req;
+        const safeUrl = sanitizeUrlForSpan(request.url);
+        const nodeEnv = adapter?.env.get("NODE_ENV") ?? "production";
 
         serverLogger.error("Middleware pipeline error:", {
-          url: req.url,
-          method: req.method,
-          error: getErrorMessage(error),
-          stack: normalizedError.stack,
+          url: safeUrl,
+          method: request.method,
+          errorName: normalizedError.name,
+          ...(nodeEnv === "development"
+            ? {
+              error: normalizedError.message,
+              stack: normalizedError.stack,
+            }
+            : {}),
         });
 
-        const nodeEnv = adapter?.env.get("NODE_ENV") ?? "production";
         const body: Record<string, unknown> = {
           error: "Internal Server Error",
-          method: req.method,
-          url: req.url,
+          method: request.method,
+          url: safeUrl,
         };
 
         if (nodeEnv === "development") {
@@ -57,10 +72,13 @@ export function executeMiddlewarePipeline(
 
         return new Response(JSON.stringify(body), {
           status: HTTP_SERVER_ERROR,
-          headers: { "content-type": "application/json" },
+          headers: {
+            "Cache-Control": "no-store",
+            "content-type": "application/json",
+          },
         });
       }
     },
-    { "http.method": req.method, "http.url": req.url },
+    { "http.method": req.method, "http.url": sanitizeUrlForSpan(req.url) },
   );
 }

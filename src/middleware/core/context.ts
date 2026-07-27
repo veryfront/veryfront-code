@@ -3,12 +3,11 @@ import { HTTP_REDIRECT_FOUND } from "#veryfront/utils";
 
 /** Context for middleware. */
 export class MiddlewareContext implements Context {
-  req: Request;
-  request: Request;
   env: Record<string, unknown>;
   executionCtx?: ExecutionContext;
   var: Record<string, unknown> = {};
 
+  private currentRequest: Request;
   private store = new Map<string, unknown>();
 
   constructor(
@@ -16,10 +15,25 @@ export class MiddlewareContext implements Context {
     env: Record<string, unknown> = {},
     executionCtx?: ExecutionContext,
   ) {
-    this.req = req;
-    this.request = req; // Alias for compatibility
+    this.currentRequest = this.requireRequest(req);
     this.env = env;
     this.executionCtx = executionCtx;
+  }
+
+  get req(): Request {
+    return this.currentRequest;
+  }
+
+  set req(request: Request) {
+    this.currentRequest = this.requireRequest(request);
+  }
+
+  get request(): Request {
+    return this.currentRequest;
+  }
+
+  set request(request: Request) {
+    this.currentRequest = this.requireRequest(request);
   }
 
   json(object: unknown, init?: ResponseInit): Response {
@@ -27,12 +41,12 @@ export class MiddlewareContext implements Context {
   }
 
   private respondWithContent(body: string, contentType: string, init?: ResponseInit): Response {
+    const headers = new Headers(init?.headers);
+    if (!headers.has("content-type")) headers.set("content-type", contentType);
+
     return new Response(body, {
       ...init,
-      headers: {
-        "content-type": contentType,
-        ...init?.headers,
-      },
+      headers,
     });
   }
 
@@ -57,5 +71,12 @@ export class MiddlewareContext implements Context {
 
   get(key: string): unknown {
     return this.store.get(key);
+  }
+
+  private requireRequest(request: Request): Request {
+    if (!(request instanceof Request)) {
+      throw new TypeError("Middleware context request must be a Request");
+    }
+    return request;
   }
 }

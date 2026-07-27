@@ -15,12 +15,13 @@ export {
   type OriginValidator,
 } from "./types.ts";
 
-export { cors } from "#veryfront/security";
+export { cors } from "#veryfront/security/http/cors/middleware.ts";
 
 export {
   authRateLimit,
   type AuthRateLimitOptions,
   MemoryRateLimitStore,
+  type MemoryRateLimitStoreOptions,
   rateLimit,
   type RateLimitOptions,
 } from "./security/rate-limit.ts";
