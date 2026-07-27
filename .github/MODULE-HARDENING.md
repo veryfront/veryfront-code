@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    27 |      46.6% | Current formal closure evidence remains valid       |
+| Closed                         |    28 |      48.3% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    29 |      50.0% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    28 |      48.3% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -63,6 +63,7 @@ stricter closure count.
 - `sandbox`
 - `schemas`
 - `studio`
+- `task`
 - `types`
 - `version.ts`
 
@@ -94,7 +95,6 @@ stricter closure count.
 - `security`
 - `server`
 - `skill`
-- `task`
 - `testing`
 - `tool`
 - `transforms`
@@ -125,7 +125,7 @@ The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`,
-`studio`, `types`, and `version.ts`.
+`studio`, `task`, `types`, and `version.ts`.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -201,6 +201,85 @@ Reproducible checkpoint evidence:
 - `docs/architecture/02-request-pipeline.md` records the Host/header boundary,
   outbound deadline and cancellation model, BFF redirect and caching policy,
   authentication parsing, and shutdown health behavior.
+
+### Task closure checkpoint
+
+The `task` audit unit owns the public `veryfront/task` definition and execution
+contracts, canonical project-runtime lookup, and the deprecated standalone
+file-discovery compatibility path. Its direct dependencies are configuration,
+discovery, errors, platform adapters, runs environment projection, utilities,
+and the unified project-agent runtime. Direct production consumers are the
+`veryfront task` CLI, local schedule/webhook trigger execution, control-plane
+task execution, and the shared project discovery handler.
+
+The current task findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** values with a callable `run`
+  but malformed names, descriptions, schemas, or scheduling metadata crossed
+  discovery as `TaskDefinition`. The source was a guard that checked only one
+  property. The consequence was runtime values that contradicted their typed
+  contract and could poison CLI labels, API metadata, or downstream policy.
+  The guard now validates every declared field without accepting arrays as
+  schema records, while lookup helpers defensively fall back from blank names.
+- **Symptom -> Source -> Consequence -> Remedy:** Windows paths, file URLs, and
+  nested task paths produced environment-dependent IDs, while the canonical
+  handler could turn a file outside its configured root into an absolute-like
+  task ID. The source was literal slash and prefix slicing. The consequence was
+  cross-platform ID drift and unsafe discovery identity. Both paths now reuse
+  the discovery path normalizer; canonical discovery requires a safe relative
+  path and task IDs retain nested `/` segments on every supported runtime.
+- **Symptom -> Source -> Consequence -> Remedy:** legacy discovery and lookup
+  depended on adapter directory order, and `sync.ts` plus `sync.js` silently
+  selected or returned competing definitions. The source was unsorted walking,
+  append-only results, and first-match lookup. The consequence was
+  nondeterministic execution after filesystem or deployment changes. Legacy
+  files and results are sorted, duplicate valid IDs are rejected with
+  deterministic diagnostics, ambiguous lookup fails closed, and canonical task
+  listings sort independently of map insertion order.
+- **Symptom -> Source -> Consequence -> Remedy:** request cancellation stopped
+  the HTTP lifecycle without reaching project task code, and duration used an
+  adjustable wall clock. The source was an execution context with no signal and
+  `Date.now()` subtraction. The consequence was avoidable work after caller
+  cancellation and potentially negative or non-monotonic duration evidence.
+  Task options and context now carry an optional cooperative `AbortSignal`;
+  pre-aborted work never invokes user code; trigger and signed control-plane
+  paths propagate their request signal; and durations are non-negative integer
+  milliseconds from the monotonic performance clock.
+- **Symptom -> Source -> Consequence -> Remedy:** the public guide omitted the
+  environment and cancellation context, documented the wrong nested task ID,
+  conflated canonical and legacy file extensions, and exposed no task-owned
+  name for the unified runtime result. The source was documentation and type
+  surface drift across several generations of discovery. The guide,
+  architecture explanation, source README, generated API pages, and JSDoc now
+  describe the actual contracts, and `ProjectTaskRuntimeDiscovery` gives the
+  public entrypoint a task-owned result type.
+
+Reproducible checkpoint evidence:
+
+- Four focused task, discovery-handler, and control-plane test files passed 11
+  suites and 66 nested steps with zero failures, including cancellation before
+  invocation, trigger propagation, malformed metadata, cross-platform paths,
+  duplicate IDs, runtime lookup, environment projection, and signed server
+  execution.
+- Six adjacent schedule and webhook suites passed 39 steps with zero failures.
+- `deno task docs:validate` passed the executable guide portfolio and all 740
+  documentation links.
+- `deno task verify:quick` passed generated-manifest freshness, formatting of
+  4,399 files, lint and policy ratchets, core/dependency/module boundaries with
+  zero cyclic edges, extension audits, documentation validation, and every
+  configured TypeScript entrypoint.
+- `deno task typecheck:consumer` rebuilt the root npm package and all
+  first-party extensions, verified root-import lifecycle behavior, and
+  compiled the documented consumer composition against generated declarations.
+  `git diff --check` also passed.
+
+No unresolved critical or high-confidence production risk remains inside the
+task definition, discovery, lookup, context, or execution boundary.
+`schedulable` remains scheduling eligibility metadata; schedule admission,
+timeouts, and enforcement belong to the still-open `schedule` and control-plane
+units rather than being hidden inside the generic task runner. The `task` unit
+is closed. Adjacent edits keep `discovery`, `server`, and `trigger` in
+revalidation.
 
 ### Issues closure checkpoint
 

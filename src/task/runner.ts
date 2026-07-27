@@ -40,6 +40,9 @@ export interface RunTaskOptions {
   /** Environment ID for the runtime target executing this task */
   environmentId?: string;
 
+  /** Cooperative cancellation propagated to the task context */
+  signal?: AbortSignal;
+
   /** If set, only these env var names are passed to the task. */
   envAllowlist?: string[];
 
@@ -64,18 +67,32 @@ export interface TaskRunResult {
   durationMs: number;
 }
 
+function elapsedMilliseconds(start: number): number {
+  return Math.max(0, Math.round(performance.now() - start));
+}
+
 /**
  * Run a task with the given options
  */
 export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
-  const { task, config = {}, projectId, environmentId, envAllowlist, debug = false } = options;
-  const start = Date.now();
-
-  if (debug) {
-    logger.info(`Running task "${task.id}" (${task.name})`);
-  }
+  const {
+    task,
+    config = {},
+    projectId,
+    environmentId,
+    signal,
+    envAllowlist,
+    debug = false,
+  } = options;
+  const start = performance.now();
 
   try {
+    signal?.throwIfAborted();
+
+    if (debug) {
+      logger.info(`Running task "${task.id}" (${task.name})`);
+    }
+
     const allEnv = getProcessEnv();
     const env = buildTaskContextEnv(allEnv, envAllowlist);
     const ctx: TaskContext = {
@@ -83,10 +100,11 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
       config,
       projectId,
       environmentId,
+      ...(signal === undefined ? {} : { signal }),
     };
 
     const result = await task.definition.run(ctx);
-    const durationMs = Date.now() - start;
+    const durationMs = elapsedMilliseconds(start);
 
     if (debug) {
       logger.info(`Task "${task.id}" completed in ${durationMs}ms`);
@@ -94,7 +112,7 @@ export async function runTask(options: RunTaskOptions): Promise<TaskRunResult> {
 
     return { success: true, result, durationMs };
   } catch (error) {
-    const durationMs = Date.now() - start;
+    const durationMs = elapsedMilliseconds(start);
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     logger.error(`Task "${task.id}" failed: ${errorMsg}`);

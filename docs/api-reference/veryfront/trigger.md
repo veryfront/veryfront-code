@@ -38,7 +38,7 @@ if (dailyTriage) {
 | Name | Description | Source |
 |------|-------------|--------|
 | `discoverSourceTriggers` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L113) |
-| `runTriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L179) |
+| `runTriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L181) |
 
 ### Types
 
@@ -52,4 +52,4 @@ if (dailyTriage) {
 | `TriggerDefinitionWithId` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L49) |
 | `TriggerDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/discovery.ts#L41) |
 | `TriggerTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/target.ts#L3) |
-| `TriggerTargetRunResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L32) |
+| `TriggerTargetRunResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/trigger/local-runner.ts#L33) |

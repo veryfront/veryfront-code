@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
@@ -342,10 +347,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     let receivedEnvironmentId: string | undefined;
+    let receivedSignal: AbortSignal | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: async (options) => {
         receivedConfig = options.config;
         receivedEnvironmentId = options.environmentId;
+        receivedSignal = options.signal;
         return {
           success: true,
           result: { synced: 12 },
@@ -379,6 +386,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
     assertEquals(receivedConfig, { dry_run: true });
     assertEquals(receivedEnvironmentId, "11111111-1111-4111-8111-111111111111");
+    assertStrictEquals(receivedSignal, request.signal);
   });
 
   it("preserves explicit null runtime environment targets", async () => {

@@ -7,9 +7,10 @@ import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { deriveTaskId, discoverTasks, findTaskById } from "./discovery.ts";
-import { discoverProjectTaskRuntime } from "./project-runtime.ts";
+import { discoverProjectTaskRuntime, listProjectRuntimeTasks } from "./project-runtime.ts";
 import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
 
 function createMockAdapter(files: Record<string, string>): FileSystemAdapter {
   const normalize = (path: string): string => path.replace(/^\/project\/?/, "").replace(/^\/+/, "");
@@ -160,6 +161,30 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(deriveTaskId("/project/tasks/cleanup.ts", "/project/tasks"), "cleanup");
     });
 
+    it("normalizes Windows separators and file URLs", () => {
+      assertEquals(
+        deriveTaskId(
+          String.raw`C:\project\tasks\reports\daily.ts`,
+          String.raw`C:\project\tasks`,
+        ),
+        "reports/daily",
+      );
+      assertEquals(
+        deriveTaskId(
+          "file:///C:/project/tasks/reports/daily.ts",
+          String.raw`C:\project\tasks`,
+        ),
+        "reports/daily",
+      );
+      assertEquals(
+        deriveTaskId(
+          "file:///project/tasks/report%20daily.ts",
+          "/project/tasks",
+        ),
+        "report daily",
+      );
+    });
+
     it("returns the input path when the prefix does not match", () => {
       assertEquals(deriveTaskId("other/cleanup.ts", "tasks"), "other/cleanup");
     });
@@ -186,6 +211,83 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(isTaskDefinition({ name: "no run" }), false);
       assertEquals(isTaskDefinition({ run: "not a function" }), false);
     });
+
+    it("rejects malformed optional metadata instead of poisoning typed consumers", () => {
+      assertEquals(isTaskDefinition({ run() {}, name: 42 }), false);
+      assertEquals(isTaskDefinition({ run() {}, description: false }), false);
+      assertEquals(isTaskDefinition({ run() {}, inputSchema: [] }), false);
+      assertEquals(isTaskDefinition({ run() {}, outputSchema: null }), false);
+      assertEquals(isTaskDefinition({ run() {}, schedulable: "true" }), false);
+      assertEquals(
+        isTaskDefinition({
+          run() {},
+          name: "Valid task",
+          description: "Valid metadata",
+          inputSchema: { type: "object" },
+          outputSchema: { type: "object" },
+          schedulable: true,
+        }),
+        true,
+      );
+    });
+  });
+
+  it("returns legacy discovery results in deterministic id order", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/z-last.ts": makeTaskSource("Last"),
+      "/project/tasks/a-first.ts": makeTaskSource("First"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.errors, []);
+    assertEquals(result.tasks.map((task) => task.id), ["a-first", "z-last"]);
+  });
+
+  it("rejects ambiguous legacy task ids across supported extensions", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/sync.js": makeTaskSource("JavaScript sync"),
+      "/project/tasks/sync.ts": makeTaskSource("TypeScript sync"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+    const found = await findTaskById("sync", {
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks, []);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((error) => error.error.includes('Duplicate task id "sync"')),
+      true,
+    );
+    assertEquals(found, null);
+  });
+
+  it("sorts project runtime task listings independently of map insertion order", () => {
+    const first = { name: "First", run() {} };
+    const last = { name: "Last", run() {} };
+    const discovery = {
+      tasks: new Map([
+        ["z-last", last],
+        ["a-first", first],
+      ]),
+    } as Pick<DiscoveryResult, "tasks"> as DiscoveryResult;
+
+    assertEquals(
+      listProjectRuntimeTasks(discovery).map((task) => task.id),
+      ["a-first", "z-last"],
+    );
   });
 
   it("discovers default-exported tasks through the discovery module loader", async () => {
@@ -449,6 +551,27 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(result.kind, "task");
     assertEquals(result.id, "probe-runtime");
     assertEquals(result.output, { hasRuntimeTool: true });
+  });
+
+  it("propagates trigger cancellation into task execution", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/cancelled.ts": makeTaskSource("Cancelled"),
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled trigger execution"));
+
+    await assertRejects(
+      () =>
+        runTriggerTarget({
+          projectDir: "/project",
+          adapter,
+          config: { fs: { type: "veryfront-api" } },
+          target: { kind: "task", id: "cancelled" },
+          signal: controller.signal,
+        }),
+      Error,
+      "cancelled trigger execution",
+    );
   });
 
   it("runs agent targets after project runtime discovery", async () => {

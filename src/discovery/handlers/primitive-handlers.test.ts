@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Resource, resource, resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { promptHandler } from "./prompt-handler.ts";
 import { resourceHandler } from "./resource-handler.ts";
+import { taskHandler } from "./task-handler.ts";
 
 Deno.test("resource discovery validates the complete runtime boundary", () => {
   assertEquals(
@@ -189,5 +190,28 @@ Deno.test("prompt discovery preserves explicit ids and replaces generated placeh
   assertEquals(
     promptHandler.getId(generated, "/project/prompts/file-name.ts", "/project/prompts"),
     "fileName",
+  );
+});
+
+Deno.test("task discovery derives portable ids and rejects paths outside its root", () => {
+  const task = { run() {} };
+
+  assertEquals(
+    taskHandler.getId(
+      task,
+      "file:///C:/project/tasks/reports/daily.ts",
+      String.raw`C:\project\tasks`,
+    ),
+    "reports/daily",
+  );
+  assertThrows(
+    () =>
+      taskHandler.getId(
+        task,
+        "/project/other/daily.ts",
+        "/project/tasks",
+      ),
+    Error,
+    "outside discovery directory",
   );
 });

@@ -102,7 +102,13 @@ function assertSafeRelativeDiscoveryPath(relativePath: string, sourcePath: strin
   }
 }
 
-function normalizeDiscoveryPath(value: string): string {
+/**
+ * Normalize native paths, standard file URLs, and adapter virtual file URLs
+ * to the slash-separated form used by discovery boundary checks.
+ *
+ * @internal
+ */
+export function normalizeDiscoveryPath(value: string): string {
   let normalized = value;
   if (value.startsWith("file:///")) {
     try {

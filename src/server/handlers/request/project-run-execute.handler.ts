@@ -334,6 +334,7 @@ function withRuntimeStepRegistries(config?: WorkflowClientConfig): WorkflowClien
 async function executeTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
@@ -362,6 +363,7 @@ async function executeTaskRun(
     environmentId: request.runtimeTargetEnvironmentId === undefined
       ? ctx.environmentId
       : request.runtimeTargetEnvironmentId ?? undefined,
+    signal,
     debug: ctx.debug,
   });
 
@@ -1493,7 +1495,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             : request.kind === "task" && request.target === "task:style-artifact-build"
             ? await this.deps.executeStyleArtifactBuild({ request, ctx, req })
             : request.kind === "task"
-            ? await executeTaskRun(request, ctx, this.deps)
+            ? await executeTaskRun(request, ctx, req.signal, this.deps)
             : request.kind === "eval"
             ? await executeEvalRun(request, ctx, req, this.deps)
             : await executeWorkflowRun(request, ctx, this.deps);

@@ -26,6 +26,7 @@ export interface RunTriggerTargetOptions {
   input?: unknown;
   agentInput?: string;
   agentContext?: Record<string, unknown>;
+  signal?: AbortSignal;
   debug?: boolean;
 }
 
@@ -73,6 +74,7 @@ async function runTaskTarget(options: RunTriggerTargetOptions): Promise<TriggerT
         task,
         config: toRecordInput(options.input),
         projectId: options.projectId,
+        signal: options.signal,
         debug: options.debug,
       }),
   );

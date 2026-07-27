@@ -613,8 +613,11 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Exports**: `#veryfront/task`
 
-- File-based task discovery from project directories
-- Task runner with typed context
+- Unified project-runtime discovery plus compatibility helpers for legacy
+  file-based discovery
+- Deterministic, portable task IDs with duplicate rejection
+- Task runner with a typed, environment-scoped context and cooperative
+  cancellation
 - Integration with the runs system for background execution
 
 #### `sandbox/` - Ephemeral Compute

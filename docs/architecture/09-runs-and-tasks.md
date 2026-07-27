@@ -28,8 +28,8 @@ flowchart TD
   taskFile[Project task file] --> discovery[Task discovery]
   discovery --> taskDef[Task definition]
   taskDef --> localRun[Local task runner]
-  localRun --> taskContext[Task context: env, config, project id]
-  taskContext --> result[Task result or sanitized error]
+  localRun --> taskContext[Task context: env, config, project and environment ids, signal]
+  taskContext --> result[Task result or message-only error]
 
   client[Runs client] --> api[Runs API]
   api --> create[Create run]
@@ -66,6 +66,12 @@ contracts apply.
 - Project environment injection is bounded and fail-closed. Every
   `VERYFRONT_*` and `TENANT_*` name is reserved case-insensitively so platform
   credentials cannot enter task context or persisted workflow context.
+- Request-scoped cancellation reaches task code as an `AbortSignal`. The
+  runner rejects pre-aborted work and exposes cooperative cancellation without
+  pretending it can terminate arbitrary JavaScript that ignores the signal.
+- Task IDs are deterministic, retain nested path segments, and normalize
+  native paths and file URLs to `/`. Ambiguous legacy definitions that collapse
+  to the same ID are rejected instead of depending on filesystem order.
 
 ## Canonical run model
 
