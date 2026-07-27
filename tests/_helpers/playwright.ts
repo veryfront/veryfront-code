@@ -22,6 +22,7 @@ export function isMissingBrowserExecutable(error: unknown): boolean {
 }
 
 export const CHROMIUM_LAUNCH_TIMEOUT_MS = 15_000;
+const BROWSER_BRIDGE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
 interface ChromiumLauncher {
   launch(options: { headless: boolean; timeout: number }): Promise<Browser>;
@@ -33,6 +34,11 @@ interface ChromiumConnector {
 
 interface BrowserBridgeMessage {
   wsEndpoint: string;
+}
+
+interface BrowserBridgeProcess {
+  stdin: WritableStream<Uint8Array>;
+  kill(signal: Deno.Signal): void;
 }
 
 const browserBridgeCleanups = new WeakMap<Browser, () => Promise<void>>();
@@ -91,6 +97,57 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
+/** @internal Exported for deterministic bridge-cleanup regression coverage. */
+export async function cleanupBrowserBridgeProcess(
+  child: BrowserBridgeProcess,
+  statusPromise: Promise<Deno.CommandStatus>,
+  stderrPromise: Promise<string>,
+  timeoutMs = BROWSER_BRIDGE_SHUTDOWN_TIMEOUT_MS,
+): Promise<void> {
+  try {
+    const writer = child.stdin.getWriter();
+    try {
+      await writer.close();
+    } finally {
+      writer.releaseLock();
+    }
+  } catch {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* expected: bridge may already have exited */
+    }
+  }
+
+  try {
+    await withTimeout(
+      Promise.allSettled([statusPromise, stderrPromise]),
+      timeoutMs,
+      `Playwright browser bridge did not exit within ${timeoutMs}ms`,
+    );
+    return;
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* expected: bridge may have exited as the timeout fired */
+    }
+  }
+
+  await Promise.allSettled([
+    withTimeout(
+      statusPromise,
+      timeoutMs,
+      `Playwright browser bridge did not report exit after SIGKILL within ${timeoutMs}ms`,
+    ),
+    withTimeout(
+      stderrPromise,
+      timeoutMs,
+      `Playwright browser bridge stderr did not close after SIGKILL within ${timeoutMs}ms`,
+    ),
+  ]);
+}
+
 async function launchChromiumThroughNode(chromium: ChromiumConnector): Promise<Browser> {
   const bridgePath = fromFileUrl(new URL("./playwright-node-bridge.mjs", import.meta.url));
   const child = new Deno.Command("node", {
@@ -103,25 +160,7 @@ async function launchChromiumThroughNode(chromium: ChromiumConnector): Promise<B
   const stderrPromise = new Response(child.stderr).text();
   let cleanupPromise: Promise<void> | undefined;
   const cleanup = (): Promise<void> => {
-    cleanupPromise ??= (async () => {
-      try {
-        const writer = child.stdin.getWriter();
-        try {
-          await writer.close();
-        } finally {
-          writer.releaseLock();
-        }
-      } catch {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          /* expected: bridge may already have exited */
-        }
-      }
-
-      await statusPromise;
-      await stderrPromise;
-    })();
+    cleanupPromise ??= cleanupBrowserBridgeProcess(child, statusPromise, stderrPromise);
     return cleanupPromise;
   };
 
