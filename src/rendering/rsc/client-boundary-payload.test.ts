@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RSCNode } from "./types.ts";
 import {
@@ -80,5 +80,136 @@ describe("rendering/rsc/client-boundary-payload", () => {
       parseClientBoundaryChildren('{"version":1,"nodes":[{"type":"script"}]}'),
       [],
     );
+  });
+
+  it("rejects payloads that exceed the serialized byte budget before parsing", () => {
+    const oversized = JSON.stringify({
+      version: 1,
+      nodes: [{ type: "html", text: "x".repeat(2 * 1024 * 1024) }],
+    });
+
+    assertEquals(parseClientBoundaryChildren(oversized), []);
+    assertThrows(
+      () =>
+        encodeClientBoundaryChildren([{
+          type: "html",
+          text: "x".repeat(2 * 1024 * 1024),
+        }]),
+      RangeError,
+      "byte limit",
+    );
+  });
+
+  it("rejects oversized and over-deep node trees", () => {
+    const oversizedNodes = Array.from(
+      { length: 10_001 },
+      (): RSCNode => ({ type: "html", text: "" }),
+    );
+    assertEquals(
+      parseClientBoundaryChildren(JSON.stringify({ version: 1, nodes: oversizedNodes })),
+      [],
+    );
+    assertThrows(
+      () => encodeClientBoundaryChildren(oversizedNodes),
+      RangeError,
+      "node limit",
+    );
+
+    const root: RSCNode = { type: "fragment", children: [] };
+    let cursor = root;
+    for (let depth = 0; depth < 65; depth += 1) {
+      const child: RSCNode = { type: "fragment", children: [] };
+      cursor.children = [child];
+      cursor = child;
+    }
+
+    assertEquals(
+      parseClientBoundaryChildren(JSON.stringify({ version: 1, nodes: [root] })),
+      [],
+    );
+    assertThrows(
+      () => encodeClientBoundaryChildren([root]),
+      RangeError,
+      "depth limit",
+    );
+  });
+
+  it("never invokes payload or prop accessors while encoding", () => {
+    let getterCalls = 0;
+    const props = Object.defineProperty({}, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "leaked";
+      },
+    });
+
+    assertThrows(
+      () =>
+        encodeClientBoundaryChildren([{
+          type: "client",
+          component: "Counter",
+          props,
+        }]),
+      TypeError,
+      "data properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("bounds client component resolution instead of creating unbounded work", async () => {
+    const nodes = Array.from(
+      { length: 32 },
+      (_, index): RSCNode => ({
+        type: "client",
+        component: `Client${index}`,
+      }),
+    );
+    let active = 0;
+    let peak = 0;
+
+    const children = await materializeClientBoundaryChildren(
+      nodes,
+      {
+        Fragment: "Fragment",
+        createElement(type) {
+          return type;
+        },
+      },
+      async (componentId) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await Promise.resolve();
+        active -= 1;
+        return componentId;
+      },
+    );
+
+    assertEquals(children.length, 32);
+    assertEquals(peak, 1);
+  });
+
+  it("validates direct materialization input before resolving components", async () => {
+    let resolutions = 0;
+
+    await assertRejects(
+      () =>
+        materializeClientBoundaryChildren(
+          [{ type: "client", component: "" }],
+          {
+            Fragment: "Fragment",
+            createElement() {
+              return null;
+            },
+          },
+          async () => {
+            resolutions += 1;
+            return null;
+          },
+        ),
+      TypeError,
+      "component identifier",
+    );
+    assertEquals(resolutions, 0);
   });
 });
