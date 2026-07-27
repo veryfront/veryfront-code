@@ -42,10 +42,11 @@
 
 ### Build System
 
-| Module       | Export Alias       | Purpose                                         |
-| ------------ | ------------------ | ----------------------------------------------- |
-| **`build/`** | `#veryfront/build` | Production builds, SSG, asset optimization      |
-| **`cli/`**   | `veryfront/cli`    | Command-line interface (`dev`, `build`, `init`) |
+| Module                | Export Alias               | Purpose                                                 |
+| --------------------- | -------------------------- | ------------------------------------------------------- |
+| **`build/`**          | `#veryfront/build`         | Production builds, SSG, asset optimization              |
+| **`release-assets/`** | `veryfront/release-assets` | Content-addressed release assets and manifest contracts |
+| **`cli/`**            | `veryfront/cli`            | Command-line interface (`dev`, `build`, `init`)         |
 
 ### Agent System
 

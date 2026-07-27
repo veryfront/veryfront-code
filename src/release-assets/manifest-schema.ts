@@ -204,6 +204,7 @@ function hasValidManifestReferences(manifest: ManifestReferenceShape): boolean {
   return true;
 }
 
+/** Extension-backed validator for the strict release asset manifest v1 body. */
 export const getReleaseAssetManifestSchema = defineSchema((v) =>
   v.object({
     schemaVersion: v.literal(RELEASE_ASSET_MANIFEST_SCHEMA_VERSION),
@@ -258,11 +259,15 @@ export const getReleaseAssetManifestSchema = defineSchema((v) =>
 // Inferred public types
 // ---------------------------------------------------------------------------
 
+/** Validated, immutable release asset manifest v1 body. */
 export type ReleaseAssetManifest = InferSchema<
   ReturnType<typeof getReleaseAssetManifestSchema>
 >;
+/** Content-addressed JavaScript module entry. */
 export type ReleaseAssetEntry = ReleaseAssetManifest["modules"][string];
+/** Content-addressed CSS entry. */
 export type ReleaseAssetCssEntry = ReleaseAssetManifest["css"][number];
+/** Per-route module and CSS closure. */
 export type ReleaseAssetRouteEntry = ReleaseAssetManifest["routes"][string];
 
 /** Manifest lifecycle states (DB-owned; mirrored here for runtime checks). */

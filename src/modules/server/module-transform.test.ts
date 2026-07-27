@@ -96,6 +96,7 @@ describe(
           isSSR: false,
           releaseRewriteOptions: {
             releaseId: null, // null → rewriteReleaseDependencyImportsForModule returns early
+            dependencyCacheRoot: "/tmp/veryfront-http-bundle",
             readDependencySource: (_path) => Promise.resolve(""),
           },
         });

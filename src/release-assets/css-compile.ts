@@ -37,11 +37,13 @@ const MAX_CSS_CANDIDATES = 100_000;
 const MAX_CSS_CANDIDATE_LENGTH = 2_048;
 const textEncoder = new TextEncoder();
 
+/** Successful bounded CSS compilation output. */
 export interface CompileProjectCssResult {
   css: string;
   styleProfileHash: string | null;
 }
 
+/** Configuration captured by a release-scoped CSS compiler. */
 export interface CompileProjectCssOptions {
   /** Project scope (slug or id) — isolates the compiler cache per project. */
   projectScope: string;
@@ -49,6 +51,7 @@ export interface CompileProjectCssOptions {
   config?: VeryfrontConfig;
 }
 
+/** Per-build configuration resolved from the materialized release. */
 export interface CompileProjectCssRuntimeOptions {
   /** Project config resolved from the materialized release file set. */
   config?: VeryfrontConfig;

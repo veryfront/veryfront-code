@@ -66,6 +66,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
       'import React from "file:///tmp/veryfront-http-bundle/http-123abc.mjs";\nexport default React;',
       {
         releaseId: "release-id",
+        dependencyCacheRoot: "/tmp/veryfront-http-bundle",
         readDependencySource: () =>
           Promise.resolve(`/*! @vf-source: ${sourceUrl} */\nexport default {};`),
       },
@@ -96,6 +97,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
       'import React from "https://esm.sh/file:///tmp/veryfront-http-bundle/http-123abc.mjs?external=react&target=es2022";',
       {
         releaseId: "release-id",
+        dependencyCacheRoot: "/tmp/veryfront-http-bundle",
         readDependencySource: () =>
           Promise.resolve(`/*! @vf-source: ${sourceUrl} */\nexport default {};`),
       },
@@ -103,6 +105,38 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
 
     assertEquals(result.includes(`"/_vf/assets/${HASH_A}.js"`), true);
     assertEquals(result.includes("https://esm.sh/file://"), false);
+  });
+
+  it("does not read matching bundle-shaped paths outside the owned cache root", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    const sourceUrl = "https://esm.sh/react@19.2.4";
+    configureReleaseAssetManifestFetcher(() =>
+      Promise.resolve({
+        state: "ready",
+        manifest: manifest({
+          [sourceUrl]: {
+            contentHash: HASH_A,
+            size: 100,
+            contentType: "text/javascript",
+          },
+        }),
+      })
+    );
+    const code = 'import React from "file:///unowned/veryfront-http-bundle/http-123abc.mjs";';
+    let reads = 0;
+
+    const result = await rewriteReleaseDependencyImportsForModule(code, {
+      releaseId: "release-id",
+      dependencyCacheRoot: "/owned/veryfront-http-bundle",
+      readDependencySource: () => {
+        reads++;
+        return Promise.resolve(`/*! @vf-source: ${sourceUrl} */`);
+      },
+    });
+
+    assertEquals(result, code);
+    assertEquals(reads, 0);
   });
 
   it("rewrites direct HTTP imports using normalized manifest dependency keys", async () => {
@@ -125,6 +159,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
       'import pkg from "https://esm.sh/pkg@1?z=2&a=1";',
       {
         releaseId: "release-id",
+        dependencyCacheRoot: "/tmp/veryfront-http-bundle",
         readDependencySource: () => Promise.reject(new Error("unused")),
       },
     );
@@ -138,6 +173,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
 
     const result = await rewriteReleaseDependencyImportsForModule(code, {
       releaseId: "release-id",
+      dependencyCacheRoot: "/tmp/veryfront-http-bundle",
       readDependencySource: () => Promise.reject(new Error("unused")),
     });
 

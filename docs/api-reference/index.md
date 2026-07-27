@@ -32,6 +32,7 @@ order: 1
 | [`veryfront/observability`](./veryfront/observability.md) | Tracing, metrics, errors, and logs. |
 | [`veryfront/prompt`](./veryfront/prompt.md) | MCP prompt definitions. |
 | [`veryfront/provider`](./veryfront/provider.md) | Model provider registry. |
+| [`veryfront/release-assets`](./veryfront/release-assets.md) | Content-addressed release assets and manifest contracts. |
 | [`veryfront/resource`](./veryfront/resource.md) | MCP resource definitions. |
 | [`veryfront/router`](./veryfront/router.md) | Client navigation and route context. |
 | [`veryfront/runs`](./veryfront/runs.md) | Canonical durable task and workflow runs. |

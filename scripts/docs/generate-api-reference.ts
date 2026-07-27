@@ -324,6 +324,13 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "exists",
     "mkdir",
   ],
+  "veryfront/release-assets": [
+    "parseReleaseAssetManifest",
+    "runReleaseAssetBuild",
+    "getReadyManifestForRenderAsync",
+    "registerManifestFetcherForRelease",
+    "releaseAssetUrl",
+  ],
   // CLI is an executable entry point, not an importable module. Skip import snippet.
   "veryfront/cli": [],
 };
@@ -819,6 +826,7 @@ const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront/prompt": "MCP prompt definitions.",
   "veryfront/provider": "Model provider registry.",
   "veryfront/resource": "MCP resource definitions.",
+  "veryfront/release-assets": "Content-addressed release assets and manifest contracts.",
   "veryfront/router": "Client navigation and route context.",
   "veryfront/sandbox": "Isolated execution.",
   "veryfront/schemas": "Validation schemas.",

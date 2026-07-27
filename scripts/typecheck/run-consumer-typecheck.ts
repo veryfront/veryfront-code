@@ -2,8 +2,9 @@
  * Consumer `tsc --noEmit` gate.
  *
  * Typechecks {@link ./fixtures} — documented `veryfront/ui`,
- * `veryfront/chat`, `veryfront/markdown`, and `veryfront/mdx` composition —
- * against the BUILT npm package (`npm/esm/**.d.ts`) using a real
+ * `veryfront/chat`, `veryfront/markdown`, `veryfront/mdx`, and
+ * `veryfront/release-assets` composition — against the BUILT npm package
+ * (`npm/esm/**.d.ts`) using a real
  * `@types/react`, exactly the way an external app compiles the published
  * declarations. This is the gap
  * `deno check` (Deno's own react types + source) and a source-level `tsc` both

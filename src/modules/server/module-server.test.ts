@@ -85,6 +85,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     deleteEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
     deleteEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
+    deleteEnv("VERYFRONT_CACHE_DIR");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     clearReleaseModuleResponseCache();
@@ -921,6 +922,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-release-assets-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-cache-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -977,6 +979,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-partial-manifest-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-partial-cache-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -1035,6 +1038,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-manifest-miss-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-manifest-miss-cache-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -1115,6 +1119,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-release-cache-gate-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-cache-gate-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";

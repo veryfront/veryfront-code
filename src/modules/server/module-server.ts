@@ -9,6 +9,7 @@ import {
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -44,6 +45,7 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
   RELEASE_MODULE_VERSION_PARAM,
 } from "#veryfront/release-assets/constants.ts";
@@ -64,6 +66,7 @@ import { transformModuleToServable } from "./module-transform.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
+const textEncoder = new TextEncoder();
 
 /**
  * Embedded polyfills for compiled Deno binaries.
@@ -279,6 +282,23 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         },
       });
       const platformFs = createFileSystem();
+      const dependencyCacheRoot = getHttpBundleCacheDir();
+      const readDependencySource = async (path: string): Promise<string> => {
+        const fileInfo = await platformFs.stat(path);
+        if (
+          !fileInfo.isFile ||
+          !Number.isSafeInteger(fileInfo.size) ||
+          fileInfo.size < 0 ||
+          fileInfo.size > RELEASE_ASSET_MAX_SIZE_BYTES
+        ) {
+          throw new Error("Release dependency source exceeds the supported boundary");
+        }
+        const source = await platformFs.readTextFile(path);
+        if (textEncoder.encode(source).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+          throw new Error("Release dependency source exceeds the supported boundary");
+        }
+        return source;
+      };
 
       const debugUserAgent = req.headers.get("user-agent") ?? "";
       logger.debug("Request", {
@@ -361,7 +381,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             },
             releaseRewriteOptions: {
               releaseId: options.releaseId,
-              readDependencySource: (path) => platformFs.readTextFile(path),
+              dependencyCacheRoot,
+              readDependencySource,
             },
             profile: true,
           });
@@ -457,7 +478,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             },
             releaseRewriteOptions: {
               releaseId: options.releaseId,
-              readDependencySource: (path) => platformFs.readTextFile(path),
+              dependencyCacheRoot,
+              readDependencySource,
             },
             profile: true,
           });
@@ -657,7 +679,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               releaseId: options.releaseId,
               manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
               manifestReadOptions: { refreshCachedNull: true },
-              readDependencySource: (path) => platformFs.readTextFile(path),
+              dependencyCacheRoot,
+              readDependencySource,
             },
             profile: true,
           });

@@ -10,15 +10,23 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isAbsolute, normalize, relative } from "#veryfront/compat/path/index.ts";
 import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
-import { RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, releaseAssetUrl } from "./constants.ts";
+import {
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
+  releaseAssetUrl,
+} from "./constants.ts";
 import { getReadyManifestForRenderAsync, type ReadyManifestReadOptions } from "./manifest-cache.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
+const textEncoder = new TextEncoder();
+
 export interface RewriteReleaseDependencyImportsOptions {
   releaseId?: string | null;
+  dependencyCacheRoot: string;
   readDependencySource: (path: string) => Promise<string>;
   manifest?: ReleaseAssetManifest | null;
   manifestReadOptions?: ReadyManifestReadOptions;
@@ -109,15 +117,51 @@ function localHttpBundlePath(specifier: string): string | null {
   }
 }
 
+function authorizedLocalHttpBundlePath(
+  specifier: string,
+  dependencyCacheRoot: string,
+): string | null {
+  const path = localHttpBundlePath(specifier);
+  if (
+    !path ||
+    !isAbsolute(path) ||
+    !isAbsolute(dependencyCacheRoot) ||
+    normalize(path) !== path
+  ) {
+    return null;
+  }
+
+  const root = normalize(dependencyCacheRoot);
+  const relativePath = relative(root, path);
+  if (
+    relativePath.length === 0 ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("..\\") ||
+    isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+  return path;
+}
+
 async function sourceUrlForLocalHttpBundle(
   specifier: string,
+  dependencyCacheRoot: string,
   readDependencySource: (path: string) => Promise<string>,
 ): Promise<string | null> {
-  const path = localHttpBundlePath(specifier);
+  const path = authorizedLocalHttpBundlePath(specifier, dependencyCacheRoot);
   if (!path) return null;
 
   try {
-    return extractSourceUrl(await readDependencySource(path));
+    const source = await readDependencySource(path);
+    if (
+      typeof source !== "string" ||
+      textEncoder.encode(source).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES
+    ) {
+      return null;
+    }
+    return extractSourceUrl(source);
   } catch {
     return null;
   }
@@ -146,7 +190,11 @@ export async function rewriteReleaseDependencyImportsForModule(
       continue;
     }
 
-    const sourceUrl = await sourceUrlForLocalHttpBundle(imp.n, options.readDependencySource);
+    const sourceUrl = await sourceUrlForLocalHttpBundle(
+      imp.n,
+      options.dependencyCacheRoot,
+      options.readDependencySource,
+    );
     if (!sourceUrl) continue;
 
     const assetUrl = dependencyAssetUrl(manifest, sourceUrl);

@@ -11,9 +11,12 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
+import {
+  BROWSER_SAFE_CLIENT_MODULES,
+  BROWSER_SAFE_EXPORTS,
+} from "../build/browser-safe-exports.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
@@ -22,7 +25,9 @@ const NPM_DIR = resolve(ROOT, "npm");
 // Read deno.json to get export paths
 const denoConfig = JSON.parse(readFileSync(resolve(ROOT, "deno.json"), "utf8"));
 const exports = denoConfig.exports ?? {};
-const npmPackage = JSON.parse(readFileSync(resolve(NPM_DIR, "package.json"), "utf8"));
+const npmPackage = JSON.parse(
+  readFileSync(resolve(NPM_DIR, "package.json"), "utf8"),
+);
 const npmExports = npmPackage.exports ?? {};
 
 // Top-level module export paths only (no sub-paths like ./workflow/worker)
@@ -36,13 +41,29 @@ const CLI_EXPORT = "./cli";
 
 // Key named exports per module that MUST exist (subset — the most important ones)
 const REQUIRED_EXPORTS = {
-  ".": ["defineConfig", "json", "notFound", "redirect", "getEnv", "createValidatedHandler", "startServer", "createHandler"],
+  ".": [
+    "defineConfig",
+    "json",
+    "notFound",
+    "redirect",
+    "getEnv",
+    "createValidatedHandler",
+    "startServer",
+    "createHandler",
+  ],
   "./head": ["Head"],
   "./router": ["Link", "useRouter", "RouterProvider"],
   "./context": ["usePageContext", "PageContextProvider"],
   "./fonts": ["GoogleFonts"],
   "./ui": ["Button", "AppShell", "DesignTokenStyle", "generateTokenCSS"],
-  "./chat": ["Chat", "useChat", "useAgent", "AgentCard", "Message", "ChatErrorBoundary"],
+  "./chat": [
+    "Chat",
+    "useChat",
+    "useAgent",
+    "AgentCard",
+    "Message",
+    "ChatErrorBoundary",
+  ],
   "./markdown": ["Markdown"],
   "./mdx": ["MDXProvider", "useMDXComponents"],
   "./agent": [
@@ -57,13 +78,44 @@ const REQUIRED_EXPORTS = {
     "agentAsTool",
     "createMemory",
   ],
-  "./tool": ["tool", "dynamicTool", "executeTool", "toolRegistry", "createRemoteMCPToolSource"],
-  "./workflow": ["workflow", "step", "parallel", "branch", "dag", "waitForApproval", "createWorkflowClient"],
+  "./tool": [
+    "tool",
+    "dynamicTool",
+    "executeTool",
+    "toolRegistry",
+    "createRemoteMCPToolSource",
+  ],
+  "./workflow": [
+    "workflow",
+    "step",
+    "parallel",
+    "branch",
+    "dag",
+    "waitForApproval",
+    "createWorkflowClient",
+  ],
   "./prompt": ["prompt", "promptRegistry"],
   "./resource": ["resource", "resourceRegistry"],
-  "./mcp": ["createMCPServer", "registerTool", "registerPrompt", "registerResource"],
-  "./middleware": ["cors", "rateLimit", "logger", "timeout", "MiddlewarePipeline"],
-  "./oauth": ["createOAuthInitHandler", "createOAuthCallbackHandler", "githubConfig", "slackConfig", "MemoryTokenStore"],
+  "./mcp": [
+    "createMCPServer",
+    "registerTool",
+    "registerPrompt",
+    "registerResource",
+  ],
+  "./middleware": [
+    "cors",
+    "rateLimit",
+    "logger",
+    "timeout",
+    "MiddlewarePipeline",
+  ],
+  "./oauth": [
+    "createOAuthInitHandler",
+    "createOAuthCallbackHandler",
+    "githubConfig",
+    "slackConfig",
+    "MemoryTokenStore",
+  ],
   "./provider": [
     "registerModelProvider",
     "resolveModel",
@@ -72,7 +124,21 @@ const REQUIRED_EXPORTS = {
     "runWithVeryfrontCloudContext",
     "runWithVeryfrontCloudContextAsync",
   ],
-  "./fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
+  "./fs": [
+    "readTextFile",
+    "writeTextFile",
+    "join",
+    "resolve",
+    "exists",
+    "mkdir",
+  ],
+  "./release-assets": [
+    "parseReleaseAssetManifest",
+    "runReleaseAssetBuild",
+    "getReadyManifestForRenderAsync",
+    "registerManifestFetcherForRelease",
+    "releaseAssetUrl",
+  ],
 };
 
 let passed = 0;
@@ -80,8 +146,26 @@ let failed = 0;
 const errors = [];
 
 for (const exportPath of moduleExports) {
-  const importPath = resolve(NPM_DIR, "esm", exports[exportPath].replace(/\.tsx?$/, ".js"));
-  const label = exportPath === "." ? "veryfront" : `veryfront/${exportPath.replace("./", "")}`;
+  const label = exportPath === "."
+    ? "veryfront"
+    : `veryfront/${exportPath.replace("./", "")}`;
+  const npmEntry = npmExports[exportPath];
+  if (!npmEntry) {
+    failed++;
+    errors.push(`  ${label}: missing npm export map entry`);
+    console.log(`  FAIL  ${label} — missing npm export map entry`);
+    continue;
+  }
+  const importTarget = typeof npmEntry === "string"
+    ? npmEntry
+    : npmEntry.import;
+  if (typeof importTarget !== "string") {
+    failed++;
+    errors.push(`  ${label}: npm export has no import target`);
+    console.log(`  FAIL  ${label} — npm export has no import target`);
+    continue;
+  }
+  const importPath = resolve(NPM_DIR, importTarget);
 
   try {
     const mod = await import(importPath);
@@ -114,14 +198,18 @@ if (!cliEntry) {
   errors.push(`  ${label}: missing export map entry`);
   console.log(`  FAIL  ${label} — missing export map entry`);
 } else {
-  const cliImportTarget = typeof cliEntry === "string" ? cliEntry : cliEntry.import;
+  const cliImportTarget = typeof cliEntry === "string"
+    ? cliEntry
+    : cliEntry.import;
   const cliImportPath = resolve(NPM_DIR, cliImportTarget);
   const cliBinPath = resolve(NPM_DIR, "bin/veryfront.js");
 
   if (!existsSync(cliImportPath)) {
     failed++;
     errors.push(`  veryfront/cli: missing import target ${cliImportTarget}`);
-    console.log(`  FAIL  veryfront/cli — missing import target ${cliImportTarget}`);
+    console.log(
+      `  FAIL  veryfront/cli — missing import target ${cliImportTarget}`,
+    );
   } else if (!existsSync(cliBinPath)) {
     failed++;
     errors.push("  veryfront/cli: missing npm bin/veryfront.js");
@@ -152,7 +240,7 @@ for (const exportPath of BROWSER_SAFE_EXPORTS) {
   }
 
   const content = readFileSync(builtFile, "utf8");
-  if (content.includes('_dnt.polyfills.js')) {
+  if (content.includes("_dnt.polyfills.js")) {
     failed++;
     errors.push(`  ${label}: should not import _dnt.polyfills.js`);
     console.log(`  FAIL  ${label} — still imports _dnt.polyfills.js`);
@@ -189,7 +277,8 @@ for (const relativePath of BROWSER_SAFE_CLIENT_MODULES) {
 console.log();
 console.log(
   `${passed} passed, ${failed} failed out of ${
-    moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length + BROWSER_SAFE_CLIENT_MODULES.length
+    moduleExports.length + 1 + BROWSER_SAFE_EXPORTS.length +
+    BROWSER_SAFE_CLIENT_MODULES.length
   } export paths`,
 );
 

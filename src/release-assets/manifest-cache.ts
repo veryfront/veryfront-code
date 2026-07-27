@@ -69,6 +69,7 @@ interface InFlightFetch {
   promise: Promise<ReleaseAssetManifest | null>;
 }
 
+/** Controls revalidation behavior for awaited manifest reads. */
 export interface ReadyManifestReadOptions {
   /**
    * Retry a cached non-ready result after a short throttle instead of waiting
@@ -83,6 +84,7 @@ const inFlight = new Map<string, InFlightFetch>();
 /** Monotonic guard that invalidates pending fetch writers after cache clears. */
 let cacheGeneration = Symbol("release-asset-manifest-cache-generation");
 
+/** Cancellation context passed to a release-scoped manifest fetcher. */
 export interface ReleaseAssetManifestFetchContext {
   /** Aborted when the fetch times out or its fetcher loses ownership. */
   readonly signal: AbortSignal;
@@ -102,6 +104,7 @@ export interface ReleaseAssetManifestFetcher {
   >;
 }
 
+/** Idempotent cleanup for one fetcher registration. */
 export type ReleaseAssetManifestFetcherCleanup = () => void;
 
 interface FetcherRegistration {

@@ -16,6 +16,7 @@ import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_LIMITS,
   RELEASE_ASSET_MAX_SIZE_BYTES,
 } from "./constants.ts";
 import {
@@ -322,6 +323,119 @@ describe("release asset build executor", () => {
     assertExists(pageUpload);
     assert(pageUpload.text.includes(reactUrl));
     assert(!pageUpload.text.includes("file://"));
+  });
+
+  it("bounds dependency aliases and atomically discards an oversized vendor batch", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const sourceUrl = "https://cdn.example/dependency.js";
+    const dependencyCode = "export const dependencyAliasBoundary = true;";
+    const files = [{
+      path: "pages/index.tsx",
+      content: `import ${JSON.stringify(sourceUrl)}; export default null;`,
+    }];
+    const client = makeClient(files, rec);
+    const transform = (source: string) => Promise.resolve(source);
+    const vendorHttpImports = withFakeReactVendor((code: string) =>
+      Promise.resolve({
+        code,
+        dependencies: Array.from(
+          { length: RELEASE_ASSET_MANIFEST_LIMITS.dependencyEntries },
+          (_, index) => ({
+            specifier: `dependency-alias-${index}`,
+            manifestKey: sourceUrl,
+            code: dependencyCode,
+          }),
+        ),
+      })
+    );
+
+    const result = await runReleaseAssetBuild(
+      { ...baseInput(client, transform), vendorHttpImports },
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assert(
+      manifest.fallback.gaps.includes("dependency-finalize-failed"),
+      "alias overflow must be explicit",
+    );
+    assertEquals(manifest.dependencies["dependency-alias-0"], undefined);
+    assert(
+      rec.uploads.every(({ text }) => text !== dependencyCode),
+      "discarded dependency assets must not be uploaded",
+    );
+  });
+
+  it("rejects accessor-backed vendor results without executing accessors", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default null;" }];
+    const client = makeClient(files, rec);
+    let accessorCalls = 0;
+    const hostileResult: Record<string, unknown> = {};
+    Object.defineProperty(hostileResult, "code", {
+      get() {
+        accessorCalls++;
+        return "export default null;";
+      },
+    });
+    Object.defineProperty(hostileResult, "dependencies", {
+      value: [],
+      enumerable: true,
+    });
+
+    const result = await runReleaseAssetBuild(
+      {
+        ...baseInput(client, (source) => Promise.resolve(source)),
+        vendorHttpImports: withFakeReactVendor(() =>
+          Promise.resolve(hostileResult as unknown as ReleaseAssetVendorResult)
+        ),
+      },
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    assertEquals(accessorCalls, 0);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assert(
+      manifest.fallback.gaps.includes(
+        "module-dependency-vendor-failed:pages/index.tsx",
+      ),
+    );
+  });
+
+  it("never publishes project modules with unresolved local file imports", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{ path: "pages/index.tsx", content: "export default null;" }];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      {
+        ...baseInput(client, (source) => Promise.resolve(source)),
+        vendorHttpImports: withFakeReactVendor(() =>
+          Promise.resolve({
+            code: 'import "file:///tmp/unresolved-release-dependency.mjs"; export default null;',
+            dependencies: [],
+          })
+        ),
+      },
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["pages/index.tsx"], undefined);
+    assert(
+      manifest.fallback.gaps.includes("module-rewrite-failed:pages/index.tsx"),
+    );
+    assert(rec.uploads.every(({ text }) => !text.includes("file:///tmp/")));
   });
 
   it("keeps project modules ready when React import-map dependency vendoring fails", async () => {

@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    26 |      44.8% | Current formal closure evidence remains valid       |
+| Closed                         |    27 |      46.6% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    30 |      51.7% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    29 |      50.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -56,6 +56,7 @@ stricter closure count.
 - `provider`
 - `prompt`
 - `registry`
+- `release-assets`
 - `repositories`
 - `runs`
 - `runtime`
@@ -87,7 +88,6 @@ stricter closure count.
 - `observability`
 - `proxy`
 - `react`
-- `release-assets`
 - `rendering`
 - `routing`
 - `schedule`
@@ -124,8 +124,8 @@ every affected unit.
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
-`repositories`, `runs`, `runtime`, `sandbox`, `schemas`, `studio`, `types`,
-and `version.ts`.
+`release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`,
+`studio`, `types`, and `version.ts`.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -3082,9 +3082,92 @@ Final closure evidence:
   and every configured source and browser entrypoint typecheck.
 
 No unresolved critical or high-confidence Platform production risk remains.
-The `platform` audit unit is closed. Agent, Modules, Release-assets, Server,
-Transforms, Utils, and Workflow remain listed for their own top-level
-revalidation because their source changed as a Platform consumer or supporting
-boundary during this checkpoint.
+The `platform` audit unit is closed. Agent, Modules, Server, Transforms, Utils,
+and Workflow remain listed for their own top-level revalidation because their
+source changed as a Platform consumer or supporting boundary during this
+checkpoint.
+
+### Release-assets closure checkpoint
+
+The `release-assets` audit unit owns the content-addressed release build,
+manifest schema, manifest cache lifecycle, production CSS compilation, HTML and
+module consumption helpers, and the public `veryfront/release-assets` package
+surface. Its consumers span production build, HTML and hydration generation,
+the module server, rendering caches, the hosted adapter, the release API
+client, and the immutable asset proxy.
+
+The current release-assets findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** manifest producers and
+  consumers admitted mutable, oversized, prototype-sensitive, or internally
+  inconsistent bodies. The source was optimistic shape checking distributed
+  across boundaries. The consequence was aliasing, unsafe inherited entries,
+  dangling route references, and unbounded validation work. One strict v1
+  parser now validates exact shapes, canonical identities, cross-references,
+  aggregate limits, and accessor-free own data, then returns a detached deeply
+  frozen snapshot built from null-prototype records.
+- **Symptom -> Source -> Consequence -> Remedy:** cached manifest work could
+  outlive its release owner, publish after replacement, or wait indefinitely.
+  The source was globally shared cache and in-flight state without complete
+  ownership or cancellation semantics. The consequence was cross-project
+  reuse, stale publication, and leaked background work. Cache identities are
+  collision-free owner/release tuples; each generation owns its fetch,
+  timeout, abort controller, publication right, and cleanup.
+- **Symptom -> Source -> Consequence -> Remedy:** build inputs, transform
+  output, dependency graphs, alias expansion, vendored batches, diagnostics,
+  and upload acknowledgements trusted partial or unbounded results. The
+  consequence was memory growth, partial dependency state surviving failed
+  batches, unresolved local imports entering manifests, and builds appearing
+  complete after an unacknowledged write. Every collection and byte envelope is
+  bounded; canonical release and dependency paths are enforced before I/O;
+  vendoring stages and commits atomically; discarded assets are removed;
+  uploads and final manifest writes require exact acknowledgements.
+- **Symptom -> Source -> Consequence -> Remedy:** equal bytes under different
+  media types shared an incomplete identity, while CSS, route closures, and
+  fallback diagnostics could exceed the manifest contract. The consequence was
+  ambiguous upload state and producers creating bodies their own consumers
+  could not validate. Asset identity now includes hash and allowlisted content
+  type; CSS candidates, route references, dependency specifiers, and diagnostic
+  gaps share explicit producer-and-consumer limits.
+- **Symptom -> Source -> Consequence -> Remedy:** module fallback responses
+  recognized bundle-shaped absolute paths without proving filesystem
+  ownership. The consequence was a manifest-controlled path potentially
+  reaching a generic text reader. Local dependency rewrites now require a
+  canonical path inside the owned HTTP-bundle cache root, require a regular
+  file, enforce size bounds before and after reading, and leave uncovered
+  modules uncached on the established release-scoped JIT path.
+- **Symptom -> Source -> Consequence -> Remedy:** the supported package surface
+  omitted the module while internal declarations and documentation drifted from
+  consumer reality. The consequence was source-relative consumption and no
+  published type contract. `veryfront/release-assets` is now an explicit Deno
+  and npm export with a consumer fixture, generated API reference, module
+  reference, and public entrypoint typecheck.
+
+Current release-assets verification evidence:
+
+- The complete module passes 10 suites and 119 nested steps with zero failures.
+- Thirty directly affected consumer suites pass 807 nested steps, and the
+  proxy/static-generation pair passes two suites and 28 nested steps, all with
+  zero failures.
+- Direct formatting, lint, and type checks pass for the changed release-assets
+  and module-server surface.
+- Documentation validation and coverage pass 40/40 API reference pages, all 66
+  guides, and every configured guide contract, example, and link.
+- The npm export verifier resolves all 69 package export paths, validates 31
+  release-assets exports, and the Node smoke harness passes all 90 checks.
+  Published-composition consumer typechecking is clean.
+- Manifest freshness, formatting, lint, style and architecture ratchets,
+  extension contracts, documentation validation, and every configured source
+  and browser entrypoint typecheck pass through `deno task verify:quick`.
+
+The two intentional availability paths are explicit rather than silent
+degradation: uncovered manifest entries use the existing authenticated,
+project- and release-scoped JIT path, and the global manifest fetcher is
+reserved for simple single-project or test setups while hosted runtimes
+register release-scoped owners. Neither path bypasses authorization. No
+unresolved critical or high-confidence release-assets production risk remains;
+the `release-assets` audit unit is closed. Build, Modules, Proxy, Rendering, and
+Server remain listed for their own top-level revalidation because their source
+or generated consumers changed during this checkpoint.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

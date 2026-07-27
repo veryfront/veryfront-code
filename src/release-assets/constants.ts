@@ -18,7 +18,9 @@ export const RELEASE_ASSET_CONTENT_TYPES = Object.freeze(
   } as const,
 );
 
+/** File extensions supported by the immutable release asset endpoint. */
 export type ReleaseAssetExtension = keyof typeof RELEASE_ASSET_CONTENT_TYPES;
+/** MIME types accepted for immutable release asset uploads and responses. */
 export type ReleaseAssetContentType = (typeof RELEASE_ASSET_CONTENT_TYPES)[ReleaseAssetExtension];
 
 /** Allowlist of accepted content types (upstream + upload validation). */
@@ -41,6 +43,7 @@ export const RELEASE_ASSET_MANIFEST_LIMITS = Object.freeze(
     gapLength: 4_096,
     moduleEntries: 20_000,
     dependencyEntries: 10_000,
+    dependencySpecifiers: 40_000,
     cssEntries: 512,
     routeEntries: 20_000,
     routeModules: 20_000,
