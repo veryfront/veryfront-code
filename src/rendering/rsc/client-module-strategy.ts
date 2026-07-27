@@ -111,17 +111,21 @@ function normalizeReleaseAssetModulePath(path: string): string {
     .replace(/\.js$/, "");
 }
 
+const RELEASE_ASSET_SOURCE_EXTENSION = /\.(tsx|ts|jsx|mdx|js)$/;
+
 function releaseAssetModuleCandidates(path: string): string[] {
   const normalized = normalizeReleaseAssetModulePath(path);
-  return [
-    path,
-    normalized,
-    `${normalized}.tsx`,
-    `${normalized}.ts`,
-    `${normalized}.jsx`,
-    `${normalized}.mdx`,
-    `${normalized}.js`,
-  ];
+  const candidates = [path, normalized];
+  if (!RELEASE_ASSET_SOURCE_EXTENSION.test(normalized)) {
+    candidates.push(
+      `${normalized}.tsx`,
+      `${normalized}.ts`,
+      `${normalized}.jsx`,
+      `${normalized}.mdx`,
+      `${normalized}.js`,
+    );
+  }
+  return Array.from(new Set(candidates));
 }
 
 export function resolveReleaseAssetModuleUrl(

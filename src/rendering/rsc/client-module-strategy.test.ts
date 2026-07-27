@@ -78,6 +78,16 @@ describe("rendering/rsc/client-module-strategy", () => {
     );
   });
 
+  it("does not fabricate extension variants for source paths that already have one", () => {
+    assertEquals(
+      resolveReleaseAssetModuleUrl(
+        { "app/page.tsx.tsx": "/_vf/assets/bad-path.js" },
+        "app/page.tsx",
+      ),
+      null,
+    );
+  });
+
   it("reads the document import map instead of relying on failed imports", () => {
     const doc = {
       querySelector: (selector: string) =>
