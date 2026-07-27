@@ -19,6 +19,7 @@ export {
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
+  waitForEnvironmentReady,
   waitForReleaseAssetManifest,
 } from "./command.ts";
 export type {
@@ -26,6 +27,8 @@ export type {
   DeploymentRoutingConvergence,
   DeploymentVerification,
   DeployOptions,
+  EnvironmentReadinessOptions,
+  EnvironmentReadinessTarget,
   ReleaseSourceVerification,
 } from "./command.ts";
 export { handleDeployCommand } from "./handler.ts";

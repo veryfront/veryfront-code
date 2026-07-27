@@ -53,6 +53,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const requests: string[] = [];
   let environmentReads = 0;
+  let environmentUrlReads = 0;
 
   try {
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
@@ -94,6 +95,15 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       const url = new URL(request.url);
       requests.push(`${request.method} ${url.pathname}`);
 
+      if (
+        request.method === "GET" &&
+        url.hostname === "my-project.production.veryfront.com"
+      ) {
+        environmentUrlReads++;
+        return new Response(environmentUrlReads === 1 ? "not ready" : "ready", {
+          status: environmentUrlReads === 1 ? 404 : 200,
+        });
+      }
       if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
         return Response.json({ id: PROJECT_ID, slug: "my-project" });
       }
@@ -206,18 +216,31 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         force: true,
         quiet: true,
         skipSourcePush: true,
+        environmentPollIntervalMs: 1,
+        environmentTimeoutMs: 1_000,
       });
 
     for (const jsonMode of [false, true]) {
       setJsonMode(jsonMode);
       requests.length = 0;
       environmentReads = 0;
+      environmentUrlReads = 0;
       releaseSourceReads = 0;
       releaseSourceContents = ["export const value = 0;\n", currentReleaseSource];
+      const output: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        output.push(args.map(String).join(" "));
+      };
 
-      await withMockFetch(handleRequest, runDeploy);
+      try {
+        await withMockFetch(handleRequest, runDeploy);
+      } finally {
+        console.log = originalLog;
+      }
 
       assertEquals(environmentReads, 2);
+      assertEquals(environmentUrlReads, 2);
       assertEquals(releaseSourceReads, 2);
       assertEquals(requests, [
         "GET /api/projects/my-project",
@@ -230,7 +253,25 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         `POST /api/projects/${PROJECT_ID}/deployments`,
         `GET /api/projects/${PROJECT_ID}/deployments/${DEPLOYMENT_ID}`,
         `GET /api/projects/${PROJECT_ID}/environments`,
+        "GET /",
+        "GET /",
       ]);
+      if (jsonMode) {
+        const events = output.map((line) =>
+          JSON.parse(line) as { type: string; name?: string; status?: string }
+        );
+        assertEquals(
+          events.slice(-4).map((event) =>
+            event.type === "step" ? `${event.name}:${event.status}` : event.type
+          ),
+          [
+            "verify-deployment:completed",
+            "wait-environment-url:started",
+            "wait-environment-url:completed",
+            "result",
+          ],
+        );
+      }
     }
 
     setJsonMode(false);
@@ -447,6 +488,12 @@ it("uses an alternative slug when inferred first deploy project creation conflic
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
 
+      if (
+        request.method === "GET" &&
+        url.hostname.endsWith(".preview.veryfront.com")
+      ) {
+        return new Response("ready");
+      }
       if (request.method === "GET" && url.pathname === "/api/projects/taken-app") {
         return Response.json({ message: "not found" }, { status: 404 });
       }

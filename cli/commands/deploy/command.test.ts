@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   resetInteractiveMode,
   setAutoConfirm,
@@ -26,6 +27,7 @@ import {
   requiresExplicitDeployConfirmation,
   verifyDeployment,
   verifyReleaseSource,
+  waitForEnvironmentReady,
   waitForReleaseAssetManifest,
 } from "./index.ts";
 import type { ApiClient } from "#cli/shared/config";
@@ -61,6 +63,174 @@ async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | 
     return (e as Error).message;
   }
 }
+
+describe("environment URL readiness", () => {
+  const hostedTarget = {
+    projectSlug: "my-project",
+    environmentName: "production",
+    url: "https://my-project.production.veryfront.com",
+    protected: false,
+    apiToken: "test-token",
+  };
+
+  it("retries a transient 404 before accepting the environment URL", async () => {
+    const statuses = [404, 200];
+    let requests = 0;
+
+    await withMockFetch(
+      () => Promise.resolve(new Response("ready", { status: statuses[requests++] })),
+      () =>
+        waitForEnvironmentReady(hostedTarget, {
+          pollIntervalMs: 1,
+          timeoutMs: 1_000,
+        }),
+    );
+
+    assertEquals(requests, 2);
+  });
+
+  it("authenticates a protected Veryfront environment with the stored token", async () => {
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+        }),
+    );
+
+    assertEquals(cookie, "authToken=test-token");
+  });
+
+  it("authenticates a protected veryfront.org environment directly", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://my-project.production.veryfront.org",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.org/",
+      cookie: "authToken=test-token",
+    }]);
+  });
+
+  it("checks a protected custom domain without sending it the token", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(
+          request.url === "https://app.example.com/"
+            ? new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            })
+            : new Response("ready"),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://app.example.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [
+      { url: "https://app.example.com/", cookie: null },
+      {
+        url: "https://my-project.production.veryfront.com/",
+        cookie: "authToken=test-token",
+      },
+    ]);
+  });
+
+  it("checks a public custom domain directly without credentials", async () => {
+    let requestedUrl = "";
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://app.example.com",
+        }),
+    );
+
+    assertEquals(requestedUrl, "https://app.example.com/");
+    assertEquals(cookie, null);
+  });
+
+  it("reports an actionable authentication error for sign-in redirects", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        assertRejects(
+          () =>
+            waitForEnvironmentReady({
+              ...hostedTarget,
+              protected: true,
+            }),
+          Error,
+          "veryfront login",
+        ),
+    );
+  });
+
+  it("reports the URL and last status when readiness times out", async () => {
+    const error = await withMockFetch(
+      () => Promise.resolve(new Response("not ready", { status: 404 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady(hostedTarget, {
+              pollIntervalMs: 1,
+              timeoutMs: 2,
+            }),
+        ),
+    );
+
+    assertEquals(error?.includes("https://my-project.production.veryfront.com"), true);
+    assertEquals(error?.includes("last response: HTTP 404"), true);
+  });
+});
 
 describe("DeployArgsSchema", () => {
   it("should use default values", () => {

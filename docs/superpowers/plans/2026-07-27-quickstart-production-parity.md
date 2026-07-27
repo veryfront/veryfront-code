@@ -31,7 +31,7 @@
 - Consumes: `FRAMEWORK_CANDIDATES: readonly string[]` from `src/server/handlers/dev/framework-candidates.generated.ts`
 - Produces: `collectClassCandidates(sourceByPath): Set<string>` containing project and framework candidates
 
-- [ ] **Step 1: Extend the existing candidate regression test**
+- [x] **Step 1: Extend the existing candidate regression test**
 
 Update `passes helper-composed Tailwind candidates to compileProjectCss` so its
 project fixture still contributes `h-16`, `md:h-[4.5rem]`, and
@@ -47,7 +47,7 @@ assert(
 The fixture must not contain `rounded-full`; the test must prove the candidate
 comes from the framework set.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -59,7 +59,7 @@ VF_DISABLE_LRU_INTERVAL=1 deno test --no-check --allow-all \
 
 Expected: FAIL with `framework chat candidates must be included`.
 
-- [ ] **Step 3: Add framework candidates at the shared release boundary**
+- [x] **Step 3: Add framework candidates at the shared release boundary**
 
 Import the generated candidate set:
 
@@ -80,7 +80,7 @@ function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> 
 }
 ```
 
-- [ ] **Step 4: Run the focused release asset suite and verify GREEN**
+- [x] **Step 4: Run the focused release asset suite and verify GREEN**
 
 Run:
 
@@ -91,7 +91,7 @@ VF_DISABLE_LRU_INTERVAL=1 deno test --no-check --allow-all \
 
 Expected: all release asset tests pass.
 
-- [ ] **Step 5: Commit the CSS parity slice**
+- [x] **Step 5: Commit the CSS parity slice**
 
 ```sh
 git add src/release-assets/build-executor.ts \
@@ -142,7 +142,7 @@ environmentPollIntervalMs?: number;
 environmentTimeoutMs?: number;
 ```
 
-- [ ] **Step 1: Add unit tests for retry and authentication behavior**
+- [x] **Step 1: Add unit tests for retry and authentication behavior**
 
 Add a `describe("environment URL readiness", ...)` block covering:
 
@@ -172,10 +172,10 @@ it("retries a transient 404 before accepting the environment URL", async () => {
 
 Add separate tests asserting:
 
-- A protected `*.veryfront.com` request includes
+- Protected `*.veryfront.com` and `*.veryfront.org` requests include
   `Cookie: authToken=test-token`.
-- A protected custom URL is replaced with the canonical Veryfront environment
-  URL before the token is sent.
+- A protected custom URL is checked without credentials before the canonical
+  Veryfront environment URL is checked with the token.
 - A public custom URL is requested directly and has no `Cookie` header.
 - A redirect to `https://veryfront.com/sign-in` rejects with a message that
   recommends `veryfront login`.
@@ -183,7 +183,7 @@ Add separate tests asserting:
 
 Use `assertRejects` and request inspection. Never use a real token in tests.
 
-- [ ] **Step 2: Run the readiness tests and verify RED**
+- [x] **Step 2: Run the readiness tests and verify RED**
 
 Run:
 
@@ -195,7 +195,7 @@ VF_DISABLE_LRU_INTERVAL=1 deno test --no-check --allow-all \
 
 Expected: type/check failure because `waitForEnvironmentReady` does not exist.
 
-- [ ] **Step 3: Implement the bounded readiness primitive**
+- [x] **Step 3: Implement the bounded readiness primitive**
 
 Add constants:
 
@@ -215,31 +215,44 @@ function buildCanonicalEnvironmentUrl(
 }
 ```
 
-Resolve the probe URL inside `waitForEnvironmentReady`:
+Resolve the ordered probes inside `waitForEnvironmentReady`:
 
 ```ts
-function buildEnvironmentReadinessUrl(
+function buildEnvironmentReadinessProbes(
   target: EnvironmentReadinessTarget,
-): string {
-  const hostname = new URL(target.url).hostname.toLowerCase();
-  if (target.protected && !hostname.endsWith(".veryfront.com")) {
-    return buildCanonicalEnvironmentUrl(
-      target.projectSlug,
-      target.environmentName,
-    );
+): EnvironmentReadinessProbe[] {
+  if (target.protected && !isVeryfrontHostedUrl(target.url)) {
+    return [
+      {
+        url: target.url,
+        authenticate: false,
+        acceptAuthenticationChallenge: true,
+      },
+      {
+        url: buildCanonicalEnvironmentUrl(
+          target.projectSlug,
+          target.environmentName,
+        ),
+        authenticate: true,
+        acceptAuthenticationChallenge: false,
+      },
+    ];
   }
-  return target.url;
+  return [{
+    url: target.url,
+    authenticate: target.protected,
+    acceptAuthenticationChallenge: false,
+  }];
 }
 ```
 
 Implement `waitForEnvironmentReady` with:
 
 ```ts
-const readinessUrl = buildEnvironmentReadinessUrl(target);
-const response = await fetch(readinessUrl, {
+const response = await fetch(probe.url, {
   method: "GET",
   redirect: "manual",
-  headers: target.protected && isVeryfrontHostedUrl(readinessUrl)
+  headers: probe.authenticate
     ? { Cookie: `authToken=${target.apiToken}`, "Cache-Control": "no-cache" }
     : { "Cache-Control": "no-cache" },
 });
@@ -247,10 +260,12 @@ const response = await fetch(readinessUrl, {
 
 Treat `200..299` and non-sign-in application redirects as ready. Retry network
 errors, `404`, `408`, `425`, `429`, and `500..599` until the deadline. Reject
-other statuses immediately with actionable text. Cancel the response body
+other statuses immediately with actionable text. An unauthenticated custom
+probe for a protected environment may accept a sign-in redirect, `401`, or
+`403` before the authenticated canonical probe. Cancel the response body
 best-effort before continuing.
 
-- [ ] **Step 4: Wire readiness into human deploy output**
+- [x] **Step 4: Wire readiness into human deploy output**
 
 After `verifyDeployment` succeeds:
 
@@ -275,7 +290,7 @@ await waitForEnvironmentReady(
 Reuse `environmentUrl` when printing `URL:`. Do not report success before the
 readiness promise resolves.
 
-- [ ] **Step 5: Wire readiness into JSON deploy output**
+- [x] **Step 5: Wire readiness into JSON deploy output**
 
 Emit:
 
@@ -290,7 +305,7 @@ streamJsonLine({
 Run the same readiness helper, then emit `completed`. Reuse the same
 `environmentUrl` in the result envelope.
 
-- [ ] **Step 6: Update deploy integration mocks and prove call ordering**
+- [x] **Step 6: Update deploy integration mocks and prove call ordering**
 
 In the canonical human/JSON integration test, make the environment host return
 `404` once and `200` next. Set `environmentPollIntervalMs: 1` and
@@ -301,7 +316,7 @@ For other successful deploy integration fixtures, return `200` for the
 expected environment hostname. Do not modify fixtures that fail before
 readiness.
 
-- [ ] **Step 7: Run focused deploy suites and verify GREEN**
+- [x] **Step 7: Run focused deploy suites and verify GREEN**
 
 Run:
 
@@ -313,7 +328,7 @@ VF_DISABLE_LRU_INTERVAL=1 deno test --no-check --allow-all \
 
 Expected: all deploy tests pass with no timer leaks.
 
-- [ ] **Step 8: Commit the readiness slice**
+- [x] **Step 8: Commit the readiness slice**
 
 ```sh
 git add cli/commands/deploy/command.ts \

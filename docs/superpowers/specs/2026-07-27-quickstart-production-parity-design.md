@@ -63,11 +63,12 @@ The readiness probe will:
 - Fail immediately on other non-success responses with an actionable message.
 - Use redirect mode `manual` so a sign-in page cannot be mistaken for the
   deployed application.
-- For protected Veryfront-hosted URLs, authenticate with the existing CLI
-  token as the `authToken` cookie.
+- For protected Veryfront-hosted URLs on `.veryfront.com` or `.veryfront.org`,
+  authenticate with the existing CLI token as the `authToken` cookie.
 - Never send the Veryfront token to a custom domain.
-- Probe the canonical Veryfront environment hostname for a protected
-  environment whose printed URL is a custom domain.
+- For a protected custom URL, first confirm that the printed custom URL
+  responds without credentials, then authenticate against the canonical
+  Veryfront environment hostname to confirm the application is ready.
 - Cancel or drain response bodies because readiness depends on response state,
   not page content.
 
@@ -77,7 +78,8 @@ print the actual environment URL and protected state.
 
 Default readiness polling will use a two-second interval and a two-minute
 timeout, matching the existing release-asset readiness budget. Internal
-options will allow focused tests to use zero-delay polling and short bounds.
+options will allow focused tests to use one-millisecond polling and short
+bounds.
 
 ## Alternatives Rejected
 
