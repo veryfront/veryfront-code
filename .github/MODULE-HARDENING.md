@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    34 |      58.6% | Current formal closure evidence remains valid       |
+| Closed                         |    35 |      60.3% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    22 |      37.9% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    21 |      36.2% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -49,6 +49,7 @@ stricter closure count.
 - `eval`
 - `extensions`
 - `fs`
+- `index.ts`
 - `issues`
 - `knowledge`
 - `markdown`
@@ -101,7 +102,6 @@ stricter closure count.
 - `tool`
 - `transforms`
 - `workflow`
-- `index.ts`
 
 ### Pending current review
 
@@ -125,7 +125,8 @@ The current closed review chain covers `agent`, `cache`, `channels`, `chat`, `co
 `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, and `version.ts`.
+`schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, `index.ts`, and
+`version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
 remediated and revalidated.
@@ -177,6 +178,10 @@ remain closed.
 steering, project Skill I/O, child-resolution, tool lifecycle, public contract,
 documentation, and complete top-level regression findings were remediated and
 revalidated.
+The root entrypoint unit is closed after its exact public and client-safe export
+contracts, runtime dependency ownership, browser graph, rewrite target, Deno and
+npm package surfaces, documentation, and built consumer declarations were
+remediated and revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -3385,20 +3390,31 @@ The current release-assets findings are remediated:
   published type contract. `veryfront/release-assets` is now an explicit Deno
   and npm export with a consumer fixture, generated API reference, module
   reference, and public entrypoint typecheck.
+- **Symptom -> Source -> Consequence -> Remedy:** the upstream first-deploy
+  flow added App Router route discovery and an embedded framework dependency
+  while the hardened branch required canonical release paths, deduplicated
+  diagnostics, and an enforced CLI/public-module boundary. A mechanical merge
+  could have weakened path validation, dropped the embedded module, duplicated
+  gaps, or introduced a forbidden private CLI import. The reconciled route
+  derivation supports Pages and App Router semantics only after complete
+  bounded-path validation, preserves the embedded dependency fallback through
+  the deduplicated diagnostic path, and exposes route derivation through the
+  documented `veryfront/release-assets` surface.
 
 Current release-assets verification evidence:
 
-- The complete module passes 10 suites and 119 nested steps with zero failures.
+- The complete module passes 10 suites and 120 nested steps with zero failures
+  on the merged source state.
 - Thirty directly affected consumer suites pass 807 nested steps, and the
   proxy/static-generation pair passes two suites and 28 nested steps, all with
   zero failures.
 - Direct formatting, lint, and type checks pass for the changed release-assets
   and module-server surface.
-- Documentation validation and coverage pass 40/40 API reference pages, all 66
-  guides, and every configured guide contract, example, and link.
-- The npm export verifier resolves all 69 package export paths, validates 31
-  release-assets exports, and the Node smoke harness passes all 90 checks.
-  Published-composition consumer typechecking is clean.
+- Documentation validation and coverage pass 40/40 API reference pages, all 67
+  guides, every configured guide contract and example, and all 746 links.
+- The npm export verifier resolves the release-assets package surface, the Node
+  smoke harness passes all 90 checks, and published-composition consumer
+  typechecking is clean.
 - Manifest freshness, formatting, lint, style and architecture ratchets,
   extension contracts, documentation validation, and every configured source
   and browser entrypoint typecheck pass through `deno task verify:quick`.
@@ -3409,9 +3425,11 @@ project- and release-scoped JIT path, and the global manifest fetcher is
 reserved for simple single-project or test setups while hosted runtimes
 register release-scoped owners. Neither path bypasses authorization. No
 unresolved critical or high-confidence release-assets production risk remains;
-the `release-assets` audit unit is closed. Build, Modules, Proxy, Rendering, and
-Server remain listed for their own top-level revalidation because their source
-or generated consumers changed during this checkpoint.
+the `release-assets` audit unit remains closed after the upstream route and
+hydration changes were reconciled and the complete module portfolio was rerun.
+Build, HTML, Modules, Rendering, and Server remain listed for their own
+top-level revalidation because their source or generated consumers changed
+during these checkpoints.
 
 ### Schedule closure checkpoint
 
@@ -4043,7 +4061,7 @@ drained before parent restoration, and this ordering constraint is stated at
 the helper boundary.
 
 No known unresolved critical or high-confidence Testing production risk
-remains. The `testing` audit unit is closed at 34 of 58 formal units.
+remains. The `testing` audit unit established the 34-of-58 closure checkpoint.
 
 ### Data execution and cache closure checkpoint (breaking cache policy pending)
 
@@ -4184,7 +4202,73 @@ Formal Data closure now requires only the cache-ownership decision and the
 resulting isolation/value-policy regressions. All non-breaking remediation and
 the final merged-source gates are complete. Until that decision is approved
 and implemented, `data` remains in `Touched, revalidation required`; the
-34-of-58 closure count is unchanged. This section records reviewed remediation
-and reproducible evidence, not premature certification.
+Data checkpoint itself adds no formal closure. This section records reviewed
+remediation and reproducible evidence, not premature certification.
+
+### Root entrypoint closure checkpoint
+
+The root-entrypoint audit unit owns the supported `veryfront` value and type
+surface in `src/index.ts`, its browser/SSR-safe internal mirror in
+`src/index.client.ts`, the target rewrite that selects that mirror, and the
+Deno-to-npm packaging boundary that emits it without publishing an unsupported
+subpath.
+
+The current review remediated these findings:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the client mirror exported
+  its small compatibility surface through broad Config, Platform, Routing,
+  Data, and Security barrels. Native ESM instantiates every re-export source,
+  so importing one root helper pulled unrelated adapters, route discovery,
+  cache/data execution, secure filesystem, error observability, and Node
+  runtime branches into the browser graph. An adversarial browser bundle was
+  approximately 1.28 MiB and retained `node:path`, `node:v8`, `node:util`,
+  filesystem, HTTP server, and crypto dependencies despite the “client-safe”
+  contract. Both root barrels now re-export values from their owning leaf
+  modules. The client graph is approximately 143 KiB on the same source state
+  and retains only the intentionally handled `node:async_hooks` polyfill and
+  the `node:buffer` fallback behind the browser's native `File`.
+- **Symptom -> Source -> Consequence -> Remedy:** input-validation errors
+  imported the complete public Errors barrel merely to obtain one error
+  definition and its class. That transitive barrel was the remaining path from
+  the client root into the complete error registry and memory instrumentation.
+  The module now imports the canonical definition and class from their owning
+  modules, preserving object and `instanceof` identity without loading
+  unrelated observability code.
+- **Symptom -> Source -> Consequence -> Remedy:** manual root/client mirrors
+  and a build-only npm entry could drift silently in names, type aliases,
+  server-only exclusions, or publication metadata. Exact `deno doc` contracts
+  now pin the root surface and prove client parity modulo the three server
+  bootstrap values. Packaging tests prove the mirror is compiled, stripped of
+  DNT runtime shims, and removed from the published export map. A browser
+  bundle regression rejects known server-only module markers and any
+  unapproved Node builtin.
+
+Current root-entrypoint verification evidence:
+
+- The focused root, config, response, data-helper, and input-validation
+  portfolio passes 21 tests with 201 nested steps. It exercises exact export
+  names, root/client parity, browser graph boundaries, helper behavior, and the
+  narrowed error identity.
+- Browser-safe and npm metadata tests pass 20 tests with 28 nested steps,
+  including build-only entrypoint collision checks and generated package
+  assertions.
+- The npm package rebuild completes for the root and all extension packages;
+  the documented consumer composition passes `tsc --noEmit` against emitted
+  declarations.
+- Documentation validation passes all 40 API reference pages, 67 guides, 112
+  public documentation files, executable examples, and 746 links.
+- `deno task verify:quick` passes fresh manifests, full formatting and lint,
+  style and architecture ratchets, dependency and extension boundaries, public
+  documentation, and every configured source and browser entrypoint
+  typecheck.
+
+The build-only client mirror deliberately retains two compatibility imports:
+`node:async_hooks` resolves to the framework's real browser polyfill, while
+`node:buffer` supplies `File` only on Node runtimes that lack
+`globalThis.File`; browsers select their native constructor. The regression
+test pins this exact allowance so it cannot grow implicitly.
+
+No known unresolved critical or high-confidence root-entrypoint production
+risk remains. The root entrypoint unit is closed at 35 of 58 formal units.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

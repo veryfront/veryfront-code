@@ -90,6 +90,26 @@ async function documentedExports(path: string): Promise<readonly string[]> {
   ].sort();
 }
 
+async function browserBundle(path: string): Promise<string> {
+  const output = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "bundle",
+      "--frozen",
+      "--platform=browser",
+      "--no-check",
+      join(REPOSITORY_ROOT, path),
+    ],
+    cwd: REPOSITORY_ROOT,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (!output.success) {
+    throw new Error(new TextDecoder().decode(output.stderr));
+  }
+  return new TextDecoder().decode(output.stdout);
+}
+
 Deno.test("public root barrel preserves its supported export surface", async () => {
   assertEquals(await documentedExports("src/index.ts"), expectedRootExports);
 });
@@ -107,4 +127,35 @@ Deno.test("client root barrel stays aligned with the public root contract", asyn
     client,
     root.filter((entry) => !serverOnly.has(entry)),
   );
+});
+
+Deno.test("client root barrel does not instantiate broad server module graphs", async () => {
+  const bundle = await browserBundle("src/index.client.ts");
+  const nodeSpecifiers = [
+    ...new Set(
+      [...bundle.matchAll(/["'](node:[^"']+)["']/g)].map((match) => match[1]),
+    ),
+  ].sort();
+
+  // `node:async_hooks` has a real framework browser polyfill. `node:buffer` is
+  // the Node fallback for File; browsers select globalThis.File before it.
+  assertEquals(nodeSpecifiers, ["node:async_hooks", "node:buffer"]);
+
+  for (
+    const serverOnlyMarker of [
+      "src/data/data-fetcher.ts",
+      "src/errors/error-registry.ts",
+      "src/observability/instruments/memory-instruments.ts",
+      "src/platform/adapters/runtime/node/",
+      "src/routing/api/route-discovery.ts",
+      "src/security/secure-fs.ts",
+      "src/server/production-server.ts",
+    ]
+  ) {
+    assertEquals(
+      bundle.includes(serverOnlyMarker),
+      false,
+      `${serverOnlyMarker} must stay outside the client root graph`,
+    );
+  }
 });

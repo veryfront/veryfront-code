@@ -34,43 +34,48 @@
  * ```
  */
 
-export { defineConfig, defineConfigWithEnv, mergeConfigs } from "#veryfront/config";
-export type { VeryfrontConfig } from "#veryfront/config";
+export { defineConfig, defineConfigWithEnv, mergeConfigs } from "./config/define-config.ts";
+export type { VeryfrontConfig } from "./config/schemas/index.ts";
 
-export { getEnv } from "#veryfront/platform";
+export { getEnv } from "./platform/compat/process/env.ts";
 
-export { createHandler, startServer, toNodeHandler } from "#veryfront/server";
-export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";
+export { createHandler, startServer, toNodeHandler } from "./server/index.ts";
+export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "./server/index.ts";
 
 export {
   badRequest,
   forbidden,
-  json,
+  internalServerError as serverError,
+  jsonResponse as json,
   notFound as apiNotFound,
-  redirect as apiRedirect,
-  serverError,
+  redirectResponse as apiRedirect,
   unauthorized,
-} from "#veryfront/routing";
-export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/routing";
+} from "./platform/compat/http/responses.ts";
+export type { APIContext, APIHandler, APIResponse, APIRoute } from "./routing/api/handler.ts";
 
-export { notFound, redirect } from "#veryfront/data";
+export { notFound, redirect } from "./data/helpers.ts";
 export type {
   DataContext,
   InferGetServerDataProps,
   PageWithData,
   StaticPathsResult,
-} from "#veryfront/data";
+} from "./data/types.ts";
 
 export type { MDXFrontmatter, MDXFrontmatterValue, PageContext } from "#veryfront/types";
 
+export { CommonSchemas } from "./schemas/common.ts";
 export {
-  CommonSchemas,
   createValidatedHandler,
+  type ValidatedHandlerConfig,
+  type ValidatedHandlerFunction,
+} from "./security/input-validation/handler.ts";
+export {
   createValidationError,
   INPUT_VALIDATION_FAILED,
+} from "./security/input-validation/errors.ts";
+export {
   parseFormData,
   parseJsonBody,
   parseQueryParams,
-  sanitizeData,
-} from "#veryfront/security";
-export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
+} from "./security/input-validation/parsers.ts";
+export { sanitizeData } from "./security/input-validation/sanitizers.ts";
