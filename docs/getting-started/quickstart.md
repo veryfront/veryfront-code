@@ -7,12 +7,14 @@ order: -1
 ## Prerequisites
 
 - Node.js 18.18 or later.
-- The Veryfront CLI installed. See [Installation](./installation.md).
+
+The examples use `veryfront` commands. If you have not installed the CLI
+globally, run them with `npx veryfront ...`.
 
 ## Create the app
 
 ```bash
-veryfront init support-agent --template ai-agent
+npm create veryfront@latest support-agent -- --template ai-agent
 cd support-agent
 ```
 
@@ -80,3 +82,15 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 ```
 
 The answer should stream. The curl response should emit `data:` lines.
+
+## Deploy it
+
+From the project directory, deploy to Veryfront Cloud:
+
+```bash
+npx veryfront deploy
+```
+
+The command creates or links the cloud project, writes `veryfront.json` when it
+is missing, pushes the current source, creates a release, waits for browser
+assets, deploys to production, and prints the environment URL.

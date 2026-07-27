@@ -8,8 +8,7 @@ order: 7
 
 - A project that runs locally with `veryfront dev` (see
   [Create project](./create-project.md)).
-- For Veryfront Cloud: a `VERYFRONT_API_TOKEN` and a project reference. Run
-  `veryfront login` or set the env vars. See
+- For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`. See
   [Configuration](../guides/configuration.md).
 - For another host: any container or Node-compatible runtime that can serve the
   build output.
@@ -37,16 +36,21 @@ endpoints work.
 
 ## Deploy to Veryfront Cloud
 
-Push the current checkout to Veryfront `main`, then create and deploy its
-release:
+Create or link the cloud project, push the current source, create a release, and
+deploy it:
 
 ```bash
-veryfront push --branch main --yes
-veryfront deploy --branch main --env production --yes
+npx veryfront deploy
 ```
 
-Run both commands from the same checkout. Deploy verifies the Push receipt,
-Git commit, and source digest before it creates the release.
+`veryfront deploy` writes `veryfront.json` when it links a project, waits for
+browser assets, and prints the environment URL.
+
+For a preview deployment per branch:
+
+```bash
+npx veryfront deploy --branch feature-x
+```
 
 ## Deploy somewhere else
 

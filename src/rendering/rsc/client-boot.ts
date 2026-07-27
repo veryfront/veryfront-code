@@ -156,12 +156,14 @@ async function hydrateMarkers(): Promise<void> {
 async function hydratePageComponent(
   pagePath: string,
   strategy: ClientModuleStrategy,
+  hydrationData: ClientRuntimeHydrationData | null,
 ): Promise<boolean> {
   try {
     const { React, ReactDOM } = await importReact();
     const moduleUrl = buildClientModuleUrl({
       strategy,
       rel: pagePath,
+      releaseAssetModules: hydrationData?.releaseAssetModules,
     });
     if (!moduleUrl) return false;
     rscLogger.debug("Loading component from:", moduleUrl);
@@ -181,7 +183,7 @@ async function hydratePageComponent(
       : root;
     const component = await wrapWithRouterProvider(
       React.createElement(Component, {}),
-      readHydrationData(document),
+      hydrationData,
     );
 
     if (shouldRenderPageComponent(strategy)) {
@@ -246,7 +248,7 @@ export async function boot(): Promise<void> {
         return;
       }
       rscLogger.debug("Found page component in hydration data:", pagePath);
-      if (await hydratePageComponent(pagePath, clientModuleStrategy)) {
+      if (await hydratePageComponent(pagePath, clientModuleStrategy, hydrationData)) {
         rscLogger.debug("Client component hydrated successfully");
       }
       return;
