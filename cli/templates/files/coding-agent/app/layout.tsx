@@ -10,6 +10,7 @@ export default function RootLayout({
     <>
       <Head>
         <title>Code Agent</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </Head>
       <div className="dark">
         <div className="flex flex-col h-screen bg-neutral-950">

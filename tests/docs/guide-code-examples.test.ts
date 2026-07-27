@@ -434,8 +434,8 @@ describe("Guide: deploying.md", () => {
         "veryfront dev",
         "veryfront build",
         "veryfront serve",
-        "veryfront push --branch main --yes",
-        "veryfront deploy --branch main --env production --yes",
+        "npx veryfront deploy",
+        "npx veryfront deploy --branch feature-x --env staging",
         "veryfront open",
       ]
     ) {
@@ -876,8 +876,8 @@ describe("Guide: deploy-project.md", () => {
       const command of [
         "veryfront build",
         "veryfront serve",
-        "veryfront push --branch main --yes",
-        "veryfront deploy --branch main --env production --yes",
+        "npx veryfront deploy",
+        "npx veryfront deploy --branch feature-x",
         "veryfront open",
       ]
     ) {

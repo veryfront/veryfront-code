@@ -11,7 +11,7 @@ Keep the first production path narrow: one route, one check, one deploy.
 
 - A Veryfront project that runs with `veryfront dev`.
 - Production credentials for providers, integrations, and deployment targets.
-- For Veryfront Cloud: `VERYFRONT_API_TOKEN` and a project reference.
+- For Veryfront Cloud: run `veryfront login` or set `VERYFRONT_API_TOKEN`.
 - For self-hosting: the current Node.js LTS or a container host that can serve
   the build output.
 
@@ -66,22 +66,20 @@ and production responses with `curl`.
 
 ## Deploy to Veryfront Cloud
 
-Push the current checkout to Veryfront, then create and deploy an immutable
-release from that source:
+Create or link the cloud project, push the current source, create a release, and
+deploy it:
 
 ```bash
-veryfront push --branch main --yes
-veryfront deploy --branch main --env production --yes
+npx veryfront deploy
 ```
 
-Run both commands from the same checkout. Deploy verifies the Push receipt,
-Git commit, and source digest before creating the release.
+`veryfront deploy` writes `veryfront.json` when it links a project, waits for
+browser assets, and prints the environment URL.
 
 For an existing nonproduction environment named `staging`:
 
 ```bash
-veryfront push --branch feature-x --yes
-veryfront deploy --branch feature-x --env staging --yes
+npx veryfront deploy --branch feature-x --env staging
 ```
 
 Use `veryfront open` after deployment to open the project. Use

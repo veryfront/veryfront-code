@@ -10,6 +10,7 @@ export default function RootLayout({
     <>
       <Head>
         <title>AI Workflows</title>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
       </Head>
       {children}
     </>

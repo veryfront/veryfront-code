@@ -167,6 +167,39 @@ describe("validatePushReceipt", () => {
       "uncommitted changes",
     );
   });
+
+  it("accepts a digest-only first push when the project has no Git source", () => {
+    const result = validatePushReceipt({ ...RECEIPT, commitSha: null, clean: false }, {
+      controlPlane: RECEIPT.controlPlane,
+      projectId: RECEIPT.projectId,
+      projectSlug: RECEIPT.projectSlug,
+      branch: RECEIPT.branch,
+      commitSha: null,
+      clean: false,
+      requireClean: true,
+    });
+
+    assertEquals(result, null);
+  });
+
+  it("rejects a digest-only receipt when the current project has a Git commit", async () => {
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validatePushReceipt({ ...RECEIPT, commitSha: null, clean: false }, {
+            controlPlane: RECEIPT.controlPlane,
+            projectId: RECEIPT.projectId,
+            projectSlug: RECEIPT.projectSlug,
+            branch: RECEIPT.branch,
+            commitSha: RECEIPT.commitSha,
+            clean: true,
+            requireClean: true,
+          })
+        ),
+      Error,
+      "no Git commit SHA",
+    );
+  });
 });
 
 describe("push receipt persistence", () => {
