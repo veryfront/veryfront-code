@@ -14,6 +14,39 @@ const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
 
+async function runGit(projectDir: string, ...args: string[]) {
+  const result = await new Deno.Command("git", {
+    args,
+    cwd: projectDir,
+    clearEnv: true,
+    env: Object.fromEntries(
+      Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+    ),
+    stdout: "null",
+    stderr: "piped",
+  }).output();
+  assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
+}
+
+async function commitProject(projectDir: string) {
+  await runGit(projectDir, "init", "--quiet");
+  await runGit(projectDir, "config", "user.email", "test@veryfront.com");
+  await runGit(projectDir, "config", "user.name", "Veryfront Test");
+  await runGit(projectDir, "add", ".");
+  await runGit(projectDir, "commit", "--quiet", "-m", "initial");
+  return new TextDecoder().decode(
+    (await new Deno.Command("git", {
+      args: ["rev-parse", "HEAD"],
+      cwd: projectDir,
+      clearEnv: true,
+      env: Object.fromEntries(
+        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+      ),
+      stdout: "piped",
+    }).output()).stdout,
+  ).trim();
+}
+
 it("uses canonical production read-back in human and JSON modes", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -21,40 +54,11 @@ it("uses canonical production read-back in human and JSON modes", async () => {
   const requests: string[] = [];
   let environmentReads = 0;
 
-  const runGit = async (...args: string[]) => {
-    const result = await new Deno.Command("git", {
-      args,
-      cwd: projectDir,
-      clearEnv: true,
-      env: Object.fromEntries(
-        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
-      ),
-      stdout: "null",
-      stderr: "piped",
-    }).output();
-    assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
-  };
-
   try {
-    await runGit("init", "--quiet");
-    await runGit("config", "user.email", "test@veryfront.com");
-    await runGit("config", "user.name", "Veryfront Test");
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
-    await runGit("add", ".");
-    await runGit("commit", "--quiet", "-m", "initial");
-    const actualSha = new TextDecoder().decode(
-      (await new Deno.Command("git", {
-        args: ["rev-parse", "HEAD"],
-        cwd: projectDir,
-        clearEnv: true,
-        env: Object.fromEntries(
-          Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
-        ),
-        stdout: "piped",
-      }).output()).stdout,
-    ).trim();
+    const actualSha = await commitProject(projectDir);
     const sourceDigest = await computeSourceDigest([
       { path: "app.ts", content: "export const value = 1;\n" },
     ]);
@@ -347,6 +351,315 @@ it("models an inferred missing project during dry-run deploy", async () => {
       }));
 
     assertEquals(requests, ["GET /api/projects/missing-app"]);
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("uses an alternative slug when inferred first deploy project creation conflicts", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const createSlugs: string[] = [];
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"taken-app"}\n');
+    await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+    const actualSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: "export const value = 1;\n" },
+    ]);
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/api/projects/taken-app") {
+        return Response.json({ message: "not found" }, { status: 404 });
+      }
+      if (request.method === "POST" && url.pathname === "/api/projects") {
+        const body = await request.json() as { slug: string };
+        createSlugs.push(body.slug);
+        if (body.slug === "taken-app") {
+          return Response.json({ error: "taken" }, { status: 409 });
+        }
+        assertEquals(/^taken-app-[a-z0-9]+$/.test(body.slug), true);
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: PROJECT_ID,
+          projectSlug: body.slug,
+          branch: "main",
+          commitSha: actualSha,
+          sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+        return Response.json({ id: PROJECT_ID }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+        return Response.json({
+          data: [{
+            id: ENVIRONMENT_ID,
+            name: "preview",
+            project_id: PROJECT_ID,
+            protected: false,
+            deployment: {
+              id: DEPLOYMENT_ID,
+              release: { id: RELEASE_ID, name: `github-main-${actualSha}` },
+            },
+          }],
+        });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+        return Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+        return Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        });
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+      ) {
+        return Response.json({
+          data: [{
+            path: "app.ts",
+            data: JSON.stringify({ body: "export const value = 1;\n", path: "app.ts" }),
+          }],
+          page_info: {},
+        });
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)
+      ) {
+        return Response.json({
+          state: "ready",
+          manifest_version: 1,
+          manifest: {
+            schemaVersion: 1,
+            projectId: PROJECT_ID,
+            releaseId: RELEASE_ID,
+            releaseVersion: 41,
+            manifestVersion: 1,
+            builderVersion: "test",
+            sourceContentHash: sourceDigest,
+            createdAt: "2026-07-10T09:20:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {},
+            css: [],
+            routes: {},
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/deployments")) {
+        return Response.json({
+          id: DEPLOYMENT_ID,
+          release_id: RELEASE_ID,
+          environment_id: ENVIRONMENT_ID,
+          routing_convergence: { status: "converged", acknowledged: 1, recipients: 1 },
+        }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/deployments/${DEPLOYMENT_ID}`)) {
+        return Response.json({
+          id: DEPLOYMENT_ID,
+          release_id: RELEASE_ID,
+          environment_id: ENVIRONMENT_ID,
+        });
+      }
+      return Response.json({ message: "not found" }, { status: 404 });
+    }, () =>
+      deployCommand({
+        projectDir,
+        branch: "main",
+        env: "preview",
+        releaseName: `github-main-${actualSha}`,
+        dryRun: false,
+        force: true,
+        quiet: true,
+        skipSourcePush: true,
+      }));
+
+    assertEquals(createSlugs.length, 2);
+    assertEquals(createSlugs[0], "taken-app");
+    assertEquals(/^taken-app-[a-z0-9]+$/.test(createSlugs[1] ?? ""), true);
+    const linkedConfig = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)) as {
+      projectSlug?: string;
+    };
+    assertEquals(linkedConfig.projectSlug, createSlugs[1]);
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("collects page routes when projectDir has a trailing slash", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+  try {
+    await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
+    await Deno.writeTextFile(
+      `${projectDir}/app/page.tsx`,
+      "export default function Page() { return null; }\n",
+    );
+    const actualSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      {
+        path: "app/page.tsx",
+        content: "export default function Page() { return null; }\n",
+      },
+    ]);
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: actualSha,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
+        return Promise.resolve(Response.json({ id: PROJECT_ID, slug: "my-project" }));
+      }
+      if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+        return Promise.resolve(Response.json({
+          data: [{
+            id: ENVIRONMENT_ID,
+            name: "production",
+            project_id: PROJECT_ID,
+            protected: false,
+            deployment: null,
+          }],
+        }));
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+        return Promise.resolve(Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }, { status: 201 }));
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+        return Promise.resolve(Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }));
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+      ) {
+        return Promise.resolve(Response.json({
+          data: [{
+            path: "app/page.tsx",
+            data: JSON.stringify({
+              body: "export default function Page() { return null; }\n",
+              path: "app/page.tsx",
+            }),
+          }],
+          page_info: {},
+        }));
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)
+      ) {
+        return Promise.resolve(Response.json({
+          state: "ready",
+          manifest_version: 1,
+          manifest: {
+            schemaVersion: 1,
+            projectId: PROJECT_ID,
+            releaseId: RELEASE_ID,
+            releaseVersion: 41,
+            manifestVersion: 1,
+            builderVersion: "test",
+            sourceContentHash: sourceDigest,
+            createdAt: "2026-07-10T09:20:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {},
+            css: [],
+            routes: {},
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        }));
+      }
+      return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+    }, () =>
+      assertRejects(
+        () =>
+          deployCommand({
+            projectDir: `${projectDir}/`,
+            branch: "main",
+            env: "production",
+            releaseName: `github-main-${actualSha}`,
+            dryRun: false,
+            force: true,
+            quiet: true,
+            skipSourcePush: true,
+          }),
+        Error,
+        "Missing routes: /",
+      ));
   } finally {
     envKeys.forEach((key, index) => {
       const value = savedEnv[index];

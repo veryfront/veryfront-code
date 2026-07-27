@@ -10,7 +10,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { createFileSystem, cwd } from "veryfront/platform";
-import { join } from "veryfront/platform/path";
+import { join, relative } from "veryfront/platform/path";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import {
   type ApiClient,
@@ -708,7 +708,6 @@ async function ensureProjectLinkedForDeploy(
     initial.apiToken,
     env,
     initial.apiUrl,
-    { allowAlternativeSlug: false },
   );
   await writeProjectSlug(projectDir, created.slug);
   if (!quiet) logInfo(`Created project ${created.slug}`);
@@ -746,7 +745,10 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
       }
       if (!/\.(tsx|ts|jsx|mdx|js)$/.test(entry.name)) continue;
 
-      const relativePath = path.slice(projectDir.length + 1).replace(/\\/g, "/");
+      const relativePath = relative(projectDir, path).replace(/\\/g, "/");
+      if (relativePath === "." || relativePath === ".." || relativePath.startsWith("../")) {
+        continue;
+      }
       const route = routeForPage(relativePath);
       if (route) routes.add(route);
     }
