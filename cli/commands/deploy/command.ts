@@ -39,7 +39,7 @@ import {
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
-import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
+import { parseProjectDomain } from "#veryfront/server-cli-domain";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
 /**

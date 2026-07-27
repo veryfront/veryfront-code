@@ -295,6 +295,7 @@
     "#veryfront/webhook/": "./src/webhook/",
     "#veryfront/trigger/": "./src/trigger/",
     "#veryfront/server": "./src/server/index.ts",
+    "#veryfront/server-cli-domain": "./src/server/cli-domain.ts",
     "#veryfront/server-cli-startup": "./src/server/cli-startup.ts",
     "#veryfront/server/project-env": "./src/server/project-env/index.ts",
     "#veryfront/testing": "./src/testing/index.ts",

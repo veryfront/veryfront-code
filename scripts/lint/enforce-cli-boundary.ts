@@ -22,6 +22,7 @@ const SKIP_PATTERNS = [
 
 const DIRECT_INTERNAL_PREFIX = "#veryfront/";
 const PRIVATE_CLI_FRAMEWORK_PORTS = new Set([
+  "#veryfront/server-cli-domain",
   "#veryfront/server-cli-startup",
 ]);
 
@@ -36,8 +37,11 @@ function shouldSkip(path: string): boolean {
   return SKIP_PATTERNS.some((pattern) => pattern.test(path));
 }
 
-function* findSpecifiers(source: string): Generator<{ specifier: string; index: number }> {
-  const staticRegex = /^\s*(import|export)\s+(?:[\s\S]*?)from\s+["']([^"']+)["']/gm;
+function* findSpecifiers(
+  source: string,
+): Generator<{ specifier: string; index: number }> {
+  const staticRegex =
+    /^\s*(import|export)\s+(?:[\s\S]*?)from\s+["']([^"']+)["']/gm;
   const bareImportRegex = /^\s*import\s+["']([^"']+)["']/gm;
   const dynamicRegex = /(?<![\w$"'`])import\s*\(\s*["']([^"']+)["']\s*\)/g;
 
@@ -69,9 +73,9 @@ function lineOf(source: string, index: number): number {
 /**
  * Classify a CLI framework import without weakening the public-package rule.
  *
- * The startup port is an exact, private import-map capability. Prefix and
- * deep-path variants remain forbidden so this cannot become a general escape
- * hatch into server internals.
+ * Server CLI ports are exact, private import-map capabilities. Prefix and
+ * deep-path variants remain forbidden so they cannot become general escape
+ * hatches into server internals.
  */
 export function classifyCliFrameworkImport(specifier: string): string | null {
   if (PRIVATE_CLI_FRAMEWORK_PORTS.has(specifier)) return null;
@@ -124,7 +128,7 @@ async function main(): Promise<void> {
       console.error(`    ${violation.reason}`);
     }
     console.error(
-      "\nAllowed framework imports from cli/: `veryfront`, `veryfront/*`, local `#cli/*` aliases, and the exact private `#veryfront/server-cli-startup` port.",
+      "\nAllowed framework imports from cli/: `veryfront`, `veryfront/*`, local `#cli/*` aliases, and exact private server CLI ports.",
     );
     Deno.exit(1);
   }

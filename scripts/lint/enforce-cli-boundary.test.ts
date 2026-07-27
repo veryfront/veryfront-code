@@ -1,16 +1,23 @@
 import { assertEquals, assertNotEquals } from "#std/assert";
 import { classifyCliFrameworkImport } from "./enforce-cli-boundary.ts";
 
-Deno.test("CLI boundary allows only the exact private startup port", () => {
-  assertEquals(
-    classifyCliFrameworkImport("#veryfront/server-cli-startup"),
-    null,
-  );
+Deno.test("CLI boundary allows only the exact private server ports", () => {
+  for (
+    const specifier of [
+      "#veryfront/server-cli-domain",
+      "#veryfront/server-cli-startup",
+    ]
+  ) {
+    assertEquals(classifyCliFrameworkImport(specifier), null);
+  }
 
   for (
     const specifier of [
       "#veryfront/server",
       "#veryfront/server/production-server.ts",
+      "#veryfront/server-cli-domain/extra",
+      "#veryfront/server-cli-domain.ts",
+      "#veryfront/server-cli-domain?unsafe=1",
       "#veryfront/server-cli-startup/extra",
       "#veryfront/server-cli-startup.ts",
       "#veryfront/server-cli-startup?unsafe=1",
@@ -38,7 +45,7 @@ Deno.test("CLI boundary continues to allow public and local CLI imports", () => 
   }
 });
 
-Deno.test("private startup port is import-mapped but not package-exported", async () => {
+Deno.test("private server ports are import-mapped but not package-exported", async () => {
   const config = JSON.parse(
     await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
   ) as {
@@ -46,15 +53,17 @@ Deno.test("private startup port is import-mapped but not package-exported", asyn
     exports?: Record<string, string>;
   };
 
-  assertEquals(
-    config.imports?.["#veryfront/server-cli-startup"],
-    "./src/server/cli-startup.ts",
-  );
-  assertEquals(config.exports?.["./server-cli-startup"], undefined);
-  assertEquals(
-    Object.values(config.exports ?? {}).includes(
-      "./src/server/cli-startup.ts",
-    ),
-    false,
-  );
+  for (
+    const [specifier, target] of [
+      ["#veryfront/server-cli-domain", "./src/server/cli-domain.ts"],
+      ["#veryfront/server-cli-startup", "./src/server/cli-startup.ts"],
+    ] as const
+  ) {
+    assertEquals(config.imports?.[specifier], target);
+    assertEquals(
+      config.exports?.[`./${specifier.slice("#veryfront/".length)}`],
+      undefined,
+    );
+    assertEquals(Object.values(config.exports ?? {}).includes(target), false);
+  }
 });
