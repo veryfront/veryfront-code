@@ -327,6 +327,46 @@ describe("resolveConfigWithAuth", () => {
   });
 });
 
+describe("createApiClient", () => {
+  it("uses problem JSON detail and suggestion in API errors", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: unknown, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            title: "Validation failed",
+            status: 400,
+            detail: "Project slug is reserved.",
+            suggestion: "Choose another project name.",
+            slug: "validation-failed",
+          }),
+          {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )) as typeof fetch;
+
+    try {
+      const client = createApiClient(
+        {
+          apiUrl: "https://api.test.veryfront.com",
+          apiToken: "token",
+          projectSlug: "admin",
+        } satisfies ResolvedConfig,
+      );
+
+      await assertRejects(
+        () => client.get("/projects/admin"),
+        Error,
+        "Project slug is reserved. Choose another project name.",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // createApiClient tests
 // ---------------------------------------------------------------------------

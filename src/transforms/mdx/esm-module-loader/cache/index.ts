@@ -655,7 +655,7 @@ export async function clearESMDiskCache(): Promise<void> {
 
   try {
     // Remove entire cache directory and recreate it
-    // This handles nested project directories like codersociety/local-main/
+    // This handles nested project directories such as customer/local-main/
     await fs.remove(cacheDir, { recursive: true });
     await fs.mkdir(cacheDir, { recursive: true });
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);

@@ -1,26 +1,78 @@
 import { hasControlCharacters } from "./string-validation.ts";
 import { RELEASE_ASSET_MANIFEST_LIMITS } from "./constants.ts";
 
+const PAGE_MODULE_EXTENSION = /\.(tsx|ts|jsx|mdx|js)$/;
+const DECLARATION_MODULE_EXTENSION = /\.d\.(tsx|ts)$/;
+
+function stripPageModuleExtension(logicalPath: string): string | null {
+  if (DECLARATION_MODULE_EXTENSION.test(logicalPath)) return null;
+  if (!PAGE_MODULE_EXTENSION.test(logicalPath)) return null;
+  return logicalPath.replace(PAGE_MODULE_EXTENSION, "");
+}
+
 /** Derive a route path from a page module logical path. */
 export function routeForPage(logicalPath: string): string | null {
   if (
     typeof logicalPath !== "string" ||
     logicalPath.length > RELEASE_ASSET_MANIFEST_LIMITS.manifestKeyLength ||
-    !logicalPath.startsWith("pages/") ||
     logicalPath.includes("\\") ||
     logicalPath.includes("?") ||
     logicalPath.includes("#") ||
-    hasControlCharacters(logicalPath) ||
-    !/\.(?:tsx?|jsx?|mdx)$/.test(logicalPath)
+    hasControlCharacters(logicalPath)
   ) {
     return null;
   }
-  const parts = logicalPath.split("/");
-  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
+
+  const pathSegments = logicalPath.split("/");
+  if (
+    pathSegments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
     return null;
   }
-  const withoutPrefix = logicalPath.slice("pages/".length);
-  const withoutExt = withoutPrefix.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
-  const route = withoutExt.replace(/\/index$/, "").replace(/^index$/, "");
-  return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+
+  if (logicalPath.startsWith("pages/")) {
+    const withoutPrefix = logicalPath.slice("pages/".length);
+    const withoutExt = stripPageModuleExtension(withoutPrefix);
+    if (withoutExt === null) return null;
+    const segments = withoutExt.split("/");
+    if (
+      segments.length === 0 ||
+      segments[0] === "api" ||
+      segments.some((segment) => segment.startsWith("_"))
+    ) {
+      return null;
+    }
+    const route = withoutExt.replace(/\/index$/, "").replace(/^index$/, "");
+    return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+  }
+
+  if (logicalPath.startsWith("app/")) {
+    const withoutPrefix = logicalPath.slice("app/".length);
+    const withoutExt = stripPageModuleExtension(withoutPrefix);
+    if (withoutExt === null) return null;
+    if (withoutExt !== "page" && !withoutExt.endsWith("/page")) return null;
+
+    const segments = withoutExt
+      .replace(/\/page$/, "")
+      .replace(/^page$/, "")
+      .split("/")
+      .filter(Boolean);
+    if (
+      segments.some((segment) =>
+        segment.startsWith("@") ||
+        segment.startsWith("_") ||
+        (segment.startsWith("(") &&
+          (!segment.endsWith(")") || segment.length === 2))
+      )
+    ) {
+      return null;
+    }
+
+    const route = segments
+      .filter((segment) => !segment.startsWith("("))
+      .join("/");
+    return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+  }
+
+  return null;
 }

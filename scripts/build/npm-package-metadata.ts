@@ -78,6 +78,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"protobufjs",
 	"esbuild",
 	"github-slugger",
+	"gaxios",
+	"gcp-metadata",
 	"jose",
 	"just-bash",
 	"mdast-util-from-markdown",

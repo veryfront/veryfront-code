@@ -181,6 +181,8 @@ describe("release asset build executor", () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "pages/index.tsx", content: "export default () => null;" },
+      { path: "pages/api/hello.ts", content: "export function GET() {}" },
+      { path: "pages/_app.tsx", content: "export default ({ Component }) => <Component />;" },
       { path: "components/Button.tsx", content: "export const Button = () => null;" },
       { path: "README.md", content: "# docs" },
     ];
@@ -204,6 +206,9 @@ describe("release asset build executor", () => {
     assertExists(manifest.modules["components/Button.tsx"]);
     // README is not a browser module — excluded.
     assertEquals(manifest.modules["README.md"], undefined);
+    // Pages Router API and reserved framework files are not browser routes.
+    assertEquals(manifest.modules["pages/api/hello.ts"], undefined);
+    assertEquals(manifest.modules["pages/_app.tsx"], undefined);
     // Page route maps to its module (single module, no imports).
     assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx"]);
     // No CSS pipeline injected → css empty + gap recorded.
@@ -212,6 +217,31 @@ describe("release asset build executor", () => {
     // Project modules plus framework import-map dependencies are uploaded.
     assert(rec.uploads.length >= 2);
     assert(rec.uploads.every((u) => u.contentType === "text/javascript"));
+  });
+
+  it("assembles App Router page routes from app/page modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/page.tsx", content: "export default () => null;" },
+      { path: "app/about/page.tsx", content: "export default () => null;" },
+      { path: "app/layout.tsx", content: "export default ({ children }) => children;" },
+      { path: "app/api/ag-ui/route.ts", content: "export async function POST() {}" },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (source: string) => Promise.resolve(source);
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["app/page.tsx"]);
+    assertExists(manifest.modules["app/about/page.tsx"]);
+    assertExists(manifest.modules["app/layout.tsx"]);
+    assertEquals(manifest.modules["app/api/ag-ui/route.ts"], undefined);
+    assertEquals(manifest.routes["/"]?.modules, ["app/page.tsx", "app/layout.tsx"]);
+    assertEquals(manifest.routes["/about"]?.modules, ["app/about/page.tsx", "app/layout.tsx"]);
+    assertEquals(routeForPage("app/layout.tsx"), null);
   });
 
   it("rejects release file paths outside the materialization directory", async () => {
@@ -480,6 +510,10 @@ describe("release asset build executor", () => {
     assertExists(manifest.dependencies["react/jsx-dev-runtime"]);
     assertExists(manifest.dependencies["veryfront/chat"]);
     assertExists(manifest.dependencies["veryfront/workflow"]);
+    assertEquals(
+      manifest.fallback.gaps.some((gap) => gap.includes("_deno-config")),
+      false,
+    );
     assertEquals(
       manifest.dependencies["veryfront/head"]?.contentHash,
       manifest.dependencies["veryfront/react/head"]?.contentHash,
@@ -2180,6 +2214,21 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage("pages/blog/index.tsx"), "/blog");
     assertEquals(routeForPage("pages/blog/post.tsx"), "/blog/post");
     assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
+    assertEquals(routeForPage("pages/api/hello.ts"), null);
+    assertEquals(routeForPage("pages/api/users/[id].ts"), null);
+    assertEquals(routeForPage("pages/index.d.ts"), null);
+    assertEquals(routeForPage("pages/blog/post.d.ts"), null);
+    assertEquals(routeForPage("pages/index.css"), null);
+    assertEquals(routeForPage("pages/_app.tsx"), null);
+    assertEquals(routeForPage("pages/_document.tsx"), null);
+    assertEquals(routeForPage("pages/blog/_draft.tsx"), null);
+    assertEquals(routeForPage("app/page.tsx"), "/");
+    assertEquals(routeForPage("app/(marketing)/page.tsx"), "/");
+    assertEquals(routeForPage("app/(marketing)/blog/page.tsx"), "/blog");
+    assertEquals(routeForPage("app/page.d.ts"), null);
+    assertEquals(routeForPage("app/page.css"), null);
+    assertEquals(routeForPage("app/@modal/page.tsx"), null);
+    assertEquals(routeForPage("app/_components/page.tsx"), null);
     assertEquals(routeForPage("components/Button.tsx"), null);
     assertEquals(routeForPage("pages/../secret.tsx"), null);
     assertEquals(routeForPage("pages/not-a-module.txt"), null);

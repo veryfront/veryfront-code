@@ -310,6 +310,7 @@ export class HTMLGenerator {
       projectId: htmlOptions.projectId,
       pageId: htmlOptions.pageId,
       sourceHash: htmlOptions.sourceHash,
+      releaseAssetManifest,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;

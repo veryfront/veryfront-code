@@ -337,13 +337,22 @@ export interface ApiClient {
 
 export const getApiErrorSchema = defineSchema((v) =>
   v.object({
-    error: v.string(),
+    error: v.string().optional(),
     message: v.string().optional(),
+    detail: v.string().optional(),
+    title: v.string().optional(),
+    suggestion: v.string().optional(),
     code: v.string().optional(),
+    slug: v.string().optional(),
   })
 );
 export const ApiErrorSchema = lazySchema(getApiErrorSchema);
 export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
+
+export function formatApiError(data: ApiError, fallback: string): string {
+  const message = data.message || data.detail || data.error || data.title || fallback;
+  return data.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${data.suggestion}` : message;
+}
 
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;
@@ -377,7 +386,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
       try {
         const parsed = ApiErrorSchema.safeParse(await response.json());
         if (parsed.success) {
-          errorMessage = parsed.data.message || parsed.data.error || errorMessage;
+          errorMessage = formatApiError(parsed.data, errorMessage);
         }
       } catch {
         // Keep default error message if JSON parsing fails

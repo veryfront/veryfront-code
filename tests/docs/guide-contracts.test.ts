@@ -187,7 +187,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/quickstart.md": {
     references: [
-      "./installation.md",
       "../guides/providers.md",
       "./create-project.md",
       "../api-reference/veryfront/agent.md",
@@ -195,7 +194,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/chat.md",
     ],
     snippets: [
-      "veryfront init support-agent --template ai-agent",
+      "npm create veryfront@latest support-agent -- --template ai-agent",
+      "npx veryfront deploy",
       "calculator.ts",
       "What is 128 divided by 8?",
       "curl -N -X POST",
@@ -227,8 +227,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Pick one production path",
       "veryfront build",
       "veryfront serve",
-      "veryfront push --branch main --yes",
-      "veryfront deploy --branch main --env production --yes",
+      "npx veryfront deploy",
+      "prints the environment URL",
       "veryfront open",
     ],
   },
@@ -678,8 +678,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "veryfront build",
       "veryfront serve",
-      "veryfront push --branch main --yes",
-      "veryfront deploy --branch main --env production --yes",
+      "npx veryfront deploy",
+      "prints the environment URL",
       "veryfront open",
     ],
   },

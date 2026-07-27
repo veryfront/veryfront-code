@@ -788,17 +788,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let deployedSlug: string | undefined;
   if (options.deploy) {
     const { chdir } = await import("veryfront/platform");
-    const { ensureAuthenticated, readToken } = await import(
-      "../../auth/index.ts"
-    );
-    const { randomSuffix } = await import("#cli/shared/slug");
-    const { reserveProjectSlug } = await import("#cli/shared/reserve-slug");
-    const { writeProjectSlug } = await import("#cli/shared/config");
-    const { pushCommand } = await import("../push/index.ts");
+    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+    const { readConfigFile } = await import("#cli/shared/config");
     const { deployCommand } = await import("../deploy/index.ts");
-    const manualDeployHint = `Run ${brand("veryfront push --branch main")}, then ${
-      brand("veryfront deploy --branch main --env production")
-    } to deploy later.`;
+    const manualDeployHint = `Run ${brand("veryfront deploy")} to deploy later.`;
 
     const authResult = await ensureAuthenticated();
     if (!authResult) {
@@ -808,27 +801,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
       if (!token) {
         log(`\n  Could not read auth token. ${manualDeployHint}`);
       } else {
-        const slug = `${projectName ?? "my-app"}-${randomSuffix()}`;
-
-        log(`\n  Deploying as ${brand(slug)}...`);
+        log(`\n  Deploying project...`);
 
         try {
-          const reserveResult = await reserveProjectSlug(slug, token);
-          deployedSlug = reserveResult.slug;
-
-          await writeProjectSlug(projectDir, deployedSlug);
-
           chdir(projectDir);
 
-          await pushCommand({
-            projectDir,
-            branch: "main",
-            force: true,
-            dryRun: false,
-            quiet: true,
-          });
-
           await deployCommand({
+            projectDir,
             branch: "main",
             env: "production",
             force: true,
@@ -836,11 +815,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
             quiet: true,
           });
 
-          log(
-            `  ${green("✓")} Deployed to ${
-              brand(`https://${deployedSlug}.production.veryfront.com`)
-            }`,
-          );
+          const configFile = await readConfigFile(projectDir);
+          deployedSlug = configFile?.projectSlug;
+          if (deployedSlug) {
+            log(
+              `  ${green("✓")} Deployed to ${
+                brand(`https://${deployedSlug}.production.veryfront.com`)
+              }`,
+            );
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
@@ -886,10 +869,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (!deployedSlug) {
     successContent.push(
       "",
-      `${brand("veryfront push --branch main")} ${dim("→ upload source")}`,
-      `${brand("veryfront deploy --branch main --env production")} ${
-        dim("→ create a release and go live")
-      }`,
+      `${brand("veryfront deploy")} ${dim("→ upload source, create a release, and go live")}`,
     );
   }
 

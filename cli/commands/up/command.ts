@@ -12,6 +12,8 @@ import { isTTY, promptUser } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { readConfigFile, type VeryfrontConfig } from "#cli/shared/config";
 import { resolveCliApiUrl } from "#cli/shared/constants";
+import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { normalizeProjectSlug } from "#cli/shared/slug";
 import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 
@@ -64,36 +66,17 @@ async function analyzeDirectory(projectDir: string): Promise<ProjectContext> {
 
   if (!hasCode) return { type: "empty" };
 
-  const dirName = projectDir.split(/[/\\]/).pop() || "my-app";
-  const suggestedSlug = dirName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-  return { type: "has-code", suggestedSlug };
-}
-
-async function createProject(
-  apiUrl: string,
-  token: string,
-  slug: string,
-): Promise<{ id: string; slug: string } | null> {
+  let suggestedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() || "my-app");
+  const packagePath = join(projectDir, "package.json");
   try {
-    const response = await fetch(`${apiUrl}/projects`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ slug }),
-    });
-
-    if (response.ok) return await response.json();
-
-    const error = await response.json().catch(() => ({}));
-    const message = (error as { message?: string }).message ?? `HTTP ${response.status}`;
-    throw new Error(message);
+    if (await fs.exists(packagePath)) {
+      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
+      if (pkg.name) suggestedSlug = normalizeProjectSlug(pkg.name);
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to create project: ${message}`);
+    cliLogger.debug("Failed to read package.json for project slug:", error);
   }
+  return { type: "has-code", suggestedSlug };
 }
 
 async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<void> {
@@ -145,7 +128,7 @@ export async function upCommand(
     if (isTTY() && !force) {
       const response = await promptUser(`Project name [${slug}]:`);
       const trimmed = response.trim();
-      if (trimmed) slug = trimmed.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+      if (trimmed) slug = normalizeProjectSlug(trimmed);
     }
 
     if (dryRun) {
@@ -163,7 +146,10 @@ export async function upCommand(
           return;
         }
 
-        await createProject(apiUrl, resolvedToken, slug);
+        const reserved = await reserveProjectSlug(slug, resolvedToken, env, apiUrl, {
+          allowAlternativeSlug: false,
+        });
+        slug = reserved.slug;
         projectSpinner.stop();
 
         await saveConfig(projectDir, { projectSlug: slug });
@@ -206,6 +192,7 @@ export async function upCommand(
         force: true,
         dryRun,
         quiet: false,
+        skipSourcePush: true,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

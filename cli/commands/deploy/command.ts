@@ -9,21 +9,37 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { cwd } from "veryfront/platform";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import { createFileSystem, cwd } from "veryfront/platform";
+import { join, relative } from "veryfront/platform/path";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import {
+  type ApiClient,
+  createApiClient,
+  readConfigFile,
+  resolveConfigWithAuth,
+  resolveConfigWithAuthDetails,
+  type ResolvedConfig,
+  writeProjectSlug,
+} from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
+import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { normalizeProjectSlug } from "#cli/shared/slug";
+import { pushCommand } from "../push/index.ts";
 import { isAutoConfirmEnabled } from "../../shared/interactive.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
   getProjectTarget,
   normalizeControlPlane,
+  type ProjectTarget,
   readPushReceipt,
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import type { ReleaseAssetManifestResponse } from "#veryfront/release-assets/manifest-schema.ts";
+import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 
 /**
  * Schema factory for deploy command arguments
@@ -38,6 +54,8 @@ export const getDeployArgsSchema = defineSchema((v) =>
     force: v.boolean().default(false),
     /** Quiet mode - suppress spinner/progress output */
     quiet: v.boolean().default(false),
+    /** Internal option used by commands that already pushed source. */
+    skipSourcePush: v.boolean().default(false),
   })
 );
 
@@ -46,7 +64,12 @@ export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 /**
  * Deploy command options (inferred from schema)
  */
-export type DeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
+type ParsedDeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
+export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
+  skipSourcePush?: boolean;
+  assetManifestPollIntervalMs?: number;
+  assetManifestTimeoutMs?: number;
+};
 
 /**
  * Parse CLI arguments into validated DeployOptions
@@ -84,6 +107,7 @@ interface Environment {
   project?: string | { id: string };
   projectId?: string;
   deployment?: EnvironmentDeployment | null;
+  domains?: string[];
 }
 
 /**
@@ -133,7 +157,7 @@ export interface DeploymentVerification {
   releaseId: string;
   releaseVersion: string;
   deploymentId: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
 }
 
@@ -141,14 +165,14 @@ export interface ReleaseSourceVerification {
   projectId: string;
   releaseId: string;
   releaseVersion: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
 }
 
 interface ReleaseSourceExpectation {
   projectId: string;
   releaseId: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
   releaseName?: string;
 }
@@ -160,7 +184,7 @@ interface DeploymentExpectation {
   environmentName: string;
   releaseId: string;
   deploymentId: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
   releaseName?: string;
 }
@@ -434,6 +458,10 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function formatSourceReference(commitSha: string | null): string {
+  return commitSha ? `pushed commit ${commitSha}` : "pushed source digest";
+}
+
 export async function verifyReleaseSource(
   client: ApiClient,
   projectReference: string,
@@ -471,7 +499,9 @@ export async function verifyReleaseSource(
   }
 
   throw new Error(
-    `Release ${expected.releaseId} source does not match pushed commit ${expected.commitSha}: expected source digest ${expected.sourceDigest}; last observed ${sourceDigest}`,
+    `Release ${expected.releaseId} source does not match ${
+      formatSourceReference(expected.commitSha)
+    }: expected source digest ${expected.sourceDigest}; last observed ${sourceDigest}`,
   );
 }
 
@@ -558,7 +588,7 @@ export async function resolvePushedSource(input: {
   projectSlug: string;
   branch: string;
   requireClean: boolean;
-}): Promise<{ commitSha: string; sourceDigest: string }> {
+}): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
     throw new Error(
@@ -579,11 +609,247 @@ export async function resolvePushedSource(input: {
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
 
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function buildEnvironmentUrl(projectSlug: string, environment: Environment): string {
+  const domain = environment.domains?.[0];
+  if (domain) {
+    return domain.startsWith("http://") || domain.startsWith("https://")
+      ? domain
+      : `https://${domain}`;
+  }
+  return `https://${projectSlug}.${environment.name}.veryfront.com`;
+}
+
+async function inferDeployProjectSlug(projectDir: string): Promise<string> {
+  const fs = createFileSystem();
+  const packagePath = join(projectDir, "package.json");
+
+  try {
+    if (await fs.exists(packagePath)) {
+      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
+      if (pkg.name) return normalizeProjectSlug(pkg.name);
+    }
+  } catch {
+    // Fall back to the directory name below.
+  }
+
+  const dirName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "my-app";
+  return normalizeProjectSlug(dirName);
+}
+
+async function ensureProjectLinkedForDeploy(
+  projectDir: string,
+  env: EnvironmentConfig,
+  dryRun: boolean,
+  quiet: boolean,
+): Promise<{
+  config: ResolvedConfig;
+  client: ApiClient;
+  project: ProjectTarget | null;
+  plannedProjectSlug: string;
+}> {
+  const details = await resolveConfigWithAuthDetails(projectDir, env);
+  const initial = details.config;
+  const configFile = await readConfigFile(projectDir);
+  const hasPersistedSlug = Boolean(configFile?.projectSlug);
+  const isInferredReference = details.projectReferenceSource.kind === "inferred";
+  const projectReference = isInferredReference
+    ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
+    : initial.projectSlug;
+  const config = { ...initial, projectSlug: projectReference };
+  const client = createApiClient(config);
+
+  try {
+    const project = await getProject(client, projectReference);
+    if (isInferredReference && !hasPersistedSlug && !dryRun) {
+      await writeProjectSlug(projectDir, project.slug);
+      if (!quiet) logInfo(`Linked project ${project.slug}`);
+    }
+    return {
+      config: { ...config, projectSlug: project.slug },
+      client,
+      project,
+      plannedProjectSlug: project.slug,
+    };
+  } catch (error) {
+    if (getErrorStatus(error) !== 404) {
+      throw new Error(
+        `Could not check project "${projectReference}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  if (!isInferredReference) {
+    throw new Error(
+      `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
+    );
+  }
+
+  const suggestedSlug = normalizeProjectSlug(projectReference);
+  if (dryRun) {
+    if (!quiet) logInfo(`Would create project ${suggestedSlug}`);
+    return {
+      config: { ...initial, projectSlug: suggestedSlug },
+      client: createApiClient({ ...initial, projectSlug: suggestedSlug }),
+      project: null,
+      plannedProjectSlug: suggestedSlug,
+    };
+  }
+
+  const created = await reserveProjectSlug(
+    suggestedSlug,
+    initial.apiToken,
+    env,
+    initial.apiUrl,
+  );
+  await writeProjectSlug(projectDir, created.slug);
+  if (!quiet) logInfo(`Created project ${created.slug}`);
+  const createdConfig = { ...initial, projectSlug: created.slug };
+  const createdClient = createApiClient(createdConfig);
+  const project = created.projectId
+    ? { id: created.projectId, slug: created.slug }
+    : await getProject(createdClient, created.slug);
+  return {
+    config: createdConfig,
+    client: createdClient,
+    project,
+    plannedProjectSlug: created.slug,
+  };
+}
+
+async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
+  const fs = createFileSystem();
+  const routes = new Set<string>();
+
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      if (!(await fs.exists(dir))) return;
+      entries = await fs.readDir(dir);
+    } catch {
+      return;
+    }
+
+    for await (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory) {
+        await walk(path);
+        continue;
+      }
+      if (!/\.(tsx|ts|jsx|mdx|js)$/.test(entry.name)) continue;
+
+      const relativePath = relative(projectDir, path).replace(/\\/g, "/");
+      if (relativePath === "." || relativePath === ".." || relativePath.startsWith("../")) {
+        continue;
+      }
+      const route = routeForPage(relativePath);
+      if (route) routes.add(route);
+    }
+  }
+
+  await Promise.all([
+    walk(join(projectDir, "app")),
+    walk(join(projectDir, "pages")),
+  ]);
+
+  return [...routes].sort();
+}
+
+function assertReadyManifestCoversPageRoutes(
+  releaseId: string,
+  result: ReleaseAssetManifestResponse,
+  expectedRoutes: string[],
+): void {
+  const manifest = result.manifest;
+  if (!manifest) {
+    throw new Error(
+      `Release assets for ${releaseId} are ready but no manifest body was returned. Check the release asset build and run deploy again.`,
+    );
+  }
+
+  const moduleCount = Object.keys(manifest.modules).length;
+  const missingRoutes = expectedRoutes.filter((route) => {
+    const modules = manifest.routes[route]?.modules;
+    return !modules || modules.length === 0;
+  });
+  if (expectedRoutes.length > 0 && (moduleCount === 0 || missingRoutes.length > 0)) {
+    throw new Error(
+      `Release assets for ${releaseId} are ready but do not include browser modules for this app. ${
+        missingRoutes.length > 0 ? `Missing routes: ${missingRoutes.join(", ")}. ` : ""
+      }The deployed page would not hydrate; check the release asset build and run deploy again.`,
+    );
+  }
+}
+
+export async function waitForReleaseAssetManifest(
+  client: ApiClient,
+  projectSlug: string,
+  releaseId: string,
+  options: {
+    expectedRoutes?: string[];
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  } = {},
+): Promise<ReleaseAssetManifestResponse> {
+  const pollIntervalMs = Math.max(100, options.pollIntervalMs ?? 2_000);
+  const timeoutMs = Math.max(pollIntervalMs, options.timeoutMs ?? 120_000);
+  const expectedRoutes = options.expectedRoutes ?? [];
+  const deadline = Date.now() + timeoutMs;
+  let lastState = "missing";
+
+  for (;;) {
+    try {
+      const result = await client.get<ReleaseAssetManifestResponse>(
+        `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
+      );
+      lastState = result.state;
+
+      if (result.state === "ready") {
+        assertReadyManifestCoversPageRoutes(releaseId, result, expectedRoutes);
+        return result;
+      }
+      if (result.state === "failed") {
+        throw new Error(`Release asset build failed for release ${releaseId}`);
+      }
+    } catch (error) {
+      if (getErrorStatus(error) !== 404) throw error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+      throw new Error(
+        `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}). Check the release asset build and run deploy again.`,
+      );
+    }
+
+    await wait(Math.min(pollIntervalMs, remainingMs));
+  }
+}
+
 /**
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<void> {
-  const { projectDir = cwd(), branch, env, releaseName, dryRun, force, quiet } = options;
+  const {
+    projectDir = cwd(),
+    branch,
+    env,
+    releaseName,
+    dryRun,
+    force,
+    quiet,
+    skipSourcePush,
+    assetManifestPollIntervalMs,
+    assetManifestTimeoutMs,
+  } = options;
 
   if (isJsonMode()) {
     return deployCommandJson(options);
@@ -591,11 +857,53 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
-  const config = await resolveConfigWithAuth(projectDir);
-  const client = createApiClient(config);
+  const environmentConfig = getEnvironmentConfig();
+  const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet);
+  let { config, client, project } = setup;
+  const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
 
-  spinner.update("Resolving project...");
-  const project = await getProject(client, config.projectSlug);
+  if (dryRun && !project) {
+    spinner.stop();
+    if (!quiet) {
+      logInfo(
+        `Would push source to "${branch}", create release, and deploy to "${env}" for project ${setup.plannedProjectSlug}`,
+      );
+    }
+    return;
+  }
+
+  if (!force && !dryRun && !skipSourcePush) {
+    spinner.stop();
+    const confirmed = await confirmPrompt(
+      `Push source to "${branch}", create release, and deploy to "${env}"?`,
+      true,
+    );
+    if (!confirmed) {
+      console.log(`  ${muted("Deploy cancelled.")}`);
+      return;
+    }
+    spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
+  }
+
+  if (!skipSourcePush) {
+    spinner.update(`Pushing source to "${branch}"...`);
+    spinner.stop();
+    await pushCommand({
+      projectDir,
+      branch,
+      force: true,
+      dryRun,
+      quiet: true,
+    });
+    spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
+    config = await resolveConfigWithAuth(projectDir, environmentConfig);
+    client = createApiClient(config);
+  }
+
+  if (!project) {
+    spinner.update("Resolving project...");
+    project = await getProject(client, config.projectSlug);
+  }
 
   spinner.update(`Looking up environment "${env}"...`);
 
@@ -619,7 +927,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
 
   spinner.update("Verifying pushed source...");
-  let source: { commitSha: string; sourceDigest: string };
+  let source: { commitSha: string | null; sourceDigest: string };
   try {
     source = await resolvePushedSource({
       projectDir,
@@ -633,7 +941,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     spinner.stop();
   }
 
-  if (!force) {
+  if (!force && skipSourcePush) {
     const confirmed = await confirmPrompt(
       `Create release from "${branch}" and deploy to "${env}"?`,
       true,
@@ -660,6 +968,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       releaseName: release.name,
       commitSha: source.commitSha,
       sourceDigest: source.sourceDigest,
+    });
+
+    spinner.update(`Waiting for release assets for ${release.version}...`);
+    await waitForReleaseAssetManifest(client, project.slug, release.id, {
+      expectedRoutes: expectedPageRoutes,
+      pollIntervalMs: assetManifestPollIntervalMs,
+      timeoutMs: assetManifestTimeoutMs,
     });
 
     spinner.update(`Deploying ${release.version} to ${env}...`);
@@ -699,7 +1014,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
   const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
   if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
-  logInfo(`  Commit: ${verification.commitSha}`);
+  logInfo(`  URL: ${buildEnvironmentUrl(verification.projectSlug, environment)}`);
+  logInfo(`  Protected: ${environment.protected ? "yes" : "no"}`);
+  logInfo(
+    verification.commitSha
+      ? `  Commit: ${verification.commitSha}`
+      : "  Commit: unavailable (source digest verified)",
+  );
   logInfo(`  Source digest: ${verification.sourceDigest}`);
   logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
 
@@ -708,7 +1029,17 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<void> {
-  const { projectDir = cwd(), branch, env, releaseName, dryRun, force } = options;
+  const {
+    projectDir = cwd(),
+    branch,
+    env,
+    releaseName,
+    dryRun,
+    force,
+    skipSourcePush,
+    assetManifestPollIntervalMs,
+    assetManifestTimeoutMs,
+  } = options;
 
   try {
     // JSON mode requires --force or --yes to prevent accidental deploys
@@ -725,12 +1056,51 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }
 
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
-    const config = await resolveConfigWithAuth(projectDir);
-    const client = createApiClient(config);
+    const environmentConfig = getEnvironmentConfig();
+    const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);
+    let { config, client, project } = setup;
+    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
+    if (dryRun && !project) {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: {
+          dryRun: true,
+          branch,
+          projectId: null,
+          projectSlug: setup.plannedProjectSlug,
+          environment: env,
+          environmentId: null,
+          controlPlane: normalizeControlPlane(config.apiUrl),
+          plannedActions: [
+            "create-project",
+            ...(skipSourcePush ? [] : ["push-source"]),
+            "create-release",
+            "deploy",
+          ],
+        },
+      });
+      return;
+    }
+
+    if (!skipSourcePush) {
+      streamJsonLine({ type: "step", name: "push-source", status: "started" });
+      await pushCommand({
+        projectDir,
+        branch,
+        force: true,
+        dryRun,
+        quiet: true,
+      });
+      config = await resolveConfigWithAuth(projectDir, environmentConfig);
+      client = createApiClient(config);
+      streamJsonLine({ type: "step", name: "push-source", status: "completed" });
+    }
+
     streamJsonLine({ type: "step", name: "resolve-target", status: "started" });
-    const project = await getProject(client, config.projectSlug);
+    if (!project) project = await getProject(client, config.projectSlug);
     const environment = await getEnvironmentByName(client, project.id, env);
     if (!environment) {
       streamJsonLine({
@@ -791,6 +1161,14 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     });
     streamJsonLine({ type: "step", name: "verify-release-source", status: "completed" });
 
+    streamJsonLine({ type: "step", name: "wait-release-assets", status: "started" });
+    await waitForReleaseAssetManifest(client, project.slug, release.id, {
+      expectedRoutes: expectedPageRoutes,
+      pollIntervalMs: assetManifestPollIntervalMs,
+      timeoutMs: assetManifestTimeoutMs,
+    });
+    streamJsonLine({ type: "step", name: "wait-release-assets", status: "completed" });
+
     streamJsonLine({ type: "step", name: "deploy", status: "started" });
     const deployment = await createDeployment(
       client,
@@ -837,6 +1215,8 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
         environment: env,
         environmentId: verification.environmentId,
         deploymentId: verification.deploymentId,
+        url: buildEnvironmentUrl(verification.projectSlug, environment),
+        protected: environment.protected,
         routingConvergence: deployment.routing_convergence ?? null,
         commitSha: verification.commitSha,
         sourceDigest: verification.sourceDigest,

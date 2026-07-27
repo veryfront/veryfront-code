@@ -70,11 +70,10 @@ describe("guide content contracts", () => {
     );
   });
 
-  it("does not claim deploy prints the production URL", async () => {
+  it("documents deploy URL output for the first deploy path", async () => {
     const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
-    assertEquals(guide.includes("deploy` prints a URL"), false);
-    assertEquals(guide.includes("CLI prints a production URL"), false);
+    assertStringIncludes(guide, "prints the environment URL");
     assertStringIncludes(guide, "veryfront open");
   });
 
@@ -92,23 +91,31 @@ describe("guide content contracts", () => {
     }
   });
 
-  it("documents Push before Deploy for every Veryfront Cloud path", async () => {
+  it("documents single-command Deploy for interactive Veryfront Cloud paths", async () => {
     const docs = [
       "docs/getting-started/deploy-project.md",
       "docs/guides/deploying.md",
-      "docs/guides/deploy-from-ci.md",
     ];
-    const push = "veryfront push --branch main --yes";
-    const deploy = "veryfront deploy --branch main --env production --yes";
+    const deploy = "npx veryfront deploy";
 
     for (const path of docs) {
       const text = await Deno.readTextFile(path);
-      const pushIndex = text.indexOf(push);
-      const deployIndex = text.indexOf(deploy);
 
-      assert(pushIndex >= 0, `${path} must document the canonical Push command`);
-      assert(deployIndex > pushIndex, `${path} must document Deploy after Push`);
+      assertStringIncludes(text, deploy);
+      assertStringIncludes(text, "writes `veryfront.json`");
+      assertStringIncludes(text, "prints the environment URL");
     }
+  });
+
+  it("keeps the CI deploy workflow on explicit Push before Deploy", async () => {
+    const guide = await Deno.readTextFile("docs/guides/deploy-from-ci.md");
+    const push = "veryfront push --branch main --yes";
+    const deploy = "veryfront deploy --branch main --env production --yes";
+    const pushIndex = guide.indexOf(push);
+    const deployIndex = guide.indexOf(deploy);
+
+    assert(pushIndex >= 0, "CI guide must document the canonical Push command");
+    assert(deployIndex > pushIndex, "CI guide must document Deploy after Push");
   });
 
   it("keeps the CI workflow serialized, auditable, and rollback-safe", async () => {

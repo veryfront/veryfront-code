@@ -194,6 +194,7 @@ describe("init command integration", () => {
 
       assertEquals(result.code, 0);
       assertEquals(await exists(join(projectDir, "package.json")), true);
+      assertEquals(await exists(join(projectDir, "public", "favicon.svg")), true);
 
       const packageJson = await readTextFile(join(projectDir, "package.json"));
       assertExists(packageJson.includes("veryfront"));

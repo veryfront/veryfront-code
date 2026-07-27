@@ -5,6 +5,8 @@ import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts
 import { join } from "veryfront/platform/path";
 import { parseUpArgs, UpArgsSchema, upCommand } from "./index.ts";
 import type { ParsedArgs } from "#cli/shared/types";
+import { normalizeProjectSlug } from "#cli/shared/slug";
+import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
   return { _: ["up"], ...flags };
@@ -85,6 +87,7 @@ describe("Up Command", () => {
       const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
       const tempDir = await Deno.makeTempDir();
       const requestedUrls: string[] = [];
+      let projectCreateBody: unknown;
 
       try {
         await Deno.writeTextFile(join(tempDir, "package.json"), "{}");
@@ -107,6 +110,7 @@ describe("Up Command", () => {
           }
 
           if (url.endsWith("/projects") && init?.method === "POST") {
+            projectCreateBody = JSON.parse(String(init.body));
             return Promise.resolve(
               new Response(JSON.stringify({ id: "project-1", slug: "test-project" }), {
                 status: 200,
@@ -191,6 +195,9 @@ describe("Up Command", () => {
           requestedUrls.some((url) => url.startsWith("https://api.veryfront.com/projects")),
           false,
         );
+        const expectedSlug = normalizeProjectSlug(tempDir.split(/[/\\]/).pop() ?? "");
+        const expectedName = capitalizeSeparatedWords(expectedSlug, "-", " ");
+        assertEquals(projectCreateBody, { slug: expectedSlug, name: expectedName });
       } finally {
         globalThis.fetch = originalFetch;
         restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);

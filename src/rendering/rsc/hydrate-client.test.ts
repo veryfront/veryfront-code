@@ -100,4 +100,31 @@ describe("rendering/rsc/hydrate-client", () => {
       "/_veryfront/rsc/module?rel=%2FCounter.tsx&v=abc123",
     );
   });
+
+  it("prefers release asset module URLs for remote client boundaries", () => {
+    const reference = parseClientRef("/app/Counter.tsx#default")!;
+    const manifest = {
+      version: 1,
+      hash: "abc123",
+      modules: [],
+      graphIds: {
+        client: [{
+          id: "Counter",
+          path: "/project/app/Counter.tsx",
+          rel: "/Counter.tsx",
+        }],
+        server: [],
+      },
+    };
+
+    assertEquals(
+      resolveClientBoundaryModuleUrl(
+        manifest,
+        reference,
+        "rsc-module",
+        { "Counter.tsx": "/_vf_modules/Counter.abc123.js" },
+      ),
+      "/_vf_modules/Counter.abc123.js",
+    );
+  });
 });

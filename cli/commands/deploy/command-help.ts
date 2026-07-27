@@ -40,8 +40,9 @@ export const deployHelp: CommandHelp = {
     "veryfront deploy --dry-run",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
-    "Requires a successful veryfront push for the same project and branch",
+    "Requires VERYFRONT_API_TOKEN or an authenticated Veryfront login",
+    "Creates or links a project when veryfront.json is not present",
+    "Pushes local source before creating the release",
     "Creates a new release from the specified branch",
     "Verifies the target environment points to the created deployment before succeeding",
   ],
