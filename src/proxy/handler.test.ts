@@ -191,7 +191,11 @@ function createNotFoundResponse(): Response {
   return new Response("Not found", { status: 404 });
 }
 
-function createHandler(port: number, apiBasePath = "") {
+function createHandler(
+  port: number,
+  apiBasePath = "",
+  logger?: Parameters<typeof createProxyHandler>[0]["logger"],
+) {
   return createProxyHandler({
     config: {
       apiBaseUrl: `http://127.0.0.1:${port}${apiBasePath}`,
@@ -200,6 +204,7 @@ function createHandler(port: number, apiBasePath = "") {
       previewApiClientId: "test-client",
       previewApiClientSecret: "test-secret",
     },
+    logger,
   });
 }
 
@@ -498,6 +503,96 @@ describe("Proxy Handler", () => {
 
         await handler.close();
       } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("refreshes an in-flight routing result without an active release", async () => {
+      let routingLookups = 0;
+      let activeReleaseId: string | null = null;
+      let releaseFirstLookup: (() => void) | undefined;
+      let markFirstLookupStarted!: () => void;
+      let markLookupJoined!: () => void;
+      const firstLookupStarted = new Promise<void>((resolve) => {
+        markFirstLookupStarted = resolve;
+      });
+      const lookupJoined = new Promise<void>((resolve) => {
+        markLookupJoined = resolve;
+      });
+      const firstLookupRelease = new Promise<void>((resolve) => {
+        releaseFirstLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          markLookupJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          const releaseIdAtLookupStart = activeReleaseId;
+          if (routingLookups === 1) {
+            markFirstLookupStarted();
+            await firstLookupRelease;
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: releaseIdAtLookupStart,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        const beforeActivation = handler.processRequest(req());
+        await firstLookupStarted;
+        activeReleaseId = "rel-456";
+        const afterActivation = handler.processRequest(req());
+        await lookupJoined;
+        releaseFirstLookup();
+
+        assertEquals((await beforeActivation).error?.status, 404);
+        const afterActivationResult = await afterActivation;
+        assertEquals(afterActivationResult.error, undefined);
+        assertEquals(afterActivationResult.releaseId, "rel-456");
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        releaseFirstLookup?.();
         await server.shutdown();
       }
     });

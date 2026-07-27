@@ -619,7 +619,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const existingLookup = routingLookupInflight.get(cacheKey);
         if (existingLookup?.generation === routingLookupGeneration) {
           logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
-          return await existingLookup.promise;
+          const result = await existingLookup.promise;
+          if (!result || !isCachedResultUsable || isCachedResultUsable(result)) {
+            return result;
+          }
+          routingLookupCache.delete(cacheKey);
+          logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
         }
 
         const lookupPromise = (async () => {
