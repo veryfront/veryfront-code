@@ -105,9 +105,7 @@ describe("BabelParseOnlyParser", () => {
       }
       const deniedCapabilities = {
         env: await isDenied(() => Deno.env.get("BABEL_TYPES_8_BREAKING")),
-        read: await isDenied(() => Deno.readTextFile(${
-      JSON.stringify(parserUrl)
-    })),
+        read: await isDenied(() => Deno.readTextFile(${JSON.stringify(parserUrl)})),
         net: await isDenied(() => fetch("http://127.0.0.1:9/")),
       };
       globalThis.postMessage({ astType: ast.type, deniedCapabilities });

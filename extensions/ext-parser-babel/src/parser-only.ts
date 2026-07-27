@@ -47,8 +47,7 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
   parse(options: ParseOptions): Promise<ASTNode> {
     const ast = parser.parse(options.code, {
       sourceType: "unambiguous",
-      allowReturnOutsideFunction:
-        options.filePath?.toLowerCase().endsWith(".cjs") === true,
+      allowReturnOutsideFunction: options.filePath?.toLowerCase().endsWith(".cjs") === true,
       plugins: pickPlugins(options.filePath),
     });
     return Promise.resolve(ast as unknown as ASTNode);
