@@ -25,10 +25,23 @@ import {
   globalInProgress,
   globalModuleCache,
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
-const SNAPSHOT_A_PIN_KEY = "on:34n9smy47dk9";
-const SNAPSHOT_B_PIN_KEY = "on:34n8mjmdp7io";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+const SNAPSHOT_A_DEPENDENCIES = { react: "^18.3.1" } as const;
+const SNAPSHOT_B_DEPENDENCIES = { react: "^19.0.0" } as const;
+const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);
+const SNAPSHOT_B_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_B_DEPENDENCIES);
 
 function createPipeline(
   pagePath: string,
@@ -205,7 +218,7 @@ describe("RenderPipeline behavior", () => {
     await pipeline.resolvePageData("/", {
       ...requestOptions,
       dependencyPinningCacheKey: SNAPSHOT_B_PIN_KEY,
-      dependencyPinningDependencies: { react: "^19.0.0" },
+      dependencyPinningDependencies: SNAPSHOT_B_DEPENDENCIES,
     });
     const afterSnapshotB = observedVersions.slice();
     observedVersions.length = 0;
@@ -213,7 +226,7 @@ describe("RenderPipeline behavior", () => {
     await pipeline.resolvePageData("/", {
       ...requestOptions,
       dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
-      dependencyPinningDependencies: { react: "^18.3.1" },
+      dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
     });
 
     assert(afterSnapshotB.length > 0);

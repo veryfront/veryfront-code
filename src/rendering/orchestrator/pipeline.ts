@@ -1181,6 +1181,8 @@ export class RenderPipeline {
       options?.environment,
       slug,
       projectUpdatedAt,
+      options?.dependencyPinningCacheKey,
+      options?.url?.origin,
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);

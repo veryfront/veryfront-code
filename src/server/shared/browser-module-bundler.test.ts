@@ -260,21 +260,21 @@ describe(
         adapter,
         projectDir,
         moduleServerOrigin: "https://preview.example",
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey: "on:54uvgwr2ih7p",
         dependencyPinningDependencies: {},
       });
 
       assertStringIncludes(
         bundle.source,
-        'from "/_vf_modules/_pins/on%3Asnapshot-a/A.js"',
+        'from "/_vf_modules/_pins/on%3A54uvgwr2ih7p/A.js"',
       );
       assertStringIncludes(
         bundle.source,
-        'from "/_vf_modules/_pins/on%3Asnapshot-a/B.js"',
+        'from "/_vf_modules/_pins/on%3A54uvgwr2ih7p/B.js"',
       );
       assertStringIncludes(
         bundle.source,
-        'from "/_vf_modules/_pins/on%3Asnapshot-a/C.js"',
+        'from "/_vf_modules/_pins/on%3A54uvgwr2ih7p/C.js"',
       );
       assertStringIncludes(
         bundle.source,

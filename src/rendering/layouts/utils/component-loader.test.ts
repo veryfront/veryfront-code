@@ -13,8 +13,19 @@ import {
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
-const SNAPSHOT_A_PIN_KEY = "on:34n9smy47dk9";
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+const SNAPSHOT_A_DEPENDENCIES = { zod: "3.0.0" } as const;
+const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
@@ -497,12 +508,12 @@ describe("rendering/layouts/utils/component-loader", () => {
         { imports: {} },
         "18.3.1",
         SNAPSHOT_A_PIN_KEY,
-        { zod: "3.0.0" },
+        SNAPSHOT_A_DEPENDENCIES,
       );
 
       assertEquals(moduleReactVersion, "18.3.1");
       assertEquals(modulePinKey, SNAPSHOT_A_PIN_KEY);
-      assertEquals(moduleDependencies, { zod: "3.0.0" });
+      assertEquals(moduleDependencies, SNAPSHOT_A_DEPENDENCIES);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
@@ -539,7 +550,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "19.1.1",
       undefined,
       SNAPSHOT_A_PIN_KEY,
-      { zod: "3.0.0" },
+      SNAPSHOT_A_DEPENDENCIES,
     );
 
     assertEquals(loaded, CachedLayout);

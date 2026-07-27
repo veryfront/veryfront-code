@@ -113,8 +113,14 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       __injectCacheForTests(cache);
 
       getRSCHandler("/dir", "proj-123");
-      assertEquals(cache.entries.has('["proj-123",false,"production","app",null]'), true);
-      assertEquals(cache.entries.has('["/dir",false,"production","app",null]'), false);
+      assertEquals(
+        cache.entries.has('["proj-123",false,"production","app",null,null]'),
+        true,
+      );
+      assertEquals(
+        cache.entries.has('["/dir",false,"production","app",null,null]'),
+        false,
+      );
     });
 
     it("should use projectDir as cache key when projectId is undefined", () => {
@@ -123,7 +129,7 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       getRSCHandler("/project/dir");
       assertEquals(
-        cache.entries.has('["/project/dir",false,"production","app",null]'),
+        cache.entries.has('["/project/dir",false,"production","app",null,null]'),
         true,
       );
     });
@@ -178,6 +184,45 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       });
 
       assertEquals(react18 !== react19, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("uses the current configured Veryfront version when only that version changes", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+      const initialConfig = {
+        client: {
+          cdn: {
+            versions: {
+              react: "19.1.1",
+              veryfront: "1.0.0",
+            },
+          },
+        },
+      };
+      const currentConfig = {
+        client: {
+          cdn: {
+            versions: {
+              react: "19.1.1",
+              veryfront: "2.0.0",
+            },
+          },
+        },
+      };
+
+      const veryfront1 = getRSCHandler("/dir", "project", {
+        config: initialConfig,
+      });
+      const veryfront2 = getRSCHandler("/dir", "project", {
+        config: currentConfig,
+      });
+      const currentSource = (veryfront2 as unknown as {
+        dependencyPinningSource: { config?: typeof currentConfig };
+      }).dependencyPinningSource;
+
+      assertEquals(veryfront1 !== veryfront2, true);
+      assertEquals(currentSource.config, currentConfig);
       assertEquals(cache.size, 2);
     });
 

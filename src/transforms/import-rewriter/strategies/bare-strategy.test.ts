@@ -12,6 +12,8 @@ import {
   _pendingResolutions,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
+import { rewriteSSRImportsCompatAsync } from "../ssr-adapter.ts";
+import { rewriteImports } from "../unified-rewriter.ts";
 import { bareStrategy } from "./bare-strategy.ts";
 
 function makeCtx(overrides: Partial<RewriteContext> = {}): RewriteContext {
@@ -283,6 +285,46 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier?.includes("lodash@4.17.21"), true);
     });
 
+    it("keeps an inline version through the two-stage SSR rewrite", async () => {
+      const context = makeCtx({
+        target: "ssr",
+        dependencyPinningCacheKey: "on:snapshot-inline",
+        dependencyPinningDependencies: { lodash: "2.0.0" },
+      });
+      const afterPipeline = await rewriteImports(
+        `import lodash from "lodash@1.2.3";`,
+        context,
+      );
+      const afterAdapter = await rewriteSSRImportsCompatAsync(afterPipeline, {
+        projectDir: context.projectDir,
+        projectId: context.projectId,
+        dependencyPinningCacheKey: context.dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.dependencyPinningDependencies,
+      });
+
+      assertEquals(
+        afterPipeline,
+        `import lodash from "https://esm.sh/lodash@1.2.3?external=react&target=es2022";`,
+      );
+      assertEquals(afterAdapter, afterPipeline);
+      assertEquals(afterAdapter.includes("lodash@2.0.0"), false);
+    });
+
+    it("keeps native npm and server-only SSR imports external while pinning", () => {
+      const context = makeCtx({
+        target: "ssr",
+        dependencyPinningCacheKey: "on:snapshot-inline",
+        dependencyPinningDependencies: {},
+      });
+
+      assertEquals(bareStrategy.rewrite(makeInfo("npm:zod@1.2.3"), context), {
+        specifier: null,
+      });
+      assertEquals(bareStrategy.rewrite(makeInfo("redis@5.11.0"), context), {
+        specifier: null,
+      });
+    });
+
     it("preserves a declared v-prefixed exact version byte-for-byte", () => {
       const result = bareStrategy.rewrite(
         makeInfo("lodash"),
@@ -376,7 +418,10 @@ describe("BareStrategy", () => {
   });
 
   describe("rewrite: SSR strips explicit versions from bare specifiers", () => {
-    const ssr = makeCtx({ target: "ssr" });
+    const ssr = makeCtx({
+      target: "ssr",
+      dependencyPinningCacheKey: "off",
+    });
 
     it("strips the version so an installed package resolves by name", () => {
       // Regression: `import()` of `next-themes@0.4.6` has no matching

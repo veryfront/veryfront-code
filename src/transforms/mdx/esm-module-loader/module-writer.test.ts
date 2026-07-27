@@ -4,6 +4,21 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildMdxModuleCacheIdentity } from "./module-writer.ts";
 import { mdxRenderer } from "../index.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+const SNAPSHOT_A_DEPENDENCIES = { react: "19.1.1" } as const;
+const SNAPSHOT_B_DEPENDENCIES = { react: "19.1.2" } as const;
+const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);
+const SNAPSHOT_B_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_B_DEPENDENCIES);
 
 describe("MDX root module cache identity", () => {
   it("isolates namespace, file, LRU, and import identities across pin snapshots", async () => {
@@ -14,14 +29,14 @@ describe("MDX root module cache identity", () => {
         "project-id",
         "19.1.1",
         code,
-        "on:snapshot-a",
+        SNAPSHOT_A_PIN_KEY,
       ),
       buildMdxModuleCacheIdentity(
         "/cache/mdx",
         "project-id",
         "19.1.1",
         code,
-        "on:snapshot-b",
+        SNAPSHOT_B_PIN_KEY,
       ),
     ]);
 
@@ -56,7 +71,7 @@ describe("MDX root module cache identity", () => {
         "project-id",
         "19.1.1",
         code,
-        "on:snapshot",
+        SNAPSHOT_A_PIN_KEY,
         "https://a.example",
       ),
       buildMdxModuleCacheIdentity(
@@ -64,7 +79,7 @@ describe("MDX root module cache identity", () => {
         "project-id",
         "19.1.1",
         code,
-        "on:snapshot",
+        SNAPSHOT_A_PIN_KEY,
         "https://b.example",
       ),
     ]);
@@ -75,6 +90,8 @@ describe("MDX root module cache identity", () => {
 
   it("pins a top-level same-origin absolute module before strict SSR fetching", async () => {
     const modulePath = `/_vf_modules/StrictChild-${crypto.randomUUID()}.js`;
+    const dependencies = {};
+    const snapshotPinKey = cacheKeyForDependencies(dependencies);
     let validRequests = 0;
     let rawRequests = 0;
     const server = Deno.serve(
@@ -83,7 +100,7 @@ describe("MDX root module cache identity", () => {
         const url = new URL(request.url);
         if (url.pathname !== modulePath) return new Response("not found", { status: 404 });
         if (
-          url.searchParams.get("pins") !== "on:snapshot" ||
+          url.searchParams.get("pins") !== snapshotPinKey ||
           url.searchParams.get("ssr") !== "true"
         ) {
           rawRequests++;
@@ -110,8 +127,8 @@ describe("MDX root module cache identity", () => {
         "strict-origin",
         `source-${crypto.randomUUID()}`,
         "19.1.1",
-        "on:snapshot",
-        {},
+        snapshotPinKey,
+        dependencies,
         projectDir,
         origin,
       );

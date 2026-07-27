@@ -133,11 +133,24 @@ export class BareStrategy implements ImportRewriteStrategy {
       // (Node) — a bare specifier carrying an explicit version, e.g.
       // `next-themes@0.4.6`, has no matching `node_modules/next-themes@0.4.6`
       // entry, so `import()` never resolves it and the cold module load stalls
-      // to a timeout/500. The version is only meaningful for the browser's
-      // esm.sh URL, so strip it here and resolve the installed package by name
-      // (preserving any subpath). `npm:` specifiers keep their version — the
-      // Deno npm resolver understands them.
+      // to a timeout/500. With dependency pinning enabled, preserve the
+      // author's inline version by resolving it through esm.sh immediately.
+      // This keeps the later SSR adapter from mistaking the stripped package
+      // name for an unversioned import and replacing it with package.json's
+      // exact pin. Flag-off requests retain the installed-package fallback.
+      // `npm:` specifiers keep their native form — the Deno resolver
+      // understands their versions.
       if (!isNpmScheme && parsed?.version) {
+        if (isPinningEnabledForRewrite(ctx)) {
+          return {
+            specifier: buildEsmShUrl(
+              parsed.packageName,
+              parsed.version,
+              parsed.subpath ?? undefined,
+              { external: ["react"] },
+            ),
+          };
+        }
         return { specifier: `${parsed.packageName}${parsed.subpath ?? ""}` };
       }
       return { specifier: null };

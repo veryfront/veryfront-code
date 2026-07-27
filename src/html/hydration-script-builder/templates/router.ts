@@ -793,6 +793,7 @@ export const getRouterScript = () => `
       fetchModule = (url, init) => fetch(url, init),
       reloadDocument = () => window.location.reload(),
       recoveryState = window,
+      allowDocumentReload = true,
     ) {
       try {
         const parsedUrl = new URL(moduleUrl, 'http://veryfront.local');
@@ -814,6 +815,7 @@ export const getRouterScript = () => `
 
         const response = await fetchModule(moduleUrl, { cache: 'no-store' });
         if (!(await isDependencySnapshotConflictResponse(response))) return false;
+        if (!allowDocumentReload) return true;
 
         const recoveryKey = '__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__';
         if (recoveryState[recoveryKey] === true) return true;
@@ -837,25 +839,43 @@ export const getRouterScript = () => `
       fetchModule = (url, init) => fetch(url, init),
       reloadDocument = () => window.location.reload(),
       recoveryState = window,
+      allowDocumentReload = true,
     ) {
       try {
         return await importModule(moduleUrl);
       } catch (error) {
-        await recoverFromSnapshotBoundModuleFailure(
+        const snapshotConflict = await recoverFromSnapshotBoundModuleFailure(
           moduleUrl,
           fetchModule,
           reloadDocument,
           recoveryState,
+          allowDocumentReload,
         );
+        if (snapshotConflict && !allowDocumentReload) {
+          const conflictError = new Error(
+            'Dependency snapshot is unavailable during speculative module prefetch'
+          );
+          conflictError.name = 'DependencySnapshotConflictError';
+          conflictError.dependencySnapshotConflict = true;
+          conflictError.cause = error;
+          throw conflictError;
+        }
         throw error;
       }
     }
 
-    async function loadPageDataComponent(pageData, path) {
-      if (!pageData.isolatedClientPage) return loadComponent(path, pageData);
+    async function loadPageDataComponent(pageData, path, options = {}) {
+      if (!pageData.isolatedClientPage) return loadComponent(path, pageData, options);
 
       const moduleUrl = buildPinnedRscModuleUrl(path, pageData);
-      const module = await importSnapshotBoundModule(moduleUrl);
+      const module = await importSnapshotBoundModule(
+        moduleUrl,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        options.allowDocumentReload !== false,
+      );
       return module.MDXLayout || module.MainLayout || module.default || module;
     }
 
@@ -1106,9 +1126,18 @@ export const getRouterScript = () => `
 
       try {
         await Promise.all(
-          modulePaths.map((modulePath) => loadPageDataComponent(pageData, modulePath))
+          modulePaths.map((modulePath) =>
+            loadPageDataComponent(pageData, modulePath, { allowDocumentReload: false })
+          )
         );
       } catch (error) {
+        if (error?.dependencySnapshotConflict) {
+          const cacheIdentity = pageDataCacheIdentity(path);
+          pageDataCache.delete(cacheIdentity);
+          backgroundRefreshTimestamps.delete(cacheIdentity);
+          prefetchedPaths.delete(path);
+          throw error;
+        }
         logBackgroundFetchFailure('Module prefetch', path, error);
       }
     }
@@ -1151,8 +1180,11 @@ export const getRouterScript = () => `
         activePageDataPrefetchControllers.set(href, controller);
 
         fetchPageDataForPrefetch(href, controller.signal)
-          .catch(() => {
+          .catch((error) => {
             prefetchedPaths.delete(href);
+            if (error?.dependencySnapshotConflict) {
+              logBackgroundFetchFailure('Module prefetch', href, error);
+            }
           })
           .finally(() => {
             inFlightPrefetches.delete(href);

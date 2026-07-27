@@ -19,7 +19,7 @@ export interface RenderCacheKeyComposition {
   readonly colorScheme?: "light" | "dark";
 }
 
-function isCanonicalPinningCacheKey(cacheKey: string): boolean {
+export function isCanonicalDependencyPinningCacheKey(cacheKey: string): boolean {
   if (cacheKey === "on:unknown" || cacheKey === "on:no-project") {
     return false;
   }
@@ -86,7 +86,7 @@ export function buildDependencyPinningCacheVariant(
 ): string | undefined {
   if (
     !dependencyPinningCacheKey ||
-    !isCanonicalPinningCacheKey(dependencyPinningCacheKey)
+    !isCanonicalDependencyPinningCacheKey(dependencyPinningCacheKey)
   ) return undefined;
 
   const variant = moduleServerOrigin

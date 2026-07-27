@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import {
   _resolveUnifiedTransformOptionsForTest,
@@ -11,12 +12,13 @@ import {
 describe("loadComponentsUnified dependency snapshots", () => {
   it("passes one immutable caller snapshot to every parallel transform", async () => {
     const callerDependencies = { lodash: "1.0.0" };
+    const dependencyPinningCacheKey = `on:${hashString(JSON.stringify([["lodash", "1.0.0"]]))}`;
     const transformOptions = await _resolveUnifiedTransformOptionsForTest(
       "/project",
       {
         projectId: "project-id",
         moduleServerOrigin: "https://preview.example",
-        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningCacheKey,
         dependencyPinningDependencies: callerDependencies,
       },
     );
@@ -45,7 +47,7 @@ describe("loadComponentsUnified dependency snapshots", () => {
     assertEquals(
       observedOptions.every(
         (options) =>
-          options.dependencyPinningCacheKey === "on:snapshot-a" &&
+          options.dependencyPinningCacheKey === dependencyPinningCacheKey &&
           options.dependencyPinningDependencies?.lodash === "1.0.0",
       ),
       true,

@@ -423,7 +423,7 @@ describe(
           createBareExternalPlugin({
             projectDir: "/project",
             projectId: "project-ref",
-            dependencyPinningCacheKey: "on:snapshot-exact",
+            dependencyPinningCacheKey: "on:3iubttgtkrz2l",
             dependencyPinningDependencies: {
               react: "19.1.1",
               "react-dom": "19.1.1",

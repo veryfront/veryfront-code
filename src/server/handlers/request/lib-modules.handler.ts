@@ -218,7 +218,7 @@ export class LibModulesHandler extends BaseHandler {
         .withCache("no-store")
         .withContentType(
           "text/plain; charset=utf-8",
-          method === "HEAD" ? null : "Dependency snapshot conflict",
+          method === "HEAD" ? null : "Unknown dependency snapshot",
           HttpStatus.CONFLICT,
         ),
     );

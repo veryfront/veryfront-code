@@ -22,14 +22,17 @@
  * const hydration = JSON.parse(
  *   document.getElementById("veryfront-hydration-data")?.textContent || "{}",
  * );
- * const actionUrl = new URL("/_veryfront/rsc/action", location.origin);
- * if (hydration.dependencyPinningCacheKey?.startsWith("on:")) {
- *   actionUrl.searchParams.set("pins", hydration.dependencyPinningCacheKey);
+ * const headers: Record<string, string> = {
+ *   "x-csrf-token": getCookie("__Host-vf_csrf") ?? "",
+ * };
+ * const pinKey = hydration.dependencyPinningCacheKey;
+ * if (typeof pinKey === "string" && pinKey.startsWith("on:")) {
+ *   headers["x-veryfront-dependency-pins"] = pinKey;
  * }
  *
- * const res = await fetch(actionUrl, {
+ * const res = await fetch("/_veryfront/rsc/action", {
  *   method: "POST",
- *   headers: { "x-csrf-token": getCookie("__Host-vf_csrf") ?? "" },
+ *   headers,
  *   body: actionPayload,
  * });
  * ```

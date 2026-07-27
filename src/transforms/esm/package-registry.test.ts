@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
   _clearNpmVersionCache,
@@ -29,6 +30,15 @@ import {
   resolveRequestedDependencyPinningSnapshot,
   stripSemverRange,
 } from "./package-registry.ts";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
 
 describe("package-registry", () => {
   describe("stripSemverRange", () => {
@@ -491,12 +501,21 @@ describe("package-registry adapter-backed snapshot sources", () => {
       },
     });
     const snapshotB = await getDependencyPinningSnapshot(sourceB);
+    const resolvedSnapshotA = await resolveDependencyPinningSnapshot(
+      sourceB,
+      snapshotA.cacheKey,
+      snapshotA.dependencies,
+    );
 
     assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
     assertEquals(snapshotA.dependencies?.react, "18.3.1");
     assertEquals(snapshotA.dependencies?.veryfront, "0.1.10");
     assertEquals(snapshotA.configuredVersions?.react?.declaration, "^18.3.1");
     assertEquals(snapshotA.configuredVersions?.veryfront?.declaration, "^0.1.10");
+    assertEquals(
+      resolvedSnapshotA.configuredVersions?.react?.declaration,
+      "^18.3.1",
+    );
     assertEquals(
       (await resolveRequestedDependencyPinningSnapshot(
         sourceB,
@@ -511,6 +530,54 @@ describe("package-registry adapter-backed snapshot sources", () => {
         dependencyPinningDependencies: snapshotA.dependencies,
       }),
       "18.3.1",
+    );
+  });
+
+  it("resolves a config-derived caller snapshot after remembered state is cleared", async () => {
+    const state = {
+      content: JSON.stringify({ dependencies: { tenant: "1.0.0" } }),
+      mtime: new Date(3_500),
+    };
+    const source = memorySource('["project-a","release-cold"]', state, {
+      react: { version: "^18.3.1" },
+      client: {
+        cdn: {
+          versions: {
+            veryfront: "^0.1.10",
+          },
+        },
+      },
+    });
+    const captured = await getDependencyPinningSnapshot(source);
+
+    clearReactVersionCache();
+    const resolved = await resolveDependencyPinningSnapshot(
+      source,
+      captured.cacheKey,
+      captured.dependencies,
+    );
+
+    assertEquals(resolved.cacheKey, captured.cacheKey);
+    assertEquals(resolved.dependencies?.tenant, "1.0.0");
+    assertEquals(resolved.dependencies?.react, "18.3.1");
+    assertEquals(resolved.dependencies?.veryfront, "0.1.10");
+    assertEquals(resolved.configuredVersions?.react?.declaration, "^18.3.1");
+    assertEquals(resolved.configuredVersions?.veryfront?.declaration, "^0.1.10");
+    assertEquals(Object.isFrozen(resolved), true);
+    assertEquals(Object.isFrozen(resolved.dependencies), true);
+    assertEquals(Object.isFrozen(resolved.configuredVersions), true);
+    assertEquals(Object.isFrozen(resolved.configuredVersions?.react), true);
+    assertEquals(Object.isFrozen(resolved.configuredVersions?.veryfront), true);
+
+    await assertRejects(
+      () =>
+        resolveDependencyPinningSnapshot(
+          source,
+          captured.cacheKey,
+          { ...captured.dependencies, tenant: "2.0.0" },
+        ),
+      Error,
+      "does not match supplied dependencies",
     );
   });
 
@@ -692,11 +759,12 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
     assertEquals(resolved.every((value) => value === snapshot), true);
   });
 
-  it("clones supplied maps and fails closed when an on snapshot is unavailable", async () => {
+  it("clones canonical supplied maps and fails closed when an on snapshot is unavailable", async () => {
     const dependencies = { lodash: "4.17.21" };
+    const cacheKey = cacheKeyForDependencies(dependencies);
     const snapshot = await resolveDependencyPinningSnapshot(
       tmpDir,
-      "on:caller-snapshot",
+      cacheKey,
       dependencies,
     );
     dependencies.lodash = "5.0.0";
@@ -705,7 +773,11 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
     assertEquals(Object.isFrozen(snapshot), true);
     assertEquals(Object.isFrozen(snapshot.dependencies), true);
     await assertRejects(
-      () => resolveDependencyPinningSnapshot(tmpDir, "on:missing-snapshot"),
+      () =>
+        resolveDependencyPinningSnapshot(
+          tmpDir,
+          cacheKeyForDependencies({ missing: "1.0.0" }),
+        ),
       Error,
       "snapshot is unavailable",
     );
@@ -713,6 +785,39 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
       () => resolveDependencyPinningSnapshot(tmpDir, "malformed", {}),
       Error,
       "Invalid dependency pinning snapshot key",
+    );
+  });
+
+  it("rejects noncanonical caller snapshot keys", async () => {
+    await assertRejects(
+      () =>
+        resolveDependencyPinningSnapshot(
+          tmpDir,
+          "on:caller-snapshot",
+          { lodash: "4.17.21" },
+        ),
+      Error,
+      "Invalid dependency pinning snapshot key",
+    );
+  });
+
+  it("rejects the same canonical key with a different dependency map", async () => {
+    const cacheKey = cacheKeyForDependencies({ lodash: "4.17.21" });
+    await resolveDependencyPinningSnapshot(
+      tmpDir,
+      cacheKey,
+      { lodash: "4.17.21" },
+    );
+
+    await assertRejects(
+      () =>
+        resolveDependencyPinningSnapshot(
+          tmpDir,
+          cacheKey,
+          { lodash: "5.0.0" },
+        ),
+      Error,
+      "does not match supplied dependencies",
     );
   });
 

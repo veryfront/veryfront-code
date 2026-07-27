@@ -321,6 +321,7 @@ describe("LibModulesHandler", () => {
 
       assertEquals(historical.status, 409);
       assertEquals(historical.headers.get("cache-control"), "no-store");
+      assertEquals(await historical.text(), "Unknown dependency snapshot");
       assertEquals(current.status, 200);
     });
 

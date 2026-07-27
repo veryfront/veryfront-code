@@ -40,6 +40,20 @@ export function getConfiguredRSCReactVersion(config?: VeryfrontConfig): string |
   return legacyVersions && legacyVersions !== "auto" ? legacyVersions.react : undefined;
 }
 
+export function getConfiguredRSCDependencyVersionIdentity(
+  config?: VeryfrontConfig,
+): readonly [react: string | null, veryfront: string | null] {
+  const legacyVersions = config?.client?.cdn?.versions;
+  const veryfrontVersion = legacyVersions && legacyVersions !== "auto"
+    ? legacyVersions.veryfront
+    : undefined;
+
+  return [
+    getConfiguredRSCReactVersion(config) ?? null,
+    veryfrontVersion ?? null,
+  ];
+}
+
 export class RSCDevServerHandler {
   private renderer: RSCRenderer | null = null;
   private clientManifest: Map<string, ClientComponentMeta> | null = null;

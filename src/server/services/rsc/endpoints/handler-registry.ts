@@ -8,7 +8,7 @@
 
 import { RSCDevServerHandler } from "../orchestrators/index.ts";
 import {
-  getConfiguredRSCReactVersion,
+  getConfiguredRSCDependencyVersionIdentity,
   type RSCServerHandlerOptions,
 } from "../orchestrators/handler.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -79,14 +79,14 @@ export function getRSCHandler(
   const baseKey = projectId ?? projectDir;
   const appDir = options.config?.directories?.app ?? "app";
   const mode = options.mode ?? "production";
-  const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
+  const dependencyVersionIdentity = getConfiguredRSCDependencyVersionIdentity(options.config);
   const pinningEnabled = options.dependencyPinningEnabled === true;
   const cacheKey = JSON.stringify([
     baseKey,
     options.isLocalProject === true,
     mode,
     appDir,
-    reactVersion,
+    ...dependencyVersionIdentity,
     ...(options.contentSourceId || options.releaseId
       ? [options.releaseId ?? null, options.contentSourceId ?? null]
       : []),

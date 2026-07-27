@@ -103,13 +103,13 @@ function hasDefaultExport(code: string): boolean {
  */
 async function writeCycleTargetAlias(
   input: PersistTransformedModuleInput,
-  relativePath: string,
+  outputRelativePath: string,
   hashedFileName: string,
 ): Promise<void> {
-  const aliasRelativePath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+  const aliasRelativePath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
   // Same extension in and out means nothing was renamed (already `.js`): the
   // authored edge already points at the real artifact, so no alias is needed.
-  if (aliasRelativePath === relativePath) return;
+  if (aliasRelativePath === outputRelativePath) return;
 
   const aliasPath = join(input.tmpDir, aliasRelativePath);
   const lines = [`export * from "./${hashedFileName}";`];
@@ -141,7 +141,14 @@ export async function persistTransformedModule(
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
     : input.filePath.replace(/^\/+/, "");
 
-  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
+  const cacheVariant = buildModuleTransformCacheVariant(
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
+  );
+  const outputRelativePath = cacheVariant
+    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
+    : relativePath;
+  const jsPath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
   const tempFilePath = join(input.tmpDir, jsPath);
 
   const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
@@ -206,7 +213,7 @@ export async function persistTransformedModule(
 
   if (input.isCycleTarget) {
     const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
-    await writeCycleTargetAlias(input, relativePath, hashedFileName);
+    await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
   }
 
   return tempFilePath;

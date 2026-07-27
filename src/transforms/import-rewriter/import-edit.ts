@@ -43,7 +43,10 @@ function maskHttpUrls(code: string): UrlMaskResult {
   const masked = code.replace(
     HTTP_URL_PATTERN,
     (_match, quote: string, url: string) => {
-      const placeholder = `__VFURL_${counter++}__`;
+      let placeholder: string;
+      do {
+        placeholder = `__VFURL_${counter++}__`;
+      } while (code.includes(placeholder) || urlMap.has(placeholder));
       urlMap.set(placeholder, url);
       return `${quote}${placeholder}${quote}`;
     },

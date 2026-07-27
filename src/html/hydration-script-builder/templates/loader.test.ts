@@ -187,7 +187,10 @@ describe("hydration-script-builder/templates/loader", () => {
 
     it("should define async loadComponent function", () => {
       const result = getResult();
-      assertEquals(result.includes("async function loadComponent(path, moduleData)"), true);
+      assertEquals(
+        result.includes("async function loadComponent(path, moduleData, options = {})"),
+        true,
+      );
     });
 
     it("loads pinned components through snapshot recovery", async () => {

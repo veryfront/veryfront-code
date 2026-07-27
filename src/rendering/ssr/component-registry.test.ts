@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import type { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { ComponentRegistry } from "./component-registry.ts";
 import type * as React from "react";
@@ -11,6 +12,15 @@ import type * as React from "react";
 // by inlining them here.
 
 type SkipEntryResult = { skip: boolean; reason?: string };
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
 
 function createErrorFallbackComponent(
   componentName: string,
@@ -341,9 +351,17 @@ describe("ComponentRegistry logic", () => {
       );
 
       await registry.loadFromDirectory("/project/components", true);
+      const dependenciesA = { lodash: "1.0.0" };
+      const dependenciesB = { lodash: "2.0.0" };
       const [snapshotA, snapshotB] = await Promise.all([
-        registry.prepareDependencySnapshot("on:a", { lodash: "1.0.0" }),
-        registry.prepareDependencySnapshot("on:b", { lodash: "2.0.0" }),
+        registry.prepareDependencySnapshot(
+          cacheKeyForDependencies(dependenciesA),
+          dependenciesA,
+        ),
+        registry.prepareDependencySnapshot(
+          cacheKeyForDependencies(dependenciesB),
+          dependenciesB,
+        ),
       ]);
 
       const componentA = registry.getAllAsComponents(snapshotA).Button;
@@ -382,21 +400,23 @@ describe("ComponentRegistry logic", () => {
       );
 
       await registry.loadFromDirectory("/project/components", true);
+      const dependencies = {};
+      const cacheKey = cacheKeyForDependencies(dependencies);
       const originAKey = await registry.prepareDependencySnapshot(
-        "on:snapshot",
-        {},
+        cacheKey,
+        dependencies,
         undefined,
         "https://a.example",
       );
       const originBKey = await registry.prepareDependencySnapshot(
-        "on:snapshot",
-        {},
+        cacheKey,
+        dependencies,
         undefined,
         "https://b.example",
       );
       const originAKeyAgain = await registry.prepareDependencySnapshot(
-        "on:snapshot",
-        {},
+        cacheKey,
+        dependencies,
         undefined,
         "https://a.example",
       );
@@ -440,16 +460,22 @@ describe("ComponentRegistry logic", () => {
       );
 
       await registry.loadFromDirectory("/project/components", true);
+      const snapshotKeys: string[] = [];
       for (let index = 0; index < 32; index++) {
+        const dependencies = { lodash: `${index}.0.0` };
+        const cacheKey = cacheKeyForDependencies(dependencies);
+        snapshotKeys.push(cacheKey);
         await registry.prepareDependencySnapshot(
-          `on:snapshot-${index}`,
-          { lodash: `${index}.0.0` },
+          cacheKey,
+          dependencies,
         );
       }
-      assertEquals(registry.has("Button", "on:snapshot-0"), true);
+      assertEquals(registry.has("Button", snapshotKeys[0]), true);
+      const dependencies32 = { lodash: "32.0.0" };
+      const snapshot32Key = cacheKeyForDependencies(dependencies32);
       await registry.prepareDependencySnapshot(
-        "on:snapshot-32",
-        { lodash: "32.0.0" },
+        snapshot32Key,
+        dependencies32,
       );
 
       const retainedState = registry as unknown as {
@@ -458,9 +484,9 @@ describe("ComponentRegistry logic", () => {
       };
       assertEquals(retainedState.componentsByDependencySnapshot.size, 32);
       assertEquals(retainedState.dependencySnapshotGenerations.size, 32);
-      assertEquals(registry.has("Button", "on:snapshot-0"), true);
-      assertEquals(registry.has("Button", "on:snapshot-1"), false);
-      assertEquals(registry.has("Button", "on:snapshot-32"), true);
+      assertEquals(registry.has("Button", snapshotKeys[0]), true);
+      assertEquals(registry.has("Button", snapshotKeys[1]), false);
+      assertEquals(registry.has("Button", snapshot32Key), true);
     });
   });
 });

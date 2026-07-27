@@ -81,10 +81,48 @@ export class PageHandler {
 <body>
   <div id="rsc-root"></div>
   <script type="module"${nonceAttr}>
+    const DEPENDENCY_SNAPSHOT_RECOVERY_RESULT = Object.freeze({
+      dependencySnapshotRecoveryStarted: true,
+    });
+
+    async function isDependencySnapshotConflictResponse(response) {
+      if (!response || response.status !== 409) return false;
+
+      try {
+        return (await response.clone().text()).trim() === 'Unknown dependency snapshot';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function recoverFromDependencySnapshotConflict(
+      response,
+      reloadDocument = () => window.location.reload(),
+      recoveryState = window,
+    ) {
+      if (!(await isDependencySnapshotConflictResponse(response))) return false;
+
+      const recoveryKey = '__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__';
+      if (recoveryState[recoveryKey] === true) return true;
+
+      recoveryState[recoveryKey] = true;
+      try {
+        reloadDocument();
+      } catch (_) {
+        delete recoveryState[recoveryKey];
+        return false;
+      }
+      return true;
+    }
+
     async function fetchPayload(url, headers) {
       try {
         const res = await fetch(url, { headers });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          return await recoverFromDependencySnapshotConflict(res)
+            ? DEPENDENCY_SNAPSHOT_RECOVERY_RESULT
+            : null;
+        }
         return await res.json();
       } catch (_) {
         // expected: fetch may fail in browser context
@@ -113,8 +151,11 @@ export class PageHandler {
     (async () => {
       const renderUrl = ${renderUrlJs};
       const transportHeaders = ${transportHeadersJs};
+      const payloadResult = await fetchPayload(renderUrl, transportHeaders);
+      if (payloadResult === DEPENDENCY_SNAPSHOT_RECOVERY_RESULT) return;
+
       const payload =
-        (await fetchPayload(renderUrl, transportHeaders)) ??
+        payloadResult ??
         { html: '<p>RSC unavailable</p>', clientRefs: [] };
 
       seedDependencySnapshot(payload);

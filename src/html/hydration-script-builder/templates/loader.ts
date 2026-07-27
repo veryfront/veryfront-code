@@ -181,7 +181,7 @@ export const getLoaderScript = (): string => `
     }
     window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 
-    async function loadComponent(path, moduleData) {
+    async function loadComponent(path, moduleData, options = {}) {
       if (!path) return null;
 
       const cacheKey = componentCacheKey(path, moduleData);
@@ -199,7 +199,14 @@ export const getLoaderScript = (): string => `
           const start = DEBUG ? performance.now() : 0;
 
           log('Loading component:', moduleUrl);
-          const module = await importSnapshotBoundModule(moduleUrl);
+          const module = await importSnapshotBoundModule(
+            moduleUrl,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            options.allowDocumentReload !== false,
+          );
 
           // Prefer MDXLayout/MainLayout over default for MDX files
           // MDXContent (default export) has a bug where it overwrites children prop
@@ -218,6 +225,7 @@ export const getLoaderScript = (): string => `
           componentCache.set(cacheKey, component);
           return component;
         } catch (error) {
+          if (error?.dependencySnapshotConflict) throw error;
           logError('Failed to load component:', path, error);
           return null;
         } finally {

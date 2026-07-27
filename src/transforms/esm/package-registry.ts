@@ -7,6 +7,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
 import type {
   FileInfo,
   FileSystemAdapter,
@@ -416,7 +417,7 @@ function normalizeDependencyPinningSource(
 }
 
 function hashDependencyPins(
-  dependencies: Record<string, string>,
+  dependencies: Readonly<Record<string, string>>,
   configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
 ): string {
   const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
@@ -429,6 +430,19 @@ function hashDependencyPins(
     dependencies: sortedEntries,
     configuredVersions,
   }));
+}
+
+function dependencyMapsEqual(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+): boolean {
+  const leftEntries = Object.entries(left).sort(([leftName], [rightName]) =>
+    leftName.localeCompare(rightName)
+  );
+  const rightEntries = Object.entries(right).sort(([leftName], [rightName]) =>
+    leftName.localeCompare(rightName)
+  );
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
 }
 
 function copyDependencyMap(
@@ -447,6 +461,21 @@ function dependencySnapshotKey(cacheIdentity: string, cacheKey: string): string 
   return `${cacheIdentity}\0${cacheKey}`;
 }
 
+function freezeConfiguredVersions(
+  configuredVersions?: DependencyPinningSnapshot["configuredVersions"],
+): DependencyPinningSnapshot["configuredVersions"] {
+  return configuredVersions
+    ? Object.freeze({
+      ...(configuredVersions.react
+        ? { react: Object.freeze({ ...configuredVersions.react }) }
+        : {}),
+      ...(configuredVersions.veryfront
+        ? { veryfront: Object.freeze({ ...configuredVersions.veryfront }) }
+        : {}),
+    })
+    : undefined;
+}
+
 function rememberDependencyPinningSnapshot(
   cacheIdentity: string,
   cacheKey: string,
@@ -456,16 +485,7 @@ function rememberDependencyPinningSnapshot(
   const snapshot: DependencyPinningSnapshot = Object.freeze({
     cacheKey,
     dependencies: dependencies ? Object.freeze(copyDependencyMap(dependencies)) : undefined,
-    configuredVersions: configuredVersions
-      ? Object.freeze({
-        ...(configuredVersions.react
-          ? { react: Object.freeze({ ...configuredVersions.react }) }
-          : {}),
-        ...(configuredVersions.veryfront
-          ? { veryfront: Object.freeze({ ...configuredVersions.veryfront }) }
-          : {}),
-      })
-      : undefined,
+    configuredVersions: freezeConfiguredVersions(configuredVersions),
   });
   const key = dependencySnapshotKey(cacheIdentity, cacheKey);
   if (
@@ -558,17 +578,43 @@ export async function resolveDependencyPinningSnapshot(
     return current;
   }
   if (cacheKey === "off") return FLAG_OFF_DEPENDENCY_SNAPSHOT;
-  if (!cacheKey.startsWith("on:") || cacheKey === "on:unknown") {
+  if (!isCanonicalDependencyPinningCacheKey(cacheKey)) {
     throw new Error(`Invalid dependency pinning snapshot key: ${cacheKey}`);
   }
 
   if (dependencies !== undefined) {
-    const immutableDependencies = Object.freeze(
-      copyDependencyMap(dependencies),
+    const copiedDependencies = copyDependencyMap(dependencies);
+    const remembered = getDependencyPinningSnapshotSync(source, cacheKey);
+    if (remembered) {
+      if (
+        !remembered.dependencies ||
+        !dependencyMapsEqual(remembered.dependencies, copiedDependencies)
+      ) {
+        throw new Error(
+          `Dependency pinning snapshot key does not match supplied dependencies: ${cacheKey}`,
+        );
+      }
+      return remembered;
+    }
+
+    const configuredVersions = captureConfiguredVersions(
+      normalizeDependencyPinningSource(source).config,
     );
+    const matchesDependencyMap = `on:${hashDependencyPins(copiedDependencies)}` === cacheKey;
+    const matchesConfiguredVersions = configuredVersions !== undefined &&
+      `on:${hashDependencyPins(copiedDependencies, configuredVersions)}` === cacheKey;
+    if (!matchesDependencyMap && !matchesConfiguredVersions) {
+      throw new Error(
+        `Dependency pinning snapshot key does not match supplied dependencies: ${cacheKey}`,
+      );
+    }
+    const immutableDependencies = Object.freeze(copiedDependencies);
     return Object.freeze({
       cacheKey,
       dependencies: immutableDependencies,
+      configuredVersions: matchesConfiguredVersions
+        ? freezeConfiguredVersions(configuredVersions)
+        : undefined,
     });
   }
 

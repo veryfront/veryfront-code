@@ -19,7 +19,11 @@ import {
   rewriteDenoNodeBuiltinImports,
   rewriteDenoNpmDependencyImports,
 } from "#veryfront/routing/api/module-loader/external-import-rewriter.ts";
-import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
+import {
+  applyComputedDynamicImportPinning,
+  applyImportEdits,
+  parseImportEdits,
+} from "./import-edit.ts";
 import { rewriteWithImportRewriteCore } from "./core.ts";
 import {
   rewriteCompiledVeryfrontImportsForRoute,
@@ -181,6 +185,22 @@ describe("import edit core", () => {
       out,
       `const u = "https://example.com/a";\nimport m from "./b.json" with { type: "json" };\n`,
     );
+  });
+
+  it("does not restore masked URLs over user placeholder-looking identifiers", async () => {
+    const code = [
+      `const __VFURL_0__ = "untouched";`,
+      `const endpoint = "https://example.com/api";`,
+      `const expression = "./lazy.js";`,
+      `const module = import(expression);`,
+    ].join("\n");
+
+    const parsed = await parseImportEdits(code);
+    const out = applyComputedDynamicImportPinning(parsed, "/_vf_modules/page.js");
+
+    assertStringIncludes(out, `const __VFURL_0__ = "untouched";`);
+    assertStringIncludes(out, `const endpoint = "https://example.com/api";`);
+    assertStringIncludes(out, `import(/*__vf_dependency_pinned__*/`);
   });
 });
 

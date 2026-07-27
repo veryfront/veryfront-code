@@ -3,6 +3,40 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageHandler } from "./page-handler.ts";
 
+function extractGeneratedFunction(html: string, declaration: string): string {
+  const start = html.indexOf(declaration);
+  assertEquals(start >= 0, true, `${declaration} not found in page handler HTML`);
+  const end = html.indexOf("\n    }", start);
+  assertEquals(end > start, true, `could not find end of ${declaration}`);
+  return html.slice(start, end + "\n    }".length);
+}
+
+async function runGeneratedSnapshotRecovery(
+  html: string,
+  response: Response,
+  reloadDocument: () => void,
+  recoveryState: Record<string, unknown>,
+): Promise<boolean> {
+  const source = [
+    extractGeneratedFunction(
+      html,
+      "async function isDependencySnapshotConflictResponse(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "async function recoverFromDependencySnapshotConflict(",
+    ),
+  ].join("\n");
+
+  return await new Function(
+    "response",
+    "reloadDocument",
+    "recoveryState",
+    `${source}
+return recoverFromDependencySnapshotConflict(response, reloadDocument, recoveryState);`,
+  )(response, reloadDocument, recoveryState) as boolean;
+}
+
 describe("server/services/rsc/orchestrators/page-handler", () => {
   describe("handle", () => {
     it("should return HTML response with correct content type", () => {
@@ -166,6 +200,56 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(
         html.indexOf("seedDependencySnapshot(payload)") <
           html.indexOf("import('/_veryfront/rsc/client.js?hydrate=1')"),
+        true,
+      );
+    });
+
+    it("reloads once and stops first render for an exact dependency snapshot conflict", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:pins-a",
+      );
+      const html = await handler.handle("/", new URLSearchParams()).text();
+      const recoveryState: Record<string, unknown> = {};
+      let reloads = 0;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        assertEquals(
+          await runGeneratedSnapshotRecovery(
+            html,
+            new Response("Unknown dependency snapshot", { status: 409 }),
+            () => {
+              reloads++;
+            },
+            recoveryState,
+          ),
+          true,
+        );
+      }
+
+      assertEquals(reloads, 1);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        true,
+      );
+      assertEquals(
+        await runGeneratedSnapshotRecovery(
+          html,
+          new Response("Application conflict", { status: 409 }),
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+        false,
+      );
+      assertEquals(reloads, 1);
+      assertEquals(
+        html.includes(
+          "if (payloadResult === DEPENDENCY_SNAPSHOT_RECOVERY_RESULT) return;",
+        ),
         true,
       );
     });
