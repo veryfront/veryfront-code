@@ -71,10 +71,10 @@ const IntrinsicRangeError = RangeError;
 const IntrinsicSet = Set;
 const IntrinsicString = String;
 const IntrinsicTypeError = TypeError;
+const IntrinsicWeakSet = WeakSet;
 const ArrayIsArray = Array.isArray;
 const ArrayPrototype = Array.prototype;
 const ArrayPrototypeIncludes = Array.prototype.includes;
-const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSort = Array.prototype.sort;
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectPrototype = Object.prototype;
@@ -93,6 +93,10 @@ const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
 const StringPrototypeSlice = String.prototype.slice;
+const WeakSetPrototypeAdd = WeakSet.prototype.add;
+const WeakSetPrototypeHas = WeakSet.prototype.has;
+const SNAPSHOT_LIMIT_EXCEEDED = Symbol("snapshot-limit-exceeded");
+const canonicalSourceIntegrationPolicies = new IntrinsicWeakSet<object>();
 
 function freezeObject<T extends object>(value: T): Readonly<T> {
   return ReflectApply(ObjectFreeze, undefined, [value]) as Readonly<T>;
@@ -107,15 +111,15 @@ function defineOwnDataProperty<T>(
   key: string,
   value: T,
 ): void {
+  const descriptor = createNullRecord<unknown>();
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.value = value;
+  descriptor.writable = true;
   ReflectApply(ObjectDefineProperty, undefined, [
     target,
     key,
-    {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    },
+    descriptor,
   ]);
 }
 
@@ -124,7 +128,16 @@ function hasOwn(value: object, key: string): boolean {
 }
 
 function pushValue<T>(values: T[], value: T): void {
-  ReflectApply(ArrayPrototypePush, values, [value]);
+  const descriptor = createNullRecord<unknown>();
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.value = value;
+  descriptor.writable = true;
+  ReflectApply(ObjectDefineProperty, undefined, [
+    values,
+    IntrinsicString(values.length),
+    descriptor,
+  ]);
 }
 
 function sortStrings(values: string[]): string[] {
@@ -137,6 +150,14 @@ function setHas(set: Set<string>, value: string): boolean {
 
 function setAdd(set: Set<string>, value: string): void {
   ReflectApply(SetPrototypeAdd, set, [value]);
+}
+
+function weakSetHas(set: WeakSet<object>, value: object): boolean {
+  return ReflectApply(WeakSetPrototypeHas, set, [value]) as boolean;
+}
+
+function weakSetAdd(set: WeakSet<object>, value: object): void {
+  ReflectApply(WeakSetPrototypeAdd, set, [value]);
 }
 
 function stringIncludes(value: string, search: string): boolean {
@@ -160,20 +181,21 @@ function stringSliceRange(value: string, start: number, end: number): string {
 }
 
 /**
- * Snapshot a small plain data record without dereferencing accessors. Proxy
- * traps are treated as malformed input and never escape this boundary.
+ * Snapshot a small plain data record without dereferencing accessors. Reflective
+ * inspection can invoke proxy traps, but trap failures remain contained and
+ * malformed input never escapes this boundary.
  */
 function snapshotDataRecord(
   value: unknown,
   maxKeys: number,
-): DataRecordSnapshot | null {
+): DataRecordSnapshot | typeof SNAPSHOT_LIMIT_EXCEEDED | null {
   try {
     if (typeof value !== "object" || value === null || ArrayIsArray(value)) return null;
     const prototype = ReflectApply(ReflectGetPrototypeOf, undefined, [value]);
     if (prototype !== ObjectPrototype && prototype !== null) return null;
 
     const ownKeys = ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
-    if (ownKeys.length > maxKeys) return null;
+    if (ownKeys.length > maxKeys) return SNAPSHOT_LIMIT_EXCEEDED;
 
     const keys: string[] = new IntrinsicArray();
     const values = createNullRecord<unknown>();
@@ -184,7 +206,12 @@ function snapshotDataRecord(
         value,
         key,
       ]) as PropertyDescriptor | undefined;
-      if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      if (
+        !descriptor ||
+        !hasOwn(descriptor, "value") ||
+        !hasOwn(descriptor, "enumerable") ||
+        descriptor.enumerable !== true
+      ) {
         return null;
       }
       defineOwnDataProperty(values, key, descriptor.value);
@@ -199,7 +226,10 @@ function snapshotDataRecord(
 /**
  * Snapshot a dense ordinary array without invoking accessors or iterators.
  */
-function snapshotDataArray(value: unknown, maxLength: number): unknown[] | null {
+function snapshotDataArray(
+  value: unknown,
+  maxLength: number,
+): unknown[] | typeof SNAPSHOT_LIMIT_EXCEEDED | null {
   try {
     if (!ArrayIsArray(value)) return null;
     const prototype = ReflectApply(ReflectGetPrototypeOf, undefined, [value]);
@@ -209,33 +239,40 @@ function snapshotDataArray(value: unknown, maxLength: number): unknown[] | null 
       value,
       "length",
     ]) as PropertyDescriptor | undefined;
-    const length = lengthDescriptor && "value" in lengthDescriptor
+    const length = lengthDescriptor && hasOwn(lengthDescriptor, "value")
       ? lengthDescriptor.value
       : undefined;
     if (
       typeof length !== "number" ||
       !NumberIsSafeInteger(length) ||
       length < 0 ||
-      length > maxLength ||
+      !lengthDescriptor ||
+      !hasOwn(lengthDescriptor, "enumerable") ||
       lengthDescriptor?.enumerable !== false
     ) {
       return null;
     }
+    if (length > maxLength) return SNAPSHOT_LIMIT_EXCEEDED;
 
     const ownKeys = ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
     if (ownKeys.length !== length + 1) return null;
 
-    const values: unknown[] = new IntrinsicArray(length);
+    const values: unknown[] = new IntrinsicArray();
     for (let index = 0; index < length; index++) {
       const key = IntrinsicString(index);
       const descriptor = ReflectApply(ReflectGetOwnPropertyDescriptor, undefined, [
         value,
         key,
       ]) as PropertyDescriptor | undefined;
-      if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+      if (
+        !descriptor ||
+        !hasOwn(descriptor, "value") ||
+        !hasOwn(descriptor, "enumerable") ||
+        descriptor.enumerable !== true
+      ) {
         return null;
       }
-      values[index] = descriptor.value;
+      pushValue(values, descriptor.value);
     }
     return values;
   } catch {
@@ -249,7 +286,8 @@ function hasExactKeys(
 ): boolean {
   if (snapshot.keys.length !== expectedKeys.length) return false;
   for (let index = 0; index < expectedKeys.length; index++) {
-    if (!hasOwn(snapshot.values, expectedKeys[index]!)) return false;
+    const key = expectedKeys[index];
+    if (typeof key !== "string" || !hasOwn(snapshot.values, key)) return false;
   }
   return true;
 }
@@ -277,7 +315,9 @@ function createAllowlistManifest(
   defineOwnDataProperty(manifest, "schemaVersion", 1);
   defineOwnDataProperty(manifest, "mode", "allowlist");
   defineOwnDataProperty(manifest, "integrations", freezeObject(integrations));
-  return freezeObject(manifest) as SourceIntegrationPolicyManifest;
+  const frozenManifest = freezeObject(manifest) as SourceIntegrationPolicyManifest;
+  weakSetAdd(canonicalSourceIntegrationPolicies, frozenManifest);
+  return frozenManifest;
 }
 
 const unrestrictedSourceIntegrationPolicy = createNullRecord<unknown>();
@@ -286,6 +326,10 @@ defineOwnDataProperty(unrestrictedSourceIntegrationPolicy, "mode", "unrestricted
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = freezeObject(
   unrestrictedSourceIntegrationPolicy,
 ) as SourceIntegrationPolicyManifest;
+weakSetAdd(
+  canonicalSourceIntegrationPolicies,
+  UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+);
 
 const EMPTY_SOURCE_INTEGRATION_RESTRICTIONS = freezeObject(createRestrictionRecord());
 
@@ -309,7 +353,13 @@ function tryParseSourceIntegrationPolicyManifest(
   value: unknown,
 ): SourceIntegrationPolicyManifest | null {
   const manifest = snapshotDataRecord(value, 3);
-  if (!manifest || manifest.values.schemaVersion !== 1) return null;
+  if (
+    !manifest ||
+    manifest === SNAPSHOT_LIMIT_EXCEEDED ||
+    manifest.values.schemaVersion !== 1
+  ) {
+    return null;
+  }
 
   if (manifest.values.mode === "unrestricted") {
     return hasExactKeys(manifest, ["schemaVersion", "mode"])
@@ -327,13 +377,14 @@ function tryParseSourceIntegrationPolicyManifest(
     manifest.values.integrations,
     MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS,
   );
-  if (!integrationSnapshot) return null;
+  if (!integrationSnapshot || integrationSnapshot === SNAPSHOT_LIMIT_EXCEEDED) return null;
 
   const integrationNames = sortStrings(integrationSnapshot.keys);
   const integrations = createRestrictionRecord();
   let totalToolIds = 0;
   for (let index = 0; index < integrationNames.length; index++) {
-    const integration = integrationNames[index]!;
+    const integration = integrationNames[index];
+    if (typeof integration !== "string") return null;
     const restrictionSnapshot = snapshotDataRecord(
       integrationSnapshot.values[integration],
       1,
@@ -341,6 +392,7 @@ function tryParseSourceIntegrationPolicyManifest(
     if (
       !isCanonicalIntegrationToolSegment(integration) ||
       !restrictionSnapshot ||
+      restrictionSnapshot === SNAPSHOT_LIMIT_EXCEEDED ||
       !hasExactKeys(restrictionSnapshot, ["allowedToolIds"])
     ) {
       return null;
@@ -360,7 +412,7 @@ function tryParseSourceIntegrationPolicyManifest(
       rawToolIds,
       MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
     );
-    if (!snapshottedToolIds) return null;
+    if (!snapshottedToolIds || snapshottedToolIds === SNAPSHOT_LIMIT_EXCEEDED) return null;
 
     const seenToolIds = new IntrinsicSet<string>();
     const toolIds: string[] = new IntrinsicArray();
@@ -414,6 +466,19 @@ export function resolveSourceIntegrationPolicyManifest(
   return tryParseSourceIntegrationPolicyManifest(value) ?? denyAllSourceIntegrationPolicy();
 }
 
+function resolveAuthorizationPolicy(
+  value: unknown,
+): SourceIntegrationPolicyManifest {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    weakSetHas(canonicalSourceIntegrationPolicies, value)
+  ) {
+    return value as SourceIntegrationPolicyManifest;
+  }
+  return tryParseSourceIntegrationPolicyManifest(value) ?? denyAllSourceIntegrationPolicy();
+}
+
 function uniqueSorted(values: readonly unknown[]): string[] {
   const unique = new IntrinsicSet<string>();
   const result: string[] = new IntrinsicArray();
@@ -437,28 +502,39 @@ export function normalizeSourceIntegrationPolicy(
   if (config === undefined) return UNRESTRICTED_SOURCE_INTEGRATION_POLICY;
 
   const configSnapshot = snapshotDataRecord(config, 1);
-  if (!configSnapshot || !hasExactKeys(configSnapshot, ["allow"])) {
+  if (
+    !configSnapshot ||
+    configSnapshot === SNAPSHOT_LIMIT_EXCEEDED ||
+    !hasExactKeys(configSnapshot, ["allow"])
+  ) {
     throw new IntrinsicTypeError("Invalid source integration policy config");
   }
   const allowSnapshot = snapshotDataRecord(
     configSnapshot.values.allow,
     MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS,
   );
-  if (!allowSnapshot) {
+  if (allowSnapshot === SNAPSHOT_LIMIT_EXCEEDED) {
     throw new IntrinsicRangeError("Source integration policy has too many integrations");
+  }
+  if (!allowSnapshot) {
+    throw new IntrinsicTypeError("Invalid source integration policy allowlist");
   }
 
   const integrationNames = sortStrings(allowSnapshot.keys);
   const integrations = createRestrictionRecord();
   let totalToolIds = 0;
   for (let index = 0; index < integrationNames.length; index++) {
-    const integration = integrationNames[index]!;
+    const integration = integrationNames[index];
+    if (typeof integration !== "string") {
+      throw new IntrinsicTypeError("Invalid source integration policy integration name");
+    }
     const rawRestriction = allowSnapshot.values[integration];
     if (rawRestriction === undefined) continue;
 
     const restrictionSnapshot = snapshotDataRecord(rawRestriction, 1);
     if (
       !restrictionSnapshot ||
+      restrictionSnapshot === SNAPSHOT_LIMIT_EXCEEDED ||
       (
         restrictionSnapshot.keys.length === 1 &&
         !hasOwn(restrictionSnapshot.values, "allowedTools")
@@ -481,10 +557,13 @@ export function normalizeSourceIntegrationPolicy(
       rawAllowedTools,
       MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
     );
-    if (
-      !allowedTools ||
-      (totalToolIds += allowedTools.length) > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS
-    ) {
+    if (allowedTools === SNAPSHOT_LIMIT_EXCEEDED) {
+      throw new IntrinsicRangeError("Source integration policy has too many tool IDs");
+    }
+    if (!allowedTools) {
+      throw new IntrinsicTypeError("Invalid source integration policy tool ID list");
+    }
+    if ((totalToolIds += allowedTools.length) > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS) {
       throw new IntrinsicRangeError("Source integration policy has too many tool IDs");
     }
     defineOwnDataProperty(
@@ -510,12 +589,19 @@ function intersectAllowedToolIds(
 
   const rightIds = new IntrinsicSet<string>();
   for (let index = 0; index < right.length; index++) {
-    setAdd(rightIds, right[index]!);
+    const toolId = right[index];
+    if (typeof toolId !== "string") {
+      throw new IntrinsicTypeError("Canonical source integration policy contains a sparse array");
+    }
+    setAdd(rightIds, toolId);
   }
 
   const intersection: string[] = new IntrinsicArray();
   for (let index = 0; index < left.length; index++) {
-    const toolId = left[index]!;
+    const toolId = left[index];
+    if (typeof toolId !== "string") {
+      throw new IntrinsicTypeError("Canonical source integration policy contains a sparse array");
+    }
     if (setHas(rightIds, toolId)) pushValue(intersection, toolId);
   }
   return intersection;
@@ -535,14 +621,23 @@ export function intersectSourceIntegrationPolicies(
     canonicalLeft.integrations,
     MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS,
   );
-  const integrationNames = sortStrings(leftSnapshot?.keys ?? new IntrinsicArray());
+  if (!leftSnapshot || leftSnapshot === SNAPSHOT_LIMIT_EXCEEDED) {
+    throw new IntrinsicTypeError("Canonical source integration policy invariant failed");
+  }
+  const integrationNames = sortStrings(leftSnapshot.keys);
   const integrations = createRestrictionRecord();
   for (let index = 0; index < integrationNames.length; index++) {
-    const integration = integrationNames[index]!;
+    const integration = integrationNames[index];
+    if (typeof integration !== "string") {
+      throw new IntrinsicTypeError("Canonical source integration policy contains a sparse record");
+    }
     if (!hasOwn(canonicalRight.integrations, integration)) continue;
 
-    const leftRestriction = canonicalLeft.integrations[integration]!;
-    const rightRestriction = canonicalRight.integrations[integration]!;
+    const leftRestriction = canonicalLeft.integrations[integration];
+    const rightRestriction = canonicalRight.integrations[integration];
+    if (!leftRestriction || !rightRestriction) {
+      throw new IntrinsicTypeError("Canonical source integration policy invariant failed");
+    }
     defineOwnDataProperty(
       integrations,
       integration,
@@ -604,13 +699,22 @@ export function isIntegrationToolAllowedBySourcePolicy(
   policy: SourceIntegrationPolicyManifest,
 ): boolean {
   if (typeof toolName !== "string") return false;
+  const canonicalPolicy = resolveAuthorizationPolicy(policy);
+  return isIntegrationToolAllowedByCanonicalPolicy(toolName, canonicalPolicy);
+}
+
+function isIntegrationToolAllowedByCanonicalPolicy(
+  toolName: string,
+  policy: SourceIntegrationPolicyManifest,
+): boolean {
   if (policy.mode === "unrestricted") return true;
 
   const identity = parseIntegrationToolIdentity(toolName);
   if (!identity) return !stringIncludes(toolName, "__");
 
   if (!hasOwn(policy.integrations, identity.integration)) return false;
-  const restriction = policy.integrations[identity.integration]!;
+  const restriction = policy.integrations[identity.integration];
+  if (!restriction) return false;
   return restriction.allowedToolIds === null ||
     ReflectApply(ArrayPrototypeIncludes, restriction.allowedToolIds, [
         identity.toolId,
@@ -622,10 +726,14 @@ export function applySourceIntegrationPolicy(
   toolNames: readonly string[],
   policy: SourceIntegrationPolicyManifest,
 ): string[] {
+  const canonicalPolicy = resolveAuthorizationPolicy(policy);
   const allowedToolNames: string[] = new IntrinsicArray();
   for (let index = 0; index < toolNames.length; index++) {
-    const toolName = toolNames[index]!;
-    if (isIntegrationToolAllowedBySourcePolicy(toolName, policy)) {
+    const toolName = toolNames[index];
+    if (
+      typeof toolName === "string" &&
+      isIntegrationToolAllowedByCanonicalPolicy(toolName, canonicalPolicy)
+    ) {
       pushValue(allowedToolNames, toolName);
     }
   }

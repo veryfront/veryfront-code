@@ -10,6 +10,7 @@ import {
   parseIntegrationToolIdentity,
   parseSourceIntegrationPolicyManifest,
   resolveSourceIntegrationPolicyManifest,
+  type SourceIntegrationPolicyManifest,
 } from "./source-policy.ts";
 import {
   MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS,
@@ -238,6 +239,128 @@ describe("source integration policy", () => {
       );
     }
     assertEquals(getterCalled, false);
+  });
+
+  it("fails a structurally forged authorization policy closed without invoking accessors", () => {
+    let getterCalled = false;
+    const forgedPolicy: Record<string, unknown> = {};
+    Object.defineProperty(forgedPolicy, "mode", {
+      enumerable: true,
+      get() {
+        getterCalled = true;
+        return "unrestricted";
+      },
+    });
+
+    assertEquals(
+      isIntegrationToolAllowedBySourcePolicy(
+        "github__list_repos",
+        forgedPolicy as SourceIntegrationPolicyManifest,
+      ),
+      false,
+    );
+    assertEquals(getterCalled, false);
+  });
+
+  it("survives inherited descriptor and numeric array prototype poisoning", async () => {
+    const moduleUrl = import.meta.resolve("./source-policy.ts");
+    const script = `
+      import {
+        applySourceIntegrationPolicy,
+        isIntegrationToolAllowedBySourcePolicy,
+        isSourceIntegrationPolicyManifest,
+        normalizeSourceIntegrationPolicy,
+        resolveSourceIntegrationPolicyManifest,
+      } from ${JSON.stringify(moduleUrl)};
+
+      const config = {
+        allow: {
+          github: { allowedTools: ["list_repos"] },
+        },
+      };
+      const toolNames = [
+        "github__list_repos",
+        "github__delete_repo",
+        "local_tool",
+      ];
+      const accessorManifest = { mode: "unrestricted" };
+      Object.defineProperty(accessorManifest, "schemaVersion", {
+        enumerable: true,
+        get() {
+          throw new Error("manifest accessor must not run");
+        },
+      });
+
+      const previousArrayIndex = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      const previousDescriptorValue = Object.getOwnPropertyDescriptor(
+        Object.prototype,
+        "value",
+      );
+      let descriptorGetterCalls = 0;
+      let numericSetterCalls = 0;
+      let outcome;
+
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set() {
+          numericSetterCalls += 1;
+          throw new Error("numeric prototype setter must not run");
+        },
+      });
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get() {
+          descriptorGetterCalls += 1;
+          return 1;
+        },
+      });
+
+      try {
+        const accepted = isSourceIntegrationPolicyManifest(accessorManifest);
+        const resolved = resolveSourceIntegrationPolicyManifest(accessorManifest);
+        const normalized = normalizeSourceIntegrationPolicy(config);
+        const allowed = applySourceIntegrationPolicy(toolNames, normalized);
+        outcome = {
+          accepted,
+          allowed,
+          descriptorGetterCalls,
+          numericSetterCalls,
+          resolvedIntegrationAllowed: isIntegrationToolAllowedBySourcePolicy(
+            "github__list_repos",
+            resolved,
+          ),
+        };
+      } finally {
+        delete Object.prototype.value;
+        if (previousDescriptorValue) {
+          Object.defineProperty(Object.prototype, "value", previousDescriptorValue);
+        }
+        delete Array.prototype[0];
+        if (previousArrayIndex) {
+          Object.defineProperty(Array.prototype, "0", previousArrayIndex);
+        }
+      }
+
+      console.log(JSON.stringify(outcome));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["--quiet", "eval", script],
+      cwd: Deno.cwd(),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const decoder = new TextDecoder();
+    if (!output.success) {
+      throw new Error(decoder.decode(output.stderr));
+    }
+
+    assertEquals(JSON.parse(decoder.decode(output.stdout)), {
+      accepted: false,
+      allowed: ["github__list_repos", "local_tool"],
+      descriptorGetterCalls: 0,
+      numericSetterCalls: 0,
+      resolvedIntegrationAllowed: false,
+    });
   });
 
   it("bounds policy cardinality and canonical segment lengths", () => {

@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    35 |      60.3% | Current formal closure evidence remains valid       |
+| Closed                         |    36 |      62.1% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     4 |       6.9% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    19 |      32.8% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    18 |      31.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -50,6 +50,7 @@ stricter closure count.
 - `extensions`
 - `fs`
 - `index.ts`
+- `integrations`
 - `issues`
 - `knowledge`
 - `markdown`
@@ -86,7 +87,6 @@ stricter closure count.
 - `build`
 - `client`
 - `data`
-- `integrations`
 - `internal-agents`
 - `mcp`
 - `modules`
@@ -121,12 +121,12 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `agent`, `cache`, `channels`, `chat`, `config`,
-`discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
-`markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
-`release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, `index.ts`, and
-`version.ts`.
+The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
+`config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
+`integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `platform`,
+`provider`, `prompt`, `registry`, `release-assets`, `repositories`, `runs`,
+`runtime`, `sandbox`, `schedule`, `schemas`, `studio`, `task`, `trigger`,
+`types`, `webhook`, `index.ts`, and `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
 remediated and revalidated.
@@ -178,6 +178,10 @@ remain closed.
 steering, project Skill I/O, child-resolution, tool lifecycle, public contract,
 documentation, and complete top-level regression findings were remediated and
 revalidated.
+`integrations` is closed after its catalog ownership, feature-flag snapshot,
+remote discovery and execution, source-policy admission and authorization,
+resource limits, hostile-input isolation, configuration schema, public
+reference, and direct consumers were remediated and revalidated.
 The root entrypoint unit is closed after its exact public and client-safe export
 contracts, runtime dependency ownership, browser graph, rewrite target, Deno and
 npm package surfaces, documentation, and built consumer declarations were
@@ -4495,6 +4499,72 @@ revalidated after the merge and remain closed. `html` remains deeply reviewed
 with only its reference replacement pending. The narrow `tool`, `rendering`,
 and `utils` changes add evidence to, but do not replace, those units' remaining
 top-level reviews, so their classifications do not change. Formal counts remain
-35 closed, 4 deeply reviewed with fixes pending, and 19 requiring revalidation.
+35 closed, 4 deeply reviewed with fixes pending, and 19 requiring revalidation
+at that upstream-integration checkpoint.
+
+### Integrations closure checkpoint
+
+The `integrations` audit unit owns the connector catalog, visibility feature
+flags, remote tool discovery and execution, request-scoped execution context,
+and exact-source integration authorization. Its production boundaries cross
+configuration, agent and workflow execution, sandbox workers, hosted route
+execution, and the public `veryfront/integrations` package surface.
+
+The current integrations findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** catalog callers could mutate
+  nested generated metadata, lookups repeatedly scanned the catalog, and
+  overlong connector names crossed lookup boundaries. Catalog metadata is now
+  deeply frozen, a private map owns canonical lookup, and shared connector-name
+  bounds are enforced before normalization.
+- **Symptom -> Source -> Consequence -> Remedy:** feature-flag collections
+  reread process state for each connector and accepted an unbounded environment
+  value. Each operation now uses one bounded snapshot, malformed or oversized
+  state fails closed, and individual lookup names share the catalog limit.
+- **Symptom -> Source -> Consequence -> Remedy:** remote discovery accepted
+  duplicate definitions, execution context could retain caller-owned accessors
+  or mutable data, and transport responses admitted malformed MCP fields.
+  Discovery now rejects duplicate names atomically; execution snapshots only
+  owned data descriptors and validates tokens, project slugs, identifiers, and
+  runtime tool names; and malformed structured content and error markers are
+  rejected before they cross the runtime boundary.
+- **Symptom -> Source -> Consequence -> Remedy:** source policies trusted typed
+  callers, inherited properties, mutable manifests, accessors, and ambient
+  array/object behavior. Structurally forged policies could therefore bypass
+  fail-closed authorization or execute hostile prototype hooks. Admission now
+  accepts only bounded dense data shapes, emits deeply frozen null-prototype
+  records, privately brands canonical policies, validates every unbranded
+  authorization input, uses captured intrinsic operations, and distinguishes
+  malformed shapes from resource-limit failures.
+- **Symptom -> Source -> Consequence -> Remedy:** policy limits could drift
+  between runtime normalization and configuration validation. One shared limit
+  contract now bounds integrations, tool IDs, segment lengths, full remote tool
+  names, API tokens, and aggregate policy size at both boundaries.
+
+Current reproducible evidence:
+
+- all 10 integrations and affected configuration suites pass 159 nested steps,
+  including catalog immutability, coherent feature-flag snapshots, duplicate
+  discovery, malformed remote responses, mutable-context isolation, bounded
+  policies, revoked proxies, hostile accessors, inherited descriptor
+  poisoning, and array-prototype numeric setters;
+- the sandbox worker and hosted route-executor portfolio passes six top-level
+  tests with 124 nested steps after the primordial-isolation changes;
+- affected agent, workflow, project runtime, data, tool-helper, and chat
+  assembly portfolios pass with zero failures, preserving authorization and
+  execution behavior across their direct consumers;
+- API reference generation refreshes the integrations source links and catalog
+  immutability contract; no authored how-to or architecture workflow changed;
+- the npm root and all first-party extension packages rebuild successfully,
+  their import lifecycle verifies, and the documented consumer composition
+  passes `tsc --noEmit` against emitted declarations; and
+- `deno task verify:quick` passes formatting, lint, style and architecture
+  ratchets, zero cyclic dependencies, module boundaries, documentation
+  validation across 746 links, and every configured production and browser
+  entrypoint typecheck.
+
+No known unresolved critical or high-confidence integrations production risk
+remains. `integrations` is closed at 36 of 58 formal units; 22 units remain to
+be closed or revalidated.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
