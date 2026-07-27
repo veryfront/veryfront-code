@@ -114,34 +114,38 @@ describe("resolveFrameworkFile", () => {
 
 describe("resolveRelativeFrameworkImport", () => {
   it("resolves relative import with explicit extension", async () => {
-    const files: Record<string, string> = { "/foo/bar/Head.tsx": "export default Head;" };
+    const sourceDir = join(FRAMEWORK_ROOT, "src", "foo", "bar");
+    const expected = join(sourceDir, "Head.tsx");
+    const files: Record<string, string> = { [expected]: "export default Head;" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./Head.tsx",
-      "/foo/bar/index.ts",
+      join(sourceDir, "index.ts"),
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/Head.tsx");
+    assertEquals(result, expected);
   });
 
   it("resolves parent directory import", async () => {
-    const files: Record<string, string> = { "/foo/utils.ts": "export const x = 1;" };
+    const sourceRoot = join(FRAMEWORK_ROOT, "src", "foo");
+    const expected = join(sourceRoot, "utils.ts");
+    const files: Record<string, string> = { [expected]: "export const x = 1;" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "../utils",
-      "/foo/bar/index.ts",
+      join(sourceRoot, "bar", "index.ts"),
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/utils.ts");
+    assertEquals(result, expected);
   });
 
   it("returns null for non-existent relative import", async () => {
     const fs = createMockFs({});
     const result = await resolveRelativeFrameworkImport(
       "./missing.tsx",
-      "/foo/bar/index.ts",
+      join(FRAMEWORK_ROOT, "src", "foo", "bar", "index.ts"),
       fs,
       async () => false,
     );
@@ -149,39 +153,45 @@ describe("resolveRelativeFrameworkImport", () => {
   });
 
   it("tries .src extension for embedded sources", async () => {
-    const files: Record<string, string> = { "/foo/bar/Head.tsx.src": "embedded" };
+    const sourceDir = join(EMBEDDED_SRC_DIR, "foo", "bar");
+    const expected = join(sourceDir, "Head.tsx.src");
+    const files: Record<string, string> = { [expected]: "embedded" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./Head.tsx",
-      "/foo/bar/index.ts",
+      join(sourceDir, "index.ts.src"),
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/Head.tsx.src");
+    assertEquals(result, expected);
   });
 
   it("resolves import without extension by probing", async () => {
-    const files: Record<string, string> = { "/foo/bar/utils.ts": "code" };
+    const sourceDir = join(FRAMEWORK_ROOT, "src", "foo", "bar");
+    const expected = join(sourceDir, "utils.ts");
+    const files: Record<string, string> = { [expected]: "code" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./utils",
-      "/foo/bar/index.ts",
+      join(sourceDir, "index.ts"),
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/utils.ts");
+    assertEquals(result, expected);
   });
 
   it("resolves transpiled .js imports back to embedded TypeScript sources", async () => {
-    const files: Record<string, string> = { "/foo/bar/csp-nonce.ts.src": "embedded" };
+    const sourceDir = join(EMBEDDED_SRC_DIR, "foo", "bar");
+    const expected = join(sourceDir, "csp-nonce.ts.src");
+    const files: Record<string, string> = { [expected]: "embedded" };
     const fs = createMockFs(files);
     const result = await resolveRelativeFrameworkImport(
       "./csp-nonce.js",
-      "/foo/bar/Head.tsx",
+      join(sourceDir, "Head.tsx.src"),
       fs,
       createExistsFn(files),
     );
-    assertEquals(result, "/foo/bar/csp-nonce.ts.src");
+    assertEquals(result, expected);
   });
 
   it("falls back from extracted framework src paths to embedded framework sources in compiled binaries", async () => {

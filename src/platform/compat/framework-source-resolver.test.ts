@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
@@ -8,6 +8,11 @@ import {
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "./framework-source-resolver.ts";
+
+const notFound = (): Error =>
+  Object.assign(new Error("not found"), {
+    code: "ENOENT",
+  });
 
 describe("platform/compat/framework-source-resolver", () => {
   it("prefers live framework src before embedded sources", async () => {
@@ -31,7 +36,7 @@ describe("platform/compat/framework-source-resolver", () => {
             };
           }
 
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });
@@ -55,7 +60,7 @@ describe("platform/compat/framework-source-resolver", () => {
             };
           }
 
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });
@@ -105,6 +110,57 @@ describe("platform/compat/framework-source-resolver", () => {
     );
 
     assertEquals(result, embeddedPath);
+  });
+
+  it("rejects relative imports that escape the framework source tree", async () => {
+    let probed = false;
+    const result = await resolveRelativeFrameworkSourceImport(
+      "../../../../../../etc/passwd",
+      `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+      {
+        exists: () => {
+          probed = true;
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    assertEquals(result, null);
+    assertEquals(probed, false);
+  });
+
+  it("rejects non-relative and backslash-based framework imports", async () => {
+    const exists = () => Promise.resolve(true);
+    assertEquals(
+      await resolveRelativeFrameworkSourceImport(
+        "/etc/passwd",
+        `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+        { exists },
+      ),
+      null,
+    );
+    assertEquals(
+      await resolveRelativeFrameworkSourceImport(
+        String.raw`..\\..\\secret`,
+        `${FRAMEWORK_SRC_DIR}/react/context/index.tsx`,
+        { exists },
+      ),
+      null,
+    );
+  });
+
+  it("propagates operational stat failures", async () => {
+    await assertRejects(
+      () =>
+        resolveFrameworkSourcePath("react/router", {
+          extraLookupDirs: ["/framework/src"],
+          fileSystem: {
+            stat: () => Promise.reject(new Error("permission denied")),
+          },
+        }),
+      Error,
+      "permission denied",
+    );
   });
 });
 
@@ -167,7 +223,7 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
               mtime: null,
             };
           }
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });
@@ -195,7 +251,7 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
               mtime: null,
             };
           }
-          throw new Error("not found");
+          throw notFound();
         },
       },
     });

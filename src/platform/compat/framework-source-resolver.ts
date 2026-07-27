@@ -1,8 +1,8 @@
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, resolve } from "#veryfront/compat/path/index.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { isCompiledBinary } from "#veryfront/utils/platform.ts";
-import { createFileSystem } from "./fs.ts";
+import { createFileSystem, isNotFoundError } from "./fs.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
 
 /**
@@ -143,8 +143,9 @@ async function findExistingFrameworkCandidate(
     try {
       const stat = await fs.stat(path);
       return stat.isFile;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
     }
   });
 
@@ -190,8 +191,8 @@ export async function resolveFrameworkSourcePath(
               lookupDir,
             };
           }
-        } catch {
-          /* expected: candidate may not exist */
+        } catch (error) {
+          if (!isNotFoundError(error)) throw error;
         }
       }
     }
@@ -205,20 +206,29 @@ export async function resolveRelativeFrameworkSourceImport(
   fromSourcePath: string,
   options: ResolveRelativeFrameworkSourceImportOptions = {},
 ): Promise<string | null> {
-  const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
-  const fromDir = fromSourcePath.substring(0, fromSourcePath.lastIndexOf("/"));
-  const parts = fromDir.split("/").filter(Boolean);
-  const importParts = specifier.split("/").filter(Boolean);
-
-  for (const part of importParts) {
-    if (part === "..") {
-      parts.pop();
-    } else if (part !== ".") {
-      parts.push(part);
-    }
+  if (
+    (!specifier.startsWith("./") && !specifier.startsWith("../")) ||
+    specifier.includes("\0") ||
+    specifier.includes("\\")
+  ) {
+    return null;
   }
 
-  const basePath = "/" + parts.join("/");
+  const candidateRoot = getFrameworkRoot(fromSourcePath);
+  if (!candidateRoot) return null;
+
+  const candidateSourceDir = join(candidateRoot, "src");
+  const candidateEmbeddedDir = join(candidateRoot, "dist", "framework-src");
+  const containingTree = isWithinDirectory(candidateSourceDir, fromSourcePath)
+    ? candidateSourceDir
+    : isWithinDirectory(candidateEmbeddedDir, fromSourcePath)
+    ? candidateEmbeddedDir
+    : null;
+  if (!containingTree) return null;
+
+  const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
+  const basePath = resolve(dirname(fromSourcePath), specifier);
+  if (!isWithinDirectory(containingTree, basePath)) return null;
 
   if (/\.(tsx?|jsx?|mjs)$/.test(specifier)) {
     const explicitCandidates = [basePath, `${basePath}.src`];

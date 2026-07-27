@@ -200,7 +200,8 @@ export async function resolveVeryfrontSourcePath(
 
 /**
  * Resolve a relative import path to an absolute framework source path.
- * Given sourcePath=/foo/bar/index.ts and specifier=./Head.tsx, returns /foo/bar/Head.tsx
+ * Given sourcePath={framework}/src/foo/bar/index.ts and specifier=./Head.tsx,
+ * returns {framework}/src/foo/bar/Head.tsx.
  *
  * Handles both regular source files (.tsx, .ts) and embedded sources (.tsx.src, .ts.src)
  * for compiled binaries.
