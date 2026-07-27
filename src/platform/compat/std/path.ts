@@ -31,6 +31,28 @@ interface PosixPath {
   delimiter: string;
 }
 
-const { posix } = isDeno ? await import("#std/path.ts") : await import("node:path");
+function freezePosixPath(
+  implementation: Omit<PosixPath, "sep" | "delimiter">,
+): Readonly<PosixPath> {
+  return Object.freeze({
+    join: (...paths: string[]) => implementation.join(...paths),
+    resolve: (...paths: string[]) => implementation.resolve(...paths),
+    normalize: (path: string) => implementation.normalize(path),
+    relative: (from: string, to: string) => implementation.relative(from, to),
+    dirname: (path: string) => implementation.dirname(path),
+    basename: (path: string, ext?: string) => implementation.basename(path, ext),
+    extname: (path: string) => implementation.extname(path),
+    isAbsolute: (path: string) => implementation.isAbsolute(path),
+    sep: "/",
+    delimiter: ":",
+  });
+}
 
-export { posix };
+async function loadPosixPath(): Promise<Readonly<PosixPath>> {
+  if (isDeno) {
+    return freezePosixPath(await import("#std/path/posix"));
+  }
+  return freezePosixPath((await import("node:path")).posix);
+}
+
+export const posix = await loadPosixPath();
