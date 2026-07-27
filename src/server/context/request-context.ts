@@ -33,7 +33,9 @@ export function createRequestContext(
     isProxyTopologyTrusted();
   const effectiveHost = getEffectiveRequestHost(req, undefined, proxyTopologyTrusted);
   const parsed = parseProjectDomain(effectiveHost);
-  const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
+  const headerProjectSlug = proxyTopologyTrusted
+    ? req.headers.get("x-project-slug")?.trim() || undefined
+    : undefined;
   const requestToken = req.headers.get("x-token");
   const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
   const token = requestToken ?? hostToken ?? "";

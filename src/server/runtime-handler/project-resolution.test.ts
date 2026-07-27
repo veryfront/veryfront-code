@@ -21,43 +21,67 @@ const defaultParsedDomain: ParsedDomain = {
 
 describe("server/runtime-handler/project-resolution", () => {
   describe("extractRequestHeaders", () => {
-    it("extracts project slug from header", () => {
+    it("extracts project slug from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-slug": "my-project" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.projectSlug, "my-project");
     });
 
-    it("extracts project id from header", () => {
+    it("extracts project id from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-id": "proj-123" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.projectId, "proj-123");
     });
 
-    it("extracts release id from header", () => {
+    it("ignores routing metadata headers when topology is untrusted", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-project-slug": "attacker-project",
+          "x-project-id": "attacker-id",
+          "x-release-id": "attacker-release",
+          "x-branch-id": "attacker-branch-id",
+          "x-branch-name": "attacker-branch",
+          "x-environment": "preview",
+          "x-environment-id": "attacker-environment",
+          "x-content-source-id": "attacker-source",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false);
+      assertEquals(headers.projectSlug, undefined);
+      assertEquals(headers.projectId, undefined);
+      assertEquals(headers.releaseId, undefined);
+      assertEquals(headers.branchId, undefined);
+      assertEquals(headers.branchName, undefined);
+      assertEquals(headers.environment, undefined);
+      assertEquals(headers.environmentId, undefined);
+      assertEquals(headers.contentSourceId, undefined);
+    });
+
+    it("extracts release id from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-release-id": "rel-456" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.releaseId, "rel-456");
     });
 
-    it("extracts branch id from header", () => {
+    it("extracts branch id from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-id": "branch-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.branchId, "branch-1");
     });
 
-    it("extracts branch name from header", () => {
+    it("extracts branch name from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-name": "feature-x" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.branchName, "feature-x");
     });
 
@@ -123,11 +147,11 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.environment, undefined);
     });
 
-    it("extracts environment-id from header", () => {
+    it("extracts environment-id from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-environment-id": "env-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.environmentId, "env-1");
     });
 
@@ -205,11 +229,11 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug !== "my-project", true);
     });
 
-    it("extracts content-source-id from header", () => {
+    it("extracts content-source-id from a trusted topology header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-content-source-id": "cs-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.contentSourceId, "cs-1");
     });
 
@@ -293,6 +317,39 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.projectId, "default-id");
     });
 
+    it("does not consume routing metadata extracted under different topology trust", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-project-slug": "attacker-project",
+          "x-project-id": "attacker-id",
+          "x-release-id": "attacker-release",
+          "x-environment": "preview",
+        },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url, true);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: "default-slug",
+        defaultProjectId: "default-id",
+        defaultReleaseId: "default-release",
+        wsSlugOverride: undefined,
+        proxyTopologyTrusted: false,
+      });
+
+      assertEquals(result.projectSlug, "default-slug");
+      assertEquals(result.projectId, "default-id");
+      assertEquals(result.releaseId, "default-release");
+      assertEquals(result.proxyEnv, undefined);
+    });
+
     it("uses defaultReleaseId when no header release is present", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
@@ -315,7 +372,7 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.releaseId, "local-release");
     });
 
-    it("preserves header releaseId over defaultReleaseId", async () => {
+    it("preserves a trusted header releaseId over defaultReleaseId", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
         lookupProjectByDomain: () => Promise.resolve(null),
@@ -326,7 +383,7 @@ describe("server/runtime-handler/project-resolution", () => {
         headers: { "x-release-id": "header-release" },
       });
       const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+      const headers = extractRequestHeaders(req, url, true);
       const result = await resolveProject(req, url, headers, {
         config: undefined,
         reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
@@ -334,9 +391,36 @@ describe("server/runtime-handler/project-resolution", () => {
         defaultProjectId: "default-id",
         defaultReleaseId: "local-release",
         wsSlugOverride: undefined,
+        proxyTopologyTrusted: true,
       });
 
       assertEquals(result.releaseId, "header-release");
+    });
+
+    it("does not let an empty trusted release header suppress defaultReleaseId", async () => {
+      __injectDepsForTests({
+        parseProjectDomain: () => defaultParsedDomain,
+        lookupProjectByDomain: () => Promise.resolve(null),
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://localhost/", {
+        headers: { "x-release-id": "   " },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url, true);
+      const result = await resolveProject(req, url, headers, {
+        config: undefined,
+        reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: "default-slug",
+        defaultProjectId: "default-id",
+        defaultReleaseId: "local-release",
+        wsSlugOverride: undefined,
+        proxyTopologyTrusted: true,
+      });
+
+      assertEquals(headers.releaseId, undefined);
+      assertEquals(result.releaseId, "local-release");
     });
 
     it("does not apply defaultProjectId when request resolved slug is different", async () => {
@@ -408,7 +492,7 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.projectSlug, "config-slug");
     });
 
-    it("extracts releaseId from headers", async () => {
+    it("extracts releaseId from trusted headers", async () => {
       __injectDepsForTests({
         parseProjectDomain: () => defaultParsedDomain,
         lookupProjectByDomain: () => Promise.resolve(null),
@@ -419,13 +503,14 @@ describe("server/runtime-handler/project-resolution", () => {
         headers: { "x-release-id": "rel-1" },
       });
       const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+      const headers = extractRequestHeaders(req, url, true);
       const result = await resolveProject(req, url, headers, {
         config: undefined,
         reqCtx: { slug: "test", mode: undefined, branch: null, token: undefined },
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         wsSlugOverride: undefined,
+        proxyTopologyTrusted: true,
       });
 
       assertEquals(result.releaseId, "rel-1");

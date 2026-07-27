@@ -487,41 +487,11 @@ function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
   return req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
 }
 
-function getHeaderFirstValue(value: string | null): string | undefined {
-  return value?.split(",")[0]?.trim() || undefined;
-}
-
-function getForwardedProtocol(req: Request): "http:" | "https:" | undefined {
-  const value = getHeaderFirstValue(req.headers.get("x-forwarded-proto"))?.replace(/:$/, "");
-  return value === "http" || value === "https" ? `${value}:` : undefined;
-}
-
-function getRequestOriginCandidates(req: Request): Set<string> {
-  const url = new URL(req.url);
-  const protocols = new Set([url.protocol]);
-  const forwardedProtocol = getForwardedProtocol(req);
-  if (forwardedProtocol) protocols.add(forwardedProtocol);
-
-  const hosts = new Set([url.host]);
-  const hostHeader = getHeaderFirstValue(req.headers.get("host"));
-  const forwardedHost = getHeaderFirstValue(req.headers.get("x-forwarded-host"));
-  if (hostHeader) hosts.add(hostHeader);
-  if (forwardedHost) hosts.add(forwardedHost);
-
-  const origins = new Set<string>();
-  for (const protocol of protocols) {
-    for (const host of hosts) {
-      origins.add(`${protocol}//${host}`);
-    }
-  }
-  return origins;
-}
-
 function isRequestSiblingAgUiEndpoint(endpoint: string, req: Request): boolean {
   try {
     const endpointUrl = new URL(endpoint);
     if (endpointUrl.pathname !== "/api/ag-ui") return false;
-    return getRequestOriginCandidates(req).has(endpointUrl.origin);
+    return endpointUrl.origin === new URL(req.url).origin;
   } catch {
     return false;
   }
@@ -543,6 +513,7 @@ interface ManagedProjectAgUiEndpointContext {
   forwardedHost: string;
   forwardedProto: string;
   environment: "preview" | "production";
+  branchName: string | undefined;
 }
 
 function getManagedProjectAgUiEndpointContext(
@@ -559,6 +530,7 @@ function getManagedProjectAgUiEndpointContext(
       forwardedHost: endpointUrl.host,
       forwardedProto: endpointUrl.protocol.replace(/:$/, ""),
       environment: parsed.environment === "preview" ? "preview" : "production",
+      branchName: parsed.branch ?? undefined,
     };
   } catch {
     return null;
@@ -959,7 +931,6 @@ function createEvalAdapterConfig(input: {
   ctx: HandlerContext;
 }): AgentServiceEvalAdapterConfig {
   const config = input.request.config ?? {};
-  const runInput = input.request.input ?? {};
   const authToken = getRuntimeApiToken(input.req, input.ctx);
   if (!authToken) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
@@ -974,6 +945,10 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
+  const branchId = input.request.runtimeTargetBranchId ?? undefined;
+  const environmentId = input.request.runtimeTargetEnvironmentId === undefined
+    ? input.ctx.environmentId
+    : input.request.runtimeTargetEnvironmentId ?? undefined;
 
   return {
     endpoint,
@@ -981,20 +956,17 @@ function createEvalAdapterConfig(input: {
     agentId,
     projectId: input.request.projectId,
     projectSlug: input.ctx.projectSlug,
-    releaseId: input.req.headers.get("x-release-id") ?? input.ctx.releaseId,
-    contentSourceId: input.req.headers.get("x-content-source-id"),
-    branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
-      getStringConfig(runInput, ["branch_id", "branchId"]) ??
-      input.req.headers.get("x-branch-id"),
-    branchName: input.req.headers.get("x-branch-name"),
-    environment: managedEndpointContext?.environment ?? input.req.headers.get("x-environment") ??
-      input.ctx.resolvedEnvironment,
-    environmentId: input.req.headers.get("x-environment-id") ?? input.ctx.environmentId,
+    releaseId: input.ctx.releaseId,
+    contentSourceId: input.ctx.enriched?.contentSourceId,
+    branchId,
+    branchName: managedEndpointContext
+      ? managedEndpointContext.branchName
+      : input.ctx.requestContext?.branch ?? undefined,
+    environment: managedEndpointContext?.environment ?? input.ctx.resolvedEnvironment,
+    environmentId,
     forwardedHost: managedEndpointContext?.forwardedHost ??
-      getHeaderFirstValue(input.req.headers.get("x-forwarded-host")) ??
       getEndpointHost(input.request.runtimeAgUiEndpoint),
     forwardedProto: managedEndpointContext?.forwardedProto ??
-      getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),

@@ -2,7 +2,7 @@
  * Project Resolution Module
  *
  * Handles project slug resolution from various sources:
- * - Request headers (x-project-slug, x-project-id, etc.)
+ * - Trusted proxy headers (x-project-slug, x-project-id, etc.)
  * - Domain parsing (*.veryfront.com subdomains)
  * - API domain lookup (custom domains)
  * - Config file defaults
@@ -99,26 +99,30 @@ export function extractRequestHeaders(
   url: URL,
   proxyTopologyTrusted?: boolean,
 ): RequestHeaders {
-  const host = getEffectiveHost(req, url, proxyTopologyTrusted);
+  const routingHeadersTrusted = proxyTopologyTrusted ?? isProxyTopologyTrusted();
+  const host = getEffectiveHost(req, url, routingHeadersTrusted);
   const parsedDomain = parseProjectDomain(host);
-  const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+  const trustedRoutingHeader = (name: string): string | undefined =>
+    routingHeadersTrusted ? req.headers.get(name)?.trim() || undefined : undefined;
+  const projectSlugHeader = trustedRoutingHeader("x-project-slug");
   // Environment selectors are routing authority, including on WebSocket
   // handshakes. Browser-controlled query/header values must not promote a
   // production request into preview mode.
-  const environment = (proxyTopologyTrusted ?? isProxyTopologyTrusted())
-    ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
+  const queryEnvironment = url.searchParams.get("x-environment")?.trim() || undefined;
+  const environment = routingHeadersTrusted
+    ? trustedRoutingHeader("x-environment") ?? queryEnvironment
     : undefined;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
-    projectId: req.headers.get("x-project-id") ?? undefined,
-    releaseId: req.headers.get("x-release-id") ?? undefined,
-    branchId: req.headers.get("x-branch-id") ?? undefined,
-    branchName: req.headers.get("x-branch-name") ?? undefined,
+    projectId: trustedRoutingHeader("x-project-id"),
+    releaseId: trustedRoutingHeader("x-release-id"),
+    branchId: trustedRoutingHeader("x-branch-id"),
+    branchName: trustedRoutingHeader("x-branch-name"),
     environment,
-    environmentId: req.headers.get("x-environment-id") ?? undefined,
+    environmentId: trustedRoutingHeader("x-environment-id"),
     token: undefined, // Extracted separately from request context
-    contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
+    contentSourceId: trustedRoutingHeader("x-content-source-id"),
   };
 }
 
@@ -163,7 +167,7 @@ interface ProjectResolutionOptions {
  * Resolve project information from multiple sources.
  *
  * Priority order:
- * 1. Request headers (x-project-slug, etc.)
+ * 1. Trusted proxy headers (x-project-slug, etc.)
  * 2. WebSocket slug override (query param)
  * 3. Config file defaults
  * 4. Domain parsing (*.veryfront.com)
@@ -175,7 +179,8 @@ export async function resolveProject(
   headers: RequestHeaders,
   opts: ProjectResolutionOptions,
 ): Promise<ProjectResolutionResult> {
-  const host = getEffectiveHost(req, url, opts.proxyTopologyTrusted);
+  const routingHeadersTrusted = opts.proxyTopologyTrusted ?? isProxyTopologyTrusted();
+  const host = getEffectiveHost(req, url, routingHeadersTrusted);
 
   const deps = getDeps();
   const parsedDomain = deps.parseProjectDomain(host);
@@ -190,11 +195,16 @@ export async function resolveProject(
   // slug was resolved prevents cache/invalidation state splits.
   const slugMatchesDefault = !resolvedSlugBeforeDefault ||
     resolvedSlugBeforeDefault === opts.defaultProjectSlug;
-  let projectId: string | undefined = headers.projectId ??
+  const trustedProjectId = routingHeadersTrusted ? headers.projectId : undefined;
+  const trustedReleaseId = routingHeadersTrusted
+    ? headers.releaseId?.trim() || undefined
+    : undefined;
+  const trustedEnvironment = routingHeadersTrusted ? headers.environment : undefined;
+  let projectId: string | undefined = trustedProjectId ??
     (slugMatchesDefault ? opts.defaultProjectId : undefined);
-  let releaseId: string | undefined = headers.releaseId ?? opts.defaultReleaseId;
+  let releaseId: string | undefined = trustedReleaseId ?? opts.defaultReleaseId;
   let environmentName: string | undefined;
-  let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
+  let proxyEnv = parseProxyEnvironment(trustedEnvironment ?? null);
 
   const shouldSkipDomainLookup = isInternalHost(host);
 
@@ -243,9 +253,9 @@ export async function resolveProject(
     }
   }
 
-  // Veryfront domain release lookup (for production domains without releaseId)
-  // Check headers.releaseId to skip if proxy already resolved it
-  const proxyAlreadyResolvedRelease = !!headers.releaseId;
+  // Veryfront domain release lookup (for production domains without releaseId).
+  // Only an explicitly trusted proxy release can suppress this lookup.
+  const proxyAlreadyResolvedRelease = trustedReleaseId !== undefined;
 
   if (
     parsedDomain.isVeryfrontDomain &&

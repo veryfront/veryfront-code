@@ -12,7 +12,10 @@ import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { agentRegistryInternal } from "#veryfront/agent/composition/composition.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types";
-import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
+import {
+  type AgentServiceEvalAdapterConfig,
+  createAgentServiceEvalAdapter,
+} from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -814,9 +817,115 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedForwardedHost, "demo-project.preview.veryfront.org");
     assertEquals(receivedForwardedProto, "https");
     assertEquals(receivedEnvironment, "preview");
-    assertEquals(receivedEnvironmentId, "env-1");
+    assertEquals(receivedEnvironmentId, undefined);
     assertEquals(receivedProjectIdHeader, "proj-1");
-    assertEquals(receivedBranchName, "main");
+    assertEquals(receivedBranchName, undefined);
+  });
+
+  it("derives eval source routing from signed body and resolved context, not unsigned headers", async () => {
+    let receivedConfig: AgentServiceEvalAdapterConfig | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedConfig = config;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_bound_routing",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project--managed-branch.preview.veryfront.org/api/ag-ui",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: null,
+      runtimeTargetBranchId: "branch-authoritative",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_bound_routing/execute",
+      body,
+      {
+        "x-token": "runtime-token",
+        "x-release-id": "release-attacker",
+        "x-content-source-id": "source-attacker",
+        "x-branch-id": "branch-attacker",
+        "x-branch-name": "attacker-branch",
+        "x-environment": "production",
+        "x-environment-id": "environment-attacker",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "http",
+      },
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.releaseId = "release-authoritative";
+    ctx.environmentId = "environment-context";
+    ctx.resolvedEnvironment = "production";
+    ctx.enriched = {
+      contentSourceId: "source-authoritative",
+    } as HandlerContext["enriched"];
+    ctx.requestContext = {
+      token: "runtime-token",
+      slug: "demo-project",
+      branch: "context-branch",
+      mode: "production",
+    };
+
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    await result.response.body?.cancel();
+    assertEquals(receivedConfig?.endpoint, "http://127.0.0.1:4311/api/ag-ui");
+    assertEquals(receivedConfig?.projectId, "proj-1");
+    assertEquals(receivedConfig?.projectSlug, "demo-project");
+    assertEquals(receivedConfig?.releaseId, "release-authoritative");
+    assertEquals(receivedConfig?.contentSourceId, "source-authoritative");
+    assertEquals(receivedConfig?.branchId, "branch-authoritative");
+    assertEquals(receivedConfig?.branchName, "managed-branch");
+    assertEquals(receivedConfig?.environment, "preview");
+    assertEquals(receivedConfig?.environmentId, undefined);
+    assertEquals(
+      receivedConfig?.forwardedHost,
+      "demo-project--managed-branch.preview.veryfront.org",
+    );
+    assertEquals(receivedConfig?.forwardedProto, "https");
+  });
+
+  it("does not let forwarded headers localize a signed external eval endpoint", async () => {
+    let receivedEndpoint: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_external_endpoint",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://agent-service.example.com/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_external_endpoint/execute",
+      body,
+      {
+        "x-token": "runtime-token",
+        "x-forwarded-host": "agent-service.example.com",
+        "x-forwarded-proto": "https",
+      },
+      "https://control-plane.example",
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    await result.response.body?.cancel();
+    assertEquals(receivedEndpoint, "https://agent-service.example.com/api/ag-ui");
   });
 
   it("returns an eval report artifact path when report upload succeeds", async () => {

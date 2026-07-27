@@ -295,22 +295,31 @@ describe("createRequestContext", () => {
       assertEquals(getRequestTokenProvenance(ctx, "different-token"), "untrusted");
     });
 
-    it("reads x-project-slug from headers", () => {
+    it("reads x-project-slug from trusted topology headers", () => {
       const req = makeRequest("https://example.com/page", {
         host: "example.com",
         "x-project-slug": "custom-slug",
       });
-      const ctx = createRequestContext(req);
+      const ctx = createRequestContext(req, { proxyTopologyTrusted: true });
       assertEquals(ctx.slug, "custom-slug");
     });
 
-    it("x-project-slug takes priority over domain-parsed slug", () => {
+    it("trusted x-project-slug takes priority over domain-parsed slug", () => {
       const req = makeRequest("https://127.0.0.1/page", {
         host: "my-app.lvh.me",
         "x-project-slug": "override-slug",
       });
-      const ctx = createRequestContext(req);
+      const ctx = createRequestContext(req, { proxyTopologyTrusted: true });
       assertEquals(ctx.slug, "override-slug");
+    });
+
+    it("ignores x-project-slug when topology headers are explicitly untrusted", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "my-app.lvh.me",
+        "x-project-slug": "attacker-project",
+      });
+      const ctx = createRequestContext(req, { proxyTopologyTrusted: false });
+      assertEquals(ctx.slug, "my-app");
     });
 
     it("falls back to the parsed domain slug when x-project-slug is blank", () => {

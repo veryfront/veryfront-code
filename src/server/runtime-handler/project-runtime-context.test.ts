@@ -258,9 +258,12 @@ describe("prepareProjectRequest", () => {
       createRequestContext(req, { proxyTopologyTrusted: false }),
     );
     assertEquals(prepared.headers.environment, undefined);
-    assertEquals(prepared.loggerFacts.projectSlug, "header-project");
-    assertEquals(prepared.trackingFacts.releaseId, "rel_123");
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(prepared.headers.projectSlug, undefined);
+    assertEquals(prepared.headers.projectId, undefined);
+    assertEquals(prepared.requestContext.slug, "");
+    assertEquals(prepared.loggerFacts.projectSlug, undefined);
+    assertEquals(prepared.trackingFacts.releaseId, undefined);
+    assertEquals(prepared.proxyGuard?.detail, "x-project-slug header is required in proxy mode");
   });
 
   it("returns the existing missing slug proxy guard response", async () => {
@@ -291,7 +294,7 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      proxyTopologyTrusted: false,
+      proxyTopologyTrusted: true,
     });
 
     assertEquals(prepared.proxyGuard?.detail, "x-token header is required in proxy mode");
@@ -301,12 +304,12 @@ describe("prepareProjectRequest", () => {
     });
   });
 
-  it("guards only trust-sensitive x-project-path in untrusted proxy requests", async () => {
-    const forwardedOnly = new Request("http://localhost/page", {
+  it("guards trust-sensitive x-project-path in untrusted proxy requests", async () => {
+    const forwardedOnly = new Request("http://my-project.production.veryfront.com/page", {
       headers: {
-        "x-project-slug": "my-project",
+        "x-project-slug": "attacker-project",
         "x-token": "proxy-token",
-        "x-forwarded-host": "my-project.production.veryfront.com",
+        "x-forwarded-host": "attacker.production.veryfront.com",
       },
     });
 
@@ -319,9 +322,9 @@ describe("prepareProjectRequest", () => {
 
     assertEquals(allowed.proxyGuard, undefined);
 
-    const projectPath = new Request("http://localhost/page", {
+    const projectPath = new Request("http://my-project.production.veryfront.com/page", {
       headers: {
-        "x-project-slug": "my-project",
+        "x-project-slug": "attacker-project",
         "x-token": "proxy-token",
         "x-project-path": "/attacker/chosen/path",
       },
@@ -443,7 +446,101 @@ describe("resolveProjectIdentity", () => {
     assertEquals(trusted.parsedDomain.environment, "preview");
   });
 
-  it("preserves explicit slug and suppresses unrelated default project id", async () => {
+  it("keeps rotating standalone identity headers on the configured identity through HandlerContext", async () => {
+    __injectDepsForTests({
+      parseProjectDomain: () => defaultParsedDomain,
+      lookupProjectByDomain: () => Promise.resolve(null),
+      getEnvironmentType: () => undefined,
+    });
+    try {
+      for (
+        const [headerSlug, headerId] of [
+          ["attacker-a", "project-attacker-a"],
+          ["attacker-b", "project-attacker-b"],
+        ] as const
+      ) {
+        const req = new Request("http://localhost/page", {
+          headers: {
+            "x-project-slug": headerSlug,
+            "x-project-id": headerId,
+          },
+        });
+        const url = new URL(req.url);
+        const prepared = await prepareProjectRequest({
+          req,
+          url,
+          isProxyMode: false,
+          proxyTopologyTrusted: false,
+        });
+        const identity = await resolveProjectIdentity({
+          req,
+          url,
+          headers: prepared.headers,
+          requestContext: prepared.requestContext,
+          config: undefined,
+          defaultProjectSlug: "configured-project",
+          defaultProjectId: "project-configured",
+          defaultReleaseId: undefined,
+          wsSlugOverride: undefined,
+          proxyTopologyTrusted: prepared.proxyTopologyTrusted,
+        });
+
+        assertEquals(prepared.headers.projectSlug, undefined);
+        assertEquals(prepared.headers.projectId, undefined);
+        assertEquals(identity.projectSlug, "configured-project");
+        assertEquals(identity.projectId, "project-configured");
+
+        const runtime = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+          req,
+          url,
+          headers: prepared.headers,
+          requestContext: prepared.requestContext,
+          projectIdentity: identity,
+          isProxyMode: false,
+          proxyTopologyTrusted: prepared.proxyTopologyTrusted,
+        }));
+
+        assertExists(runtime.handlerContext);
+        assertEquals(runtime.handlerContext.projectSlug, "configured-project");
+        assertEquals(runtime.handlerContext.projectId, "project-configured");
+      }
+
+      const trustedReq = new Request("http://localhost/page", {
+        headers: {
+          "x-project-slug": "trusted-project",
+          "x-project-id": "project-trusted",
+          "x-token": "trusted-token",
+        },
+      });
+      const trustedUrl = new URL(trustedReq.url);
+      const trustedPrepared = await prepareProjectRequest({
+        req: trustedReq,
+        url: trustedUrl,
+        isProxyMode: true,
+        proxyTopologyTrusted: true,
+      });
+      const trustedIdentity = await resolveProjectIdentity({
+        req: trustedReq,
+        url: trustedUrl,
+        headers: trustedPrepared.headers,
+        requestContext: trustedPrepared.requestContext,
+        config: undefined,
+        defaultProjectSlug: "configured-project",
+        defaultProjectId: "project-configured",
+        defaultReleaseId: undefined,
+        wsSlugOverride: undefined,
+        proxyTopologyTrusted: trustedPrepared.proxyTopologyTrusted,
+      });
+
+      assertEquals(trustedPrepared.proxyGuard, undefined);
+      assertEquals(trustedIdentity.projectSlug, "trusted-project");
+      assertEquals(trustedIdentity.projectId, "project-trusted");
+    } finally {
+      __injectDepsForTests(null);
+    }
+  });
+
+  it("preserves a trusted explicit slug and suppresses unrelated default project id", async () => {
     __injectDepsForTests({
       parseProjectDomain: () => defaultParsedDomain,
       lookupProjectByDomain: () => Promise.resolve(null),
@@ -454,19 +551,19 @@ describe("resolveProjectIdentity", () => {
         headers: { "x-project-slug": "request-slug", "x-branch-id": "branch-1" },
       });
       const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+      const headers = extractRequestHeaders(req, url, true);
 
       const result = await resolveProjectIdentity({
         req,
         url,
         headers,
-        requestContext: createRequestContext(req),
+        requestContext: createRequestContext(req, { proxyTopologyTrusted: true }),
         config: undefined,
         defaultProjectSlug: "default-slug",
         defaultProjectId: "default-id",
         defaultReleaseId: undefined,
         wsSlugOverride: "ws-slug",
-        proxyTopologyTrusted: false,
+        proxyTopologyTrusted: true,
       });
 
       assertEquals(result.projectSlug, "request-slug");
@@ -476,7 +573,7 @@ describe("resolveProjectIdentity", () => {
     }
   });
 
-  it("keeps header release ahead of default release and domain release lookup", async () => {
+  it("keeps a trusted proxy release ahead of default release and domain release lookup", async () => {
     let lookupCount = 0;
     __injectDepsForTests({
       parseProjectDomain: () => ({
@@ -512,14 +609,14 @@ describe("resolveProjectIdentity", () => {
       const result = await resolveProjectIdentity({
         req,
         url,
-        headers: extractRequestHeaders(req, url),
-        requestContext: createRequestContext(req),
+        headers: extractRequestHeaders(req, url, true),
+        requestContext: createRequestContext(req, { proxyTopologyTrusted: true }),
         config,
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         defaultReleaseId: "default-release",
         wsSlugOverride: undefined,
-        proxyTopologyTrusted: false,
+        proxyTopologyTrusted: true,
       });
 
       assertEquals(result.releaseId, "header-release");
@@ -588,6 +685,7 @@ describe("resolveProjectRuntimeContext", () => {
       routeRegistry,
       securityConfig,
       cspUserHeader,
+      environmentId: "env-remote",
       envVarCache: {
         get: (
           environmentId: string,

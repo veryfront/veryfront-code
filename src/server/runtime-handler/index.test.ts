@@ -8,7 +8,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
-import { createVeryfrontHandler } from "./index.ts";
+import { createVeryfrontHandler, type RuntimeHandlerOptions } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -58,6 +58,20 @@ async function createFreshDispatchJws(): Promise<{
     jws: `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`,
     publicKeyPem,
   };
+}
+
+async function withTrustedProxyTopology<T>(operation: () => Promise<T>): Promise<T> {
+  const previousTrustSetting = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+  Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+  try {
+    return await operation();
+  } finally {
+    if (previousTrustSetting === undefined) {
+      Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    } else {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousTrustSetting);
+    }
+  }
 }
 
 function createMockAdapter(
@@ -248,6 +262,10 @@ function createProxySecurityHandler(
   configSource: string,
   projectEnvFetch: typeof globalThis.fetch = createDefaultProjectEnvFetch(),
   environment: Readonly<Record<string, string>> = {},
+  defaults: Pick<
+    RuntimeHandlerOptions,
+    "defaultProjectSlug" | "defaultProjectId" | "defaultReleaseId" | "defaultEnvironment"
+  > = {},
 ) {
   injectIsolationDepsForTests({
     checkRequest: () => ({ allowed: true }),
@@ -264,6 +282,7 @@ function createProxySecurityHandler(
         fs: { veryfront: { proxyMode: true } },
       } as any,
       projectEnvFetch,
+      ...defaults,
     },
   );
 }
@@ -296,10 +315,12 @@ describe("server/runtime-handler/index", () => {
   it("returns 502 when x-token is missing in proxy mode", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(
-      new Request("http://localhost/page", {
-        headers: { "x-project-slug": "my-project" },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://localhost/page", {
+          headers: { "x-project-slug": "my-project" },
+        }),
+      )
     );
 
     assertEquals(response.status, 502);
@@ -332,19 +353,21 @@ describe("server/runtime-handler/index", () => {
       },
     );
 
-    const response = await handler(
-      new Request("http://my-project.production.veryfront.com/missing.css", {
-        method: "OPTIONS",
-        headers: {
-          "x-project-slug": "my-project",
-          "x-project-id": "project_123",
-          "x-token": "proxy-token",
-          "x-release-id": "release_123",
-          "x-environment-id": "environment_production",
-          origin: "https://client.example",
-          "access-control-request-method": "GET",
-        },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://my-project.production.veryfront.com/missing.css", {
+          method: "OPTIONS",
+          headers: {
+            "x-project-slug": "my-project",
+            "x-project-id": "project_123",
+            "x-token": "proxy-token",
+            "x-release-id": "release_123",
+            "x-environment-id": "environment_production",
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+      )
     );
 
     assertEquals(response.status, 204);
@@ -360,7 +383,7 @@ describe("server/runtime-handler/index", () => {
     const handler = createProxyModeHandler();
 
     const response = await handler(
-      new Request("http://localhost/page", {
+      new Request("http://my-project.production.veryfront.com/page", {
         headers: {
           "x-project-slug": "my-project",
           "x-token": "spoofed-token",
@@ -437,6 +460,14 @@ describe("server/runtime-handler/index", () => {
     try {
       const handler = createProxySecurityHandler(
         "export default { security: { cors: false } };",
+        createDefaultProjectEnvFetch(),
+        {},
+        {
+          defaultProjectSlug: "test-project",
+          defaultProjectId: "project_123",
+          defaultReleaseId: "release_123",
+          defaultEnvironment: "production",
+        },
       );
 
       const response = await handler(
@@ -454,7 +485,10 @@ describe("server/runtime-handler/index", () => {
         ),
       );
 
-      assertEquals(response.status, 404);
+      // The untrusted project/environment metadata is discarded before the
+      // preview selector can affect source resolution.
+      assertEquals(response.status, 400);
+      await response.body?.cancel();
     } finally {
       if (previousTrustSetting === undefined) {
         Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
@@ -675,15 +709,17 @@ describe("server/runtime-handler/index", () => {
       origin: "https://client.example",
     };
 
-    const preflight = await handler(
-      new Request("http://secure-project.production.veryfront.com/missing.css", {
-        method: "OPTIONS",
-        headers: {
-          ...proxyHeaders,
-          "access-control-request-method": "GET",
-          "access-control-request-headers": "authorization",
-        },
-      }),
+    const preflight = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://secure-project.production.veryfront.com/missing.css", {
+          method: "OPTIONS",
+          headers: {
+            ...proxyHeaders,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "authorization",
+          },
+        }),
+      )
     );
 
     assertEquals(preflight.status, 204);
@@ -693,10 +729,12 @@ describe("server/runtime-handler/index", () => {
     );
     assertEquals(preflight.headers.get("Access-Control-Allow-Credentials"), "true");
 
-    const unauthorized = await handler(
-      new Request("http://secure-project.production.veryfront.com/missing.css", {
-        headers: proxyHeaders,
-      }),
+    const unauthorized = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://secure-project.production.veryfront.com/missing.css", {
+          headers: proxyHeaders,
+        }),
+      )
     );
 
     assertEquals(unauthorized.status, 401);
@@ -708,10 +746,12 @@ describe("server/runtime-handler/index", () => {
     assertEquals(unauthorized.headers.get("Access-Control-Allow-Credentials"), "true");
 
     const authorization = `Basic ${btoa("alice:secret")}`;
-    const actual = await handler(
-      new Request("http://secure-project.production.veryfront.com/missing.css", {
-        headers: { ...proxyHeaders, authorization },
-      }),
+    const actual = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://secure-project.production.veryfront.com/missing.css", {
+          headers: { ...proxyHeaders, authorization },
+        }),
+      )
     );
 
     assertEquals(actual.status, 404);
@@ -722,11 +762,13 @@ describe("server/runtime-handler/index", () => {
     assertEquals(actual.headers.get("Access-Control-Allow-Credentials"), "true");
     assertEquals(actual.headers.get("Content-Security-Policy"), "default-src 'none'");
 
-    const csrfRejected = await handler(
-      new Request("http://secure-project.production.veryfront.com/missing.css", {
-        method: "POST",
-        headers: { ...proxyHeaders, authorization },
-      }),
+    const csrfRejected = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://secure-project.production.veryfront.com/missing.css", {
+          method: "POST",
+          headers: { ...proxyHeaders, authorization },
+        }),
+      )
     );
 
     assertEquals(csrfRejected.status, 403);
@@ -893,15 +935,17 @@ describe("server/runtime-handler/index", () => {
       },
     );
 
-    const response = await handler(
-      new Request("http://secure-project.production.veryfront.com/missing.css", {
-        headers: {
-          "x-project-slug": "secure-project",
-          "x-project-id": "project_123",
-          "x-release-id": "release_123",
-          "x-token": "proxy-token",
-        },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://secure-project.production.veryfront.com/missing.css", {
+          headers: {
+            "x-project-slug": "secure-project",
+            "x-project-id": "project_123",
+            "x-release-id": "release_123",
+            "x-token": "proxy-token",
+          },
+        }),
+      )
     );
 
     assertEquals(response.status, 400);
@@ -942,6 +986,12 @@ describe("server/runtime-handler/index", () => {
       "export default { security: { cors: false } };",
       projectEnvFetch,
       { CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY: publicKeyPem },
+      {
+        defaultProjectSlug: "secure-project",
+        defaultProjectId: "project_123",
+        defaultReleaseId: "release_123",
+        defaultEnvironment: "production",
+      },
     );
 
     const response = await handler(
@@ -958,8 +1008,12 @@ describe("server/runtime-handler/index", () => {
       }),
     );
 
-    assertEquals(response.status, 502);
+    // A dispatch signature that is not bound to the routing tuple cannot make
+    // its project/source metadata authoritative; resolution fails closed
+    // before any tenant environment is loaded.
+    assertEquals(response.status, 400);
     assertEquals(environmentFetches, 0);
+    await response.body?.cancel();
   });
 
   it("binds a custom domain through authoritative domain metadata", async () => {
@@ -990,16 +1044,18 @@ describe("server/runtime-handler/index", () => {
       projectEnvFetch,
     );
 
-    const response = await handler(
-      new Request("https://customer.example/missing.css", {
-        headers: {
-          "x-project-slug": "secure-project",
-          "x-project-id": "project_123",
-          "x-release-id": "release_customer",
-          "x-environment-id": "environment_customer",
-          "x-token": "proxy-token",
-        },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("https://customer.example/missing.css", {
+          headers: {
+            "x-project-slug": "secure-project",
+            "x-project-id": "project_123",
+            "x-release-id": "release_customer",
+            "x-environment-id": "environment_customer",
+            "x-token": "proxy-token",
+          },
+        }),
+      )
     );
 
     assertEquals(response.status, 404);
@@ -1015,16 +1071,18 @@ describe("server/runtime-handler/index", () => {
       };
     `);
 
-    const response = await handler(
-      new Request("http://secure-project.preview.veryfront.com/missing.css", {
-        method: "POST",
-        headers: {
-          "x-project-slug": "secure-project",
-          "x-project-id": "project_123",
-          "x-environment-id": "environment_preview",
-          "x-token": "proxy-token",
-        },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://secure-project.preview.veryfront.com/missing.css", {
+          method: "POST",
+          headers: {
+            "x-project-slug": "secure-project",
+            "x-project-id": "project_123",
+            "x-environment-id": "environment_preview",
+            "x-token": "proxy-token",
+          },
+        }),
+      )
     );
 
     assertEquals(response.status, 403);
@@ -1126,20 +1184,22 @@ describe("server/runtime-handler/index", () => {
 
   it("does not invent a CSRF policy when exact-source control-plane config is deferred", async () => {
     const handler = createProxyModeHandler();
-    const response = await handler(
-      new Request(
-        "http://localhost/api/control-plane/runs/run_123/resume",
-        {
-          method: "POST",
-          headers: {
-            "x-project-slug": "secure-project",
-            "x-project-id": "project_123",
-            "x-token": "proxy-token",
-            "content-type": "application/json",
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request(
+          "http://localhost/api/control-plane/runs/run_123/resume",
+          {
+            method: "POST",
+            headers: {
+              "x-project-slug": "secure-project",
+              "x-project-id": "project_123",
+              "x-token": "proxy-token",
+              "content-type": "application/json",
+            },
+            body: "{}",
           },
-          body: "{}",
-        },
-      ),
+        ),
+      )
     );
 
     assertEquals(response.status, 500);
