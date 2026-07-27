@@ -61,6 +61,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"jszip",
 	"pdf-lib",
 	"esbuild",
+	"gaxios",
+	"gcp-metadata",
 	"github-slugger",
 	"gaxios",
 	"gcp-metadata",

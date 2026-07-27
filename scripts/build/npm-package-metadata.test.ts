@@ -340,6 +340,11 @@ describe("normalizeNpmPackageMetadata", () => {
         "@opentelemetry/exporter-metrics-otlp-http": "0.219.0",
         "@opentelemetry/sdk-metrics": "2.8.0",
         "@opentelemetry/sdk-node": "0.218.0",
+        "@sentry/deno": "10.68.0",
+        "brace-expansion": "5.0.8",
+        "gaxios": "7.2.0",
+        "gcp-metadata": "8.1.2",
+        "protobufjs": "7.6.5",
         "zod": "4.3.6",
       },
       optionalDependencies: {
