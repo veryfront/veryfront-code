@@ -173,8 +173,8 @@ Deno.test("npm publish orders extensions before the root package", async () => {
       [
         "npm/extensions/ext-alpha",
         "npm/extensions/ext-zeta",
-        "npm/create",
         "npm",
+        "npm/create",
       ],
     );
   } finally {
@@ -258,8 +258,8 @@ Deno.test("npm publish skips extension packages marked publish false", async () 
         "create-veryfront",
         "@veryfront/ext-alpha",
         "npm/extensions/ext-alpha",
-        "npm/create",
         "npm",
+        "npm/create",
       ],
     );
     assertStringIncludes(

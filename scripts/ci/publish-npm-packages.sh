@@ -36,7 +36,9 @@ require_env() {
 }
 
 # Package directories in dependency order for publish modes. The root package
-# pins auto-loaded extensions to the same version, so publish it last.
+# pins auto-loaded extensions to the same version, so publish it after
+# extensions. create-veryfront depends on the root veryfront package, so publish
+# it last.
 package_dirs() {
   find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort | while read -r PACKAGE_DIR; do
     if [ "$(jq -r '.veryfront.npm.publish == false' "${PACKAGE_DIR}/package.json")" = "true" ]; then
@@ -46,8 +48,8 @@ package_dirs() {
     fi
     printf '%s\n' "${PACKAGE_DIR}"
   done
-  printf '%s\n' npm/create
   printf '%s\n' npm
+  printf '%s\n' npm/create
 }
 
 # Package names derived from the deno.json workspace (preflight runs before
