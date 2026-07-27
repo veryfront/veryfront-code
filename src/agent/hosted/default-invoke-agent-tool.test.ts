@@ -168,7 +168,10 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
     forkToolNames?: readonly string[];
     system?: string;
     prompt?: string;
+    childConfigAbortSignal?: AbortSignal;
+    refreshAbortSignal?: AbortSignal;
   } = {};
+  const abortController = new AbortController();
 
   const result = await executeDefaultHostedInvokeAgentTool(
     createTestOptions({
@@ -180,9 +183,10 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
           assertEquals(projectReference, "target-project");
           return Promise.resolve({ projectId: "target-project-id", slug: "target-project" });
         },
-        resolveChildAgentExecutionConfig: (childAgentId, projectId) => {
+        resolveChildAgentExecutionConfig: (childAgentId, projectId, abortSignal?: AbortSignal) => {
           assertEquals(childAgentId, "extraction-agent");
           assertEquals(projectId, "target-project-id");
+          captured.childConfigAbortSignal = abortSignal;
           return Promise.resolve({
             system: "Follow the extraction policy.",
             model: "configured-model",
@@ -191,6 +195,9 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
             toolNames: ["lookup_job"],
             availableSkillIds: ["extraction"],
           });
+        },
+        refreshProjectSkillIds: (_projectContext, abortSignal?: AbortSignal) => {
+          captured.refreshAbortSignal = abortSignal;
         },
         buildGlobalTools: (context, childAgentId, childConfig) => {
           assertEquals(context.projectId, "target-project-id");
@@ -255,7 +262,10 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
       project_reference: "target-project",
     },
     "extraction-agent",
-    { toolCallId: "tool-call-configured-child" },
+    {
+      toolCallId: "tool-call-configured-child",
+      abortSignal: abortController.signal,
+    },
   );
 
   assertEquals("success" in result && result.success, true);
@@ -266,6 +276,8 @@ Deno.test("default hosted invoke resolves and runs configured child against the 
   assertEquals(captured.system?.includes("Follow the extraction policy."), true);
   assertEquals(captured.system?.includes("Available Skills"), true);
   assertEquals(captured.prompt?.includes("Extract the application."), true);
+  assertEquals(captured.childConfigAbortSignal, abortController.signal);
+  assertEquals(captured.refreshAbortSignal, abortController.signal);
   assertEquals(context.projectId, "target-project-id");
   assertEquals(context.projectSlug, "target-project");
 });

@@ -2,6 +2,7 @@ import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolExecutionContext,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import { runWithRequestContextResponse as runWithProjectRequestContextResponse } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -37,6 +38,7 @@ import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.t
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
+  type HostedRuntimeSystemRefreshInput,
   resolveHostedToolExecutionIdentity,
 } from "./runtime-state-resolver.ts";
 import type { ProjectSteeringMutationResult } from "../project/steering-mutation.ts";
@@ -108,12 +110,14 @@ export type DefaultHostedChatRuntimeSystemRefreshInput = {
   initialProjectId?: string | null;
   liveProjectSteering: NonNullable<DefaultHostedChatRuntimeCreationOptions["liveProjectSteering"]>;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
+  abortSignal?: AbortSignal;
 };
 
 /** Input payload for default hosted chat runtime steering mutation. */
 export type DefaultHostedChatRuntimeSteeringMutationInput = {
   mutation: ProjectSteeringMutationResult;
   taskContext: DefaultHostedChatRuntimeTaskContext;
+  executionContext?: ToolExecutionContext;
 };
 
 /** Input payload for default hosted chat runtime project switch. */
@@ -121,6 +125,7 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
   projectSlug?: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
+  executionContext?: ToolExecutionContext;
 };
 
 /** Options accepted by create default hosted chat runtime. */
@@ -213,17 +218,26 @@ async function buildToolAssembly(
         taskContext: input.taskContext,
         error,
       }),
-    onSteeringMutation: async (mutation) => {
-      await input.onSteeringMutation?.({ mutation, taskContext: input.taskContext });
+    onSteeringMutationWithContext: async (mutation, executionContext) => {
+      await input.onSteeringMutation?.({
+        mutation,
+        taskContext: input.taskContext,
+        ...(executionContext === undefined ? {} : { executionContext }),
+      });
       if (mutation.instructionsChanged || mutation.skillsChanged) {
         incrementSteeringRevision(input.taskContext);
       }
     },
-    onStudioProjectSwitch: async (projectId, projectSlug) => {
+    onStudioProjectSwitchWithContext: async (
+      projectId,
+      projectSlug,
+      executionContext,
+    ) => {
       const changed = await input.onStudioProjectSwitch?.({
         projectId,
         projectSlug,
         taskContext: input.taskContext,
+        ...(executionContext === undefined ? {} : { executionContext }),
       });
       if (changed) {
         incrementSteeringRevision(input.taskContext);
@@ -243,12 +257,17 @@ function createRuntimeAgentConfig(input: {
   const liveProjectSteering = input.options.liveProjectSteering;
   const systemRefresh = input.refreshSystem;
   const refreshSystem = systemRefresh && liveProjectSteering
-    ? () =>
+    ? (
+      refreshInput: HostedRuntimeSystemRefreshInput<DefaultHostedChatRuntimeTaskContext>,
+    ) =>
       systemRefresh({
         taskContext: input.taskContext,
         initialProjectId: input.options.projectId,
         liveProjectSteering,
         toolAssembly: input.toolAssembly,
+        ...(refreshInput.abortSignal === undefined
+          ? {}
+          : { abortSignal: refreshInput.abortSignal }),
       })
     : undefined;
 

@@ -34,6 +34,7 @@ export type RuntimeStepStateResolver = (
   mode: AgentRuntimeStepMode,
   step: number,
   systemPrompt: string,
+  abortSignal?: AbortSignal,
 ) => Promise<AgentRuntimeStepState>;
 
 export interface PrepareAgentRuntimeStepInput {
@@ -75,6 +76,7 @@ export async function prepareAgentRuntimeStep(
     input.mode,
     input.step,
     input.systemPrompt,
+    input.toolContextBase?.abortSignal,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
   if (input.toolContextBase?.abortSignal !== undefined) {

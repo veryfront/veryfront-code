@@ -1876,6 +1876,7 @@ describe("agent runtime refresh hooks", () => {
     const runtimeRequests: RuntimeStateRequest[] = [];
     const observedSystems: string[] = [];
     const inspectedContexts: Array<Record<string, unknown> | undefined> = [];
+    const abortController = new AbortController();
     let callCount = 0;
 
     const model: ModelRuntime = {
@@ -1975,10 +1976,18 @@ describe("agent runtime refresh hooks", () => {
     const result = await assistant.generate({
       input: "Switch to project b and inspect the active context",
       context: { projectId: "project-a" },
+      abortSignal: abortController.signal,
     });
 
     assertEquals(result.text, "done");
     assertEquals(runtimeRequests.map((request) => request.step), [0, 1, 2]);
+    assertEquals(
+      runtimeRequests.every((request) =>
+        (request as RuntimeStateRequest & { abortSignal?: AbortSignal }).abortSignal ===
+          abortController.signal
+      ),
+      true,
+    );
     assertEquals(observedSystems, [
       "Base system prompt",
       "Refreshed system prompt",

@@ -379,6 +379,70 @@ Deno.test("createHostedProjectRemoteToolSource reports project navigation and st
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
 });
 
+Deno.test("createHostedProjectRemoteToolSource exposes trusted execution context to internal lifecycle handlers", async () => {
+  const observedSignals: Array<AbortSignal | undefined> = [];
+  const abortController = new AbortController();
+  const sourceInput = {
+    source: createRemoteSource({
+      tools: [navigationTool("studio_open_project"), projectFileTool("update_file")],
+      execute: (toolName: string) => {
+        if (toolName === "studio_open_project") {
+          return { success: true, project_id: "project-2", slug: "project-two" };
+        }
+        return { success: true };
+      },
+    }),
+    defaultProjectId: () => "project-1",
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    onProjectSwitchWithContext: (
+      _projectId: string,
+      _projectSlug: string | undefined,
+      context: ToolExecutionContext | undefined,
+    ) => {
+      observedSignals.push(context?.abortSignal);
+    },
+    onSteeringMutationWithContext: (
+      _mutation: { instructionsChanged: boolean; skillsChanged: boolean },
+      context: ToolExecutionContext | undefined,
+    ) => {
+      observedSignals.push(context?.abortSignal);
+    },
+  } as Parameters<typeof createHostedProjectRemoteToolSource>[0] & {
+    onProjectSwitchWithContext: (
+      projectId: string,
+      projectSlug: string | undefined,
+      context: ToolExecutionContext | undefined,
+    ) => void;
+    onSteeringMutationWithContext: (
+      mutation: { instructionsChanged: boolean; skillsChanged: boolean },
+      context: ToolExecutionContext | undefined,
+    ) => void;
+  };
+  const source = createHostedProjectRemoteToolSource(sourceInput);
+  const executionContext: ToolExecutionContext = {
+    abortSignal: abortController.signal,
+    toolCallId: "tool-call-1",
+  };
+
+  await source.executeTool(
+    "studio_open_project",
+    { project_reference: "project-two" },
+    executionContext,
+  );
+  await source.executeTool(
+    "update_file",
+    { path: "AGENTS.md" },
+    executionContext,
+  );
+
+  assertEquals(observedSignals, [
+    abortController.signal,
+    abortController.signal,
+  ]);
+});
+
 Deno.test("createHostedProjectRemoteToolSource rejects unsafe navigation references before remote work", async () => {
   let executeCalls = 0;
   const source = createHostedProjectRemoteToolSource({

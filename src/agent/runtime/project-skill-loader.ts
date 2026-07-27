@@ -63,11 +63,17 @@ export type RuntimeProjectSkillLoaderLogger = {
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+type RuntimeProjectSkillReadContext = {
+  signal?: AbortSignal;
+};
+
 /** Options accepted by runtime project skill loader. */
 export type RuntimeProjectSkillLoaderOptions = {
-  getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
+  getProjectFile: (
+    options: RuntimeGetProjectFileOptions & { signal?: AbortSignal },
+  ) => Promise<RuntimeProjectFile | null>;
   getProjectFiles: (
-    options: RuntimeProjectFilesApiOptions,
+    options: RuntimeProjectFilesApiOptions & { signal?: AbortSignal },
   ) => Promise<RuntimeProjectFileListItem[]>;
   steeringPaths?: Pick<ProjectSteeringPaths, "skills">;
   isAccessDeniedError?: (error: unknown) => boolean;
@@ -79,15 +85,18 @@ export type RuntimeProjectSkillLoader = {
   listProjectSkillReferences: (
     context: RuntimeProjectSkillContext,
     skillId: string,
+    signal?: AbortSignal,
   ) => Promise<string[]>;
   loadProjectSkill: (
     context: RuntimeProjectSkillContext,
     skillId: string,
+    signal?: AbortSignal,
   ) => Promise<RuntimeLoadedProjectSkill | null>;
   loadProjectSkillReference: (
     context: RuntimeProjectSkillContext,
     skillId: string,
     normalizedFile: string,
+    signal?: AbortSignal,
   ) => Promise<string | null>;
 };
 
@@ -154,6 +163,29 @@ function isAccessDeniedError(
   return options.isAccessDeniedError?.(error) ?? false;
 }
 
+function throwIfProjectSkillReadAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason === undefined
+      ? new DOMException("The operation was aborted", "AbortError")
+      : signal.reason;
+  }
+}
+
+async function readProjectSkillValue<T>(
+  signal: AbortSignal | undefined,
+  read: () => Promise<T>,
+): Promise<T> {
+  throwIfProjectSkillReadAborted(signal);
+  try {
+    const value = await read();
+    throwIfProjectSkillReadAborted(signal);
+    return value;
+  } catch (error) {
+    throwIfProjectSkillReadAborted(signal);
+    throw error;
+  }
+}
+
 type ProjectSkillSource =
   | { kind: "directory"; skillsPath: string }
   | { kind: "flat"; skillsPath: string }
@@ -176,9 +208,12 @@ function isSafeRuntimeSkillId(skillId: unknown): skillId is string {
 
 async function getExpectedProjectFile(
   options: RuntimeProjectSkillLoaderOptions,
-  request: RuntimeGetProjectFileOptions,
+  request: RuntimeGetProjectFileOptions & RuntimeProjectSkillReadContext,
 ): Promise<RuntimeProjectFile | null> {
-  const file = await options.getProjectFile(request);
+  const file = await readProjectSkillValue(
+    request.signal,
+    () => options.getProjectFile(request),
+  );
   if (
     file !== null &&
     (
@@ -244,6 +279,7 @@ async function findProjectSkillSource(input: {
   options: RuntimeProjectSkillLoaderOptions;
   context: RuntimeProjectSkillContext;
   skillId: string;
+  signal?: AbortSignal;
 }): Promise<ProjectSkillSource | null> {
   const projectId = input.context.projectId;
   if (!projectId || !isSafeRuntimeSkillId(input.skillId)) {
@@ -261,6 +297,7 @@ async function findProjectSkillSource(input: {
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillsPath}/${input.skillId}/SKILL.md`,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     if (directorySkill?.content) {
       return { kind: "directory", skillsPath };
@@ -271,6 +308,7 @@ async function findProjectSkillSource(input: {
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillsPath}/${input.skillId}.md`,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     if (flatSkill?.content) {
       return { kind: "flat", skillsPath };
@@ -332,6 +370,7 @@ async function listProjectSkillReferences(input: {
   context: RuntimeProjectSkillContext;
   skillId: string;
   skillsPath?: string;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const projectId = input.context.projectId;
   if (!projectId) {
@@ -347,11 +386,13 @@ async function listProjectSkillReferences(input: {
   }
 
   const allFiles = snapshotProjectFileList(
-    await input.options.getProjectFiles({
-      projectId,
-      authToken: input.context.authToken,
-      branchId: input.context.branchId,
-    }),
+    await readProjectSkillValue(input.signal, () =>
+      input.options.getProjectFiles({
+        projectId,
+        authToken: input.context.authToken,
+        branchId: input.context.branchId,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      })),
   );
 
   return collectProjectSkillReferences({
@@ -407,6 +448,7 @@ async function loadProjectSkill(input: {
   options: RuntimeProjectSkillLoaderOptions;
   context: RuntimeProjectSkillContext;
   skillId: string;
+  signal?: AbortSignal;
 }): Promise<RuntimeLoadedProjectSkill | null> {
   const projectId = input.context.projectId;
   if (!projectId || !isSafeRuntimeSkillId(input.skillId)) {
@@ -422,6 +464,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: `${catalogSkillDir}/SKILL.md`,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       if (
         catalogSkill?.content &&
@@ -447,6 +490,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: `${skillsPath}/${input.skillId}/SKILL.md`,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
 
       if (directorySkill?.content) {
@@ -472,6 +516,7 @@ async function loadProjectSkill(input: {
         authToken: input.context.authToken,
         branchId: input.context.branchId,
         path: `${skillsPath}/${input.skillId}.md`,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
 
       if (flatSkill?.content) {
@@ -492,6 +537,7 @@ async function loadProjectSkill(input: {
       }
     }
   } catch (error) {
+    throwIfProjectSkillReadAborted(input.signal);
     if (isAccessDeniedError(error, input.options)) {
       if (
         Object.prototype.hasOwnProperty.call(input.context.skillSourcePaths ?? {}, input.skillId)
@@ -520,6 +566,7 @@ async function loadProjectSkillReference(input: {
   context: RuntimeProjectSkillContext;
   skillId: string;
   normalizedFile: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   const projectId = input.context.projectId;
   if (
@@ -543,11 +590,13 @@ async function loadProjectSkillReference(input: {
       authToken: input.context.authToken,
       branchId: input.context.branchId,
       path: `${skillDir}/${input.normalizedFile}`,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     if (projectFile !== null) {
       return projectFile.content;
     }
   } catch (error) {
+    throwIfProjectSkillReadAborted(input.signal);
     if (!isAccessDeniedError(error, input.options)) {
       throw error;
     }
@@ -574,10 +623,11 @@ export function createRuntimeProjectSkillLoader(
   options: RuntimeProjectSkillLoaderOptions,
 ): RuntimeProjectSkillLoader {
   return {
-    listProjectSkillReferences: (context, skillId) =>
-      listProjectSkillReferences({ options, context, skillId }),
-    loadProjectSkill: (context, skillId) => loadProjectSkill({ options, context, skillId }),
-    loadProjectSkillReference: (context, skillId, normalizedFile) =>
-      loadProjectSkillReference({ options, context, skillId, normalizedFile }),
+    listProjectSkillReferences: (context, skillId, signal) =>
+      listProjectSkillReferences({ options, context, skillId, signal }),
+    loadProjectSkill: (context, skillId, signal) =>
+      loadProjectSkill({ options, context, skillId, signal }),
+    loadProjectSkillReference: (context, skillId, normalizedFile, signal) =>
+      loadProjectSkillReference({ options, context, skillId, normalizedFile, signal }),
   };
 }

@@ -196,8 +196,9 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "support",
   system: "You are a support assistant.",
-  resolveRuntimeState: async ({ step }) => {
+  resolveRuntimeState: async ({ step, abortSignal }) => {
     if (step === 0) return;
+    abortSignal?.throwIfAborted();
 
     return {
       system: "Use the latest project instructions and tool inventory.",
@@ -205,6 +206,10 @@ export default agent({
   },
 });
 ```
+
+The request's `abortSignal` is the enclosing run's cancellation authority.
+Forward it to refresh I/O and rethrow cancellation rather than replacing it
+with cached project steering.
 
 Services that use Veryfront Cloud project steering can reuse
 `fetchDefaultAgentServiceProjectSteering()` for the initial fetch and

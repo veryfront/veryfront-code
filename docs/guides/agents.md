@@ -348,8 +348,9 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "assistant",
   system: "You are a project assistant.",
-  resolveRuntimeState: async ({ step }) => {
+  resolveRuntimeState: async ({ step, abortSignal }) => {
     if (step === 0) return;
+    abortSignal?.throwIfAborted();
 
     return {
       system: "Use the latest project instructions before continuing.",
@@ -357,6 +358,11 @@ export default agent({
   },
 });
 ```
+
+`abortSignal` is the cancellation authority for the enclosing `generate()` or
+`stream()` call. Pass it to any network or storage reads performed by the
+resolver, and let cancellation propagate instead of converting it into stale
+fallback state.
 
 ## Agent configuration
 

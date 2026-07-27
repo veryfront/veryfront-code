@@ -93,7 +93,7 @@ Deno.test("createVeryfrontCloudRuntimeSystemMessages scopes skill delegation to 
 
   assertStringIncludes(
     message?.content ?? "",
-    "When delegating, use only these available scoped delegation tools: `agent_reviewer`.",
+    'When delegating, use only these available scoped delegation tools: "agent_reviewer".',
   );
   assertEquals((message?.content ?? "").includes("invoke_agent"), false);
   assertEquals((message?.content ?? "").includes("Pass through any returned model"), false);

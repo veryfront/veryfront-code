@@ -204,8 +204,12 @@ export function createLoadSkillTool(
 export async function refreshProjectSkillIds(
   context: NodeVeryfrontCloudAgentServiceContext,
   skillContext: HostedProjectSkillIdsContext,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await getProjectSteering(context, skillContext.agentId).refreshProjectSkillIds(skillContext);
+  await getProjectSteering(context, skillContext.agentId).refreshProjectSkillIdsForRequest(
+    skillContext,
+    signal,
+  );
 }
 
 /** Sets filtered trace attributes on the active span. */
@@ -288,8 +292,11 @@ export function fetchProjectSteering(
 ) {
   return fetchDefaultHostedProjectSteering({
     ...input,
-    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup, agentId, signal),
-    fetchSkills: (lookup) => getSkillsConfig(context, lookup, agentId, signal),
+    ...(signal === undefined ? {} : { signal }),
+    fetchProjectInstructions: ({ signal: requestSignal, ...lookup }) =>
+      getProjectInstructions(context, lookup, agentId, requestSignal),
+    fetchSkills: ({ signal: requestSignal, ...lookup }) =>
+      getSkillsConfig(context, lookup, agentId, requestSignal),
     trace: context.trace,
     traceOperationName: "chat.fetchSteering",
   });
@@ -301,6 +308,7 @@ export async function resolveHostedChildAgentExecutionConfig(
   taskContext: ChildRunContext,
   childAgentId: string,
   projectId: string,
+  signal?: AbortSignal,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
   if (!getProjectAgentRuntime(context).agents.has(childAgentId)) {
     return undefined;
@@ -308,11 +316,16 @@ export async function resolveHostedChildAgentExecutionConfig(
 
   const agentConfig = await resolveAgentConfig(context, childAgentId);
   const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
-  const steering = await fetchProjectSteering(context, {
-    projectId: projectId || null,
-    authToken: taskContext.authToken,
-    branchId,
-  }, childAgentId);
+  const steering = await fetchProjectSteering(
+    context,
+    {
+      projectId: projectId || null,
+      authToken: taskContext.authToken,
+      branchId,
+    },
+    childAgentId,
+    signal,
+  );
   const advertisedSkills = resolveRuntimeSkillsForAgent({
     skills: steering.skills,
     agentId: childAgentId,
@@ -390,10 +403,16 @@ export function createInvokeAgentTool(
           : {}),
       };
     },
-    resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
-      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
-    refreshProjectSkillIds: (projectSkillContext) =>
-      refreshProjectSkillIds(context, projectSkillContext),
+    resolveChildAgentExecutionConfig: (childAgentId, projectId, signal) =>
+      resolveHostedChildAgentExecutionConfig(
+        context,
+        childContext,
+        childAgentId,
+        projectId,
+        signal,
+      ),
+    refreshProjectSkillIds: (projectSkillContext, signal) =>
+      refreshProjectSkillIds(context, projectSkillContext, signal),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
     createRemoteToolSource: createRemoteMCPToolSource,

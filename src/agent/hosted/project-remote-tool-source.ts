@@ -45,6 +45,19 @@ export type HostedProjectRemoteToolSourceProjectSwitchHandler = (
   projectSlug?: string,
 ) => Promise<void> | void;
 
+/** Internal mutation handler that retains the trusted tool execution context. */
+export type HostedProjectRemoteToolSourceContextualMutationHandler = (
+  mutation: ProjectSteeringMutationResult,
+  context: ToolExecutionContext | undefined,
+) => Promise<void> | void;
+
+/** Internal project-switch handler that retains the trusted tool execution context. */
+export type HostedProjectRemoteToolSourceContextualProjectSwitchHandler = (
+  projectId: string,
+  projectSlug: string | undefined,
+  context: ToolExecutionContext | undefined,
+) => Promise<void> | void;
+
 /** Input payload for hosted project remote tool source prepare tool. */
 export type HostedProjectRemoteToolSourcePrepareToolInput = (input: {
   toolName: string;
@@ -82,7 +95,9 @@ export type CreateHostedProjectRemoteToolSourceInput = {
   shouldRetryWithTool?: HostedProjectRemoteToolSourceRetryPolicy;
   steeringPaths?: ProjectSteeringPaths;
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
+  onProjectSwitchWithContext?: HostedProjectRemoteToolSourceContextualProjectSwitchHandler;
   onSteeringMutation?: HostedProjectRemoteToolSourceMutationHandler;
+  onSteeringMutationWithContext?: HostedProjectRemoteToolSourceContextualMutationHandler;
 };
 
 function resolveActiveBranchId(
@@ -235,10 +250,18 @@ export function createHostedProjectRemoteToolSource(
         );
 
         if (confirmedProject) {
-          await input.onProjectSwitch?.(
-            confirmedProject.projectId,
-            confirmedProject.projectSlug,
-          );
+          if (input.onProjectSwitchWithContext) {
+            await input.onProjectSwitchWithContext(
+              confirmedProject.projectId,
+              confirmedProject.projectSlug,
+              executeContext ?? context,
+            );
+          } else {
+            await input.onProjectSwitch?.(
+              confirmedProject.projectId,
+              confirmedProject.projectSlug,
+            );
+          }
         } else if (isClaimedSuccessfulProjectContextSwitchResult(result)) {
           return createUnconfirmedProjectContextSwitchResult();
         }
@@ -255,7 +278,14 @@ export function createHostedProjectRemoteToolSource(
       });
 
       if (mutation.instructionsChanged || mutation.skillsChanged) {
-        await input.onSteeringMutation?.(mutation);
+        if (input.onSteeringMutationWithContext) {
+          await input.onSteeringMutationWithContext(
+            mutation,
+            executeContext ?? context,
+          );
+        } else {
+          await input.onSteeringMutation?.(mutation);
+        }
       }
 
       return result;
@@ -267,7 +297,7 @@ export function createHostedProjectRemoteToolSource(
 export type CreateHostedProjectRemoteToolSourcesInput =
   & Omit<
     CreateHostedProjectRemoteToolSourceInput,
-    "source" | "onProjectSwitch"
+    "source" | "onProjectSwitch" | "onProjectSwitchWithContext"
   >
   & {
     authToken: string;
@@ -279,6 +309,7 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     conversationId?: string;
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
+    onStudioProjectSwitchWithContext?: HostedProjectRemoteToolSourceContextualProjectSwitchHandler;
   };
 
 function needsStudioMcpSource(input: CreateHostedProjectRemoteToolSourcesInput): boolean {
@@ -328,6 +359,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   server: AgentServiceMcpServerConfig,
   source: RemoteToolSource,
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
+  onProjectSwitchWithContext?: HostedProjectRemoteToolSourceContextualProjectSwitchHandler,
 ): RemoteToolSource {
   const policySource = createHostedMcpToolPolicySource(source, server.toolPolicy);
 
@@ -364,7 +396,11 @@ function createHostedProjectRemoteToolSourceFromConfig(
     ...(input.onSteeringMutation !== undefined
       ? { onSteeringMutation: input.onSteeringMutation }
       : {}),
+    ...(input.onSteeringMutationWithContext !== undefined
+      ? { onSteeringMutationWithContext: input.onSteeringMutationWithContext }
+      : {}),
     ...(onProjectSwitch !== undefined ? { onProjectSwitch } : {}),
+    ...(onProjectSwitchWithContext !== undefined ? { onProjectSwitchWithContext } : {}),
   });
 }
 
@@ -409,6 +445,7 @@ export function createHostedProjectRemoteToolSources(
         server,
         createRemoteToolSource(remoteConfig),
         server.kind === "veryfront-studio" ? input.onStudioProjectSwitch : undefined,
+        server.kind === "veryfront-studio" ? input.onStudioProjectSwitchWithContext : undefined,
       ),
     );
   }

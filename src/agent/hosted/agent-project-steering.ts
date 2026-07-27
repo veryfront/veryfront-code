@@ -84,6 +84,10 @@ export type StrictHostedAgentProjectSteering = HostedAgentProjectSteering & {
     lookup: RuntimeProjectSteeringLookup,
     signal: AbortSignal | undefined,
   ) => Promise<RuntimeSkillDefinition[]>;
+  refreshProjectSkillIdsForRequest: (
+    context: HostedProjectSkillIdsContext,
+    signal: AbortSignal | undefined,
+  ) => Promise<void>;
   getProjectSteeringAdapter: () => StrictHostedProjectSteeringAdapter;
 };
 
@@ -192,5 +196,7 @@ export function createStrictHostedAgentProjectSteering(
       steering.getProjectSteeringAdapter().getProjectInstructionsForRequest(lookup, signal),
     getSkillsConfigForRequest: (lookup, signal) =>
       steering.getProjectSteeringAdapter().getSkillsConfigForRequest(lookup, signal),
+    refreshProjectSkillIdsForRequest: (context, signal) =>
+      steering.getProjectSteeringAdapter().refreshProjectSkillIdsForRequest(context, signal),
   };
 }

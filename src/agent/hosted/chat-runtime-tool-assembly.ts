@@ -20,6 +20,8 @@ import {
 import { type AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import {
   createHostedProjectRemoteToolSources,
+  type HostedProjectRemoteToolSourceContextualMutationHandler,
+  type HostedProjectRemoteToolSourceContextualProjectSwitchHandler,
   type HostedProjectRemoteToolSourceMutationHandler,
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
@@ -101,6 +103,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   shouldRetryWithRemoteTool?: HostedProjectRemoteToolSourceRetryPolicy;
   onSteeringMutation?: HostedProjectRemoteToolSourceMutationHandler;
   onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
+  onSteeringMutationWithContext?: HostedProjectRemoteToolSourceContextualMutationHandler;
+  onStudioProjectSwitchWithContext?: HostedProjectRemoteToolSourceContextualProjectSwitchHandler;
   preloadLatestConversationUserText?: boolean;
   /**
    * Per-run tool discovery context. When provided, its `activatedRemoteToolNames`
@@ -297,6 +301,8 @@ export async function prepareHostedChatRuntimeToolAssembly<
     shouldRetryWithTool: input.shouldRetryWithRemoteTool,
     onSteeringMutation: input.onSteeringMutation,
     onStudioProjectSwitch: input.onStudioProjectSwitch,
+    onSteeringMutationWithContext: input.onSteeringMutationWithContext,
+    onStudioProjectSwitchWithContext: input.onStudioProjectSwitchWithContext,
   });
   const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),

@@ -297,6 +297,8 @@ Deno.test(
       const studioExecutionContexts: ToolExecutionContext[] = [];
       const integrationExecutionContexts: ToolExecutionContext[] = [];
       const streamErrors: string[] = [];
+      const streamAbortController = new AbortController();
+      let projectSwitchAbortSignal: AbortSignal | undefined;
       let integrationCallAuthorization: string | null = null;
       let integrationCallProjectSlug: string | null = null;
 
@@ -390,7 +392,13 @@ Deno.test(
                 });
               },
             }),
-            onStudioProjectSwitch: ({ projectId, projectSlug, taskContext }) => {
+            onStudioProjectSwitch: ({
+              projectId,
+              projectSlug,
+              taskContext,
+              executionContext,
+            }) => {
+              projectSwitchAbortSignal = executionContext?.abortSignal;
               taskContext.projectId = projectId;
               taskContext.projectSlug = projectSlug;
               taskContext.authToken = "project-two-token";
@@ -409,7 +417,7 @@ Deno.test(
               parts: [{ type: "text", text: "Open project two and list its repositories." }],
               timestamp: 1,
             }],
-            abortSignal: new AbortController().signal,
+            abortSignal: streamAbortController.signal,
           });
           for await (
             const _chunk of result.toUIMessageStream({
@@ -431,6 +439,7 @@ Deno.test(
       assertEquals(studioExecutionContexts[0]?.authToken, "project-one-token");
       assertEquals(studioExecutionContexts[0]?.projectId, "11111111-1111-4111-8111-111111111111");
       assertEquals(studioExecutionContexts[0]?.projectSlug, "project-one");
+      assertEquals(projectSwitchAbortSignal, streamAbortController.signal);
       assertEquals(integrationExecutionContexts.length, 1);
       assertEquals(integrationExecutionContexts[0]?.authToken, "project-two-token");
       assertEquals(

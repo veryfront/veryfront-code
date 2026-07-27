@@ -26,6 +26,7 @@ describe("agent/runtime-step", () => {
   it("does not let runtime context shadow the trusted abort signal", async () => {
     const trustedAbort = new AbortController();
     const shadowAbort = new AbortController();
+    let resolverAbortSignal: AbortSignal | undefined;
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -38,16 +39,27 @@ describe("agent/runtime-step", () => {
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
-      resolveRuntimeState: async () => ({
-        systemPrompt: "Base",
-        context: { abortSignal: shadowAbort.signal },
-      }),
+      resolveRuntimeState: async (
+        _messages,
+        _context,
+        _mode,
+        _step,
+        _systemPrompt,
+        abortSignal?: AbortSignal,
+      ) => {
+        resolverAbortSignal = abortSignal;
+        return {
+          systemPrompt: "Base",
+          context: { abortSignal: shadowAbort.signal },
+        };
+      },
       runtimeContext: undefined,
       step: 0,
       systemPrompt: "Base",
       toolContextBase: { abortSignal: trustedAbort.signal },
     });
 
+    assertStrictEquals(resolverAbortSignal, trustedAbort.signal);
     assertStrictEquals(prepared.toolContext.abortSignal, trustedAbort.signal);
   });
 

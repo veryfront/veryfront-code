@@ -929,18 +929,28 @@ Deno.test("hosted child execution config resolves steering against the target pr
     authToken: string;
     branchId?: string | null;
   }> = [];
+  const steeringSignals: Array<AbortSignal | undefined> = [];
+  const abortController = new AbortController();
   const config = await veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
     {
       options: { mcpServers: [] },
       discoveryResult: { agents: new Map([["extraction-agent", null]]) },
       agentConfigs: new Map([["extraction-agent", childAgent]]),
       projectSteeringByAgentId: new Map([["extraction-agent", {
-        getProjectInstructions: (lookup: typeof steeringLookups[number]) => {
+        getProjectInstructionsForRequest: (
+          lookup: typeof steeringLookups[number],
+          signal: AbortSignal | undefined,
+        ) => {
           steeringLookups.push(lookup);
+          steeringSignals.push(signal);
           return Promise.resolve("Use the target project's extraction policy.");
         },
-        getSkillsConfig: (lookup: typeof steeringLookups[number]) => {
+        getSkillsConfigForRequest: (
+          lookup: typeof steeringLookups[number],
+          signal: AbortSignal | undefined,
+        ) => {
           steeringLookups.push(lookup);
+          steeringSignals.push(signal);
           return Promise.resolve([]);
         },
       }]]),
@@ -954,6 +964,7 @@ Deno.test("hosted child execution config resolves steering against the target pr
     },
     "extraction-agent",
     "target-project",
+    abortController.signal,
   );
 
   assertEquals(config?.model, "openai/gpt-5.4");
@@ -963,6 +974,8 @@ Deno.test("hosted child execution config resolves steering against the target pr
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
   ]);
+  assert(steeringSignals[0] instanceof AbortSignal);
+  assertEquals(steeringSignals[0], steeringSignals[1]);
 });
 
 Deno.test({

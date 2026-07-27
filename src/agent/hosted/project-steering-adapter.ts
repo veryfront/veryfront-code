@@ -111,6 +111,10 @@ export type StrictHostedProjectSteeringAdapter = HostedProjectSteeringAdapter & 
     lookup: RuntimeProjectSteeringLookup,
     signal: AbortSignal | undefined,
   ) => Promise<RuntimeSkillDefinition[]>;
+  refreshProjectSkillIdsForRequest: (
+    context: HostedProjectSkillIdsContext,
+    signal: AbortSignal | undefined,
+  ) => Promise<void>;
 };
 
 function createProjectFilesAccessDeniedError(statusCode: number, message: string): Error {
@@ -219,6 +223,36 @@ function createProjectSteeringAdapter(
     });
   }
 
+  async function refreshProjectSkillIds(
+    context: HostedProjectSkillIdsContext,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const skills = await getSkillsConfig(
+      {
+        projectId: context.projectId,
+        authToken: context.authToken,
+        branchId: context.branchId,
+      },
+      signal,
+    );
+
+    // Owner-aware: the refreshed per-run skill set keeps the caller's
+    // scope — never another agent's owned skills — and the source-path
+    // map stays in sync so colocated skills do not go stale.
+    const visibleSkills = skills.filter((skill) =>
+      isRuntimeSkillVisibleTo(skill, { agentId: context.agentId })
+    );
+    context.availableSkillIds = visibleSkills.map((skill) => skill.id);
+    const skillSourcePaths = Object.fromEntries(
+      visibleSkills
+        .filter((skill) => skill.sourcePath)
+        .map((skill) => [skill.id, skill.sourcePath as string]),
+    );
+    context.skillSourcePaths = Object.keys(skillSourcePaths).length > 0
+      ? skillSourcePaths
+      : undefined;
+  }
+
   const adapter: HostedProjectSteeringAdapter = {
     listBuiltinSkillIds: () => builtinSkills.map((skill) => skill.id),
     getProjectInstructions,
@@ -237,29 +271,7 @@ function createProjectSteeringAdapter(
         builtinStore,
         logger: options.logger,
       }),
-    refreshProjectSkillIds: async (context) => {
-      const skills = await getSkillsConfig({
-        projectId: context.projectId,
-        authToken: context.authToken,
-        branchId: context.branchId,
-      });
-
-      // Owner-aware: the refreshed per-run skill set keeps the caller's
-      // scope — never another agent's owned skills — and the source-path
-      // map stays in sync so colocated skills do not go stale.
-      const visibleSkills = skills.filter((skill) =>
-        isRuntimeSkillVisibleTo(skill, { agentId: context.agentId })
-      );
-      context.availableSkillIds = visibleSkills.map((skill) => skill.id);
-      const skillSourcePaths = Object.fromEntries(
-        visibleSkills
-          .filter((skill) => skill.sourcePath)
-          .map((skill) => [skill.id, skill.sourcePath as string]),
-      );
-      context.skillSourcePaths = Object.keys(skillSourcePaths).length > 0
-        ? skillSourcePaths
-        : undefined;
-    },
+    refreshProjectSkillIds,
   };
   if (!strictProjectFiles) {
     return adapter;
@@ -268,6 +280,7 @@ function createProjectSteeringAdapter(
     ...adapter,
     getProjectInstructionsForRequest: getProjectInstructions,
     getSkillsConfigForRequest: getSkillsConfig,
+    refreshProjectSkillIdsForRequest: refreshProjectSkillIds,
   };
 }
 

@@ -261,6 +261,8 @@ export interface RuntimeStateRequest {
   system: string;
   messages: Message[];
   context?: Record<string, unknown>;
+  /** Trusted cancellation authority for the enclosing generate or stream call. */
+  abortSignal?: AbortSignal;
 }
 
 /** State for resolved runtime. */

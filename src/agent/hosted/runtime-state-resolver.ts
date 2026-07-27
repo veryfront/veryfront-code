@@ -36,6 +36,7 @@ export type HostedRuntimeStateResolverInput = {
   system: string;
   messages: readonly unknown[];
   step: number;
+  abortSignal?: AbortSignal;
 };
 
 /** Result returned from hosted runtime state resolver. */
@@ -48,6 +49,7 @@ export type HostedRuntimeStateResolverResult = {
 export type HostedRuntimeSystemRefreshInput<TContext extends HostedRuntimeStateResolverContext> = {
   taskContext: TContext;
   system: string;
+  abortSignal?: AbortSignal;
 };
 
 /** Public API contract for hosted runtime system refresh. */
@@ -133,7 +135,7 @@ export function createHostedRuntimeStateResolver<
   let lastAppliedProjectId = activeProjectId(options.taskContext);
   let lastAppliedBranchId = activeBranchId(options.taskContext);
 
-  return async ({ context, system, messages, step }) => {
+  return async ({ context, system, messages, step, abortSignal }) => {
     const currentSteeringRevision = steeringRevision(options.taskContext);
     const currentProjectId = activeProjectId(options.taskContext);
     const currentBranchId = activeBranchId(options.taskContext);
@@ -153,6 +155,7 @@ export function createHostedRuntimeStateResolver<
       nextSystem = await options.refreshSystem({
         taskContext: options.taskContext,
         system,
+        ...(abortSignal === undefined ? {} : { abortSignal }),
       });
 
       lastAppliedSteeringRevision = currentSteeringRevision;

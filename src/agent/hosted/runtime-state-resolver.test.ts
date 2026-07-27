@@ -76,10 +76,12 @@ describe("agent/hosted-runtime-state-resolver", () => {
       steeringRevision: 0,
     };
     let refreshCount = 0;
+    let refreshAbortSignal: AbortSignal | undefined;
     const resolver = createHostedRuntimeStateResolver({
       taskContext,
-      refreshSystem: () => {
+      refreshSystem: ({ abortSignal }) => {
         refreshCount += 1;
+        refreshAbortSignal = abortSignal;
         return `refreshed-${refreshCount}`;
       },
     });
@@ -90,12 +92,22 @@ describe("agent/hosted-runtime-state-resolver", () => {
     });
 
     taskContext.steeringRevision = 1;
+    const abortController = new AbortController();
 
-    assertEquals(await resolver({ system: "initial", messages: [], step: 1 }), {
-      system: "refreshed-1",
-      context: { authToken: undefined },
-    });
+    assertEquals(
+      await resolver({
+        system: "initial",
+        messages: [],
+        step: 1,
+        abortSignal: abortController.signal,
+      }),
+      {
+        system: "refreshed-1",
+        context: { authToken: undefined },
+      },
+    );
     assertEquals(refreshCount, 1);
+    assertEquals(refreshAbortSignal, abortController.signal);
   });
 
   it("does not expose the authenticated user as legacy endUserId in runtime tool context", async () => {

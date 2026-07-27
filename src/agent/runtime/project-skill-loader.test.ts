@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
@@ -103,6 +103,66 @@ Deno.test("runtime project skill loader loads directory skills with normalized s
       "resources/schema.json",
     ],
   });
+});
+
+Deno.test("runtime project skill loader forwards one cancellation signal through body and listing reads", async () => {
+  let fileSignal: AbortSignal | undefined;
+  let listSignal: AbortSignal | undefined;
+  const loader = createRuntimeProjectSkillLoader({
+    getProjectFile: (options) => {
+      fileSignal = (options as RuntimeGetProjectFileOptions & { signal?: AbortSignal }).signal;
+      return Promise.resolve({
+        path: options.path,
+        content: directorySkill("research", "# Research"),
+      });
+    },
+    getProjectFiles: (options) => {
+      listSignal = (options as RuntimeProjectFilesApiOptions & { signal?: AbortSignal }).signal;
+      return Promise.resolve([
+        { path: "skills/research/references/guide.md" },
+      ]);
+    },
+  });
+  const controller = new AbortController();
+  const cancellableLoader = loader as typeof loader & {
+    loadProjectSkill: (
+      context: typeof PROJECT_CONTEXT,
+      skillId: string,
+      signal?: AbortSignal,
+    ) => ReturnType<typeof loader.loadProjectSkill>;
+  };
+
+  await cancellableLoader.loadProjectSkill(
+    PROJECT_CONTEXT,
+    "research",
+    controller.signal,
+  );
+
+  assertStrictEquals(fileSignal, controller.signal);
+  assertStrictEquals(listSignal, controller.signal);
+});
+
+Deno.test("runtime project skill loader never converts caller cancellation into denied fallback", async () => {
+  const controller = new AbortController();
+  const cancellation = new DOMException("request cancelled", "AbortError");
+  const loader = createRuntimeProjectSkillLoader({
+    getProjectFile: () => {
+      controller.abort(cancellation);
+      return Promise.reject(new AccessDeniedError("late access denial"));
+    },
+    getProjectFiles: () => Promise.resolve([]),
+    isAccessDeniedError: (error) => error instanceof AccessDeniedError,
+  });
+
+  const error = await assertRejects(() =>
+    loader.loadProjectSkill(
+      PROJECT_CONTEXT,
+      "research",
+      controller.signal,
+    )
+  );
+
+  assertStrictEquals(error, cancellation);
 });
 
 Deno.test("runtime project skill loader rejects malformed custom project file listings", async () => {

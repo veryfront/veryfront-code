@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals, assertStringIncludes } from "@std/assert";
 import {
   createRuntimeLoadSkillTool,
   RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
@@ -100,6 +100,78 @@ Deno.test("createRuntimeLoadSkillTool loads project skills before builtin skills
     referenceNote:
       "After this skill is loaded, use load_skill with the `file` parameter only for one of these listed reference files.",
   });
+});
+
+Deno.test("createRuntimeLoadSkillTool forwards the exact execution cancellation to project reads", async () => {
+  let bodySignal: AbortSignal | undefined;
+  let referenceSignal: AbortSignal | undefined;
+  const projectSkillLoader: RuntimeProjectSkillLoader = {
+    listProjectSkillReferences: () => Promise.resolve([]),
+    loadProjectSkill: (_context, _skillId, signal?: AbortSignal) => {
+      bodySignal = signal;
+      return Promise.resolve({
+        instructions: "# Project plan",
+        references: ["references/project.md"],
+      });
+    },
+    loadProjectSkillReference: (
+      _context,
+      _skillId,
+      _normalizedFile,
+      signal?: AbortSignal,
+    ) => {
+      referenceSignal = signal;
+      return Promise.resolve("Project reference");
+    },
+  };
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader,
+    builtinStore: createBuiltinStore({}),
+  });
+  const controller = new AbortController();
+
+  await tool.execute({ skillId: "plan" }, { abortSignal: controller.signal });
+  await tool.execute(
+    { skillId: "plan", file: "references/project.md" },
+    { abortSignal: controller.signal },
+  );
+
+  assertStrictEquals(bodySignal, controller.signal);
+  assertStrictEquals(referenceSignal, controller.signal);
+});
+
+Deno.test("createRuntimeLoadSkillTool does not cache a result returned after cancellation", async () => {
+  const controller = new AbortController();
+  const cancellation = new DOMException("tool cancelled", "AbortError");
+  const context = createProjectContext();
+  const tool = createRuntimeLoadSkillTool({
+    context,
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        controller.abort(cancellation);
+        return Promise.resolve({
+          instructions: "# Project plan",
+          references: [],
+        });
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const error = await assertRejects(() =>
+    tool.execute(
+      { skillId: "plan" },
+      { abortSignal: controller.signal },
+    )
+  );
+
+  assertStrictEquals(error, cancellation);
+  assertEquals(context.loadedSkillResponses, {});
 });
 
 Deno.test("a claimed project skill never falls through to a builtin with the same id", async () => {

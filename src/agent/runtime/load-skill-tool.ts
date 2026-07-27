@@ -596,7 +596,9 @@ async function loadRuntimeSkillReferenceFile(
     options.context,
     skillId,
     normalizedFile,
+    executionContext?.abortSignal,
   );
+  throwIfLoadSkillAborted(executionContext);
   if (projectFileContent !== null) {
     const response = { skillId, file: normalizedFile, content: projectFileContent };
     loadedSkillReferenceResponses[referenceKey] = response;
@@ -624,8 +626,22 @@ async function loadRuntimeSkillReferenceFile(
 async function loadRuntimeSkillBody(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
+  executionContext?: ToolExecutionContext,
 ): Promise<RuntimeLoadedProjectSkill | null> {
-  return await options.projectSkillLoader.loadProjectSkill(options.context, skillId);
+  return await options.projectSkillLoader.loadProjectSkill(
+    options.context,
+    skillId,
+    executionContext?.abortSignal,
+  );
+}
+
+function throwIfLoadSkillAborted(executionContext: ToolExecutionContext | undefined): void {
+  const signal = executionContext?.abortSignal;
+  if (signal?.aborted) {
+    throw signal.reason === undefined
+      ? new DOMException("The operation was aborted", "AbortError")
+      : signal.reason;
+  }
 }
 
 /** Create runtime load skill tool. */
@@ -638,6 +654,7 @@ export function createRuntimeLoadSkillTool(
     { skillId, file }: RuntimeLoadSkillToolInput,
     executionContext?: ToolExecutionContext,
   ) {
+    throwIfLoadSkillAborted(executionContext);
     let parsed: RuntimeLoadSkillToolInput;
     try {
       parsed = buildRuntimeLoadSkillInputSchema(options).parse(
@@ -674,7 +691,8 @@ export function createRuntimeLoadSkillTool(
       return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
     }
 
-    const projectSkill = await loadRuntimeSkillBody(options, skillId);
+    const projectSkill = await loadRuntimeSkillBody(options, skillId, executionContext);
+    throwIfLoadSkillAborted(executionContext);
     if (projectSkill) {
       const response = buildLoadedSkillResponse({
         options,

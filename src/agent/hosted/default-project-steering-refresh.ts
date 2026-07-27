@@ -29,6 +29,8 @@ export type DefaultHostedProjectSteeringRefreshLookup = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
+  /** Cancellation authority for this steering read. */
+  signal?: AbortSignal;
 };
 
 /** Public API contract for default hosted project steering fetchers. */
@@ -64,7 +66,69 @@ export type FetchDefaultHostedProjectSteeringInput =
       operation: () => Promise<TResult>,
     ) => Promise<TResult>;
     traceOperationName?: string;
+    signal?: AbortSignal;
   };
+
+function getAbortReason(signal: AbortSignal): unknown {
+  return signal.reason === undefined
+    ? new DOMException("The operation was aborted", "AbortError")
+    : signal.reason;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw getAbortReason(signal);
+  }
+}
+
+function createSteeringFetchScope(signal: AbortSignal | undefined): {
+  signal: AbortSignal | undefined;
+  abort: (reason: unknown) => void;
+  dispose: () => void;
+} {
+  if (!signal) {
+    return {
+      signal: undefined,
+      abort: () => undefined,
+      dispose: () => undefined,
+    };
+  }
+
+  const controller = new AbortController();
+  const forwardAbort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(getAbortReason(signal));
+    }
+  };
+  signal.addEventListener("abort", forwardAbort, { once: true });
+  if (signal.aborted) {
+    forwardAbort();
+  }
+
+  return {
+    signal: controller.signal,
+    abort: (reason) => {
+      if (!controller.signal.aborted) {
+        controller.abort(reason);
+      }
+    },
+    dispose: () => signal.removeEventListener("abort", forwardAbort),
+  };
+}
+
+function buildSteeringLookup(input: {
+  projectId: string;
+  authToken: string;
+  branchId?: string | null;
+  signal?: AbortSignal;
+}): DefaultHostedProjectSteeringRefreshLookup {
+  return {
+    projectId: input.projectId,
+    authToken: input.authToken,
+    branchId: input.branchId,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  };
+}
 
 /** Fetch default hosted project steering helper. */
 export async function fetchDefaultHostedProjectSteering(
@@ -76,34 +140,49 @@ export async function fetchDefaultHostedProjectSteering(
     return { instructions: "", skills: [] };
   }
 
+  throwIfAborted(input.signal);
+  const fetchScope = createSteeringFetchScope(input.signal);
   const fetchSteering = async () => {
+    const lookup = buildSteeringLookup({
+      projectId,
+      authToken: input.authToken,
+      branchId: input.branchId,
+      signal: fetchScope.signal,
+    });
+    const runSibling = <T>(operation: () => Promise<T>): Promise<T> =>
+      Promise.resolve()
+        .then(operation)
+        .catch((error) => {
+          fetchScope.abort(error);
+          throw error;
+        });
     const [instructions, skills] = await Promise.all([
-      input.fetchProjectInstructions({
-        projectId,
-        authToken: input.authToken,
-        branchId: input.branchId,
-      }),
-      input.fetchSkills({
-        projectId,
-        authToken: input.authToken,
-        branchId: input.branchId,
-      }),
+      runSibling(() => input.fetchProjectInstructions(lookup)),
+      runSibling(() => input.fetchSkills(lookup)),
     ]);
 
+    throwIfAborted(fetchScope.signal);
     return {
       instructions,
       skills,
     };
   };
 
-  if (!input.trace) {
-    return await fetchSteering();
-  }
+  try {
+    if (!input.trace) {
+      return await fetchSteering();
+    }
 
-  return await input.trace(
-    input.traceOperationName ?? "agent.fetchProjectSteering",
-    fetchSteering,
-  );
+    return await input.trace(
+      input.traceOperationName ?? "agent.fetchProjectSteering",
+      fetchSteering,
+    );
+  } catch (error) {
+    fetchScope.abort(error);
+    throw error;
+  } finally {
+    fetchScope.dispose();
+  }
 }
 
 function getActiveProjectId(taskContext: DefaultHostedChatRuntimeTaskContext): string | null {
@@ -120,14 +199,19 @@ async function fetchProjectInstructionsWithFallback(input: {
   projectId: string;
   branchId: string | null;
   initialProjectInstructions: string;
+  abortSignal?: AbortSignal;
 }): Promise<string> {
   try {
-    return await input.options.fetchProjectInstructions({
-      projectId: input.projectId,
-      authToken: input.taskContext.authToken,
-      branchId: input.branchId,
-    });
+    return await input.options.fetchProjectInstructions(
+      buildSteeringLookup({
+        projectId: input.projectId,
+        authToken: input.taskContext.authToken,
+        branchId: input.branchId,
+        signal: input.abortSignal,
+      }),
+    );
   } catch (error) {
+    throwIfAborted(input.abortSignal);
     input.options.logger?.error(
       "Refreshing project instructions failed during hosted runtime steering update",
       {
@@ -146,14 +230,19 @@ async function fetchSkillsWithFallback(input: {
   projectId: string;
   branchId: string | null;
   initialSkills: RuntimeSkillDefinition[];
+  abortSignal?: AbortSignal;
 }): Promise<RuntimeSkillDefinition[]> {
   try {
-    return await input.options.fetchSkills({
-      projectId: input.projectId,
-      authToken: input.taskContext.authToken,
-      branchId: input.branchId,
-    });
+    return await input.options.fetchSkills(
+      buildSteeringLookup({
+        projectId: input.projectId,
+        authToken: input.taskContext.authToken,
+        branchId: input.branchId,
+        signal: input.abortSignal,
+      }),
+    );
   } catch (error) {
+    throwIfAborted(input.abortSignal);
     input.options.logger?.error(
       "Refreshing skills failed during hosted runtime steering update",
       {
@@ -171,6 +260,7 @@ export function createDefaultHostedProjectSteeringRefresh(
   options: CreateDefaultHostedProjectSteeringRefreshOptions,
 ): (input: DefaultHostedChatRuntimeSystemRefreshInput) => Promise<string> {
   return async (input) => {
+    throwIfAborted(input.abortSignal);
     const projectId = getActiveProjectId(input.taskContext);
     const branchId = getActiveBranchId(input.taskContext);
     const canUseInitialProjectSteering = projectId !== null &&
@@ -190,6 +280,7 @@ export function createDefaultHostedProjectSteeringRefresh(
           projectId,
           branchId,
           initialProjectInstructions,
+          abortSignal: input.abortSignal,
         })
         : Promise.resolve(""),
       projectId
@@ -199,14 +290,19 @@ export function createDefaultHostedProjectSteeringRefresh(
           projectId,
           branchId,
           initialSkills,
+          abortSignal: input.abortSignal,
         })
         : Promise.resolve([]),
       listProjectScopedRemoteToolNames(input.toolAssembly.remoteToolSources, {
         projectId,
-        context: resolveHostedToolExecutionIdentity(input.taskContext),
+        context: {
+          ...resolveHostedToolExecutionIdentity(input.taskContext),
+          ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
+        },
         projectScopedRemoteToolOptions: options.projectScopedRemoteToolOptions,
       }),
     ]);
+    throwIfAborted(input.abortSignal);
 
     const advertisedSkills = resolveRuntimeSkillsForAgent({
       skills,

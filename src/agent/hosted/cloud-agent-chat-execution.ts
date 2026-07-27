@@ -121,8 +121,9 @@ export function buildLocalTools(
 /** Creates the project steering refresh object for the chat runtime. */
 export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentServiceContext) {
   return createDefaultHostedProjectSteeringRefresh({
-    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
-    fetchSkills: (lookup) => getSkillsConfig(context, lookup),
+    fetchProjectInstructions: ({ signal, ...lookup }) =>
+      getProjectInstructions(context, lookup, undefined, signal),
+    fetchSkills: ({ signal, ...lookup }) => getSkillsConfig(context, lookup, undefined, signal),
     buildInstructions: buildVeryfrontCloudRuntimeInstructions,
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
@@ -162,19 +163,32 @@ export function createAgentRuntime(
     buildLocalTools: localToolRuntime.buildLocalTools,
     cleanup: localToolRuntime.cleanup,
     refreshSystem,
-    onSteeringMutation: async ({ mutation, taskContext }) => {
+    onSteeringMutation: async ({ mutation, taskContext, executionContext }) => {
       if (mutation.skillsChanged) {
         // Pass the live task context (not a spread copy) so the refreshed
         // owner-scoped skill ids and source paths actually land on the run.
-        await refreshProjectSkillIds(context, taskContext);
+        await refreshProjectSkillIds(
+          context,
+          taskContext,
+          executionContext?.abortSignal,
+        );
       }
     },
-    onStudioProjectSwitch: async ({ projectId, projectSlug, taskContext }) => {
+    onStudioProjectSwitch: async ({
+      projectId,
+      projectSlug,
+      taskContext,
+      executionContext,
+    }) => {
       if (!applyAgentProjectContextChange(taskContext, projectId, projectSlug)) {
         return false;
       }
 
-      await refreshProjectSkillIds(context, taskContext);
+      await refreshProjectSkillIds(
+        context,
+        taskContext,
+        executionContext?.abortSignal,
+      );
       return true;
     },
     projectScopedRemoteToolOptions: {

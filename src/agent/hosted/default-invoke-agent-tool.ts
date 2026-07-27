@@ -148,6 +148,7 @@ export type DefaultHostedInvokeAgentProjectRefresh<
   TContext extends DefaultHostedInvokeAgentContext,
 > = (
   context: TContext,
+  abortSignal?: AbortSignal,
 ) => Promise<void> | void;
 
 /** Options accepted by default hosted invoke agent tool. */
@@ -180,6 +181,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     resolveChildAgentExecutionConfig?: (
       childAgentId: string,
       projectId: string,
+      abortSignal?: AbortSignal,
     ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
     resolveProjectReference?: HostedProjectReferenceResolver;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
@@ -264,8 +266,11 @@ async function refreshProjectSkillIds<TContext extends DefaultHostedInvokeAgentC
     DefaultHostedInvokeAgentToolOptions<TContext>,
     "context" | "refreshProjectSkillIds"
   >,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
-  await options.refreshProjectSkillIds?.(options.context);
+  throwIfChildRunAborted(abortSignal);
+  await options.refreshProjectSkillIds?.(options.context, abortSignal);
+  throwIfChildRunAborted(abortSignal);
 }
 
 async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgentContext>(
@@ -275,12 +280,14 @@ async function applyRequestedProjectId<TContext extends DefaultHostedInvokeAgent
   >,
   projectId: string,
   projectSlug?: string,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
+  throwIfChildRunAborted(abortSignal);
   if (!applyAgentProjectContextChange(options.context, projectId, projectSlug)) {
     return;
   }
 
-  await refreshProjectSkillIds(options);
+  await refreshProjectSkillIds(options, abortSignal);
 }
 
 async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentContext>(
@@ -324,7 +331,7 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     createToolsFromRemoteDefinitions: options.createToolsFromRemoteDefinitions ??
       createToolsFromRemoteDefinitions,
     onConfirmedStudioProjectSwitch: (projectId, projectSlug) =>
-      applyRequestedProjectId(options, projectId, projectSlug),
+      applyRequestedProjectId(options, projectId, projectSlug, abortSignal),
   });
 }
 
@@ -365,7 +372,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
       }
 
       if (mutation.skillsChanged) {
-        await refreshProjectSkillIds(options);
+        await refreshProjectSkillIds(options, input.abortSignal);
       }
     },
   });
@@ -498,7 +505,12 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     resolveProvider: options.resolveProvider,
     resolveModelThinking: options.resolveModelThinking,
     onRequestedProjectId: (projectId, projectSlug) =>
-      applyRequestedProjectId(scopedOptions, projectId, projectSlug),
+      applyRequestedProjectId(
+        scopedOptions,
+        projectId,
+        projectSlug,
+        execution.abortSignal,
+      ),
     onRuntimeConfig: (runtimeConfig) => {
       options.logger.info("Starting child fork", {
         conversationId: scopedOptions.context.conversationId,
@@ -637,11 +649,13 @@ export async function executeDefaultHostedInvokeAgentTool<
     if (!resolvedProject) {
       throw new Error(UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE);
     }
+    throwIfChildRunAborted(abortSignal);
     targetProjectId = resolvedProject.projectId;
     await applyRequestedProjectId(
       options,
       targetProjectId,
       resolvedProject.projectSlug,
+      abortSignal,
     );
     resolvedInput = {
       ...input,
@@ -651,7 +665,9 @@ export async function executeDefaultHostedInvokeAgentTool<
   const childConfig = await options.resolveChildAgentExecutionConfig?.(
     childAgentId,
     targetProjectId,
+    abortSignal,
   );
+  throwIfChildRunAborted(abortSignal);
   const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
   const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
   const forkInput = configuredInput;
@@ -728,7 +744,7 @@ export async function executeDefaultHostedInvokeAgentTool<
       resolveModelId: options.resolveModelId,
       resolveProvider: options.resolveProvider,
       onRequestedProjectId: (projectId, projectSlug) =>
-        applyRequestedProjectId(options, projectId, projectSlug),
+        applyRequestedProjectId(options, projectId, projectSlug, abortSignal),
       publishParentRunEvents: options.context.publishParentRunEvents,
       contextUnavailableMessage:
         "invoke_agent requires durable conversation context when durable child runs are enabled.",

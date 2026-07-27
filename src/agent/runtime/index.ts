@@ -695,6 +695,7 @@ export class AgentRuntime {
     mode: "generate" | "stream",
     step: number,
     systemPrompt: string,
+    abortSignal?: AbortSignal,
   ): Promise<RuntimeStepState> {
     const refreshed: ResolvedRuntimeState | undefined = await this.config.resolveRuntimeState?.({
       agentId: this.id,
@@ -703,6 +704,7 @@ export class AgentRuntime {
       system: systemPrompt,
       messages: [...messages],
       context,
+      ...(abortSignal === undefined ? {} : { abortSignal }),
     });
 
     return {

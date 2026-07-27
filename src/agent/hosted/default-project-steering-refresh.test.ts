@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { RemoteToolSource } from "#veryfront/tool";
@@ -96,6 +96,44 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       instructions: "Fresh instructions",
       skills: [createSkill("build")],
     });
+  });
+
+  it("cancels the sibling steering request with the first failure", async () => {
+    const caller = new AbortController();
+    const instructionsFailure = new Error("instructions unavailable");
+    let skillsSignal: AbortSignal | undefined;
+    const input = {
+      projectId: "project-1",
+      authToken: "auth-token",
+      signal: caller.signal,
+      fetchProjectInstructions: () => Promise.reject(instructionsFailure),
+      fetchSkills: (
+        lookup: {
+          projectId: string;
+          authToken: string;
+          branchId?: string | null;
+          signal?: AbortSignal;
+        },
+      ) => {
+        skillsSignal = lookup.signal;
+        return new Promise<RuntimeSkillDefinition[]>((_resolve, reject) => {
+          lookup.signal?.addEventListener(
+            "abort",
+            () => reject(lookup.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+    } as Parameters<typeof fetchDefaultHostedProjectSteering>[0] & {
+      signal: AbortSignal;
+    };
+
+    const error = await assertRejects(() => fetchDefaultHostedProjectSteering(input));
+
+    assertEquals(error, instructionsFailure);
+    assertEquals(skillsSignal?.aborted, true);
+    assertEquals(skillsSignal?.reason, instructionsFailure);
+    assertEquals(caller.signal.aborted, false);
   });
 
   it("returns empty steering without fetching when no project is active", async () => {
@@ -290,6 +328,33 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       "Refreshing project instructions failed during hosted runtime steering update",
       "Refreshing skills failed during hosted runtime steering update",
     ]);
+  });
+
+  it("does not swallow a pre-aborted runtime refresh into fallback steering", async () => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("runtime disconnected", "AbortError");
+    controller.abort(cancellation);
+    let fetchCount = 0;
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => {
+        fetchCount += 1;
+        return Promise.resolve("must not be fetched");
+      },
+      fetchSkills: () => {
+        fetchCount += 1;
+        return Promise.resolve([]);
+      },
+      buildInstructions: (input) => input.instructions,
+    });
+    const input = createRefreshInput() as DefaultHostedChatRuntimeSystemRefreshInput & {
+      abortSignal?: AbortSignal;
+    };
+    input.abortSignal = controller.signal;
+
+    const error = await assertRejects(() => refresh(input));
+
+    assertEquals(error, cancellation);
+    assertEquals(fetchCount, 0);
   });
 
   it("does not reuse origin steering after a cross-project refresh failure", async () => {

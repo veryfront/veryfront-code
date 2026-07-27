@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    32 |      55.2% | Current formal closure evidence remains valid       |
+| Closed                         |    33 |      56.9% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    24 |      41.4% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    23 |      39.7% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -38,6 +38,7 @@ stricter closure count.
 
 ### Closed
 
+- `agent`
 - `cache`
 - `channels`
 - `chat`
@@ -78,7 +79,6 @@ stricter closure count.
 
 ### Touched, revalidation required
 
-- `agent`
 - `build`
 - `client`
 - `data`
@@ -121,7 +121,7 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `cache`, `channels`, `chat`, `config`,
+The current closed review chain covers `agent`, `cache`, `channels`, `chat`, `config`,
 `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
@@ -170,6 +170,10 @@ policy, documentation, and direct consumers were remediated and revalidated.
 The narrow shared configuration and trigger changes received their complete
 affected suites and repository-boundary checks, so `config` and `trigger`
 remain closed.
+`agent` is closed after its runtime-state, cancellation-authority, hosted
+steering, project Skill I/O, child-resolution, tool lifecycle, public contract,
+documentation, and complete top-level regression findings were remediated and
+revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -3817,17 +3821,107 @@ Current verification evidence:
   entrypoint typechecks. The module baseline remains 62 broad imports with no
   new violation.
 
-No known critical or high-confidence risk remains in the narrowed execution
-and initial hosted project-files paths above. Later runtime steering refresh,
-child-agent configuration, Skill refresh, and project `load_skill` calls are
-strictly deadline-bounded but do not yet receive the enclosing run or tool
-abort signal, so they may finish after that caller is cancelled. This warning
-must be resolved or explicitly accepted before closing the complete `agent`
-unit. The `skill` unit remains in touched/revalidation-required status because
-reserving framework Skill tool IDs and replacing persisted-history activation
-with freshly re-derived trusted state require an explicitly approved
-compatibility decision. The `agent` unit also remains in revalidation until
-its complete top-level gate passes. This checkpoint therefore does not change
-the formal 32-of-58 closure count.
+No known critical or high-confidence risk remained in the narrowed execution
+and initial hosted project-files paths above. At that checkpoint, later runtime
+steering refresh, child-agent configuration, Skill refresh, and project
+`load_skill` calls were strictly deadline-bounded but did not yet receive the
+enclosing run or tool abort signal. The following Agent closure checkpoint
+resolves that warning and completes the top-level Agent gate. The `skill` unit
+remains in touched/revalidation-required status because reserving framework
+Skill tool IDs and replacing persisted-history activation with freshly
+re-derived trusted state require an explicitly approved compatibility
+decision.
+
+### Agent cancellation and lifecycle closure checkpoint
+
+The `agent` audit unit owns public agent definitions and runtime requests,
+generate/stream step preparation, hosted steering and project Skill access,
+child-agent execution, remote-tool lifecycle integration, Agent service
+composition, streaming, React adapters, and the public `veryfront/agent`
+surface. Its direct dependencies span chat, schemas, tool, Skill, provider,
+platform, sandbox, integrations, observability, and shared runtime utilities.
+Its production consumers include source-defined agents, hosted Agent services,
+AG-UI routes, durable child runs, Studio project tools, and package consumers.
+
+The final open findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** the enclosing generate or
+  stream cancellation authority stopped at runtime step preparation. Later
+  runtime-state refresh, child configuration, project Skill refresh and
+  `load_skill` reads, and project-switch or steering-mutation callbacks could
+  perform authenticated I/O after cancellation. The source was split authority
+  across interfaces that retained identity but discarded the trusted tool/run
+  execution context. The consequence was late remote work, stale state
+  application, or post-cancellation cache mutation. `RuntimeStateRequest` now
+  carries an additive optional `abortSignal`; runtime, hosted refresh, strict
+  project steering, child resolution, Skill loading, and internal lifecycle
+  callbacks propagate that exact authority. Separate contextual lifecycle
+  callbacks preserve trusted execution context without changing the invocation
+  shape of legacy public callbacks.
+- **Symptom -> Source -> Consequence -> Remedy:** initial instructions and
+  Skill steering reads were launched as independent promises, so one failure
+  left its sibling running, while step-boundary refresh fallback could convert
+  caller cancellation into cached steering. The source was unstructured
+  sibling concurrency and failure fallback that did not distinguish
+  cancellation. The consequence was wasted remote work and stale instructions
+  surviving a cancelled run. A disposable derived abort scope now forwards the
+  exact caller reason, aborts the sibling on first failure, consumes both
+  promise outcomes, and removes its listener. Runtime refresh checks
+  cancellation before and after all parallel work and never treats caller
+  cancellation as a recoverable lookup failure.
+- **Symptom -> Source -> Consequence -> Remedy:** an injected project Skill
+  adapter could ignore its signal, settle after cancellation, or return an
+  access-denied error after the caller aborted. The loader could then cache the
+  late value or activate builtin fallback. The source was signal forwarding
+  without a post-read authority check and error classification taking
+  precedence over cancellation. The consequence was observable work and
+  policy state crossing a cancelled tool boundary. Project Skill reads now
+  check the exact signal before and after adapter settlement, cancellation wins
+  over access-denied fallback, and `load_skill` checks again before caching a
+  body or reference.
+- **Symptom -> Source -> Consequence -> Remedy:** one Cloud system-message test
+  still expected Markdown interpolation after the strict Skill prompt builder
+  moved untrusted tool names to JSON encoding. The source was a stale
+  cross-module assertion from the earlier security hardening checkpoint. The
+  consequence was a false full-suite failure and ambiguity about the intended
+  prompt contract. The assertion now verifies the encoded strict form; no
+  production behavior changed.
+
+Current Agent verification evidence:
+
+- The complete `src/agent` portfolio passes 928 tests with 1,603 nested steps
+  across 226 test files and zero failures. This includes runtime state,
+  generate/stream cancellation, strict project-file requests, sibling
+  cancellation, refresh fallback, child-agent project resolution, mutation and
+  project-switch lifecycle context, Skill body/reference reads, AG-UI, durable
+  execution, service routes, streaming, and package-surface contracts.
+- The two loader suites pass 59 focused cases after proving both new
+  cancellation regressions red before the remedies. The broader
+  cancellation-focused integration portfolio also passes runtime, hosted
+  refresh, strict adapter, remote source, default runtime, and Cloud service
+  paths.
+- Every changed Agent test and the public Agent barrel typecheck. The npm
+  package was rebuilt from current source and the documented consumer
+  composition passed `tsc --noEmit` against the emitted declarations.
+- Generated API references and the Agent guides pass documentation validation:
+  all 40 reference pages, 67 guides, 112 public documentation files,
+  executable guide examples, and all 746 links are valid.
+- `deno task verify:quick` passes fresh manifests, formatting across 4,423
+  configured files, lint across 4,329 source files, every style, dependency,
+  module, extension, sanitizer, and skipped-test ratchet, zero cyclic module
+  edges, documentation validation, and all configured production and browser
+  entrypoint typechecks. The module baseline remains 62 broad imports with no
+  new violation.
+
+The optional signal on legacy public adapters remains source-compatible.
+Framework-owned hosted paths always provide a request or tool signal and use
+the strict deadline-bounded project-files client. A custom public adapter that
+ignores its optional signal cannot be forcibly interrupted while its own
+promise remains pending, but its result cannot cross the cancellation boundary
+after settlement; this is an explicit low residual at an injected external
+boundary, not a hidden fallback.
+
+No known unresolved critical or high-confidence Agent production risk remains.
+The `agent` audit unit is closed at 33 of 58 formal units.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

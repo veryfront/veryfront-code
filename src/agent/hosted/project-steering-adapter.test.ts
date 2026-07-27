@@ -162,6 +162,113 @@ Deno.test("strict hosted project steering propagates in-flight caller cancellati
   });
 });
 
+Deno.test("strict hosted load_skill routes execution cancellation to the project-files request", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancel load_skill", "AbortError");
+    let observedSignal: AbortSignal | undefined;
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    let releaseFetch!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: (_url, init) => {
+        observedSignal = init.signal as AbortSignal;
+        notifyFetchStarted();
+        return pendingResponse;
+      },
+    });
+    const loadSkill = adapter.createLoadSkillTool({
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: ["project"],
+      skillSourcePaths: {
+        project: "skills/project/SKILL.md",
+      },
+    });
+
+    const result = loadSkill.execute(
+      { skillId: "project" },
+      { abortSignal: controller.signal },
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+    await Promise.resolve();
+    releaseFetch(new Response(null, { status: 404 }));
+    const error = await assertRejects(() => result);
+
+    assertEquals(error, cancellation);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, cancellation);
+  });
+});
+
+Deno.test("strict hosted skill refresh routes caller cancellation to the project-files request", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancel skill refresh", "AbortError");
+    let observedSignal: AbortSignal | undefined;
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    let releaseFetch!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: (_url, init) => {
+        observedSignal = init.signal as AbortSignal;
+        notifyFetchStarted();
+        return pendingResponse;
+      },
+    });
+    const requestAdapter = adapter as typeof adapter & {
+      refreshProjectSkillIdsForRequest?: (
+        context: {
+          projectId: string;
+          authToken: string;
+          branchId: null;
+          availableSkillIds: string[];
+        },
+        signal: AbortSignal,
+      ) => Promise<void>;
+    };
+
+    assert(
+      typeof requestAdapter.refreshProjectSkillIdsForRequest === "function",
+      "strict adapter must expose request-scoped skill refresh",
+    );
+    const result = requestAdapter.refreshProjectSkillIdsForRequest(
+      {
+        projectId: "project-1",
+        authToken: "token-1",
+        branchId: null,
+        availableSkillIds: [],
+      },
+      controller.signal,
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+    await Promise.resolve();
+    releaseFetch(new Response(null, { status: 404 }));
+    const error = await assertRejects(() => result);
+
+    assertEquals(error, cancellation);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, cancellation);
+  });
+});
+
 Deno.test("strict hosted project steering rejects signal-unaware client injection", async () => {
   await withSkillsDir(async (skillsDir) => {
     type StrictOptions = Parameters<typeof createStrictHostedProjectSteeringAdapter>[0];
