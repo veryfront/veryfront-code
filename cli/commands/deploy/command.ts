@@ -38,8 +38,7 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
-import type { ReleaseAssetManifestResponse } from "#veryfront/release-assets/manifest-schema.ts";
-import { routeForPage } from "#veryfront/release-assets/route-path.ts";
+import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
 
 /**
  * Schema factory for deploy command arguments

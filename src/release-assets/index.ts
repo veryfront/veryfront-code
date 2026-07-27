@@ -80,3 +80,4 @@ export {
   type CompileProjectCssRuntimeOptions,
   createCompileProjectCss,
 } from "./css-compile.ts";
+export { routeForPage } from "./route-path.ts";
