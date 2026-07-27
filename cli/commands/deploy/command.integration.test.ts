@@ -265,7 +265,12 @@ it("uses canonical production read-back in human and JSON modes", {
       ]);
       if (jsonMode) {
         const events = output.map((line) =>
-          JSON.parse(line) as { type: string; name?: string; status?: string }
+          JSON.parse(line) as {
+            type: string;
+            name?: string;
+            status?: string;
+            data?: { url?: string };
+          }
         );
         assertEquals(
           events.slice(-4).map((event) =>
@@ -277,6 +282,10 @@ it("uses canonical production read-back in human and JSON modes", {
             "wait-environment-url:completed",
             "result",
           ],
+        );
+        assertEquals(
+          events.at(-1)?.data?.url,
+          "https://my-project.production.veryfront.com/dashboard",
         );
       }
     }
