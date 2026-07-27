@@ -1,0 +1,165 @@
+#!/usr/bin/env -S deno test --allow-all
+/**
+ * Regression Test: Shared hydration runtime breaks legacy router assets
+ *
+ * Bug: A current shared hydration runtime statically imported
+ *      `getNavigationStore` from a release-pinned `veryfront/router` asset.
+ *      Existing releases without that export failed during browser module
+ *      linking before hydration could run.
+ * Fixed: 2026-07-27
+ * Related: https://github.com/veryfront/veryfront-issue-inbox/issues/264
+ *
+ * Root Cause:
+ *   The shared hydration runtime and project release assets are versioned
+ *   independently, but the hydration runtime required a new named export.
+ *
+ * Reproduction:
+ *   Serve the latest generated hydration module with a legacy router module
+ *   that exports RouterProvider and useRouter, but not getNavigationStore.
+ *
+ * Fix:
+ *   Resolve getNavigationStore through the router module namespace and register
+ *   the SPA navigator only when that optional export exists.
+ */
+
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  captureBrowserDiagnostics,
+  getBrowserDiagnosticMessages,
+  launchChromium,
+} from "../../_helpers/playwright.ts";
+import { generateProdHydrationModule } from "../../../src/html/hydration-script-builder/prod-scripts.ts";
+
+const HTML = `<!doctype html>
+<html>
+  <head>
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "/react.js",
+          "react-dom/client": "/react-dom-client.js",
+          "veryfront/router": "/legacy-router.js",
+          "veryfront/context": "/context.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root">Existing release content</div>
+    <script id="veryfront-hydration-data" type="application/json">
+      {"pagePath":"pages/index.tsx","params":{},"props":{}}
+    </script>
+    <script type="module" src="/hydration-runtime.js"></script>
+  </body>
+</html>`;
+
+const REACT_MODULE = `
+export function createElement(type, props, ...children) {
+  return { type, props: props || {}, children };
+}
+`;
+
+const REACT_DOM_CLIENT_MODULE = `
+function markHydrated() {
+  document.documentElement.dataset.hydrated = "yes";
+  return { render: markHydrated };
+}
+export function createRoot() {
+  return { render: markHydrated };
+}
+export function hydrateRoot() {
+  markHydrated();
+  return { render: markHydrated };
+}
+`;
+
+const LEGACY_ROUTER_MODULE = `
+export function RouterProvider({ children }) {
+  return children;
+}
+export function useRouter() {
+  return {};
+}
+`;
+
+const PAGE_CONTEXT_MODULE = `
+export function PageContextProvider({ children }) {
+  return children;
+}
+`;
+
+const PAGE_MODULE = `
+export default function ExistingReleasePage() {
+  return null;
+}
+`;
+
+function javascript(source: string): Response {
+  return new Response(source, {
+    headers: { "content-type": "application/javascript; charset=utf-8" },
+  });
+}
+
+describe(
+  "Regression: shared hydration runtime supports legacy router release assets",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    it("hydrates without requiring getNavigationStore", async () => {
+      const hydrationModule = generateProdHydrationModule();
+      const server = Deno.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        onListen() {},
+      }, (request) => {
+        const pathname = new URL(request.url).pathname;
+
+        if (pathname === "/") {
+          return new Response(HTML, {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        if (pathname === "/hydration-runtime.js") return javascript(hydrationModule);
+        if (pathname === "/react.js") return javascript(REACT_MODULE);
+        if (pathname === "/react-dom-client.js") return javascript(REACT_DOM_CLIENT_MODULE);
+        if (pathname === "/legacy-router.js") return javascript(LEGACY_ROUTER_MODULE);
+        if (pathname === "/context.js") return javascript(PAGE_CONTEXT_MODULE);
+        if (pathname.startsWith("/_vf_modules/")) return javascript(PAGE_MODULE);
+
+        return new Response("Not found", { status: 404 });
+      });
+      const browser = await launchChromium();
+
+      try {
+        if (!browser) return;
+
+        const page = await browser.newPage();
+        const diagnostics = captureBrowserDiagnostics(page);
+        const { port } = server.addr as Deno.NetAddr;
+        const response = await page.goto(`http://127.0.0.1:${port}/`);
+
+        assertEquals(response?.status(), 200);
+        await page.waitForFunction(() => document.documentElement.dataset.hydrated === "yes");
+
+        const messages = getBrowserDiagnosticMessages(diagnostics);
+        assertEquals(
+          messages.some((message) =>
+            message.includes(
+              "does not provide an export named 'getNavigationStore'",
+            )
+          ),
+          false,
+          messages.join("\n"),
+        );
+        assertEquals(
+          await page.locator("#root").textContent(),
+          "Existing release content",
+        );
+      } finally {
+        await browser?.close();
+        await server.shutdown();
+        await server.finished;
+      }
+    });
+  },
+);

@@ -1153,11 +1153,13 @@ export const getRouterScript = () => `
     // same SPA navigator that intercepts <Link> clicks. Without this the shared
     // navigation store has no navigator registered and its navigate() falls back
     // to a full-page location.assign (finding #7: push() full-reloads).
-    getNavigationStore().setNavigator((href, options) => {
-      const mode = options && options.history;
-      const historyMode = mode === 'replace' ? 'replace' : mode === 'none' ? 'none' : 'push';
-      return navigateSPA(href, historyMode);
-    });
+    if (typeof getNavigationStore === 'function') {
+      getNavigationStore().setNavigator((href, options) => {
+        const mode = options && options.history;
+        const historyMode = mode === 'replace' ? 'replace' : mode === 'none' ? 'none' : 'push';
+        return navigateSPA(href, historyMode);
+      });
+    }
 
     // ============================================
     // Event handlers

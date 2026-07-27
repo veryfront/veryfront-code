@@ -12,8 +12,10 @@ export function generateProdHydrationModule(): string {
   return [
     `import * as React from 'react';`,
     `import { createRoot } from 'react-dom/client';`,
-    `import { RouterProvider, useRouter as useRouterFromModule, getNavigationStore } from 'veryfront/router';`,
+    `import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';`,
+    `import * as RouterRuntime from 'veryfront/router';`,
     `import { PageContextProvider } from 'veryfront/context';`,
+    `const getNavigationStore = RouterRuntime.getNavigationStore;`,
     getRouterScript().trim(),
     getLoaderScript().trim(),
     getRendererScript().trim(),
