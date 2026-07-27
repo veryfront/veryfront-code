@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStreamTransformState,
@@ -374,6 +374,36 @@ describe("internal-agents/ag-ui-sse", () => {
       new TextDecoder().decode(payload),
       'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1"}\n\n',
     );
+  });
+
+  it("accepts extension event tokens without weakening SSE framing", () => {
+    const payload = formatAgUiEvent("Done.custom-v1", { ok: true });
+
+    assertEquals(
+      new TextDecoder().decode(payload),
+      'event: Done.custom-v1\ndata: {"ok":true}\n\n',
+    );
+  });
+
+  it("rejects event names that could inject or corrupt SSE frames", () => {
+    for (
+      const event of [
+        "",
+        "RunError\n",
+        "RunError\r",
+        "RunError\ndata: forged",
+        "RunError\r\n\r\nevent: Forged",
+        "RunError\u0000Forged",
+        "Run Error",
+        `A${"b".repeat(128)}`,
+      ]
+    ) {
+      assertThrows(
+        () => formatAgUiEvent(event, { message: "original" }),
+        TypeError,
+        "AG-UI event names",
+      );
+    }
   });
 
   it("preserves extended usage metadata in RunFinished frames", () => {

@@ -14,6 +14,7 @@ import { resolveSchemaValidator } from "#veryfront/schemas/define.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 const encoder = new TextEncoder();
+const AG_UI_EVENT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
 
 type RuntimeDataEvent = AgUiRuntimeStreamEvent;
 export type RunFinishedMetadata = AgUiBrowserRunFinishedMetadata;
@@ -123,6 +124,13 @@ type AgUiEventName =
   | "RunFinished";
 
 export function formatAgUiEvent(event: string, payload: Record<string, unknown>): Uint8Array {
+  const eventNameMatch = AG_UI_EVENT_NAME_PATTERN.exec(event);
+  if (!eventNameMatch || eventNameMatch[0] !== event) {
+    throw new TypeError(
+      "AG-UI event names must be 1-128 character ASCII tokens beginning with a letter",
+    );
+  }
+
   const schemas = resolveAgUiEventPayloadSchemas();
   const schema = schemas[event as AgUiEventName];
   const validatedPayload = schema ? schema.parse(payload) : payload;
