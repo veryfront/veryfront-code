@@ -642,7 +642,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MiddlewareFactory: "Middleware factory function",
     MiddlewareHandler: "Middleware handler function",
     Next: "Next middleware callback",
-    CorsOptions: "CORS config",
+    CorsOptions: "Legacy-compatible CORS config subset",
     RateLimitOptions: "Rate limit config",
     RateLimitStore: "Rate limit storage interface",
     RedisRateLimitOptions: "Redis rate limit config",
@@ -2035,7 +2035,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     skip: "Predicate: skip if returns true",
   },
   CorsOptions: {
-    origin: "Allowed origins (string, regex, array, or function)",
+    origin: "Allowed origin, origin list, or boolean validator",
     methods: "Allowed HTTP methods",
     allowedHeaders: "Allowed request headers",
     exposedHeaders: "Headers exposed to client",

@@ -20,9 +20,21 @@ export function getRequest(ctx: AnyMiddlewareContext): Request {
   return ctx.request;
 }
 
+/**
+ * Legacy middleware origin-validator contract.
+ *
+ * The canonical CORS implementation also accepts validators that return an
+ * explicit allowed-origin string. Import `OriginValidator` from
+ * `veryfront/security` when that broader contract is required.
+ */
 export type OriginValidator = (origin: string) => boolean | Promise<boolean>;
 
-/** Options accepted by cors. */
+/**
+ * Legacy-compatible CORS option subset retained for middleware consumers.
+ *
+ * `cors()` also accepts `boolean` and the broader `CORSConfig` exported by
+ * `veryfront/security`.
+ */
 export interface CorsOptions {
   origin?: string | string[] | OriginValidator;
   methods?: string[];

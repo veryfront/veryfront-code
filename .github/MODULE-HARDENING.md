@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    36 |      62.1% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     4 |       6.9% | Reviewed remediation or design work remains open    |
+| Closed                         |    37 |      63.8% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     3 |       5.2% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    18 |      31.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -56,6 +56,7 @@ stricter closure count.
 - `markdown`
 - `mdx`
 - `metrics`
+- `middleware`
 - `platform`
 - `provider`
 - `prompt`
@@ -78,7 +79,6 @@ stricter closure count.
 ### Deep reviewed, fixes pending
 
 - `html`
-- `middleware`
 - `resource`
 - `utils`
 
@@ -123,10 +123,10 @@ every affected unit.
 
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
-`integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`, `platform`,
-`provider`, `prompt`, `registry`, `release-assets`, `repositories`, `runs`,
-`runtime`, `sandbox`, `schedule`, `schemas`, `studio`, `task`, `trigger`,
-`types`, `webhook`, `index.ts`, and `version.ts`.
+`integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
+`middleware`, `platform`, `provider`, `prompt`, `registry`, `release-assets`,
+`repositories`, `runs`, `runtime`, `sandbox`, `schedule`, `schemas`, `studio`,
+`task`, `trigger`, `types`, `webhook`, `index.ts`, and `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
 remediated and revalidated.
@@ -182,6 +182,10 @@ revalidated.
 remote discovery and execution, source-policy admission and authorization,
 resource limits, hostile-input isolation, configuration schema, public
 reference, and direct consumers were remediated and revalidated.
+`middleware` is closed after its composition, request context, response
+teardown, logging, CORS, timeout, security, rate-limit, Redis lifecycle, public
+surface, compatibility documentation, and direct consumers were remediated and
+revalidated.
 The root entrypoint unit is closed after its exact public and client-safe export
 contracts, runtime dependency ownership, browser graph, rewrite target, Deno and
 npm package surfaces, documentation, and built consumer declarations were
@@ -4370,7 +4374,7 @@ restructuring awaits explicit confirmation. Until that reference is replaced
 and documentation validation passes, `html` remains `Deep reviewed, fixes
 pending`; this checkpoint does not increment formal closure.
 
-### Middleware deep-review checkpoint (reference update pending)
+### Middleware closure checkpoint
 
 The `middleware` audit unit owns request context, scoped composition, terminal
 handler execution, response-body teardown, built-in logging, CORS, timeouts,
@@ -4416,6 +4420,13 @@ The current implementation review remediated these findings:
   cached. Defined invalid values now fail registration deterministically,
   validated options are immutable snapshots, and timeout responses are
   explicitly non-cacheable.
+- **Symptom -> Source -> Consequence -> Remedy:** the module README documented
+  private aliases, removed signatures, and middleware that the public package
+  does not export, while generated docs described the legacy-compatible
+  `CorsOptions` subset as the complete canonical CORS contract. The stale
+  document is replaced by a public-package reference, the exhaustive generated
+  reference is linked, and the intentional compatibility subset is
+  distinguished from `CORSConfig` without a breaking type expansion.
 
 Current reproducible evidence:
 
@@ -4430,17 +4441,16 @@ Current reproducible evidence:
 - the npm package and first-party extensions rebuild, audit cleanly, and the
   published consumer composition compiles against emitted declarations;
 - documentation generation and validation pass all 40 API pages, 67 guides,
-  112 public documentation files, executable examples, and 746 links; and
+  112 public documentation files, executable examples, and 747 links; and
 - `deno task verify:quick` passes formatting, lint, policy and dependency
   ratchets, zero module cycles, fresh manifests, documentation contracts, and
   every configured production and browser entrypoint typecheck.
 
 No known unresolved critical or high-confidence middleware implementation risk
-remains. The authored `src/middleware/README.md` was materially stale and a
-replacement reference has been prepared, but its Diátaxis restructuring still
-awaits explicit confirmation. Until that reference is accepted and revalidated,
-`middleware` remains `Deep reviewed, fixes pending`; this checkpoint does not
-increment formal closure.
+remains. The authored `src/middleware/README.md` is now an accurate
+reference-oriented document, its generated API companion is current, and the
+public compatibility distinction is explicit. `middleware` is closed at 37 of
+58 formal units; 21 units remain to be closed or revalidated.
 
 ### Upstream integration revalidation checkpoint
 

@@ -93,16 +93,16 @@ List registered middleware with metadata.
 
 ### `CorsOptions`
 
-Options accepted by cors.
+Legacy-compatible CORS option subset retained for middleware consumers.
 
-| Property          | Type                                    | Description                                         | Source                                                                                              |
-| ----------------- | --------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `origin?`         | `string \| string[] \| OriginValidator` | Allowed origins (string, regex, array, or function) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L27) |
-| `methods?`        | `string[]`                              | Allowed HTTP methods                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L28) |
-| `allowedHeaders?` | `string[]`                              | Allowed request headers                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L29) |
-| `exposedHeaders?` | `string[]`                              | Headers exposed to client                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L30) |
-| `credentials?`    | `boolean`                               | Allow credentials                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L31) |
-| `maxAge?`         | `number`                                | Preflight cache duration (seconds)                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L32) |
+| Property          | Type                                    | Description                                       | Source                                                                                              |
+| ----------------- | --------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `origin?`         | `string \| string[] \| OriginValidator` | Allowed origin, origin list, or boolean validator | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L39) |
+| `methods?`        | `string[]`                              | Allowed HTTP methods                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L40) |
+| `allowedHeaders?` | `string[]`                              | Allowed request headers                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L41) |
+| `exposedHeaders?` | `string[]`                              | Headers exposed to client                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L42) |
+| `credentials?`    | `boolean`                               | Allow credentials                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L43) |
+| `maxAge?`         | `number`                                | Preflight cache duration (seconds)                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L44) |
 
 ### `RateLimitOptions`
 
@@ -163,20 +163,20 @@ Options accepted by timeout.
 
 ### Types
 
-| Name                          | Description                                               | Source                                                                                                                  |
-| ----------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `AuthRateLimitOptions`        | Options accepted by the authentication rate-limit preset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L146)      |
-| `Context`                     | Context for context.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L8)                         |
-| `CorsOptions`                 | Options accepted by cors.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L26)                     |
-| `ExecutionContext`            | Context for execution.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L2)                         |
-| `LogFormat`                   | Public API contract for log format.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L15)                    |
-| `LoggerOptions`               | Options accepted by logger.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L18)                    |
-| `MemoryRateLimitStoreOptions` | Options accepted by the in-memory rate limit store.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L122)      |
-| `MiddlewareFactory`           | Public API contract for middleware factory.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L32)                        |
-| `MiddlewareHandler`           | Handler for middleware.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L26)                        |
-| `MiddlewarePipelineOptions`   | Options accepted by middleware pipeline.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/pipeline/types.ts#L2)                |
-| `Next`                        | Public API contract for next.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L23)                        |
-| `RateLimitOptions`            | Options accepted by rate limit.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L131)      |
-| `RateLimitStore`              | Public API contract for rate limit store.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L32)            |
-| `RedisRateLimitOptions`       | Options accepted by redis rate limit.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/redis-rate-limit.ts#L47) |
-| `TimeoutOptions`              | Options accepted by timeout.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L19)                   |
+| Name                          | Description                                                             | Source                                                                                                                  |
+| ----------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `AuthRateLimitOptions`        | Options accepted by the authentication rate-limit preset.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L146)      |
+| `Context`                     | Context for context.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L8)                         |
+| `CorsOptions`                 | Legacy-compatible CORS option subset retained for middleware consumers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L38)                     |
+| `ExecutionContext`            | Context for execution.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L2)                         |
+| `LogFormat`                   | Public API contract for log format.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L15)                    |
+| `LoggerOptions`               | Options accepted by logger.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L18)                    |
+| `MemoryRateLimitStoreOptions` | Options accepted by the in-memory rate limit store.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L122)      |
+| `MiddlewareFactory`           | Public API contract for middleware factory.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L32)                        |
+| `MiddlewareHandler`           | Handler for middleware.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L26)                        |
+| `MiddlewarePipelineOptions`   | Options accepted by middleware pipeline.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/pipeline/types.ts#L2)                |
+| `Next`                        | Public API contract for next.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/core/types.ts#L23)                        |
+| `RateLimitOptions`            | Options accepted by rate limit.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L131)      |
+| `RateLimitStore`              | Public API contract for rate limit store.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L32)            |
+| `RedisRateLimitOptions`       | Options accepted by redis rate limit.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/redis-rate-limit.ts#L47) |
+| `TimeoutOptions`              | Options accepted by timeout.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L19)                   |
