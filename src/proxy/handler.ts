@@ -500,6 +500,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     });
   }
 
+  function hasActiveReleaseForMatchedEnvironment(
+    result: ProjectRoutingLookupResult,
+    envMatcher: (env: ProjectLookupEnvironment) => boolean,
+  ): boolean {
+    return result.environments?.some((env) => envMatcher(env) && !!env.active_release_id) ?? false;
+  }
+
   function pruneInvalidationGenerations(generations: Map<string, number>): void {
     const oldestActiveGeneration = activeRoutingLookupGenerations.size > 0
       ? Math.min(...activeRoutingLookupGenerations.keys())
@@ -592,6 +599,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     lookupKey: string,
     token: string,
     timing?: ProxyServerTiming,
+    isCachedResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
   ): Promise<ProjectRoutingLookupResult | null> {
     const cacheKey = normalizeProjectLookupKey(lookupKey);
     return await profileProxyServerTimingPhase(
@@ -599,9 +607,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       "proxy.routing_lookup",
       async () => {
         const cached = getCachedRoutingLookup(cacheKey);
-        if (cached) {
+        if (cached && (!isCachedResultUsable || isCachedResultUsable(cached))) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
+        }
+        if (cached) {
+          routingLookupCache.delete(cacheKey);
+          logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
         }
 
         const existingLookup = routingLookupInflight.get(cacheKey);
@@ -775,12 +787,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
     signedInternalControlPlaneRequest: boolean,
+    requireActiveRelease: boolean,
   ): Promise<ResolvedProjectMetadata> {
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.project_lookup",
       async () => {
-        const routingResult = await resolveProjectRoutingLookup(lookupKey, token, timing);
+        const routingResult = await resolveProjectRoutingLookup(
+          lookupKey,
+          token,
+          timing,
+          requireActiveRelease
+            ? (result) => hasActiveReleaseForMatchedEnvironment(result, envMatcher)
+            : undefined,
+        );
         if (!routingResult) {
           return await resolveFullProjectLookupAndProtection(
             req,
@@ -921,6 +941,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           timing,
           logContext,
           signedInternalControlPlaneRequest,
+          scope === "production",
         );
 
       try {

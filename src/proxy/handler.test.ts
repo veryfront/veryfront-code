@@ -443,6 +443,65 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("refreshes cached routing metadata without an active release", async () => {
+      let routingLookups = 0;
+      let activeReleaseId: string | null = null;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: activeReleaseId,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        const beforeActivation = await handler.processRequest(req());
+        activeReleaseId = "rel-456";
+        const afterActivation = await handler.processRequest(req());
+
+        assertEquals(beforeActivation.error?.status, 404);
+        assertEquals(afterActivation.error, undefined);
+        assertEquals(afterActivation.releaseId, "rel-456");
+        assertEquals(routingLookups, 2);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("invalidates routing metadata only for the targeted project", async () => {
       const routingLookups = new Map<string, number>();
       const { server, port } = createMockServer((req: Request) => {
