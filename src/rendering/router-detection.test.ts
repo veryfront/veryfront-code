@@ -1,11 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { detectAppRouter, resolveRouterModeForPage } from "./router-detection.ts";
+import {
+  clearRouterDetectionCacheForProject,
+  detectAppRouter,
+  resolveRouterModeForPage,
+} from "./router-detection.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+
+function fileNotFoundError(): Error {
+  return Object.assign(new Error("File not found"), { code: "ENOENT" });
+}
 
 const failingAdapter: RuntimeAdapter = {
   id: "node",
@@ -135,7 +143,7 @@ describe("detectAppRouter", () => {
               isSymlink: false,
             });
           }
-          return Promise.reject(new Error("File not found"));
+          return Promise.reject(fileNotFoundError());
         },
         readDir: async function* (path: string) {
           if (path === "/project") {
@@ -195,7 +203,7 @@ describe("detectAppRouter", () => {
               isSymlink: false,
             });
           }
-          return Promise.reject(new Error("File not found"));
+          return Promise.reject(fileNotFoundError());
         },
         readDir: async function* (path: string) {
           if (path === "/project/pages") {
@@ -298,6 +306,227 @@ describe("detectAppRouter", () => {
 
     assertEquals(result, false);
     assertEquals(followedCycle, false);
+  });
+
+  it("requires exact route basenames instead of accepting prefix lookalikes", async () => {
+    const adapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        readDir: async function* (path: string) {
+          if (path === "/project") {
+            yield { name: "app", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "pages", isFile: false, isDirectory: true, isSymlink: false };
+          } else if (path === "/project/app") {
+            yield { name: "pageant.tsx", isFile: true, isDirectory: false, isSymlink: false };
+            yield {
+              name: "layout-backup.tsx",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          } else if (path === "/project/pages") {
+            yield { name: "index.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        },
+      },
+    } as RuntimeAdapter;
+
+    const result = await detectAppRouter("/project", {} as VeryfrontConfig, adapter, {
+      projectId: "exact-route-basename-project",
+    });
+
+    assertEquals(result, false);
+  });
+
+  it("recognizes arbitrary Pages Router filenames when both router roots exist", async () => {
+    const adapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        readDir: async function* (path: string) {
+          if (path === "/project") {
+            yield { name: "app", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "pages", isFile: false, isDirectory: true, isSymlink: false };
+          } else if (path === "/project/app") {
+            yield {
+              name: "Button.tsx",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          } else if (path === "/project/pages") {
+            yield { name: "about.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        },
+      },
+    } as RuntimeAdapter;
+
+    const result = await detectAppRouter("/project", {} as VeryfrontConfig, adapter, {
+      projectId: "arbitrary-pages-filename-project",
+    });
+
+    assertEquals(result, false);
+  });
+
+  it("does not substitute host files for a virtual filesystem failure", async () => {
+    const tmpDir = await makeTempDir();
+    const appDir = join(tmpDir, "app");
+    await mkdir(appDir, { recursive: true });
+    await writeTextFile(
+      join(appDir, "page.tsx"),
+      "export default function Page() { return null; }",
+    );
+
+    const virtualAdapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        getUnderlyingAdapter: () => ({}),
+        isVeryfrontAdapter: () => true,
+        isMultiProjectMode: () => true,
+      },
+    } as RuntimeAdapter;
+
+    await assertRejects(
+      () =>
+        detectAppRouter(tmpDir, {} as VeryfrontConfig, virtualAdapter, {
+          projectId: "virtual-fallback-isolation-project",
+        }),
+      Error,
+      "adapter readDir failure",
+    );
+  });
+
+  it("rejects configured route roots that escape the project", async () => {
+    await assertRejects(
+      () =>
+        detectAppRouter(
+          "/project",
+          { directories: { app: "../app", pages: "pages" } } as VeryfrontConfig,
+          failingAdapter,
+          { projectId: "router-root-escape-project" },
+        ),
+      TypeError,
+      "stay within the project",
+    );
+  });
+
+  it("bounds recursive route discovery", async () => {
+    const maxDirectories = 1_024;
+    const adapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        readDir: async function* (path: string) {
+          if (path === "/project") {
+            yield { name: "app", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "pages", isFile: false, isDirectory: true, isSymlink: false };
+            return;
+          }
+          if (path === "/project/pages") {
+            yield { name: "index.tsx", isFile: true, isDirectory: false, isSymlink: false };
+            return;
+          }
+          if (!path.startsWith("/project/app")) return;
+
+          const depth = path.split("/").filter((segment) => segment === "d").length;
+          if (depth < maxDirectories) {
+            yield { name: "d", isFile: false, isDirectory: true, isSymlink: false };
+          }
+        },
+      },
+    } as RuntimeAdapter;
+
+    await assertRejects(
+      () =>
+        detectAppRouter("/project", {} as VeryfrontConfig, adapter, {
+          projectId: "bounded-route-discovery-project",
+        }),
+      Error,
+      "directory limit",
+    );
+  });
+
+  it("isolates cached decisions by configured router roots", async () => {
+    const adapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        readDir: async function* (path: string) {
+          if (path === "/project") {
+            yield { name: "app-a", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "app-b", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "pages", isFile: false, isDirectory: true, isSymlink: false };
+          } else if (path === "/project/app-a") {
+            yield { name: "page.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          } else if (path === "/project/app-b") {
+            yield {
+              name: "Component.tsx",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          } else if (path === "/project/pages") {
+            yield { name: "about.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        },
+      },
+    } as RuntimeAdapter;
+
+    const first = await detectAppRouter(
+      "/project",
+      { directories: { app: "app-a", pages: "pages" } } as VeryfrontConfig,
+      adapter,
+      { projectId: "config-sensitive-cache-project" },
+    );
+    const second = await detectAppRouter(
+      "/project",
+      { directories: { app: "app-b", pages: "pages" } } as VeryfrontConfig,
+      adapter,
+      { projectId: "config-sensitive-cache-project" },
+    );
+
+    assertEquals(first, true);
+    assertEquals(second, false);
+  });
+
+  it("clears every configured-root variant for one project", async () => {
+    let hasAppRoute = true;
+    const adapter = {
+      ...failingAdapter,
+      fs: {
+        ...failingAdapter.fs,
+        readDir: async function* (path: string) {
+          if (path === "/project") {
+            yield { name: "app", isFile: false, isDirectory: true, isSymlink: false };
+            yield { name: "pages", isFile: false, isDirectory: true, isSymlink: false };
+          } else if (path === "/project/app" && hasAppRoute) {
+            yield { name: "page.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          } else if (path === "/project/pages") {
+            yield { name: "about.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        },
+      },
+    } as RuntimeAdapter;
+    const projectId = "clear-configured-root-variants-project";
+
+    assertEquals(
+      await detectAppRouter("/project", {} as VeryfrontConfig, adapter, { projectId }),
+      true,
+    );
+    hasAppRoute = false;
+    assertEquals(
+      await detectAppRouter("/project", {} as VeryfrontConfig, adapter, { projectId }),
+      true,
+    );
+
+    clearRouterDetectionCacheForProject(projectId);
+
+    assertEquals(
+      await detectAppRouter("/project", {} as VeryfrontConfig, adapter, { projectId }),
+      false,
+    );
   });
 });
 

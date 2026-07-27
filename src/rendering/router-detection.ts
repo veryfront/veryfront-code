@@ -8,13 +8,18 @@
  **************************/
 
 import { basename, dirname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { normalizeProjectRelativeDiscoveryPath } from "#veryfront/utils/discovery-path-policy.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
+import { containsPathControlCharacters } from "#veryfront/utils/route-path-utils.ts";
+import { DYNAMIC_ROUTE_ERROR } from "#veryfront/errors";
 
 const logger = rendererLogger.component("router-detection");
 
@@ -23,6 +28,9 @@ export { getAppRouteEntity } from "./app-route-resolver.ts";
 
 const ROUTER_DETECTION_CACHE_MAX_ENTRIES = 200;
 const ROUTER_DETECTION_CACHE_TTL_MS = 60_000;
+const MAX_ROUTE_DETECTION_DIRECTORIES = 1_024;
+const MAX_ROUTE_DETECTION_ENTRIES = 100_000;
+const MAX_DIRECTORY_ENTRIES = 10_000;
 
 const routerDetectionCache = new LRUCache<string, boolean>({
   maxEntries: ROUTER_DETECTION_CACHE_MAX_ENTRIES,
@@ -46,14 +54,23 @@ export function clearRouterDetectionCache(): void {
  * @param projectId - The project ID used as cache key. Falls back to projectDir for local dev.
  */
 export function clearRouterDetectionCacheForProject(projectId: string): void {
-  routerDetectionCache.delete(projectId);
+  for (const cacheKey of routerDetectionCache.keys()) {
+    if (routerCacheKeyBelongsToScope(cacheKey, projectId)) {
+      routerDetectionCache.delete(cacheKey);
+    }
+  }
 }
 
 export function primeRouterDetectionCache(
   projectKey: string,
   mode: "app" | "pages",
+  config: VeryfrontConfig = {},
 ): void {
-  routerDetectionCache.set(projectKey, mode === "app");
+  const directories = resolveRouterDirectories(config);
+  routerDetectionCache.set(
+    createRouterCacheKey(projectKey, directories),
+    mode === "app",
+  );
 }
 
 export interface DetectAppRouterOptions {
@@ -71,6 +88,46 @@ function isPathInside(path: string, directory: string): boolean {
 
 function resolveProjectPath(projectDir: string, path: string): string {
   return normalize(isAbsolute(path) ? path : join(projectDir, path));
+}
+
+/**
+ * Normalize a configured router root while preserving "." as the explicit
+ * project-root convention.
+ */
+export function normalizeRouterDirectoryName(
+  value: unknown,
+  fallback: string,
+): string {
+  const candidate = value ?? fallback;
+  return candidate === "." ? "." : normalizeProjectRelativeDiscoveryPath(candidate);
+}
+
+type RouterDirectories = {
+  app: string;
+  pages: string;
+};
+
+function resolveRouterDirectories(config: VeryfrontConfig): RouterDirectories {
+  return {
+    app: normalizeRouterDirectoryName(config.directories?.app, "app"),
+    pages: normalizeRouterDirectoryName(config.directories?.pages, "pages"),
+  };
+}
+
+function createRouterCacheKey(
+  scope: string,
+  directories: RouterDirectories,
+): string {
+  return JSON.stringify([scope, directories.app, directories.pages]);
+}
+
+function routerCacheKeyBelongsToScope(cacheKey: string, scope: string): boolean {
+  try {
+    const value: unknown = JSON.parse(cacheKey);
+    return Array.isArray(value) && value.length === 3 && value[0] === scope;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -95,11 +152,11 @@ export function resolveRouterModeForPage(
   const resolvedPagePath = resolveProjectPath(projectDir, pagePath);
   const appRoot = resolveProjectPath(
     projectDir,
-    config.directories?.app ?? "app",
+    normalizeRouterDirectoryName(config.directories?.app, "app"),
   );
   const pagesRoot = resolveProjectPath(
     projectDir,
-    config.directories?.pages ?? "pages",
+    normalizeRouterDirectoryName(config.directories?.pages, "pages"),
   );
 
   const isAppRoute = isPathInside(resolvedPagePath, appRoot);
@@ -128,10 +185,12 @@ export async function detectAppRouter(
   adapter: RuntimeAdapter,
   options?: DetectAppRouterOptions,
 ): Promise<boolean> {
+  const directories = resolveRouterDirectories(config);
   if (config?.router === "app") return true;
   if (config?.router === "pages") return false;
 
-  const cacheKey = options?.projectId ?? projectDir;
+  const cacheScope = options?.projectId ?? projectDir;
+  const cacheKey = createRouterCacheKey(cacheScope, directories);
   const cached = routerDetectionCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -146,13 +205,17 @@ export async function detectAppRouter(
   return await withSpan(
     SpanNames.ROUTER_DETECT_APP,
     async () => {
-      const result = await detectAppRouterImpl(projectDir, config, adapter);
+      const result = await detectAppRouterImpl(
+        projectDir,
+        adapter,
+        directories,
+      );
       routerDetectionCache.set(cacheKey, result);
       return result;
     },
     {
       "router.project_dir": projectDir,
-      "router.cache_key": cacheKey,
+      "router.cache_key": cacheScope,
       "router.config_router": config?.router ?? "auto",
     },
   );
@@ -160,29 +223,51 @@ export async function detectAppRouter(
 
 async function detectAppRouterImpl(
   projectDir: string,
-  config: VeryfrontConfig,
   adapter: RuntimeAdapter,
+  directories: RouterDirectories,
 ): Promise<boolean> {
-  const appDirName = config?.directories?.app ?? "app";
-  const pagesDirName = config?.directories?.pages ?? "pages";
-
-  const appDir = normalize(join(projectDir, appDirName));
-  const pagesDir = normalize(join(projectDir, pagesDirName));
+  const appDir = normalize(join(projectDir, directories.app));
+  const pagesDir = normalize(join(projectDir, directories.pages));
 
   const [hasAppDir, hasPagesDir] = await Promise.all([
     directoryExists(appDir, projectDir, adapter),
     directoryExists(pagesDir, projectDir, adapter),
   ]);
 
-  if (hasAppDir && (await hasRouteFiles(appDir, adapter))) return true;
-  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter))) return false;
+  if (hasAppDir && (await hasRouteFiles(appDir, adapter, "app"))) return true;
+  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter, "pages"))) return false;
 
   if (hasPagesDir && !hasAppDir) return false;
   return true;
 }
 
 const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);
-const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
+const ROUTE_FILE_STEMS = new Set(["page", "layout", "error", "loading", "not-found", "index"]);
+
+type RouteTraversalState = {
+  directoriesVisited: number;
+  entriesInspected: number;
+  visited: Set<string>;
+};
+
+function isSafeDirectoryEntryName(name: string): boolean {
+  return name.length > 0 &&
+    name.length <= MAX_PATH_LENGTH_CHARS &&
+    name !== "." &&
+    name !== ".." &&
+    !name.includes("/") &&
+    !name.includes("\\") &&
+    !containsPathControlCharacters(name);
+}
+
+function isRouteFile(name: string, routerKind: "app" | "pages"): boolean {
+  const lowerName = name.toLowerCase();
+  const dotIndex = lowerName.lastIndexOf(".");
+  if (dotIndex <= 0) return false;
+
+  if (!ROUTE_EXTENSIONS.has(lowerName.slice(dotIndex))) return false;
+  return routerKind === "pages" || ROUTE_FILE_STEMS.has(lowerName.slice(0, dotIndex));
+}
 
 async function resolveTraversalKey(
   dir: string,
@@ -204,38 +289,51 @@ async function resolveTraversalKey(
 async function hasRouteFiles(
   dir: string,
   adapter: RuntimeAdapter,
-  visited = new Set<string>(),
+  routerKind: "app" | "pages",
+  state: RouteTraversalState = {
+    directoriesVisited: 0,
+    entriesInspected: 0,
+    visited: new Set(),
+  },
   requireCanonicalPath = false,
 ): Promise<boolean> {
   const traversalKey = await resolveTraversalKey(dir, adapter, requireCanonicalPath);
-  if (traversalKey === null || visited.has(traversalKey)) return false;
-  visited.add(traversalKey);
+  if (traversalKey === null || state.visited.has(traversalKey)) return false;
+  state.visited.add(traversalKey);
+  state.directoriesVisited += 1;
+  if (state.directoriesVisited > MAX_ROUTE_DETECTION_DIRECTORIES) {
+    throw DYNAMIC_ROUTE_ERROR.create({
+      detail: `Router detection exceeds the ${MAX_ROUTE_DETECTION_DIRECTORIES}-directory limit`,
+    });
+  }
 
   const entries = await readDirWithFallback(dir, adapter);
+  state.entriesInspected += entries.length;
+  if (state.entriesInspected > MAX_ROUTE_DETECTION_ENTRIES) {
+    throw DYNAMIC_ROUTE_ERROR.create({
+      detail: `Router detection exceeds the ${MAX_ROUTE_DETECTION_ENTRIES}-entry limit`,
+    });
+  }
 
   for (const entry of entries) {
+    if (!isSafeDirectoryEntryName(entry.name)) continue;
+
     if (entry.isFile) {
-      const name = entry.name.toLowerCase();
-      const dotIndex = name.lastIndexOf(".");
-      const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
-
-      if (ROUTE_EXTENSIONS.has(ext) && ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))) {
-        return true;
-      }
-
+      if (isRouteFile(entry.name, routerKind)) return true;
       continue;
     }
 
     if (
       entry.isDirectory &&
-      (await hasRouteFiles(join(dir, entry.name), adapter, visited))
+      !entry.isSymlink &&
+      (await hasRouteFiles(join(dir, entry.name), adapter, routerKind, state))
     ) {
       return true;
     }
 
     if (
       entry.isSymlink &&
-      (await hasRouteFiles(join(dir, entry.name), adapter, visited, true))
+      (await hasRouteFiles(join(dir, entry.name), adapter, routerKind, state, true))
     ) {
       return true;
     }
@@ -260,21 +358,31 @@ type NormalizedStat = {
 };
 
 async function withAdapterFallback<T>(
+  adapter: RuntimeAdapter,
   adapterFn: () => Promise<T>,
   fallbackFn: () => Promise<T>,
   defaultValue: T,
 ): Promise<T> {
   try {
     return await adapterFn();
-  } catch (_) {
-    /* expected: adapter may not support this operation */
+  } catch (adapterError) {
+    if (!canUseHostFilesystemFallback(adapter)) {
+      if (isNotFoundError(adapterError)) return defaultValue;
+      throw adapterError;
+    }
+
     try {
       return await fallbackFn();
-    } catch (_) {
-      /* expected: fallback may also fail */
-      return defaultValue;
+    } catch (fallbackError) {
+      if (isNotFoundError(fallbackError)) return defaultValue;
+      throw fallbackError;
     }
   }
+}
+
+function canUseHostFilesystemFallback(adapter: RuntimeAdapter): boolean {
+  return (adapter.id === "node" || adapter.id === "deno" || adapter.id === "bun") &&
+    !isVirtualFilesystem(adapter.fs);
 }
 
 async function directoryExists(
@@ -303,6 +411,7 @@ async function statWithFallback(
   const fs = createFileSystem();
 
   return await withAdapterFallback(
+    adapter,
     async () => (await adapter.fs.stat(path)) as NormalizedStat,
     async () => {
       const stat = await fs.stat(path);
@@ -319,16 +428,32 @@ async function statWithFallback(
 }
 
 async function collectDirEntries(
-  iterable: AsyncIterable<{
-    name: string;
-    isFile: boolean;
-    isDirectory: boolean;
-    isSymlink?: boolean;
-  }>,
+  iterable: AsyncIterable<unknown>,
 ): Promise<NormalizedDirEntry[]> {
   const entries: NormalizedDirEntry[] = [];
 
-  for await (const entry of iterable) {
+  for await (const value of iterable) {
+    if (entries.length >= MAX_DIRECTORY_ENTRIES) {
+      throw DYNAMIC_ROUTE_ERROR.create({
+        detail: `Router directory listing exceeds the ${MAX_DIRECTORY_ENTRIES}-entry limit`,
+      });
+    }
+    if (typeof value !== "object" || value === null) {
+      throw DYNAMIC_ROUTE_ERROR.create({
+        detail: "Router filesystem adapter returned an invalid directory entry",
+      });
+    }
+    const entry = value as Partial<NormalizedDirEntry>;
+    if (
+      typeof entry.name !== "string" ||
+      typeof entry.isFile !== "boolean" ||
+      typeof entry.isDirectory !== "boolean" ||
+      (entry.isSymlink !== undefined && typeof entry.isSymlink !== "boolean")
+    ) {
+      throw DYNAMIC_ROUTE_ERROR.create({
+        detail: "Router filesystem adapter returned an invalid directory entry",
+      });
+    }
     entries.push({
       name: entry.name,
       isFile: entry.isFile,
@@ -347,6 +472,7 @@ async function readDirWithFallback(
   const fs = createFileSystem();
 
   return await withAdapterFallback(
+    adapter,
     () => collectDirEntries(adapter.fs.readDir(dir)),
     () => collectDirEntries(fs.readDir(dir)),
     [],

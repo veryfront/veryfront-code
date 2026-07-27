@@ -40,11 +40,13 @@ describe("005.2 SSG App Router Pages Discovery", () => {
       const content = await readPageResolver();
 
       assert(
-        content.includes('appDirName = this.config.directories?.app ?? "app"'),
-        "Should get app directory name from config",
+        content.includes("normalizeRouterDirectoryName") &&
+          content.includes("this.config.directories?.app"),
+        "Should validate and normalize the configured app directory",
       );
       assert(
-        content.includes("await this.discoverAppRouterPages(appDir"),
+        content.includes("await this.discoverAppRouterPages(") &&
+          content.includes("appDir,"),
         "Should call discoverAppRouterPages for app directory",
       );
       assert(

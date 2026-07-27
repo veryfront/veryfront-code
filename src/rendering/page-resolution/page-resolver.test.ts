@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageResolver } from "./page-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -9,6 +9,7 @@ interface DirEntry {
   name: string;
   isFile: boolean;
   isDirectory: boolean;
+  isSymlink?: boolean;
 }
 
 function fileNotFoundError(): Error {
@@ -591,6 +592,116 @@ describe("rendering/page-resolution/page-resolver", () => {
       const pages = await resolver.getAllPages();
       assertEquals(pages.includes("contact"), true);
       assertEquals(pages.includes("blog"), true);
+    });
+
+    it("discovers nested Pages Router files with canonical slugs", async () => {
+      const adapter = createMockAdapter(
+        {
+          "/project/pages": [
+            { name: "blog", isFile: false, isDirectory: true },
+          ],
+          "/project/pages/blog": [
+            { name: "index.tsx", isFile: true, isDirectory: false },
+            { name: "post.mdx", isFile: true, isDirectory: false },
+          ],
+          "/project": [],
+        },
+        ["/project/pages"],
+      );
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig(),
+        adapter,
+      });
+
+      const pages = await resolver.getAllPages();
+
+      assertEquals(pages.includes("blog"), true);
+      assertEquals(pages.includes("blog/post"), true);
+    });
+
+    it("propagates operational failures instead of returning a partial App Router list", async () => {
+      const adapter = createMockAdapter(
+        {
+          "/project/app": [
+            { name: "docs", isFile: false, isDirectory: true },
+          ],
+          "/project": [],
+        },
+        ["/project/app"],
+      );
+      adapter.fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "docs", isFile: false, isDirectory: true, isSymlink: false };
+            return;
+          }
+          if (path === "/project/app/docs") {
+            throw new Error("remote filesystem unavailable");
+          }
+        })();
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig(),
+        adapter,
+      });
+
+      await assertRejects(
+        () => resolver.getAllPages(),
+        Error,
+        "remote filesystem unavailable",
+      );
+    });
+
+    it("rejects configured route roots that escape the project", async () => {
+      const adapter = createMockAdapter(
+        {
+          "/outside": [
+            { name: "secret.tsx", isFile: true, isDirectory: false },
+          ],
+          "/project": [],
+        },
+        ["/outside"],
+      );
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig({
+          directories: { pages: "../outside" },
+        }),
+        adapter,
+      });
+
+      await assertRejects(
+        () => resolver.getAllPages(),
+        TypeError,
+        "stay within the project",
+      );
+    });
+
+    it("bounds recursive page discovery", async () => {
+      const maxDirectories = 1_024;
+      const adapter = createMockAdapter({}, ["/project/app"]);
+      adapter.fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/project") return;
+          if (!path.startsWith("/project/app")) return;
+
+          const depth = path.split("/").filter((segment) => segment === "d").length;
+          if (depth < maxDirectories) {
+            yield { name: "d", isFile: false, isDirectory: true, isSymlink: false };
+          }
+        })();
+      const resolver = new PageResolver({
+        projectDir: "/project",
+        config: createMockConfig(),
+        adapter,
+      });
+
+      await assertRejects(
+        () => resolver.getAllPages(),
+        Error,
+        "directory limit",
+      );
     });
 
     it("should skip config files", async () => {
