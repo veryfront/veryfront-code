@@ -1,65 +1,66 @@
 /**
  * File Discovery
  *
- * Utilities for finding TypeScript files in directories.
+ * Bounded, adapter-aware utilities for finding project-authored source files.
  */
 
+import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 
+const MAX_DISCOVERY_DEPTH = 64;
+export const MAX_PROJECT_DISCOVERY_ENTRIES = 100_000;
+const COMMON_DISCOVERY_IGNORE_PATTERNS = [
+  "node_modules",
+  ".git",
+  "__tests__",
+] as const;
+const TYPESCRIPT_DISCOVERY_IGNORE_PATTERNS = [
+  ...COMMON_DISCOVERY_IGNORE_PATTERNS,
+  "*.test.*",
+  "*.spec.*",
+  "*.bench.*",
+  "*.d.ts",
+] as const;
+
 /**
- * Find all TypeScript files in a directory recursively
+ * Find files with one of the requested extensions under a discovery root.
+ *
+ * Adapter paths remain opaque keys. Native paths are emitted as canonical file
+ * URLs so spaces and literal percent signs round-trip through dynamic import.
  */
 async function findFilesByExtension(
   dir: string,
   context: FileDiscoveryContext,
   extensions: readonly string[],
+  ignorePatterns: readonly string[],
 ): Promise<string[]> {
-  const files: string[] = [];
+  if (!(await discoveryFileExists(dir, context))) return [];
+
+  const files = await collectFiles({
+    baseDir: dir,
+    extensions: [...extensions],
+    recursive: true,
+    maxDepth: MAX_DISCOVERY_DEPTH,
+    maxEntries: MAX_PROJECT_DISCOVERY_ENTRIES,
+    ignorePatterns: [...ignorePatterns],
+    fsAdapter: context.fsAdapter,
+    entryBudget: context.entryBudget,
+  });
 
   if (context.fsAdapter) {
-    if (!(await context.fsAdapter.exists(dir))) return files;
-
-    for await (const entry of context.fsAdapter.readDir(dir)) {
-      const filePath = `${dir}/${entry.name}`;
-
-      if (entry.isFile && extensions.some((extension) => entry.name.endsWith(extension))) {
-        // Adapter paths are opaque adapter keys, not native file URLs. Keeping
-        // them raw also preserves literal percent signs and relative VFS roots.
-        files.push(filePath);
-        continue;
-      }
-
-      if (entry.isDirectory) {
-        files.push(...(await findFilesByExtension(filePath, context, extensions)));
-      }
-    }
-
-    return files;
+    // Adapter paths are opaque adapter keys, not native file URLs. Keeping
+    // them raw also preserves literal percent signs and relative VFS roots.
+    return files.map((file) => file.path);
   }
 
-  const { fs, path, url } = await getNodeDeps(context);
-  if (!fs.existsSync(dir)) return files;
-
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const filePath = path.join(dir, entry.name);
-
-    if (entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension))) {
-      files.push(url.pathToFileURL(path.resolve(filePath)).href);
-      continue;
-    }
-
-    if (entry.isDirectory()) {
-      files.push(...(await findFilesByExtension(filePath, context, extensions)));
-    }
-  }
-
-  return files;
+  const { path, url } = await getNodeDeps(context);
+  return files.map((file) => url.pathToFileURL(path.resolve(file.path)).href);
 }
 
 /**
  * Get Node.js fs and path modules (cached on context).
  *
- * Only called when no fsAdapter is present — callers must guard accordingly.
+ * Only called for native filesystem operations.
  */
 async function getNodeDeps(
   context: FileDiscoveryContext,
@@ -79,24 +80,17 @@ async function getNodeDeps(
   return context.nodeDeps;
 }
 
-/**
- * Find all TypeScript files in a directory recursively.
- */
+/** Find runtime TypeScript modules, excluding conventional test-only sources. */
 export function findTypeScriptFiles(
   dir: string,
   context: FileDiscoveryContext,
 ): Promise<string[]> {
-  return findFilesByExtension(dir, context, [".ts", ".tsx"]);
-}
-
-/**
- * Find all Markdown files in a directory recursively.
- */
-export function findMarkdownFiles(
-  dir: string,
-  context: FileDiscoveryContext,
-): Promise<string[]> {
-  return findFilesByExtension(dir, context, [".md"]);
+  return findFilesByExtension(
+    dir,
+    context,
+    [".ts", ".tsx"],
+    TYPESCRIPT_DISCOVERY_IGNORE_PATTERNS,
+  );
 }
 
 export async function readDiscoveryTextFile(
@@ -112,7 +106,7 @@ export async function readDiscoveryTextFile(
 
   const { fs, url } = await getNodeDeps(context);
   const path = file.startsWith("file://") ? url.fileURLToPath(file) : file;
-  return fs.readFileSync(path, "utf-8");
+  return await fs.promises.readFile(path, "utf-8");
 }
 
 /** A single top-level entry inside a discovery directory. */
@@ -122,58 +116,53 @@ export type DiscoveryDirectoryEntry = {
   isDirectory: boolean;
 };
 
-/** Lists the immediate (non-recursive) entries of a discovery directory. */
+/** Lists immediate entries, rejecting unsafe adapter names and source failures. */
 export async function listDiscoveryDirectoryEntries(
   dir: string,
   context: FileDiscoveryContext,
 ): Promise<DiscoveryDirectoryEntry[]> {
-  const entries: DiscoveryDirectoryEntry[] = [];
+  if (!(await discoveryFileExists(dir, context))) return [];
 
-  try {
-    if (context.fsAdapter) {
-      if (!(await context.fsAdapter.exists(dir))) return entries;
-
-      for await (const entry of context.fsAdapter.readDir(dir)) {
-        entries.push({
-          name: entry.name,
-          isFile: entry.isFile,
-          isDirectory: entry.isDirectory,
-        });
-      }
-
-      return entries;
-    }
-
-    const { fs } = await getNodeDeps(context);
-    if (!fs.existsSync(dir)) return entries;
-
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      entries.push({
-        name: entry.name,
-        isFile: entry.isFile(),
-        isDirectory: entry.isDirectory(),
-      });
-    }
-  } catch (_) {
-    /* expected: directory may not exist or be unreadable */
-    return entries;
-  }
-
-  return entries;
+  const entries = await collectFiles({
+    baseDir: dir,
+    recursive: false,
+    maxDepth: 0,
+    maxEntries: MAX_PROJECT_DISCOVERY_ENTRIES,
+    includeDirs: true,
+    fsAdapter: context.fsAdapter,
+    entryBudget: context.entryBudget,
+  });
+  return entries.map((entry) => ({
+    name: entry.name,
+    isFile: entry.isFile,
+    isDirectory: entry.isDirectory,
+  }));
 }
 
-/** Returns true when a discovery file exists (fsAdapter-aware). */
+function isNotFoundError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return true;
+  }
+  if (!(error instanceof Error)) return false;
+  return error.name === "NotFound" || error.name === "NotFoundError";
+}
+
+/** Return true when a discovery path exists; operational failures propagate. */
 export async function discoveryFileExists(
   path: string,
   context: FileDiscoveryContext,
 ): Promise<boolean> {
+  if (context.fsAdapter) {
+    return await context.fsAdapter.exists(path);
+  }
+
+  const { fs } = await getNodeDeps(context);
   try {
-    if (context.fsAdapter) {
-      return await context.fsAdapter.exists(path);
-    }
-    const { fs } = await getNodeDeps(context);
-    return fs.existsSync(path);
-  } catch (_) {
-    return false;
+    await fs.promises.stat(path);
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
   }
 }

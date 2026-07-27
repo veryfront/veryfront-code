@@ -16,6 +16,7 @@ import type { ScheduleDefinition } from "#veryfront/schedule/types.ts";
 import type { WebhookDefinition } from "#veryfront/webhook/types.ts";
 import type { Platform } from "#veryfront/platform/core-platform.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileDiscoveryEntryBudget } from "#veryfront/utils/file-discovery.ts";
 
 /**
  * Context for file discovery operations
@@ -29,6 +30,8 @@ export interface FileDiscoveryContext {
     url: typeof import("node:url");
   };
   baseDir?: string;
+  /** Shared budget across every filesystem walk in one discovery generation. */
+  entryBudget?: FileDiscoveryEntryBudget;
 }
 
 /**
@@ -36,16 +39,16 @@ export interface FileDiscoveryContext {
  */
 export interface DiscoveryConfig {
   baseDir: string;
-  toolDirs?: string[];
-  agentDirs?: string[];
-  skillDirs?: string[];
-  resourceDirs?: string[];
-  promptDirs?: string[];
-  workflowDirs?: string[];
-  taskDirs?: string[];
-  scheduleDirs?: string[];
-  webhookDirs?: string[];
-  evalDirs?: string[];
+  toolDirs?: readonly string[];
+  agentDirs?: readonly string[];
+  skillDirs?: readonly string[];
+  resourceDirs?: readonly string[];
+  promptDirs?: readonly string[];
+  workflowDirs?: readonly string[];
+  taskDirs?: readonly string[];
+  scheduleDirs?: readonly string[];
+  webhookDirs?: readonly string[];
+  evalDirs?: readonly string[];
   verbose?: boolean;
   fsAdapter?: FileSystemAdapter;
 }

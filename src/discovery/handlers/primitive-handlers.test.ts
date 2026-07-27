@@ -3,9 +3,170 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Resource, resource, resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
+import { agentHandler } from "./agent-handler.ts";
 import { promptHandler } from "./prompt-handler.ts";
 import { resourceHandler } from "./resource-handler.ts";
 import { taskHandler } from "./task-handler.ts";
+import { prepareDiscoveredTool, toolHandler } from "./tool-handler.ts";
+import { workflowHandler } from "./workflow-handler.ts";
+
+Deno.test("tool discovery validates the provider-facing runtime contract", () => {
+  const valid = {
+    type: "function",
+    description: "Search project documents",
+    inputSchema: { type: "object", properties: {} },
+    execute: () => Promise.resolve([]),
+  };
+
+  assertEquals(toolHandler.validate(valid), true);
+  assertEquals(toolHandler.validate({ ...valid, description: "" }), false);
+  assertEquals(toolHandler.validate({ ...valid, inputSchema: undefined }), false);
+  assertEquals(toolHandler.validate({ ...valid, type: "unknown" }), false);
+  assertEquals(toolHandler.validate({ execute: valid.execute }), false);
+});
+
+Deno.test("tool discovery accepts valid JSON Schemas without a type keyword", () => {
+  const literalSchema = {
+    anyOf: [{ type: "string" }, { type: "number" }],
+  };
+  const literalSchemaTool = {
+    type: "function",
+    description: "Search by string or numeric identifier",
+    inputSchema: literalSchema,
+    execute: () => Promise.resolve([]),
+  };
+  const contractSchemaTool = {
+    ...literalSchemaTool,
+    inputSchema: defineSchema((v) => v.unknown())(),
+    inputSchemaJson: {},
+  };
+
+  assertEquals(toolHandler.validate(literalSchemaTool), true);
+  assertEquals(toolHandler.validate(contractSchemaTool), true);
+  const prepared = prepareDiscoveredTool(literalSchemaTool as never, "search");
+  literalSchema.anyOf[0]!.type = "boolean";
+  assertEquals(prepared.inputSchemaJson, {
+    anyOf: [{ type: "string" }, { type: "number" }],
+  });
+  assertEquals(
+    toolHandler.validate({
+      ...literalSchemaTool,
+      inputSchema: { type: "not-a-json-schema-type" },
+    }),
+    false,
+  );
+  assertEquals(
+    toolHandler.validate({
+      ...literalSchemaTool,
+      inputSchema: new Date(),
+    }),
+    false,
+  );
+});
+
+Deno.test("tool discovery recognizes the public schema surface without private markers", () => {
+  const contract = {} as Record<string, (...args: unknown[]) => unknown>;
+  for (
+    const method of [
+      "optional",
+      "nullable",
+      "nullish",
+      "default",
+      "describe",
+      "refine",
+      "superRefine",
+      "transform",
+      "strict",
+      "strip",
+      "passthrough",
+      "partial",
+      "extend",
+      "merge",
+      "omit",
+      "pick",
+      "min",
+      "max",
+      "int",
+      "positive",
+      "nonnegative",
+      "regex",
+      "email",
+      "url",
+      "uuid",
+      "datetime",
+      "pipe",
+    ]
+  ) {
+    contract[method] = () => contract;
+  }
+  contract.parse = (value) => value;
+  contract.safeParse = (value) => ({ success: true, data: value });
+
+  assertEquals(
+    toolHandler.validate({
+      type: "function",
+      description: "Custom schema adapter tool",
+      inputSchema: contract,
+      execute: () => Promise.resolve(),
+    }),
+    true,
+  );
+});
+
+Deno.test("agent discovery validates every callable public operation", () => {
+  const valid = {
+    id: "researcher",
+    config: { model: "openai:gpt-4.1" },
+    generate: () => Promise.resolve({}),
+    stream: () => Promise.resolve({}),
+    respond: () => Promise.resolve(new Response()),
+    getMemory: () => ({}),
+    getMemoryStats: () => Promise.resolve({ totalMessages: 0, estimatedTokens: 0, type: "test" }),
+    clearMemory: () => Promise.resolve(),
+  };
+
+  assertEquals(agentHandler.validate(valid), true);
+  assertEquals(agentHandler.validate({ ...valid, config: undefined }), false);
+  assertEquals(agentHandler.validate({ ...valid, stream: undefined }), false);
+  assertEquals(agentHandler.validate({ ...valid, clearMemory: undefined }), false);
+  assertEquals(agentHandler.validate({ generate: valid.generate }), false);
+});
+
+Deno.test("workflow discovery rejects inconsistent or unusable definitions", () => {
+  const valid = {
+    id: "daily-report",
+    definition: {
+      id: "daily-report",
+      steps: [],
+    },
+  };
+
+  assertEquals(workflowHandler.validate(valid), true);
+  assertEquals(
+    workflowHandler.validate({
+      ...valid,
+      id: "outer-id",
+    }),
+    false,
+  );
+  assertEquals(
+    workflowHandler.validate({
+      ...valid,
+      definition: { id: "daily-report", steps: null },
+    }),
+    false,
+  );
+  assertEquals(
+    workflowHandler.validate({
+      ...valid,
+      definition: {
+        id: "daily-report",
+        steps: [{ id: "broken", config: null }],
+      },
+    }),
+    false,
+  );
+});
 
 Deno.test("resource discovery validates the complete runtime boundary", () => {
   assertEquals(

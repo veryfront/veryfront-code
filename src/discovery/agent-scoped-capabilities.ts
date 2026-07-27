@@ -27,6 +27,7 @@ import { SKILL_MD_FILENAME } from "#veryfront/skill/types.ts";
 import { registerTool } from "#veryfront/mcp";
 import { ensureError } from "#veryfront/errors";
 import { filenameToId } from "./discovery-utils.ts";
+import { isDiscoverableTool, prepareDiscoveredTool } from "./handlers/tool-handler.ts";
 import {
   discoveryFileExists,
   findTypeScriptFiles,
@@ -71,11 +72,6 @@ export function namespaceAgentCapability(agentId: string, shortName: string): st
   }${AGENT_CAPABILITY_NAMESPACE_SEPARATOR}${shortName}`;
 }
 
-function isTool(value: unknown): value is Tool {
-  return value !== null && typeof value === "object" &&
-    typeof (value as Tool).execute === "function";
-}
-
 function hasExplicitToolId(tool: Tool): boolean {
   const generated = tool.__veryfrontGeneratedId;
   if (typeof tool.id !== "string" || tool.id.trim().length === 0) {
@@ -88,13 +84,22 @@ function toolShortName(tool: Tool, file: string): string {
   return hasExplicitToolId(tool) ? tool.id : filenameToId(file);
 }
 
-function collectModuleTools(module: unknown, file: string): Map<string, Tool> {
-  const tools = new Map<string, Tool>();
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function collectModuleTools(module: unknown): Tool[] {
+  const tools: Tool[] = [];
+  const seen = new Set<Tool>();
   const record = module as Record<string, unknown>;
-  for (const value of Object.values(record ?? {})) {
-    if (isTool(value)) {
-      tools.set(toolShortName(value, file), value);
-    }
+  for (
+    const [, value] of Object.entries(record ?? {}).sort(([left], [right]) =>
+      compareText(left, right)
+    )
+  ) {
+    if (!isDiscoverableTool(value) || seen.has(value)) continue;
+    seen.add(value);
+    tools.push(value);
   }
   return tools;
 }
@@ -117,6 +122,9 @@ function reportShadowedGlobalCapability(input: {
           `global ${input.kind} id "${input.shortName}": the agent's selector resolves its own ` +
           `${input.kind} first. Rename one to make the reference unambiguous.`,
       ),
+      code: "duplicate_id",
+      sourceKind: input.kind,
+      sourceId: input.shortName,
     });
   }
 }
@@ -142,7 +150,7 @@ export async function registerAgentColocatedTools(
   }
 
   const files = (await findTypeScriptFiles(toolsDir, input.context)).sort((left, right) =>
-    left.localeCompare(right)
+    compareText(left, right)
   );
   const registeredIds: string[] = [];
   const seenThisPass = new Set<string>();
@@ -150,7 +158,18 @@ export async function registerAgentColocatedTools(
   for (const file of files) {
     try {
       const module = await importModule(file, input.context);
-      for (const [shortName, moduleTool] of collectModuleTools(module, file)) {
+      const moduleTools = collectModuleTools(module);
+      if (moduleTools.length === 0) {
+        input.result?.errors.push({
+          file,
+          error: new Error(`${file} does not export a valid colocated tool`),
+          code: "invalid_export",
+          sourceKind: "tool",
+        });
+        continue;
+      }
+      for (const moduleTool of moduleTools) {
+        const shortName = toolShortName(moduleTool, file);
         const namespaced = namespaceAgentCapability(input.agentId, shortName);
         if (!isProviderSafeToolName(namespaced)) {
           input.result?.errors.push({
@@ -159,6 +178,9 @@ export async function registerAgentColocatedTools(
               `Colocated tool "${shortName}" for agent "${input.agentId}" produces an ` +
                 `invalid tool name "${namespaced}" (must match [A-Za-z0-9_-], max 64 chars).`,
             ),
+            code: "invalid_export",
+            sourceKind: "tool",
+            sourceId: namespaced,
           });
           continue;
         }
@@ -174,6 +196,9 @@ export async function registerAgentColocatedTools(
               `Duplicate colocated tool "${shortName}" for agent "${input.agentId}": ` +
                 `another tools/ module already registered "${namespaced}"; keeping the first.`,
             ),
+            code: "duplicate_id",
+            sourceKind: "tool",
+            sourceId: namespaced,
           });
           continue;
         }
@@ -186,15 +211,19 @@ export async function registerAgentColocatedTools(
           result: input.result,
         });
         registerTool(namespaced, {
-          ...moduleTool,
-          id: namespaced,
+          ...prepareDiscoveredTool(moduleTool, namespaced),
           ownerAgentId: input.agentId,
           shortName,
         });
         registeredIds.push(namespaced);
       }
     } catch (error) {
-      input.result?.errors.push({ file, error: ensureError(error) });
+      input.result?.errors.push({
+        file,
+        error: ensureError(error),
+        code: "load_error",
+        sourceKind: "tool",
+      });
     }
   }
 
@@ -244,7 +273,7 @@ export async function registerAgentColocatedSkills(
 
   const skillsDir = `${input.rootPath}/${AGENT_SKILLS_SUBDIR}`;
   const entries = (await listDiscoveryDirectoryEntries(skillsDir, input.context)).sort((a, b) =>
-    a.name.localeCompare(b.name)
+    compareText(a.name, b.name)
   );
   for (const entry of entries) {
     if (!entry.isDirectory || !isSafePathSegment(entry.name)) {
@@ -270,15 +299,13 @@ export async function registerAgentColocatedSkills(
       if (!skill) {
         continue;
       }
-      if (candidate.shortName !== input.agentId) {
-        reportShadowedGlobalCapability({
-          kind: "skill",
-          agentId: input.agentId,
-          shortName: candidate.shortName,
-          file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
-          result: input.result,
-        });
-      }
+      reportShadowedGlobalCapability({
+        kind: "skill",
+        agentId: input.agentId,
+        shortName: candidate.shortName,
+        file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
+        result: input.result,
+      });
       registerSkill(skill.id, skill);
       input.result?.skills.set(skill.id, skill);
       registeredIds.push(skill.id);
@@ -286,6 +313,9 @@ export async function registerAgentColocatedSkills(
       input.result?.errors.push({
         file: `${candidate.skillDir}/${SKILL_MD_FILENAME}`,
         error: ensureError(error),
+        code: "load_error",
+        sourceKind: "skill",
+        sourceId: candidate.id,
       });
     }
   }

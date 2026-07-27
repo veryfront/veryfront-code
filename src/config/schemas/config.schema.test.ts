@@ -83,6 +83,36 @@ describe("configSchema", () => {
     }
   });
 
+  it("rejects unsafe and unbounded AI discovery roots", () => {
+    for (
+      const path of [
+        "",
+        ".",
+        "../tools",
+        "tools/../outside",
+        "tools//nested",
+        "/absolute/tools",
+        String.raw`C:\absolute\tools`,
+        String.raw`C:relative\tools`,
+        "file:///absolute/tools",
+        "FILE:///absolute/tools",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            ai: {
+              tools: {
+                discovery: { paths: [path] },
+              },
+            },
+          }),
+        Error,
+        "ai.tools.discovery.paths.0",
+      );
+    }
+  });
+
   it("preserves values in intentional dynamic extension points", () => {
     const config = validateVeryfrontConfig({
       theme: { colors: { brand: "#123456" } },

@@ -120,7 +120,7 @@ export interface StartProductionModeOptions extends BaseServerOptions {
   debug?: boolean;
   /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
   defaultEnvironment?: "preview" | "production";
-  /** Discovery configuration for AI primitives. Runs discoverAll() before serving. */
+  /** Discovery configuration for an atomic, fail-closed primitive generation before serving. */
   discoveryConfig?: DiscoveryOptions;
   /** Map of local project slugs to their filesystem paths. */
   localProjects?: Record<string, string>;

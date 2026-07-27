@@ -51,5 +51,17 @@ Other instructions.`,
     assertEquals(registryDuplicate.metadata.description, "First copy");
 
     assertEquals(result.skills.has("other"), true);
+    assertEquals(
+      result.errors.map(({ code, sourceKind, sourceId }) => ({
+        code,
+        sourceKind,
+        sourceId,
+      })),
+      [{
+        code: "duplicate_id",
+        sourceKind: "skill",
+        sourceId: "duplicate",
+      }],
+    );
   });
 });

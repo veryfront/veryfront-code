@@ -1,12 +1,15 @@
 import { join } from "@std/path";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { normalizeDiscoveryPath } from "#veryfront/discovery/discovery-utils.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import { TRIGGER_CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/index.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
+import {
+  MAX_PROJECT_DISCOVERY_DIRECTORIES,
+  normalizeProjectRelativeDiscoveryPath,
+} from "#veryfront/utils/discovery-path-policy.ts";
 
 const TRIGGER_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 const TRIGGER_IGNORE_PATTERNS = [
@@ -16,7 +19,6 @@ const TRIGGER_IGNORE_PATTERNS = [
   "*.test.*",
   "*.spec.*",
 ] as const;
-const MAX_TRIGGER_DIRECTORIES = 100;
 
 /** Source definition families handled by shared trigger discovery. */
 export type SourceTriggerKind = "schedule" | "webhook";
@@ -115,38 +117,11 @@ function containsControlCharacter(value: string): boolean {
 }
 
 function normalizeTriggerDirectory(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_PATH_LENGTH_CHARS ||
-    containsControlCharacter(value) ||
-    value.startsWith("file://")
-  ) {
-    invalidDiscoveryConfiguration(
-      `Trigger source directory must be a non-empty relative path of at most ${MAX_PATH_LENGTH_CHARS} characters without control characters.`,
-    );
-  }
-
-  let normalized: string;
   try {
-    normalized = normalizeDiscoveryPath(value).replace(/\/+$/, "");
+    return normalizeProjectRelativeDiscoveryPath(value);
   } catch (error) {
     invalidDiscoveryConfiguration("Trigger source directory is invalid.", error);
   }
-
-  if (
-    normalized.length === 0 ||
-    normalized.startsWith("/") ||
-    /^[A-Za-z]:\//.test(normalized) ||
-    normalized.split("/").some((segment) =>
-      segment.length === 0 || segment === "." || segment === ".."
-    )
-  ) {
-    invalidDiscoveryConfiguration(
-      "Trigger source directory must stay within the project and cannot contain empty, dot, or traversal segments.",
-    );
-  }
-  return normalized;
 }
 
 function normalizeTriggerDirectoriesUnsafe(
@@ -183,10 +158,10 @@ function normalizeTriggerDirectoriesUnsafe(
     typeof length !== "number" ||
     !Number.isSafeInteger(length) ||
     length < 0 ||
-    length > MAX_TRIGGER_DIRECTORIES
+    length > MAX_PROJECT_DISCOVERY_DIRECTORIES
   ) {
     invalidDiscoveryConfiguration(
-      `Trigger discovery accepts at most ${MAX_TRIGGER_DIRECTORIES} source directories.`,
+      `Trigger discovery accepts at most ${MAX_PROJECT_DISCOVERY_DIRECTORIES} source directories.`,
     );
   }
 

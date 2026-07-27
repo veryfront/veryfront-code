@@ -236,6 +236,19 @@ describe("package resolution core", () => {
     assertEquals(resolvePackageExportPath(exportsMap, "./debounce"), "./debounce.js");
   });
 
+  it("resolves root export shorthand and keeps it scoped to the package root", () => {
+    assertEquals(resolvePackageExportPath("./index.js", "."), "./index.js");
+    assertEquals(resolvePackageExportPath("./index.js", "./private"), null);
+    assertEquals(
+      resolvePackageExportPath({ import: "./esm.js", default: "./index.js" }, "."),
+      "./esm.js",
+    );
+    assertEquals(
+      resolvePackageExportPath({ import: "./esm.js", default: "./index.js" }, "./private"),
+      null,
+    );
+  });
+
   it("preserves node conditional preference and rejects unsupported conditions", () => {
     assertEquals(
       pickPackageExportEntry({ node: "./node.js", default: "./default.js" }),

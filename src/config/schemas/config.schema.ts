@@ -28,6 +28,11 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { MAX_PATH_LENGTH } from "#veryfront/utils/constants/security.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import {
+  isProjectRelativeDiscoveryPath,
+  MAX_PROJECT_DISCOVERY_DIRECTORIES,
+} from "#veryfront/utils/discovery-path-policy.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_NAME_LENGTH = 256;
@@ -241,13 +246,27 @@ const getEmbeddingDimensionSchema = defineSchema((v) =>
   ])
 );
 
+const getProjectDiscoveryPathSchema = defineSchema((v) =>
+  v
+    .string()
+    .min(1)
+    .max(MAX_PATH_LENGTH_CHARS)
+    .refine(
+      isProjectRelativeDiscoveryPath,
+      "Expected a canonical project-relative discovery path",
+    )
+);
+
 const getAiDiscoveryContainerSchema = defineSchema((v) =>
   v
     .object({
       discovery: v
         .object({
           enabled: v.boolean().optional(),
-          paths: v.array(v.string()).optional(),
+          paths: v
+            .array(getProjectDiscoveryPathSchema())
+            .max(MAX_PROJECT_DISCOVERY_DIRECTORIES)
+            .optional(),
         })
         .partial()
         .strict()

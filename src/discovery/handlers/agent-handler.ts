@@ -10,6 +10,10 @@ import { filenameToId, getRelativeDiscoveryPath } from "../discovery-utils.ts";
 
 const COLOCATED_CAPABILITY_DIRS = new Set(["skills", "tools"]);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function isAgentDefinitionFile(file: string, dir: string): boolean {
   const segments = getRelativeDiscoveryPath(file, dir).split("/");
   if (segments.length < 3) return true;
@@ -17,11 +21,31 @@ function isAgentDefinitionFile(file: string, dir: string): boolean {
   return parentCapabilityDir === undefined || !COLOCATED_CAPABILITY_DIRS.has(parentCapabilityDir);
 }
 
+function isDiscoverableAgent(item: unknown): item is Agent {
+  if (!isRecord(item) || !isRecord(item.config)) return false;
+  if (
+    typeof item.id !== "string" ||
+    item.id.trim().length === 0 ||
+    typeof item.config.model !== "string" ||
+    item.config.model.trim().length === 0
+  ) {
+    return false;
+  }
+
+  return [
+    "generate",
+    "stream",
+    "respond",
+    "getMemory",
+    "getMemoryStats",
+    "clearMemory",
+  ].every((operation) => typeof item[operation] === "function");
+}
+
 export const agentHandler: DiscoveryHandler<Agent> = {
   typeName: "agent",
   shouldDiscover: isAgentDefinitionFile,
-  validate: (item): item is Agent =>
-    item !== null && typeof item === "object" && typeof (item as Agent).generate === "function",
+  validate: isDiscoverableAgent,
   getId: (agent, file) => {
     const configuredId = agent.config.id;
     return typeof configuredId === "string" && configuredId.trim().length > 0

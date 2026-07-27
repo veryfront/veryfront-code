@@ -5,10 +5,14 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearTranspileCache, importModule } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { reset, tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
+import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/defaults.ts";
+import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
 import { toFileUrl } from "#veryfront/compat/path";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 
 /**
  * Creates a mock FileSystemAdapter backed by an in-memory file map.
@@ -114,6 +118,7 @@ describe("knowledge module static import", () => {
 describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterEach(() => {
     clearTranspileCache();
+    ensureBuiltinSchemaValidator();
   });
 
   afterAll(async () => {
@@ -136,6 +141,102 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         assertEquals(mod.default.loaded, true);
       } finally {
         await Deno.remove(parent, { recursive: true });
+      }
+    });
+
+    it("invalidates a native bundle when a relative dependency changes", async () => {
+      const dir = await Deno.makeTempDir();
+      const entry = `${dir}/entry.ts`;
+      const dependency = `${dir}/dependency.ts`;
+      try {
+        await Deno.writeTextFile(
+          entry,
+          'import { value } from "./dependency.ts"; export default { value };',
+        );
+        await Deno.writeTextFile(dependency, "export const value = 1;");
+
+        const first = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        }) as { default: { value: number } };
+        assertEquals(first.default.value, 1);
+
+        await Deno.writeTextFile(dependency, "export const value = 2;");
+        const second = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        }) as { default: { value: number } };
+        assertEquals(second.default.value, 2);
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("does not cache native builds when a bundler omits dependency metadata", async () => {
+      await ensureDefaultBundlerContracts();
+      const originalBundler = tryResolve<Bundler>("Bundler");
+      if (!originalBundler) throw new Error("Expected the default bundler to be registered");
+
+      const bundlerWithoutMetafile: Bundler = {
+        async bundle(options) {
+          const result = { ...await originalBundler.bundle(options) };
+          delete result.metafile;
+          return result;
+        },
+        transform(options) {
+          return originalBundler.transform(options);
+        },
+      };
+
+      const dir = await Deno.makeTempDir();
+      const entry = `${dir}/entry.ts`;
+      try {
+        register("Bundler", bundlerWithoutMetafile);
+        await Deno.writeTextFile(entry, "export default { value: 1 };");
+
+        const first = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        });
+        const second = await importModule(toFileUrl(entry).href, {
+          platform: "node",
+        });
+
+        assertEquals(first === second, false);
+      } finally {
+        register("Bundler", originalBundler);
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("rejects a successful bundler result without JavaScript output", async () => {
+      await ensureDefaultBundlerContracts();
+      const originalBundler = tryResolve<Bundler>("Bundler");
+      if (!originalBundler) throw new Error("Expected the default bundler to be registered");
+
+      const outputlessBundler: Bundler = {
+        async bundle(options) {
+          return {
+            ...await originalBundler.bundle(options),
+            outputFiles: [],
+          };
+        },
+        transform(options) {
+          return originalBundler.transform(options);
+        },
+      };
+
+      const dir = await Deno.makeTempDir();
+      const entry = `${dir}/entry.ts`;
+      try {
+        register("Bundler", outputlessBundler);
+        await Deno.writeTextFile(entry, "export default { value: 1 };");
+
+        await assertRejects(
+          () => importModule(toFileUrl(entry).href, { platform: "node" }),
+          Error,
+          "Bundler produced no JavaScript output",
+        );
+      } finally {
+        register("Bundler", originalBundler);
+        await Deno.remove(dir, { recursive: true });
       }
     });
   });
@@ -275,28 +376,32 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       // process; the same relative path recurs across them. A path-only cache
       // key kept serving the previous release's module after a deploy.
       const path = "/project/agents/assistant.ts";
-      const contextFor = (content: string): FileDiscoveryContext => ({
+      const files = {
+        [path]: `export default { version: "release-1" };`,
+      };
+      const context: FileDiscoveryContext = {
         platform: "node",
-        fsAdapter: createMockAdapter({ [path]: content }),
+        fsAdapter: createMockAdapter(files),
         baseDir: "/project",
-      });
+      };
 
       const first = await importModule(
         `file://${path}`,
-        contextFor(`export default { version: "release-1" };`),
+        context,
       ) as { default: { version: string } };
       assertEquals(first.default.version, "release-1");
 
+      files[path] = `export default { version: "release-2" };`;
       const second = await importModule(
         `file://${path}`,
-        contextFor(`export default { version: "release-2" };`),
+        context,
       ) as { default: { version: string } };
       assertEquals(second.default.version, "release-2");
 
       // Unchanged content is still served from the cache (same module object).
       const third = await importModule(
         `file://${path}`,
-        contextFor(`export default { version: "release-2" };`),
+        context,
       );
       assertEquals(third === second, true);
     });
@@ -311,34 +416,152 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
         `import { CONFIG } from "./config";`,
         `export default { model: CONFIG.model };`,
       ].join("\n");
-      const contextFor = (depSource: string): FileDiscoveryContext => ({
+      const dependencyPath = "/project/agents/config.ts";
+      const files = {
+        [entryPath]: entrySource,
+        [dependencyPath]: `export const CONFIG = { model: "gpt-4" };`,
+      };
+      const context: FileDiscoveryContext = {
         platform: "node",
-        fsAdapter: createMockAdapter({
-          [entryPath]: entrySource,
-          "/project/agents/config.ts": depSource,
-        }),
+        fsAdapter: createMockAdapter(files),
         baseDir: "/project",
-      });
+      };
 
       const first = await importModule(
         `file://${entryPath}`,
-        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+        context,
       ) as { default: { model: string } };
       assertEquals(first.default.model, "gpt-4");
 
+      files[dependencyPath] = `export const CONFIG = { model: "gpt-5.5" };`;
       const second = await importModule(
         `file://${entryPath}`,
-        contextFor(`export const CONFIG = { model: "gpt-5.5" };`),
+        context,
       ) as { default: { model: string } };
       assertEquals(second.default.model, "gpt-5.5");
 
       // Both dependency versions stay cached: reverting to the original
       // dependency contents serves the originally built module object.
+      files[dependencyPath] = `export const CONFIG = { model: "gpt-4" };`;
       const third = await importModule(
         `file://${entryPath}`,
-        contextFor(`export const CONFIG = { model: "gpt-4" };`),
+        context,
       );
       assertEquals(third === first, true);
+    });
+
+    it("deduplicates concurrent imports from the same source adapter", async () => {
+      const path = "/project/agents/assistant.ts";
+      const adapter = createMockAdapter({
+        [path]: `export default { version: "concurrent" };`,
+      });
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "/project",
+      };
+
+      const [first, second, third] = await Promise.all([
+        importModule(`file://${path}`, context),
+        importModule(`file://${path}`, context),
+        importModule(`file://${path}`, context),
+      ]);
+
+      assertEquals(first === second, true);
+      assertEquals(second === third, true);
+    });
+
+    it("does not share evaluated module objects across source adapters", async () => {
+      const path = "/project/agents/assistant.ts";
+      const source = `export default { version: "same-source" };`;
+      const contextFor = (fsAdapter: FileSystemAdapter): FileDiscoveryContext => ({
+        platform: "node",
+        fsAdapter,
+        baseDir: "/project",
+      });
+
+      const first = await importModule(
+        `file://${path}`,
+        contextFor(createMockAdapter({ [path]: source })),
+      );
+      const second = await importModule(
+        `file://${path}`,
+        contextFor(createMockAdapter({ [path]: source })),
+      );
+
+      assertEquals(first === second, false);
+    });
+
+    it("does not resurrect a cache entry cleared during dependency validation", async () => {
+      const entryPath = "/project/agents/assistant.ts";
+      const dependencyPath = "/project/agents/config.ts";
+      const files = {
+        [entryPath]: [
+          'import { model } from "./config.ts";',
+          "export default { model };",
+        ].join("\n"),
+        [dependencyPath]: 'export const model = "gpt-5";',
+      };
+      const baseAdapter = createMockAdapter(files);
+      const validationStarted = Promise.withResolvers<void>();
+      const releaseValidation = Promise.withResolvers<void>();
+      let delayDependencyRead = false;
+      let dependencyReadDelayed = false;
+      const adapter: FileSystemAdapter = {
+        ...baseAdapter,
+        async readFile(path) {
+          if (
+            delayDependencyRead &&
+            !dependencyReadDelayed &&
+            path === dependencyPath
+          ) {
+            dependencyReadDelayed = true;
+            validationStarted.resolve();
+            await releaseValidation.promise;
+          }
+          return await baseAdapter.readFile(path);
+        },
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: adapter,
+        baseDir: "/project",
+      };
+
+      const first = await importModule(`file://${entryPath}`, context);
+      delayDependencyRead = true;
+      const pending = importModule(`file://${entryPath}`, context);
+      await validationStarted.promise;
+      clearTranspileCache();
+      releaseValidation.resolve();
+
+      const refreshed = await pending;
+      const cachedRefresh = await importModule(`file://${entryPath}`, context);
+
+      assertEquals(refreshed === first, false);
+      assertEquals(cachedRefresh === refreshed, true);
+    });
+
+    it("does not share evaluated module objects across registry scopes", async () => {
+      const path = "/project/agents/assistant.ts";
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter({
+          [path]: `export default { version: "same-source" };`,
+        }),
+        baseDir: "/project",
+      };
+
+      const first = await runWithCacheKeyContext(
+        { projectId: "project-a", mode: "preview", versionId: "main" },
+        () => importModule(`file://${path}`, context),
+      );
+      const second = await runWithCacheKeyContext(
+        { projectId: "project-b", mode: "preview", versionId: "main" },
+        () => importModule(`file://${path}`, context),
+      );
+
+      assertEquals(first === second, false);
     });
 
     it("should throw when file is not found via fsAdapter", async () => {

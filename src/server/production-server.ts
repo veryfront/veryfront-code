@@ -214,7 +214,7 @@ interface ServerOptions {
    * Used by proxy middleware to inject context headers in combined mode.
    */
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
-  /** Discovery configuration for AI primitives. Runs discoverAll() before serving. */
+  /** Discovery configuration for an atomic, fail-closed primitive generation before serving. */
   discoveryConfig?: DiscoveryOptions;
   /** Map of project slugs to their filesystem paths (seeds local project discovery). */
   localProjects?: Record<string, string>;
@@ -469,7 +469,7 @@ async function startProductionServerWithAuthorization(
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
           try {
-            const { discoverAll } = await import("#veryfront/discovery");
+            const { replaceDiscoveredProjectPrimitives } = await import("#veryfront/discovery");
             const { isExtendedFSAdapter } = await import(
               "#veryfront/platform/adapters/fs/wrapper.ts"
             );
@@ -484,7 +484,7 @@ async function startProductionServerWithAuthorization(
                 discoveryConfig.projectSlug,
                 discoveryConfig.apiToken,
                 () =>
-                  discoverAll({
+                  replaceDiscoveredProjectPrimitives({
                     baseDir: discoveryConfig.baseDir,
                     fsAdapter: discoveryConfig.fsAdapter,
                     verbose: discoveryConfig.verbose ?? false,
@@ -493,7 +493,7 @@ async function startProductionServerWithAuthorization(
                 { tokenProvenance: "project-bound" },
               );
             } else {
-              await discoverAll({
+              await replaceDiscoveredProjectPrimitives({
                 baseDir: discoveryConfig.baseDir,
                 fsAdapter: discoveryConfig.fsAdapter,
                 verbose: discoveryConfig.verbose ?? false,

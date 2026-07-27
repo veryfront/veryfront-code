@@ -1,10 +1,4 @@
-import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
-import { promptRegistry } from "#veryfront/prompt/registry.ts";
-import { resourceRegistry } from "#veryfront/resource/registry.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { toolRegistry } from "#veryfront/tool/registry.ts";
-import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { discoverAll } from "./discovery-engine.ts";
 import { clearTranspileCache } from "./transpiler.ts";
 import type { DiscoveryConfig, DiscoveryResult } from "./types.ts";
@@ -53,12 +47,6 @@ export async function replaceDiscoveredProjectPrimitives(
 ): Promise<DiscoveryResult> {
   return await runWithRegistryTransaction(async () => {
     clearTranspileCache();
-    agentRegistry.clear();
-    toolRegistry.clear();
-    skillRegistry.clear();
-    promptRegistry.clear();
-    resourceRegistry.clear();
-    workflowRegistry.clear();
 
     const result = await discoverAll(config);
     if (result.errors.length > 0 && options.errorPolicy !== "publish-valid") {

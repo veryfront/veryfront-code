@@ -132,3 +132,101 @@ Deno.test("file discovery propagates source failures instead of treating them as
     "resource source unavailable",
   );
 });
+
+Deno.test("directory listing and existence checks propagate adapter failures", async () => {
+  const listFailureAdapter = {
+    exists: () => Promise.resolve(true),
+    readDir: async function* () {
+      yield await Promise.reject(new Error("directory authorization failed"));
+    },
+  } as unknown as FileSystemAdapter;
+  const existsFailureAdapter = {
+    exists: () => Promise.reject(new Error("metadata service unavailable")),
+  } as unknown as FileSystemAdapter;
+
+  await assertRejects(
+    () =>
+      listDiscoveryDirectoryEntries("/agents", {
+        platform: "node",
+        fsAdapter: listFailureAdapter,
+      }),
+    Error,
+    "directory authorization failed",
+  );
+  await assertRejects(
+    () =>
+      discoveryFileExists("/agents/lead.md", {
+        platform: "node",
+        fsAdapter: existsFailureAdapter,
+      }),
+    Error,
+    "metadata service unavailable",
+  );
+});
+
+Deno.test("file discovery rejects unsafe adapter directory-entry names", async () => {
+  const fsAdapter = fakeFsAdapter(
+    {
+      "/tools": [
+        { name: "../outside.ts", isFile: true, isDirectory: false },
+      ],
+    },
+    new Set(),
+  );
+
+  await assertRejects(
+    () => findTypeScriptFiles("/tools", { platform: "node", fsAdapter }),
+    TypeError,
+    "invalid directory entry name",
+  );
+});
+
+Deno.test("TypeScript discovery excludes tests, declarations, benchmarks, and ignored trees", async () => {
+  const fsAdapter = fakeFsAdapter(
+    {
+      "/tools": [
+        { name: "live.ts", isFile: true, isDirectory: false },
+        { name: "live.test.ts", isFile: true, isDirectory: false },
+        { name: "live.spec.tsx", isFile: true, isDirectory: false },
+        { name: "live.d.ts", isFile: true, isDirectory: false },
+        { name: "live.bench.ts", isFile: true, isDirectory: false },
+        { name: "__tests__", isFile: false, isDirectory: true },
+        { name: "nested", isFile: false, isDirectory: true },
+      ],
+      "/tools/__tests__": [
+        { name: "hidden.ts", isFile: true, isDirectory: false },
+      ],
+      "/tools/nested": [
+        { name: "helper.tsx", isFile: true, isDirectory: false },
+      ],
+    },
+    new Set(),
+  );
+
+  assertEquals(
+    await findTypeScriptFiles("/tools", { platform: "node", fsAdapter }),
+    ["/tools/live.ts", "/tools/nested/helper.tsx"],
+  );
+});
+
+Deno.test("discovery applies one scan budget across configured roots", async () => {
+  const fsAdapter = fakeFsAdapter(
+    {
+      "/tools-a": [{ name: "first.ts", isFile: true, isDirectory: false }],
+      "/tools-b": [{ name: "second.ts", isFile: true, isDirectory: false }],
+    },
+    new Set(),
+  );
+  const context = {
+    platform: "node",
+    fsAdapter,
+    entryBudget: { scannedEntries: 0, maxEntries: 1 },
+  } satisfies FileDiscoveryContext;
+
+  assertEquals(await findTypeScriptFiles("/tools-a", context), ["/tools-a/first.ts"]);
+  await assertRejects(
+    () => findTypeScriptFiles("/tools-b", context),
+    RangeError,
+    "entry limit of 1 exceeded",
+  );
+});

@@ -217,6 +217,56 @@ Deno.test("agent ids that sanitize to the same namespace report a collision erro
   }
 });
 
+Deno.test("agent namespace collisions are detected across configured discovery roots", async () => {
+  const root = await Deno.makeTempDir();
+  skillRegistryInternal.clearAll();
+  try {
+    await Deno.mkdir(`${root}/agents-a/a.b`, { recursive: true });
+    await Deno.mkdir(`${root}/agents-b/a_b`, { recursive: true });
+    await Deno.writeTextFile(
+      `${root}/agents-a/a.b/AGENT.md`,
+      `---\nname: AB1\n---\nOne.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents-a/a.b/SKILL.md`,
+      `---\nname: ab\ndescription: First\n---\nOne.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents-b/a_b/AGENT.md`,
+      `---\nname: AB2\n---\nTwo.\n`,
+    );
+    await Deno.writeTextFile(
+      `${root}/agents-b/a_b/SKILL.md`,
+      `---\nname: ab\ndescription: Second\n---\nTwo.\n`,
+    );
+
+    const result = await discoverAll({
+      baseDir: root,
+      toolDirs: [],
+      agentDirs: ["agents-a", "agents-b"],
+      skillDirs: [],
+      resourceDirs: [],
+      promptDirs: [],
+      workflowDirs: [],
+      taskDirs: [],
+      scheduleDirs: [],
+      webhookDirs: [],
+      evalDirs: [],
+    });
+
+    assertEquals(
+      result.errors.filter((entry) =>
+        String(entry.error).includes("shares the sanitized capability namespace")
+      ).length,
+      1,
+    );
+  } finally {
+    skillRegistryInternal.clearAll();
+    cleanupAgents(["a.b", "a_b"]);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // ── Full-pipeline regression (review finding: discoverAll wiped colocated skills) ──
 
 import { discoverAll } from "./index.ts";

@@ -255,6 +255,44 @@ describe(
       assertEquals(toolIds.length >= 2, true);
     });
 
+    it("atomically removes stale registry entries on direct rediscovery", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-replace-" });
+      try {
+        await Deno.mkdir(`${tempDir}/prompts`);
+        const promptFile = `${tempDir}/prompts/temporary.ts`;
+        await Deno.writeTextFile(
+          promptFile,
+          [
+            'import { prompt } from "veryfront/prompt";',
+            'export default prompt({ description: "Temporary", content: "ok" });',
+          ].join("\n"),
+        );
+        const config = {
+          baseDir: tempDir,
+          toolDirs: [],
+          agentDirs: [],
+          skillDirs: [],
+          resourceDirs: [],
+          promptDirs: ["prompts"],
+          workflowDirs: [],
+          taskDirs: [],
+          scheduleDirs: [],
+          webhookDirs: [],
+          evalDirs: [],
+        };
+
+        await discoverAll(config);
+        assertEquals(promptRegistry.get("temporary")?.description, "Temporary");
+
+        await Deno.remove(promptFile);
+        await discoverAll(config);
+
+        assertEquals(promptRegistry.get("temporary"), undefined);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("should handle discovery errors gracefully", async () => {
       const result = await discoverAll({
         baseDir: "/nonexistent/path",
@@ -535,8 +573,9 @@ describe(
         await Deno.writeTextFile(
           `${tempDir}/tools/many.ts`,
           [
-            'export const alpha = { execute: async () => "alpha" };',
-            'export const beta = { execute: async () => "beta" };',
+            'const schema = { type: "object", properties: {} };',
+            'export const alpha = { type: "function", description: "Alpha", inputSchema: schema, execute: async () => "alpha" };',
+            'export const beta = { type: "function", description: "Beta", inputSchema: schema, execute: async () => "beta" };',
           ].join("\n"),
         );
 
@@ -547,6 +586,31 @@ describe(
 
         assertEquals(Array.from(result.tools.keys()).sort(), ["alpha", "beta"]);
         assertEquals(toolRegistry.getAllIds().sort(), ["alpha", "beta"]);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("treats multiple export aliases of one tool as one definition", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-alias-export-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/search.ts`,
+          [
+            'const search = { type: "function", description: "Search", inputSchema: { type: "object", properties: {} }, execute: async () => [] };',
+            "export { search, search as searchAlias };",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(Array.from(result.tools.keys()), ["search"]);
+        assertEquals(result.errors, []);
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }
@@ -771,11 +835,11 @@ describe(
         await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
         await Deno.writeTextFile(
           `${tempDir}/tools/foo.ts`,
-          'export const foo = { execute: async () => "foo" };\n',
+          'export const foo = { type: "function", description: "Foo", inputSchema: { type: "object", properties: {} }, execute: async () => "foo" };\n',
         );
         await Deno.writeTextFile(
           `${tempDir}/tools/bar.ts`,
-          'export const bar = { execute: async () => "bar" };\n',
+          'export const bar = { type: "function", description: "Bar", inputSchema: { type: "object", properties: {} }, execute: async () => "bar" };\n',
         );
         await Deno.writeTextFile(
           `${tempDir}/tools/index.ts`,

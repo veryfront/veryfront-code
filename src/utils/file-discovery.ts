@@ -6,7 +6,11 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
-import type { DirEntry, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type {
+  DirEntry,
+  FileSystemAdapter,
+  RuntimeAdapter,
+} from "#veryfront/platform/adapters/base.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const DEFAULT_MAX_DISCOVERY_ENTRIES = 100_000;
@@ -40,7 +44,17 @@ export interface FileDiscoveryOptions {
   ignorePatterns?: string[];
   includeDirs?: boolean;
   followSymlinks?: boolean;
+  /** Direct filesystem capability for callers that do not own a full runtime adapter. */
+  fsAdapter?: FileSystemAdapter;
   adapter?: RuntimeAdapter;
+  /** Optional budget shared across multiple discovery walks. */
+  entryBudget?: FileDiscoveryEntryBudget;
+}
+
+/** Mutable scan counter that can bound a group of related discovery walks. */
+export interface FileDiscoveryEntryBudget {
+  scannedEntries: number;
+  readonly maxEntries: number;
 }
 
 export interface FileDiscoveryResult {
@@ -195,11 +209,11 @@ function assertSafeDirectoryEntryName(name: string): void {
 }
 
 async function* readDirectoryEntries(
-  adapter: RuntimeAdapter,
+  fsAdapter: FileSystemAdapter,
   dir: string,
 ): AsyncIterable<DirEntry> {
   try {
-    for await (const entry of adapter.fs.readDir(dir)) yield entry;
+    for await (const entry of fsAdapter.readDir(dir)) yield entry;
   } catch (error) {
     if (isNotFoundError(error)) return;
     throw error;
@@ -219,7 +233,9 @@ export async function* discoverFiles(
     ignorePatterns,
     includeDirs = false,
     followSymlinks = false,
+    fsAdapter,
     adapter,
+    entryBudget,
   } = options;
 
   if (
@@ -231,18 +247,34 @@ export async function* discoverFiles(
   if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
     throw new RangeError("File discovery maxEntries must be a positive safe integer");
   }
+  if (entryBudget !== undefined) {
+    if (
+      !Number.isSafeInteger(entryBudget.scannedEntries) ||
+      entryBudget.scannedEntries < 0 ||
+      !Number.isSafeInteger(entryBudget.maxEntries) ||
+      entryBudget.maxEntries <= 0 ||
+      entryBudget.scannedEntries > entryBudget.maxEntries
+    ) {
+      throw new RangeError(
+        "File discovery entryBudget must contain a non-negative safe counter and positive safe limit",
+      );
+    }
+  }
   validateFilterList(extensions, "extensions");
   validateFilterList(patterns, "patterns");
   validateFilterList(ignorePatterns, "ignorePatterns");
+  if (adapter !== undefined && fsAdapter !== undefined) {
+    throw new TypeError("File discovery accepts either adapter or fsAdapter, not both");
+  }
 
-  const runtimeAdapter = adapter ?? (await getDefaultAdapter());
+  const fileSystem = fsAdapter ?? adapter?.fs ?? (await getDefaultAdapter()).fs;
   let physicalBaseDir: string | undefined;
   if (followSymlinks) {
-    if (typeof runtimeAdapter.fs.realPath !== "function") {
-      throw new Error("File discovery requires adapter.fs.realPath when following symlinks");
+    if (typeof fileSystem.realPath !== "function") {
+      throw new Error("File discovery requires fsAdapter.realPath when following symlinks");
     }
     try {
-      physicalBaseDir = await runtimeAdapter.fs.realPath(baseDir);
+      physicalBaseDir = await fileSystem.realPath(baseDir);
     } catch (error) {
       if (isNotFoundError(error) || hasErrorCode(error, "ELOOP")) return;
       throw error;
@@ -259,16 +291,14 @@ export async function* discoverFiles(
     includeDirs,
     recursive,
     followSymlinks,
-    adapter: runtimeAdapter,
+    fsAdapter: fileSystem,
     physicalBaseDir,
     visitedDirectories: new Set<string>(),
-    budget: { scannedEntries: 0, maxEntries },
+    budgets: [
+      { scannedEntries: 0, maxEntries },
+      ...(entryBudget === undefined ? [] : [entryBudget]),
+    ],
   });
-}
-
-interface FileDiscoveryBudget {
-  scannedEntries: number;
-  readonly maxEntries: number;
 }
 
 interface WalkDirectoryOptions {
@@ -281,10 +311,21 @@ interface WalkDirectoryOptions {
   includeDirs: boolean;
   recursive: boolean;
   followSymlinks: boolean;
-  adapter: RuntimeAdapter;
+  fsAdapter: FileSystemAdapter;
   physicalBaseDir: string | undefined;
   visitedDirectories: Set<string>;
-  budget: FileDiscoveryBudget;
+  budgets: FileDiscoveryEntryBudget[];
+}
+
+function consumeDiscoveryEntry(budgets: readonly FileDiscoveryEntryBudget[]): void {
+  for (const budget of budgets) {
+    if (budget.scannedEntries >= budget.maxEntries) {
+      throw new RangeError(
+        `File discovery entry limit of ${budget.maxEntries} exceeded`,
+      );
+    }
+  }
+  for (const budget of budgets) budget.scannedEntries++;
 }
 
 async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<FileDiscoveryResult> {
@@ -298,10 +339,10 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
     includeDirs,
     recursive,
     followSymlinks,
-    adapter,
+    fsAdapter,
     physicalBaseDir,
     visitedDirectories,
-    budget,
+    budgets,
   } = options;
 
   if (currentDepth > maxDepth) return;
@@ -309,7 +350,7 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
   if (followSymlinks) {
     let physicalDir: string;
     try {
-      physicalDir = await adapter.fs.realPath!(dir);
+      physicalDir = await fsAdapter.realPath!(dir);
     } catch (error) {
       if (isNotFoundError(error) || hasErrorCode(error, "ELOOP")) return;
       throw error;
@@ -320,13 +361,8 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
     visitedDirectories.add(physicalDir);
   }
 
-  for await (const entry of readDirectoryEntries(adapter, dir)) {
-    budget.scannedEntries++;
-    if (budget.scannedEntries > budget.maxEntries) {
-      throw new RangeError(
-        `File discovery entry limit of ${budget.maxEntries} exceeded`,
-      );
-    }
+  for await (const entry of readDirectoryEntries(fsAdapter, dir)) {
+    consumeDiscoveryEntry(budgets);
     assertSafeDirectoryEntryName(entry.name);
     if (shouldIgnore(entry.name, ignorePatterns)) continue;
 
@@ -369,9 +405,9 @@ async function* walkDirectory(options: WalkDirectoryOptions): AsyncGenerator<Fil
     if (!entry.isSymlink || !followSymlinks) continue;
 
     try {
-      const physicalTarget = await adapter.fs.realPath!(fullPath);
+      const physicalTarget = await fsAdapter.realPath!(fullPath);
       if (!physicalBaseDir || !isWithinPhysicalDirectory(physicalBaseDir, physicalTarget)) continue;
-      const stat = await adapter.fs.stat(fullPath);
+      const stat = await fsAdapter.stat(fullPath);
 
       if (stat.isDirectory) {
         if (!recursive) continue;

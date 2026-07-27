@@ -14,13 +14,18 @@ import { computeHash } from "#veryfront/utils";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import {
+  clearDiscoveryImportRewriteCache,
+  rewriteDiscoveryImports,
+  rewriteForDeno,
+} from "./import-rewriter.ts";
 import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
+import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 
 type TranspileCacheEntry = {
-  /** Content hashes of every file esbuild bundled into the module besides the entry. */
+  /** Content hashes of every file the bundler reports for the module. */
   deps: ReadonlyArray<{ path: string; hash: string }>;
   module: unknown;
 };
@@ -29,6 +34,44 @@ type TranspileCacheEntry = {
 // bundled dependency contents it was built from and is only served while those
 // still match (see findCachedModuleWithFreshDeps).
 const transpileCache = new Map<string, TranspileCacheEntry[]>();
+const inFlightImports = new Map<string, Promise<unknown>>();
+const fsAdapterIds = new WeakMap<FileSystemAdapter, number>();
+const MAX_TRANSPILE_CACHE_KEYS = 256;
+const MAX_TRANSPILE_CACHE_VERSIONS_PER_KEY = 8;
+let nextFsAdapterId = 1;
+let transpileCacheGeneration = 0;
+let nextModuleImportId = 1;
+
+function getFsAdapterIdentity(context: FileDiscoveryContext): string {
+  const adapter = context.fsAdapter;
+  if (!adapter) return "native";
+  let id = fsAdapterIds.get(adapter);
+  if (id === undefined) {
+    id = nextFsAdapterId++;
+    fsAdapterIds.set(adapter, id);
+  }
+  return `adapter:${id}`;
+}
+
+function touchTranspileCacheKey(key: string, entries: TranspileCacheEntry[]): void {
+  transpileCache.delete(key);
+  transpileCache.set(key, entries);
+}
+
+function cacheTranspiledModule(key: string, entry: TranspileCacheEntry): void {
+  const entries = transpileCache.get(key) ?? [];
+  entries.unshift(entry);
+  if (entries.length > MAX_TRANSPILE_CACHE_VERSIONS_PER_KEY) {
+    entries.length = MAX_TRANSPILE_CACHE_VERSIONS_PER_KEY;
+  }
+  touchTranspileCacheKey(key, entries);
+
+  while (transpileCache.size > MAX_TRANSPILE_CACHE_KEYS) {
+    const oldestKey = transpileCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    transpileCache.delete(oldestKey);
+  }
+}
 
 /**
  * Returns the first cached module whose recorded bundled-dependency contents
@@ -206,108 +249,154 @@ export async function importModule(
   // another project's discovery. The entry hash alone is still not enough —
   // bundled relative imports are inlined into the module — so cached entries
   // are only served after their recorded dependency contents re-verify.
-  const cacheKey = `${file} ${await computeHash(source)}`;
+  const scopeId = tryGetRegistryScopeId() ?? "__default__";
+  const adapterIdentity = getFsAdapterIdentity(context);
+  const cacheKey = `${scopeId}\0${adapterIdentity}\0${file}\0${await computeHash(source)}`;
+  const generation = transpileCacheGeneration;
   const cachedEntries = transpileCache.get(cacheKey);
   if (cachedEntries) {
     const cached = await findCachedModuleWithFreshDeps(cachedEntries, context);
-    if (cached) return cached;
+    // A clear that happens while dependency contents are being read marks a
+    // generation boundary. Restart so the caller cannot resurrect or consume
+    // the just-invalidated module.
+    if (generation !== transpileCacheGeneration) {
+      return await importModule(file, context);
+    }
+    if (cached) {
+      touchTranspileCacheKey(cacheKey, cachedEntries);
+      return cached;
+    }
   }
 
-  const loader = getEsbuildLoader(filePath);
-  await ensureDefaultBundlerContracts();
-  const { build } = await import("veryfront/extensions/bundler");
-  const fileDir = pathHelper.dirname(filePath);
+  const inFlightKey = `${generation}\0${cacheKey}`;
+  const existingImport = inFlightImports.get(inFlightKey);
+  if (existingImport) return await existingImport;
 
-  // When using fsAdapter (VFS), bundle all relative imports via the plugin.
-  // Only mark relative imports as external when running in Deno without VFS
-  // (local filesystem where Deno can resolve them natively).
-  const hasFsAdapter = !!context.fsAdapter;
-  const relativeImports = isDeno && !isDenoCompiled && !hasFsAdapter
-    ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)].map((m) => m[1]!).filter(Boolean)
-    : [];
+  const pendingImport = (async (): Promise<unknown> => {
+    const loader = getEsbuildLoader(filePath);
+    await ensureDefaultBundlerContracts();
+    const { build } = await import("veryfront/extensions/bundler");
+    const fileDir = pathHelper.dirname(filePath);
 
-  // Use fsAdapter plugin whenever a VFS adapter is available (regardless of
-  // runtime), recording every bundled dependency for cache re-validation.
-  const bundledDeps: Array<{ path: string; content: string }> = [];
-  const plugins = hasFsAdapter
-    ? [
-      createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
-        bundledDeps.push({ path, content });
-      }),
-    ]
-    : [];
+    const hasFsAdapter = !!context.fsAdapter;
 
-  const result = await build({
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "neutral",
-    target: "es2022",
-    jsx: "automatic",
-    jsxImportSource: "react",
-    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-    plugins,
-    // Externalize all bare-specifier imports so npm packages a tool/agent file
-    // depends on (e.g. `pdf-parse`, `mammoth`) are not pulled into the
-    // discovery bundle. Discovery only needs the module's exports; the
-    // implementation runs server-side at request time and can resolve npm
-    // packages natively via the project's node_modules / import map.
-    // Without this, esbuild under platform: "neutral" tries to bundle CJS
-    // npm packages and fails on their Node built-in references (fs, http, ...).
-    packages: "external",
-    external: [
-      "zod",
-      "node:*",
-      "veryfront",
-      "veryfront/*",
-      "@opentelemetry/*",
-      "path",
-      ...relativeImports,
-    ],
-    stdin: {
-      contents: source,
-      loader,
-      resolveDir: fileDir,
-      // Must be a basename: esbuild joins resolveDir + sourcefile to form the
-      // entry module path when sourcefile is relative. Passing the full
-      // relative filePath (e.g. "tools/foo.ts") on VFS runs (baseDir === "")
-      // doubles the prefix to "tools/tools/foo.ts", which anchors ../ imports
-      // one directory too deep.
-      sourcefile: pathHelper.basename(filePath),
-    },
-  });
+    // Record every bundled dependency for cache re-validation. Adapter loads
+    // report their contents through the plugin; native inputs are collected
+    // from the bundler metafile below.
+    const bundledDepContents = new Map<string, string>();
+    const plugins = hasFsAdapter
+      ? [
+        createFsAdapterPlugin(context.fsAdapter!, (path, content) => {
+          bundledDepContents.set(path, content);
+        }),
+      ]
+      : [];
 
-  if (result.errors.length > 0) {
-    throw COMPILATION_ERROR.create({
-      detail: `Failed to transpile ${filePath}: ${result.errors[0]?.text ?? "unknown error"}`,
+    const result = await build({
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "neutral",
+      target: "es2022",
+      jsx: "automatic",
+      jsxImportSource: "react",
+      resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+      plugins,
+      metafile: true,
+      // Externalize all bare-specifier imports so npm packages a tool/agent file
+      // depends on (e.g. `pdf-parse`, `mammoth`) are not pulled into the
+      // discovery bundle. Discovery only needs the module's exports; the
+      // implementation runs server-side at request time and can resolve npm
+      // packages natively via the project's node_modules / import map.
+      // Without this, esbuild under platform: "neutral" tries to bundle CJS
+      // npm packages and fails on their Node built-in references (fs, http, ...).
+      packages: "external",
+      external: [
+        "zod",
+        "node:*",
+        "veryfront",
+        "veryfront/*",
+        "@opentelemetry/*",
+        "path",
+      ],
+      stdin: {
+        contents: source,
+        loader,
+        resolveDir: fileDir,
+        // Must be a basename: esbuild joins resolveDir + sourcefile to form the
+        // entry module path when sourcefile is relative. Passing the full
+        // relative filePath (e.g. "tools/foo.ts") on VFS runs (baseDir === "")
+        // doubles the prefix to "tools/tools/foo.ts", which anchors ../ imports
+        // one directory too deep.
+        sourcefile: pathHelper.basename(filePath),
+      },
     });
-  }
 
-  const js = result.outputFiles?.[0]?.text ?? "export {}";
+    if (result.errors.length > 0) {
+      throw COMPILATION_ERROR.create({
+        detail: `Failed to transpile ${filePath}: ${result.errors[0]?.text ?? "unknown error"}`,
+      });
+    }
 
-  const localFs = createFileSystem();
-  const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
-  const tempFile = pathHelper.join(tempDir, "module.mjs");
+    const localFs = createFileSystem();
+    if (!hasFsAdapter) {
+      for (const inputPath of Object.keys(result.metafile?.inputs ?? {})) {
+        const resolvedPath = pathHelper.isAbsolute(inputPath)
+          ? inputPath
+          : pathHelper.resolve(inputPath);
+        const content = pathHelper.resolve(resolvedPath) === pathHelper.resolve(filePath)
+          ? source
+          : await localFs.readTextFile(resolvedPath);
+        bundledDepContents.set(resolvedPath, content);
+      }
+    }
 
-  const transformedCode = isDeno
-    ? rewriteForDeno(js, fileDir)
-    : await rewriteDiscoveryImports(js, context.baseDir ?? ".", localFs, fileDir);
+    const output = result.outputFiles[0];
+    if (!output) {
+      throw COMPILATION_ERROR.create({
+        detail: `Bundler produced no JavaScript output for ${filePath}`,
+      });
+    }
+    const js = output.text;
 
-  await localFs.writeTextFile(tempFile, transformedCode);
+    const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
+    try {
+      const tempFile = pathHelper.join(tempDir, "module.mjs");
+      const transformedCode = isDeno
+        ? rewriteForDeno(js, fileDir)
+        : await rewriteDiscoveryImports(js, context.baseDir ?? ".", localFs, fileDir);
+      await localFs.writeTextFile(tempFile, transformedCode);
 
+      const moduleUrl = pathHelper.toFileUrl(tempFile);
+      moduleUrl.searchParams.set("v", String(nextModuleImportId++));
+      const module = await import(moduleUrl.href);
+      const deps = await Promise.all(
+        Array.from(bundledDepContents, async ([path, content]) => ({
+          path,
+          hash: await computeHash(content),
+        })),
+      );
+      // A native bundler that ignores `metafile: true` gives us no dependency
+      // graph to revalidate. Serving that result from cache would make edits
+      // to relative imports invisible, so such results remain deliberately
+      // uncached. Adapter builds track dependencies through the load plugin.
+      const cacheable = hasFsAdapter || result.metafile !== undefined;
+      if (cacheable && generation === transpileCacheGeneration) {
+        cacheTranspiledModule(cacheKey, { deps, module });
+      }
+      return module;
+    } finally {
+      await localFs.remove(tempDir, { recursive: true });
+    }
+  })();
+
+  inFlightImports.set(inFlightKey, pendingImport);
   try {
-    const moduleUrl = pathHelper.toFileUrl(tempFile);
-    moduleUrl.searchParams.set("v", String(Date.now()));
-    const module = await import(moduleUrl.href);
-    const deps = await Promise.all(
-      bundledDeps.map(async ({ path, content }) => ({ path, hash: await computeHash(content) })),
-    );
-    const entries = transpileCache.get(cacheKey) ?? [];
-    entries.push({ deps, module });
-    transpileCache.set(cacheKey, entries);
-    return module;
+    return await pendingImport;
   } finally {
-    await localFs.remove(tempDir, { recursive: true });
+    if (inFlightImports.get(inFlightKey) === pendingImport) {
+      inFlightImports.delete(inFlightKey);
+    }
   }
 }
 
@@ -315,5 +404,8 @@ export async function importModule(
  * Clear the transpile cache
  */
 export function clearTranspileCache(): void {
+  transpileCacheGeneration++;
   transpileCache.clear();
+  inFlightImports.clear();
+  clearDiscoveryImportRewriteCache();
 }

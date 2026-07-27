@@ -133,7 +133,8 @@ const TYPE_ONLY_STATIC_RE = /(?:^|[\s;{}])(?:import|export)\s+type\b/;
 function isNotFoundError(error: unknown): boolean {
   const DenoNotFound = globalThis.Deno?.errors?.NotFound;
   if (DenoNotFound && error instanceof DenoNotFound) return true;
-  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 function rewriteBareNpmImportsForDeno(code: string): string {
@@ -213,6 +214,11 @@ const resolvedSpecifierCache = new LRUCache<string, string>({
   maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
 });
 
+/** Clear package-resolution state as part of a discovery generation refresh. */
+export function clearDiscoveryImportRewriteCache(): void {
+  resolvedSpecifierCache.clear();
+}
+
 /**
  * Rewrite imports for Node.js runtime
  * - Resolves relative imports to file:// URLs
@@ -227,265 +233,285 @@ export async function rewriteDiscoveryImports(
 ): Promise<string> {
   let transformed = code;
 
-  try {
-    const { pathToFileURL } = await import("node:url");
-    const projectRoot = pathHelper.resolve(projectDir);
+  const { pathToFileURL } = await import("node:url");
+  const projectRoot = pathHelper.resolve(projectDir);
 
-    // Handle relative imports
-    transformed = transformed.replace(
-      /from\s+["'](\.\.\/[^"']+)["']/g,
-      (_match, relativePath: string) =>
-        `from "${pathToFileURL(pathHelper.resolve(fileDir, relativePath)).href}"`,
-    );
+  // Handle relative imports
+  transformed = transformed.replace(
+    /from\s+["'](\.\.\/[^"']+)["']/g,
+    (_match, relativePath: string) =>
+      `from "${pathToFileURL(pathHelper.resolve(fileDir, relativePath)).href}"`,
+  );
 
-    // Resolve a bare specifier (optionally with subpath) to a file:// URL,
-    // honoring the package's `exports` map for subpath imports such as
-    // `react/jsx-runtime` or `lodash-es/debounce`. Successful resolutions
-    // are memoized per (projectDir, specifier); failures are NOT cached
-    // so a subsequent `npm install` of the missing dep is picked up
-    // without a process restart.
-    const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
-      const cacheKey = `${projectRoot}::${specifier}`;
-      const cached = resolvedSpecifierCache.get(cacheKey);
-      if (cached !== undefined) return cached;
+  // Resolve a bare specifier (optionally with subpath) to a file:// URL,
+  // honoring the package's `exports` map for subpath imports such as
+  // `react/jsx-runtime` or `lodash-es/debounce`. Successful resolutions
+  // are memoized per (projectDir, specifier); failures are NOT cached
+  // so a subsequent `npm install` of the missing dep is picked up
+  // without a process restart.
+  const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
+    const cacheKey = `${projectRoot}::${specifier}`;
+    const cached = resolvedSpecifierCache.get(cacheKey);
+    if (cached !== undefined) return cached;
 
-      const { name: packageName, subpath } = splitPackageSubpath(specifier);
-      let searchDir = projectRoot;
+    const { name: packageName, subpath } = splitPackageSubpath(specifier);
+    let searchDir = projectRoot;
 
-      for (let i = 0; i < 10; i++) {
-        const packagePath = pathHelper.resolve(searchDir, "node_modules", packageName);
-        const packageJsonPath = pathHelper.join(packagePath, "package.json");
+    while (true) {
+      const packagePath = pathHelper.resolve(searchDir, "node_modules", packageName);
+      const packageJsonPath = pathHelper.join(packagePath, "package.json");
 
-        try {
-          const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          const exportPath = resolvePackageExportPath(pkgJson.exports, subpath);
-
-          const entryPoint = exportPath ??
-            (subpath === "."
-              ? (pkgJson.module ?? pkgJson.main ?? "index.js")
-              // No exports entry matched: fall back to joining the subpath
-              // onto the package dir (e.g. `dotenv/config.js`).
-              : subpath.replace(/^\.\//, ""));
-
-          const normalized = resolveContainedPackagePath(packagePath, entryPoint);
-          if (!normalized) return null;
-
-          const resolved = pathToFileURL(normalized).href;
-          resolvedSpecifierCache.set(cacheKey, resolved);
-          return resolved;
-        } catch (_) {
-          /* expected: package.json not found at this level, walk up */
-          const parent = pathHelper.dirname(searchDir);
-          if (parent === searchDir) break;
-          searchDir = parent;
-        }
-      }
-
-      // Intentionally do NOT cache nulls — a missing-then-installed package
-      // should be resolvable on the next pass without a process restart.
-      return null;
-    };
-
-    const rewritePackageImports = (input: string, pkg: string, resolvedUrl: string): string => {
-      const escapedPkg = escapeRegExp(pkg);
-      const staticImportRegex = new RegExp(
-        `(^|[\\s;{}])((?:import|export)\\b[^"']*?\\bfrom\\s+)["']${escapedPkg}["']`,
-        "g",
-      );
-      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
-      const sideEffectRegex = new RegExp(
-        `(^|[\\n;{}])(\\s*)import\\s+["']${escapedPkg}["'](\\s*;?)`,
-        "g",
-      );
-
-      return input
-        .replace(staticImportRegex, (match, lead: string, head: string) => {
-          if (TYPE_ONLY_STATIC_RE.test(lead + head)) return match;
-          return `${lead}${head}"${resolvedUrl}"`;
-        })
-        .replace(dynamicImportRegex, `import("${resolvedUrl}")`)
-        .replace(
-          sideEffectRegex,
-          (_m, lead: string, indent: string, tail: string) =>
-            `${lead}${indent}import "${resolvedUrl}"${tail}`,
-        );
-    };
-
-    // Collect every bare specifier the transformed source still imports,
-    // then resolve each to a file:// URL in the project's node_modules.
-    // With `packages: "external"` in the discovery bundler, npm packages a
-    // tool/agent depends on (e.g. `pdf-parse`, `mammoth`, `react/jsx-runtime`)
-    // survive as bare imports here and need explicit resolution before the
-    // temp module is loaded from outside the project's resolution root.
-    const collectBareSpecifiers = (input: string): string[] => {
-      const specifiers = new Set<string>();
-      // Matches `import x from "spec"`, `export { x } from "spec"`,
-      // `export * from "spec"`. The leading-context capture lets us skip
-      // `import type` / `export type` lines, which TypeScript erases at
-      // emit time and must not trigger filesystem resolution.
-      for (
-        const match of input.matchAll(
-          /(?:^|[\s;{}])((?:import|export)\b[^"']*?\bfrom\s+)["']([^"']+)["']/g,
-        )
-      ) {
-        const head = match[1] ?? "";
-        const s = match[2];
-        if (TYPE_ONLY_STATIC_RE.test(head)) continue;
-        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
-      }
-      for (const match of input.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-        const s = match[1];
-        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
-      }
-      // Side-effect imports: `import "reflect-metadata";`, `import "dotenv/config";`.
-      for (
-        const match of input.matchAll(
-          /(?:^|[\n;{}])\s*import\s+["']([^"']+)["']\s*;?/g,
-        )
-      ) {
-        const s = match[1];
-        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
-      }
-      return [...specifiers];
-    };
-
-    // Resolve every bare specifier in parallel — each lookup is independent
-    // node_modules I/O. Apply the resulting rewrites sequentially against
-    // the same source string.
-    const specifiers = collectBareSpecifiers(transformed);
-    const resolvedPairs = await Promise.all(
-      specifiers.map(async (pkg) => [pkg, await resolvePackageToFileUrl(pkg)] as const),
-    );
-    for (const [pkg, resolvedUrl] of resolvedPairs) {
-      if (!resolvedUrl) continue;
-      transformed = rewritePackageImports(transformed, pkg, resolvedUrl);
-    }
-
-    const resolveRuntimeSpecifierToFileUrl = (specifier: string): string | null => {
+      let packageJsonText: string;
       try {
-        const resolved = import.meta.resolve(specifier);
-        return resolved && resolved !== specifier ? resolved : null;
-      } catch (_) {
-        return null;
-      }
-    };
-
-    const rewriteResolvedSpecifierImports = (
-      input: string,
-      specifier: string,
-      resolvedUrl: string,
-    ): string => {
-      const escapedSpecifier = escapeRegExp(specifier);
-      return input
-        .replace(new RegExp(`from\\s*["']${escapedSpecifier}["']`, "g"), `from "${resolvedUrl}"`)
-        .replace(
-          new RegExp(`import\\s*\\(\\s*["']${escapedSpecifier}["']\\s*\\)`, "g"),
-          `import("${resolvedUrl}")`,
-        );
-    };
-
-    type VeryfrontExportSource =
-      | { kind: "absent" }
-      | { kind: "present"; packagePath: string; exportsMap: unknown };
-
-    const findVeryfrontExportSource = async (): Promise<VeryfrontExportSource> => {
-      const nodePackagePath = pathHelper.resolve(projectRoot, "node_modules", "veryfront");
-      const vfPackageJsonPath = pathHelper.join(nodePackagePath, "package.json");
-      let hasNodePackagePath = false;
-      try {
-        await fs.stat(nodePackagePath);
-        hasNodePackagePath = true;
+        packageJsonText = await fs.readTextFile(packageJsonPath);
       } catch (error) {
-        if (!isNotFoundError(error)) {
-          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
-        }
-
-        /* expected: veryfront directory absent, fallback to deno.json search */
-      }
-
-      if (hasNodePackagePath) {
-        try {
-          const packageJsonText = await fs.readTextFile(vfPackageJsonPath);
-          const pkgJson = JSON.parse(packageJsonText);
-          return { kind: "present", packagePath: nodePackagePath, exportsMap: pkgJson.exports };
-        } catch (_) {
-          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
-        }
-      }
-
-      // Search for deno.json in parent directories.
-      let searchDir = projectRoot;
-      for (let i = 0; i < 5; i++) {
-        try {
-          const denoJsonPath = pathHelper.join(searchDir, "deno.json");
-          const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
-          if (denoJson.name === "veryfront" && "exports" in denoJson) {
-            return {
-              kind: "present",
-              packagePath: pathHelper.resolve(searchDir),
-              exportsMap: denoJson.exports,
-            };
-          }
-        } catch (_) {
-          /* expected: deno.json not found at this level */
-        }
+        if (!isNotFoundError(error)) throw error;
         const parent = pathHelper.dirname(searchDir);
         if (parent === searchDir) break;
         searchDir = parent;
+        continue;
       }
 
-      return { kind: "absent" };
-    };
+      const pkgJson: unknown = JSON.parse(packageJsonText);
+      if (!pkgJson || typeof pkgJson !== "object" || Array.isArray(pkgJson)) {
+        throw new TypeError(`Package metadata at ${packageJsonPath} must be a JSON object`);
+      }
+      const packageMetadata = pkgJson as Record<string, unknown>;
+      const hasExports = Object.prototype.hasOwnProperty.call(packageMetadata, "exports");
+      const exportPath = hasExports
+        ? resolvePackageExportPath(packageMetadata.exports, subpath)
+        : null;
+      // The exports field encapsulates every undeclared package subpath. Once
+      // present, never fall back to a private on-disk path.
+      if (hasExports && exportPath === null) return null;
 
-    const veryfrontSpecifiers = new Set<string>();
-    for (const match of transformed.matchAll(/from\s+["'](veryfront(?:\/[^"']+)?)["']/g)) {
-      const specifier = match[1];
-      if (specifier) veryfrontSpecifiers.add(specifier);
+      const entryPoint = exportPath ??
+        (subpath === "."
+          ? (packageMetadata.module ?? packageMetadata.main ?? "index.js")
+          // Packages without an exports field retain legacy subpath lookup
+          // (for example older `dotenv/config.js` releases).
+          : subpath.replace(/^\.\//, ""));
+      if (typeof entryPoint !== "string" || entryPoint.length === 0) {
+        throw new TypeError(
+          `Package metadata at ${packageJsonPath} must declare a non-empty string entry point`,
+        );
+      }
+
+      const normalized = resolveContainedPackagePath(packagePath, entryPoint);
+      if (!normalized) return null;
+
+      const resolved = pathToFileURL(normalized).href;
+      resolvedSpecifierCache.set(cacheKey, resolved);
+      return resolved;
     }
+
+    // Intentionally do NOT cache nulls — a missing-then-installed package
+    // should be resolvable on the next pass without a process restart.
+    return null;
+  };
+
+  const rewritePackageImports = (input: string, pkg: string, resolvedUrl: string): string => {
+    const escapedPkg = escapeRegExp(pkg);
+    const staticImportRegex = new RegExp(
+      `(^|[\\s;{}])((?:import|export)\\b[^"']*?\\bfrom\\s+)["']${escapedPkg}["']`,
+      "g",
+    );
+    const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+    const sideEffectRegex = new RegExp(
+      `(^|[\\n;{}])(\\s*)import\\s+["']${escapedPkg}["'](\\s*;?)`,
+      "g",
+    );
+
+    return input
+      .replace(staticImportRegex, (match, lead: string, head: string) => {
+        if (TYPE_ONLY_STATIC_RE.test(lead + head)) return match;
+        return `${lead}${head}"${resolvedUrl}"`;
+      })
+      .replace(dynamicImportRegex, `import("${resolvedUrl}")`)
+      .replace(
+        sideEffectRegex,
+        (_m, lead: string, indent: string, tail: string) =>
+          `${lead}${indent}import "${resolvedUrl}"${tail}`,
+      );
+  };
+
+  // Collect every bare specifier the transformed source still imports,
+  // then resolve each to a file:// URL in the project's node_modules.
+  // With `packages: "external"` in the discovery bundler, npm packages a
+  // tool/agent depends on (e.g. `pdf-parse`, `mammoth`, `react/jsx-runtime`)
+  // survive as bare imports here and need explicit resolution before the
+  // temp module is loaded from outside the project's resolution root.
+  const collectBareSpecifiers = (input: string): string[] => {
+    const specifiers = new Set<string>();
+    // Matches `import x from "spec"`, `export { x } from "spec"`,
+    // `export * from "spec"`. The leading-context capture lets us skip
+    // `import type` / `export type` lines, which TypeScript erases at
+    // emit time and must not trigger filesystem resolution.
     for (
-      const match of transformed.matchAll(/import\s*\(\s*["'](veryfront(?:\/[^"']+)?)["']\s*\)/g)
+      const match of input.matchAll(
+        /(?:^|[\s;{}])((?:import|export)\b[^"']*?\bfrom\s+)["']([^"']+)["']/g,
+      )
     ) {
-      const specifier = match[1];
-      if (specifier) veryfrontSpecifiers.add(specifier);
+      const head = match[1] ?? "";
+      const s = match[2];
+      if (TYPE_ONLY_STATIC_RE.test(head)) continue;
+      if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+    }
+    for (const match of input.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+      const s = match[1];
+      if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+    }
+    // Side-effect imports: `import "reflect-metadata";`, `import "dotenv/config";`.
+    for (
+      const match of input.matchAll(
+        /(?:^|[\n;{}])\s*import\s+["']([^"']+)["']\s*;?/g,
+      )
+    ) {
+      const s = match[1];
+      if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+    }
+    return [...specifiers];
+  };
+
+  // Resolve every bare specifier in parallel — each lookup is independent
+  // node_modules I/O. Apply the resulting rewrites sequentially against
+  // the same source string.
+  const specifiers = collectBareSpecifiers(transformed);
+  const resolvedPairs = await Promise.all(
+    specifiers.map(async (pkg) => [pkg, await resolvePackageToFileUrl(pkg)] as const),
+  );
+  for (const [pkg, resolvedUrl] of resolvedPairs) {
+    if (!resolvedUrl) continue;
+    transformed = rewritePackageImports(transformed, pkg, resolvedUrl);
+  }
+
+  const resolveRuntimeSpecifierToFileUrl = (specifier: string): string | null => {
+    try {
+      const resolved = import.meta.resolve(specifier);
+      return resolved && resolved !== specifier ? resolved : null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const rewriteResolvedSpecifierImports = (
+    input: string,
+    specifier: string,
+    resolvedUrl: string,
+  ): string => {
+    const escapedSpecifier = escapeRegExp(specifier);
+    return input
+      .replace(new RegExp(`from\\s*["']${escapedSpecifier}["']`, "g"), `from "${resolvedUrl}"`)
+      .replace(
+        new RegExp(`import\\s*\\(\\s*["']${escapedSpecifier}["']\\s*\\)`, "g"),
+        `import("${resolvedUrl}")`,
+      );
+  };
+
+  type VeryfrontExportSource =
+    | { kind: "absent" }
+    | { kind: "present"; packagePath: string; exportsMap: unknown };
+
+  const findVeryfrontExportSource = async (): Promise<VeryfrontExportSource> => {
+    const nodePackagePath = pathHelper.resolve(projectRoot, "node_modules", "veryfront");
+    const vfPackageJsonPath = pathHelper.join(nodePackagePath, "package.json");
+    let hasNodePackagePath = false;
+    try {
+      await fs.stat(nodePackagePath);
+      hasNodePackagePath = true;
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+
+      /* expected: veryfront directory absent, fallback to deno.json search */
     }
 
-    const veryfrontExportSource = await findVeryfrontExportSource();
-
-    const resolveVeryfrontExportToFileUrl = (
-      specifier: string,
-    ): { kind: "resolved"; url: string } | { kind: "rejected" } => {
-      if (veryfrontExportSource.kind === "absent") return { kind: "rejected" };
-
-      const subpath = specifier === "veryfront" ? "." : "./" + specifier.replace("veryfront/", "");
-      const exportPath = resolvePackageExportPath(veryfrontExportSource.exportsMap, subpath);
-      if (!exportPath) return { kind: "rejected" };
-
-      const packagePath = veryfrontExportSource.packagePath;
-      const resolvedPath = resolveContainedPackagePath(packagePath, exportPath);
-      if (!resolvedPath) return { kind: "rejected" };
-
-      return { kind: "resolved", url: pathToFileURL(resolvedPath).href };
-    };
-
-    for (const specifier of veryfrontSpecifiers) {
-      if (veryfrontExportSource.kind === "absent") continue;
-      const result = resolveVeryfrontExportToFileUrl(specifier);
-      if (result.kind === "resolved") {
-        transformed = rewriteResolvedSpecifierImports(transformed, specifier, result.url);
+    if (hasNodePackagePath) {
+      let packageJsonText: string;
+      try {
+        packageJsonText = await fs.readTextFile(vfPackageJsonPath);
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          return { kind: "present", packagePath: nodePackagePath, exportsMap: undefined };
+        }
+        throw error;
       }
+      const pkgJson = JSON.parse(packageJsonText);
+      return { kind: "present", packagePath: nodePackagePath, exportsMap: pkgJson.exports };
     }
 
-    if (veryfrontExportSource.kind === "absent") {
-      for (const specifier of veryfrontSpecifiers) {
-        const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
-        if (resolvedUrl) {
-          transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+    // Search for deno.json in parent directories.
+    let searchDir = projectRoot;
+    while (true) {
+      const denoJsonPath = pathHelper.join(searchDir, "deno.json");
+      let denoJsonText: string | undefined;
+      try {
+        denoJsonText = await fs.readTextFile(denoJsonPath);
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+      if (denoJsonText !== undefined) {
+        const denoJson = JSON.parse(denoJsonText);
+        if (denoJson.name === "veryfront" && "exports" in denoJson) {
+          return {
+            kind: "present",
+            packagePath: pathHelper.resolve(searchDir),
+            exportsMap: denoJson.exports,
+          };
         }
       }
+      const parent = pathHelper.dirname(searchDir);
+      if (parent === searchDir) break;
+      searchDir = parent;
     }
-  } catch (_) {
-    /* expected: Node.js URL module unavailable in non-Node runtime */
-    return transformed;
+
+    return { kind: "absent" };
+  };
+
+  const veryfrontSpecifiers = new Set<string>();
+  for (const match of transformed.matchAll(/from\s+["'](veryfront(?:\/[^"']+)?)["']/g)) {
+    const specifier = match[1];
+    if (specifier) veryfrontSpecifiers.add(specifier);
+  }
+  for (
+    const match of transformed.matchAll(/import\s*\(\s*["'](veryfront(?:\/[^"']+)?)["']\s*\)/g)
+  ) {
+    const specifier = match[1];
+    if (specifier) veryfrontSpecifiers.add(specifier);
+  }
+
+  const veryfrontExportSource = await findVeryfrontExportSource();
+
+  const resolveVeryfrontExportToFileUrl = (
+    specifier: string,
+  ): { kind: "resolved"; url: string } | { kind: "rejected" } => {
+    if (veryfrontExportSource.kind === "absent") return { kind: "rejected" };
+
+    const subpath = specifier === "veryfront" ? "." : "./" + specifier.replace("veryfront/", "");
+    const exportPath = resolvePackageExportPath(veryfrontExportSource.exportsMap, subpath);
+    if (!exportPath) return { kind: "rejected" };
+
+    const packagePath = veryfrontExportSource.packagePath;
+    const resolvedPath = resolveContainedPackagePath(packagePath, exportPath);
+    if (!resolvedPath) return { kind: "rejected" };
+
+    return { kind: "resolved", url: pathToFileURL(resolvedPath).href };
+  };
+
+  for (const specifier of veryfrontSpecifiers) {
+    if (veryfrontExportSource.kind === "absent") continue;
+    const result = resolveVeryfrontExportToFileUrl(specifier);
+    if (result.kind === "resolved") {
+      transformed = rewriteResolvedSpecifierImports(transformed, specifier, result.url);
+    }
+  }
+
+  if (veryfrontExportSource.kind === "absent") {
+    for (const specifier of veryfrontSpecifiers) {
+      const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
+      if (resolvedUrl) {
+        transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+      }
+    }
   }
 
   return transformed;

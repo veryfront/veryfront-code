@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    31 |      53.4% | Current formal closure evidence remains valid       |
+| Closed                         |    32 |      55.2% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    25 |      43.1% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    24 |      41.4% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -42,6 +42,7 @@ stricter closure count.
 - `channels`
 - `chat`
 - `config`
+- `discovery`
 - `embedding`
 - `errors`
 - `eval`
@@ -81,7 +82,6 @@ stricter closure count.
 - `build`
 - `client`
 - `data`
-- `discovery`
 - `html`
 - `integrations`
 - `internal-agents`
@@ -122,7 +122,7 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `cache`, `channels`, `chat`, `config`,
-`embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
+`discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, and `version.ts`.
@@ -163,6 +163,13 @@ discovery, public surface, documentation, and direct consumers were remediated
 and revalidated. The shared trigger and schedule discovery changes made during
 that closure received complete affected-suite and repository-boundary
 revalidation, so both previously closed units remain closed.
+`discovery` is closed after its configuration and filesystem boundaries,
+deterministic multi-root identity, export validation, registry generation
+transactions, source-module and package-resolution caches, production startup
+policy, documentation, and direct consumers were remediated and revalidated.
+The narrow shared configuration and trigger changes received their complete
+affected suites and repository-boundary checks, so `config` and `trigger`
+remain closed.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -3602,5 +3609,122 @@ the `webhook` audit unit is closed. `trigger` and `schedule` remain closed after
 complete affected-suite revalidation. Discovery remains listed for its own
 top-level revalidation because shared discovery configuration and registration
 consumers changed during this checkpoint.
+
+### Discovery closure checkpoint
+
+The `discovery` audit unit owns project primitive discovery, configured source
+roots, deterministic file collection and module loading, primitive contract
+validation, agent-scoped capability discovery, registry publication, and
+provider-configuration diagnostics. Its direct dependencies are configuration,
+filesystem adapters, primitive registries, the TypeScript bundler, import
+rewriting, errors, schemas, and shared file-discovery utilities. Direct
+consumers are production-server bootstrap and reconciliation, local trigger
+execution, file watching, project generation, and every source-defined agent,
+tool, workflow, skill, prompt, middleware, channel, provider, integration,
+schedule, and webhook.
+
+The current discovery findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** discovery roots were mutable,
+  inconsistently validated, and able to escape the project through absolute,
+  drive-relative, URL, control-character, or traversal paths. The consequence
+  was caller mutation changing an in-flight generation, platform-dependent
+  source selection, and adapters receiving paths outside the authored project
+  boundary. Configuration now synchronously snapshots a frozen, de-duplicated
+  set of at most 100 roots per primitive through one shared path policy. The
+  same fail-closed policy is reused by trigger discovery, rejects unsafe paths
+  before filesystem work begins, and preserves only normalized project-relative
+  roots.
+- **Symptom -> Source -> Consequence -> Remedy:** directory traversal was
+  unbounded, swallowed read failures, depended on adapter enumeration order,
+  and scanned ignored test or declaration trees. The consequence was resource
+  exhaustion, partial projects presented as complete, nondeterministic
+  duplicate winners, and test fixtures becoming production definitions. One
+  deterministic collector now enforces safe returned names, a depth limit and
+  a shared 100,000-entry project budget across all roots, propagates unexpected
+  adapter failures, ignores non-production trees and files, and de-duplicates
+  overlapping roots before import.
+- **Symptom -> Source -> Consequence -> Remedy:** primitive handlers trusted
+  shallow shapes, tool schemas retained caller-owned executable or exotic
+  objects, and agent-scoped aliases could overwrite the same namespace
+  silently. The consequence was malformed public primitives failing later,
+  post-registration mutation changing provider contracts, and capability
+  identity depending on export order. Handlers now validate their published
+  public contracts, take bounded data-only schema snapshots without relying on
+  private schema internals, sort exports deterministically, collapse aliases of
+  the same object, and report distinct duplicate or sanitized-name collisions
+  structurally.
+- **Symptom -> Source -> Consequence -> Remedy:** failed or repeated discovery
+  could leave a mixture of stale and newly registered primitives. The
+  consequence was startup state depending on which handler failed and
+  rediscovery retaining removed prompts or capabilities. Generation now treats
+  all six discovery-owned registries as one publication transaction. Direct
+  discovery atomically publishes its complete valid subset for compatibility;
+  the production lifecycle uses the strict replacement boundary and restores
+  the previous generation when any definition is invalid. Production server
+  bootstrap therefore fails before listening instead of serving partial
+  project state.
+- **Symptom -> Source -> Consequence -> Remedy:** transpiled modules were cached
+  without complete project, adapter, or dependency identity, cache storage was
+  unbounded, and a cache clear racing dependency validation could resurrect
+  stale code. Successful bundler calls without JavaScript also fell back to an
+  empty module, while early rewrite or write failures could leak temporary
+  directories. Cache identity now includes registry scope, source adapter,
+  source hash, and revalidated bundled dependencies; bounded version storage,
+  in-flight de-duplication, and generation guards prevent cross-project reuse
+  and post-clear resurrection. Native builds without dependency metadata are
+  deliberately uncached, outputless builds fail explicitly, and all temporary
+  work is covered by cleanup.
+- **Symptom -> Source -> Consequence -> Remedy:** package rewriting used fixed
+  parent-search depths, caught unrelated filesystem and metadata failures as
+  missing packages, retained stale package metadata, and bypassed declared
+  `exports` through private-subpath fallback. The consequence was silent
+  environment-specific resolution and imports succeeding against package
+  encapsulation. Resolution now searches to the filesystem root, treats only
+  absence as absence, propagates malformed or inaccessible metadata, enforces
+  contained declared exports including root shorthand forms, and clears
+  package-resolution state with the transpile cache.
+- **Symptom -> Source -> Consequence -> Remedy:** provider diagnostics accepted
+  ambiguous whitespace keys and emitted unbounded or control-bearing names and
+  shell suggestions. Public documentation also omitted generation
+  transactions, root constraints, ignored files, and cache boundaries. The
+  validator now sorts and bounds labels, quotes them safely, escapes terminal
+  controls including Unicode line separators, and emits shell-safe environment
+  keys. Architecture and configuration documentation now state the implemented
+  fail-closed behavior and operational limits.
+
+Current discovery verification evidence:
+
+- The final affected discovery, configuration, trigger, production-server,
+  shared file-discovery, and import-rewriter set passes 65 suites with 218
+  nested steps and zero failures. Regressions cover caller mutation, unsafe
+  roots, shared scan limits, overlapping roots, same-object aliases, public
+  markerless schema contracts, atomic rollback, source and dependency
+  invalidation, adapter and project isolation, concurrent imports, cache-clear
+  races, absent bundler metadata, outputless builds, package encapsulation,
+  malformed metadata, and hostile provider labels.
+- `deno task verify:quick` passes fresh manifests, formatting across 4,408
+  configured files, lint across 4,314 source files, every style, dependency,
+  module, and extension ratchet, zero cyclic module edges, documentation
+  validation, and every configured production and browser entrypoint
+  typecheck. Documentation validation covers 39 API paths, 40 generated
+  reference pages, 67 guides, 112 public docs, executable guide contracts and
+  examples, and all 746 links.
+- The core module-boundary baseline remains 62 broad imports with no new
+  violation. Core and CLI dependency boundaries remain at zero, and React
+  isolation remains intact.
+
+The host ESM loader necessarily retains each evaluated unique module URL because
+the runtime exposes no unload API. Framework-owned cache maps are bounded and
+cleared deterministically; production environments that perform sustained,
+high-churn source replacement must recycle the worker process to reclaim the
+host loader's retained module graph. This is an explicit operational boundary,
+not a hidden fallback.
+
+No unresolved critical or high-confidence discovery production risk remains;
+the `discovery` audit unit is closed. The affected `config`, `trigger`,
+`schedule`, and `webhook` units remain closed after complete revalidation.
+Other touched consumers retain their existing ledger states until their own
+top-level closure passes.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

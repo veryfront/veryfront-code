@@ -70,6 +70,20 @@ async function getDirectoryAgentCandidate(
 /** Tracks sanitized capability namespaces to the agent that owns them. */
 type CapabilityNamespaceOwners = Map<string, string>;
 
+/** State shared across every configured markdown-agent root in one generation. */
+export interface RuntimeAgentMarkdownDiscoveryState {
+  readonly namespaceOwners: CapabilityNamespaceOwners;
+  readonly seenFiles: Set<string>;
+}
+
+/** Create generation-local state for deterministic cross-root de-duplication. */
+export function createRuntimeAgentMarkdownDiscoveryState(): RuntimeAgentMarkdownDiscoveryState {
+  return {
+    namespaceOwners: new Map(),
+    seenFiles: new Set(),
+  };
+}
+
 /**
  * Registers a directory agent's colocated capabilities. This is PURE
  * REGISTRATION — binding (`skills:` / `tools:` selectors) happens at
@@ -97,16 +111,32 @@ async function registerColocatedCapabilities(
           `"${namespace}" with agent "${existingOwner}". Rename one to avoid ` +
           `colliding colocated tool/skill ids.`,
       ),
+      code: "duplicate_id",
+      sourceKind: "agent capability namespace",
+      sourceId: namespace,
     });
     return;
   }
   namespaceOwners.set(namespace, definition.id);
 
-  // Skills and tools live in disjoint subtrees; register them concurrently.
-  await Promise.all([
+  // Skills and tools live in disjoint subtrees. Wait for both outcomes so one
+  // rejected source cannot leave its sibling mutating registries after this
+  // generation has already continued or rolled back.
+  const outcomes = await Promise.allSettled([
     registerAgentColocatedSkills({ agentId: definition.id, rootPath, context, result }),
     registerAgentColocatedTools({ agentId: definition.id, rootPath, context, result }),
   ]);
+  for (const outcome of outcomes) {
+    if (outcome.status === "rejected") {
+      result.errors.push({
+        file: rootPath,
+        error: ensureError(outcome.reason),
+        code: "load_error",
+        sourceKind: "agent capability",
+        sourceId: definition.id,
+      });
+    }
+  }
 }
 
 async function registerMarkdownAgent(
@@ -125,6 +155,9 @@ async function registerMarkdownAgent(
           `discovered (e.g. both a flat "${definition.id}.md" and a "${definition.id}/" ` +
           `directory exist); keeping the first.`,
       ),
+      code: "duplicate_id",
+      sourceKind: "agent",
+      sourceId: definition.id,
     });
     return;
   }
@@ -161,7 +194,13 @@ async function discoverMarkdownAgentCandidate(
       namespaceOwners,
     );
   } catch (error) {
-    result.errors.push({ file: candidate.file, error: ensureError(error) });
+    result.errors.push({
+      file: candidate.file,
+      error: ensureError(error),
+      code: "load_error",
+      sourceKind: "agent",
+      sourceId: candidate.id,
+    });
   }
 }
 
@@ -181,11 +220,11 @@ export async function discoverRuntimeAgentMarkdownDefinitions(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
+  state: RuntimeAgentMarkdownDiscoveryState = createRuntimeAgentMarkdownDiscoveryState(),
 ): Promise<void> {
   const entries = (await listDiscoveryDirectoryEntries(dir, context)).sort((left, right) =>
-    left.name.localeCompare(right.name)
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0
   );
-  const namespaceOwners: CapabilityNamespaceOwners = new Map();
 
   for (const entry of entries) {
     const candidate = entry.isDirectory
@@ -197,7 +236,9 @@ export async function discoverRuntimeAgentMarkdownDefinitions(
     if (!candidate) {
       continue;
     }
+    if (state.seenFiles.has(candidate.file)) continue;
+    state.seenFiles.add(candidate.file);
 
-    await discoverMarkdownAgentCandidate(candidate, result, context, namespaceOwners);
+    await discoverMarkdownAgentCandidate(candidate, result, context, state.namespaceOwners);
   }
 }

@@ -311,15 +311,37 @@ defineConfig({
         paths: ["tasks"],
       },
     },
+    schedules: {
+      discovery: {
+        paths: ["schedules"],
+      },
+    },
+    webhooks: {
+      discovery: {
+        paths: ["webhooks"],
+      },
+    },
+    evals: {
+      discovery: {
+        paths: ["evals"],
+      },
+    },
   },
 });
 ```
 
 Notes:
 
-- `paths` are relative to your project root.
-- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
+- `paths` are canonical paths relative to your project root. Each primitive
+  accepts at most 100 roots.
+- Paths cannot be absolute paths or file URLs and cannot contain empty, `.`, or
+  `..` segments. Backslashes are normalized to `/`; duplicate canonical paths
+  are scanned once.
+- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`,
+  `tasks`, `schedules`, `webhooks`, and `evals`.
 - Set `enabled: false` to disable discovery for that primitive.
+- TypeScript discovery ignores `node_modules`, `.git`, `__tests__`, and files
+  matching `*.test.*`, `*.spec.*`, `*.bench.*`, or `*.d.ts`.
 
 Provider credentials and model selection belong to the provider setup
 described in [Providers](./providers.md). `ai.enabled` and provider settings are

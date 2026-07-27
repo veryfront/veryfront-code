@@ -40,8 +40,20 @@ export function pickPackageExportEntry(entry: unknown): string | null {
 // Resolve a subpath (`.` or `./foo/bar`) against a `package.json#exports` map.
 // Literal keys win over `./*`-style glob patterns; the longest glob prefix wins.
 export function resolvePackageExportPath(exports: unknown, subpath: string): string | null {
+  // Node permits root-export sugar: a string, array, or conditional object
+  // without "." keys is equivalent to an export for ".".
+  if (typeof exports === "string" || Array.isArray(exports)) {
+    return subpath === "." ? pickPackageExportEntry(exports) : null;
+  }
   if (!exports || typeof exports !== "object") return null;
   const map = exports as Record<string, unknown>;
+  const keys = Object.keys(map);
+  const hasSubpathKeys = keys.some((key) => key === "." || key.startsWith("./"));
+  if (!hasSubpathKeys) {
+    return subpath === "." ? pickPackageExportEntry(map) : null;
+  }
+  // Mixing condition keys and subpath keys is invalid package metadata.
+  if (keys.some((key) => key !== "." && !key.startsWith("./"))) return null;
 
   if (subpath in map) return pickPackageExportEntry(map[subpath]);
 

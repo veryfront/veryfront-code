@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { relative } from "#veryfront/compat/path/index.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import { clearTranspileCache } from "./transpiler.ts";
 
 describe("discovery/import-rewriter", () => {
   it("rewrites veryfront public imports for Deno temp module imports", () => {
@@ -220,6 +226,65 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
+  it("resolves package root exports declared with string shorthand", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const packageDir = `${projectDir}/node_modules/root-export`;
+    await Deno.mkdir(packageDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify({
+        name: "root-export",
+        version: "1.0.0",
+        exports: "./entry.js",
+      }),
+    );
+    await Deno.writeTextFile(`${packageDir}/entry.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import rootExport from "root-export";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, "root-export/entry.js");
+      assertEquals(transformed.includes('from "root-export"'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not expose undeclared package subpaths when exports is present", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const packageDir = `${projectDir}/node_modules/encapsulated`;
+    await Deno.mkdir(packageDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify({
+        name: "encapsulated",
+        version: "1.0.0",
+        exports: { ".": "./index.js" },
+      }),
+    );
+    await Deno.writeTextFile(`${packageDir}/index.js`, "");
+    await Deno.writeTextFile(`${packageDir}/private.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import secret from "encapsulated/private.js";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, 'from "encapsulated/private.js"');
+      assertEquals(transformed.includes("file://"), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("resolves side-effect imports via the project's node_modules in the Node discovery path", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
     const dotenvDir = `${projectDir}/node_modules/dotenv`;
@@ -391,6 +456,48 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
+  it("refreshes positive package resolutions when the discovery cache is cleared", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-cache-refresh-" });
+    const pkgDir = `${projectDir}/node_modules/switchable-package`;
+    const packageJsonPath = `${pkgDir}/package.json`;
+    const code = 'import value from "switchable-package";';
+
+    try {
+      await Deno.mkdir(pkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ name: "switchable-package", main: "./v1.js" }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/v1.js`, "export default 1;");
+
+      const first = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+      );
+      assertStringIncludes(first, "switchable-package/v1.js");
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ name: "switchable-package", main: "./v2.js" }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/v2.js`, "export default 2;");
+      clearTranspileCache();
+
+      const refreshed = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/tools`,
+      );
+      assertStringIncludes(refreshed, "switchable-package/v2.js");
+    } finally {
+      clearTranspileCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("refuses to resolve a package whose exports map escapes the package directory", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
     const pkgDir = `${projectDir}/node_modules/evil`;
@@ -515,7 +622,7 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
-  it("does not fall back to runtime veryfront resolution when local package.json cannot be read", async () => {
+  it("propagates project-local veryfront package read failures", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
     const veryfrontDir = `${projectDir}/node_modules/veryfront`;
     const packageJsonPath = `${veryfrontDir}/package.json`;
@@ -540,21 +647,23 @@ describe("discovery/import-rewriter", () => {
     };
 
     try {
-      const transformed = await rewriteDiscoveryImports(
-        'import { defineSchema } from "veryfront/schemas";',
-        projectDir,
-        unreadablePackageJsonFs,
-        `${projectDir}/app`,
+      await assertRejects(
+        () =>
+          rewriteDiscoveryImports(
+            'import { defineSchema } from "veryfront/schemas";',
+            projectDir,
+            unreadablePackageJsonFs,
+            `${projectDir}/app`,
+          ),
+        Error,
+        "forced package.json read failure",
       );
-
-      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
-      assertStringIncludes(transformed, 'from "veryfront/schemas"');
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
   });
 
-  it("does not fall back to runtime veryfront resolution when local package stat fails for a non-not-found reason", async () => {
+  it("propagates project-local veryfront stat failures", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
     const veryfrontDir = `${projectDir}/node_modules/veryfront`;
     await Deno.mkdir(veryfrontDir, { recursive: true });
@@ -569,15 +678,39 @@ describe("discovery/import-rewriter", () => {
     };
 
     try {
-      const transformed = await rewriteDiscoveryImports(
-        'import { defineSchema } from "veryfront/schemas";',
-        projectDir,
-        statFailureFs,
-        `${projectDir}/app`,
+      await assertRejects(
+        () =>
+          rewriteDiscoveryImports(
+            'import { defineSchema } from "veryfront/schemas";',
+            projectDir,
+            statFailureFs,
+            `${projectDir}/app`,
+          ),
+        Error,
+        "forced stat permission failure",
       );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
 
-      assertEquals(transformed.includes(import.meta.resolve("veryfront/schemas")), false);
-      assertStringIncludes(transformed, 'from "veryfront/schemas"');
+  it("propagates malformed dependency package metadata", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const packageDir = `${projectDir}/node_modules/broken-package`;
+    await Deno.mkdir(packageDir, { recursive: true });
+    await Deno.writeTextFile(`${packageDir}/package.json`, "{not-json");
+
+    try {
+      await assertRejects(
+        () =>
+          rewriteDiscoveryImports(
+            'import value from "broken-package";',
+            projectDir,
+            createFileSystem(),
+            `${projectDir}/app`,
+          ),
+        SyntaxError,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

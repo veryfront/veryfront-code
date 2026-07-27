@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
@@ -19,6 +19,9 @@ import {
   getSSRServerPort,
   isSSRClientOnlyFetching,
 } from "#veryfront/rendering/ssr-globals/context.ts";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+
+afterAll(() => stopEsbuild());
 
 function createBootstrapResult(
   dispose: () => void | Promise<void>,
@@ -73,6 +76,41 @@ describe("resolveProductionBootstrap()", () => {
 });
 
 describe("startProductionServer() lifecycle", () => {
+  it("rejects a partial primitive generation before opening the listener", async () => {
+    let serveCalls = 0;
+    let bootstrapDisposeCalls = 0;
+    const bootstrap = createBootstrapResult(() => {
+      bootstrapDisposeCalls++;
+    });
+    bootstrap.adapter.serve = () => {
+      serveCalls++;
+      return Promise.reject(new Error("listener must not start"));
+    };
+    await bootstrap.adapter.fs.mkdir("/project/prompts", { recursive: true });
+    await bootstrap.adapter.fs.writeFile(
+      "/project/prompts/broken.ts",
+      "export default { description: 'not a prompt' };",
+    );
+
+    await assertRejects(
+      () =>
+        startLocalCliProxyProductionServer({
+          projectDir: "/project",
+          port: 4_321,
+          bootstrapResult: bootstrap,
+          discoveryConfig: {
+            baseDir: "/project",
+            fsAdapter: bootstrap.adapter.fs,
+          },
+        }),
+      Error,
+      "Discovery generation rejected with 1 error",
+    );
+
+    assertEquals(serveCalls, 0);
+    assertEquals(bootstrapDisposeCalls, 1);
+  });
+
   it("validates a supplied bootstrap before touching resources or acquiring ownership", async () => {
     let serveCalls = 0;
     let bootstrapDisposeCalls = 0;

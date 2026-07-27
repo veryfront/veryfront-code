@@ -87,5 +87,49 @@ describe("src/discovery/provider-config-validator", () => {
 
       assertEquals(result.warnings[0]?.includes("ANTHROPIC_API_KEY"), true);
     });
+
+    it("treats whitespace-only credentials as missing", () => {
+      const config = {
+        ai: {
+          providers: {
+            openai: { apiKey: "   " },
+          },
+        },
+      } as VeryfrontConfig;
+
+      const result = validateProviderConfig(config);
+
+      assertEquals(result.warnings.length, 1);
+    });
+
+    it("escapes provider labels and emits shell-safe environment variable names", () => {
+      const config = {
+        ai: {
+          providers: {
+            "openai-compatible\nspoof": {},
+          },
+        },
+      } as VeryfrontConfig;
+
+      const result = validateProviderConfig(config);
+      const warning = result.warnings[0] ?? "";
+
+      assertEquals(warning.includes("openai-compatible\nspoof"), false);
+      assertEquals(warning.includes("OPENAI_COMPATIBLE_SPOOF_API_KEY"), true);
+    });
+
+    it("escapes Unicode line separators in provider labels", () => {
+      const result = validateProviderConfig({
+        ai: {
+          providers: {
+            "provider\u2028spoof": {},
+          },
+        },
+      } as VeryfrontConfig);
+      const warning = result.warnings[0] ?? "";
+
+      assertEquals(warning.includes("\u2028"), false);
+      assertEquals(warning.includes("\\u2028"), true);
+    });
   });
 });
