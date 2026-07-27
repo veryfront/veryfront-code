@@ -47,8 +47,9 @@ What this changes:
 
 - All runtimes get the same `package.json` and template files.
 - `--runtime deno` additionally writes a thin `deno.json` so `deno task dev` /
-  `deno task build` / `deno task preview` work without extra setup. Deno reads
-  npm dependencies directly from `package.json` via `nodeModulesDir: "auto"`.
+  `deno task build` / `deno task start` / `deno task eval` work without extra
+  setup. Deno reads npm dependencies directly from `package.json` via
+  `nodeModulesDir: "auto"`.
 - The install command and the printed next-steps match your runtime
   (`npm install` / `bun install` / `deno install`).
 

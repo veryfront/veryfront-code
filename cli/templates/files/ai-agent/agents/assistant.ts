@@ -11,13 +11,14 @@ export default agent({
     suggestions: [
       {
         type: "prompt",
-        title: "Draft a plan",
-        prompt: "Help me make a concise plan for ",
+        title: "Plan a project",
+        prompt: "Create a concise plan for building and launching a small web application.",
       },
       {
         type: "prompt",
-        title: "Explain a topic",
-        prompt: "Explain this clearly: ",
+        title: "Split a bill",
+        prompt:
+          "Calculate an 18% tip on $84.50, then split the total evenly among three people.",
       },
     ],
   },
