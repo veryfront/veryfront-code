@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { MemoryCache } from "./memory-cache.ts";
 import type { TokenCacheEntry } from "./types.ts";
@@ -39,6 +39,51 @@ describe("MemoryCache", () => {
       await cache.set("expired-key", createEntry("expired", -1000));
 
       assertEquals(await cache.get("expired-key"), null);
+    });
+
+    it("owns an immutable snapshot of each entry", async () => {
+      const entry = createEntry("original");
+      await cache.set("key1", entry);
+      entry.token = "mutated";
+
+      const result = await cache.get("key1");
+      assertEquals(result?.token, "original");
+      assertEquals(Object.isFrozen(result), true);
+      assertThrows(() => {
+        result!.token = "caller-mutated";
+      }, TypeError);
+      assertEquals((await cache.get("key1"))?.token, "original");
+    });
+
+    it("does not invoke entry accessors", async () => {
+      let reads = 0;
+      const forged = Object.create(null);
+      Object.defineProperty(forged, "token", {
+        enumerable: true,
+        get() {
+          reads++;
+          return "forged";
+        },
+      });
+
+      await assertRejects(
+        () => cache.set("key1", forged as TokenCacheEntry),
+        TypeError,
+        "invalid",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("treats an already expired write as a deletion", async () => {
+      await cache.set("key", createEntry("current"));
+      await cache.set("key", {
+        token: "expired",
+        expiresAt: Date.now() - 1,
+        scope: "production",
+      });
+
+      assertEquals(await cache.has("key"), false);
+      assertEquals((await cache.stats()).size, 0);
     });
   });
 
@@ -120,5 +165,73 @@ describe("MemoryCache", () => {
         await smallCache.close();
       }
     });
+
+    it("does not evict another entry when replacing an existing key", async () => {
+      const smallCache = new MemoryCache({ maxSize: 2, cleanupInterval: 0 });
+      try {
+        await smallCache.set("key1", createEntry("token-1"));
+        await smallCache.set("key2", createEntry("token-2"));
+        await smallCache.set("key2", createEntry("token-2-new"));
+
+        assertEquals(await smallCache.has("key1"), true);
+        assertEquals((await smallCache.get("key2"))?.token, "token-2-new");
+      } finally {
+        await smallCache.close();
+      }
+    });
+
+    it("refreshes recency when an entry is read", async () => {
+      const smallCache = new MemoryCache({ maxSize: 2, cleanupInterval: 0 });
+      try {
+        await smallCache.set("key1", createEntry("token-1"));
+        await smallCache.set("key2", createEntry("token-2"));
+        await smallCache.get("key1");
+        await smallCache.set("key3", createEntry("token-3"));
+
+        assertEquals(await smallCache.has("key1"), true);
+        assertEquals(await smallCache.has("key2"), false);
+      } finally {
+        await smallCache.close();
+      }
+    });
+  });
+
+  it("validates construction policy", () => {
+    assertThrows(
+      () => new MemoryCache({ maxSize: 0 }),
+      RangeError,
+      "between 1 and 100000",
+    );
+    assertThrows(
+      () => new MemoryCache({ cleanupInterval: Number.NaN }),
+      RangeError,
+      "cleanupInterval",
+    );
+    const accessorOptions = Object.defineProperty({}, "maxSize", {
+      get: () => 10,
+    });
+    assertThrows(
+      () => new MemoryCache(accessorOptions),
+      TypeError,
+      "data property",
+    );
+    assertThrows(
+      () => new MemoryCache({ maxsize: 10 } as never),
+      TypeError,
+      "unknown option",
+    );
+  });
+
+  it("is idempotently closed and rejects later operations", async () => {
+    await cache.close();
+    await cache.close();
+
+    await assertRejects(() => cache.get("key"), Error, "closed");
+    await assertRejects(
+      () => cache.set("key", createEntry("token")),
+      Error,
+      "closed",
+    );
+    await assertRejects(() => cache.stats(), Error, "closed");
   });
 });

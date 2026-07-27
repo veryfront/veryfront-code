@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { TracingTokenCache } from "./tracing-cache.ts";
 import type { CacheStats, TokenCache, TokenCacheEntry } from "./types.ts";
@@ -25,6 +25,7 @@ class FakeCache implements TokenCache {
 
   delete(key: string): Promise<void> {
     this.calls.push({ method: "delete", args: [key] });
+    this.entry = null;
     return Promise.resolve();
   }
 
@@ -78,6 +79,24 @@ describe("TracingTokenCache", () => {
     assertEquals(call.method, "set");
     assertEquals(call.args[0], "k2");
     assertEquals(call.args[1], entry);
+    entry.token = "mutated";
+    assertEquals(fake.entry?.token, "t-2");
+    assertEquals(Object.isFrozen(fake.entry), true);
+  });
+
+  it("turns an already expired write into a backend deletion", async () => {
+    const fake = new FakeCache();
+    fake.entry = makeEntry("current");
+    const traced = new TracingTokenCache(fake);
+
+    await traced.set("key", {
+      token: "expired",
+      expiresAt: Date.now() - 1,
+      scope: "production",
+    });
+
+    assertEquals(fake.calls, [{ method: "delete", args: ["key"] }]);
+    assertEquals(fake.entry, null);
   });
 
   it("delegates delete()", async () => {
@@ -160,5 +179,118 @@ describe("TracingTokenCache", () => {
     await traced.get("k5");
 
     assertEquals(fake.calls, [{ method: "get", args: ["k5"] }]);
+  });
+
+  it("snapshots backend operations at construction", async () => {
+    const fake = new FakeCache();
+    fake.entry = makeEntry("original");
+    const traced = new TracingTokenCache(fake);
+    fake.get = () => Promise.resolve(makeEntry("replacement"));
+
+    assertEquals((await traced.get("key"))?.token, "original");
+    assertEquals(fake.calls, [{ method: "get", args: ["key"] }]);
+  });
+
+  it("rejects accessor-backed operations without invoking them", () => {
+    const fake = new FakeCache();
+    let reads = 0;
+    Object.defineProperty(fake, "get", {
+      get() {
+        reads++;
+        return () => Promise.resolve(null);
+      },
+    });
+
+    assertThrows(
+      () => new TracingTokenCache(fake),
+      TypeError,
+      "data function",
+    );
+    assertEquals(reads, 0);
+  });
+
+  it("rejects invalid span policy", () => {
+    const fake = new FakeCache();
+    assertThrows(
+      () => new TracingTokenCache(fake, { spanPrefix: "Cache Invalid" }),
+      TypeError,
+      "spanPrefix",
+    );
+    const accessorOptions = Object.defineProperty({}, "spanPrefix", {
+      get: () => "cache.dynamic",
+    });
+    assertThrows(
+      () => new TracingTokenCache(fake, accessorOptions),
+      TypeError,
+      "data property",
+    );
+  });
+
+  it("validates backend statistics without invoking accessors", async () => {
+    const fake = new FakeCache();
+    let reads = 0;
+    fake.stats = () => {
+      const stats = Object.create(null);
+      Object.defineProperty(stats, "hits", {
+        get() {
+          reads++;
+          return 1;
+        },
+      });
+      return Promise.resolve(stats as CacheStats);
+    };
+    const traced = new TracingTokenCache(fake);
+
+    await assertRejects(
+      () => traced.stats(),
+      TypeError,
+      "invalid statistics",
+    );
+    assertEquals(reads, 0);
+  });
+
+  it("validates backend entries and booleans at the boundary", async () => {
+    const fake = new FakeCache();
+    let reads = 0;
+    fake.get = () => {
+      const value = Object.create(null);
+      Object.defineProperty(value, "token", {
+        get() {
+          reads++;
+          return "token";
+        },
+      });
+      return Promise.resolve(value as TokenCacheEntry);
+    };
+    fake.has = () => Promise.resolve("yes" as never);
+    const traced = new TracingTokenCache(fake);
+
+    await assertRejects(
+      () => traced.get("key"),
+      TypeError,
+      "entry is invalid",
+    );
+    assertEquals(reads, 0);
+    await assertRejects(
+      () => traced.has("key"),
+      TypeError,
+      "invalid has result",
+    );
+    await assertRejects(
+      () => traced.get(""),
+      TypeError,
+      "bounded non-empty",
+    );
+  });
+
+  it("closes once and rejects subsequent operations", async () => {
+    const fake = new FakeCache();
+    const traced = new TracingTokenCache(fake);
+
+    await traced.close();
+    await traced.close();
+
+    assertEquals(fake.calls, [{ method: "close", args: [] }]);
+    await assertRejects(() => traced.get("key"), Error, "closed");
   });
 });

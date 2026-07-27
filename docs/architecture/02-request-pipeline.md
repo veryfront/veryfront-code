@@ -73,6 +73,42 @@ flowchart TD
 
 ## Runtime caches
 
+### OAuth token cache
+
+The standalone proxy uses a bounded, process-local LRU token cache by default.
+Setting `CACHE_TYPE=redis` explicitly loads `@veryfront/ext-cache-redis` and
+requires a valid `REDIS_URL`; a missing extension, missing URL, unsupported URL
+scheme, unsafe key prefix, or malformed extension contract stops startup. The
+proxy does not silently replace invalid Redis configuration with memory.
+`REDIS_PREFIX`, when present, is limited to 256 visible ASCII characters and
+cannot contain Redis glob metacharacters because the extension uses that prefix
+to scope bulk deletion.
+
+An operational Redis outage is different from invalid configuration. The
+Redis-backed store is wrapped in a process-local memory fallback and a circuit
+breaker. Three consecutive primary read failures open the circuit for 30
+seconds; a failed mutation opens it immediately because stale writes and
+invalidations are correctness-sensitive. Only one half-open health probe runs
+at a time. Before Redis is trusted again, the proxy replays a bounded journal
+of writes, deletes, and clears accumulated during the outage. Repeated journal
+overflow escalates recovery to a Redis namespace clear and keeps at most 10,000
+new mutations, so an extended outage cannot create unbounded process memory or
+restore stale entries.
+
+Mutations execute in call order so a slow, older Redis write cannot complete
+after a newer write and roll the cache backward. At most 10,000 mutations may
+wait for that ordering boundary; excess work is rejected instead of creating
+an unbounded in-process queue.
+
+Cache keys, entries, backend methods, and statistics are snapshotted and
+validated at the proxy boundary. Already-expired writes behave as deletions.
+Token values and cache keys are not attached to tracing spans. The fallback and
+reconciliation journal are intentionally process-local: Redis is a performance
+cache, not an authority for token validity, and every entry remains
+expiry-bound.
+
+### Project metadata caches
+
 The proxy caches routing-only project metadata from the control plane. That
 payload contains project identity, environments, domains, and active release
 ids, but it does not contain `protected` flags or project members. Protection
@@ -93,10 +129,10 @@ other HTTP failures, and invalid payloads fail closed as gateway errors.
 
 Default routing cache controls:
 
-| Environment variable                        | Default | Allowed range  |
-| ------------------------------------------- | ------- | -------------- |
-| `VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS`      | `60000` | `0..86400000`  |
-| `VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES` | `1000`  | `0..10000`     |
+| Environment variable                        | Default | Allowed range |
+| ------------------------------------------- | ------- | ------------- |
+| `VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS`      | `60000` | `0..86400000` |
+| `VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES` | `1000`  | `0..10000`    |
 
 `0` disables routing-cache retention. Invalid or out-of-range values stop proxy
 construction instead of silently selecting a different policy.

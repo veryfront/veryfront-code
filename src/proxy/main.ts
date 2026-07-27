@@ -15,6 +15,8 @@
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
+ * - REDIS_PREFIX: Optional Redis token-key namespace
+ * - REDIS_PASSWORD: Optional Redis password when it is not embedded in REDIS_URL
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
  * - VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET: HMAC secret for Redis routing events and acknowledgements
  * - VERYFRONT_API_INTERNAL_URL: API URL for internal endpoints (falls back to VERYFRONT_PROXY_API_BASE_URL)
@@ -25,6 +27,7 @@
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
+import { ensureRedisTokenCacheStoreFromEnv } from "./cache/redis-extension.ts";
 import {
   getReplayableRequestBodies,
   getUpstreamRetryCount,
@@ -203,6 +206,7 @@ const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExte
 register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler
+await ensureRedisTokenCacheStoreFromEnv();
 const cache = await createCacheFromEnv();
 const routingInvalidationLogger = {
   debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),

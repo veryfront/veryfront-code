@@ -30,10 +30,17 @@ export interface CacheStats {
 }
 
 export interface MemoryCacheOptions {
-  maxSize?: number; // Maximum number of entries
-  cleanupInterval?: number; // Interval in ms to cleanup expired entries
+  /** Maximum number of entries. Must be between 1 and 100,000. */
+  maxSize?: number;
+  /** Expiry sweep interval in milliseconds. `0` disables scheduled sweeps. */
+  cleanupInterval?: number;
 }
 
+/**
+ * @deprecated Redis connection policy belongs to the `ext-cache-redis`
+ * extension. The proxy cache factory only selects an already registered
+ * `TokenCacheStore`.
+ */
 export interface RedisCacheOptions {
   url: string;
   prefix?: string;
@@ -45,4 +52,8 @@ export interface RedisCacheOptions {
 
 export type CacheOptions =
   | { type: "memory"; options?: MemoryCacheOptions }
-  | { type: "redis"; options: RedisCacheOptions };
+  | {
+    /** Requires a previously registered `TokenCacheStore` extension contract. */
+    type: "redis";
+    options?: never;
+  };
