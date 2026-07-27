@@ -4,7 +4,6 @@ import { isBun, isDeno, isNode } from "./runtime.ts";
 import { validateTempDirectoryPrefix } from "./temp-directory-prefix.ts";
 
 const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
-const DEFAULT_EXCLUSIVE_FILE_MODE = 0o600;
 const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "ENOSYS",
   "ENOTSUP",
@@ -17,26 +16,12 @@ export interface PathIdentity {
   readonly inode: string;
 }
 
-function isSamePathIdentity(
-  left: PathIdentity,
-  right: PathIdentity,
-): boolean {
-  return left.device === right.device && left.inode === right.inode;
-}
-
 function isUnsupportedChmodError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === "NotSupported") return true;
 
   const code = (error as NodeJS.ErrnoException).code;
   return typeof code === "string" && UNSUPPORTED_CHMOD_ERROR_CODES.has(code);
-}
-
-function validateFileMode(mode: number): number {
-  if (!Number.isSafeInteger(mode) || mode < 0 || mode > 0o777) {
-    throw new RangeError("File mode must be a safe integer between 0o000 and 0o777");
-  }
-  return mode;
 }
 
 function normalizePathIdentity(
@@ -418,100 +403,6 @@ export function readFile(path: string): Promise<Uint8Array> {
 /** Write text to a file. */
 export function writeTextFile(path: string, data: string): Promise<void> {
   return getFs().writeTextFile(path, data);
-}
-
-/**
- * Atomically create a text file without following or replacing an existing
- * directory entry.
- */
-export async function writeTextFileExclusive(
-  path: string,
-  data: string,
-  options: { mode?: number } = {},
-): Promise<PathIdentity> {
-  const mode = validateFileMode(options.mode ?? DEFAULT_EXCLUSIVE_FILE_MODE);
-  let created = false;
-  let identity: PathIdentity | undefined;
-  const failures: unknown[] = [];
-
-  if (isDeno) {
-    let file: Deno.FsFile | undefined;
-    try {
-      file = await denoGlobal().open(path, {
-        createNew: true,
-        mode,
-        write: true,
-      });
-      created = true;
-      const info = await file.stat();
-      identity = normalizePathIdentity(info.dev, info.ino);
-
-      const bytes = new TextEncoder().encode(data);
-      let offset = 0;
-      while (offset < bytes.byteLength) {
-        const written = await file.write(bytes.subarray(offset));
-        if (!Number.isSafeInteger(written) || written <= 0) {
-          throw new Error(`Exclusive text-file write made no progress for "${path}"`);
-        }
-        offset += written;
-      }
-    } catch (error) {
-      failures.push(error);
-    }
-    if (file) {
-      try {
-        file.close();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-  } else {
-    const fs = await import("node:fs/promises");
-    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
-    try {
-      handle = await fs.open(path, "wx", mode);
-      created = true;
-      const info = await handle.stat({ bigint: true });
-      identity = normalizePathIdentity(info.dev, info.ino);
-      await handle.writeFile(data, { encoding: "utf8" });
-    } catch (error) {
-      failures.push(error);
-    }
-    if (handle) {
-      try {
-        await handle.close();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-  }
-
-  if (created && !identity) {
-    failures.push(
-      new Error(`Stable filesystem identity is unavailable for exclusive file "${path}"`),
-    );
-  }
-  if (failures.length === 0 && identity) return identity;
-
-  if (created) {
-    try {
-      const currentIdentity = await getPathIdentity(path);
-      if (!identity || !currentIdentity || !isSamePathIdentity(identity, currentIdentity)) {
-        throw new Error(
-          `Refusing to remove an exclusive text file whose identity changed: "${path}"`,
-        );
-      }
-      await remove(path);
-    } catch (error) {
-      if (!isNotFoundError(error)) failures.push(error);
-    }
-  }
-
-  if (failures.length === 1) throw failures[0];
-  throw new AggregateError(
-    failures,
-    `Exclusive text-file creation and cleanup failed for "${path}"`,
-  );
 }
 
 /** Write bytes to a file. */

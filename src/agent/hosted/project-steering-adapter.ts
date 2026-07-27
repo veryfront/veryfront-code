@@ -14,6 +14,7 @@ import {
 } from "../runtime/load-skill-tool.ts";
 import type { MutableAgentProjectContext } from "../project/context.ts";
 import {
+  createRuntimeProjectFilesClient,
   createStrictRuntimeProjectFilesClient,
   type RuntimeProjectFilesClient,
   type RuntimeProjectFilesClientOptions,
@@ -57,6 +58,13 @@ export type HostedProjectSteeringAdapterOptions = {
   builtinStore?: RuntimeLoadSkillBuiltinStore;
 };
 
+/** Internal strict options forbid signal-unaware public project-files clients. */
+export type StrictHostedProjectSteeringAdapterOptions =
+  & Omit<HostedProjectSteeringAdapterOptions, "projectFilesClient">
+  & {
+    projectFilesClient?: never;
+  };
+
 /** Context for hosted project skill IDs. */
 export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
   authToken: string;
@@ -93,6 +101,18 @@ export type HostedProjectSteeringAdapter = {
   refreshProjectSkillIds: (context: HostedProjectSkillIdsContext) => Promise<void>;
 };
 
+/** Internal request-scoped extension used only by fail-closed cloud composition. */
+export type StrictHostedProjectSteeringAdapter = HostedProjectSteeringAdapter & {
+  getProjectInstructionsForRequest: (
+    lookup: RuntimeProjectSteeringLookup,
+    signal: AbortSignal | undefined,
+  ) => Promise<string>;
+  getSkillsConfigForRequest: (
+    lookup: RuntimeProjectSteeringLookup,
+    signal: AbortSignal | undefined,
+  ) => Promise<RuntimeSkillDefinition[]>;
+};
+
 function createProjectFilesAccessDeniedError(statusCode: number, message: string): Error {
   return new HostedServiceAuthError(statusCode, message);
 }
@@ -110,8 +130,12 @@ function createProjectFilesClientOptions(
 
 function createDefaultProjectFilesClient(
   options: HostedProjectSteeringAdapterOptions,
-): RuntimeProjectFilesClient {
-  return createStrictRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
+  strict: boolean,
+): RuntimeProjectFilesClient | ReturnType<typeof createStrictRuntimeProjectFilesClient> {
+  const clientOptions = createProjectFilesClientOptions(options);
+  return strict
+    ? createStrictRuntimeProjectFilesClient(clientOptions)
+    : createRuntimeProjectFilesClient(clientOptions);
 }
 
 function createDefaultProjectSkillLoader(
@@ -134,11 +158,26 @@ function createDefaultBuiltinStore(): RuntimeLoadSkillBuiltinStore {
   };
 }
 
-/** Create hosted project steering adapter. */
-export function createHostedProjectSteeringAdapter(
+function createProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
-): HostedProjectSteeringAdapter {
-  const projectFilesClient = options.projectFilesClient ?? createDefaultProjectFilesClient(options);
+  strictProjectFiles: false,
+): HostedProjectSteeringAdapter;
+function createProjectSteeringAdapter(
+  options: StrictHostedProjectSteeringAdapterOptions,
+  strictProjectFiles: true,
+): StrictHostedProjectSteeringAdapter;
+function createProjectSteeringAdapter(
+  options: HostedProjectSteeringAdapterOptions,
+  strictProjectFiles: boolean,
+): HostedProjectSteeringAdapter | StrictHostedProjectSteeringAdapter {
+  if (strictProjectFiles && options.projectFilesClient !== undefined) {
+    throw new TypeError(
+      "Strict hosted project steering does not accept a signal-unaware projectFilesClient",
+    );
+  }
+  const projectFilesClient = strictProjectFiles
+    ? createDefaultProjectFilesClient(options, true)
+    : options.projectFilesClient ?? createDefaultProjectFilesClient(options, false);
   const projectSkillLoader = options.projectSkillLoader ??
     createDefaultProjectSkillLoader(options, projectFilesClient);
   const builtinSkills = options.builtinSkills ??
@@ -147,26 +186,40 @@ export function createHostedProjectSteeringAdapter(
 
   async function getProjectInstructions(
     lookup: RuntimeProjectSteeringLookup,
+    signal?: AbortSignal,
   ): Promise<string> {
     return getRuntimeProjectInstructions({
       ...lookup,
-      getProjectFile: projectFilesClient.getProjectFile,
+      getProjectFile: (fileOptions) =>
+        projectFilesClient.getProjectFile({
+          ...fileOptions,
+          ...(strictProjectFiles && signal ? { signal } : {}),
+        }),
     });
   }
 
   async function getSkillsConfig(
     lookup: RuntimeProjectSteeringLookup,
+    signal?: AbortSignal,
   ): Promise<RuntimeSkillDefinition[]> {
     return getRuntimeProjectSkillCatalog({
       ...lookup,
       builtinSkills,
       logger: options.logger,
-      getProjectFile: projectFilesClient.getProjectFile,
-      getProjectFiles: projectFilesClient.getProjectFiles,
+      getProjectFile: (fileOptions) =>
+        projectFilesClient.getProjectFile({
+          ...fileOptions,
+          ...(strictProjectFiles && signal ? { signal } : {}),
+        }),
+      getProjectFiles: (fileOptions) =>
+        projectFilesClient.getProjectFiles({
+          ...fileOptions,
+          ...(strictProjectFiles && signal ? { signal } : {}),
+        }),
     });
   }
 
-  return {
+  const adapter: HostedProjectSteeringAdapter = {
     listBuiltinSkillIds: () => builtinSkills.map((skill) => skill.id),
     getProjectInstructions,
     getSkillsConfig,
@@ -208,4 +261,31 @@ export function createHostedProjectSteeringAdapter(
         : undefined;
     },
   };
+  if (!strictProjectFiles) {
+    return adapter;
+  }
+  return {
+    ...adapter,
+    getProjectInstructionsForRequest: getProjectInstructions,
+    getSkillsConfigForRequest: getSkillsConfig,
+  };
+}
+
+/**
+ * Create a hosted project steering adapter.
+ *
+ * The public factory retains the established permissive project-files client
+ * contract. Hosted service composition uses the strict internal factory below.
+ */
+export function createHostedProjectSteeringAdapter(
+  options: HostedProjectSteeringAdapterOptions,
+): HostedProjectSteeringAdapter {
+  return createProjectSteeringAdapter(options, false);
+}
+
+/** Create the fail-closed project steering adapter used by hosted services. */
+export function createStrictHostedProjectSteeringAdapter(
+  options: StrictHostedProjectSteeringAdapterOptions,
+): StrictHostedProjectSteeringAdapter {
+  return createProjectSteeringAdapter(options, true);
 }

@@ -171,7 +171,7 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
     throw new TypeError("Skill definition must be an object");
   }
 
-  const definitionId = requireBoundedIdentity(
+  requireBoundedIdentity(
     ownDataValue(value, "id"),
     "Skill definition id",
     SKILL_ID_MAX_LENGTH,

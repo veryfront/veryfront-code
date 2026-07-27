@@ -10,18 +10,13 @@ import { getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import {
-  chmod,
   getPathIdentity,
-  isAlreadyExistsError,
-  isNotFoundError,
   lstat,
   type PathIdentity,
   readTextFile,
   realPath,
-  remove,
-  writeTextFileExclusive,
 } from "#veryfront/platform/compat/fs.ts";
-import { dirname, extname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
+import { dirname, extname, isAbsolute, relative, resolve } from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
 import {
@@ -50,8 +45,6 @@ const UTF8_ENCODER = new TextEncoder();
 const SANDBOX_PREPARATION_TIMEOUT_MS = 5_000;
 const SANDBOX_CLEANUP_TIMEOUT_SECONDS = 5;
 const SANDBOX_CLEANUP_MAX_OUTPUT_BYTES = 65_536;
-const LOCAL_SNAPSHOT_CREATE_ATTEMPTS = 4;
-const LOCAL_SNAPSHOT_MAX_EXTENSION_LENGTH = 16;
 
 type TerminationSentinel = typeof ABORT_SENTINEL | typeof TIMEOUT_SENTINEL;
 
@@ -507,13 +500,7 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
   }
 }
 
-interface LocalScriptSnapshot {
-  readonly executablePath: string;
-  validateForExecution(): Promise<void>;
-  cleanup(): Promise<void>;
-}
-
-interface SameDirectorySnapshotContext {
+interface ValidatedLocalScriptContext {
   readonly lexicalRoot: string;
   readonly lexicalScriptDirectory: string;
   readonly lexicalScriptPath: string;
@@ -553,7 +540,7 @@ function requirePathIdentity(
 ): PathIdentity {
   if (!identity) {
     throw new Error(
-      `Cannot safely snapshot the skill script because ${label} has no stable filesystem identity`,
+      `Cannot safely validate the skill script because ${label} has no stable filesystem identity`,
     );
   }
   return identity;
@@ -577,11 +564,11 @@ function assertDirectory(
   }
 }
 
-async function captureSameDirectorySnapshotContext(
+async function captureValidatedLocalScriptContext(
   normalized: NormalizedSkillScriptExecutorInput,
-): Promise<SameDirectorySnapshotContext> {
+): Promise<ValidatedLocalScriptContext> {
   if (!normalized.validatedSourceRoot) {
-    throw new Error("Same-directory skill snapshots require a validated source root");
+    throw new Error("Validated local skill execution requires a source root");
   }
 
   const lexicalRoot = resolve(normalized.validatedSourceRoot);
@@ -634,8 +621,8 @@ async function captureSameDirectorySnapshotContext(
   });
 }
 
-async function assertSameDirectorySnapshotContextUnchanged(
-  context: SameDirectorySnapshotContext,
+async function assertValidatedLocalScriptContextUnchanged(
+  context: ValidatedLocalScriptContext,
 ): Promise<void> {
   const [rootInfo, scriptDirectoryInfo, scriptInfo] = await Promise.all([
     lstat(context.lexicalRoot),
@@ -684,119 +671,26 @@ async function assertSameDirectorySnapshotContextUnchanged(
   }
 }
 
-async function removeSnapshotWithIdentity(
-  path: string,
-  expectedIdentity: PathIdentity,
-): Promise<void> {
-  let currentIdentity: PathIdentity | undefined;
-  try {
-    currentIdentity = await getPathIdentity(path);
-  } catch (error) {
-    if (isNotFoundError(error)) return;
-    throw error;
-  }
-  if (!currentIdentity || !isSamePathIdentity(currentIdentity, expectedIdentity)) {
-    throw new Error(`Refusing to remove a replaced skill script snapshot: "${path}"`);
-  }
-  await remove(path);
-}
+type PreparedValidatedLocalScript = Readonly<{
+  scriptPath: string;
+  scriptContent: string;
+}>;
 
-function sameDirectorySnapshotCreationError(
-  directory: string,
-  cause: unknown,
-): Error {
-  return new Error(
-    `Cannot create a safe same-directory skill script snapshot in "${directory}". ` +
-      "The scripts directory must be writable; Veryfront does not fall back to an " +
-      "unrelated temporary directory because that would break script-relative imports.",
-    { cause },
-  );
-}
-
-async function createSameDirectoryScriptSnapshot(
+async function prepareValidatedLocalScript(
   normalized: NormalizedSkillScriptExecutorInput,
-): Promise<LocalScriptSnapshot> {
-  const context = await captureSameDirectorySnapshotContext(normalized);
-  const rawExtension = extname(normalized.scriptPath);
-  const extension = rawExtension.length <= LOCAL_SNAPSHOT_MAX_EXTENSION_LENGTH ? rawExtension : "";
-
-  let snapshotPath: string | undefined;
-  let snapshotIdentity: PathIdentity | undefined;
-  let collision: unknown;
-  for (let attempt = 0; attempt < LOCAL_SNAPSHOT_CREATE_ATTEMPTS; attempt++) {
-    const candidate = join(
-      context.canonicalScriptDirectory,
-      `.veryfront-script-${crypto.randomUUID()}${extension}`,
-    );
-    try {
-      snapshotIdentity = await writeTextFileExclusive(
-        candidate,
-        normalized.scriptContent ?? "",
-        { mode: 0o600 },
-      );
-      snapshotPath = candidate;
-      break;
-    } catch (error) {
-      if (isAlreadyExistsError(error)) {
-        collision = error;
-        continue;
-      }
-      throw sameDirectorySnapshotCreationError(
-        context.canonicalScriptDirectory,
-        error,
-      );
-    }
+): Promise<PreparedValidatedLocalScript> {
+  const context = await captureValidatedLocalScriptContext(normalized);
+  const currentContent = await readBoundedLocalScript(context.lexicalScriptPath);
+  if (
+    normalized.scriptContent !== undefined &&
+    currentContent !== normalized.scriptContent
+  ) {
+    throw new Error("Skill script content changed while preparing execution");
   }
-
-  if (!snapshotPath || !snapshotIdentity) {
-    throw sameDirectorySnapshotCreationError(
-      context.canonicalScriptDirectory,
-      collision ?? new Error("Unable to allocate a unique snapshot name"),
-    );
-  }
-
-  const validateForExecution = async (): Promise<void> => {
-    await assertSameDirectorySnapshotContextUnchanged(context);
-    const snapshotInfo = await lstat(snapshotPath);
-    assertRegularFile(snapshotInfo, "Skill script snapshot");
-    const canonicalSnapshotPath = await realPath(snapshotPath);
-    const currentSnapshotIdentity = requirePathIdentity(
-      await getPathIdentity(snapshotPath),
-      "the script snapshot",
-    );
-    if (
-      !isSameCanonicalPath(dirname(canonicalSnapshotPath), context.canonicalScriptDirectory) ||
-      !isPathContained(context.canonicalRoot, canonicalSnapshotPath) ||
-      !isSamePathIdentity(snapshotIdentity, currentSnapshotIdentity)
-    ) {
-      throw new Error("Skill script snapshot changed while preparing execution");
-    }
-  };
-
-  const failures: unknown[] = [];
-  try {
-    await chmod(snapshotPath, 0o500);
-    await validateForExecution();
-  } catch (error) {
-    failures.push(error);
-  }
-
-  if (failures.length > 0) {
-    try {
-      await removeSnapshotWithIdentity(snapshotPath, snapshotIdentity);
-    } catch (error) {
-      failures.push(error);
-    }
-    throwCollectedFailures(
-      failures,
-      "Same-directory skill script snapshot preparation and cleanup failed",
-    );
-  }
-
+  await assertValidatedLocalScriptContextUnchanged(context);
   return Object.freeze({
-    executablePath: snapshotPath,
-    validateForExecution,
-    cleanup: () => removeSnapshotWithIdentity(snapshotPath, snapshotIdentity),
+    scriptPath: context.lexicalScriptPath,
+    scriptContent: normalized.scriptContent ?? currentContent,
   });
 }
 
@@ -808,44 +702,18 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
     const normalized = normalizeExecutorInput(input);
     if (normalized.abortSignal?.aborted) return abortedResult();
 
-    if (
-      normalized.scriptContent === undefined ||
-      normalized.validatedSourceRoot === undefined
-    ) {
+    if (normalized.validatedSourceRoot === undefined) {
       return await executeLocalScriptAtPath(normalized, normalized.scriptPath);
     }
 
-    const failures: unknown[] = [];
-    let result: SkillScriptResult | undefined;
-    let snapshot: LocalScriptSnapshot | undefined;
+    const validatedScript = await prepareValidatedLocalScript(normalized);
+    if (normalized.abortSignal?.aborted) return abortedResult();
 
-    try {
-      snapshot = await createSameDirectoryScriptSnapshot(normalized);
-      // This is the last feasible pathname/identity check before the runtime
-      // opens the entrypoint. A same-user actor with write access to the parent
-      // directory can still race the interpreter's later pathname open.
-      await snapshot.validateForExecution();
-      result = await executeLocalScriptAtPath(normalized, snapshot.executablePath);
-    } catch (error) {
-      failures.push(error);
-    }
-
-    if (snapshot) {
-      try {
-        await snapshot.cleanup();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-
-    if (failures.length > 0) {
-      throwCollectedFailures(
-        failures,
-        "Local skill script execution and snapshot cleanup failed",
-      );
-    }
-    if (!result) throw new Error("Local skill script execution completed without a result");
-    return result;
+    // The final containment, content, and identity checks above happen before
+    // the interpreter opens the validated path. Local skills are trusted
+    // development code: a same-user writer can still race that later open, and
+    // imported dependencies are resolved from the live source tree.
+    return await executeLocalScriptAtPath(normalized, validatedScript.scriptPath);
   }
 }
 
@@ -984,18 +852,26 @@ class CloudScriptExecutor implements SkillScriptExecutor {
 
     let cloudInput = normalized;
     if (normalized.scriptContent === undefined) {
-      const contentSettlement = await runWithinBudget(
+      const contentSettlement = await runWithinBudget<
+        string | PreparedValidatedLocalScript
+      >(
         budget,
         normalized.abortSignal,
         () =>
           normalized.validatedSourceRoot
-            ? readBoundedLocalScript(normalized.scriptPath)
+            ? prepareValidatedLocalScript(normalized)
             : readTextFile(normalized.scriptPath),
       );
       if (contentSettlement === ABORT_SENTINEL || contentSettlement === TIMEOUT_SENTINEL) {
         return terminationResult(contentSettlement, budget.timeoutMs);
       }
-      cloudInput = Object.freeze({ ...normalized, scriptContent: contentSettlement });
+      cloudInput = typeof contentSettlement === "string"
+        ? Object.freeze({ ...normalized, scriptContent: contentSettlement })
+        : Object.freeze({
+          ...normalized,
+          scriptPath: contentSettlement.scriptPath,
+          scriptContent: contentSettlement.scriptContent,
+        });
     }
 
     // Lazy import to avoid bundling sandbox in non-cloud environments

@@ -529,6 +529,9 @@ Do work.`,
         rootPath: skillRoot,
       });
 
+      const sourceEntriesBefore = (await Array.fromAsync(Deno.readDir(`${skillRoot}/scripts`)))
+        .map((entry) => entry.name)
+        .sort();
       const result = await createExecuteSkillScriptTool({
         executor: new LocalScriptExecutor(),
       });
@@ -550,19 +553,16 @@ Do work.`,
         assertEquals(execution.stdout.trim(), expected);
       }
 
-      const leakedSnapshots: string[] = [];
-      for await (const entry of Deno.readDir(`${skillRoot}/scripts`)) {
-        if (entry.name.startsWith(".veryfront-script-")) {
-          leakedSnapshots.push(entry.name);
-        }
-      }
-      assertEquals(leakedSnapshots, []);
+      const sourceEntriesAfter = (await Array.fromAsync(Deno.readDir(`${skillRoot}/scripts`)))
+        .map((entry) => entry.name)
+        .sort();
+      assertEquals(sourceEntriesAfter, sourceEntriesBefore);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
   });
 
-  it("execute_skill_script fails explicitly when safe same-directory staging is read-only", async () => {
+  it("execute_skill_script runs from a read-only skill tree without source staging", async () => {
     if (Deno.build.os === "windows") return;
     const tempDir = await Deno.makeTempDir({ prefix: "vf-skill-read-only-script-" });
     const skillRoot = `${tempDir}/my-skill`;
@@ -572,6 +572,7 @@ Do work.`,
       await Deno.mkdir(scriptDirectory, { recursive: true });
       await Deno.writeTextFile(`${scriptDirectory}/run.js`, 'console.log("ok");\n');
       await Deno.chmod(scriptDirectory, 0o555);
+      await Deno.chmod(skillRoot, 0o555);
 
       const probePath = `${scriptDirectory}/.write-probe`;
       try {
@@ -594,18 +595,18 @@ Do work.`,
         rootPath: skillRoot,
       });
 
-      await assertRejects(
-        () =>
-          createExecuteSkillScriptTool({
-            executor: new LocalScriptExecutor(),
-          }).execute({
-            skillId: "my-skill",
-            script: "scripts/run.js",
-          }),
-        Error,
-        "does not fall back to an unrelated temporary directory",
-      );
+      const result = await createExecuteSkillScriptTool({
+        executor: new LocalScriptExecutor(),
+      }).execute({
+        skillId: "my-skill",
+        script: "scripts/run.js",
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.trim(), "ok");
     } finally {
+      await Deno.chmod(skillRoot, 0o700).catch(() => {});
       await Deno.chmod(scriptDirectory, 0o700).catch(() => {});
       await Deno.remove(tempDir, { recursive: true });
     }

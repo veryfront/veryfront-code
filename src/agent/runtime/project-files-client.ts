@@ -13,7 +13,9 @@ import {
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
+const DEFAULT_PROJECT_FILES_OPERATION_TIMEOUT_MS = 300_000;
 const MAX_PROJECT_FILES_TIMEOUT_MS = 300_000;
+const MAX_PROJECT_FILES_OPERATION_TIMEOUT_MS = 300_000;
 const MAX_PROJECT_FILES_PAGE_LIMIT = 100;
 
 // Project paths and pagination cursors cross a remote trust boundary and are
@@ -197,11 +199,33 @@ export type RuntimeProjectFilesClientOptions = {
   createAccessDeniedError?: (statusCode: number, message: string) => Error;
 };
 
+/** Internal options for fail-closed hosted project-file reads. */
+export type StrictRuntimeProjectFilesClientOptions = RuntimeProjectFilesClientOptions & {
+  /** Aggregate listing timeout, capped at five minutes. */
+  operationTimeoutMs?: number;
+};
+
+/** Internal per-call context for fail-closed hosted project-file reads. */
+type StrictRuntimeProjectFilesRequestContext = {
+  /** Caller cancellation composed with request and aggregate deadlines. */
+  signal?: AbortSignal;
+};
+
 /** Public API contract for runtime project files client. */
 export type RuntimeProjectFilesClient = {
   getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
   getProjectFiles: (
     options: RuntimeProjectFilesApiOptions,
+  ) => Promise<RuntimeProjectFileListItem[]>;
+};
+
+/** Internal client contract that accepts request-scoped cancellation. */
+type StrictRuntimeProjectFilesClient = {
+  getProjectFile: (
+    options: RuntimeGetProjectFileOptions & StrictRuntimeProjectFilesRequestContext,
+  ) => Promise<RuntimeProjectFile | null>;
+  getProjectFiles: (
+    options: RuntimeProjectFilesApiOptions & StrictRuntimeProjectFilesRequestContext,
   ) => Promise<RuntimeProjectFileListItem[]>;
 };
 
@@ -233,8 +257,8 @@ export function createRuntimeProjectFilesClient(
  * validation and resource limits.
  */
 export function createStrictRuntimeProjectFilesClient(
-  options: RuntimeProjectFilesClientOptions,
-): RuntimeProjectFilesClient {
+  options: StrictRuntimeProjectFilesClientOptions,
+): StrictRuntimeProjectFilesClient {
   const clientOptions = normalizeRuntimeProjectFilesClientOptions(options);
   return {
     getProjectFile: (input) => getStrictRuntimeProjectFile({ ...input, ...clientOptions }),
@@ -280,64 +304,80 @@ export async function getRuntimeProjectFile(
 
 /** Return a runtime project file with strict hosted-boundary enforcement. */
 export async function getStrictRuntimeProjectFile(
-  options: RuntimeProjectFilesClientOptions & RuntimeGetProjectFileOptions,
+  options:
+    & StrictRuntimeProjectFilesClientOptions
+    & RuntimeGetProjectFileOptions
+    & StrictRuntimeProjectFilesRequestContext,
 ): Promise<RuntimeProjectFile | null> {
   validateRuntimeProjectFilesClientOptions(options, false);
+  validateStrictRuntimeProjectFilesRequestContext(options);
   validateRuntimeProjectFilesApiOptions(options);
   validateProjectFileRequestPath(options.path);
 
-  return traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
-    const url = createStrictRuntimeProjectFileUrl({
-      ...options,
-      fields: "(path,content)",
-    });
-    const response = await fetchStrictRuntimeProjectFilesRestResponse(url, options);
+  return runStrictProjectFilesRequest(
+    options,
+    options.signal,
+    (requestScope) =>
+      traceStrictProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
+        const url = createStrictRuntimeProjectFileUrl({
+          ...options,
+          fields: "(path,content)",
+        });
+        return await withStrictRuntimeProjectFilesRestResponse(
+          url,
+          options,
+          requestScope,
+          async (response, activeRequestScope) => {
+            if (response.status === 404) {
+              cancelResponseBodyWithoutWaiting(response);
+              return null;
+            }
 
-    if (response.status === 404) {
-      cancelResponseBodyWithoutWaiting(response);
-      return null;
-    }
+            if (!response.ok) {
+              throw NETWORK_ERROR.create({
+                detail:
+                  `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readStrictApiErrorMessage(
+                    response,
+                    activeRequestScope,
+                  )}`,
+              });
+            }
 
-    if (!response.ok) {
-      throw NETWORK_ERROR.create({
-        detail:
-          `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readStrictApiErrorMessage(
-            response,
-          )}`,
-      });
-    }
+            const responseJson = await readBoundedJsonResponse(
+              response,
+              MAX_PROJECT_FILE_RESPONSE_BYTES,
+              "Project file response",
+              activeRequestScope,
+            ).catch((error) => {
+              if (!(error instanceof RuntimeProjectFilesProtocolError)) {
+                throw error;
+              }
+              throw createInvalidProjectFileResponseError(options, error);
+            });
+            const parsed = getStrictRuntimeProjectFileSchema().safeParse(responseJson);
+            if (!parsed.success) {
+              throw createInvalidProjectFileResponseError(options);
+            }
+            if (parsed.data.path !== options.path) {
+              throw createInvalidProjectFileResponseError(
+                options,
+                new RuntimeProjectFilesProtocolError(
+                  "Project file response path did not match the request",
+                ),
+              );
+            }
+            if (!isRuntimeProjectFileContent(parsed.data.content)) {
+              throw NETWORK_ERROR.create({
+                detail:
+                  `Failed to fetch file ${options.path} for project ${options.projectId}: content exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
+              });
+            }
 
-    const responseJson = await readBoundedJsonResponse(
-      response,
-      MAX_PROJECT_FILE_RESPONSE_BYTES,
-      "Project file response",
-    ).catch((error) => {
-      if (!(error instanceof RuntimeProjectFilesProtocolError)) {
-        throw error;
-      }
-      throw createInvalidProjectFileResponseError(options, error);
-    });
-    const parsed = getStrictRuntimeProjectFileSchema().safeParse(responseJson);
-    if (!parsed.success) {
-      throw createInvalidProjectFileResponseError(options);
-    }
-    if (parsed.data.path !== options.path) {
-      throw createInvalidProjectFileResponseError(
-        options,
-        new RuntimeProjectFilesProtocolError(
-          "Project file response path did not match the request",
-        ),
-      );
-    }
-    if (!isRuntimeProjectFileContent(parsed.data.content)) {
-      throw NETWORK_ERROR.create({
-        detail:
-          `Failed to fetch file ${options.path} for project ${options.projectId}: content exceeds ${SKILL_TEXT_FILE_MAX_BYTES} bytes`,
-      });
-    }
-
-    return parsed.data;
-  });
+            return parsed.data;
+          },
+        );
+      }),
+  );
 }
 
 /** Whether a runtime project file content value fits the shared Skill budget. */
@@ -389,90 +429,140 @@ export async function getRuntimeProjectFiles(
 
 /** Return runtime project files with strict hosted-boundary enforcement. */
 export async function getStrictRuntimeProjectFiles(
-  options: RuntimeProjectFilesClientOptions & RuntimeProjectFilesApiOptions,
+  options:
+    & StrictRuntimeProjectFilesClientOptions
+    & RuntimeProjectFilesApiOptions
+    & StrictRuntimeProjectFilesRequestContext,
 ): Promise<RuntimeProjectFileListItem[]> {
   validateRuntimeProjectFilesClientOptions(options);
+  validateStrictRuntimeProjectFilesRequestContext(options);
   validateRuntimeProjectFilesApiOptions(options);
   const pageLimit = resolveProjectFilesPageLimit(options.pageLimit);
+  const operationDeadline = performance.now() +
+    resolveProjectFilesOperationTimeoutMs(options.operationTimeoutMs);
+  const operationScope = createStrictProjectFilesOperationScope(
+    options.signal,
+    operationDeadline,
+  );
 
-  return traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFiles", async () => {
-    const files: RuntimeProjectFileListItem[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    let pageCount = 0;
+  try {
+    return await waitForStrictProjectFilesOperationPromise(
+      operationScope,
+      operationDeadline,
+      () =>
+        traceStrictProjectFilesRequest(options, "runtimeProjectFiles.getProjectFiles", async () => {
+          const files: RuntimeProjectFileListItem[] = [];
+          const seenCursors = new Set<string>();
+          let cursor: string | null = null;
+          let pageCount = 0;
 
-    do {
-      if (pageCount >= MAX_PROJECT_FILES_TOTAL_PAGES) {
-        throw createProjectFilesListLimitError(
-          options.projectId,
-          `pagination exceeds ${MAX_PROJECT_FILES_TOTAL_PAGES} pages`,
-        );
-      }
-      pageCount += 1;
+          do {
+            throwIfStrictProjectFilesOperationExpired(
+              operationScope,
+              operationDeadline,
+            );
+            if (pageCount >= MAX_PROJECT_FILES_TOTAL_PAGES) {
+              throw createProjectFilesListLimitError(
+                options.projectId,
+                `pagination exceeds ${MAX_PROJECT_FILES_TOTAL_PAGES} pages`,
+              );
+            }
+            pageCount += 1;
 
-      const url = createStrictRuntimeProjectFileUrl({
-        ...options,
-        fields: "(path)",
-        cursor,
-        pageLimit,
-      });
-      const response = await fetchStrictRuntimeProjectFilesRestResponse(url, options);
+            const url = createStrictRuntimeProjectFileUrl({
+              ...options,
+              fields: "(path)",
+              cursor,
+              pageLimit,
+            });
+            const page = await runStrictProjectFilesRequest(
+              options,
+              operationScope.signal,
+              (requestScope) =>
+                withStrictRuntimeProjectFilesRestResponse(
+                  url,
+                  options,
+                  requestScope,
+                  async (response, activeRequestScope) => {
+                    if (!response.ok) {
+                      throw NETWORK_ERROR.create({
+                        detail:
+                          `Failed to fetch files for project ${options.projectId}: ${await readStrictApiErrorMessage(
+                            response,
+                            activeRequestScope,
+                          )}`,
+                      });
+                    }
 
-      if (!response.ok) {
-        throw NETWORK_ERROR.create({
-          detail:
-            `Failed to fetch files for project ${options.projectId}: ${await readStrictApiErrorMessage(
-              response,
-            )}`,
-        });
-      }
+                    const responseJson = await readBoundedJsonResponse(
+                      response,
+                      MAX_PROJECT_FILE_LIST_PAGE_BYTES,
+                      "Project files list response",
+                      activeRequestScope,
+                    ).catch((error) => {
+                      if (!(error instanceof RuntimeProjectFilesProtocolError)) {
+                        throw error;
+                      }
+                      throw createInvalidProjectFilesListResponseError(options.projectId, error);
+                    });
+                    const parsed = getStrictRuntimeProjectFileListRestResponseSchema().safeParse(
+                      responseJson,
+                    );
+                    if (!parsed.success) {
+                      throw createInvalidProjectFilesListResponseError(options.projectId);
+                    }
+                    return parsed.data;
+                  },
+                ),
+            );
+            throwIfStrictProjectFilesOperationExpired(
+              operationScope,
+              operationDeadline,
+            );
 
-      const responseJson = await readBoundedJsonResponse(
-        response,
-        MAX_PROJECT_FILE_LIST_PAGE_BYTES,
-        "Project files list response",
-      ).catch((error) => {
-        if (!(error instanceof RuntimeProjectFilesProtocolError)) {
-          throw error;
-        }
-        throw createInvalidProjectFilesListResponseError(options.projectId, error);
-      });
-      const parsed = getStrictRuntimeProjectFileListRestResponseSchema().safeParse(responseJson);
-      if (!parsed.success) {
-        throw createInvalidProjectFilesListResponseError(options.projectId);
-      }
-      if (parsed.data.data.length > pageLimit) {
-        throw createProjectFilesListLimitError(
-          options.projectId,
-          `page returned more than the requested ${pageLimit} files`,
-        );
-      }
-      if (
-        files.length + parsed.data.data.length >
-          MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS
-      ) {
-        throw createProjectFilesListLimitError(
-          options.projectId,
-          `file count exceeds ${MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS}`,
-        );
-      }
+            if (page.data.length > pageLimit) {
+              throw createProjectFilesListLimitError(
+                options.projectId,
+                `page returned more than the requested ${pageLimit} files`,
+              );
+            }
+            if (
+              files.length + page.data.length >
+                MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS
+            ) {
+              throw createProjectFilesListLimitError(
+                options.projectId,
+                `file count exceeds ${MAX_RUNTIME_PROJECT_FILES_TOTAL_ITEMS}`,
+              );
+            }
 
-      files.push(...parsed.data.data);
-      const nextCursor = parsed.data.page_info.next;
-      if (nextCursor !== null) {
-        if (seenCursors.has(nextCursor)) {
-          throw createProjectFilesListLimitError(
-            options.projectId,
-            "pagination returned a repeated cursor",
+            files.push(...page.data);
+            const nextCursor = page.page_info.next;
+            if (nextCursor !== null) {
+              if (seenCursors.has(nextCursor)) {
+                throw createProjectFilesListLimitError(
+                  options.projectId,
+                  "pagination returned a repeated cursor",
+                );
+              }
+              seenCursors.add(nextCursor);
+            }
+            cursor = nextCursor;
+          } while (cursor);
+
+          throwIfStrictProjectFilesOperationExpired(
+            operationScope,
+            operationDeadline,
           );
-        }
-        seenCursors.add(nextCursor);
-      }
-      cursor = nextCursor;
-    } while (cursor);
-
-    return files;
-  });
+          return files;
+        }),
+    );
+  } catch (error) {
+    operationScope.abort(error);
+    throw error;
+  } finally {
+    operationScope.dispose();
+  }
 }
 
 function createInvalidProjectFileResponseError(
@@ -586,31 +676,54 @@ async function fetchRuntimeProjectFilesRestResponse(
   return response;
 }
 
-async function fetchStrictRuntimeProjectFilesRestResponse(
+async function withStrictRuntimeProjectFilesRestResponse<TResult>(
   url: URL,
-  options: RuntimeProjectFilesClientOptions & { authToken: string },
-): Promise<Response> {
-  const response = await (options.fetch ?? fetch)(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${options.authToken}`,
+  options:
+    & StrictRuntimeProjectFilesClientOptions
+    & StrictRuntimeProjectFilesRequestContext
+    & { authToken: string },
+  requestScope: StrictProjectFilesRequestScope,
+  handleResponse: (
+    response: Response,
+    requestScope: StrictProjectFilesRequestScope,
+  ) => Promise<TResult>,
+): Promise<TResult> {
+  const response = await waitForStrictProjectFilesRequestPromise(
+    requestScope,
+    () =>
+      (options.fetch ?? fetch)(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${options.authToken}`,
+        },
+        signal: requestScope.signal,
+      }),
+    (lateResponse, reason) => {
+      cancelResponseBodyWithoutWaiting(lateResponse, reason);
     },
-    signal: AbortSignal.timeout(resolveProjectFilesTimeoutMs(options.timeoutMs)),
-  });
+  );
 
   if (response.status === 401 || response.status === 403) {
     cancelResponseBodyWithoutWaiting(response);
     throw createProjectFilesAccessDeniedError(options, response.status);
   }
 
-  return response;
+  try {
+    const result = await handleResponse(response, requestScope);
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    return result;
+  } catch (error) {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    throw error;
+  }
 }
 
 function validateRuntimeProjectFilesClientOptions(
-  options: RuntimeProjectFilesClientOptions,
+  options: StrictRuntimeProjectFilesClientOptions,
   validatePageLimit = true,
 ): void {
   normalizeProjectFilesApiUrl(options.apiUrl);
   resolveProjectFilesTimeoutMs(options.timeoutMs);
+  resolveProjectFilesOperationTimeoutMs(options.operationTimeoutMs);
   if (validatePageLimit) {
     resolveProjectFilesPageLimit(options.pageLimit);
   }
@@ -629,13 +742,14 @@ function validateRuntimeProjectFilesClientOptions(
 }
 
 function normalizeRuntimeProjectFilesClientOptions(
-  options: RuntimeProjectFilesClientOptions,
-): Readonly<RuntimeProjectFilesClientOptions> {
+  options: StrictRuntimeProjectFilesClientOptions,
+): Readonly<StrictRuntimeProjectFilesClientOptions> {
   validateRuntimeProjectFilesClientOptions(options);
   return Object.freeze({
     apiUrl: normalizeProjectFilesApiUrl(options.apiUrl),
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     timeoutMs: resolveProjectFilesTimeoutMs(options.timeoutMs),
+    operationTimeoutMs: resolveProjectFilesOperationTimeoutMs(options.operationTimeoutMs),
     pageLimit: resolveProjectFilesPageLimit(options.pageLimit),
     ...(options.trace === undefined ? {} : { trace: options.trace }),
     ...(options.createAccessDeniedError === undefined
@@ -730,6 +844,335 @@ function resolveProjectFilesTimeoutMs(timeoutMs: number | undefined): number {
   return value;
 }
 
+function resolveProjectFilesOperationTimeoutMs(timeoutMs: number | undefined): number {
+  const value = timeoutMs ?? DEFAULT_PROJECT_FILES_OPERATION_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value > MAX_PROJECT_FILES_OPERATION_TIMEOUT_MS
+  ) {
+    throw new RangeError(
+      `operationTimeoutMs must be a positive safe integer no greater than ${MAX_PROJECT_FILES_OPERATION_TIMEOUT_MS}`,
+    );
+  }
+  return value;
+}
+
+type StrictProjectFilesAbortScope = {
+  signal: AbortSignal;
+  abort: (reason: unknown) => void;
+  dispose: () => void;
+};
+
+type StrictProjectFilesRequestScope = StrictProjectFilesAbortScope & {
+  deadline: number;
+};
+
+function createStrictProjectFilesAggregateDeadlineError(): DOMException {
+  return new DOMException(
+    "Project files listing exceeded its aggregate deadline",
+    "TimeoutError",
+  );
+}
+
+function createStrictProjectFilesRequestTimeoutError(): DOMException {
+  return new DOMException("Project files request timed out", "TimeoutError");
+}
+
+function getStrictProjectFilesAbortReason(signal: AbortSignal): unknown {
+  return signal.reason === undefined
+    ? new DOMException("Project files request was aborted", "AbortError")
+    : signal.reason;
+}
+
+function createStrictProjectFilesAbortScope(
+  upstreamSignal: AbortSignal | undefined,
+  timeoutMs: number,
+  createTimeoutReason: () => unknown,
+): StrictProjectFilesAbortScope {
+  if (upstreamSignal?.aborted) {
+    return {
+      signal: upstreamSignal,
+      abort: () => undefined,
+      dispose: () => undefined,
+    };
+  }
+
+  const controller = new AbortController();
+  if (timeoutMs <= 0) {
+    controller.abort(createTimeoutReason());
+    return {
+      signal: controller.signal,
+      abort: () => undefined,
+      dispose: () => undefined,
+    };
+  }
+
+  let disposed = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const abortFromUpstream = () => {
+    if (!controller.signal.aborted && upstreamSignal) {
+      controller.abort(getStrictProjectFilesAbortReason(upstreamSignal));
+    }
+  };
+
+  if (upstreamSignal) {
+    upstreamSignal.addEventListener("abort", abortFromUpstream, { once: true });
+    if (upstreamSignal.aborted) {
+      abortFromUpstream();
+    }
+  }
+  if (!controller.signal.aborted) {
+    timeoutId = setTimeout(() => {
+      controller.abort(createTimeoutReason());
+    }, Math.max(1, Math.ceil(timeoutMs)));
+  }
+
+  return {
+    signal: controller.signal,
+    abort: (reason) => {
+      if (!controller.signal.aborted) {
+        controller.abort(reason);
+      }
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+    },
+  };
+}
+
+function createStrictProjectFilesOperationScope(
+  callerSignal: AbortSignal | undefined,
+  operationDeadline: number,
+): StrictProjectFilesAbortScope {
+  return createStrictProjectFilesAbortScope(
+    callerSignal,
+    operationDeadline - performance.now(),
+    createStrictProjectFilesAggregateDeadlineError,
+  );
+}
+
+function createStrictProjectFilesRequestScope(
+  upstreamSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): StrictProjectFilesRequestScope {
+  const deadline = performance.now() + timeoutMs;
+  return {
+    ...createStrictProjectFilesAbortScope(
+      upstreamSignal,
+      deadline - performance.now(),
+      createStrictProjectFilesRequestTimeoutError,
+    ),
+    deadline,
+  };
+}
+
+function throwIfStrictProjectFilesRequestExpired(
+  requestScope: StrictProjectFilesRequestScope,
+): void {
+  throwIfStrictProjectFilesAborted(requestScope.signal);
+  if (performance.now() >= requestScope.deadline) {
+    const error = createStrictProjectFilesRequestTimeoutError();
+    requestScope.abort(error);
+    throw error;
+  }
+}
+
+function consumeStrictProjectFilesPromise<TResult>(
+  promise: Promise<TResult>,
+): void {
+  promise.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+async function waitForStrictProjectFilesRequestPromise<TResult>(
+  requestScope: StrictProjectFilesRequestScope,
+  createPromise: () => Promise<TResult>,
+  onLateFulfilled?: (value: TResult, reason: unknown) => void,
+): Promise<TResult> {
+  throwIfStrictProjectFilesRequestExpired(requestScope);
+
+  let promise: Promise<TResult>;
+  try {
+    promise = Promise.resolve(createPromise());
+  } catch (error) {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    throw error;
+  }
+
+  const guardedPromise = promise.then((value) => {
+    try {
+      throwIfStrictProjectFilesRequestExpired(requestScope);
+      return value;
+    } catch (error) {
+      try {
+        onLateFulfilled?.(value, error);
+      } catch {
+        // Best-effort cleanup must not replace the deadline or cancellation.
+      }
+      throw error;
+    }
+  });
+
+  try {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+  } catch (error) {
+    consumeStrictProjectFilesPromise(guardedPromise);
+    throw error;
+  }
+
+  let result: TResult;
+  try {
+    result = await waitForStrictProjectFilesAbort(
+      guardedPromise,
+      requestScope.signal,
+    );
+  } catch (error) {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    throw error;
+  }
+
+  try {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    return result;
+  } catch (error) {
+    try {
+      onLateFulfilled?.(result, error);
+    } catch {
+      // Best-effort cleanup must not replace the deadline or cancellation.
+    }
+    throw error;
+  }
+}
+
+async function runStrictProjectFilesRequest<TResult>(
+  options: StrictRuntimeProjectFilesClientOptions,
+  upstreamSignal: AbortSignal | undefined,
+  operation: (requestScope: StrictProjectFilesRequestScope) => Promise<TResult>,
+): Promise<TResult> {
+  const requestScope = createStrictProjectFilesRequestScope(
+    upstreamSignal,
+    resolveProjectFilesTimeoutMs(options.timeoutMs),
+  );
+  try {
+    return await waitForStrictProjectFilesRequestPromise(
+      requestScope,
+      () => operation(requestScope),
+    );
+  } catch (error) {
+    requestScope.abort(error);
+    throw error;
+  } finally {
+    requestScope.dispose();
+  }
+}
+
+function throwIfStrictProjectFilesAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw getStrictProjectFilesAbortReason(signal);
+  }
+}
+
+function throwIfStrictProjectFilesOperationExpired(
+  operationScope: StrictProjectFilesAbortScope,
+  operationDeadline: number,
+): void {
+  throwIfStrictProjectFilesAborted(operationScope.signal);
+  if (performance.now() >= operationDeadline) {
+    const error = createStrictProjectFilesAggregateDeadlineError();
+    operationScope.abort(error);
+    throw error;
+  }
+}
+
+async function waitForStrictProjectFilesOperationPromise<TResult>(
+  operationScope: StrictProjectFilesAbortScope,
+  operationDeadline: number,
+  createPromise: () => Promise<TResult>,
+): Promise<TResult> {
+  throwIfStrictProjectFilesOperationExpired(operationScope, operationDeadline);
+
+  let promise: Promise<TResult>;
+  try {
+    promise = Promise.resolve(createPromise());
+  } catch (error) {
+    throwIfStrictProjectFilesOperationExpired(operationScope, operationDeadline);
+    throw error;
+  }
+
+  const guardedPromise = promise.then((value) => {
+    throwIfStrictProjectFilesOperationExpired(operationScope, operationDeadline);
+    return value;
+  });
+
+  try {
+    throwIfStrictProjectFilesOperationExpired(operationScope, operationDeadline);
+  } catch (error) {
+    consumeStrictProjectFilesPromise(guardedPromise);
+    throw error;
+  }
+
+  try {
+    const result = await waitForStrictProjectFilesAbort(
+      guardedPromise,
+      operationScope.signal,
+    );
+    throwIfStrictProjectFilesOperationExpired(operationScope, operationDeadline);
+    return result;
+  } catch (error) {
+    throwIfStrictProjectFilesOperationExpired(operationScope, operationDeadline);
+    throw error;
+  }
+}
+
+function waitForStrictProjectFilesAbort<TResult>(
+  promise: Promise<TResult>,
+  signal: AbortSignal,
+): Promise<TResult> {
+  if (signal.aborted) {
+    promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    return Promise.reject(getStrictProjectFilesAbortReason(signal));
+  }
+
+  return new Promise<TResult>((resolve, reject) => {
+    let settled = false;
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      action();
+    };
+    const onAbort = () => settle(() => reject(getStrictProjectFilesAbortReason(signal)));
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+    promise.then(
+      (value) => settle(() => resolve(value)),
+      (error) => settle(() => reject(error)),
+    );
+  });
+}
+
+function validateStrictRuntimeProjectFilesRequestContext(
+  options: StrictRuntimeProjectFilesRequestContext,
+): void {
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) {
+    throw new TypeError("signal must be an AbortSignal");
+  }
+}
+
 function resolveProjectFilesPageLimit(pageLimit: number | undefined): number {
   const value = pageLimit ?? DEFAULT_PROJECT_FILES_PAGE_LIMIT;
   if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_PROJECT_FILES_PAGE_LIMIT) {
@@ -777,10 +1220,19 @@ function cancelReaderWithoutWaiting(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   reason?: unknown,
 ): void {
+  let cancellation: Promise<void> | undefined;
   try {
-    void reader.cancel(reason).catch(() => undefined);
+    cancellation = reader.cancel(reason);
   } catch {
     // Best-effort cleanup; preserve the primary protocol error.
+  }
+  try {
+    reader.releaseLock();
+  } catch {
+    // Best-effort cleanup; preserve the primary protocol error.
+  }
+  if (cancellation) {
+    void cancellation.catch(() => undefined);
   }
 }
 
@@ -804,11 +1256,15 @@ async function readBoundedResponseText(
   response: Response,
   maxBytes: number,
   label: string,
+  requestScope: StrictProjectFilesRequestScope,
 ): Promise<string> {
+  throwIfStrictProjectFilesRequestExpired(requestScope);
   parseDeclaredContentLength(response, maxBytes, label);
+  throwIfStrictProjectFilesRequestExpired(requestScope);
 
   const reader = response.body?.getReader();
   if (!reader) {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
     return "";
   }
 
@@ -819,7 +1275,10 @@ async function readBoundedResponseText(
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await waitForStrictProjectFilesRequestPromise(
+        requestScope,
+        () => reader.read(),
+      );
       if (done) {
         completed = true;
         break;
@@ -847,13 +1306,20 @@ async function readBoundedResponseText(
   } finally {
     if (!completed) {
       cancelReaderWithoutWaiting(reader, failure);
+    } else {
+      reader.releaseLock();
     }
-    reader.releaseLock();
   }
 
+  throwIfStrictProjectFilesRequestExpired(requestScope);
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, byteLength));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.subarray(0, byteLength),
+    );
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    return text;
   } catch {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
     throw new RuntimeProjectFilesProtocolError(`${label} was not valid UTF-8`);
   }
 }
@@ -862,11 +1328,16 @@ async function readBoundedJsonResponse(
   response: Response,
   maxBytes: number,
   label: string,
+  requestScope: StrictProjectFilesRequestScope,
 ): Promise<unknown> {
-  const text = await readBoundedResponseText(response, maxBytes, label);
+  const text = await readBoundedResponseText(response, maxBytes, label, requestScope);
+  throwIfStrictProjectFilesRequestExpired(requestScope);
   try {
-    return JSON.parse(text);
+    const value = JSON.parse(text);
+    throwIfStrictProjectFilesRequestExpired(requestScope);
+    return value;
   } catch {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
     throw new RuntimeProjectFilesProtocolError(`${label} was not valid JSON`);
   }
 }
@@ -917,15 +1388,20 @@ async function readApiErrorMessage(response: Response): Promise<string> {
   return body;
 }
 
-async function readStrictApiErrorMessage(response: Response): Promise<string> {
+async function readStrictApiErrorMessage(
+  response: Response,
+  requestScope: StrictProjectFilesRequestScope,
+): Promise<string> {
   let body: string;
   try {
     body = await readBoundedResponseText(
       response,
       MAX_PROJECT_FILES_ERROR_BODY_BYTES,
       "Project files API error response",
+      requestScope,
     );
   } catch (error) {
+    throwIfStrictProjectFilesRequestExpired(requestScope);
     if (isRequestCancellationError(error)) {
       throw error;
     }
@@ -963,4 +1439,75 @@ function traceProjectFilesRequest<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   return options.trace ? options.trace(name, fn) : fn();
+}
+
+async function traceStrictProjectFilesRequest<T>(
+  options: StrictRuntimeProjectFilesClientOptions,
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const trace = options.trace;
+  if (!trace) {
+    return await fn();
+  }
+
+  let traceSettled = false;
+  let operationPromise: Promise<T> | undefined;
+  let invocationError: TypeError | undefined;
+  const rejectClosedInvocation = (): Promise<T> => {
+    const promise = Promise.reject<T>(
+      new TypeError("trace invoked the project files operation after settling"),
+    );
+    consumeStrictProjectFilesPromise(promise);
+    return promise;
+  };
+  const invokeOperation = (): Promise<T> => {
+    if (traceSettled) {
+      return rejectClosedInvocation();
+    }
+    if (operationPromise) {
+      invocationError ??= new TypeError(
+        "trace must invoke the project files operation exactly once",
+      );
+      return operationPromise;
+    }
+    try {
+      operationPromise = Promise.resolve(fn());
+    } catch (error) {
+      operationPromise = Promise.reject(error);
+    }
+    consumeStrictProjectFilesPromise(operationPromise);
+    return operationPromise;
+  };
+
+  let tracePromise: Promise<T>;
+  try {
+    tracePromise = Promise.resolve(trace(name, invokeOperation));
+  } catch (error) {
+    traceSettled = true;
+    if (operationPromise) {
+      consumeStrictProjectFilesPromise(operationPromise);
+    }
+    throw error;
+  }
+
+  try {
+    await tracePromise;
+  } catch (error) {
+    traceSettled = true;
+    if (operationPromise) {
+      consumeStrictProjectFilesPromise(operationPromise);
+    }
+    throw error;
+  }
+
+  traceSettled = true;
+  if (!operationPromise) {
+    throw new TypeError("trace must invoke the project files operation exactly once");
+  }
+  const result = await operationPromise;
+  if (invocationError) {
+    throw invocationError;
+  }
+  return result;
 }

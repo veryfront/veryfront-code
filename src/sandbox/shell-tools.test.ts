@@ -8,6 +8,7 @@ import {
 import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   createSandboxShellTools,
   normalizeBashToolSet,
@@ -215,7 +216,7 @@ describe("sandbox/shell-tools", () => {
       },
       required: ["command"],
       allOf: [{ additionalProperties: false }],
-    };
+    } satisfies JsonSchema;
     const normalized = normalizeBashToolSet({
       bash: { inputSchemaJson },
     });

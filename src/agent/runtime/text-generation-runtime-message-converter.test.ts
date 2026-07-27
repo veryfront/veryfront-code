@@ -12,9 +12,7 @@ import type {
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
-import {
-  markRuntimeGeneratedUserMessage,
-} from "./runtime-message-origin.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 describe("text-generation-runtime-message-converter", () => {
   describe("convertToTextGenerationRuntimeMessage", () => {
@@ -590,40 +588,45 @@ describe("text-generation-runtime-message-converter", () => {
     });
 
     it("retains pending provider correlation across a runtime recovery user message", () => {
-      const messages = [{
-        id: "u1",
-        role: "user",
-        parts: [{ type: "text", text: "Search and inspect" }],
-      }, {
-        id: "a1",
-        role: "assistant",
-        parts: [{
-          type: "tool-web_search",
-          toolCallId: "server_search_1",
-          toolName: "web_search",
-          args: { query: "Veryfront" },
-          providerExecuted: true,
-          supportsDeferredResults: true,
-        }, {
-          type: "tool-local_lookup",
-          toolCallId: "local_lookup_1",
-          toolName: "local_lookup",
-          args: { query: "runtime" },
-        }],
-      }, {
-        id: "local-result",
-        role: "tool",
-        parts: [{
-          type: "tool-result",
-          toolCallId: "local_lookup_1",
-          toolName: "local_lookup",
-          result: { matches: 1 },
-        }],
-      }, markRuntimeGeneratedUserMessage({
-        id: "runtime-recovery",
-        role: "user",
-        parts: [{ type: "text", text: "Retry with available tools." }],
-      })] as unknown as Message[];
+      const messages = [
+        {
+          id: "u1",
+          role: "user",
+          parts: [{ type: "text", text: "Search and inspect" }],
+        },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "server_search_1",
+            toolName: "web_search",
+            args: { query: "Veryfront" },
+            providerExecuted: true,
+            supportsDeferredResults: true,
+          }, {
+            type: "tool-local_lookup",
+            toolCallId: "local_lookup_1",
+            toolName: "local_lookup",
+            args: { query: "runtime" },
+          }],
+        },
+        {
+          id: "local-result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "local_lookup_1",
+            toolName: "local_lookup",
+            result: { matches: 1 },
+          }],
+        },
+        markRuntimeGeneratedUserMessage({
+          id: "runtime-recovery",
+          role: "user",
+          parts: [{ type: "text", text: "Retry with available tools." }],
+        }),
+      ] as unknown as Message[];
 
       const converted = convertToTextGenerationRuntimeMessages(messages);
       const assistant = converted.find(

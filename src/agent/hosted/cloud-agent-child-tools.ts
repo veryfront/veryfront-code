@@ -167,9 +167,13 @@ export function getProjectInstructions(
   context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
   agentId?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   return context.trace("chat.getProjectInstructions", async () => {
-    return await getProjectSteering(context, agentId).getProjectInstructions(lookup);
+    return await getProjectSteering(context, agentId).getProjectInstructionsForRequest(
+      lookup,
+      signal,
+    );
   });
 }
 
@@ -178,9 +182,13 @@ export function getSkillsConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
   agentId?: string,
+  signal?: AbortSignal,
 ): Promise<RuntimeSkillDefinition[]> {
   return context.trace("chat.getSkillsConfig", async () => {
-    return await getProjectSteering(context, agentId).getSkillsConfig(lookup);
+    return await getProjectSteering(context, agentId).getSkillsConfigForRequest(
+      lookup,
+      signal,
+    );
   });
 }
 
@@ -276,11 +284,12 @@ export function fetchProjectSteering(
   context: NodeVeryfrontCloudAgentServiceContext,
   input: { projectId: string | null; authToken: string; branchId?: string | null },
   agentId?: string,
+  signal?: AbortSignal,
 ) {
   return fetchDefaultHostedProjectSteering({
     ...input,
-    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup, agentId),
-    fetchSkills: (lookup) => getSkillsConfig(context, lookup, agentId),
+    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup, agentId, signal),
+    fetchSkills: (lookup) => getSkillsConfig(context, lookup, agentId, signal),
     trace: context.trace,
     traceOperationName: "chat.fetchSteering",
   });

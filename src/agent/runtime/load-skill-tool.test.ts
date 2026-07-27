@@ -138,6 +138,7 @@ Deno.test("an invalid catalog override cannot re-enable a builtin with the same 
       name: "shared",
       description: "Builtin shared",
       instructions: "# Builtin shared",
+      allowedTools: [],
     }],
     getProjectFiles,
     getProjectFile,

@@ -38,9 +38,14 @@ export {
   SKILL_REFERENCES_DIR,
   SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
+  SKILL_STRICT_NAME_REGEX,
   SKILL_TOOL_IDS,
 } from "./types.ts";
-export { SKILL_TEXT_FILE_MAX_BYTES } from "./limits.ts";
+export {
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_SUBDIR_MAX_ENTRIES,
+  SKILL_TEXT_FILE_MAX_BYTES,
+} from "./limits.ts";
 
 // Registry
 export {
@@ -54,13 +59,22 @@ export {
 
 // Parser
 export {
+  parseSkillFileFrontmatter,
   parseSkillFrontmatter,
   validateSkillFileMetadata,
   validateSkillMetadata,
 } from "./parser.ts";
 
 // Path Safety
-export { listSkillSubdir, validateSkillPath } from "./path-safety.ts";
+export {
+  listSkillSubdir,
+  listStrictSkillSubdir,
+  validateSkillPath,
+  validateStrictSkillPath,
+} from "./path-safety.ts";
+
+// Bounded file access
+export { readBoundedSkillTextFile } from "./bounded-text-file.ts";
 
 // Tools
 export {

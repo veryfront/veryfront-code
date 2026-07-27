@@ -3727,4 +3727,101 @@ the `discovery` audit unit is closed. The affected `config`, `trigger`,
 Other touched consumers retain their existing ledger states until their own
 top-level closure passes.
 
+### Skill execution and hosted project-files follow-up checkpoint
+
+This checkpoint revalidates the local and cloud Skill script-execution
+boundary plus the hosted Agent project-files path. It deliberately preserves
+the permissive public project-files client while giving hosted composition a
+separate strict client with request-scoped cancellation and bounded remote
+input handling.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** validated local Skill
+  execution could check one source-root path and launch a same-named path
+  relative to the working directory. When validated content was omitted,
+  local and cloud execution could also read or upload the unresolved caller
+  path without proving source-root containment. The consequence was
+  validation/execution path confusion and a containment bypass. One
+  preparation boundary now resolves the exact lexical source path, enforces
+  containment, performs a bounded read, checks file identity, compares
+  supplied content when present, and returns the exact path and content used
+  by both executors.
+- **Symptom -> Source -> Consequence -> Remedy:** validated scripts were copied
+  into source-adjacent staging files before local launch. The consequence was
+  failure on read-only Skill installations, changed relative-import
+  semantics, and cleanup work in a framework-owned source tree. Local
+  execution now launches the exact validated original path, retains its
+  script-relative imports, and leaves no source staging artifact. Generic
+  public execution without a validated source root keeps its historical
+  direct behavior.
+- **Symptom -> Source -> Consequence -> Remedy:** the execution contract could
+  be described as stronger than the operating-system boundary actually
+  provided. The consequence was treating trusted local code execution as a
+  sandbox or claiming an atomic byte-to-exec guarantee that the host runtime
+  does not expose. Public types and the Skill how-to now state the bounded
+  decoded-content and file-identity checks and explicitly retain local
+  replacement between final validation and process launch as a trusted-code
+  boundary.
+- **Symptom -> Source -> Consequence -> Remedy:** hosted project-file requests
+  used independent timeout fragments and signal-unaware composition.
+  Synchronous custom fetch or trace work could outrun a deadline, pre-aborted
+  calls could still invoke tracing, late responses and noncooperative streams
+  could retain resources, and one cached caller could not be cancelled in
+  isolation. Strict requests now use monotonic per-request and aggregate
+  deadlines, exact caller reasons, disposable listener/timer scopes, bounded
+  response reads, late-response cancellation, immediate reader-lock release,
+  and request-scoped signals carried through hosted preparation. Concurrent
+  calls through the cached adapter remain isolated.
+- **Symptom -> Source -> Consequence -> Remedy:** a custom strict trace wrapper
+  could start its callback and then reject, hang, or resolve a fabricated
+  value independently. The consequence was a stranded fetch or an unvalidated
+  result crossing the strict boundary. Strict tracing now permits exactly one
+  callback invocation, cannot launch it after trace settlement, returns only
+  the callback's validated result, consumes late settlement, and aborts every
+  started request or aggregate operation on failure. The public legacy trace
+  contract remains unchanged.
+- **Symptom -> Source -> Consequence -> Remedy:** injecting the public,
+  signal-unaware project-files client could bypass strict hosted cancellation,
+  while adding a public callback argument would have changed established
+  hosted contracts. Strict adapter construction now rejects that injection.
+  An internal asynchronous request-preparation context carries the exact
+  inbound signal across AG-UI and durable preparation, isolates concurrent
+  and nested calls, and supplies a fresh non-aborted fallback only to direct
+  invocations. The public legacy factory still supports custom client
+  injection.
+
+Current verification evidence:
+
+- The hosted project-files, steering, request-context, and route portfolio
+  passes 97 tests with sanitizers and zero failures. The project-files client
+  contributes 64 cases, including early trace rejection and success,
+  fabricated results, noncooperative tracing and streams, synchronous
+  deadline starvation, late responses, exact cancellation identity, timer
+  disposal, pagination limits, and cached-call isolation.
+- The affected Skill, filesystem compatibility, sandbox, and Agent runtime
+  portfolio passes 65 suites with 333 nested steps and zero failures. It
+  covers conflicting working-directory paths, omitted working directories and
+  content, outside-root rejection before cloud provisioning, read-only Skill
+  trees, relative imports, bounded output, cancellation, sandbox cleanup, and
+  current policy consumers.
+- The five CLI Skill test files pass 6 suites with 53 nested steps and zero
+  failures. Generated API reference pages and the Skill guide pass
+  documentation validation across all 40 reference pages, 67 guides, 112
+  public docs, executable examples, and 746 links.
+- `deno task verify:quick` passes fresh manifests, formatting across 4,423
+  configured files, lint across 4,329 source files, every style, dependency,
+  module, extension, sanitizer, and skipped-test ratchet, zero cyclic module
+  edges, documentation validation, and all configured production and browser
+  entrypoint typechecks. The module baseline remains 62 broad imports with no
+  new violation.
+
+No known critical or high-confidence risk remains in the narrowed execution
+and hosted project-files paths above. The `skill` unit remains in
+touched/revalidation-required status because reserving framework Skill tool
+IDs and replacing persisted-history activation with freshly re-derived trusted
+state require an explicitly approved compatibility decision. The `agent` unit
+also remains in revalidation until its complete top-level gate passes. This
+checkpoint therefore does not change the formal 32-of-58 closure count.
+
 Update this ledger in the same commit that closes or reopens an audit unit.

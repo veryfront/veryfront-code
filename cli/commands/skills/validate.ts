@@ -9,8 +9,7 @@ import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json
 import { logError, logSuccess } from "#cli/utils";
 import { basename } from "#std/path.ts";
 import { isNotFoundError } from "veryfront/fs";
-import { validateSkillFileMetadata } from "veryfront/skill";
-import { parseSkillFileFrontmatter } from "#veryfront/skill/parser.ts";
+import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "veryfront/skill";
 import { readSkillDocument } from "../../skills/read-skill-document.ts";
 
 interface ValidationIssue {

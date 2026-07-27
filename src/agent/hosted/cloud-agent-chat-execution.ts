@@ -28,6 +28,7 @@ import {
   type AgentServiceRuntimeConfig,
   type CreateAgentServiceRuntimeOptions,
 } from "../service/runtime.ts";
+import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import {
   createAgentServiceRegistrationLifecycle,
@@ -307,10 +308,12 @@ export async function prepareChatExecutionWithinProjectRuntime(
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
+  const abortSignal = resolveHostedRequestPreparationSignal();
+  abortSignal.throwIfAborted();
   const requestedAgentId = req.agentId ?? getDefaultAgentId(context);
   // veryfront-api is the trusted caller for request-scoped project-agent config.
   const agentConfig = req.agentConfig ?? await resolveAgentConfig(context, requestedAgentId);
-  const abortController = new AbortController();
+  abortSignal.throwIfAborted();
   const {
     effectiveMessages,
     rootRunContext,
@@ -320,7 +323,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
     request: req,
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
-    abortSignal: abortController.signal,
+    abortSignal,
     logger: context.infrastructure.logger,
     rootRun: {
       instrumentation: {
@@ -331,13 +334,14 @@ export async function prepareChatExecutionWithinProjectRuntime(
         error: (message, metadata) => context.infrastructure.logger.error(message, metadata),
       },
     },
-    fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
+    fetchSteering: (steeringInput) =>
+      fetchProjectSteering(context, steeringInput, undefined, abortSignal),
     buildInstructions: buildVeryfrontCloudRuntimeInstructions,
     contextBudget: createHostedChatContextBudgetOptions(
       context,
       req,
       agentConfig,
-      abortController.signal,
+      abortSignal,
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () =>

@@ -8,16 +8,15 @@ import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import {
+  listStrictSkillSubdir,
+  parseSkillFileFrontmatter,
+  SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_STRICT_NAME_REGEX,
+  SKILL_SUBDIR_MAX_ENTRIES,
   type SkillMetadata as ValidatedSkillMetadata,
   validateSkillFileMetadata,
+  validateStrictSkillPath,
 } from "veryfront/skill";
-import { listStrictSkillSubdir, validateStrictSkillPath } from "#veryfront/skill/path-safety.ts";
-import { parseSkillFileFrontmatter } from "#veryfront/skill/parser.ts";
-import { SKILL_STRICT_NAME_REGEX } from "#veryfront/skill/types.ts";
-import {
-  SKILL_RELATIVE_PATH_MAX_LENGTH,
-  SKILL_SUBDIR_MAX_ENTRIES,
-} from "#veryfront/skill/limits.ts";
 import { readSkillDocument } from "../../skills/read-skill-document.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, getFs } from "./helpers.ts";

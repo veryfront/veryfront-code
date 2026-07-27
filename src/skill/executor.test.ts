@@ -5,7 +5,6 @@ import {
   exists,
   makeTempDir,
   mkdir,
-  readDir,
   realPath,
   remove,
   writeTextFile,
@@ -150,16 +149,14 @@ describe("src/skill/executor", () => {
       assertEquals(result.exitCode, 0);
     });
 
-    it("preserves relative imports for an explicitly validated source root", async () => {
+    it("executes the original validated path while preserving relative imports", async () => {
       const skillRoot = await makeTempDir({ prefix: "vf-skill-source-root-" });
       const scriptDirectory = `${skillRoot}/scripts`;
       const scriptPath = `${scriptDirectory}/main.js`;
       const scriptContent = [
-        'const fs = require("node:fs");',
         'const helper = require("./helper.js");',
         "process.stdout.write(JSON.stringify({",
         "  message: helper.message,",
-        "  mode: fs.statSync(__filename).mode & 0o777,",
         "  path: __filename,",
         "}));",
       ].join("\n");
@@ -183,20 +180,187 @@ describe("src/skill/executor", () => {
         assertEquals(result.stderr, "");
         const observed = JSON.parse(result.stdout) as {
           message: string;
-          mode: number;
           path: string;
         };
         assertEquals(observed.message, "relative-ok");
-        assertEquals(observed.path === scriptPath, false);
-        assertEquals(await exists(observed.path), false);
-        if (getOsType() !== "windows") {
-          assertEquals(observed.mode, 0o500);
-        }
-        const leakedSnapshots = (await Array.fromAsync(readDir(scriptDirectory)))
-          .filter((entry) => entry.name.startsWith(".veryfront-script-"));
-        assertEquals(leakedSnapshots, []);
+        assertEquals(await realPath(observed.path), await realPath(scriptPath));
+        assertEquals(await exists(scriptPath), true);
       } finally {
         await remove(skillRoot, { recursive: true });
+      }
+    });
+
+    it("executes the validated source-root path when a relative script conflicts with cwd", async () => {
+      const root = await makeTempDir({ prefix: "vf-skill-relative-cwd-" });
+      const skillRoot = `${root}/skill`;
+      const workingDirectory = `${root}/other`;
+      const scriptContent = 'process.stdout.write("validated");';
+
+      try {
+        await mkdir(skillRoot);
+        await mkdir(workingDirectory);
+        await writeTextFile(`${skillRoot}/run.js`, scriptContent);
+        await writeTextFile(
+          `${workingDirectory}/run.js`,
+          'process.stdout.write("wrong-working-directory-script");',
+        );
+
+        const result = await new LocalScriptExecutor().execute({
+          scriptPath: "run.js",
+          scriptContent,
+          cwd: workingDirectory,
+          validatedSourceRoot: skillRoot,
+        });
+
+        assertEquals(result.exitCode, 0);
+        assertEquals(result.stderr, "");
+        assertEquals(result.stdout, "validated");
+      } finally {
+        await remove(root, { recursive: true });
+      }
+    });
+
+    it("executes a relative validated script from its source root when cwd is omitted", async () => {
+      const skillRoot = await makeTempDir({ prefix: "vf-skill-relative-default-cwd-" });
+      const scriptContent = 'process.stdout.write("validated-without-cwd");';
+
+      try {
+        await writeTextFile(`${skillRoot}/run.js`, scriptContent);
+
+        const result = await new LocalScriptExecutor().execute({
+          scriptPath: "run.js",
+          scriptContent,
+          validatedSourceRoot: skillRoot,
+        });
+
+        assertEquals(result.exitCode, 0);
+        assertEquals(result.stderr, "");
+        assertEquals(result.stdout, "validated-without-cwd");
+      } finally {
+        await remove(skillRoot, { recursive: true });
+      }
+    });
+
+    it("validates and executes source-root content when validated content is omitted", async () => {
+      const root = await makeTempDir({ prefix: "vf-skill-relative-read-" });
+      const skillRoot = `${root}/skill`;
+      const workingDirectory = `${root}/other`;
+
+      try {
+        await mkdir(skillRoot);
+        await mkdir(workingDirectory);
+        await writeTextFile(
+          `${skillRoot}/run.js`,
+          'process.stdout.write("validated-source-root");',
+        );
+        await writeTextFile(
+          `${workingDirectory}/run.js`,
+          'process.stdout.write("wrong-working-directory-script");',
+        );
+
+        const result = await new LocalScriptExecutor().execute({
+          scriptPath: "run.js",
+          cwd: workingDirectory,
+          validatedSourceRoot: skillRoot,
+        });
+
+        assertEquals(result.exitCode, 0);
+        assertEquals(result.stderr, "");
+        assertEquals(result.stdout, "validated-source-root");
+      } finally {
+        await remove(root, { recursive: true });
+      }
+    });
+
+    it("resolves a relative source-root script when validated content and cwd are omitted", async () => {
+      const skillRoot = await makeTempDir({ prefix: "vf-skill-relative-read-default-cwd-" });
+
+      try {
+        await writeTextFile(
+          `${skillRoot}/run.js`,
+          'process.stdout.write("validated-source-root-without-cwd");',
+        );
+
+        const result = await new LocalScriptExecutor().execute({
+          scriptPath: "run.js",
+          validatedSourceRoot: skillRoot,
+        });
+
+        assertEquals(result.exitCode, 0);
+        assertEquals(result.stderr, "");
+        assertEquals(result.stdout, "validated-source-root-without-cwd");
+      } finally {
+        await remove(skillRoot, { recursive: true });
+      }
+    });
+
+    it("rejects an uncontained script when validated content is omitted", async () => {
+      const root = await makeTempDir({ prefix: "vf-skill-uncontained-read-" });
+      const skillRoot = `${root}/skill`;
+      const outsideScript = `${root}/outside.js`;
+
+      try {
+        await mkdir(skillRoot);
+        await writeTextFile(outsideScript, 'process.stdout.write("outside");');
+
+        await assertRejects(
+          () =>
+            new LocalScriptExecutor().execute({
+              scriptPath: outsideScript,
+              validatedSourceRoot: skillRoot,
+            }),
+          TypeError,
+          "must remain inside its working directory",
+        );
+      } finally {
+        await remove(root, { recursive: true });
+      }
+    });
+
+    it("rejects a validated script whose source bytes changed before launch", async () => {
+      const skillRoot = await makeTempDir({ prefix: "vf-skill-source-change-" });
+      const scriptPath = `${skillRoot}/run.js`;
+
+      try {
+        await writeTextFile(scriptPath, 'process.stdout.write("current");');
+
+        await assertRejects(
+          () =>
+            new LocalScriptExecutor().execute({
+              scriptPath,
+              scriptContent: 'process.stdout.write("validated");',
+              validatedSourceRoot: skillRoot,
+            }),
+          Error,
+          "content changed while preparing execution",
+        );
+      } finally {
+        await remove(skillRoot, { recursive: true });
+      }
+    });
+
+    it("rejects a validated script outside its declared source root", async () => {
+      const root = await makeTempDir({ prefix: "vf-skill-source-containment-" });
+      const skillRoot = `${root}/skill`;
+      const scriptPath = `${root}/outside.js`;
+      const scriptContent = 'process.stdout.write("outside");';
+
+      try {
+        await mkdir(skillRoot);
+        await writeTextFile(scriptPath, scriptContent);
+
+        await assertRejects(
+          () =>
+            new LocalScriptExecutor().execute({
+              scriptPath,
+              scriptContent,
+              validatedSourceRoot: skillRoot,
+            }),
+          TypeError,
+          "must remain inside its working directory",
+        );
+      } finally {
+        await remove(root, { recursive: true });
       }
     });
 
@@ -213,7 +377,7 @@ describe("src/skill/executor", () => {
         const result = await new LocalScriptExecutor().execute({
           scriptPath,
           // LocalScriptExecutor historically executes scriptPath for generic
-          // direct calls; snapshot staging is an explicit tool contract.
+          // direct calls unless a validated source root is also supplied.
           scriptContent: 'process.stdout.write("must-not-run");',
           cwd: workingDirectory,
         });
@@ -397,6 +561,73 @@ describe("src/skill/executor", () => {
         "bytes",
       );
       assertEquals(fetchCalls.length, 0);
+    });
+
+    it("reads and uploads a contained source-root script when cloud content is omitted", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      const skillRoot = await makeTempDir({ prefix: "vf-skill-cloud-contained-" });
+      const scriptContent = "printf cloud-contained";
+      mockFetch([
+        jsonResponse({
+          id: "session-contained-read",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        textResponse(""),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        ndjsonResponse([
+          { type: "stdout", data: "cloud-contained" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        textResponse(""),
+      ]);
+
+      try {
+        await writeTextFile(`${skillRoot}/run.sh`, scriptContent);
+
+        const result = await getSkillScriptExecutor().execute({
+          scriptPath: "run.sh",
+          validatedSourceRoot: skillRoot,
+        });
+
+        assertEquals(result, { stdout: "cloud-contained", stderr: "", exitCode: 0 });
+        const filesBody = jsonBody(fetchCalls, 2) as {
+          files: Array<{ path: string; content: string }>;
+        };
+        assertEquals(filesBody.files[0]?.content, scriptContent);
+      } finally {
+        await remove(skillRoot, { recursive: true });
+      }
+    });
+
+    it("rejects an uncontained cloud script before reading or provisioning", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      const root = await makeTempDir({ prefix: "vf-skill-cloud-uncontained-" });
+      const skillRoot = `${root}/skill`;
+      const outsideScript = `${root}/outside.sh`;
+      mockFetch([]);
+
+      try {
+        await mkdir(skillRoot);
+        await writeTextFile(outsideScript, "printf outside");
+
+        await assertRejects(
+          () =>
+            getSkillScriptExecutor().execute({
+              scriptPath: outsideScript,
+              validatedSourceRoot: skillRoot,
+            }),
+          TypeError,
+          "must remain inside its working directory",
+        );
+        assertEquals(fetchCalls.length, 0);
+      } finally {
+        await remove(root, { recursive: true });
+      }
     });
 
     it("bounds sandbox provisioning with the script timeout", async () => {

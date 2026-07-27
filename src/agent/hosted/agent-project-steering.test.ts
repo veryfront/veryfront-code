@@ -1,7 +1,10 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { afterEach } from "#veryfront/testing/bdd.ts";
 import { join, resolve } from "node:path";
-import { createHostedAgentProjectSteering } from "./agent-project-steering.ts";
+import {
+  createHostedAgentProjectSteering,
+  createStrictHostedAgentProjectSteering,
+} from "./agent-project-steering.ts";
 import { reset, tryResolve } from "../../extensions/contracts.ts";
 import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import type { RuntimeProjectFilesFetch } from "../runtime/project-files-client.ts";
@@ -176,6 +179,97 @@ Deno.test("createHostedAgentProjectSteering validates traversal-prone agent inpu
   );
 });
 
+Deno.test("strict hosted agent steering rejects unsafe project identity before fetch", async () => {
+  await withTempDir(async (rootDir) => {
+    const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
+    let fetchCalls = 0;
+    const steering = createStrictHostedAgentProjectSteering({
+      baseDir,
+      agentId: "support",
+      getApiUrl: () => "https://api.example.com",
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    await assertRejects(
+      () =>
+        steering.getProjectInstructions({
+          projectId: "..",
+          authToken: "auth-token",
+        }),
+      TypeError,
+      "route-safe",
+    );
+    assertEquals(fetchCalls, 0);
+  });
+});
+
+Deno.test("strict hosted agent steering keeps cancellation request-scoped across its cached adapter", async () => {
+  await withTempDir(async (rootDir) => {
+    const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const firstCancellation = new DOMException("stop first steering call", "AbortError");
+    let notifyBothFetchesStarted!: () => void;
+    const bothFetchesStarted = new Promise<void>((resolve) => {
+      notifyBothFetchesStarted = resolve;
+    });
+    let resolveFirstFetch!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirstFetch = resolve;
+    });
+    let resolveSecondFetch!: (response: Response) => void;
+    const secondFetch = new Promise<Response>((resolve) => {
+      resolveSecondFetch = resolve;
+    });
+    const observedSignals: AbortSignal[] = [];
+    let fetchCalls = 0;
+    const steering = createStrictHostedAgentProjectSteering({
+      baseDir,
+      agentId: "support",
+      getApiUrl: () => "https://api.example.com",
+      fetch: (_url, init) => {
+        fetchCalls += 1;
+        observedSignals.push(init.signal as AbortSignal);
+        if (fetchCalls === 2) {
+          notifyBothFetchesStarted();
+        }
+        return fetchCalls === 1 ? firstFetch : secondFetch;
+      },
+    });
+    const cachedAdapter = steering.getProjectSteeringAdapter();
+
+    const firstInstructions = steering.getProjectInstructionsForRequest(
+      {
+        projectId: "project-1",
+        authToken: "auth-token",
+      },
+      firstController.signal,
+    );
+    const secondInstructions = steering.getProjectInstructionsForRequest(
+      {
+        projectId: "project-1",
+        authToken: "auth-token",
+      },
+      secondController.signal,
+    );
+    await bothFetchesStarted;
+    firstController.abort(firstCancellation);
+    const firstError = await assertRejects(() => firstInstructions);
+    resolveFirstFetch(new Response(null, { status: 404 }));
+    resolveSecondFetch(new Response(null, { status: 404 }));
+
+    assertEquals(firstError, firstCancellation);
+    assertEquals(await secondInstructions, "");
+    assertEquals(steering.getProjectSteeringAdapter(), cachedAdapter);
+    assertEquals(observedSignals.length, 2);
+    assertEquals(observedSignals[0]?.reason, firstCancellation);
+    assertEquals(observedSignals[1]?.aborted, false);
+  });
+});
+
 Deno.test("createHostedAgentProjectSteering exposes load_skill and refresh helpers", async () => {
   await withTempDir(async (rootDir) => {
     const baseDir = writeAgentDefinition({ rootDir, agentId: "support" });
@@ -212,7 +306,7 @@ Plan carefully.`,
       projectId: null,
       authToken: "auth-token",
       branchId: null,
-      availableSkillIds: [],
+      availableSkillIds: ["plan"],
       availableToolNames: [],
     });
     const result = await tool.execute({ skillId: "plan" });

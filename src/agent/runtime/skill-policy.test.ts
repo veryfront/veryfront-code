@@ -18,9 +18,7 @@ import {
   SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
-import {
-  markRuntimeGeneratedUserMessage,
-} from "./runtime-message-origin.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 describe("src/agent/runtime skill policy helpers", () => {
   describe("extractSkillPolicy", () => {

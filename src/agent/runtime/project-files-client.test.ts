@@ -34,6 +34,7 @@ const baseOptions = {
 const TEST_MAX_PAGE_LIMIT = 100;
 const TEST_MAX_TOTAL_FILES = 10_000;
 const TEST_MAX_TOTAL_PAGES = 200;
+const TEST_MAX_OPERATION_TIMEOUT_MS = 300_000;
 const TEST_MAX_PATH_CHARACTERS = 4_096;
 const TEST_MAX_ERROR_BODY_BYTES = 64 * 1_024;
 
@@ -41,6 +42,20 @@ type FetchCall = {
   url: string;
   init: RequestInit;
 };
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -355,6 +370,108 @@ Deno.test("legacy project file response and error body handling remains observab
   assertEquals(cancelled, false);
 });
 
+Deno.test("legacy project file calls preserve normal REST, auth, and response shaping", async () => {
+  const fileFetch = mockFetchResponses(
+    jsonResponse({
+      path: "src/index.ts",
+      content: "hello",
+      type: "file",
+      size: 5,
+    }),
+  );
+  assertEquals(
+    await getRuntimeProjectFile({
+      ...baseOptions,
+      branchId: "branch-1",
+      fetch: fileFetch,
+      path: "src/index.ts",
+    }),
+    { path: "src/index.ts", content: "hello" },
+  );
+  const fileUrl = getRequestedUrl(fileFetch);
+  assertEquals(fileUrl.pathname, "/projects/project-1/files/src%2Findex.ts");
+  assertEquals(fileUrl.searchParams.get("branch"), "branch-1");
+  assertEquals(fileUrl.searchParams.get("fields"), "(path,content)");
+  assertEquals(
+    new Headers(getFetchCall(fileFetch).init.headers).get("Authorization"),
+    "Bearer token-1",
+  );
+
+  const listFetch = mockFetchResponses(
+    jsonResponse({
+      data: [{ path: "src/index.ts", type: "file", size: 5 }],
+      page_info: { next: null },
+    }),
+  );
+  assertEquals(
+    await getRuntimeProjectFiles({
+      ...baseOptions,
+      branchId: "branch-1",
+      fetch: listFetch,
+    }),
+    [{ path: "src/index.ts" }],
+  );
+  const listUrl = getRequestedUrl(listFetch);
+  assertEquals(listUrl.pathname, "/projects/project-1/files");
+  assertEquals(listUrl.searchParams.get("branch"), "branch-1");
+  assertEquals(listUrl.searchParams.get("fields"), "(path)");
+  assertEquals(listUrl.searchParams.get("limit"), "100");
+  assertEquals(
+    new Headers(getFetchCall(listFetch).init.headers).get("Authorization"),
+    "Bearer token-1",
+  );
+});
+
+Deno.test("legacy project file calls preserve auth and custom error identities", async () => {
+  for (const status of [401, 403]) {
+    const error = await assertRejects(() =>
+      getRuntimeProjectFile({
+        ...baseOptions,
+        fetch: mockFetchResponses(textResponse("denied", status)),
+        path: "src/index.ts",
+      })
+    );
+    assertInstanceOf(error, RuntimeProjectFilesApiAuthError);
+    assertEquals((error as RuntimeProjectFilesApiAuthError).statusCode, status);
+  }
+
+  const customError = await assertRejects(() =>
+    getRuntimeProjectFile({
+      ...baseOptions,
+      createAccessDeniedError: (statusCode, message) =>
+        new Error(`custom:${statusCode}:${message}`),
+      fetch: mockFetchResponses(textResponse("denied", 403)),
+      path: "src/index.ts",
+    })
+  );
+  assertEquals(
+    getErrorMessage(customError),
+    "custom:403:Access denied to project files API",
+  );
+});
+
+Deno.test("legacy project file calls preserve upstream and network failures", async () => {
+  const upstreamError = await assertRejects(() =>
+    getRuntimeProjectFiles({
+      ...baseOptions,
+      fetch: mockFetchResponses(textResponse("Project not found", 404)),
+    })
+  );
+  assertStringIncludes(getErrorMessage(upstreamError), "Project not found");
+
+  const networkError = new Error("ECONNREFUSED");
+  const thrown = await assertRejects(() =>
+    getRuntimeProjectFile({
+      ...baseOptions,
+      fetch: async () => {
+        throw networkError;
+      },
+      path: "src/index.ts",
+    })
+  );
+  assertEquals(thrown, networkError);
+});
+
 Deno.test("getStrictRuntimeProjectFile returns a project file from the API file route", async () => {
   const fileData = { path: "src/index.ts", content: "hello" };
   const fetchSpy = mockFetchResponses(
@@ -660,6 +777,24 @@ Deno.test("strict runtime project files client validates timeout and page-limit 
     () =>
       createStrictRuntimeProjectFilesClient({
         apiUrl: baseOptions.apiUrl,
+        operationTimeoutMs: 0,
+      }),
+    RangeError,
+    "operationTimeoutMs",
+  );
+  assertThrows(
+    () =>
+      createStrictRuntimeProjectFilesClient({
+        apiUrl: baseOptions.apiUrl,
+        operationTimeoutMs: TEST_MAX_OPERATION_TIMEOUT_MS + 1,
+      }),
+    RangeError,
+    "operationTimeoutMs",
+  );
+  assertThrows(
+    () =>
+      createStrictRuntimeProjectFilesClient({
+        apiUrl: baseOptions.apiUrl,
         timeoutMs: 0,
       }),
     RangeError,
@@ -829,6 +964,33 @@ Deno.test("strict runtime project files preserve timeout identity across request
   assertEquals((errorBodyError as Error).cause === timeoutCause, true);
 });
 
+Deno.test("strict project file requests enforce monotonic timeouts around synchronous fetch work", async () => {
+  const responseCancelled = createDeferred<void>();
+  const response = streamResponse(
+    [new TextEncoder().encode('{"path":"src/index.ts","content":"ok"}')],
+    {},
+    { onCancel: () => responseCancelled.resolve() },
+  );
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      timeoutMs: 1,
+      fetch: async () => {
+        const busyUntil = performance.now() + 20;
+        while (performance.now() < busyUntil) {
+          // Deliberately block timer delivery to verify the monotonic check.
+        }
+        return response;
+      },
+      path: "src/index.ts",
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "request timed out");
+  await responseCancelled.promise;
+});
+
 Deno.test("getStrictRuntimeProjectFile bounds upstream error bodies", async () => {
   const oversizedError = new Uint8Array(TEST_MAX_ERROR_BODY_BYTES + 1);
   oversizedError.fill("x".charCodeAt(0));
@@ -921,6 +1083,410 @@ Deno.test("getStrictRuntimeProjectFiles follows API pagination until no next cur
 
   assertEquals(result, [{ path: "a.ts" }, { path: "b.ts" }]);
   assertEquals(getRequestedUrl(fetchSpy, 1).searchParams.get("cursor"), "cursor-2");
+});
+
+Deno.test("getStrictRuntimeProjectFiles cancels a late terminal response after its aggregate deadline", async () => {
+  const lateFetch = createDeferred<Response>();
+  const responseCancelled = createDeferred<void>();
+  let fetchCalls = 0;
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      operationTimeoutMs: 1,
+      fetch: () => {
+        fetchCalls += 1;
+        return lateFetch.promise;
+      },
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "aggregate deadline");
+  assertEquals(fetchCalls, 1);
+
+  lateFetch.resolve(
+    streamResponse(
+      [new TextEncoder().encode('{"data":[],"page_info":{"next":null}}')],
+      {},
+      { onCancel: () => responseCancelled.resolve() },
+    ),
+  );
+  await responseCancelled.promise;
+});
+
+Deno.test("getStrictRuntimeProjectFiles bounds a stalled terminal response body", async () => {
+  const responseCancelled = createDeferred<void>();
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      responseCancelled.resolve();
+      return new Promise(() => undefined);
+    },
+  });
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      operationTimeoutMs: 1,
+      fetch: () => Promise.resolve(new Response(body)),
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "aggregate deadline");
+  await responseCancelled.promise;
+  assertEquals(body.locked, false);
+});
+
+Deno.test("getStrictRuntimeProjectFiles bounds a noncooperative trace wrapper", async () => {
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      operationTimeoutMs: 1,
+      fetch: () => Promise.reject(new Error("trace must not invoke the request")),
+      trace: () => new Promise(() => undefined),
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "aggregate deadline");
+});
+
+Deno.test("strict listing trace rejection aborts an operation the trace already started", async () => {
+  const traceError = new Error("listing trace export failed");
+  const fetchStarted = createDeferred<void>();
+  let fetchSignal: AbortSignal | undefined;
+
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      operationTimeoutMs: 100,
+      fetch: (_url, init) => {
+        fetchSignal = init.signal as AbortSignal;
+        fetchStarted.resolve();
+        return new Promise(() => undefined);
+      },
+      trace: async <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        void operation();
+        await fetchStarted.promise;
+        throw traceError;
+      },
+    })
+  );
+
+  assertEquals(error, traceError);
+  assertEquals(fetchSignal?.aborted, true);
+  assertEquals(fetchSignal?.reason, traceError);
+});
+
+Deno.test("getStrictRuntimeProjectFiles enforces its deadline after trace post-processing", async () => {
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      operationTimeoutMs: 10,
+      fetch: () => Promise.resolve(jsonResponse({ data: [], page_info: { next: null } })),
+      trace: async <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        const result = await operation();
+        const busyUntil = performance.now() + 50;
+        while (performance.now() < busyUntil) {
+          // Deliberately starve timer delivery after the traced work resolves.
+        }
+        return result;
+      },
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "aggregate deadline");
+});
+
+Deno.test("expired aggregate deadlines do not launch fetches after trace pre-processing", async () => {
+  let fetchCalls = 0;
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      operationTimeoutMs: 5,
+      fetch: () => {
+        fetchCalls += 1;
+        return Promise.resolve(jsonResponse({ data: [], page_info: { next: null } }));
+      },
+      trace: async <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        const busyUntil = performance.now() + 30;
+        while (performance.now() < busyUntil) {
+          // Deliberately starve timer delivery before invoking traced work.
+        }
+        return await operation();
+      },
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "aggregate deadline");
+  assertEquals(fetchCalls, 0);
+});
+
+Deno.test("pre-aborted project file listings do not invoke custom trace wrappers", async () => {
+  const controller = new AbortController();
+  const cancellation = { kind: "listing-cancelled" };
+  controller.abort(cancellation);
+  let traceCalls = 0;
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFiles({
+      ...baseOptions,
+      signal: controller.signal,
+      fetch: () => Promise.reject(new Error("fetch must not run")),
+      trace: () => {
+        traceCalls += 1;
+        throw new Error("sync trace failure");
+      },
+    })
+  );
+
+  assertEquals(error === cancellation, true);
+  assertEquals(traceCalls, 0);
+});
+
+Deno.test("getStrictRuntimeProjectFile bounds a noncooperative trace wrapper", async () => {
+  let fetchCalls = 0;
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      timeoutMs: 1,
+      fetch: () => {
+        fetchCalls += 1;
+        return Promise.resolve(jsonResponse({ path: "src/index.ts", content: "unused" }));
+      },
+      path: "src/index.ts",
+      trace: () => new Promise(() => undefined),
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "request timed out");
+  assertEquals(fetchCalls, 0);
+});
+
+Deno.test("strict trace rejection aborts an operation the trace already started", async () => {
+  const traceError = new Error("trace export failed");
+  const fetchStarted = createDeferred<void>();
+  let fetchSignal: AbortSignal | undefined;
+
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      timeoutMs: 100,
+      fetch: (_url, init) => {
+        fetchSignal = init.signal as AbortSignal;
+        fetchStarted.resolve();
+        return new Promise(() => undefined);
+      },
+      path: "src/index.ts",
+      trace: async <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        void operation();
+        await fetchStarted.promise;
+        throw traceError;
+      },
+    })
+  );
+
+  assertEquals(error, traceError);
+  assertEquals(fetchSignal?.aborted, true);
+  assertEquals(fetchSignal?.reason, traceError);
+});
+
+Deno.test("strict trace success cannot fabricate a result ahead of its operation", async () => {
+  let fetchSignal: AbortSignal | undefined;
+
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      timeoutMs: 5,
+      fetch: (_url, init) => {
+        fetchSignal = init.signal as AbortSignal;
+        return new Promise(() => undefined);
+      },
+      path: "src/index.ts",
+      trace: <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        void operation();
+        return Promise.resolve(null as T);
+      },
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "request timed out");
+  assertEquals(fetchSignal?.aborted, true);
+});
+
+Deno.test("strict trace returns the validated operation result instead of its own value", async () => {
+  const result = await getStrictRuntimeProjectFile({
+    ...baseOptions,
+    fetch: () =>
+      Promise.resolve(
+        jsonResponse({ path: "src/index.ts", content: "validated" }),
+      ),
+    path: "src/index.ts",
+    trace: <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+      void operation();
+      return Promise.resolve(null as T);
+    },
+  });
+
+  assertEquals(result, { path: "src/index.ts", content: "validated" });
+});
+
+Deno.test("strict request aborts work started by a noncooperative trace wrapper", async () => {
+  let fetchSignal: AbortSignal | undefined;
+
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      timeoutMs: 5,
+      fetch: (_url, init) => {
+        fetchSignal = init.signal as AbortSignal;
+        return new Promise(() => undefined);
+      },
+      path: "src/index.ts",
+      trace: <T>(_name: string, operation: () => Promise<T>): Promise<T> => {
+        void operation();
+        return new Promise(() => undefined);
+      },
+    })
+  );
+
+  assertEquals((error as Error).name, "TimeoutError");
+  assertStringIncludes(getErrorMessage(error), "request timed out");
+  assertEquals(fetchSignal?.aborted, true);
+});
+
+Deno.test("strict project file requests propagate in-flight caller cancellation exactly", async () => {
+  const controller = new AbortController();
+  const cancellation = new DOMException("caller stopped in flight", "AbortError");
+  const fetchStarted = createDeferred<void>();
+  const observedSignals: AbortSignal[] = [];
+
+  const request = getStrictRuntimeProjectFile({
+    ...baseOptions,
+    signal: controller.signal,
+    fetch: (_url, init) => {
+      observedSignals.push(init.signal as AbortSignal);
+      fetchStarted.resolve();
+      return new Promise(() => undefined);
+    },
+    path: "src/index.ts",
+  });
+
+  await fetchStarted.promise;
+  controller.abort(cancellation);
+  const error = await assertRejects(() => request);
+
+  assertEquals(error, cancellation);
+  assertEquals(observedSignals[0]?.aborted, true);
+  assertEquals(observedSignals[0]?.reason, cancellation);
+});
+
+Deno.test("strict project error-body reads preserve arbitrary caller cancellation reasons", async () => {
+  const controller = new AbortController();
+  const cancellation = { kind: "caller-disconnected" };
+  const bodyReadStarted = createDeferred<void>();
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      pull() {
+        bodyReadStarted.resolve();
+      },
+    }),
+    { status: 500 },
+  );
+  const request = getStrictRuntimeProjectFile({
+    ...baseOptions,
+    signal: controller.signal,
+    fetch: () => Promise.resolve(response),
+    path: "src/index.ts",
+  });
+
+  await bodyReadStarted.promise;
+  controller.abort(cancellation);
+  const error = await assertRejects(() => request);
+
+  assertEquals(error === cancellation, true);
+  assertEquals(response.body?.locked, false);
+});
+
+Deno.test("successful strict project file calls dispose cancellation listeners and timers", async () => {
+  const controller = new AbortController();
+  const callerSignal = controller.signal;
+  const originalAddEventListener = callerSignal.addEventListener;
+  const originalRemoveEventListener = callerSignal.removeEventListener;
+  let abortListenerAdds = 0;
+  let abortListenerRemovals = 0;
+  Object.defineProperty(callerSignal, "addEventListener", {
+    configurable: true,
+    value(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type === "abort") abortListenerAdds += 1;
+      Reflect.apply(originalAddEventListener, callerSignal, [type, listener, options]);
+    },
+  });
+  Object.defineProperty(callerSignal, "removeEventListener", {
+    configurable: true,
+    value(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ) {
+      if (type === "abort") abortListenerRemovals += 1;
+      Reflect.apply(originalRemoveEventListener, callerSignal, [type, listener, options]);
+    },
+  });
+  const observedSignals: AbortSignal[] = [];
+  const client = createStrictRuntimeProjectFilesClient({
+    apiUrl: baseOptions.apiUrl,
+    operationTimeoutMs: 10,
+    timeoutMs: 10,
+    fetch: (_url, init) => {
+      observedSignals.push(init.signal as AbortSignal);
+      return Promise.resolve(
+        jsonResponse({ data: [], page_info: { next: null } }),
+      );
+    },
+  });
+
+  assertEquals(
+    await client.getProjectFiles({
+      projectId: baseOptions.projectId,
+      authToken: baseOptions.authToken,
+      signal: callerSignal,
+    }),
+    [],
+  );
+
+  assertEquals(abortListenerAdds, 1);
+  assertEquals(abortListenerRemovals, 1);
+  controller.abort(new DOMException("late caller abort", "AbortError"));
+  assertEquals(observedSignals[0]?.aborted, false);
+});
+
+Deno.test("strict project file requests preserve caller cancellation identity", async () => {
+  const controller = new AbortController();
+  const cancellation = new DOMException("caller stopped", "AbortError");
+  controller.abort(cancellation);
+  let fetchCalls = 0;
+
+  const error = await assertRejects(() =>
+    getStrictRuntimeProjectFile({
+      ...baseOptions,
+      signal: controller.signal,
+      fetch: () => {
+        fetchCalls += 1;
+        throw new Error("sync custom fetch failure");
+      },
+      path: "src/index.ts",
+    })
+  );
+
+  assertEquals(error, cancellation);
+  assertEquals(fetchCalls, 0);
 });
 
 Deno.test("getStrictRuntimeProjectFiles rejects repeated pagination cursors", async () => {

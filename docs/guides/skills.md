@@ -201,25 +201,21 @@ veryfront skills validate skills/my-skill
 ## Script execution limits
 
 Skill scripts default to a 60-second timeout and may request up to 5 minutes.
-Local tool execution runs the validated bytes from an exclusively created
-snapshot beside the selected script. This preserves script-relative imports
-and ancestor package resolution without reopening the selected source path.
-The snapshot requests owner-only permissions, is checked against the canonical
-skill root and native filesystem identities immediately before launch, and is
-removed by identity afterward. Its generated entrypoint basename differs from
-the selected source filename. Filesystems that do not expose a stable native
-device/file identity fail closed instead of using a metadata or content-hash
-substitute. Windows does not provide POSIX owner-only mode semantics; permission
-changes there are limited to the guarantees of the native runtime and
-filesystem.
+Local tool execution preserves the original validated script path, filename,
+working directory, script-relative imports, and ancestor package resolution.
+It does not write staging files into the skill tree, so skills may be installed
+read-only. Immediately before launch, Veryfront rechecks canonical containment
+and native filesystem identities and confirms that the selected file still
+matches the bounded decoded content read by the tool. Filesystems that do not expose a
+stable native device/file identity fail closed instead of using metadata as an
+identity substitute.
 
-**Breaking requirement:** the selected script's directory must be writable
-while local execution starts. A read-only skill directory fails explicitly;
-Veryfront does not fall back to an unrelated temporary directory because that
-would change import resolution. A same-user actor that can write to the
-directory can still race the interpreter's pathname open after the final
-identity check, so local skill scripts remain trusted development code rather
-than an operating-system security boundary.
+The interpreter must still open the original path after those checks. A
+same-user actor that can mutate the source namespace can race that final open,
+and imported dependencies are resolved from the live source tree rather than
+an immutable bundle. Local skill scripts are therefore trusted development
+code, not an operating-system security boundary. Use cloud execution when
+untrusted code requires filesystem and process isolation.
 
 Local cancellation, output limits, and timeouts signal the runtime-owned POSIX
 process group or request Windows process-tree termination, then close capture

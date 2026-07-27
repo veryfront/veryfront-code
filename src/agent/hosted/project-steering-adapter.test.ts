@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { join } from "node:path";
-import { createHostedProjectSteeringAdapter } from "./project-steering-adapter.ts";
+import {
+  createHostedProjectSteeringAdapter,
+  createStrictHostedProjectSteeringAdapter,
+} from "./project-steering-adapter.ts";
 import type {
   RuntimeGetProjectFileOptions,
   RuntimeProjectFile,
@@ -101,7 +104,7 @@ Use project instructions.`,
 Deno.test("hosted project steering adapter uses the strict default project files client", async () => {
   await withSkillsDir(async (skillsDir) => {
     let fetchCalls = 0;
-    const adapter = createHostedProjectSteeringAdapter({
+    const adapter = createStrictHostedProjectSteeringAdapter({
       apiUrl: "https://api.example.test",
       skillsDir,
       fetch: async () => {
@@ -120,6 +123,100 @@ Deno.test("hosted project steering adapter uses the strict default project files
       "route-safe",
     );
     assertEquals(fetchCalls, 0);
+  });
+});
+
+Deno.test("strict hosted project steering propagates in-flight caller cancellation", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("stop project steering", "AbortError");
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    const observedSignals: AbortSignal[] = [];
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: (_url, init) => {
+        observedSignals.push(init.signal as AbortSignal);
+        notifyFetchStarted();
+        return new Promise(() => undefined);
+      },
+    });
+
+    const instructions = adapter.getProjectInstructionsForRequest(
+      {
+        projectId: "project-1",
+        authToken: "token-1",
+      },
+      controller.signal,
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+    const error = await assertRejects(() => instructions);
+
+    assertEquals(error, cancellation);
+    assertEquals(observedSignals[0]?.aborted, true);
+    assertEquals(observedSignals[0]?.reason, cancellation);
+  });
+});
+
+Deno.test("strict hosted project steering rejects signal-unaware client injection", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    type StrictOptions = Parameters<typeof createStrictHostedProjectSteeringAdapter>[0];
+    const strictTypeRejectsPublicClient: RuntimeProjectFilesClient extends
+      NonNullable<StrictOptions["projectFilesClient"]> ? false
+      : true = true;
+    assertEquals(strictTypeRejectsPublicClient, true);
+
+    const projectFilesClient = createProjectFilesClient();
+    const publicAdapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      projectFilesClient,
+    });
+    assertEquals(
+      await publicAdapter.getProjectInstructions({
+        projectId: "project-1",
+        authToken: "token-1",
+      }),
+      "",
+    );
+
+    assertThrows(
+      () =>
+        createStrictHostedProjectSteeringAdapter({
+          apiUrl: "https://api.example.test",
+          skillsDir,
+          projectFilesClient,
+        } as never),
+      TypeError,
+      "signal-unaware projectFilesClient",
+    );
+  });
+});
+
+Deno.test("public hosted project steering adapter preserves the legacy project files client", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    let fetchCalls = 0;
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    assertEquals(
+      await adapter.getProjectInstructions({
+        projectId: "..",
+        authToken: "",
+      }),
+      "",
+    );
+    assertEquals(fetchCalls, 1);
   });
 });
 

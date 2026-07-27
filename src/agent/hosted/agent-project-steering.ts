@@ -3,9 +3,11 @@ import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import {
   createHostedProjectSteeringAdapter,
+  createStrictHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
   type HostedProjectSteeringAdapter,
   type HostedProjectSteeringLogger,
+  type StrictHostedProjectSteeringAdapter,
 } from "./project-steering-adapter.ts";
 import {
   loadRuntimeAgentMarkdownDefinitionFromFile,
@@ -72,14 +74,37 @@ export type HostedAgentProjectSteering = {
   getProjectSteeringAdapter: () => HostedProjectSteeringAdapter;
 };
 
+/** Internal request-scoped extension used only by fail-closed cloud composition. */
+export type StrictHostedAgentProjectSteering = HostedAgentProjectSteering & {
+  getProjectInstructionsForRequest: (
+    lookup: RuntimeProjectSteeringLookup,
+    signal: AbortSignal | undefined,
+  ) => Promise<string>;
+  getSkillsConfigForRequest: (
+    lookup: RuntimeProjectSteeringLookup,
+    signal: AbortSignal | undefined,
+  ) => Promise<RuntimeSkillDefinition[]>;
+  getProjectSteeringAdapter: () => StrictHostedProjectSteeringAdapter;
+};
+
 function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Create hosted agent project steering. */
-export function createHostedAgentProjectSteering(
+type ProjectSteeringAdapterFactory<TAdapter extends HostedProjectSteeringAdapter> = (
+  options: Parameters<typeof createStrictHostedProjectSteeringAdapter>[0],
+) => TAdapter;
+
+type AgentProjectSteeringWithAdapter<TAdapter extends HostedProjectSteeringAdapter> =
+  & Omit<HostedAgentProjectSteering, "getProjectSteeringAdapter">
+  & {
+    getProjectSteeringAdapter: () => TAdapter;
+  };
+
+function createAgentProjectSteering<TAdapter extends HostedProjectSteeringAdapter>(
   options: HostedAgentProjectSteeringOptions,
-): HostedAgentProjectSteering {
+  createProjectSteeringAdapter: ProjectSteeringAdapterFactory<TAdapter>,
+): AgentProjectSteeringWithAdapter<TAdapter> {
   ensureBuiltinSchemaValidator();
   const parsedOptions = hostedAgentProjectSteeringOptionsSchema.parse(options);
   const agentsDir = resolveRuntimeAgentDefinitionsDir({
@@ -96,7 +121,7 @@ export function createHostedAgentProjectSteering(
     resolveRuntimeBuiltinSkillsDir(parsedOptions.baseDir);
 
   let cachedAgentConfig: RuntimeAgentMarkdownDefinition | null = null;
-  let cachedProjectSteeringAdapter: HostedProjectSteeringAdapter | null = null;
+  let cachedProjectSteeringAdapter: TAdapter | null = null;
 
   function getAgentConfig(): RuntimeAgentMarkdownDefinition {
     if (cachedAgentConfig) {
@@ -119,12 +144,12 @@ export function createHostedAgentProjectSteering(
     }
   }
 
-  function getProjectSteeringAdapter(): HostedProjectSteeringAdapter {
+  function getProjectSteeringAdapter(): TAdapter {
     if (cachedProjectSteeringAdapter) {
       return cachedProjectSteeringAdapter;
     }
 
-    cachedProjectSteeringAdapter = createHostedProjectSteeringAdapter({
+    cachedProjectSteeringAdapter = createProjectSteeringAdapter({
       apiUrl: options.getApiUrl(),
       skillsDir,
       logger: options.logger,
@@ -143,5 +168,29 @@ export function createHostedAgentProjectSteering(
     createLoadSkillTool: (context) => getProjectSteeringAdapter().createLoadSkillTool(context),
     refreshProjectSkillIds: (context) =>
       getProjectSteeringAdapter().refreshProjectSkillIds(context),
+  };
+}
+
+/** Create hosted agent project steering with the established public client contract. */
+export function createHostedAgentProjectSteering(
+  options: HostedAgentProjectSteeringOptions,
+): HostedAgentProjectSteering {
+  return createAgentProjectSteering(options, createHostedProjectSteeringAdapter);
+}
+
+/** Create fail-closed hosted agent project steering for cloud-service composition. */
+export function createStrictHostedAgentProjectSteering(
+  options: HostedAgentProjectSteeringOptions,
+): StrictHostedAgentProjectSteering {
+  const steering = createAgentProjectSteering(
+    options,
+    createStrictHostedProjectSteeringAdapter,
+  );
+  return {
+    ...steering,
+    getProjectInstructionsForRequest: (lookup, signal) =>
+      steering.getProjectSteeringAdapter().getProjectInstructionsForRequest(lookup, signal),
+    getSkillsConfigForRequest: (lookup, signal) =>
+      steering.getProjectSteeringAdapter().getSkillsConfigForRequest(lookup, signal),
   };
 }
