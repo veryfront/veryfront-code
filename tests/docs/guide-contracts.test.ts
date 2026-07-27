@@ -189,7 +189,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/chat.md",
     ],
     snippets: [
-      "npm create veryfront@latest support-agent -- --template ai-agent",
+      "npm create veryfront@latest support-agent",
       "npx veryfront deploy",
       "calculator.ts",
       "What is 128 divided by 8?",

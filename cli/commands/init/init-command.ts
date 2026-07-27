@@ -42,6 +42,7 @@ import {
   shouldRunWizard,
   validateProjectName,
 } from "./interactive-wizard.ts";
+import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 /**
  * Icon mapping for integrations based on category/name
@@ -316,7 +317,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     initGit = wizardResult.initGit;
     wizardRuntime = wizardResult.runtime;
   } else {
-    template = options.template ?? "minimal";
+    template = options.template ?? DEFAULT_TEMPLATE;
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
