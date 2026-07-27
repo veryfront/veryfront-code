@@ -20,7 +20,13 @@ import {
   getStudioScripts,
 } from "./dev-scripts.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
+import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+
+interface RouteDirectories {
+  app?: string;
+  pages?: string;
+}
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -61,6 +67,8 @@ export interface InjectHTMLContentOptions {
   projectStylesheetHref?: string;
   /** Ready release asset manifest used to hydrate full HTML client pages */
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Configured route directories used to map physical page paths to route keys */
+  directories?: RouteDirectories;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -75,6 +83,41 @@ function hasProjectStylesheet(html: string): boolean {
   return /id=["']vf-tailwind-css["']/i.test(html) ||
     /href=["'][^"']*\/_vf_styles\/styles\.css(?:\?[^"']*)?["']/i.test(html) ||
     /href=["'][^"']*\/_vf\/css\/[^"']+\.css["']/i.test(html);
+}
+
+function normalizeLogicalPath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.replace(/\\/g, "/").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
+
+function pathBelowRoot(path: string, root: string): string | null {
+  const normalizedPath = normalizeLogicalPath(path);
+  const normalizedRoot = normalizeLogicalPath(root);
+  if (normalizedRoot === "") return normalizedPath;
+  if (normalizedPath === normalizedRoot) return "";
+  const prefix = `${normalizedRoot}/`;
+  return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : null;
+}
+
+function routeForConfiguredPage(path: string, directories?: RouteDirectories): string | null {
+  const appRelativePath = pathBelowRoot(path, directories?.app ?? "app");
+  if (appRelativePath !== null) {
+    const route = routeForPage(`app/${appRelativePath}`);
+    if (route !== null) return route;
+  }
+
+  const pagesRelativePath = pathBelowRoot(path, directories?.pages ?? "pages");
+  if (pagesRelativePath !== null) return routeForPage(`pages/${pagesRelativePath}`);
+
+  return null;
 }
 
 export function injectHTMLContent(
@@ -133,12 +176,13 @@ export function injectHTMLContent(
 
   // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
   if (options.pagePath && options.isClientPage && hasBodyClose) {
+    const pagePath = toProjectRelativePath(options.pagePath, options.projectDir);
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
     // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
     const hydrationData = jsonForInlineScript({
-      pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
+      pagePath,
       slug: options.slug,
       isClientPage: true,
       params: options.params ?? {},
@@ -146,7 +190,9 @@ export function injectHTMLContent(
         isLocalProject: options.isLocalProject ?? options.mode === "development",
         environment: options.environment,
       }),
-      releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
+      releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest, {
+        route: routeForConfiguredPage(pagePath, options.directories),
+      }),
     });
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =

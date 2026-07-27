@@ -1854,6 +1854,42 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assert(routeModules.includes("lib/utils.ts"), "extensionless transitive import in closure");
   });
 
+  it("derives manifest routes from configured app and pages directories", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: 'export default { directories: { app: "src\\\\site", pages: "src\\\\pages" } };',
+      },
+      {
+        path: "src/site/layout.tsx",
+        content: "export default function Layout({ children }) { return children; }",
+      },
+      {
+        path: "src/site/page.tsx",
+        content: "export default function Home() { return null; }",
+      },
+      {
+        path: "src/pages/about.tsx",
+        content: "export default function About() { return null; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+
+    assertEquals(Object.keys(manifest.routes).sort(), ["/", "/about"]);
+    assertEquals(manifest.routes["/"]?.modules, [
+      "src/site/page.tsx",
+      "src/site/layout.tsx",
+    ]);
+    assertEquals(manifest.routes["/about"]?.modules, ["src/pages/about.tsx"]);
+  });
+
   // H1: non-transform failures (e.g., listAllReleaseFiles throws) report failed.
   it("reports failed on non-transform build failure (H1)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };

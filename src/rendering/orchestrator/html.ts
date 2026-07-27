@@ -312,6 +312,7 @@ export class HTMLGenerator {
       importMapJson,
       projectStylesheetHref,
       releaseAssetManifest,
+      directories: this.config.config.directories,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;

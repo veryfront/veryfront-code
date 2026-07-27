@@ -362,6 +362,61 @@ it("models an inferred missing project during dry-run deploy", async () => {
   }
 });
 
+it("does not claim dry-run deploy would push source when source push is skipped", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const logs: string[] = [];
+  const originalLog = console.log;
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"missing-app"}\n');
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+
+    await withMockFetch(
+      (_input: string | URL | Request, _init?: RequestInit) =>
+        Promise.resolve(Response.json({ message: "not found" }, { status: 404 })),
+      () =>
+        deployCommand({
+          projectDir,
+          branch: "main",
+          env: "production",
+          dryRun: true,
+          force: true,
+          quiet: false,
+          skipSourcePush: true,
+        }),
+    );
+
+    assertEquals(
+      logs.some((line) => line.includes('Would create release and deploy to "production"')),
+      true,
+    );
+    assertEquals(logs.some((line) => line.includes("push source")), false);
+  } finally {
+    console.log = originalLog;
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
 it("uses an alternative slug when inferred first deploy project creation conflicts", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
@@ -527,7 +582,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
   }
 });
 
-it("collects page routes when projectDir has a trailing slash", async () => {
+it("collects configured app and pages routes when projectDir has a trailing slash", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
     "VERYFRONT_API_TOKEN",
@@ -538,18 +593,30 @@ it("collects page routes when projectDir has a trailing slash", async () => {
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
   try {
-    await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+    await Deno.mkdir(`${projectDir}/src/site`, { recursive: true });
+    await Deno.mkdir(`${projectDir}/src/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
-    await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
     await Deno.writeTextFile(
-      `${projectDir}/app/page.tsx`,
+      `${projectDir}/veryfront.config.ts`,
+      'export default { projectSlug: "my-project", directories: { app: "src/site", pages: "src/pages" } };\n',
+    );
+    await Deno.writeTextFile(
+      `${projectDir}/src/site/page.tsx`,
       "export default function Page() { return null; }\n",
+    );
+    await Deno.writeTextFile(
+      `${projectDir}/src/pages/about.tsx`,
+      "export default function About() { return null; }\n",
     );
     const actualSha = await commitProject(projectDir);
     const sourceDigest = await computeSourceDigest([
       {
-        path: "app/page.tsx",
+        path: "src/site/page.tsx",
         content: "export default function Page() { return null; }\n",
+      },
+      {
+        path: "src/pages/about.tsx",
+        content: "export default function About() { return null; }\n",
       },
     ]);
     await writePushReceipt(projectDir, {
@@ -609,10 +676,16 @@ it("collects page routes when projectDir has a trailing slash", async () => {
       ) {
         return Promise.resolve(Response.json({
           data: [{
-            path: "app/page.tsx",
+            path: "src/site/page.tsx",
             data: JSON.stringify({
               body: "export default function Page() { return null; }\n",
-              path: "app/page.tsx",
+              path: "src/site/page.tsx",
+            }),
+          }, {
+            path: "src/pages/about.tsx",
+            data: JSON.stringify({
+              body: "export default function About() { return null; }\n",
+              path: "src/pages/about.tsx",
             }),
           }],
           page_info: {},
@@ -658,7 +731,7 @@ it("collects page routes when projectDir has a trailing slash", async () => {
             skipSourcePush: true,
           }),
         Error,
-        "Missing routes: /",
+        "Missing routes: /, /about",
       ));
   } finally {
     envKeys.forEach((key, index) => {
