@@ -22,6 +22,7 @@ import {
 } from "./dev-scripts.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { createBuildVersion } from "#veryfront/utils/version.ts";
 
 const MAX_INJECTION_INPUT_PROPERTIES = 128;
 
@@ -249,16 +250,23 @@ export function injectHTMLContent(
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
     // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
+    const pagePath = toProjectRelativePath(options.pagePath, options.projectDir);
+    const releaseManifest = options.studioEmbed ? null : options.releaseAssetManifest;
     const hydrationData = jsonForInlineScript({
-      pagePath: toProjectRelativePath(options.pagePath, options.projectDir),
+      pagePath,
       slug: options.slug,
-      isClientPage: true,
       params: options.params ?? {},
+      props: {},
+      layouts: [],
       clientModuleStrategy: determineClientModuleStrategy({
         isLocalProject: options.isLocalProject ?? options.mode === "development",
         environment: options.environment,
       }),
-      releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
+      releaseId: releaseManifest?.releaseId,
+      releaseAssetModules: buildReleaseAssetModules(releaseManifest, [pagePath]),
+      buildVersion: createBuildVersion(),
+      dev: options.mode === "development",
+      studioEmbed: options.studioEmbed,
     });
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =

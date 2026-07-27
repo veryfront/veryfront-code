@@ -4,6 +4,7 @@ import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-m
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { createBuildVersion } from "#veryfront/utils/version.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
@@ -71,26 +72,35 @@ export function generateHydrationData(
       };
     })
     .filter((layout): layout is NonNullable<typeof layout> => Boolean(layout));
+  const appPath = options.appPath
+    ? toProjectRelativePath(options.appPath, options.projectDir) || undefined
+    : undefined;
+  const errorPath = options.errorPath
+    ? toProjectRelativePath(options.errorPath, options.projectDir) || undefined
+    : undefined;
+  const pagePath = options.pagePath
+    ? toProjectRelativePath(options.pagePath, options.projectDir) || undefined
+    : undefined;
+  const hydrationModulePaths = [
+    pagePath,
+    ...layouts.map((layout) => layout.path),
+    appPath,
+    errorPath,
+  ].filter((path): path is string => Boolean(path));
 
   const data: HydrationDataStructure = {
     slug: slug || "",
     props: props || {},
     params: params || {},
     layouts,
-    appPath: options.appPath
-      ? toProjectRelativePath(options.appPath, options.projectDir) || undefined
-      : undefined,
-    errorPath: options.errorPath
-      ? toProjectRelativePath(options.errorPath, options.projectDir) || undefined
-      : undefined,
+    appPath,
+    errorPath,
     appRouterRoot: toProjectRelativePath(
       options.config?.directories?.app ?? "app",
       options.projectDir,
     ).replace(/^\/+|\/+$/g, ""),
     isolatedClientPage: options.isolatedClientPage,
-    pagePath: options.pagePath
-      ? toProjectRelativePath(options.pagePath, options.projectDir) || undefined
-      : undefined,
+    pagePath,
     // `options.pageType`/`options.environment` are validated against literal
     // enum schemas (see html.schema.ts), but the schema inference widens them
     // to `string`. Narrow back to the real literal unions rather than `any`.
@@ -101,7 +111,11 @@ export function generateHydrationData(
       environment: options.environment as HydrationEnvironment | undefined,
     }),
     releaseId: options.releaseId,
-    releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
+    releaseAssetModules: buildReleaseAssetModules(
+      options.releaseAssetManifest,
+      hydrationModulePaths,
+    ),
+    buildVersion: createBuildVersion(),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid

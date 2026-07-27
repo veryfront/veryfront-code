@@ -14,6 +14,9 @@ describe("hydration-script-builder/templates/loader", () => {
     path: string,
     setup = "",
     studioEmbed = false,
+    preferRscModule?: boolean,
+    releaseAssetModules?: Record<string, string> | null,
+    releaseId?: string | null,
   ): string {
     const globalRecord = globalThis as MutableTestGlobal;
     const previousWindow = globalRecord.window;
@@ -26,8 +29,28 @@ describe("hydration-script-builder/templates/loader", () => {
       return new Function(
         "path",
         "studioEmbed",
-        `const MODULE_SERVER_URL = '/_vf_modules';\n${getLoaderScript()}\n${setup}\nreturn pathToModuleUrl(path, studioEmbed);`,
-      )(path, studioEmbed) as string;
+        "preferRscModule",
+        "releaseAssetModules",
+        "releaseId",
+        `const MODULE_SERVER_URL = '/_vf_modules';
+${getLoaderScript()}
+${setup}
+return preferRscModule === undefined
+  ? pathToModuleUrl(path, studioEmbed)
+  : resolveHydrationModuleUrl(
+      path,
+      preferRscModule,
+      studioEmbed,
+      releaseAssetModules,
+      releaseId,
+    );`,
+      )(
+        path,
+        studioEmbed,
+        preferRscModule,
+        releaseAssetModules,
+        releaseId,
+      ) as string;
     } finally {
       if (previousWindow === undefined) {
         delete globalRecord.window;
@@ -47,6 +70,40 @@ describe("hydration-script-builder/templates/loader", () => {
         globalRecord.__veryfrontReleaseAssetModules = previousReleaseAssetModules;
       }
     }
+  }
+
+  function evaluateLoaderRuntime(maxCacheSize: number): {
+    load(path: string, moduleUrl: string): Promise<unknown>;
+    clear(path?: string): void;
+    cachedValues(): unknown[];
+  } {
+    const script = getLoaderScript().replace(
+      "const MAX_COMPONENT_CACHE_SIZE = 500;",
+      `const MAX_COMPONENT_CACHE_SIZE = ${maxCacheSize};`,
+    );
+    const testWindow: Record<string, unknown> = {};
+    const runtime = new Function(
+      "window",
+      `const MODULE_SERVER_URL = '/_vf_modules';
+const DEBUG = false;
+const log = () => {};
+const logError = () => {};
+${script}
+return {
+  load: loadComponentFromUrl,
+  clear: clearComponentCache,
+  cachedValues: () => [...componentCache.values()],
+};`,
+    )(testWindow) as {
+      load(path: string, moduleUrl: string): Promise<unknown>;
+      clear(path?: string): void;
+      cachedValues(): unknown[];
+    };
+    return runtime;
+  }
+
+  function dataModule(value: string): string {
+    return `data:text/javascript,export%20default%20${encodeURIComponent(JSON.stringify(value))}`;
   }
 
   describe("getLoaderScript", () => {
@@ -86,7 +143,7 @@ describe("hydration-script-builder/templates/loader", () => {
 
     it("should define pathToModuleUrl function", () => {
       const result = getResult();
-      assertEquals(result.includes("function pathToModuleUrl(path, studioEmbed)"), true);
+      assertEquals(result.includes("function pathToModuleUrl("), true);
     });
 
     it("should expose release asset module map support", () => {
@@ -96,13 +153,13 @@ describe("hydration-script-builder/templates/loader", () => {
         result.includes("window.__veryfrontSetReleaseAssetModules = setReleaseAssetModules"),
         true,
       );
-      assertEquals(result.includes("resolveReleaseAssetModuleUrl(path)"), true);
+      assertEquals(result.includes("function resolveReleaseAssetModuleUrl("), true);
     });
 
     it("should expose release id support for immutable fallback module URLs", () => {
       const result = getResult();
       assertEquals(result.includes("window.__veryfrontSetReleaseId = setReleaseId"), true);
-      assertEquals(result.includes("appendReleaseModuleVersion(url)"), true);
+      assertEquals(result.includes("function appendReleaseModuleVersion("), true);
       assertEquals(result.includes("VERYFRONT_RUNTIME_VERSION"), true);
     });
 
@@ -138,8 +195,8 @@ describe("hydration-script-builder/templates/loader", () => {
 
     it("should use cache before loading in loadComponent", () => {
       const result = getResult();
-      assertEquals(result.includes("componentCache.has(path)"), true);
-      assertEquals(result.includes("componentCache.get(path)"), true);
+      assertEquals(result.includes("componentCache.has(cacheKey)"), true);
+      assertEquals(result.includes("componentCache.get(cacheKey)"), true);
     });
 
     it("should prefer MDXLayout over default export", () => {
@@ -168,7 +225,7 @@ describe("hydration-script-builder/templates/loader", () => {
 
       assertEquals(
         result,
-        `/_vf_modules/pages/blog.js?vf_release=rel-1&vf_runtime=${VERSION}`,
+        `/_vf_modules/pages/blog.mdx?vf_release=rel-1&vf_runtime=${VERSION}`,
       );
     });
 
@@ -179,7 +236,7 @@ describe("hydration-script-builder/templates/loader", () => {
         true,
       );
 
-      assertEquals(result, "/_vf_modules/pages/blog.js?studio_embed=true");
+      assertEquals(result, "/_vf_modules/pages/blog.mdx?studio_embed=true");
     });
 
     it("does not version-stamp HMR fallback module URLs", () => {
@@ -188,7 +245,7 @@ describe("hydration-script-builder/templates/loader", () => {
         "window.__veryfrontSetReleaseId('rel-1'); window.__veryfrontSetHMRRefreshTimestamp('123');",
       );
 
-      assertEquals(result, "/_vf_modules/pages/blog.js?t=123");
+      assertEquals(result, "/_vf_modules/pages/blog.mdx?t=123");
     });
 
     it("keeps release asset module URLs ahead of fallback release stamping", () => {
@@ -199,6 +256,110 @@ describe("hydration-script-builder/templates/loader", () => {
       );
 
       assertEquals(result, assetUrl);
+    });
+
+    it("never aliases an explicitly requested extension to a sibling source file", () => {
+      const wrongAssetUrl = "/_vf/assets/" + "b".repeat(64) + ".js";
+      const result = runGeneratedPathToModuleUrl(
+        "app/page.tsx",
+        `window.__veryfrontSetReleaseAssetModules({ 'app/page.ts': '${wrongAssetUrl}' });`,
+      );
+
+      assertEquals(result, "/_vf_modules/app/page.tsx");
+    });
+
+    it("ignores inherited release-map properties", () => {
+      const inheritedAssetUrl = "/_vf/assets/" + "f".repeat(64) + ".js";
+      const result = runGeneratedPathToModuleUrl(
+        "app/page.tsx",
+        `const inheritedMap = Object.create({ 'app/page.tsx': '${inheritedAssetUrl}' });
+window.__veryfrontSetReleaseAssetModules(inheritedMap);`,
+      );
+
+      assertEquals(result, "/_vf_modules/app/page.tsx");
+    });
+
+    it("keeps authored JavaScript distinct from the legacy extensionless endpoint", () => {
+      assertEquals(
+        runGeneratedPathToModuleUrl("app/page.js"),
+        "/_vf_modules/app/page.js.js",
+      );
+      assertEquals(
+        runGeneratedPathToModuleUrl("app/page"),
+        "/_vf_modules/app/page.js",
+      );
+    });
+
+    it("expands source variants only for extensionless logical paths", () => {
+      const assetUrl = "/_vf/assets/" + "c".repeat(64) + ".js";
+      const result = runGeneratedPathToModuleUrl(
+        "app/page",
+        `window.__veryfrontSetReleaseAssetModules({ 'app/page.ts': '${assetUrl}' });`,
+      );
+
+      assertEquals(result, assetUrl);
+    });
+
+    it("normalizes query and hash suffixes without weakening exact extension identity", () => {
+      const exactAssetUrl = "/_vf/assets/" + "d".repeat(64) + ".js";
+      const result = runGeneratedPathToModuleUrl(
+        "/app/page.tsx?cache=1#section",
+        `window.__veryfrontSetReleaseAssetModules({ 'app/page.tsx': '${exactAssetUrl}', 'app/page.ts': '/wrong.js' });`,
+      );
+
+      assertEquals(result, exactAssetUrl);
+    });
+
+    it("selects transport independently for full, partial, and unrelated release maps", () => {
+      const pageAsset = "/_vf/assets/" + "e".repeat(64) + ".js";
+      const setup =
+        `window.__veryfrontSetReleaseAssetModules({ 'app/page.tsx': '${pageAsset}', 'app/unrelated.tsx': '/unrelated.js' });`;
+
+      assertEquals(
+        runGeneratedPathToModuleUrl("app/page.tsx", setup, false, true),
+        pageAsset,
+      );
+      assertEquals(
+        runGeneratedPathToModuleUrl("app/layout.tsx", setup, false, true),
+        "/_veryfront/rsc/module?rel=app%2Flayout.tsx",
+      );
+      assertEquals(
+        runGeneratedPathToModuleUrl("pages/about.tsx", setup, false, false),
+        "/_vf_modules/pages/about.tsx",
+      );
+    });
+
+    it("resolves an explicit page-data release without mutating the active release", () => {
+      const explicitAsset = "/_vf/assets/" + "1".repeat(64) + ".js";
+      const result = runGeneratedPathToModuleUrl(
+        "app/page.tsx",
+        "window.__veryfrontSetReleaseId('active'); window.__veryfrontSetReleaseAssetModules({});",
+        false,
+        false,
+        { "app/page.tsx": explicitAsset },
+        "prefetched",
+      );
+
+      assertEquals(result, explicitAsset);
+    });
+
+    it("uses true LRU eviction for the bounded component cache", async () => {
+      const runtime = evaluateLoaderRuntime(2);
+      await runtime.load("a.tsx", dataModule("a"));
+      await runtime.load("b.tsx", dataModule("b"));
+      await runtime.load("a.tsx", dataModule("a"));
+      await runtime.load("c.tsx", dataModule("c"));
+
+      assertEquals(runtime.cachedValues(), ["a", "c"]);
+    });
+
+    it("does not repopulate the cache from an import invalidated while in flight", async () => {
+      const runtime = evaluateLoaderRuntime(2);
+      const pending = runtime.load("stale.tsx", dataModule("stale"));
+
+      runtime.clear("stale.tsx");
+      assertEquals(await pending, "stale");
+      assertEquals(runtime.cachedValues(), []);
     });
   });
 });

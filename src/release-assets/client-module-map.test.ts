@@ -50,4 +50,26 @@ describe("release asset client module map", () => {
 
     assertEquals(result, undefined);
   });
+
+  it("can scope a browser map to the modules needed by one route", () => {
+    const result = buildReleaseAssetModules(
+      manifestWithModules({
+        "app/page.tsx": {
+          contentHash: "b".repeat(64),
+          size: 1,
+          contentType: "text/javascript",
+        },
+        "app/unrelated.tsx": {
+          contentHash: "c".repeat(64),
+          size: 1,
+          contentType: "text/javascript",
+        },
+      }),
+      ["app/page.tsx", "app/page.tsx", "app/missing.tsx"],
+    );
+
+    assertEquals(result, {
+      "app/page.tsx": `/_vf/assets/${"b".repeat(64)}.js`,
+    });
+  });
 });

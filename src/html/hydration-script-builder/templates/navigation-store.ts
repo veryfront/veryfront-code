@@ -17,7 +17,7 @@ export const getNavigationStoreCompatibilityScript = () => `
           if (existing) return existing;
 
           const listeners = new Set();
-          let navigator = null;
+          const navigatorRegistrations = [];
           const store = {
             subscribe(listener) {
               listeners.add(listener);
@@ -37,12 +37,27 @@ export const getNavigationStoreCompatibilityScript = () => `
               }
             },
             navigate(href, options) {
-              if (navigator) return navigator(href, options);
-              globalThis.location?.assign(href);
+              const registration = navigatorRegistrations.at(-1);
+              if (registration) return registration.navigate(href, options);
+
+              const location = globalThis.location;
+              if (location && options?.history !== 'none') {
+                if (options?.history === 'replace') location.replace(href);
+                else location.assign(href);
+              }
               return Promise.resolve();
             },
             setNavigator(next) {
-              navigator = next;
+              const registration = { navigate: next };
+              navigatorRegistrations.push(registration);
+              let active = true;
+
+              return () => {
+                if (!active) return;
+                active = false;
+                const index = navigatorRegistrations.indexOf(registration);
+                if (index !== -1) navigatorRegistrations.splice(index, 1);
+              };
             },
           };
 

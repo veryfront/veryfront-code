@@ -27,8 +27,8 @@ Generated-only changes do not count as module review evidence.
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
 | Closed                         |    35 |      60.3% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    21 |      36.2% | Substantive recovered or current work exists        |
+| Deep reviewed, fixes pending   |     3 |       5.2% | Reviewed remediation or design work remains open    |
+| Touched, revalidation required |    20 |      34.5% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -76,6 +76,7 @@ stricter closure count.
 
 ### Deep reviewed, fixes pending
 
+- `html`
 - `resource`
 - `utils`
 
@@ -84,7 +85,6 @@ stricter closure count.
 - `build`
 - `client`
 - `data`
-- `html`
 - `integrations`
 - `internal-agents`
 - `mcp`
@@ -189,6 +189,12 @@ malformed-import-map, and default-memoization compatibility decisions are
 unresolved. Each closure requires a complete consumer map, deep module-level
 review, adversarial boundary tests, public-contract documentation, and
 repository-wide static verification.
+`html` has completed its current implementation review and remediation. Its
+focused, complete-module, browser, release-asset, and static gates pass. Formal
+closure is pending only replacement of the materially stale module README with
+an accurate reference document; the documentation workflow requires explicit
+confirmation of that reference-only classification before authored content is
+restructured.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
@@ -4270,5 +4276,94 @@ test pins this exact allowance so it cannot grow implicitly.
 
 No known unresolved critical or high-confidence root-entrypoint production
 risk remains. The root entrypoint unit is closed at 35 of 58 formal units.
+
+### HTML deep-review checkpoint (reference update pending)
+
+The `html` audit unit owns server-generated document shells, metadata and tag
+serialization, inline hydration data, the shared production hydration runtime,
+SPA navigation and module loading, and project CSS discovery and generation.
+Its runtime boundary crosses Release Assets, Rendering, Modules, Server,
+Routing, React, Security, and Utils; those consumers remain independently
+classified by the status table above.
+
+The current implementation review remediated these findings:
+
+- **Symptom -> Source -> Consequence -> Remedy:** concurrent navigations shared
+  one mutable owner and stale responses could commit history, router state,
+  progress cleanup, scroll restoration, or React output after a newer
+  navigation. Navigation is now a sequenced transaction with request-linked
+  cancellation and latest-owner assertions around every asynchronous commit.
+  Popstate uses the same path, query strings remain query strings, hash-only
+  transitions avoid unnecessary renders, router snapshots update before React
+  rendering, and subscribers are notified only after a committed transition.
+- **Symptom -> Source -> Consequence -> Remedy:** page-data timeouts were
+  indistinguishable from caller cancellation, retry delays ignored caller
+  aborts, and discarded retry responses retained bodies. Internal deadlines
+  now surface as `TimeoutError` so the active owner performs document fallback;
+  caller abort remains `AbortError`, backoff is abortable, response bodies are
+  canceled before retry, and hydration wait timers/listeners are cleaned up.
+- **Symptom -> Source -> Consequence -> Remedy:** the initial page lacked a
+  build identity, cached or prefetched page data could cross deployments, and
+  speculative work could replace the active release globals. Initial and SPA
+  payloads now carry stable build/release identity, cross-build foreground
+  navigation reloads before rendering, and speculative module resolution uses
+  an explicit immutable release context. Process start time is compared only
+  in explicit development because healthy production pods naturally have
+  different start times.
+- **Symptom -> Source -> Consequence -> Remedy:** release coverage changed App
+  Router rendering ownership, partial release maps selected the wrong
+  transport, and every page embedded the complete manifest module table. Route
+  ownership is now independent of transport, each page advertises only its
+  page/layout/app/error module set, and covered modules, the RSC endpoint, and
+  the legacy module server are selected independently per logical module.
+- **Symptom -> Source -> Consequence -> Remedy:** explicit authored extensions
+  could resolve a same-stem sibling, while authored JavaScript collided with
+  the legacy extensionless `.js` endpoint. Hydration URLs preserve exact source
+  extensions, JavaScript and MJS use an unambiguous transport suffix, and the
+  module server scopes both lookup and negative-cache identity to the requested
+  extension. The hydration schema accepts the same MD/MJS extension set and
+  rejects non-canonical module paths.
+- **Symptom -> Source -> Consequence -> Remedy:** component and page-data
+  caches were FIFO or unbounded, stale in-flight imports could repopulate
+  cleared state, and release-map property lookup trusted inherited values.
+  Both caches now use bounded LRU behavior; one monotonic generation rejects
+  pre-clear import results without path-proportional bookkeeping; module
+  identity includes its resolved URL; and release maps use own-property-only
+  reads.
+- **Symptom -> Source -> Consequence -> Remedy:** the immutable hydration
+  runtime used an eight-hex 32-bit content name while the handler could serve
+  current bytes under an arbitrary versioned path. Runtime identity and its
+  strong ETag now use the complete SHA-256 digest. Legacy and unknown hashes
+  redirect without cacheability to the canonical path, and conditional
+  requests use RFC-compatible weak comparison and quoted-list parsing.
+- **Symptom -> Source -> Consequence -> Remedy:** a second unreachable SPA
+  renderer duplicated the live runtime with separate cache and error behavior.
+  Its internal export, source, and tests were removed after repository-wide
+  consumer search established that the generated router/loader/renderer path
+  is the sole production implementation.
+
+Current reproducible evidence:
+
+- all 40 HTML suites pass 753 nested steps with zero failures, including
+  executable generated-runtime tests for latest-owner races, multi-pod build
+  identity, timeout classification, abortable backoff, exact module identity,
+  true LRU eviction, invalidation generations, schema parity, and hydration
+  failure behavior;
+- the complete Release Assets portfolio passes 10 suites with 121 nested steps,
+  preserving that previously closed unit after the scoped browser-map change;
+- eight affected Modules, Rendering, Release Assets, and Server suites pass 177
+  nested steps; the legacy-router browser regression passes both real Chromium
+  scenarios, including partial App Router release coverage;
+- all 91 affected TypeScript files pass lint, the HTML and changed
+  cross-module entrypoints pass typechecking, formatting and diff hygiene pass,
+  and API reference regeneration succeeds for all 40 published module groups.
+
+No known unresolved critical or high-confidence HTML implementation risk
+remains. The authored `src/html/README.md` still describes removed signatures,
+configuration objects, and injection behavior. Under the selected Diátaxis
+workflow it is classified as **Reference** with high confidence, but authored
+restructuring awaits explicit confirmation. Until that reference is replaced
+and documentation validation passes, `html` remains `Deep reviewed, fixes
+pending`; this checkpoint does not increment formal closure.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

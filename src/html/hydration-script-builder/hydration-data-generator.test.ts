@@ -1,10 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateHydrationData } from "./hydration-data-generator.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { HydrationDataSchema } from "../schemas/index.ts";
+import { type HydrationData, HydrationDataSchema } from "../schemas/index.ts";
 
 function parseHydrationData(
   slug: string,
@@ -233,6 +233,11 @@ describe("hydration-data-generator", () => {
             size: 100,
             contentType: "text/javascript",
           },
+          "app/unrelated.tsx": {
+            contentHash: "e".repeat(64),
+            size: 100,
+            contentType: "text/javascript",
+          },
         },
         css: [],
         routes: {
@@ -265,6 +270,7 @@ describe("hydration-data-generator", () => {
         parsed.releaseAssetModules?.["app/layout.tsx"],
         `/_vf/assets/${"d".repeat(64)}.js`,
       );
+      assertEquals(parsed.releaseAssetModules?.["app/unrelated.tsx"], undefined);
     });
 
     it("includes release id for production fallback module versioning", () => {
@@ -379,10 +385,145 @@ describe("hydration-data-generator", () => {
           "layouts/main.tsx": { theme: "dark" },
         },
       });
-      const parsed = HydrationDataSchema.parse(generated) as Record<string, unknown>;
+      const parsed: HydrationData = HydrationDataSchema.parse(generated);
 
       assertEquals(parsed.layoutProps, {
         "layouts/main.tsx": { theme: "dark" },
+      });
+    });
+
+    it("preserves every generated hydration contract field through schema parsing", () => {
+      const contentHash = "e".repeat(64);
+      const manifest: ReleaseAssetManifest = {
+        schemaVersion: 1,
+        projectId: "project-id",
+        releaseId: "release-id",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "f".repeat(64),
+        createdAt: "2026-07-27T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "app/page.tsx": {
+            contentHash,
+            size: 100,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes: {},
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      };
+      const generated = parseHydrationData(
+        "docs",
+        { slug: ["guides", "intro"] },
+        { answer: 42 },
+        {
+          ...baseOptions,
+          mode: "development",
+          projectDir: "/project",
+          pagePath: "/project/app/page.tsx",
+          appPath: "/project/app/app.tsx",
+          errorPath: "/project/app/error.tsx",
+          nestedLayouts: [{ kind: "tsx", path: "/project/app/layout.tsx" }],
+          isolatedClientPage: true,
+          pageType: "tsx",
+          releaseId: "release-id",
+          releaseAssetManifest: manifest,
+          frontmatter: { title: "Guide" },
+          layoutProps: { "app/layout.tsx": { theme: "dark" } },
+          headings: [{ id: "intro", text: "Introduction", level: 1 }],
+          studioEmbed: true,
+        } as HTMLGenerationOptions & {
+          releaseAssetManifest: ReleaseAssetManifest;
+        },
+      );
+
+      const parsed: HydrationData = HydrationDataSchema.parse(generated);
+
+      assertEquals(parsed.pageType, "tsx");
+      assertEquals(parsed.releaseId, "release-id");
+      assertEquals(parsed.releaseAssetModules, {
+        "app/page.tsx": `/_vf/assets/${contentHash}.js`,
+      });
+      assertEquals(typeof parsed.buildVersion?.framework, "string");
+      assertEquals(typeof parsed.buildVersion?.serverStart, "number");
+      assertEquals(parsed.frontmatter, { title: "Guide" });
+      assertEquals(parsed.dev, true);
+      assertEquals(parsed.headings, [{ id: "intro", text: "Introduction", level: 1 }]);
+      assertEquals(parsed.studioEmbed, true);
+      assertEquals(parsed.isolatedClientPage, true);
+      assertEquals(parsed.errorPath, "app/error.tsx");
+    });
+
+    it("rejects unsafe or oversized release module maps in hydration data", () => {
+      const baseHydrationData = {
+        slug: "page",
+        props: {},
+        params: {},
+        layouts: [],
+      };
+
+      assertThrows(() =>
+        HydrationDataSchema.parse({
+          ...baseHydrationData,
+          releaseAssetModules: {
+            "app/page.tsx": "https://attacker.invalid/module.js",
+          },
+        })
+      );
+
+      const oversizedEntries = Object.fromEntries(
+        Array.from(
+          { length: 513 },
+          (_, index) => [
+            `app/generated-${index}.tsx`,
+            `/_vf/assets/${index.toString(16).padStart(64, "0")}.js`,
+          ],
+        ),
+      );
+      assertThrows(() =>
+        HydrationDataSchema.parse({
+          ...baseHydrationData,
+          releaseAssetModules: oversizedEntries,
+        })
+      );
+
+      assertThrows(() =>
+        HydrationDataSchema.parse({
+          ...baseHydrationData,
+          pagePath: "a".repeat(2_049),
+        })
+      );
+
+      assertThrows(() =>
+        HydrationDataSchema.parse({
+          ...baseHydrationData,
+          pagePath: "../app/page.tsx",
+        })
+      );
+    });
+
+    it("accepts every authored module extension supported by hydration loading", () => {
+      const assetUrl = `/_vf/assets/${"a".repeat(64)}.js`;
+      const parsed = HydrationDataSchema.parse({
+        slug: "content",
+        props: {},
+        params: {},
+        layouts: [],
+        pagePath: "content/page.md",
+        releaseAssetModules: {
+          "content/page.md": assetUrl,
+          "lib/runtime.mjs": assetUrl,
+        },
+      });
+
+      assertEquals(parsed.pagePath, "content/page.md");
+      assertEquals(parsed.releaseAssetModules, {
+        "content/page.md": assetUrl,
+        "lib/runtime.mjs": assetUrl,
       });
     });
 

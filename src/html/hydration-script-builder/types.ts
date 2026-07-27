@@ -1,4 +1,5 @@
 import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
+import type { BuildVersion } from "#veryfront/utils/version.ts";
 
 export interface HydrationLayout {
   kind: "mdx" | "tsx";
@@ -24,6 +25,8 @@ export interface HydrationDataStructure {
   releaseId?: string;
   /** Production release asset URLs keyed by logical source path. */
   releaseAssetModules?: Record<string, string>;
+  /** Server/runtime identity used to reject stale cross-deploy SPA payloads. */
+  buildVersion?: BuildVersion;
   frontmatter?: Record<string, unknown>;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**

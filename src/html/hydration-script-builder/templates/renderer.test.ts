@@ -48,20 +48,15 @@ describe("hydration-script-builder/templates/renderer", () => {
     it("should use the RSC module endpoint only for app router RSC client pages", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
-      assertIncludes(result, "!hasReleaseAssetModules");
       assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
-      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)");
-      assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
+      assertIncludes(result, "isRemoteAppRouterClientPage");
+      assertIncludes(result, "resolveHydrationModuleUrl");
     });
 
-    it("prefers release asset modules over the RSC module endpoint", () => {
+    it("does not use release coverage to choose App Router rendering ownership", () => {
       const result = getRendererScript();
-      assertIncludes(result, "const hasReleaseAssetModules");
-      assertIncludes(
-        result,
-        "data.releaseAssetModules && Object.keys(data.releaseAssetModules).length > 0",
-      );
-      assertIncludes(result, "!hasReleaseAssetModules");
+      assertEquals(result.includes("hasReleaseAssetModules"), false);
+      assertIncludes(result, "function isRemoteAppRouterClientPage");
     });
 
     it("uses the configured App Router root for pages and layouts", () => {
@@ -72,7 +67,7 @@ describe("hydration-script-builder/templates/renderer", () => {
     });
 
     it("should use pathToModuleUrl for non-RSC page loading", () => {
-      assertIncludes(getRendererScript(), "pathToModuleUrl(data.pagePath");
+      assertIncludes(getRendererScript(), "resolveHydrationModuleUrl(\n            data.pagePath");
     });
 
     it("should fallback to Pages Router pattern", () => {
@@ -107,7 +102,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "loadHydrationComponent");
       assertIncludes(result, "layouts[i].path");
       assertIncludes(result, "shouldRenderRscClientPage");
-      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(path)");
+      assertIncludes(result, "resolveHydrationModuleUrl");
     });
 
     it("should recreate initial layouts with their serialized props", () => {
@@ -166,7 +161,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       const result = getRendererScript();
       assertIncludes(
         result,
-        "data.clientModuleStrategy === 'rsc-module' &&\n          !hasReleaseAssetModules &&\n          isAppRouterPath(normalizedPagePath)",
+        "const shouldRenderRscClientPage = isRemoteAppRouterClientPage(",
       );
       assertIncludes(result, "container.__reactRoot = createRoot(container)");
       assertIncludes(result, "container.__reactRoot.render(tree)");
@@ -220,6 +215,59 @@ describe("hydration-script-builder/templates/renderer", () => {
         "\nreturn isModuleNotFoundError(error);",
     )(error) as boolean;
   }
+
+  function isRemoteAppRouterClientPage(
+    data: Record<string, unknown>,
+    isAppRouterPage: boolean,
+  ): boolean {
+    return new Function(
+      "data",
+      "isAppRouterPage",
+      extractFunction("function isRemoteAppRouterClientPage(") +
+        "\nreturn isRemoteAppRouterClientPage(data, isAppRouterPage);",
+    )(data, isAppRouterPage) as boolean;
+  }
+
+  describe("App Router rendering ownership", () => {
+    it("is invariant across absent, full, partial, and unrelated release maps", () => {
+      const releaseMaps = [
+        undefined,
+        {
+          "app/page.tsx": "/_vf/assets/page.js",
+          "app/layout.tsx": "/_vf/assets/layout.js",
+        },
+        { "app/page.tsx": "/_vf/assets/page.js" },
+        { "app/unrelated.tsx": "/_vf/assets/unrelated.js" },
+      ];
+
+      for (const releaseAssetModules of releaseMaps) {
+        assertEquals(
+          isRemoteAppRouterClientPage(
+            { clientModuleStrategy: "rsc-module", releaseAssetModules },
+            true,
+          ),
+          true,
+        );
+      }
+    });
+
+    it("keeps Pages Router and filesystem-strategy pages on legacy ownership", () => {
+      assertEquals(
+        isRemoteAppRouterClientPage({ clientModuleStrategy: "rsc-module" }, false),
+        false,
+      );
+      assertEquals(
+        isRemoteAppRouterClientPage(
+          {
+            clientModuleStrategy: "fs",
+            releaseAssetModules: { "app/page.tsx": "/_vf/assets/page.js" },
+          },
+          true,
+        ),
+        false,
+      );
+    });
+  });
 
   type ImportModule = (url: string) => Promise<unknown>;
 

@@ -5,10 +5,8 @@ export const getRouterScript = () => `
     // Hydration state tracking
     // ============================================
     let hydrationResolve;
-    let hydrationReject;
-    const hydrationPromise = new Promise((resolve, reject) => {
+    const hydrationPromise = new Promise((resolve) => {
       hydrationResolve = resolve;
-      hydrationReject = reject;
     });
     let hydrationCompleted = false;
     let hydrationFailed = false;
@@ -21,7 +19,10 @@ export const getRouterScript = () => `
 
     window.__veryfrontHydrationFailed = (error) => {
       hydrationFailed = true;
-      hydrationReject(error);
+      // Wake navigation waiters without rejecting an otherwise unobserved
+      // promise. The render path reads hydrationFailed and performs the
+      // document-navigation fallback.
+      hydrationResolve();
       logError('Hydration failed signal received:', error);
     };
 
@@ -50,13 +51,72 @@ export const getRouterScript = () => `
     const log = DEBUG ? console.log.bind(console, '[Veryfront]') : () => {};
     const logError = console.error.bind(console, '[Veryfront]');
 
+    function getNavigationUrl(href) {
+      return new URL(href, window.location.href);
+    }
+
+    function getNavigationPathname(href) {
+      try {
+        return getNavigationUrl(href).pathname;
+      } catch (_) {
+        return '<invalid route>';
+      }
+    }
+
     function logBackgroundFetchFailure(reason, path, error) {
       const message = error?.message ?? String(error);
-      log(reason + ' failed:', path, message);
+      log(reason + ' failed:', getNavigationPathname(path), message);
     }
 
     function isAbortError(error) {
       return error?.name === 'AbortError';
+    }
+
+    function createAbortError(message = 'Operation aborted') {
+      const error = new Error(message);
+      error.name = 'AbortError';
+      return error;
+    }
+
+    function createTimeoutError(message = 'Operation timed out') {
+      const error = new Error(message);
+      error.name = 'TimeoutError';
+      return error;
+    }
+
+    function throwIfAborted(signal) {
+      if (signal?.aborted) throw createAbortError();
+    }
+
+    function waitForHydration(signal, timeoutMs) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeout;
+
+        const cleanup = () => {
+          signal?.removeEventListener('abort', onAbort);
+          if (timeout !== undefined) clearTimeout(timeout);
+        };
+        const settle = (callback, value) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          callback(value);
+        };
+        const onAbort = () => settle(reject, createAbortError());
+
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal?.addEventListener('abort', onAbort, { once: true });
+        timeout = setTimeout(
+          () => settle(reject, createTimeoutError('Hydration timeout')),
+          timeoutMs,
+        );
+        hydrationPromise.then(() => settle(resolve));
+      });
     }
 
     function getDocumentNonce() {
@@ -69,43 +129,67 @@ export const getRouterScript = () => `
     // ============================================
     // Version tracking for cache invalidation
     // ============================================
-    let clientBuildVersion = null;
+    let compareServerStart = false;
+
+    function readInitialBuildVersion() {
+      try {
+        const element = document.getElementById('veryfront-hydration-data');
+        const data = JSON.parse(element?.textContent || '{}');
+        // Process start time is useful for a local dev server restart, but it is
+        // not a deployment identity: healthy production pods naturally start
+        // at different times. Production uses framework, project, and release
+        // identities so load balancing cannot cause reload loops.
+        compareServerStart = data?.dev === true;
+        return data?.buildVersion && typeof data.buildVersion === 'object'
+          ? { ...data.buildVersion }
+          : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    let clientBuildVersion = readInitialBuildVersion();
+
+    function getBuildVersionMismatch(newVersion) {
+      if (!clientBuildVersion || !newVersion || typeof newVersion !== 'object') {
+        return null;
+      }
+
+      const identityFields = compareServerStart
+        ? ['serverStart', 'framework', 'projectUpdated']
+        : ['framework', 'projectUpdated'];
+      for (const field of identityFields) {
+        const previousValue = clientBuildVersion[field];
+        const nextValue = newVersion[field];
+        if (
+          previousValue !== undefined &&
+          nextValue !== undefined &&
+          previousValue !== nextValue
+        ) {
+          return { field, previousValue, nextValue };
+        }
+      }
+
+      return null;
+    }
 
     function checkVersionMismatch(newVersion) {
       if (!clientBuildVersion) {
-        clientBuildVersion = newVersion;
+        clientBuildVersion = { ...newVersion };
         log('Build version initialized:', newVersion);
         return false;
       }
 
-      if (newVersion.serverStart !== clientBuildVersion.serverStart) {
-        log('Server restarted, reloading...', {
-          old: clientBuildVersion.serverStart,
-          new: newVersion.serverStart
-        });
+      const mismatch = getBuildVersionMismatch(newVersion);
+      if (mismatch) {
+        log('Build version changed, reloading...', mismatch);
         return true;
       }
 
-      if (newVersion.framework !== clientBuildVersion.framework) {
-        log('Framework version changed, reloading...', {
-          old: clientBuildVersion.framework,
-          new: newVersion.framework
-        });
-        return true;
-      }
-
-      if (
-        newVersion.projectUpdated &&
-        clientBuildVersion.projectUpdated &&
-        newVersion.projectUpdated !== clientBuildVersion.projectUpdated
-      ) {
-        log('Project content updated, reloading...', {
-          old: clientBuildVersion.projectUpdated,
-          new: newVersion.projectUpdated
-        });
-        return true;
-      }
-
+      // Hydration data may not carry optional project identity fields. Capture
+      // them from the first page-data response so later navigations can still
+      // detect a change.
+      clientBuildVersion = { ...clientBuildVersion, ...newVersion };
       return false;
     }
 
@@ -133,6 +217,11 @@ export const getRouterScript = () => `
           return duration;
         }
       : () => 0;
+    const perfCancel = DEBUG
+      ? (label) => {
+          perfTimers.delete(label);
+        }
+      : () => {};
 
     function routeTimingNow() {
       return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -313,7 +402,11 @@ export const getRouterScript = () => `
       const entry = pageDataCache.get(path);
       if (!entry) return null;
 
-      if (Date.now() - entry.timestamp < CACHE_TTL_MS) return entry.data;
+      if (Date.now() - entry.timestamp < CACHE_TTL_MS) {
+        pageDataCache.delete(path);
+        pageDataCache.set(path, entry);
+        return entry.data;
+      }
 
       pageDataCache.delete(path);
       backgroundRefreshTimestamps.delete(path);
@@ -321,7 +414,7 @@ export const getRouterScript = () => `
     }
 
     function setCachedPageData(path, data) {
-      if (pageDataCache.size >= MAX_CACHE_SIZE) {
+      if (pageDataCache.size >= MAX_CACHE_SIZE && !pageDataCache.has(path)) {
         const oldest = pageDataCache.keys().next().value;
         if (oldest) {
           pageDataCache.delete(oldest);
@@ -329,6 +422,7 @@ export const getRouterScript = () => `
         }
       }
 
+      pageDataCache.delete(path);
       pageDataCache.set(path, { data, timestamp: Date.now() });
     }
 
@@ -346,11 +440,14 @@ export const getRouterScript = () => `
       scrollPositions.set(path, window.scrollY);
     }
 
-    function restoreScrollPosition(path) {
+    function restoreScrollPosition(path, navigation) {
       const savedY = scrollPositions.get(path);
       if (savedY === undefined) return false;
 
-      requestAnimationFrame(() => window.scrollTo(0, savedY));
+      requestAnimationFrame(() => {
+        if (navigation && !isLatestNavigation(navigation)) return;
+        window.scrollTo(0, savedY);
+      });
       return true;
     }
 
@@ -359,8 +456,12 @@ export const getRouterScript = () => `
     // ============================================
     let progressBar = null;
     let progressTimeout = null;
+    let progressOwner = 0;
 
-    function showNavigationProgress() {
+    function showNavigationProgress(navigationId) {
+      progressOwner = navigationId;
+      if (progressTimeout) clearTimeout(progressTimeout);
+
       if (!progressBar) {
         progressBar = document.createElement('div');
         progressBar.id = 'vf-nav-progress';
@@ -373,13 +474,16 @@ export const getRouterScript = () => `
       progressBar.style.width = '30%';
 
       progressTimeout = setTimeout(() => {
+        if (progressOwner !== navigationId) return;
         progressBar?.style && (progressBar.style.width = '70%');
       }, 300);
 
       document.body.setAttribute('aria-busy', 'true');
     }
 
-    function hideNavigationProgress() {
+    function hideNavigationProgress(navigationId) {
+      if (progressOwner !== navigationId) return;
+
       if (progressTimeout) {
         clearTimeout(progressTimeout);
         progressTimeout = null;
@@ -388,10 +492,12 @@ export const getRouterScript = () => `
       if (progressBar) {
         progressBar.style.width = '100%';
         setTimeout(() => {
+          if (progressOwner !== navigationId) return;
           if (!progressBar) return;
 
           progressBar.style.opacity = '0';
           setTimeout(() => {
+            if (progressOwner !== navigationId) return;
             if (progressBar) progressBar.style.width = '0';
           }, 200);
         }, 150);
@@ -405,8 +511,36 @@ export const getRouterScript = () => `
     // ============================================
     let currentAbortController = null;
 
-    function sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
+    function sleep(ms, signal) {
+      return new Promise((resolve, reject) => {
+        let timeout;
+        const cleanup = () => signal?.removeEventListener('abort', onAbort);
+        const onAbort = () => {
+          if (timeout !== undefined) clearTimeout(timeout);
+          cleanup();
+          reject(createAbortError());
+        };
+
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal?.addEventListener('abort', onAbort, { once: true });
+        timeout = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, ms);
+      });
+    }
+
+    function cancelResponseBody(response) {
+      try {
+        const cancellation = response?.body?.cancel?.();
+        cancellation?.catch?.(() => {});
+      } catch (_) {
+        // Releasing a retry response body is best-effort.
+      }
     }
 
     async function fetchWithRetry(url, options, maxRetries = MAX_RETRIES) {
@@ -416,32 +550,49 @@ export const getRouterScript = () => `
         const abortFromCaller = () => controller.abort();
         if (callerSignal?.aborted) controller.abort();
         callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
-        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, FETCH_TIMEOUT_MS);
+        let response;
+        let fetchError;
         try {
-          const response = await fetch(url, { ...options, signal: controller.signal });
+          response = await fetch(url, { ...options, signal: controller.signal });
+        } catch (error) {
+          fetchError = error;
+        } finally {
           clearTimeout(timeout);
           callerSignal?.removeEventListener('abort', abortFromCaller);
+        }
 
+        if (callerSignal?.aborted) {
+          cancelResponseBody(response);
+          throw createAbortError();
+        }
+
+        if (response) {
           if (response.ok) return response;
 
-          if (response.status >= 500 && attempt < maxRetries) {
-            log('Server error, retrying...', response.status);
-            await sleep(Math.pow(2, attempt) * 500);
-            continue;
-          }
+          if (response.status < 500 || attempt === maxRetries) return response;
 
-          return response;
-        } catch (error) {
-          clearTimeout(timeout);
-          callerSignal?.removeEventListener('abort', abortFromCaller);
+          cancelResponseBody(response);
+          log('Server error, retrying...', response.status);
+        } else {
+          const failure = timedOut
+            ? createTimeoutError('Page data request timed out')
+            : isAbortError(fetchError)
+            ? new Error('Page data request aborted unexpectedly')
+            : fetchError ?? new Error('Page data request failed without a response');
+          if (attempt === maxRetries) throw failure;
 
-          if (error.name === 'AbortError' && callerSignal?.aborted) throw error;
-          if (attempt === maxRetries) throw error;
-
-          log('Fetch failed, retrying...', error.message);
-          await sleep(Math.pow(2, attempt) * 500);
+          log(
+            'Fetch failed, retrying...',
+            failure?.message ?? String(failure),
+          );
         }
+
+        await sleep(Math.pow(2, attempt) * 500, callerSignal);
       }
     }
 
@@ -454,12 +605,15 @@ export const getRouterScript = () => `
         recordRouteTiming = false,
         timingSource = 'network'
       } = options;
-      const normalizedPath = path === '/' ? '' : path.replace(/^\\//, '');
-      const endpoint = '/_veryfront/page-data/' + normalizedPath + '.json';
+      const navigationUrl = getNavigationUrl(path);
+      const routePathname = navigationUrl.pathname;
+      const normalizedPath = routePathname === '/' ? 'index' : routePathname.replace(/^\\//, '');
+      const endpoint =
+        '/_veryfront/page-data/' + normalizedPath + '.json' + navigationUrl.search;
       const startedAt = recordRouteTiming ? routeTimingNow() : 0;
 
-      log('Fetching page data:', path);
-      perfStart('fetch:' + path);
+      log('Fetching page data:', routePathname);
+      perfStart('fetch:' + routePathname);
 
       const headers = options.prefetch
         ? { 'X-Veryfront-Prefetch': '1' }
@@ -468,13 +622,14 @@ export const getRouterScript = () => `
         headers,
         signal
       }, options.prefetch ? 0 : MAX_RETRIES);
+      throwIfAborted(signal);
 
       if (!response.ok) {
-        perfEnd('fetch:' + path);
+        perfEnd('fetch:' + routePathname);
         if (recordRouteTiming) {
           emitRouteTiming(
             'page-data',
-            path,
+            routePathname,
             startedAt,
             buildPageDataTimingDetail(response, endpoint, startedAt, timingSource)
           );
@@ -484,14 +639,15 @@ export const getRouterScript = () => `
         throw error;
       }
 
-      perfStart('parse:' + path);
+      perfStart('parse:' + routePathname);
       const data = await response.json();
-      perfEnd('parse:' + path);
-      perfEnd('fetch:' + path);
+      throwIfAborted(signal);
+      perfEnd('parse:' + routePathname);
+      perfEnd('fetch:' + routePathname);
       if (recordRouteTiming) {
         emitRouteTiming(
           'page-data',
-          path,
+          routePathname,
           startedAt,
           buildPageDataTimingDetail(response, endpoint, startedAt, timingSource)
         );
@@ -507,10 +663,23 @@ export const getRouterScript = () => `
     }
 
     function handlePageDataVersionMismatch(path, data) {
-      if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
-        log('Version mismatch detected, performing full page reload to:', path);
+      const buildVersionChanged =
+        data?.buildVersion && checkVersionMismatch(data.buildVersion);
+      const activeReleaseId = window.__veryfrontReleaseId;
+      const releaseChanged =
+        typeof activeReleaseId === 'string' &&
+        activeReleaseId.length > 0 &&
+        typeof data?.releaseId === 'string' &&
+        data.releaseId.length > 0 &&
+        data.releaseId !== activeReleaseId;
+
+      if (buildVersionChanged || releaseChanged) {
+        log(
+          'Version mismatch detected, performing full page reload to:',
+          getNavigationPathname(path),
+        );
         window.location.href = path;
-        return new Promise(() => {});
+        throw createAbortError('Page data belongs to a different build');
       }
 
       return data;
@@ -548,19 +717,22 @@ export const getRouterScript = () => `
 
     async function fetchPageDataForNavigation(path, signal) {
       const startedAt = routeTimingNow();
+      const routePathname = getNavigationPathname(path);
       const cached = getCachedPageData(path);
       if (cached) {
-        log('Using cached page data:', path);
+        log('Using cached page data:', routePathname);
+        const checkedData = handlePageDataVersionMismatch(path, cached);
         refreshPageDataInBackground(path);
-        emitRouteTiming('page-data', path, startedAt, { source: 'cache' });
-        return cached;
+        emitRouteTiming('page-data', routePathname, startedAt, { source: 'cache' });
+        return checkedData;
       }
 
       const pending = pendingPageDataFetches.get(path);
       if (pending) {
-        log('Reusing pending page data fetch for navigation:', path);
+        log('Reusing pending page data fetch for navigation:', routePathname);
         const data = await pending;
-        emitRouteTiming('page-data', path, startedAt, { source: 'deduped' });
+        throwIfAborted(signal);
+        emitRouteTiming('page-data', routePathname, startedAt, { source: 'deduped' });
         return handlePageDataVersionMismatch(path, data);
       }
 
@@ -586,41 +758,89 @@ export const getRouterScript = () => `
     // ============================================
     // Navigation state
     // ============================================
-    let currentPath = window.location.pathname;
+    let currentPath = window.location.pathname + window.location.search;
+    let currentHash = window.location.hash || '';
     let isNavigating = false;
+    let navigationSequence = 0;
+
+    function isLatestNavigation(navigation) {
+      return navigation.id === navigationSequence && !navigation.signal.aborted;
+    }
+
+    function assertLatestNavigation(navigation) {
+      if (!isLatestNavigation(navigation)) {
+        throw createAbortError('Navigation superseded');
+      }
+    }
+
+    function notifyNavigationSubscribers() {
+      try {
+        const navigationStore = getNavigationStore();
+        if (typeof navigationStore?.notify === 'function') navigationStore.notify();
+      } catch (notifyError) {
+        log('Navigation subscriber notification failed:', notifyError?.message);
+      }
+    }
 
     // ============================================
     // SPA navigation handler
     // ============================================
-    async function navigateSPA(href, historyMode = 'push', restoreScroll = false) {
+    async function navigateSPA(
+      href,
+      historyMode = 'push',
+      restoreScroll = false,
+      providedPageData,
+    ) {
+      let targetUrl;
+      try {
+        targetUrl = getNavigationUrl(href);
+      } catch (_) {
+        logError('Invalid SPA navigation target');
+        return;
+      }
+
+      if (targetUrl.origin !== window.location.origin) {
+        if (targetUrl.protocol === 'http:' || targetUrl.protocol === 'https:') {
+          window.location.href = targetUrl.href;
+        } else {
+          logError('Unsupported SPA navigation protocol:', targetUrl.protocol);
+        }
+        return;
+      }
+
+      const targetRouteHref = targetUrl.pathname + targetUrl.search;
+      const resolvedHref = targetRouteHref + targetUrl.hash;
+      const targetPathname = targetUrl.pathname;
+      const targetHash = targetUrl.hash ? targetUrl.hash.slice(1) : '';
+      const navigationId = ++navigationSequence;
       currentAbortController?.abort();
 
-      if (isNavigating) return;
-      isNavigating = true;
-      const [navigationPath] = href.split('#');
-      removeQueuedPrefetch(navigationPath || href);
+      removeQueuedPrefetch(targetRouteHref);
       abortActiveSpeculativePrefetches();
 
-      currentAbortController = new AbortController();
-      const signal = currentAbortController.signal;
+      const controller = new AbortController();
+      currentAbortController = controller;
+      const signal = controller.signal;
+      const navigation = { id: navigationId, controller, signal };
+      isNavigating = true;
       const navigationStartedAt = routeTimingNow();
-
-      showNavigationProgress();
-      perfStart('nav:total:' + href);
+      const totalPerfLabel = 'nav:total:' + navigationId + ':' + targetPathname;
+      const fetchPerfLabel = 'nav:fetchData:' + navigationId + ':' + targetPathname;
+      const renderPerfLabel = 'nav:render:' + navigationId + ':' + targetPathname;
 
       try {
-        log('SPA navigating to:', href);
+        showNavigationProgress(navigationId);
+        perfStart(totalPerfLabel);
+        log('SPA navigating to:', targetPathname);
 
         saveScrollPosition(currentPath);
 
-        const [path, hash] = href.split('#');
-        const targetPath = path || currentPath;
-
-        perfStart('nav:fetchData:' + href);
-        const pageData = await fetchPageDataForNavigation(targetPath, signal);
-        perfEnd('nav:fetchData:' + href);
-
-        if (signal.aborted) return;
+        perfStart(fetchPerfLabel);
+        const pageData = providedPageData === undefined
+          ? await fetchPageDataForNavigation(targetRouteHref, signal)
+          : handlePageDataVersionMismatch(targetRouteHref, providedPageData);
+        assertLatestNavigation(navigation);
+        perfEnd(fetchPerfLabel);
 
         // getServerData redirect(): the page-data endpoint encodes it as a 200
         // { redirect: { destination } } payload. Follow it with a document
@@ -630,40 +850,51 @@ export const getRouterScript = () => `
         // URL to location.href would EXECUTE it (the server also filters these, so
         // this is defense in depth). Fall through to the normal error path otherwise.
         if (pageData && pageData.redirect && typeof pageData.redirect.destination === 'string') {
+          let redirectTarget = null;
           try {
-            var redirectTarget = new URL(pageData.redirect.destination, window.location.origin);
-            if (redirectTarget.protocol === 'http:' || redirectTarget.protocol === 'https:') {
-              log('SPA navigation redirect -> ' + redirectTarget.href);
-              window.location.href = redirectTarget.href;
-              return;
-            }
+            redirectTarget = new URL(pageData.redirect.destination, window.location.origin);
           } catch (e) { /* invalid destination — do not follow */ }
+
+          if (
+            redirectTarget &&
+            (redirectTarget.protocol === 'http:' || redirectTarget.protocol === 'https:')
+          ) {
+            assertLatestNavigation(navigation);
+            log('SPA navigation redirect -> ' + redirectTarget.pathname);
+            window.location.href = redirectTarget.href;
+            return;
+          }
         }
 
-        if (historyMode === 'push') {
-          window.history.pushState({ pageData, scrollY: 0 }, '', href);
-        } else if (historyMode === 'replace') {
-          window.history.replaceState({ pageData, scrollY: 0 }, '', href);
-        }
+        perfStart(renderPerfLabel);
+        await renderPageFromData(pageData, targetPathname, navigation, () => {
+          assertLatestNavigation(navigation);
 
-        // Update the shared router snapshot BEFORE rendering. RouterProvider
-        // reads router.params during render, so mutating after renderPageFromData
-        // would leave the new page's first render with the previous route's
-        // params (issue #2741). pathname/query move up for the same reason.
-        currentPath = targetPath;
-        window.__veryfrontRouter.pathname = targetPath;
-        window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
-        window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);
+          if (historyMode === 'push') {
+            window.history.pushState({ pageData, scrollY: 0 }, '', resolvedHref);
+          } else if (historyMode === 'replace') {
+            window.history.replaceState({ pageData, scrollY: 0 }, '', resolvedHref);
+          }
 
-        perfStart('nav:render:' + href);
-        await renderPageFromData(pageData, targetPath);
-        perfEnd('nav:render:' + href);
+          // Commit the shared router snapshot immediately before the React
+          // render, after every asynchronous preparation step has completed.
+          currentPath = targetRouteHref;
+          currentHash = targetUrl.hash;
+          window.__veryfrontRouter.path = targetPathname;
+          window.__veryfrontRouter.pathname = targetPathname;
+          window.__veryfrontRouter.query = Object.fromEntries(targetUrl.searchParams);
+          window.__veryfrontRouter.params = normalizeRouteParams(pageData.params);
+        });
+        assertLatestNavigation(navigation);
+        perfEnd(renderPerfLabel);
+        notifyNavigationSubscribers();
 
         if (restoreScroll) {
-          restoreScrollPosition(targetPath);
-        } else if (hash) {
+          restoreScrollPosition(targetRouteHref, navigation);
+        } else if (targetHash) {
           requestAnimationFrame(() => {
-            const target = document.getElementById(hash);
+            if (!isLatestNavigation(navigation)) return;
+            const target = document.getElementById(targetHash);
             if (target) {
               target.scrollIntoView({ behavior: 'smooth' });
               return;
@@ -671,21 +902,19 @@ export const getRouterScript = () => `
             window.scrollTo(0, 0);
           });
         } else {
+          assertLatestNavigation(navigation);
           window.scrollTo(0, 0);
         }
 
-        hideNavigationProgress();
-        perfEnd('nav:total:' + href);
-        emitRouteTiming('total', targetPath, navigationStartedAt, {
-          href,
+        assertLatestNavigation(navigation);
+        perfEnd(totalPerfLabel);
+        emitRouteTiming('total', targetPathname, navigationStartedAt, {
           historyMode,
           restoreScroll
         });
         log('SPA navigation complete');
       } catch (error) {
-        hideNavigationProgress();
-
-        if (error.name === 'AbortError') {
+        if (!isLatestNavigation(navigation) || isAbortError(error)) {
           log('Navigation aborted');
           return;
         }
@@ -693,14 +922,24 @@ export const getRouterScript = () => `
         logError('SPA navigation failed:', error.message);
 
         if (error.status === 404) {
-          logError('Page not found:', href);
+          logError('Page not found:', targetPathname);
         }
 
-        window.location.href = href;
+        window.location.href = resolvedHref;
       } finally {
-        isNavigating = false;
-        currentAbortController = null;
-        processPageDataPrefetchQueue();
+        perfCancel(totalPerfLabel);
+        perfCancel(fetchPerfLabel);
+        perfCancel(renderPerfLabel);
+
+        if (
+          navigationId === navigationSequence &&
+          currentAbortController === controller
+        ) {
+          hideNavigationProgress(navigationId);
+          isNavigating = false;
+          currentAbortController = null;
+          processPageDataPrefetchQueue();
+        }
       }
     }
 
@@ -708,14 +947,23 @@ export const getRouterScript = () => `
     // Render page from page data
     // ============================================
     async function loadPageDataComponent(pageData, path) {
-      if (!pageData.isolatedClientPage) return loadComponent(path);
-
-      const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
-      const module = await import(moduleUrl);
-      return module.MDXLayout || module.MainLayout || module.default || module;
+      const moduleUrl = resolveHydrationModuleUrl(
+        path,
+        pageData.isolatedClientPage === true,
+        window.__veryfrontStudioEmbed === true,
+        pageData.releaseAssetModules || null,
+        pageData.releaseId || null,
+      );
+      const component = await loadComponentFromUrl(path, moduleUrl);
+      if (!component) {
+        throw new Error('Module has no renderable export: ' + path);
+      }
+      return component;
     }
 
-    async function renderPageFromData(pageData, targetPath) {
+    async function renderPageFromData(pageData, targetPath, navigation, commitNavigationState) {
+      assertLatestNavigation(navigation);
+
       if (pageData.requiresFullDocumentNavigation) {
         throw new Error('Server layout requires full document navigation');
       }
@@ -733,6 +981,7 @@ export const getRouterScript = () => `
       const components = await Promise.all(
         allPaths.map((path) => loadPageDataComponent(pageData, path))
       );
+      assertLatestNavigation(navigation);
       emitRouteTiming('modules', targetPath, modulesStartedAt, { count: allPaths.length });
       perfEnd('render:loadAll');
 
@@ -745,6 +994,19 @@ export const getRouterScript = () => `
       if (!PageComponent) {
         throw new Error('Failed to load page component: ' + pageData.pagePath);
       }
+
+      if (!hydrationCompleted && !hydrationFailed) {
+        log('Waiting for hydration to complete before SPA render...');
+        try {
+          await waitForHydration(navigation.signal, 10000);
+        } catch (waitError) {
+          if (isAbortError(waitError)) throw waitError;
+          log('Hydration wait failed:', waitError.message);
+        }
+      }
+
+      assertLatestNavigation(navigation);
+      commitNavigationState();
 
       if (pageData.frontmatter?.title) {
         document.title = pageData.frontmatter.title;
@@ -828,7 +1090,7 @@ export const getRouterScript = () => `
         slug: pageData.slug || '',
         path: pageData.pagePath || targetPath,
         params: normalizedParams,
-        query: Object.fromEntries(new URLSearchParams(window.location.search)),
+        query: { ...router.query },
         frontmatter: pageData.frontmatter || {},
         data: pageData.props || {},
         headings: headingsArray,
@@ -842,18 +1104,7 @@ export const getRouterScript = () => `
         ? document.getElementById('veryfront-page-island')
         : document.getElementById('root');
 
-      if (!hydrationCompleted && !hydrationFailed) {
-        log('Waiting for hydration to complete before SPA render...');
-        try {
-          await Promise.race([
-            hydrationPromise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Hydration timeout')), 10000))
-          ]);
-        } catch (waitError) {
-          log('Hydration wait failed:', waitError.message);
-        }
-      }
-
+      assertLatestNavigation(navigation);
       if (container?.__reactRoot) {
         perfStart('render:reactRender');
         container.__reactRoot.render(tree);
@@ -950,11 +1201,19 @@ export const getRouterScript = () => `
 
     async function preloadModulesForPageData(pageData, path) {
       if (!pageData || pageData.requiresFullDocumentNavigation) return;
-      if (pageData.releaseId && window.__veryfrontSetReleaseId) {
-        window.__veryfrontSetReleaseId(pageData.releaseId);
-      }
-      if (pageData.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
-        window.__veryfrontSetReleaseAssetModules(pageData.releaseAssetModules);
+      // Never let speculative work replace the active route's release context.
+      // A cross-build payload stays cached so the foreground navigation can
+      // perform the canonical full reload, but its modules are not evaluated.
+      if (pageData.buildVersion && getBuildVersionMismatch(pageData.buildVersion)) return;
+      const activeReleaseId = window.__veryfrontReleaseId;
+      if (
+        typeof activeReleaseId === 'string' &&
+        activeReleaseId.length > 0 &&
+        typeof pageData.releaseId === 'string' &&
+        pageData.releaseId.length > 0 &&
+        pageData.releaseId !== activeReleaseId
+      ) {
+        return;
       }
 
       const modulePaths = getPageDataModulePaths(pageData);
@@ -1098,11 +1357,16 @@ export const getRouterScript = () => `
     // lost, matching the server flattenRouteParams + RSC hydration normalizer.
     function normalizeRouteParams(raw) {
       const out = {};
-      if (!raw) return out;
-      for (const key in raw) {
+      if (!raw || typeof raw !== 'object') return out;
+      for (const key of Object.keys(raw)) {
         const value = raw[key];
         if (value === undefined) continue;
-        out[key] = Array.isArray(value) ? value.join('/') : value;
+        Object.defineProperty(out, key, {
+          configurable: true,
+          enumerable: true,
+          value: Array.isArray(value) ? value.join('/') : value,
+          writable: true,
+        });
       }
       return out;
     }
@@ -1160,48 +1424,48 @@ export const getRouterScript = () => `
       log('Router runtime does not export getNavigationStore; using shared v1 registry fallback');
     }
     if (typeof getNavigationStore === 'function') {
-      getNavigationStore().setNavigator((href, options) => {
+      const navigationStore = getNavigationStore();
+      const previousNavigatorDisposer = window.__veryfrontNavigationStoreDisposer;
+      if (typeof previousNavigatorDisposer === 'function') {
+        previousNavigatorDisposer();
+      }
+      const navigationStoreDisposer = navigationStore.setNavigator((href, options) => {
         const mode = options && options.history;
         const historyMode = mode === 'replace' ? 'replace' : mode === 'none' ? 'none' : 'push';
         return navigateSPA(href, historyMode);
       });
+      window.__veryfrontNavigationStoreDisposer =
+        typeof navigationStoreDisposer === 'function' ? navigationStoreDisposer : null;
     }
 
     // ============================================
     // Event handlers
     // ============================================
     window.addEventListener('popstate', async (e) => {
-      const path = window.location.pathname;
-      log('Popstate:', path);
-
-      saveScrollPosition(currentPath);
-
-      if (!e.state?.pageData) {
-        await navigateSPA(path, 'none', true);
+      const routeHref = window.location.pathname + window.location.search;
+      const nextHash = window.location.hash || '';
+      if (routeHref === currentPath && nextHash !== currentHash) {
+        currentHash = nextHash;
+        notifyNavigationSubscribers();
         return;
       }
 
-      showNavigationProgress();
-      try {
-        // Update the router snapshot before rendering so RouterProvider reads
-        // this route's params, not the previous route's (issue #2741).
-        currentPath = path;
-        window.__veryfrontRouter.pathname = path;
-        window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
-        window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);
+      const href = routeHref + nextHash;
+      log('Popstate:', window.location.pathname);
+      await navigateSPA(href, 'none', true, e.state?.pageData);
+    });
 
-        await renderPageFromData(e.state.pageData, path);
+    window.addEventListener('hashchange', () => {
+      const nextHash = window.location.hash || '';
+      if (nextHash === currentHash) return;
 
-        restoreScrollPosition(path);
-        hideNavigationProgress();
-      } catch (error) {
-        hideNavigationProgress();
-        logError('Popstate render failed:', error.message);
-        window.location.reload();
-      }
+      currentHash = nextHash;
+      notifyNavigationSubscribers();
     });
 
     document.addEventListener('click', (e) => {
+      if (e.defaultPrevented || (typeof e.button === 'number' && e.button !== 0)) return;
+      if (!e.target || typeof e.target.closest !== 'function') return;
       const link = e.target.closest('a[href]');
       if (!link) return;
 
@@ -1209,17 +1473,26 @@ export const getRouterScript = () => `
       if (!href) return;
 
       if (href.startsWith('#')) {
-        const target = document.getElementById(href.slice(1));
+        let targetId = href.slice(1);
+        try {
+          targetId = decodeURIComponent(targetId);
+        } catch (_) {
+          // Keep the literal fragment when it is not valid percent-encoding.
+        }
+        const target = document.getElementById(targetId) ||
+          document.getElementsByName(targetId)[0];
         if (!target) return;
 
         e.preventDefault();
+        window.history.pushState(window.history.state, '', href);
+        currentHash = window.location.hash || href;
+        notifyNavigationSubscribers();
         target.scrollIntoView({ behavior: 'smooth' });
-        window.history.pushState(null, '', href);
         return;
       }
 
       if (
-        link.target === '_blank' ||
+        (link.target && link.target !== '_self') ||
         link.hasAttribute('download') ||
         e.metaKey ||
         e.ctrlKey ||

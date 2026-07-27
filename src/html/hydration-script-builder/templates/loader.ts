@@ -4,19 +4,30 @@ export const getLoaderScript = (): string => `
     // Note: DEBUG, log, logError are defined in router.ts which loads first
 
     const VERYFRONT_RUNTIME_VERSION = '${VERSION}';
+    const MAX_COMPONENT_CACHE_SIZE = 500;
     const componentCache = new Map();
+    const componentCachePaths = new Map();
     const loadingPromises = new Map();
+    let componentCacheGeneration = 0;
 
     function clearComponentCache(path) {
+      // A single monotonic generation invalidates every import that began
+      // before this clear without retaining one generation entry per path.
+      componentCacheGeneration++;
       if (!path) {
         componentCache.clear();
+        componentCachePaths.clear();
         loadingPromises.clear();
         log('Cleared all component caches');
         return;
       }
 
-      componentCache.delete(path);
-      loadingPromises.delete(path);
+      for (const [cacheKey, cachedPath] of componentCachePaths) {
+        if (cachedPath !== path) continue;
+        componentCache.delete(cacheKey);
+        componentCachePaths.delete(cacheKey);
+        loadingPromises.delete(cacheKey);
+      }
       log('Cleared component cache for:', path);
     }
     window.__veryfrontClearComponentCache = clearComponentCache;
@@ -32,9 +43,9 @@ export const getLoaderScript = (): string => `
     }
     window.__veryfrontSetReleaseId = setReleaseId;
 
-    function appendReleaseModuleVersion(url) {
-      if (!__releaseId || url.includes('vf_release=')) return url;
-      let versionedUrl = appendQueryParam(url, 'vf_release', encodeURIComponent(__releaseId));
+    function appendReleaseModuleVersion(url, releaseId = __releaseId) {
+      if (!releaseId || url.includes('vf_release=')) return url;
+      let versionedUrl = appendQueryParam(url, 'vf_release', encodeURIComponent(releaseId));
       versionedUrl = appendQueryParam(versionedUrl, 'vf_runtime', encodeURIComponent(VERYFRONT_RUNTIME_VERSION));
       return versionedUrl;
     }
@@ -54,46 +65,108 @@ export const getLoaderScript = (): string => `
         .replace(/[?#].*$/, '');
     }
 
-    function resolveReleaseAssetModuleUrl(path) {
-      if (!__releaseAssetModules || __studioEmbed || __hmrRefreshTimestamp) return null;
+    function readOwnReleaseAssetModuleUrl(moduleMap, path) {
+      try {
+        if (!Object.prototype.hasOwnProperty.call(moduleMap, path)) return null;
+        const value = moduleMap[path];
+        return typeof value === 'string' && value ? value : null;
+      } catch {
+        // Treat application-mutated browser globals as a cache miss.
+        return null;
+      }
+    }
+
+    function resolveReleaseAssetModuleUrl(
+      path,
+      moduleMap = __releaseAssetModules,
+      studioEmbed = __studioEmbed,
+    ) {
+      if (!moduleMap || studioEmbed || __hmrRefreshTimestamp) return null;
 
       const key = normalizeReleaseAssetModulePath(path);
-      if (__releaseAssetModules[key]) return __releaseAssetModules[key];
+      const exactUrl = readOwnReleaseAssetModuleUrl(moduleMap, key);
+      if (exactUrl) return exactUrl;
 
-      const withoutExt = key.replace(/\\.(tsx|ts|jsx|mdx|js|mjs)$/, '');
-      const extensions = ['.tsx', '.ts', '.jsx', '.mdx', '.js'];
+      // An explicit source extension identifies one exact module. Falling
+      // through from page.tsx to a sibling page.ts silently runs different
+      // source code and makes partial release manifests unsafe. Only
+      // extensionless requests may probe source variants.
+      if (/\\.(tsx|ts|jsx|mdx|md|js|mjs)$/.test(key)) return null;
+
+      const extensions = ['.tsx', '.ts', '.jsx', '.mdx', '.md', '.js', '.mjs'];
       for (const ext of extensions) {
-        const candidate = withoutExt + ext;
-        if (__releaseAssetModules[candidate]) return __releaseAssetModules[candidate];
+        const candidate = key + ext;
+        const candidateUrl = readOwnReleaseAssetModuleUrl(moduleMap, candidate);
+        if (candidateUrl) return candidateUrl;
       }
 
       return null;
     }
 
-    function pathToModuleUrl(path, studioEmbed) {
-      const releaseAssetUrl = resolveReleaseAssetModuleUrl(path);
+    // Select transport independently for every logical module. Release assets
+    // win when that exact module is covered; remote App Router modules then use
+    // the hardened RSC endpoint; all other modules retain the legacy module
+    // server fallback.
+    function resolveHydrationModuleUrl(
+      path,
+      preferRscModule,
+      studioEmbed,
+      releaseAssetModules = __releaseAssetModules,
+      releaseId = __releaseId,
+    ) {
+      const releaseAssetUrl = resolveReleaseAssetModuleUrl(
+        path,
+        releaseAssetModules,
+        studioEmbed,
+      );
       if (releaseAssetUrl) return releaseAssetUrl;
 
-      const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
+      if (preferRscModule) {
+        return '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
+      }
+
+      return pathToModuleUrl(path, studioEmbed, releaseAssetModules, releaseId);
+    }
+
+    function pathToModuleUrl(
+      path,
+      studioEmbed,
+      releaseAssetModules = __releaseAssetModules,
+      releaseId = __releaseId,
+    ) {
+      const releaseAssetUrl = resolveReleaseAssetModuleUrl(
+        path,
+        releaseAssetModules,
+        studioEmbed,
+      );
+      if (releaseAssetUrl) return releaseAssetUrl;
+
+      const normalizedPath = normalizeReleaseAssetModulePath(path);
+      const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx|md|js|mjs)$/;
 
       const match =
-        path.match(new RegExp('/' + pattern.source)) ||
-        path.match(new RegExp('^' + pattern.source));
+        normalizedPath.match(new RegExp('/' + pattern.source)) ||
+        normalizedPath.match(new RegExp('^' + pattern.source));
 
-      let url;
-      if (match) {
-        url = MODULE_SERVER_URL + '/' + match[1] + '/' + match[2] + '.js';
-      } else {
-        const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
-        url =
-          MODULE_SERVER_URL +
-          '/' +
-          (hasKnownExt ? path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js') : path + '.js');
-      }
+      const logicalPath = match
+        ? match[1] + '/' + match[2] + '.' + match[3]
+        : normalizedPath;
+      const hasSourceExt = /\\.(tsx|ts|jsx|mdx|md|js|mjs)$/.test(logicalPath);
+      // Preserve authored extensions so the module server can resolve the
+      // requested source exactly. A second .js suffix disambiguates authored
+      // JavaScript from the legacy extensionless compiled-module endpoint.
+      const requestPath = /\\.(js|mjs)$/.test(logicalPath)
+        ? logicalPath + '.js'
+        : hasSourceExt
+        ? logicalPath
+        : logicalPath + '.js';
+      let url = MODULE_SERVER_URL + '/' + requestPath;
 
       if (studioEmbed) url = appendQueryParam(url, 'studio_embed', 'true');
       if (__hmrRefreshTimestamp) url = appendQueryParam(url, 't', __hmrRefreshTimestamp);
-      if (!studioEmbed && !__hmrRefreshTimestamp) url = appendReleaseModuleVersion(url);
+      if (!studioEmbed && !__hmrRefreshTimestamp) {
+        url = appendReleaseModuleVersion(url, releaseId);
+      }
 
       return url;
     }
@@ -112,20 +185,24 @@ export const getLoaderScript = (): string => `
     }
     window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 
-    async function loadComponent(path) {
-      if (!path) return null;
+    async function loadComponentFromUrl(path, moduleUrl) {
+      if (!path || !moduleUrl) return null;
 
-      if (componentCache.has(path)) {
+      const cacheKey = path + '\\0' + moduleUrl;
+      if (componentCache.has(cacheKey)) {
         log('Component cached:', path);
-        return componentCache.get(path);
+        const component = componentCache.get(cacheKey);
+        componentCache.delete(cacheKey);
+        componentCache.set(cacheKey, component);
+        return component;
       }
 
-      const existingPromise = loadingPromises.get(path);
+      const existingPromise = loadingPromises.get(cacheKey);
       if (existingPromise) return existingPromise;
 
+      const cacheGeneration = componentCacheGeneration;
       const loadPromise = (async () => {
         try {
-          const moduleUrl = pathToModuleUrl(path, __studioEmbed);
           const start = DEBUG ? performance.now() : 0;
 
           log('Loading component:', moduleUrl);
@@ -145,17 +222,36 @@ export const getLoaderScript = (): string => `
             );
           }
 
-          componentCache.set(path, component);
+          if (cacheGeneration === componentCacheGeneration) {
+            if (componentCache.size >= MAX_COMPONENT_CACHE_SIZE) {
+              const oldestKey = componentCache.keys().next().value;
+              if (oldestKey !== undefined) {
+                componentCache.delete(oldestKey);
+                componentCachePaths.delete(oldestKey);
+              }
+            }
+            componentCache.set(cacheKey, component);
+            componentCachePaths.set(cacheKey, path);
+          }
           return component;
         } catch (error) {
           logError('Failed to load component:', path, error);
           return null;
         } finally {
-          loadingPromises.delete(path);
+          if (loadingPromises.get(cacheKey) === loadPromise) {
+            loadingPromises.delete(cacheKey);
+            if (!componentCache.has(cacheKey)) componentCachePaths.delete(cacheKey);
+          }
         }
       })();
 
-      loadingPromises.set(path, loadPromise);
+      loadingPromises.set(cacheKey, loadPromise);
+      componentCachePaths.set(cacheKey, path);
       return loadPromise;
+    }
+
+    async function loadComponent(path) {
+      if (!path) return null;
+      return loadComponentFromUrl(path, pathToModuleUrl(path, __studioEmbed));
     }
 `;

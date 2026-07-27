@@ -5,6 +5,7 @@ import * as esbuild from "veryfront/extensions/bundler";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 import {
   generateProdHydrationModule,
+  getProdHydrationModuleHash,
   getProdHydrationModulePath,
   getProdScripts,
   PROD_HYDRATION_MODULE_PATH,
@@ -82,9 +83,11 @@ describe("hydration-script-builder/prod-scripts", () => {
       const runtimePath = getProdHydrationModulePath();
 
       assertEquals(
-        /^\/_veryfront\/hydration-runtime\.[0-9a-f]+\.js$/.test(runtimePath),
+        /^\/_veryfront\/hydration-runtime\.[0-9a-f]{64}\.js$/.test(runtimePath),
         true,
       );
+      assertEquals(runtimePath.includes(getProdHydrationModuleHash()), true);
+      assertEquals(getProdHydrationModuleHash().length, 64);
       assertEquals(getProdHydrationModulePath(), runtimePath);
       assertEquals(runtimePath === PROD_HYDRATION_MODULE_PATH, false);
     });

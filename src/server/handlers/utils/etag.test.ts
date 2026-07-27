@@ -67,6 +67,13 @@ describe("server/handlers/utils/etag", () => {
       });
       assertEquals(hasMatchingEtag(req, '"new"'), false);
     });
+
+    it("uses weak comparison and accepts lists for If-None-Match", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "If-None-Match": '"old", W/"current"' },
+      });
+      assertEquals(hasMatchingEtag(req, '"current"'), true);
+    });
   });
 
   describe("parseIfNoneMatch", () => {
@@ -82,6 +89,10 @@ describe("server/handlers/utils/etag", () => {
       assertEquals(parseIfNoneMatch("*"), ["*"]);
     });
 
+    it("does not split a legal comma inside an opaque tag", () => {
+      assertEquals(parseIfNoneMatch('"a,b", W/"c"'), ['"a,b"', 'W/"c"']);
+    });
+
     it("should filter empty entries", () => {
       assertEquals(parseIfNoneMatch('"a",,,"b"'), ['"a"', '"b"']);
     });
@@ -94,6 +105,11 @@ describe("server/handlers/utils/etag", () => {
 
     it("should match exact etag", () => {
       assertEquals(matchesAnyEtag('"abc"', '"abc", "def"'), true);
+    });
+
+    it("should use weak comparison for cache revalidation", () => {
+      assertEquals(matchesAnyEtag('"abc"', 'W/"abc"'), true);
+      assertEquals(matchesAnyEtag('W/"abc"', '"abc"'), true);
     });
 
     it("should return false on no match", () => {

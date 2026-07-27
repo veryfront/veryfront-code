@@ -5,13 +5,14 @@ import {
   getRouterScript,
 } from "./templates/index.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
-import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
+import { createHash } from "node:crypto";
 
 export const PROD_HYDRATION_MODULE_PATH = "/_veryfront/hydration-runtime.js";
 export const PROD_HYDRATION_MODULE_VERSIONED_PATH_PATTERN =
-  /^\/_veryfront\/hydration-runtime\.[0-9a-f]{8}\.js$/;
+  /^\/_veryfront\/hydration-runtime\.(?:[0-9a-f]{8}|[0-9a-f]{64})\.js$/;
 
 let cachedProdHydrationModulePath: string | null = null;
+let cachedProdHydrationModuleHash: string | null = null;
 
 export function generateProdHydrationModule(): string {
   return [
@@ -30,9 +31,19 @@ export function generateProdHydrationModule(): string {
 export function getProdHydrationModulePath(): string {
   if (cachedProdHydrationModulePath) return cachedProdHydrationModulePath;
 
-  const hash = fnv1aHash(generateProdHydrationModule()).padStart(8, "0");
-  cachedProdHydrationModulePath = `/_veryfront/hydration-runtime.${hash}.js`;
+  cachedProdHydrationModulePath =
+    `/_veryfront/hydration-runtime.${getProdHydrationModuleHash()}.js`;
   return cachedProdHydrationModulePath;
+}
+
+/** Full content digest used by the immutable runtime URL and strong ETag. */
+export function getProdHydrationModuleHash(): string {
+  if (cachedProdHydrationModuleHash) return cachedProdHydrationModuleHash;
+
+  cachedProdHydrationModuleHash = createHash("sha256")
+    .update(generateProdHydrationModule(), "utf8")
+    .digest("hex");
+  return cachedProdHydrationModuleHash;
 }
 
 export function isVersionedProdHydrationModulePath(pathname: string): boolean {

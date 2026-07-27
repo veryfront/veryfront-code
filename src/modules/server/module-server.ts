@@ -903,7 +903,7 @@ async function findSourceFile(
     projectSlug: context.projectSlug,
     branch: context.branch,
     releaseId: context.releaseId,
-    basePath: basePathWithoutExt,
+    basePath: hasKnownExt ? basePath : basePathWithoutExt,
     reactVersion,
   });
 
@@ -993,7 +993,9 @@ async function findSourceFile(
   const fallbackExtensions = requestedExt !== null && requestedExt !== "json"
     ? extensions.filter((ext) => ext !== ".json")
     : extensions;
-  const projectLookupExtensions = requestedExt === "mjs"
+  const projectLookupExtensions = hasKnownExt
+    ? [knownExtMatch[0]]
+    : requestedExt === "mjs"
     ? [".mjs", ...fallbackExtensions.filter((ext) => ext !== ".mjs")]
     : fallbackExtensions;
 

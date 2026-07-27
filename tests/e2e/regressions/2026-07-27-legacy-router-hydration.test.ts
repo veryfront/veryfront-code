@@ -62,16 +62,16 @@ export function createElement(type, props, ...children) {
 `;
 
 const REACT_DOM_CLIENT_MODULE = `
-function markHydrated() {
+function markHydrated(container, mode) {
   document.documentElement.dataset.hydrated = "yes";
-  return { render: markHydrated };
+  globalThis.__veryfrontMount = { mode, containerId: container?.id || null };
 }
-export function createRoot() {
-  return { render: markHydrated };
+export function createRoot(container) {
+  return { render() { markHydrated(container, "createRoot"); } };
 }
-export function hydrateRoot() {
-  markHydrated();
-  return { render: markHydrated };
+export function hydrateRoot(container) {
+  markHydrated(container, "hydrateRoot");
+  return { render() { markHydrated(container, "hydrateRoot"); } };
 }
 `;
 
@@ -121,6 +121,48 @@ export default function ExistingReleasePage() {
   return null;
 }
 `;
+
+const RELEASE_ASSET_HASH = "a".repeat(64);
+const RELEASE_ASSET_URL = `/_vf/assets/${RELEASE_ASSET_HASH}.js`;
+const APP_ROUTER_RELEASE_HYDRATION_DATA = JSON.stringify({
+  pagePath: "app/page.tsx",
+  appRouterRoot: "app",
+  clientModuleStrategy: "rsc-module",
+  isolatedClientPage: true,
+  params: {},
+  props: {},
+  layouts: [{ kind: "tsx", path: "app/layout.tsx" }],
+  releaseAssetModules: {
+    "app/page.tsx": RELEASE_ASSET_URL,
+  },
+});
+const APP_ROUTER_RELEASE_HTML = `<!doctype html>
+<html>
+  <head>
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "/react.js",
+          "react-dom/client": "/react-dom-client.js",
+          "veryfront/router": "/legacy-router.js",
+          "veryfront/context": "/context.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <section id="server-layout">
+        Server-owned layout
+        <div id="veryfront-page-island">Server page island</div>
+      </section>
+    </div>
+    <script id="veryfront-hydration-data" type="application/json">
+      ${APP_ROUTER_RELEASE_HYDRATION_DATA}
+    </script>
+    <script type="module" src="/hydration-runtime.js"></script>
+  </body>
+</html>`;
 
 function javascript(source: string): Response {
   return new Response(source, {
@@ -211,6 +253,68 @@ describe(
           }),
           true,
         );
+      } finally {
+        await closeChromium(browser);
+        await server.shutdown();
+        await server.finished;
+      }
+    });
+
+    it("keeps App Router island ownership with a partial release map", async () => {
+      const hydrationModule = generateProdHydrationModule();
+      const rscModuleRequests: Array<string | null> = [];
+      const server = Deno.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        onListen() {},
+      }, (request) => {
+        const url = new URL(request.url);
+        const pathname = url.pathname;
+
+        if (pathname === "/") {
+          return new Response(APP_ROUTER_RELEASE_HTML, {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+        if (pathname === "/hydration-runtime.js") return javascript(hydrationModule);
+        if (pathname === "/react.js") return javascript(REACT_MODULE);
+        if (pathname === "/react-dom-client.js") return javascript(REACT_DOM_CLIENT_MODULE);
+        if (pathname === "/legacy-router.js") return javascript(LEGACY_ROUTER_MODULE);
+        if (pathname === "/context.js") return javascript(PAGE_CONTEXT_MODULE);
+        if (pathname === RELEASE_ASSET_URL) return javascript(PAGE_MODULE);
+        if (pathname === "/_veryfront/rsc/module") {
+          rscModuleRequests.push(url.searchParams.get("rel"));
+          return javascript(PAGE_MODULE);
+        }
+
+        return new Response("Not found", { status: 404 });
+      });
+      const browser = await launchChromium();
+
+      try {
+        if (!browser) return;
+
+        const page = await browser.newPage();
+        const diagnostics = captureBrowserDiagnostics(page);
+        const { port } = server.addr as Deno.NetAddr;
+        const response = await page.goto(`http://127.0.0.1:${port}/`);
+
+        assertEquals(response?.status(), 200);
+        await waitForHydration(page, diagnostics);
+        assertEquals(
+          await page.evaluate(() =>
+            Reflect.get(globalThis, "__veryfrontMount") as {
+              mode: string;
+              containerId: string | null;
+            }
+          ),
+          {
+            mode: "createRoot",
+            containerId: "veryfront-page-island",
+          },
+        );
+        assertEquals(await page.locator("#server-layout").count(), 1);
+        assertEquals(rscModuleRequests, ["app/layout.tsx"]);
       } finally {
         await closeChromium(browser);
         await server.shutdown();

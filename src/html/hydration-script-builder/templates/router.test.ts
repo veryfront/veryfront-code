@@ -28,7 +28,6 @@ describe("hydration-script-builder/templates/router", () => {
       for (
         const token of [
           "hydrationResolve",
-          "hydrationReject",
           "hydrationPromise",
           "hydrationCompleted",
           "hydrationFailed",
@@ -89,16 +88,18 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "clientBuildVersion");
     });
 
-    it("should check serverStart in version mismatch", () => {
-      assertIncludes(getRouterScript(), "newVersion.serverStart");
+    it("should compare serverStart only for explicit development hydration", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "compareServerStart = data?.dev === true");
+      assertIncludes(result, "? ['serverStart', 'framework', 'projectUpdated']");
     });
 
     it("should check framework version in version mismatch", () => {
-      assertIncludes(getRouterScript(), "newVersion.framework");
+      assertIncludes(getRouterScript(), "'framework'");
     });
 
     it("should check projectUpdated in version mismatch", () => {
-      assertIncludes(getRouterScript(), "newVersion.projectUpdated");
+      assertIncludes(getRouterScript(), "'projectUpdated'");
     });
 
     it("should define LRU page data cache with TTL", () => {
@@ -119,11 +120,14 @@ describe("hydration-script-builder/templates/router", () => {
 
     it("should reuse pending page-data fetches for first-hit navigation", () => {
       const result = getRouterScript();
-      assertIncludes(result, "log('Reusing pending page data fetch for navigation:', path)");
+      assertIncludes(
+        result,
+        "log('Reusing pending page data fetch for navigation:', routePathname)",
+      );
       assertIncludes(result, "return handlePageDataVersionMismatch(path, data)");
       assertIncludes(
         result,
-        "emitRouteTiming('page-data', path, startedAt, { source: 'deduped' });",
+        "emitRouteTiming('page-data', routePathname, startedAt, { source: 'deduped' });",
       );
     });
 
@@ -158,7 +162,7 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "function emitRouteTiming(phase, path, startedAt, detail = {})");
       assertIncludes(result, "window.__veryfrontRouteTimings");
       assertIncludes(result, "veryfront:route-timing");
-      assertIncludes(result, "emitRouteTiming('total', targetPath, navigationStartedAt");
+      assertIncludes(result, "emitRouteTiming('total', targetPathname, navigationStartedAt");
     });
 
     it("should capture bounded Server-Timing details for page-data network timing", () => {
@@ -201,24 +205,27 @@ describe("hydration-script-builder/templates/router", () => {
         result,
         "buildPageDataTimingDetail(response, endpoint, startedAt, timingSource)",
       );
-      assertIncludes(result, "emitRouteTiming('page-data', path, startedAt, { source: 'cache' });");
       assertIncludes(
         result,
-        "emitRouteTiming('page-data', path, startedAt, { source: 'deduped' });",
+        "emitRouteTiming('page-data', routePathname, startedAt, { source: 'cache' });",
+      );
+      assertIncludes(
+        result,
+        "emitRouteTiming('page-data', routePathname, startedAt, { source: 'deduped' });",
       );
     });
 
     it("should define scroll position memory", () => {
       const result = getRouterScript();
       assertIncludes(result, "function saveScrollPosition(path)");
-      assertIncludes(result, "function restoreScrollPosition(path)");
+      assertIncludes(result, "function restoreScrollPosition(path, navigation)");
       assertIncludes(result, "MAX_SCROLL_POSITIONS = 100");
     });
 
     it("should define loading progress indicator", () => {
       const result = getRouterScript();
-      assertIncludes(result, "function showNavigationProgress()");
-      assertIncludes(result, "function hideNavigationProgress()");
+      assertIncludes(result, "function showNavigationProgress(navigationId)");
+      assertIncludes(result, "function hideNavigationProgress(navigationId)");
       assertIncludes(result, "vf-nav-progress");
     });
 
@@ -233,21 +240,24 @@ describe("hydration-script-builder/templates/router", () => {
     });
 
     it("should define navigateSPA function", () => {
-      assertIncludes(getRouterScript(), "async function navigateSPA(href, historyMode");
+      assertIncludes(getRouterScript(), "async function navigateSPA(\n      href,");
     });
 
     it("should define renderPageFromData function", () => {
-      assertIncludes(getRouterScript(), "async function renderPageFromData(pageData, targetPath)");
+      assertIncludes(
+        getRouterScript(),
+        "async function renderPageFromData(pageData, targetPath, navigation, commitNavigationState)",
+      );
     });
 
-    it("should load isolated page-island modules through the hardened RSC endpoint", () => {
+    it("should resolve isolated page-island modules through release assets then RSC", () => {
       const result = getRouterScript();
       assertIncludes(result, "async function loadPageDataComponent(pageData, path)");
       assertIncludes(
         result,
-        "const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);",
+        "const moduleUrl = resolveHydrationModuleUrl(",
       );
-      assertIncludes(result, "const module = await import(moduleUrl);");
+      assertIncludes(result, "await loadComponentFromUrl(path, moduleUrl)");
       assertIncludes(
         result,
         "allPaths.map((path) => loadPageDataComponent(pageData, path))",
@@ -258,7 +268,7 @@ describe("hydration-script-builder/templates/router", () => {
       const result = getRouterScript();
       assertIncludes(result, "if (pageData.requiresFullDocumentNavigation) {");
       assertIncludes(result, "throw new Error('Server layout requires full document navigation');");
-      assertIncludes(result, "window.location.href = href;");
+      assertIncludes(result, "window.location.href = resolvedHref;");
     });
 
     it("should install release asset modules from SPA page data before loading components", () => {
@@ -368,7 +378,20 @@ describe("hydration-script-builder/templates/router", () => {
       );
       assertIncludes(
         result,
-        "window.__veryfrontRouter.params = normalizeRouteParams(e.state.pageData.params);",
+        "await navigateSPA(href, 'none', true, e.state?.pageData);",
+      );
+    });
+
+    it("should make the latest navigation the sole owner of commits and cleanup", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "let navigationSequence = 0;");
+      assertIncludes(result, "const navigationId = ++navigationSequence;");
+      assertIncludes(result, "function assertLatestNavigation(navigation)");
+      assertIncludes(result, "assertLatestNavigation(navigation);");
+      assertIncludes(result, "currentAbortController === controller");
+      assertEquals(
+        result.includes("currentAbortController?.abort();\n\n      if (isNavigating) return;"),
+        false,
       );
     });
 
@@ -384,7 +407,14 @@ describe("hydration-script-builder/templates/router", () => {
 
     it("should skip external links and modifier key clicks", () => {
       const result = getRouterScript();
-      for (const token of ["target === '_blank'", "e.metaKey", "e.ctrlKey", "e.shiftKey"]) {
+      for (
+        const token of [
+          "link.target && link.target !== '_self'",
+          "e.metaKey",
+          "e.ctrlKey",
+          "e.shiftKey",
+        ]
+      ) {
         assertIncludes(result, token);
       }
     });
@@ -440,10 +470,12 @@ describe("hydration-script-builder/templates/router", () => {
       origin: string;
       pathname: string;
       search: string;
-      readonly href: string;
+      hash: string;
+      href: string;
     }
     interface RuntimeRouter {
       params: Record<string, string>;
+      path: string;
       pathname: string;
       query: Record<string, string>;
       navigate(path: string): Promise<void>;
@@ -456,7 +488,12 @@ describe("hydration-script-builder/templates/router", () => {
     }
     interface RuntimeWindow {
       location: RuntimeLocation;
-      history: { pushState(): void; back(): void; forward(): void };
+      history: {
+        pushState(state: unknown, unused: string, href: string): void;
+        replaceState(state: unknown, unused: string, href: string): void;
+        back(): void;
+        forward(): void;
+      };
       addEventListener(type: string, fn: (e: unknown) => void): void;
       dispatchEvent(): boolean;
       scrollTo(): void;
@@ -467,11 +504,32 @@ describe("hydration-script-builder/templates/router", () => {
     }
     interface RuntimeHandle {
       router: RuntimeRouter;
-      navigateSPA: (href: string, pushState?: boolean, restoreScroll?: boolean) => Promise<void>;
+      navigateSPA: (
+        href: string,
+        historyMode?: "push" | "replace" | "none",
+        restoreScroll?: boolean,
+        providedPageData?: unknown,
+      ) => Promise<void>;
+      fetchWithRetry: (
+        url: string,
+        options: { headers?: Record<string, string>; signal?: AbortSignal },
+        maxRetries?: number,
+      ) => Promise<unknown>;
       win: RuntimeWindow;
       listeners: Record<string, Array<(e: unknown) => void>>;
       setNextPageData: (data: unknown) => void;
       fetchCalls: RuntimeFetchCall[];
+      historyCalls: Array<{ method: "push" | "replace"; href: string }>;
+      getAssignedHref: () => string | null;
+      isBodyBusy: () => boolean;
+      getNavigationNotifications: () => number;
+      moduleResolutionCalls: Array<{
+        path: string;
+        preferRscModule: boolean;
+        studioEmbed: boolean;
+        releaseAssetModules: Record<string, string> | null;
+        releaseId: string | null;
+      }>;
       // The router.params snapshot captured the moment renderPageFromData built
       // the RouterProvider element — i.e. what the new page renders with. This is
       // what the ordering bug (mutating params after render) would get wrong.
@@ -486,14 +544,28 @@ describe("hydration-script-builder/templates/router", () => {
         pathname?: string;
         search?: string;
         hydrationParams?: Record<string, string | string[]>;
+        hydrationBuildVersion?: {
+          framework: string;
+          serverStart: number;
+          projectUpdated?: string;
+        };
+        hydrationDev?: boolean;
+        activeReleaseId?: string;
         fetchImpl?: (
           url: string,
           options: { headers?: Record<string, string>; signal?: AbortSignal },
         ) => Promise<unknown>;
+        loadComponentImpl?: (path: string) => Promise<unknown>;
+        setTimeoutImpl?: (callback: () => void, delay: number) => number;
+        clearTimeoutImpl?: (id: number) => void;
         debug?: boolean;
       } = {},
     ): RuntimeHandle {
-      const hydrationJson = JSON.stringify({ params: opts.hydrationParams ?? {} });
+      const hydrationJson = JSON.stringify({
+        params: opts.hydrationParams ?? {},
+        buildVersion: opts.hydrationBuildVersion,
+        dev: opts.hydrationDev,
+      });
       const listeners: Record<string, Array<(e: unknown) => void>> = {};
       const addEventListener = (type: string, fn: (e: unknown) => void) => {
         (listeners[type] ??= []).push(fn);
@@ -512,10 +584,20 @@ describe("hydration-script-builder/templates/router", () => {
         appendChild() {},
       });
 
+      const bodyAttributes = new Set<string>();
       const rootEl = { __reactRoot: { render() {} } };
       const doc = {
         readyState: "complete",
-        body: { prepend() {}, setAttribute() {}, removeAttribute() {}, appendChild() {} },
+        body: {
+          prepend() {},
+          setAttribute(name: string) {
+            bodyAttributes.add(name);
+          },
+          removeAttribute(name: string) {
+            bodyAttributes.delete(name);
+          },
+          appendChild() {},
+        },
         head: { appendChild() {} },
         createElement: () => makeEl(),
         querySelector: () => null,
@@ -528,16 +610,33 @@ describe("hydration-script-builder/templates/router", () => {
         addEventListener,
       };
 
-      const win: RuntimeWindow = {
-        location: {
-          origin: "https://veryfront.test",
-          pathname: opts.pathname ?? "/",
-          search: opts.search ?? "",
-          get href() {
-            return "https://veryfront.test" + this.pathname + this.search;
-          },
+      let assignedHref: string | null = null;
+      const historyCalls: RuntimeHandle["historyCalls"] = [];
+      const location = {
+        origin: "https://veryfront.test",
+        pathname: opts.pathname ?? "/",
+        search: opts.search ?? "",
+        hash: "",
+        get href() {
+          return assignedHref ??
+            "https://veryfront.test" + this.pathname + this.search;
         },
-        history: { pushState() {}, back() {}, forward() {} },
+        set href(value: string) {
+          assignedHref = value;
+        },
+      };
+      const win: RuntimeWindow = {
+        location,
+        history: {
+          pushState(_state: unknown, _unused: string, href: string) {
+            historyCalls.push({ method: "push", href });
+          },
+          replaceState(_state: unknown, _unused: string, href: string) {
+            historyCalls.push({ method: "replace", href });
+          },
+          back() {},
+          forward() {},
+        },
         addEventListener,
         dispatchEvent() {
           return true;
@@ -546,6 +645,10 @@ describe("hydration-script-builder/templates/router", () => {
         scrollY: 0,
         __VERYFRONT_DEBUG__: opts.debug,
       };
+      if (opts.activeReleaseId) {
+        (win as RuntimeWindow & { __veryfrontReleaseId?: string }).__veryfrontReleaseId =
+          opts.activeReleaseId;
+      }
 
       let nextPageData: unknown = { pagePath: "page", params: {} };
       const fetchCalls: RuntimeFetchCall[] = [];
@@ -581,13 +684,39 @@ describe("hydration-script-builder/templates/router", () => {
         ) => {
           if (type === RouterProvider && props?.router) {
             renderedRouterParams = { ...props.router.params };
-          } else if (props && "params" in props && renderedPageParams === null) {
+          } else if (props && "params" in props) {
             renderedPageParams = { ...(props.params ?? {}) };
           }
           return {};
         },
       };
-      const loadComponent = () => Promise.resolve(() => null);
+      const loadComponent = (path: string) =>
+        opts.loadComponentImpl?.(path) ?? Promise.resolve(() => null);
+      const moduleResolutionCalls: RuntimeHandle["moduleResolutionCalls"] = [];
+      const resolveHydrationModuleUrl = (
+        path: string,
+        preferRscModule: boolean,
+        studioEmbed: boolean,
+        releaseAssetModules: Record<string, string> | null,
+        releaseId: string | null,
+      ) => {
+        moduleResolutionCalls.push({
+          path,
+          preferRscModule,
+          studioEmbed,
+          releaseAssetModules,
+          releaseId,
+        });
+        return path;
+      };
+      const loadComponentFromUrl = (path: string) => loadComponent(path);
+      let navigationNotifications = 0;
+      const navigationStore = {
+        setNavigator() {},
+        notify() {
+          navigationNotifications++;
+        },
+      };
 
       const factory = new Function(
         "window",
@@ -597,10 +726,12 @@ describe("hydration-script-builder/templates/router", () => {
         "RouterProvider",
         "PageContextProvider",
         "loadComponent",
+        "resolveHydrationModuleUrl",
+        "loadComponentFromUrl",
         "setTimeout",
         "clearTimeout",
         "getNavigationStore",
-        getRouterScript() + "\nreturn { router, navigateSPA };",
+        getRouterScript() + "\nreturn { router, navigateSPA, fetchWithRetry };",
       );
 
       const handle = factory(
@@ -611,33 +742,62 @@ describe("hydration-script-builder/templates/router", () => {
         RouterProvider,
         PageContextProvider,
         loadComponent,
-        () => 0,
-        () => {},
-        () => ({ setNavigator() {} }),
-      ) as { router: RuntimeRouter; navigateSPA: RuntimeHandle["navigateSPA"] };
+        resolveHydrationModuleUrl,
+        loadComponentFromUrl,
+        opts.setTimeoutImpl ?? (() => 0),
+        opts.clearTimeoutImpl ?? (() => {}),
+        () => navigationStore,
+      ) as {
+        router: RuntimeRouter;
+        navigateSPA: RuntimeHandle["navigateSPA"];
+        fetchWithRetry: RuntimeHandle["fetchWithRetry"];
+      };
 
       return {
         router: handle.router,
         navigateSPA: handle.navigateSPA,
+        fetchWithRetry: handle.fetchWithRetry,
         win,
         listeners,
         setNextPageData: (data: unknown) => {
           nextPageData = data;
         },
         fetchCalls,
+        historyCalls,
+        getAssignedHref: () => assignedHref,
+        isBodyBusy: () => bodyAttributes.has("aria-busy"),
+        getNavigationNotifications: () => navigationNotifications,
+        moduleResolutionCalls,
         getRenderedParams: () => renderedRouterParams,
         getRenderedPageParams: () => renderedPageParams,
       };
     }
 
-    function pageDataResponse(path = "page"): unknown {
+    function pageDataResponse(
+      path = "page",
+      pageData: unknown = { pagePath: path, params: {} },
+    ): unknown {
       return {
         ok: true,
         status: 200,
         url: "/_veryfront/page-data/" + path + ".json",
         headers: { get: () => null },
-        json: () => Promise.resolve({ pagePath: path, params: {} }),
+        json: () => Promise.resolve(pageData),
       };
+    }
+
+    function deferred<T>(): {
+      promise: Promise<T>;
+      resolve: (value: T) => void;
+      reject: (reason: unknown) => void;
+    } {
+      let resolve!: (value: T) => void;
+      let reject!: (reason: unknown) => void;
+      const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+      });
+      return { promise, resolve, reject };
     }
 
     function flushMicrotasks(): Promise<void> {
@@ -659,6 +819,24 @@ describe("hydration-script-builder/templates/router", () => {
       assertEquals(router.params, { slug: "guides/intro", lang: "en" });
     });
 
+    it("normalizes only own route params without prototype mutation", () => {
+      const hydrationParams = Object.create({ inherited: "ignored" }) as Record<
+        string,
+        string | string[]
+      >;
+      Object.defineProperty(hydrationParams, "__proto__", {
+        enumerable: true,
+        value: ["safe", "value"],
+      });
+
+      const { router } = evaluateRouterRuntime({ hydrationParams });
+
+      assertEquals(Object.keys(router.params), ["__proto__"]);
+      assertEquals(Object.prototype.hasOwnProperty.call(router.params, "__proto__"), true);
+      assertEquals(router.params["__proto__"], "safe/value");
+      assertEquals(Object.getPrototypeOf(router.params), Object.prototype);
+    });
+
     it("replaces stale params with new page data on SPA navigation", async () => {
       const runtime = evaluateRouterRuntime({
         pathname: "/posts/42",
@@ -668,7 +846,7 @@ describe("hydration-script-builder/templates/router", () => {
 
       runtime.setNextPageData({ pagePath: "page", params: { id: "99" } });
       runtime.win.location.pathname = "/posts/99";
-      await runtime.navigateSPA("/posts/99", true);
+      await runtime.navigateSPA("/posts/99", "push");
 
       assertEquals(runtime.router.params, { id: "99" });
       assertEquals(runtime.router.pathname, "/posts/99");
@@ -677,13 +855,58 @@ describe("hydration-script-builder/templates/router", () => {
       assertEquals(runtime.getRenderedParams(), { id: "99" });
     });
 
+    it("notifies shared router subscribers after a committed navigation", async () => {
+      const runtime = evaluateRouterRuntime();
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA("/next", "push");
+
+      assertEquals(runtime.getNavigationNotifications(), 1);
+    });
+
+    it("keeps query strings out of page-data paths and router.pathname", async () => {
+      const testCases: Array<{
+        href: string;
+        endpoint: string;
+        pathname: string;
+        query: Record<string, string>;
+      }> = [
+        {
+          href: "/catalog?sort=price&sort=rating",
+          endpoint: "/_veryfront/page-data/catalog.json?sort=price&sort=rating",
+          pathname: "/catalog",
+          query: { sort: "rating" },
+        },
+        {
+          href: "/?page=2",
+          endpoint: "/_veryfront/page-data/index.json?page=2",
+          pathname: "/",
+          query: { page: "2" },
+        },
+      ];
+
+      for (const testCase of testCases) {
+        const runtime = evaluateRouterRuntime();
+        runtime.win.__veryfrontHydrationComplete?.();
+
+        await runtime.navigateSPA(testCase.href, "push");
+
+        assertEquals(runtime.fetchCalls[0]?.url, testCase.endpoint);
+        assertEquals(runtime.router.path, testCase.pathname);
+        assertEquals(runtime.router.pathname, testCase.pathname);
+        assertEquals(runtime.router.query, testCase.query);
+        assertEquals(runtime.historyCalls, [{ method: "push", href: testCase.href }]);
+        assertEquals(runtime.getNavigationNotifications(), 1);
+      }
+    });
+
     it("normalizes catch-all params for both router and page props on SPA nav", () => {
       const runtime = evaluateRouterRuntime({ pathname: "/", hydrationParams: {} });
       runtime.win.__veryfrontHydrationComplete?.();
 
       // Page data carries a raw catch-all array, as route matching produces it.
       runtime.setNextPageData({ pagePath: "page", params: { slug: ["guides", "intro"] } });
-      return runtime.navigateSPA("/docs/guides/intro", true).then(() => {
+      return runtime.navigateSPA("/docs/guides/intro", "push").then(() => {
         // Both the router snapshot and the page component's `params` prop must
         // be joined strings so client and server render identically (#2742).
         assertEquals(runtime.router.params, { slug: "guides/intro" });
@@ -700,7 +923,7 @@ describe("hydration-script-builder/templates/router", () => {
       runtime.win.__veryfrontHydrationComplete?.();
 
       runtime.setNextPageData({ pagePath: "page", params: {} });
-      await runtime.navigateSPA("/about", true);
+      await runtime.navigateSPA("/about", "push");
 
       assertEquals(runtime.router.params, {});
       assertEquals(runtime.getRenderedParams(), {});
@@ -720,6 +943,233 @@ describe("hydration-script-builder/templates/router", () => {
 
       assertEquals(runtime.router.params, { id: "7" });
       assertEquals(runtime.getRenderedParams(), { id: "7" });
+    });
+
+    it("starts a newer navigation immediately and lets only the latest response commit", async () => {
+      const requests = new Map<
+        string,
+        ReturnType<typeof deferred<unknown>>
+      >();
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: (url) => {
+          const request = deferred<unknown>();
+          requests.set(url, request);
+          return request.promise;
+        },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      const firstNavigation = runtime.navigateSPA("/first", "push");
+      await flushUntil(() => requests.has("/_veryfront/page-data/first.json"));
+
+      const secondNavigation = runtime.navigateSPA("/second", "push");
+      await flushUntil(() => requests.has("/_veryfront/page-data/second.json"));
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/first.json",
+        "/_veryfront/page-data/second.json",
+      ]);
+
+      requests.get("/_veryfront/page-data/second.json")?.resolve(
+        pageDataResponse("page-b", { pagePath: "page-b", params: { owner: "second" } }),
+      );
+      await secondNavigation;
+
+      requests.get("/_veryfront/page-data/first.json")?.resolve(
+        pageDataResponse("page-a", { pagePath: "page-a", params: { owner: "first" } }),
+      );
+      await firstNavigation;
+
+      assertEquals(runtime.router.pathname, "/second");
+      assertEquals(runtime.router.params, { owner: "second" });
+      assertEquals(runtime.getRenderedPageParams(), { owner: "second" });
+      assertEquals(runtime.historyCalls, [{ method: "push", href: "/second" }]);
+      assertEquals(runtime.isBodyBusy(), false);
+    });
+
+    it("keeps current progress and fallback ownership when a stale request aborts", async () => {
+      const secondResponse = deferred<unknown>();
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: (url, options) => {
+          if (url.endsWith("/first.json")) {
+            return new Promise((_, reject) => {
+              options.signal?.addEventListener("abort", () => {
+                reject(new DOMException("Aborted", "AbortError"));
+              });
+            });
+          }
+          return secondResponse.promise;
+        },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      const firstNavigation = runtime.navigateSPA("/first", "push");
+      await flushUntil(() => runtime.fetchCalls.length === 1);
+      const secondNavigation = runtime.navigateSPA("/second", "push");
+      await flushUntil(() => runtime.fetchCalls.length === 2);
+      await firstNavigation;
+
+      assertEquals(runtime.isBodyBusy(), true);
+      assertEquals(runtime.getAssignedHref(), null);
+
+      secondResponse.resolve(
+        pageDataResponse("page-b", { pagePath: "page-b", params: { owner: "second" } }),
+      );
+      await secondNavigation;
+
+      assertEquals(runtime.router.pathname, "/second");
+      assertEquals(runtime.getAssignedHref(), null);
+      assertEquals(runtime.isBodyBusy(), false);
+    });
+
+    it("prevents a superseded delayed render from overwriting the latest page", async () => {
+      const firstComponent = deferred<unknown>();
+      const loadedPaths: string[] = [];
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: (url) => {
+          const first = url.endsWith("/first.json");
+          return Promise.resolve(
+            pageDataResponse(first ? "page-a" : "page-b", {
+              pagePath: first ? "page-a" : "page-b",
+              params: { owner: first ? "first" : "second" },
+            }),
+          );
+        },
+        loadComponentImpl: (path) => {
+          loadedPaths.push(path);
+          return path === "page-a" ? firstComponent.promise : Promise.resolve(() => null);
+        },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      const firstNavigation = runtime.navigateSPA("/first", "push");
+      await flushUntil(() => loadedPaths.includes("page-a"));
+      const secondNavigation = runtime.navigateSPA("/second", "push");
+      await secondNavigation;
+
+      firstComponent.resolve(() => null);
+      await firstNavigation;
+
+      assertEquals(runtime.router.pathname, "/second");
+      assertEquals(runtime.getRenderedPageParams(), { owner: "second" });
+      assertEquals(runtime.historyCalls, [{ method: "push", href: "/second" }]);
+      assertEquals(runtime.getNavigationNotifications(), 1);
+    });
+
+    it("interrupts a stale hydration wait without cleaning up the current owner", async () => {
+      const runtime = evaluateRouterRuntime();
+
+      const firstNavigation = runtime.navigateSPA(
+        "/first",
+        "push",
+        false,
+        { pagePath: "page-a", params: { owner: "first" } },
+      );
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const secondNavigation = runtime.navigateSPA(
+        "/second",
+        "push",
+        false,
+        { pagePath: "page-b", params: { owner: "second" } },
+      );
+      await firstNavigation;
+
+      assertEquals(runtime.isBodyBusy(), true);
+      assertEquals(runtime.historyCalls, []);
+
+      runtime.win.__veryfrontHydrationComplete?.();
+      await secondNavigation;
+
+      assertEquals(runtime.router.pathname, "/second");
+      assertEquals(runtime.historyCalls, [{ method: "push", href: "/second" }]);
+      assertEquals(runtime.isBodyBusy(), false);
+    });
+
+    it("routes state-backed popstate through the same latest-navigation transaction", async () => {
+      const firstResponse = deferred<unknown>();
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: () => firstResponse.promise,
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      const firstNavigation = runtime.navigateSPA("/first", "push");
+      await flushUntil(() => runtime.fetchCalls.length === 1);
+
+      runtime.win.location.pathname = "/back";
+      const popstate = runtime.listeners.popstate?.[0];
+      if (!popstate) throw new Error("popstate handler was not registered");
+      await popstate({
+        state: {
+          pageData: { pagePath: "page-back", params: { owner: "popstate" } },
+        },
+      });
+
+      firstResponse.resolve(
+        pageDataResponse("page-a", { pagePath: "page-a", params: { owner: "first" } }),
+      );
+      await firstNavigation;
+
+      assertEquals(runtime.fetchCalls.length, 1);
+      assertEquals(runtime.router.pathname, "/back");
+      assertEquals(runtime.getRenderedPageParams(), { owner: "popstate" });
+      assertEquals(runtime.historyCalls, []);
+      assertEquals(runtime.getAssignedHref(), null);
+    });
+
+    it("preserves push, replace, and none history contracts", async () => {
+      const runtime = evaluateRouterRuntime();
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA(
+        "/pushed",
+        "push",
+        false,
+        { pagePath: "page", params: {} },
+      );
+      await runtime.navigateSPA(
+        "/replaced",
+        "replace",
+        false,
+        { pagePath: "page", params: {} },
+      );
+      await runtime.navigateSPA(
+        "/history-owned",
+        "none",
+        false,
+        { pagePath: "page", params: {} },
+      );
+
+      assertEquals(runtime.historyCalls, [
+        { method: "push", href: "/pushed" },
+        { method: "replace", href: "/replaced" },
+      ]);
+      assertEquals(runtime.router.pathname, "/history-owned");
+    });
+
+    it("falls back to a document navigation only for the current owner", async () => {
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        const runtime = evaluateRouterRuntime();
+        runtime.win.__veryfrontHydrationComplete?.();
+        await runtime.navigateSPA(
+          "/server-layout",
+          "push",
+          false,
+          {
+            pagePath: "page",
+            params: {},
+            requiresFullDocumentNavigation: true,
+          },
+        );
+
+        assertEquals(runtime.getAssignedHref(), "/server-layout");
+        assertEquals(runtime.isBodyBusy(), false);
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
 
     it("limits generated page-data prefetches to two active requests", async () => {
@@ -773,6 +1223,92 @@ describe("hydration-script-builder/templates/router", () => {
       const call = runtime.fetchCalls[0];
       if (!call) throw new Error("prefetch fetch did not start");
       assertEquals(call.options.headers, { "X-Veryfront-Prefetch": "1" });
+    });
+
+    it("keeps speculative module resolution scoped to the prefetched release", async () => {
+      const releaseAssetModules = {
+        "app/page.tsx": "/_vf/assets/" + "a".repeat(64) + ".js",
+      };
+      const runtime = evaluateRouterRuntime({
+        activeReleaseId: "release-1",
+        fetchImpl: () =>
+          Promise.resolve(
+            pageDataResponse("next", {
+              pagePath: "app/page.tsx",
+              params: {},
+              isolatedClientPage: true,
+              releaseId: "release-1",
+              releaseAssetModules,
+            }),
+          ),
+      });
+
+      runtime.router.prefetch("/next");
+      await flushUntil(() => runtime.moduleResolutionCalls.length === 1);
+
+      assertEquals(runtime.moduleResolutionCalls, [{
+        path: "app/page.tsx",
+        preferRscModule: true,
+        studioEmbed: false,
+        releaseAssetModules,
+        releaseId: "release-1",
+      }]);
+    });
+
+    it("reloads when cached speculative data belongs to another build", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationBuildVersion: { framework: "1.0.0", serverStart: 1 },
+        hydrationDev: true,
+        fetchImpl: () =>
+          Promise.resolve(
+            pageDataResponse("stale", {
+              pagePath: "page",
+              params: {},
+              buildVersion: { framework: "1.0.0", serverStart: 2 },
+            }),
+          ),
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      runtime.router.prefetch("/stale");
+      await flushUntil(() => runtime.fetchCalls.length === 1);
+      for (let index = 0; index < 10; index++) await flushMicrotasks();
+      await runtime.navigateSPA("/stale", "push");
+
+      assertEquals(runtime.getAssignedHref(), "/stale");
+      assertEquals(runtime.historyCalls, []);
+      assertEquals(runtime.router.pathname, "/");
+      assertEquals(runtime.fetchCalls.length, 1);
+    });
+
+    it("does not treat a different healthy production pod start as a new build", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationBuildVersion: {
+          framework: "1.0.0",
+          serverStart: 1,
+          projectUpdated: "2026-07-27T17:00:00.000Z",
+        },
+        hydrationDev: false,
+        fetchImpl: () =>
+          Promise.resolve(
+            pageDataResponse("next", {
+              pagePath: "page",
+              params: {},
+              buildVersion: {
+                framework: "1.0.0",
+                serverStart: 2,
+                projectUpdated: "2026-07-27T17:00:00.000Z",
+              },
+            }),
+          ),
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA("/next", "push");
+
+      assertEquals(runtime.getAssignedHref(), null);
+      assertEquals(runtime.router.pathname, "/next");
+      assertEquals(runtime.historyCalls, [{ method: "push", href: "/next" }]);
     });
 
     it("allows a failed speculative prefetch to be requested again later", async () => {
@@ -840,7 +1376,7 @@ describe("hydration-script-builder/templates/router", () => {
         runtime.router.prefetch("/queued");
         assertEquals(runtime.fetchCalls.length, 2);
 
-        await runtime.navigateSPA("/target", true);
+        await runtime.navigateSPA("/target", "push");
 
         assertEquals(abortedPrefetches.sort(), [
           "/_veryfront/page-data/other.json",
@@ -860,6 +1396,96 @@ describe("hydration-script-builder/templates/router", () => {
         console.log = originalConsoleLog;
         console.error = originalConsoleError;
       }
+    });
+
+    it("classifies an internal fetch deadline as a timeout, not navigation cancellation", async () => {
+      let nextTimerId = 1;
+      const timers = new Map<number, { callback: () => void; delay: number }>();
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: (_url, options) =>
+          new Promise((_, reject) => {
+            options.signal?.addEventListener("abort", () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          }),
+        setTimeoutImpl: (callback, delay) => {
+          const id = nextTimerId++;
+          timers.set(id, { callback, delay });
+          return id;
+        },
+        clearTimeoutImpl: (id) => timers.delete(id),
+      });
+
+      const request = runtime.fetchWithRetry(
+        "/_veryfront/page-data/slow.json",
+        {},
+        0,
+      );
+      await flushUntil(() => runtime.fetchCalls.length === 1);
+
+      const deadline = [...timers.values()].find((timer) => timer.delay === 10_000);
+      if (!deadline) throw new Error("fetch deadline was not scheduled");
+      deadline.callback();
+
+      let failure: unknown;
+      try {
+        await request;
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(failure instanceof Error, true);
+      assertEquals((failure as Error).name, "TimeoutError");
+    });
+
+    it("cancels retry bodies and interrupts backoff when navigation is aborted", async () => {
+      let nextTimerId = 1;
+      let canceledBodies = 0;
+      const timers = new Map<number, { callback: () => void; delay: number }>();
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: () =>
+          Promise.resolve({
+            ok: false,
+            status: 503,
+            body: {
+              cancel() {
+                canceledBodies++;
+                return Promise.resolve();
+              },
+            },
+          }),
+        setTimeoutImpl: (callback, delay) => {
+          const id = nextTimerId++;
+          timers.set(id, { callback, delay });
+          return id;
+        },
+        clearTimeoutImpl: (id) => timers.delete(id),
+      });
+      const controller = new AbortController();
+
+      const request = runtime.fetchWithRetry(
+        "/_veryfront/page-data/retry.json",
+        { signal: controller.signal },
+        2,
+      );
+      await flushUntil(() => [...timers.values()].some((timer) => timer.delay === 500));
+      controller.abort();
+
+      let failure: unknown;
+      try {
+        await request;
+      } catch (error) {
+        failure = error;
+      }
+
+      assertEquals(failure instanceof Error, true);
+      assertEquals((failure as Error).name, "AbortError");
+      assertEquals(canceledBodies, 1);
+      assertEquals(runtime.fetchCalls.length, 1);
+      assertEquals(
+        [...timers.values()].some((timer) => timer.delay === 500),
+        false,
+      );
     });
   });
 });

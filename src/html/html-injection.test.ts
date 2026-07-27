@@ -277,6 +277,9 @@ describe("html/html-injection", () => {
       const hydrationData = extractHydrationData(html);
       assertEquals(hydrationData.pagePath, "app/page.tsx");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+      assertEquals(hydrationData.props, {});
+      assertEquals(hydrationData.layouts, []);
+      assertEquals(typeof hydrationData.buildVersion, "object");
     });
 
     it("injects release asset modules into full-document client page hydration data", () => {
@@ -298,6 +301,7 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.releaseAssetModules, {
         "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
       });
+      assertEquals(hydrationData.releaseId, "release-id");
     });
 
     it("seeds route params into client-page hydration data (issue #2741)", () => {

@@ -17,6 +17,7 @@ interface RuntimeLocation {
   origin: string;
   pathname: string;
   search: string;
+  hash: string;
   readonly href: string;
 }
 interface RuntimeRouter {
@@ -86,8 +87,9 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
       origin: "https://veryfront.test",
       pathname: "/",
       search: "",
+      hash: "",
       get href() {
-        return "https://veryfront.test" + this.pathname + this.search;
+        return "https://veryfront.test" + this.pathname + this.search + this.hash;
       },
     } as RuntimeLocation,
     history: {
@@ -124,6 +126,8 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
   const PageContextProvider = () => ({});
   const React = { createElement: () => ({}) };
   const loadComponent = () => Promise.resolve(() => null);
+  const resolveHydrationModuleUrl = (path: string) => path;
+  const loadComponentFromUrl = () => loadComponent();
 
   // Faithful stand-in for the cross-bundle navigation store the react runtime's
   // RouterProvider reads. `navigate` delegates to the registered navigator, or
@@ -151,6 +155,8 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
     "RouterProvider",
     "PageContextProvider",
     "loadComponent",
+    "resolveHydrationModuleUrl",
+    "loadComponentFromUrl",
     "setTimeout",
     "clearTimeout",
     "getNavigationStore",
@@ -165,6 +171,8 @@ function evaluateRouterRuntimeWithStore(): RuntimeHandle {
     RouterProvider,
     PageContextProvider,
     loadComponent,
+    resolveHydrationModuleUrl,
+    loadComponentFromUrl,
     () => 0,
     () => {},
     getNavigationStore,

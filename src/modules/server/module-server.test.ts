@@ -1239,6 +1239,34 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("does not resolve an explicit source extension to a sibling file", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-exact-source-extension-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/app/page.ts`,
+        `export default function Page() { return "wrong sibling"; }\n`,
+      );
+
+      const response = await serve(
+        new Request("http://localhost:3000/_vf_modules/app/page.tsx"),
+        projectDir,
+      );
+
+      assertEquals(response.status, 404);
+
+      const siblingResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/app/page.ts"),
+        projectDir,
+      );
+      assertEquals(siblingResponse.status, 200);
+      assertStringIncludes(await siblingResponse.text(), "wrong sibling");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("serves a JSON module requested with a .js suffix as JSON", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-json-content-type-" });
 

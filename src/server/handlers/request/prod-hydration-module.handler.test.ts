@@ -11,6 +11,7 @@ import {
 
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const NO_CACHE_CONTROL = "no-cache, no-store, must-revalidate";
+const NO_STORE_CACHE_CONTROL = "no-store";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -54,63 +55,145 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   };
 }
 
-describe("server/handlers/request/prod-hydration-module.handler", () => {
-  it("serves the versioned production hydration runtime module with immutable caching", async () => {
-    const handler = new ProdHydrationModuleHandler();
-    const result = await handler.handle(
-      new Request(`http://localhost${getProdHydrationModulePath()}`),
-      makeCtx(),
-    );
+function unknownVersionedRuntimePath(): string {
+  const canonicalPath = getProdHydrationModulePath();
+  const replacementHash = canonicalPath.includes(".00000000.js") ? "ffffffff" : "00000000";
+  return canonicalPath.replace(/[0-9a-f]{8}(?=\.js$)/, replacementHash);
+}
 
-    assertEquals(result.continue, false);
-    assertExists(result.response);
-    assertEquals(result.response.status, 200);
+async function requestRuntime(path: string, init?: RequestInit): Promise<Response> {
+  const result = await new ProdHydrationModuleHandler().handle(
+    new Request(`http://localhost${path}`, init),
+    makeCtx(),
+  );
+
+  assertEquals(result.continue, false);
+  assertExists(result.response);
+  return result.response;
+}
+
+describe("server/handlers/request/prod-hydration-module.handler", () => {
+  it("serves only the canonical versioned runtime with immutable caching", async () => {
+    const response = await requestRuntime(getProdHydrationModulePath());
+
+    assertEquals(response.status, 200);
     assertEquals(
-      result.response.headers.get("content-type"),
+      response.headers.get("content-type"),
       "application/javascript; charset=utf-8",
     );
-    assertEquals(result.response.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
-    assertEquals(result.response.headers.get("pragma"), null);
-    assertEquals(result.response.headers.get("expires"), null);
+    assertEquals(response.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
+    assertEquals(response.headers.get("pragma"), null);
+    assertEquals(response.headers.get("expires"), null);
+    assertEquals(response.headers.get("location"), null);
+    assertExists(response.headers.get("etag"));
 
-    const body = await result.response.text();
+    const body = await response.text();
     assertStringIncludes(body, "MODULE_SERVER_URL");
     assertStringIncludes(body, "renderPage");
   });
 
-  it("keeps the legacy production hydration runtime path revalidated", async () => {
-    const handler = new ProdHydrationModuleHandler();
-    const result = await handler.handle(
-      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`),
-      makeCtx(),
-    );
+  it("redirects unknown versioned hashes without caching current bytes under the wrong key", async () => {
+    const canonicalPath = getProdHydrationModulePath();
+    const canonicalResponse = await requestRuntime(canonicalPath);
+    const canonicalEtag = canonicalResponse.headers.get("etag");
+    assertExists(canonicalEtag);
 
-    assertEquals(result.response?.status, 200);
-    assertEquals(result.response?.headers.get("cache-control"), NO_CACHE_CONTROL);
-    assertEquals(result.response?.headers.get("pragma"), "no-cache");
-    assertEquals(result.response?.headers.get("expires"), "0");
+    for (
+      const [label, method, headers] of [
+        ["GET", "GET", undefined],
+        ["conditional GET", "GET", { "if-none-match": canonicalEtag }],
+        ["conditional HEAD", "HEAD", { "if-none-match": canonicalEtag }],
+      ] as const
+    ) {
+      const response = await requestRuntime(unknownVersionedRuntimePath(), {
+        method,
+        headers,
+      });
+
+      assertEquals(response.status, 307, label);
+      assertEquals(response.headers.get("location"), canonicalPath, label);
+      assertEquals(response.headers.get("cache-control"), NO_STORE_CACHE_CONTROL, label);
+      assertEquals(response.headers.get("pragma"), "no-cache", label);
+      assertEquals(response.headers.get("expires"), "0", label);
+      assertEquals(response.headers.get("etag"), null, label);
+      assertEquals(response.headers.get("content-type"), null, label);
+      assertEquals(await response.text(), "", label);
+    }
   });
 
-  it("returns not modified with immutable caching when the versioned ETag matches", async () => {
-    const handler = new ProdHydrationModuleHandler();
-    const runtimePath = getProdHydrationModulePath();
-    const first = await handler.handle(
-      new Request(`http://localhost${runtimePath}`),
-      makeCtx(),
-    );
-    const etag = first.response?.headers.get("etag");
-    assertExists(etag);
-
-    const second = await handler.handle(
-      new Request(`http://localhost${runtimePath}`, {
-        headers: { "if-none-match": etag },
-      }),
-      makeCtx(),
+  it("redirects legacy 8-hex runtime identities to the SHA-256 path", async () => {
+    const response = await requestRuntime(
+      "/_veryfront/hydration-runtime.00000000.js",
     );
 
-    assertEquals(second.response?.status, 304);
-    assertEquals(second.response?.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
-    assertEquals(second.response?.headers.get("pragma"), null);
-    assertEquals(second.response?.headers.get("expires"), null);
+    assertEquals(response.status, 307);
+    assertEquals(response.headers.get("location"), getProdHydrationModulePath());
+    assertEquals(response.headers.get("cache-control"), NO_STORE_CACHE_CONTROL);
+    assertEquals(response.headers.get("etag"), null);
+  });
+
+  it("keeps the unversioned compatibility path revalidated with the canonical bytes", async () => {
+    const canonicalResponse = await requestRuntime(getProdHydrationModulePath());
+    const canonicalEtag = canonicalResponse.headers.get("etag");
+    const canonicalBody = await canonicalResponse.text();
+    assertExists(canonicalEtag);
+
+    const response = await requestRuntime(PROD_HYDRATION_MODULE_PATH);
+
+    assertEquals(response.status, 200);
+    assertEquals(response.headers.get("cache-control"), NO_CACHE_CONTROL);
+    assertEquals(response.headers.get("pragma"), "no-cache");
+    assertEquals(response.headers.get("expires"), "0");
+    assertEquals(response.headers.get("etag"), canonicalEtag);
+    assertEquals(await response.text(), canonicalBody);
+  });
+
+  it("aligns HEAD metadata with GET for canonical and unversioned paths", async () => {
+    for (
+      const [path, cacheControl] of [
+        [getProdHydrationModulePath(), IMMUTABLE_CACHE_CONTROL],
+        [PROD_HYDRATION_MODULE_PATH, NO_CACHE_CONTROL],
+      ] as const
+    ) {
+      const getResponse = await requestRuntime(path);
+      const headResponse = await requestRuntime(path, { method: "HEAD" });
+
+      assertEquals(headResponse.status, getResponse.status, path);
+      assertEquals(headResponse.headers.get("etag"), getResponse.headers.get("etag"), path);
+      assertEquals(
+        headResponse.headers.get("content-type"),
+        getResponse.headers.get("content-type"),
+        path,
+      );
+      assertEquals(headResponse.headers.get("cache-control"), cacheControl, path);
+      assertEquals(await headResponse.text(), "", path);
+    }
+  });
+
+  it("returns path-appropriate cache headers for matching GET and HEAD ETags", async () => {
+    for (
+      const [path, cacheControl, pragma, expires] of [
+        [getProdHydrationModulePath(), IMMUTABLE_CACHE_CONTROL, null, null],
+        [PROD_HYDRATION_MODULE_PATH, NO_CACHE_CONTROL, "no-cache", "0"],
+      ] as const
+    ) {
+      const initialResponse = await requestRuntime(path);
+      const etag = initialResponse.headers.get("etag");
+      assertExists(etag);
+
+      for (const method of ["GET", "HEAD"]) {
+        const response = await requestRuntime(path, {
+          method,
+          headers: { "if-none-match": etag },
+        });
+
+        assertEquals(response.status, 304, `${method} ${path}`);
+        assertEquals(response.headers.get("etag"), etag, `${method} ${path}`);
+        assertEquals(response.headers.get("cache-control"), cacheControl, `${method} ${path}`);
+        assertEquals(response.headers.get("pragma"), pragma, `${method} ${path}`);
+        assertEquals(response.headers.get("expires"), expires, `${method} ${path}`);
+        assertEquals(await response.text(), "", `${method} ${path}`);
+      }
+    }
   });
 });

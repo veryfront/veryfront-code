@@ -56,6 +56,13 @@ export const getRendererScript = () => `
       }
     }
 
+    // App Router rendering ownership is a property of the route and client
+    // module strategy. Release coverage selects transport for individual
+    // modules; it must never change the React root or server/client ownership.
+    function isRemoteAppRouterClientPage(data, isAppRouterPage) {
+      return data.clientModuleStrategy === 'rsc-module' && isAppRouterPage;
+    }
+
     async function renderPage(pathname) {
       const resolvedPathname = (() => {
         const input = typeof pathname === 'string' ? pathname : window.location.pathname;
@@ -85,14 +92,14 @@ export const getRendererScript = () => `
       log('Hydration data:', data);
 
       // Set studioEmbed flag for module loading (affects query params)
-      if (data.studioEmbed && window.__veryfrontSetStudioEmbed) {
-        window.__veryfrontSetStudioEmbed(true);
+      if (window.__veryfrontSetStudioEmbed) {
+        window.__veryfrontSetStudioEmbed(data.studioEmbed === true);
       }
       if (window.__veryfrontSetReleaseId) {
         window.__veryfrontSetReleaseId(data.releaseId || null);
       }
-      if (data.releaseAssetModules && window.__veryfrontSetReleaseAssetModules) {
-        window.__veryfrontSetReleaseAssetModules(data.releaseAssetModules);
+      if (window.__veryfrontSetReleaseAssetModules) {
+        window.__veryfrontSetReleaseAssetModules(data.releaseAssetModules || null);
       }
 
       try {
@@ -103,8 +110,6 @@ export const getRendererScript = () => `
           typeof data.appRouterRoot === 'string' && data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
             ? data.appRouterRoot.replace(/^\\/+|\\/+$/g, '')
             : 'app';
-        const hasReleaseAssetModules =
-          data.releaseAssetModules && Object.keys(data.releaseAssetModules).length > 0;
 
         function isAppRouterPath(path) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
@@ -118,23 +123,27 @@ export const getRendererScript = () => `
           return pathWithoutExtension === normalizedAppRouterRoot + '/layout';
         }
 
-        const shouldRenderRscClientPage =
-          data.clientModuleStrategy === 'rsc-module' &&
-          !hasReleaseAssetModules &&
-          isAppRouterPath(normalizedPagePath);
+        const shouldRenderRscClientPage = isRemoteAppRouterClientPage(
+          data,
+          isAppRouterPath(normalizedPagePath),
+        );
         const isolatedClientPage =
           shouldRenderRscClientPage && data.isolatedClientPage === true;
 
         async function loadHydrationComponent(path, preferRscModule) {
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
-          if (preferRscModule && isAppRouterPath(normalizedPath)) {
-            const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
-            log('Loading App Router component from RSC module:', moduleUrl);
-            const module = await import(moduleUrl);
-            return module.default || module;
-          }
+          const shouldUseRscTransport =
+            preferRscModule && isAppRouterPath(normalizedPath);
+          if (!shouldUseRscTransport) return loadComponent(path);
 
-          return loadComponent(path);
+          const moduleUrl = resolveHydrationModuleUrl(
+            path,
+            true,
+            data.studioEmbed,
+          );
+          log('Loading hydration component:', moduleUrl);
+          const module = await import(moduleUrl);
+          return module.MDXLayout || module.MainLayout || module.default || module;
         }
 
         function unwrapAppRouterDocumentLayout(LayoutComponent) {
@@ -154,9 +163,11 @@ export const getRendererScript = () => `
         let pageModuleError = null;
 
         if (data.pagePath) {
-          const moduleUrl = shouldRenderRscClientPage
-            ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
-            : pathToModuleUrl(data.pagePath, data.studioEmbed);
+          const moduleUrl = resolveHydrationModuleUrl(
+            data.pagePath,
+            shouldRenderRscClientPage,
+            data.studioEmbed,
+          );
           log('Loading page from hydration data:', moduleUrl);
 
           try {

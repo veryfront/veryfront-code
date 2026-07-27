@@ -1314,7 +1314,15 @@ export class RenderPipeline {
       isolatedClientPage: pageIslandPlan ? true : undefined,
       requiresFullDocumentNavigation: pageIslandPlan?.serverLayouts.length ? true : undefined,
       releaseId: options?.releaseId,
-      releaseAssetModules: buildReleaseAssetModules(options?.releaseAssetManifest),
+      releaseAssetModules: buildReleaseAssetModules(
+        options?.releaseAssetManifest,
+        [
+          pagePath,
+          ...layouts.map((layout) => layout.path),
+          appPath,
+          errorPath,
+        ].filter((path): path is string => Boolean(path)),
+      ),
       headings,
       css,
       cssAction,
