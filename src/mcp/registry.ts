@@ -1,6 +1,6 @@
 import type { MCPRegistry, MCPStats } from "./types.ts";
 import type { Tool } from "#veryfront/tool";
-import type { Resource } from "#veryfront/resource";
+import type { ResourceDefinition } from "#veryfront/resource";
 import type { Prompt } from "#veryfront/prompt";
 import { toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
@@ -23,7 +23,7 @@ export function registerTool(id: string, tool: Tool): void {
 /** Registers resource. */
 export function registerResource<TParams, TData>(
   id: string,
-  resource: Resource<TParams, TData>,
+  resource: ResourceDefinition<TParams, TData>,
 ): void {
   resourceRegistry.register(id, resource);
 }

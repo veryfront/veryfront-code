@@ -70,16 +70,16 @@ function resolveDiscoveryDir(baseDir: string, dir: string): string {
   return join(baseDir, dir);
 }
 
-function collectDiscoveryCandidates<T>(
+function collectDiscoveryCandidates<TInput, TRegistered>(
   module: unknown,
-  handler: DiscoveryHandler<T>,
-): DiscoveryCandidate<T>[] {
-  const defaultItem = (module as { default?: T }).default;
+  handler: DiscoveryHandler<TInput, TRegistered>,
+): DiscoveryCandidate<TInput>[] {
+  const defaultItem = (module as { default?: TInput }).default;
   if (handler.validate(defaultItem)) {
     return [{ exportName: "default", item: defaultItem }];
   }
 
-  const candidates: DiscoveryCandidate<T>[] = [];
+  const candidates: DiscoveryCandidate<TInput>[] = [];
   const seen = new Set<unknown>();
   for (
     const [exportName, value] of Object.entries(module as Record<string, unknown>).sort(
@@ -95,11 +95,11 @@ function collectDiscoveryCandidates<T>(
   return candidates;
 }
 
-function getCandidateId<T>(
-  candidate: DiscoveryCandidate<T>,
+function getCandidateId<TInput, TRegistered>(
+  candidate: DiscoveryCandidate<TInput>,
   file: string,
   dir: string,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<TInput, TRegistered>,
   useExportNameFallback: boolean,
 ): string {
   const derivedId = handler.getId(candidate.item, file, dir);
@@ -115,11 +115,11 @@ function getCandidateId<T>(
 /**
  * Discover items of a specific type in a directory
  */
-async function discoverItems<T>(
+async function discoverItems<TInput, TRegistered>(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<TInput, TRegistered>,
   seenFiles: Set<string>,
   verbose?: boolean,
 ): Promise<void> {
@@ -218,12 +218,12 @@ async function discoverItems<T>(
   }
 }
 
-async function discoverConfiguredItems<T>(
+async function discoverConfiguredItems<TInput, TRegistered>(
   dirs: readonly string[],
   baseDir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<TInput, TRegistered>,
   verbose?: boolean,
 ): Promise<void> {
   const seenFiles = new Set<string>();

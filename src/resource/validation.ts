@@ -1,6 +1,6 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { McpConfig, McpContentConfig } from "./schemas/index.ts";
-import type { Resource, ResourceConfig, ResourceLoadContext } from "./types.ts";
+import type { Resource, ResourceConfig, ResourceDefinition, ResourceLoadContext } from "./types.ts";
 import { ResourceParamsValidationError } from "./errors.ts";
 import { isValidResourceMimeType } from "./mime-type.ts";
 
@@ -172,18 +172,19 @@ export function createResourceDefinition<TParams, TData>(
  * loader. The captured callbacks remain private to this module.
  */
 export function replaceResourceDefinitionMetadata<TParams, TData>(
-  value: Resource<TParams, TData>,
+  value: ResourceConfig<TParams, TData>,
   id: string,
   pattern: string,
 ): Resource<TParams, TData> {
   // Discovery also accepts literal ResourceConfig-shaped exports that do not
   // yet have an id or pattern. The derived metadata completes that boundary.
   assertResourceConfig(value);
-  const state = getResourceDefinitionState(value) ?? ObjectFreeze({
-    paramsSchema: value.paramsSchema,
-    load: value.load,
-    subscribe: value.subscribe,
-  });
+  const state = getResourceDefinitionState<TParams, TData>(value) ??
+    ObjectFreeze({
+      paramsSchema: value.paramsSchema,
+      load: value.load,
+      subscribe: value.subscribe,
+    });
 
   return buildResourceDefinition({
     id,
@@ -203,13 +204,13 @@ export function replaceResourceDefinitionMetadata<TParams, TData>(
  * twice.
  */
 export function normalizeResourceDefinition<TParams, TData>(
-  value: Resource<TParams, TData>,
+  value: ResourceDefinition<TParams, TData>,
 ): Resource<TParams, TData> {
   assertResourceDefinition(value);
-  const capturedState = getResourceDefinitionState(value);
-  if (capturedState !== undefined && ObjectIsFrozen(value)) {
+  if (isNormalizedResourceDefinition(value)) {
     return value;
   }
+  const capturedState = getResourceDefinitionState<TParams, TData>(value);
   const state = capturedState ?? ObjectFreeze({
     paramsSchema: value.paramsSchema,
     load: value.load,
@@ -227,8 +228,14 @@ export function normalizeResourceDefinition<TParams, TData>(
   });
 }
 
+function isNormalizedResourceDefinition<TParams, TData>(
+  value: ResourceDefinition<TParams, TData>,
+): value is Resource<TParams, TData> {
+  return ObjectIsFrozen(value) && resourceDefinitionStates.has(value);
+}
+
 function getResourceDefinitionState<TParams, TData>(
-  value: Resource<TParams, TData>,
+  value: object,
 ): ResourceDefinitionState<TParams, TData> | undefined {
   return resourceDefinitionStates.get(value) as
     | ResourceDefinitionState<TParams, TData>
@@ -236,11 +243,11 @@ function getResourceDefinitionState<TParams, TData>(
 }
 
 function assertResourceDefinition<TParams, TData>(
-  value: Resource<TParams, TData>,
+  value: ResourceDefinition<TParams, TData>,
 ): void;
 function assertResourceDefinition(
   value: unknown,
-): asserts value is Resource<unknown, unknown>;
+): asserts value is ResourceDefinition<unknown, unknown>;
 function assertResourceDefinition(value: unknown): void {
   if (!isObjectRecord(value)) {
     throw new TypeError("Resource definition must be an object");

@@ -7,6 +7,7 @@ import {
   type McpContentConfig,
   resource,
   resourceRegistry,
+  type ResourceDefinition,
   type ResourceLoadContext,
 } from "veryfront/resource";
 import { defineSchema } from "veryfront/schemas";
@@ -33,6 +34,24 @@ void welcome.getContent({ name: "Ada" });
 void docs.load({ section: "agents" });
 resourceRegistry.register(docs.id, docs);
 registerResource(docs.id, docs);
+
+const literalDocs: ResourceDefinition<
+  { section: string },
+  { section: string }
+> = {
+  id: "literal-docs",
+  pattern: "/literal-docs/:section",
+  description: "Read literal documentation",
+  paramsSchema: defineSchema((v) => v.object({ section: v.string() }))(),
+  load: ({ section }) => ({ section }),
+};
+resourceRegistry.register(literalDocs.id, literalDocs);
+registerResource(literalDocs.id, literalDocs);
+
+resourceRegistry.get(docs.id)!.load({ section: "agents" }).then((result) => {
+  // @ts-expect-error Heterogeneous registry lookups must not expose an `any` result.
+  void result.section;
+});
 
 const markdownContent: McpContentConfig = {
   type: "text",

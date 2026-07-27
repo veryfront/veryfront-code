@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { Resource } from "./types.ts";
+import type { Resource, ResourceDefinition } from "./types.ts";
 import {
   assertResourceUri,
   type CompiledResourcePattern,
@@ -22,9 +22,15 @@ import {
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { normalizeResourceDefinition } from "./validation.ts";
 
-const compiledResourcePatterns = new WeakMap<Resource, CompiledResourcePattern>();
+// A registry is heterogeneous by design. Parameter erasure is safe here
+// because every stored resource validates unknown runtime input before calling
+// its captured typed loader; results remain unknown to registry consumers.
+// deno-lint-ignore no-explicit-any
+type StoredResource = Resource<any, unknown>;
 
-function compiledPatternFor(resource: Resource): CompiledResourcePattern {
+const compiledResourcePatterns = new WeakMap<StoredResource, CompiledResourcePattern>();
+
+function compiledPatternFor(resource: StoredResource): CompiledResourcePattern {
   const existing = compiledResourcePatterns.get(resource);
   if (existing) return existing;
   const compiled = compileResourcePattern(resource.pattern);
@@ -34,8 +40,8 @@ function compiledPatternFor(resource: Resource): CompiledResourcePattern {
 
 function assertEquivalentResourceId(
   id: string,
-  existing: Pick<Resource, "pattern">,
-  incoming: Pick<Resource, "pattern">,
+  existing: Pick<ResourceDefinition, "pattern">,
+  incoming: Pick<ResourceDefinition, "pattern">,
 ): void {
   if (existing.pattern === incoming.pattern) return;
   throw new Error(
@@ -45,7 +51,7 @@ function assertEquivalentResourceId(
 }
 
 function assertUnambiguousResourceRegistry(
-  registry: ReadonlyMap<string, Resource>,
+  registry: ReadonlyMap<string, StoredResource>,
 ): void {
   const entries = Array.from(registry);
   for (let incomingIndex = 1; incomingIndex < entries.length; incomingIndex++) {
@@ -71,9 +77,9 @@ function assertUnambiguousResourceRegistry(
 }
 
 function assertUnambiguousResourceCandidate(
-  registry: ReadonlyMap<string, Resource>,
+  registry: ReadonlyMap<string, StoredResource>,
   id: string,
-  incoming: Resource,
+  incoming: StoredResource,
 ): void {
   const incomingPattern = compiledPatternFor(incoming);
 
@@ -96,30 +102,30 @@ function assertUnambiguousResourceCandidate(
   }
 }
 
-const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource", {
+const resourceRegistryManager = new ProjectScopedRegistryManager<StoredResource>("resource", {
   validateRegistration: assertEquivalentResourceId,
   validateRegistryCandidate: assertUnambiguousResourceCandidate,
   validateRegistry: assertUnambiguousResourceRegistry,
 });
 
-class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
+class ResourceRegistryInternal extends ScopedRegistryFacade<StoredResource> {
   override register<TParams, TData>(
     id: string,
-    resource: Resource<TParams, TData>,
+    resource: ResourceDefinition<TParams, TData>,
   ): void {
     const normalized = normalizeResourceDefinition(resource);
-    super.register(id, normalized as unknown as Resource);
+    super.register(id, normalized);
   }
 
   override registerShared<TParams, TData>(
     id: string,
-    resource: Resource<TParams, TData>,
+    resource: ResourceDefinition<TParams, TData>,
   ): void {
     const normalized = normalizeResourceDefinition(resource);
-    super.registerShared(id, normalized as unknown as Resource);
+    super.registerShared(id, normalized);
   }
 
-  findEntryByPattern(uri: string): readonly [string, Resource] | undefined {
+  findEntryByPattern(uri: string): readonly [string, StoredResource] | undefined {
     assertResourceUri(uri);
     const candidates = Array.from(
       this.getAll(),
@@ -143,7 +149,7 @@ class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
     return undefined;
   }
 
-  findByPattern(uri: string): Resource | undefined {
+  findByPattern(uri: string): StoredResource | undefined {
     return this.findEntryByPattern(uri)?.[1];
   }
 
@@ -168,7 +174,7 @@ class ResourceRegistryInternal extends ScopedRegistryFacade<Resource> {
 export const resourceRegistryInternal = new ResourceRegistryInternal(resourceRegistryManager);
 
 /** Project-scoped resource registry API safe for application code. */
-class ResourceRegistry extends ScopedRegistryView<Resource> {
+class ResourceRegistry extends ScopedRegistryView<StoredResource> {
   readonly #registry: ResourceRegistryInternal;
 
   constructor(registry: ResourceRegistryInternal) {
@@ -178,16 +184,16 @@ class ResourceRegistry extends ScopedRegistryView<Resource> {
 
   override register<TParams, TData>(
     id: string,
-    resource: Resource<TParams, TData>,
+    resource: ResourceDefinition<TParams, TData>,
   ): void {
     this.#registry.register(id, resource);
   }
 
-  findEntryByPattern(uri: string): readonly [string, Resource] | undefined {
+  findEntryByPattern(uri: string): readonly [string, StoredResource] | undefined {
     return this.#registry.findEntryByPattern(uri);
   }
 
-  findByPattern(uri: string): Resource | undefined {
+  findByPattern(uri: string): StoredResource | undefined {
     return this.#registry.findByPattern(uri);
   }
 

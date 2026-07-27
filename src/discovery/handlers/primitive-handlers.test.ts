@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { type Resource, resource, resourceRegistry } from "#veryfront/resource";
+import { resource, resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import { agentHandler } from "./agent-handler.ts";
 import { promptHandler } from "./prompt-handler.ts";
@@ -208,12 +208,38 @@ Deno.test("resource discovery derives metadata for a valid literal resource expo
     assertEquals(resourceHandler.validate(literal), true);
     const registered = resourceHandler.register(
       "docs",
-      literal as unknown as Resource,
+      literal,
       "/project/resources/docs.ts",
       "/project/resources",
     );
     assertEquals(registered.id, "docs");
     assertEquals(registered.pattern, "/docs");
+  } finally {
+    resourceRegistry.delete("docs");
+  }
+});
+
+Deno.test("resource discovery normalizes a literal export with explicit identity", async () => {
+  const literal = {
+    id: "docs",
+    pattern: "docs://project",
+    description: "Docs",
+    paramsSchema: defineSchema((v) => v.object({}))(),
+    load: () => ({ title: "Project" }),
+  };
+
+  try {
+    const registered = resourceHandler.register(
+      "docs",
+      literal,
+      "/project/resources/docs.ts",
+      "/project/resources",
+    );
+
+    assertEquals(Object.isFrozen(registered), true);
+    assertEquals(Object.is(registered, literal), false);
+    assertEquals(await registered.load({}), { title: "Project" });
+    assertEquals(resourceRegistry.get("docs"), registered);
   } finally {
     resourceRegistry.delete("docs");
   }
@@ -235,7 +261,7 @@ Deno.test("resource discovery preserves explicit patterns and replaces generated
   try {
     const registeredExplicit = resourceHandler.register(
       "docs",
-      explicit as unknown as Resource,
+      explicit,
       "/project/resources/docs.ts",
       "/project/resources",
     );
@@ -243,7 +269,7 @@ Deno.test("resource discovery preserves explicit patterns and replaces generated
 
     const registeredGenerated = resourceHandler.register(
       "profile",
-      generated as unknown as Resource,
+      generated,
       "/project/resources/users/[id]/profile.ts",
       "/project/resources",
     );
@@ -268,7 +294,7 @@ Deno.test("resource discovery applies parameter transforms exactly once", async 
   try {
     resourceHandler.register(
       "profile",
-      discovered as unknown as Resource,
+      discovered,
       "/project/resources/users/[id]/profile.ts",
       "/project/resources",
     );

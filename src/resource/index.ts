@@ -31,6 +31,7 @@ export type {
   McpContentConfig,
   Resource,
   ResourceConfig,
+  ResourceDefinition,
   ResourceLoadContext,
 } from "./types.ts";
 export { resource } from "./factory.ts";

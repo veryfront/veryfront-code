@@ -1,4 +1,4 @@
-import type { Resource } from "./types.ts";
+import type { ResourceConfig } from "./types.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { encodeBase64Bytes } from "#veryfront/utils/base64url.ts";
 
@@ -6,6 +6,8 @@ const MAX_RESOURCE_CONTENT_BYTES = 4 * 1024 * 1024;
 const JsonStringify = JSON.stringify.bind(JSON);
 const TextEncoderConstructor = TextEncoder;
 const Uint8ArrayConstructor = Uint8Array;
+
+type ResourceMCPMetadata = Pick<ResourceConfig, "mcp">;
 
 export type MCPResourceContents =
   | {
@@ -40,7 +42,7 @@ export class ResourceContentValidationError extends Error {
 }
 
 /** MIME type advertised for every result of one resource definition. */
-export function getResourceMCPMimeType(resource: Resource): string {
+export function getResourceMCPMimeType(resource: ResourceMCPMetadata): string {
   const content = resource.mcp?.content;
   return content === undefined || content.type === "json" ? "application/json" : content.mimeType;
 }
@@ -48,7 +50,7 @@ export function getResourceMCPMimeType(resource: Resource): string {
 /** Convert one loader result into a bounded MCP text or blob content item. */
 export function toMCPResourceContents(
   resourceId: string,
-  resource: Resource,
+  resource: ResourceMCPMetadata,
   data: unknown,
   uri: string,
 ): MCPResourceContents {
