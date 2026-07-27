@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  type SSRIsolationOptions,
   SSROrchestrator,
   type SSROrchestratorConfig,
   type SSROrchestratorDependencies,
@@ -17,6 +18,8 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
 import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
+import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
+import { join } from "node:path";
 
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
 
@@ -231,6 +234,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       let observed:
         | { projectId: string; readPaths: string[]; delivery: string }
         | undefined;
+      let evictedWorkerId: string | undefined;
       const workerPool: ReturnType<
         NonNullable<SSROrchestratorDependencies["getWorkerPool"]>
       > = {
@@ -245,6 +249,9 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
         },
         executeStream: () => {
           throw new Error("stream execution must not be used");
+        },
+        evictWorker: (projectId) => {
+          evictedWorkerId = projectId;
         },
       };
       const orchestrator = new SSROrchestrator(createMockConfig(), {
@@ -269,11 +276,11 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
           ),
       );
 
-      assertEquals(observed, {
-        projectId: "/tmp/project",
-        readPaths: ["/tmp/project"],
-        delivery: "string",
-      });
+      assert(observed);
+      assertMatch(observed.projectId, /^ssr-ephemeral-[0-9a-f-]{36}$/);
+      assertEquals(observed.readPaths, ["/tmp/project"]);
+      assertEquals(observed.delivery, "string");
+      assertEquals(evictedWorkerId, observed.projectId);
       assertEquals(result.fullHtml.includes("<main>isolated</main>"), true);
       assertEquals(result.finalStream, null);
     });
@@ -288,6 +295,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       let observed:
         | { projectId: string; readPaths: string[]; delivery: string }
         | undefined;
+      let evictedWorkerId: string | undefined;
       const workerPool: ReturnType<
         NonNullable<SSROrchestratorDependencies["getWorkerPool"]>
       > = {
@@ -298,6 +306,9 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
           if (request.type !== "render-ssr") throw new Error("expected an SSR request");
           observed = { projectId, readPaths, delivery: request.delivery };
           return workerStream;
+        },
+        evictWorker: (projectId) => {
+          evictedWorkerId = projectId;
         },
       };
       const config = createMockConfig({
@@ -328,12 +339,230 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
           ),
       );
 
-      assertEquals(observed, {
-        projectId: "/tmp/project",
-        readPaths: ["/tmp/project"],
-        delivery: "stream",
-      });
+      assert(observed);
+      assertMatch(observed.projectId, /^ssr-ephemeral-[0-9a-f-]{36}$/);
+      assertEquals(observed.readPaths, ["/tmp/project"]);
+      assertEquals(observed.delivery, "stream");
+      assertEquals(evictedWorkerId, observed.projectId);
       assertEquals(result.finalStream, workerStream);
+    });
+
+    it("snapshots the complete isolated request before resolving its Worker generation", async () => {
+      let projectDir = "/tmp/original-project";
+      let pageModulePath = "/tmp/original-project/page.tsx";
+      const layoutModulePaths = ["/tmp/original-project/layout.tsx"];
+      const pageProps = { title: "original", nested: { count: 1 } };
+      const layoutProps = [{ theme: "original", nested: { count: 2 } }];
+      const reads = {
+        projectDir: 0,
+        pageModulePath: 0,
+        layoutModulePaths: 0,
+        pageProps: 0,
+        layoutProps: 0,
+        workerScopeId: 0,
+        workerGenerationId: 0,
+      };
+      let mutationScheduled = false;
+      const isolation = {
+        get projectDir() {
+          reads.projectDir++;
+          return projectDir;
+        },
+        get pageModulePath() {
+          reads.pageModulePath++;
+          return pageModulePath;
+        },
+        get layoutModulePaths() {
+          reads.layoutModulePaths++;
+          return layoutModulePaths;
+        },
+        get pageProps() {
+          reads.pageProps++;
+          return pageProps;
+        },
+        get layoutProps() {
+          reads.layoutProps++;
+          return layoutProps;
+        },
+        get workerScopeId() {
+          reads.workerScopeId++;
+          return "ssr-snapshot-scope";
+        },
+        get workerGenerationId() {
+          reads.workerGenerationId++;
+          if (!mutationScheduled) {
+            mutationScheduled = true;
+            queueMicrotask(() => {
+              projectDir = "/tmp/mutated-project";
+              pageModulePath = "/tmp/mutated-project/page.tsx";
+              layoutModulePaths[0] = "/tmp/mutated-project/layout.tsx";
+              pageProps.title = "mutated";
+              pageProps.nested.count = 10;
+              layoutProps[0]!.theme = "mutated";
+              layoutProps[0]!.nested.count = 20;
+            });
+          }
+          return "release-1";
+        },
+      } satisfies SSRIsolationOptions;
+      let observed:
+        | {
+          readPaths: string[];
+          pageModulePath: string;
+          layoutModulePaths: string[];
+          pageProps: Record<string, unknown>;
+          layoutProps: Record<string, unknown>[];
+        }
+        | undefined;
+      const workerPool: ReturnType<
+        NonNullable<SSROrchestratorDependencies["getWorkerPool"]>
+      > = {
+        execute: async (_workerId, readPaths, request) => {
+          if (request.type !== "render-ssr") throw new Error("expected an SSR request");
+          observed = {
+            readPaths,
+            pageModulePath: request.pageModulePath,
+            layoutModulePaths: request.layoutModulePaths,
+            pageProps: request.pageProps,
+            layoutProps: request.layoutProps,
+          };
+          return {
+            type: "ssr-result",
+            id: request.id,
+            html: "<main>isolated</main>",
+          };
+        },
+        executeStream: () => {
+          throw new Error("stream execution must not be used");
+        },
+        evictWorker: () => {},
+      };
+      const orchestrator = new SSROrchestrator(createMockConfig(), {
+        getWorkerPool: () => workerPool,
+        isSSRIsolationEnabled: () => true,
+      });
+
+      await runWithExactSourceIntegrationPolicy(
+        TEST_SOURCE_INTEGRATION_POLICY,
+        () =>
+          orchestrator.performSSRRendering(
+            React.createElement("div"),
+            createGenerationContext(),
+            undefined,
+            isolation,
+          ),
+      );
+
+      assertEquals(projectDir, "/tmp/mutated-project");
+      assertEquals(observed, {
+        readPaths: ["/tmp/original-project"],
+        pageModulePath: "/tmp/original-project/page.tsx",
+        layoutModulePaths: ["/tmp/original-project/layout.tsx"],
+        pageProps: { title: "original", nested: { count: 1 } },
+        layoutProps: [{ theme: "original", nested: { count: 2 } }],
+      });
+      assertEquals(reads, {
+        projectDir: 1,
+        pageModulePath: 1,
+        layoutModulePaths: 1,
+        pageProps: 1,
+        layoutProps: 1,
+        workerScopeId: 1,
+        workerGenerationId: 1,
+      });
+    });
+
+    it("rejects inconsistent isolated layout data before Worker admission", async () => {
+      let poolResolved = false;
+      const orchestrator = new SSROrchestrator(createMockConfig(), {
+        getWorkerPool: () => {
+          poolResolved = true;
+          throw new Error("worker pool must not be resolved");
+        },
+        isSSRIsolationEnabled: () => true,
+      });
+      let failure: unknown;
+
+      try {
+        await orchestrator.performSSRRendering(
+          React.createElement("div"),
+          createGenerationContext(),
+          undefined,
+          {
+            projectDir: "/tmp/project",
+            pageModulePath: "/tmp/project/page.tsx",
+            layoutModulePaths: ["/tmp/project/layout.tsx"],
+            pageProps: {},
+            layoutProps: [],
+          },
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      assert(failure instanceof TypeError);
+      assertEquals(
+        failure.message,
+        "SSR isolation layoutProps must have one entry per layoutModulePath",
+      );
+      assertEquals(poolResolved, false);
+    });
+
+    it("loads a fresh isolated dependency graph when the source generation changes", async () => {
+      const projectDir = await Deno.realPath(
+        await Deno.makeTempDir({ prefix: "vf-isolated-ssr-" }),
+      );
+      const pageModulePath = join(projectDir, "page.mjs");
+      const dependencyPath = join(projectDir, "dependency.mjs");
+      const workerScopeId = `ssr-generation-${crypto.randomUUID()}`;
+      await Deno.writeTextFile(
+        pageModulePath,
+        `import { label } from "./dependency.mjs";
+         export default function Page() { return label; }`,
+      );
+      await Deno.writeTextFile(
+        dependencyPath,
+        `export const label = "first generation";`,
+      );
+      const orchestrator = new SSROrchestrator(createMockConfig(), {
+        getWorkerPool,
+        isSSRIsolationEnabled: () => true,
+      });
+      const renderGeneration = (workerGenerationId: string) =>
+        runWithExactSourceIntegrationPolicy(
+          TEST_SOURCE_INTEGRATION_POLICY,
+          () =>
+            orchestrator.performSSRRendering(
+              React.createElement("div"),
+              createGenerationContext(),
+              undefined,
+              {
+                projectDir,
+                pageModulePath,
+                layoutModulePaths: [],
+                pageProps: {},
+                layoutProps: [],
+                workerScopeId,
+                workerGenerationId,
+              },
+            ),
+        );
+
+      try {
+        const first = await renderGeneration("release-1");
+        await Deno.writeTextFile(
+          dependencyPath,
+          `export const label = "second generation";`,
+        );
+        const second = await renderGeneration("release-2");
+
+        assert(first.fullHtml.includes("first generation"));
+        assert(second.fullHtml.includes("second generation"));
+      } finally {
+        getWorkerPool().evictWorkerScope(workerScopeId);
+        __resetPoolForTests();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("finalizes the render session before HTML shell generation", async () => {

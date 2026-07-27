@@ -45,7 +45,13 @@ import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
-import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
+import {
+  type DataCacheScope,
+  DataFetcher,
+  type FetchDataOptions,
+  snapshotDataCacheScope,
+} from "#veryfront/data/index.ts";
+import { requireDataProjectId } from "#veryfront/data/project-identity.ts";
 import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
@@ -81,6 +87,10 @@ import {
 } from "#veryfront/rendering/rsc/page-island.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 import { toMDXFrontmatter } from "../frontmatter.ts";
+import {
+  createWorkerExecutionScopeId,
+  WorkerExecutionScopeOwner,
+} from "../worker-execution-scope.ts";
 
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
@@ -101,6 +111,7 @@ import {
   type ModuleToLoad,
   SSR_RENDER_TIMEOUT_MS,
 } from "./module-collection.ts";
+import { RENDER_OPTIONS_SNAPSHOT, snapshotRenderOptions } from "./request-snapshot.ts";
 
 const renderPageLog = logger.component("render-page");
 const renderPipelineLog = logger.component("render-pipeline");
@@ -137,6 +148,12 @@ export interface RenderPipelineConfig {
   directories?: RouterDirectories;
   /** Query parameter handling for cache keys (from config.cache.queryParams) */
   queryParamOptions?: import("#veryfront/cache/keys.ts").QueryParamCacheOptions;
+  /** @internal Shared owner used by the multi-project Renderer. */
+  dataFetcher?: DataFetcher;
+  /** @internal Explicit immutable scope; null deliberately disables data caching. */
+  dataCacheScope?: DataCacheScope | null;
+  /** @internal Worker lifetime owned by the enclosing project/source context. */
+  workerExecutionScopeId?: string;
 }
 
 interface DataResolutionResult {
@@ -163,32 +180,119 @@ interface FetchedDataResult {
   error: Error | null;
 }
 
+interface PipelineRequestIdentity {
+  readonly projectId: string;
+  readonly contentSourceId: string | undefined;
+  readonly workerExecutionScopeId: string;
+}
+
 const PRE_RESOLVED_DATA = Symbol("veryfront.preResolvedData");
+const PIPELINE_REQUEST_IDENTITY = Symbol("veryfront.pipelineRequestIdentity");
 
 type InternalRenderOptions = RenderOptions & {
   [PRE_RESOLVED_DATA]?: DataResolutionResult;
+  [PIPELINE_REQUEST_IDENTITY]?: Readonly<PipelineRequestIdentity>;
+  [RENDER_OPTIONS_SNAPSHOT]?: true;
 };
 
 function stripInternalRenderOptions(options: InternalRenderOptions): RenderOptions {
-  const { [PRE_RESOLVED_DATA]: _preResolvedData, ...publicOptions } = options;
+  const {
+    [PRE_RESOLVED_DATA]: _preResolvedData,
+    [PIPELINE_REQUEST_IDENTITY]: _requestIdentity,
+    [RENDER_OPTIONS_SNAPSHOT]: _optionsSnapshot,
+    ...publicOptions
+  } = options;
   return publicOptions;
 }
 
 export class RenderPipeline {
-  private config: RenderPipelineConfig;
-  private dataFetcher: DataFetcher;
-  private moduleLoaderConfig: ModuleLoaderConfig;
+  private readonly config: RenderPipelineConfig;
+  private readonly dataFetcher: DataFetcher;
+  private readonly ownsDataFetcher: boolean;
+  private readonly configuredProjectId: string;
+  private readonly configuredContentSourceId: string | undefined;
+  private readonly dataCacheScope: Readonly<DataCacheScope> | null | undefined;
+  private readonly workerExecutionScopes: WorkerExecutionScopeOwner;
+  private readonly ownsWorkerExecutionScope: boolean;
+  private destroyed = false;
+  private readonly moduleLoaderConfig: ModuleLoaderConfig;
   private reactVersionPromise: Promise<string> | null = null;
 
   constructor(config: RenderPipelineConfig) {
-    this.config = config;
-    this.dataFetcher = new DataFetcher(config.adapter);
+    const input = { ...config };
+    const projectDir = input.projectDir;
+    const rawProjectId = input.projectId;
+    const rawContentSourceId = input.contentSourceId;
+    const suppliedDataFetcher = input.dataFetcher;
+    const rawDataCacheScope = input.dataCacheScope;
+    const rawWorkerExecutionScopeId = input.workerExecutionScopeId;
+    const dataCacheScope = rawDataCacheScope === undefined ||
+        rawDataCacheScope === null
+      ? rawDataCacheScope
+      : snapshotDataCacheScope(rawDataCacheScope);
+    const configuredProjectId = requireDataProjectId(
+      rawProjectId === undefined ? dataCacheScope?.projectId ?? projectDir : rawProjectId,
+      "RenderPipeline projectId",
+    );
+    const configuredContentSourceId = rawContentSourceId === undefined
+      ? undefined
+      : requireDataProjectId(
+        rawContentSourceId,
+        "RenderPipeline contentSourceId",
+      );
+    const workerExecutionScopeId = rawWorkerExecutionScopeId === undefined
+      ? createWorkerExecutionScopeId()
+      : requireDataProjectId(
+        rawWorkerExecutionScopeId,
+        "RenderPipeline workerExecutionScopeId",
+      );
+
+    if (
+      suppliedDataFetcher !== undefined &&
+      rawDataCacheScope === undefined
+    ) {
+      throw new TypeError(
+        "A borrowed dataFetcher requires an explicit dataCacheScope or null",
+      );
+    }
+    if (
+      dataCacheScope &&
+      rawProjectId !== undefined &&
+      dataCacheScope.projectId !== configuredProjectId
+    ) {
+      throw new TypeError(
+        "dataCacheScope projectId must match the pipeline projectId",
+      );
+    }
+    this.config = {
+      ...input,
+      projectDir,
+      projectId: rawProjectId,
+      contentSourceId: configuredContentSourceId,
+      dataFetcher: suppliedDataFetcher,
+      dataCacheScope,
+      workerExecutionScopeId,
+    };
+    this.configuredProjectId = configuredProjectId;
+    this.configuredContentSourceId = configuredContentSourceId;
+    this.dataCacheScope = dataCacheScope;
+    this.ownsWorkerExecutionScope = rawWorkerExecutionScopeId === undefined;
+    this.workerExecutionScopes = new WorkerExecutionScopeOwner({
+      initialScopeId: workerExecutionScopeId,
+      ...(this.ownsWorkerExecutionScope ? {} : {
+        // The enclosing owner holds cross-pipeline leases and is the only
+        // authority that may retire a shared scope.
+        evictScope: () => {},
+      }),
+    });
+    this.ownsDataFetcher = suppliedDataFetcher === undefined;
+    this.dataFetcher = suppliedDataFetcher ?? new DataFetcher(input.adapter);
     this.moduleLoaderConfig = {
-      projectDir: config.projectDir,
-      projectId: config.projectId ?? config.projectDir,
-      contentSourceId: config.contentSourceId,
-      adapter: config.adapter,
-      mode: config.mode,
+      projectDir,
+      projectId: configuredProjectId,
+      contentSourceId: configuredContentSourceId,
+      adapter: input.adapter,
+      mode: input.mode,
       moduleCache: createModuleCache(),
       esmCache: createEsmCache(),
     };
@@ -233,19 +337,60 @@ export class RenderPipeline {
    * serve concurrent requests, so request identity must not be written into shared
    * mutable state while module transforms are in flight.
    */
-  private async resolveModuleLoaderConfig(
+  private snapshotRequestIdentity(
     options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+    workerExecutionScopeId = this.workerExecutionScopes.currentScopeId,
+  ): Readonly<PipelineRequestIdentity> {
+    const rawProjectId = options?.projectId;
+    const rawContentSourceId = options?.contentSourceId;
+    const projectId = rawProjectId === undefined ? this.configuredProjectId : requireDataProjectId(
+      rawProjectId,
+      "RenderPipeline request projectId",
+    );
+    const contentSourceId = rawContentSourceId === undefined
+      ? this.configuredContentSourceId
+      : requireDataProjectId(
+        rawContentSourceId,
+        "RenderPipeline request contentSourceId",
+      );
+
+    if (
+      !this.ownsDataFetcher &&
+      rawProjectId !== undefined &&
+      projectId !== this.dataCacheScope?.projectId
+    ) {
+      throw new TypeError(
+        "A pipeline borrowing a dataFetcher cannot override its cache-scope projectId",
+      );
+    }
+    if (
+      !this.ownsDataFetcher &&
+      rawContentSourceId !== undefined &&
+      contentSourceId !== this.configuredContentSourceId
+    ) {
+      throw new TypeError(
+        "A pipeline borrowing a dataFetcher cannot override its configured contentSourceId",
+      );
+    }
+
+    return Object.freeze({
+      projectId,
+      contentSourceId,
+      workerExecutionScopeId,
+    });
+  }
+
+  private async resolveModuleLoaderConfig(
+    identity: Readonly<PipelineRequestIdentity>,
   ): Promise<ModuleLoaderConfig> {
-    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
-    const contentSourceId = options?.contentSourceId ?? this.config.contentSourceId;
     const [reactVersion, importMap] = await Promise.all([
       this.getReactVersion(),
       preloadImportMap(
         this.config.projectDir,
         this.config.adapter,
-        projectId,
+        identity.projectId,
         {
-          contentSourceId,
+          contentSourceId: identity.contentSourceId,
           config: this.config.config,
         },
       ),
@@ -253,20 +398,99 @@ export class RenderPipeline {
 
     return {
       ...this.moduleLoaderConfig,
-      projectId,
-      contentSourceId,
+      projectId: identity.projectId,
+      contentSourceId: identity.contentSourceId,
       importMap,
       reactVersion,
     };
   }
 
   /**
+   * Keep static-data identity aligned with the request-local module source.
+   * A direct pipeline caller may override contentSourceId; reusing the
+   * configured scope in that case would cache source B's data under source A.
+   */
+  private resolveDataCacheScope(
+    identity: Readonly<PipelineRequestIdentity>,
+  ): DataCacheScope | null | undefined {
+    const configured = this.dataCacheScope;
+    if (configured === null || configured === undefined) return configured;
+
+    const versionId = identity.contentSourceId !== undefined &&
+        identity.contentSourceId !== this.configuredContentSourceId
+      ? identity.contentSourceId
+      : configured.versionId;
+    return snapshotDataCacheScope({
+      ...configured,
+      projectId: identity.projectId,
+      versionId,
+    });
+  }
+
+  /**
    * Clear the module cache to force re-transformation on next render.
    * Called by poke/invalidation handlers to ensure fresh modules are loaded.
    */
-  clearModuleCache(): void {
+  clearModuleCache(nextWorkerExecutionScopeId?: string): void {
+    if (this.destroyed) return;
+    if (
+      !this.ownsWorkerExecutionScope &&
+      nextWorkerExecutionScopeId === undefined
+    ) {
+      throw new TypeError(
+        "A pipeline borrowing a worker execution scope requires the enclosing owner's replacement scope ID when clearing its module cache",
+      );
+    }
+    const replacementScopeId = nextWorkerExecutionScopeId === undefined
+      ? undefined
+      : requireDataProjectId(
+        nextWorkerExecutionScopeId,
+        "RenderPipeline replacement workerExecutionScopeId",
+      );
+    this.workerExecutionScopes.rotate(replacementScopeId);
     this.moduleLoaderConfig.moduleCache.clear();
     this.moduleLoaderConfig.esmCache.clear();
+  }
+
+  /** @internal Clear static data owned or consumed by this pipeline. */
+  clearDataCache(pattern?: string): void {
+    if (this.destroyed) return;
+    if (this.ownsDataFetcher) {
+      this.dataFetcher.clearCache(pattern);
+      return;
+    }
+    const scope = this.dataCacheScope;
+    if (scope === null) return;
+    if (scope) {
+      this.dataFetcher.clearCacheForScope(scope, pattern);
+      return;
+    }
+    this.dataFetcher.clearCache(pattern);
+  }
+
+  /** @internal Clear one exact route in this pipeline's authoritative scope. */
+  clearDataCacheForRoute(pathname: string): void {
+    if (this.destroyed) return;
+    if (this.ownsDataFetcher) {
+      this.dataFetcher.clearCacheForRouteAcrossScopes(pathname);
+      return;
+    }
+    const scope = this.dataCacheScope;
+    if (scope) {
+      this.dataFetcher.clearCacheForRoute(scope, pathname);
+    }
+  }
+
+  /** Release only resources constructed by this pipeline. */
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.workerExecutionScopes.close(this.ownsWorkerExecutionScope);
+    if (this.ownsDataFetcher) this.dataFetcher.destroy();
+  }
+
+  private assertActive(): void {
+    if (this.destroyed) throw new Error("RenderPipeline has been destroyed");
   }
 
   private loadModule(
@@ -301,10 +525,10 @@ export class RenderPipeline {
    */
   private async loadModulesInParallel(
     modules: ModuleToLoad[],
-    options?: Pick<RenderOptions, "projectId" | "contentSourceId">,
+    identity: Readonly<PipelineRequestIdentity>,
     timeoutControl?: ProgressTimeoutControl,
   ): Promise<LoadedModule[]> {
-    const moduleLoaderConfig = await this.resolveModuleLoaderConfig(options);
+    const moduleLoaderConfig = await this.resolveModuleLoaderConfig(identity);
     if (timeoutControl) {
       const completedMilestones = new Set<string>();
       moduleLoaderConfig.signal = timeoutControl.signal;
@@ -388,7 +612,8 @@ export class RenderPipeline {
     slug: string,
     pagePath: string,
     nestedLayouts: LayoutItem[],
-    options?: RenderOptions,
+    options: RenderOptions | undefined,
+    identity: Readonly<PipelineRequestIdentity>,
   ): Promise<DataResolutionResult> {
     let params: Record<string, string | string[]> = options?.params ? { ...options.params } : {};
     const pageProps: Record<string, unknown> = {};
@@ -440,7 +665,7 @@ export class RenderPipeline {
           SpanNames.RENDER_LOAD_MODULES,
           () =>
             withProgressTimeoutThrow(
-              (control) => this.loadModulesInParallel(modulesToLoad, options, control),
+              (control) => this.loadModulesInParallel(modulesToLoad, identity, control),
               {
                 idleTimeoutMs: MODULE_LOAD_TIMEOUT_MS,
                 hardTimeoutMs: options.abortSignal ? undefined : MODULE_LOAD_HARD_TIMEOUT_MS,
@@ -461,6 +686,10 @@ export class RenderPipeline {
       return { params, pageProps, layoutProps };
     }
 
+    options.abortSignal?.throwIfAborted();
+    const dataCacheScope = this.resolveDataCacheScope(identity);
+    const workerGenerationId = identity.contentSourceId ??
+      dataCacheScope?.versionId;
     const dataResults = await profilePhase(
       "render.fetch_data",
       () =>
@@ -475,6 +704,15 @@ export class RenderPipeline {
                     const fetchOptions: FetchDataOptions = {
                       modulePath: jobPath,
                       projectDir: this.config.projectDir,
+                      projectId: identity.projectId,
+                      ...(dataCacheScope !== undefined ? { cacheScope: dataCacheScope } : {}),
+                      ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+                      ...(workerGenerationId !== undefined
+                        ? {
+                          workerScopeId: identity.workerExecutionScopeId,
+                          workerGenerationId,
+                        }
+                        : {}),
                     };
                     const result = await this.dataFetcher
                       .fetchData(
@@ -491,6 +729,7 @@ export class RenderPipeline {
               ),
               DATA_FETCH_TIMEOUT_MS,
               `Data fetch for ${slug}`,
+              { signal: options.abortSignal },
             ),
           { "render.data_job_count": dataJobs.length },
         ),
@@ -536,11 +775,37 @@ export class RenderPipeline {
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    this.assertActive();
+    options = snapshotRenderOptions(options);
+    const inheritedIdentity = (options as InternalRenderOptions | undefined)?.[
+      PIPELINE_REQUEST_IDENTITY
+    ];
+    if (inheritedIdentity) {
+      return await this.renderPageWithIdentity(slug, options, inheritedIdentity);
+    }
+
+    const workerScopeLease = this.workerExecutionScopes.acquire();
+    try {
+      const requestIdentity = this.snapshotRequestIdentity(
+        options,
+        workerScopeLease.scopeId,
+      );
+      return await this.renderPageWithIdentity(slug, options, requestIdentity);
+    } finally {
+      workerScopeLease.release();
+    }
+  }
+
+  private async renderPageWithIdentity(
+    slug: string,
+    options: RenderOptions | undefined,
+    requestIdentity: Readonly<PipelineRequestIdentity>,
+  ): Promise<RenderResult> {
     const pipelineStartTime = performance.now();
     const timing: Record<string, number> = {};
-    const requestProjectSlug = options?.projectSlug ?? options?.projectId;
+    const requestProjectSlug = options?.projectSlug ?? requestIdentity.projectId;
     const projectSlug = requestProjectSlug ?? "unknown";
-    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+    const projectId = requestIdentity.projectId;
     const cacheKey = this.buildCacheKey(slug, options);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
@@ -613,7 +878,7 @@ export class RenderPipeline {
                 .preloadLayoutModules(layoutResult.nestedLayouts, {
                   projectId,
                   projectSlug: requestProjectSlug,
-                  contentSourceId: options?.contentSourceId,
+                  contentSourceId: requestIdentity.contentSourceId,
                 })
                 .then(
                   (summary) => ({ ok: true as const, summary }),
@@ -630,7 +895,7 @@ export class RenderPipeline {
               const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
                 PRE_RESOLVED_DATA
               ];
-              const renderInputOptions = internalPreResolvedData && options
+              const renderInputOptions = options
                 ? stripInternalRenderOptions(options as InternalRenderOptions)
                 : options;
               if (internalPreResolvedData) {
@@ -652,6 +917,7 @@ export class RenderPipeline {
                             pageInfo.entity.path,
                             layoutResult.nestedLayouts,
                             options,
+                            requestIdentity,
                           );
                           resolvedParams = dataResolution.params;
                           dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
@@ -847,7 +1113,7 @@ export class RenderPipeline {
         },
         {
           "render.slug": slug,
-          "render.project_id": options?.projectId || this.config.projectDir,
+          "render.project_id": requestIdentity.projectId,
           "render.mode": this.config.mode,
         },
       );
@@ -860,7 +1126,7 @@ export class RenderPipeline {
           adapter: this.config.adapter,
           projectId,
           projectSlug,
-          contentSourceId: options?.contentSourceId,
+          contentSourceId: requestIdentity.contentSourceId,
           slug,
           pagePath: slug,
         });
@@ -871,7 +1137,7 @@ export class RenderPipeline {
             slug,
             projectId,
             projectSlug,
-            contentSourceId: options?.contentSourceId,
+            contentSourceId: requestIdentity.contentSourceId,
           });
           return await renderOnce();
         }
@@ -883,9 +1149,35 @@ export class RenderPipeline {
 
   /** Resolve page data for SPA client-side navigation without rendering HTML. */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    setupSSRGlobals();
+    this.assertActive();
+    options = snapshotRenderOptions(options);
+    const workerScopeLease = this.workerExecutionScopes.acquire();
+    try {
+      const requestIdentity = this.snapshotRequestIdentity(
+        options,
+        workerScopeLease.scopeId,
+      );
+      return await this.resolvePageDataWithIdentity(
+        slug,
+        options,
+        requestIdentity,
+      );
+    } finally {
+      workerScopeLease.release();
+    }
+  }
 
-    const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+  private async resolvePageDataWithIdentity(
+    slug: string,
+    options: RenderOptions | undefined,
+    requestIdentity: Readonly<PipelineRequestIdentity>,
+  ): Promise<PageDataResponse> {
+    setupSSRGlobals();
+    const publicOptions = options
+      ? stripInternalRenderOptions(options as InternalRenderOptions)
+      : undefined;
+
+    const projectId = requestIdentity.projectId;
 
     if (this.config.mode === "development") {
       clearSSRModuleCacheForProject(projectId, { preserveActiveTransforms: true });
@@ -917,6 +1209,7 @@ export class RenderPipeline {
           pageInfo.entity.path,
           layoutResult.nestedLayouts,
           options,
+          requestIdentity,
         ),
     );
 
@@ -934,7 +1227,7 @@ export class RenderPipeline {
           pageType,
           pageInfo,
           slug,
-          options,
+          publicOptions,
           params,
         ),
     );
@@ -942,7 +1235,7 @@ export class RenderPipeline {
     const pageIslandPlan = await this.planClientPageIsland(
       pageInfo,
       layoutResult.nestedLayouts,
-      options,
+      publicOptions,
     );
     const clientLayoutPaths = new Set(
       pageIslandPlan?.clientLayouts.map((layout) => layout.path) ?? [],
@@ -972,7 +1265,7 @@ export class RenderPipeline {
           collectedMetadata: {},
           slug,
           cssImports: [],
-          options,
+          options: publicOptions,
         });
         return resolved ? extractRelativePathShared(resolved, this.config.projectDir) : undefined;
       },
@@ -980,7 +1273,14 @@ export class RenderPipeline {
 
     const { css, cssAction, cssError } = await profilePhase(
       "page_data.resolve_css",
-      () => this.resolvePageDataCss(slug, options, projectUpdatedAt, dataResolution),
+      () =>
+        this.resolvePageDataCss(
+          slug,
+          options,
+          requestIdentity,
+          projectUpdatedAt,
+          dataResolution,
+        ),
     );
 
     resolvePageDataLog.debug("Resolved page data", {
@@ -1091,6 +1391,7 @@ export class RenderPipeline {
   private async resolvePageDataCss(
     slug: string,
     options: RenderOptions | undefined,
+    identity: Readonly<PipelineRequestIdentity>,
     projectUpdatedAt: string | undefined,
     dataResolution: DataResolutionResult,
   ): Promise<PageCssResult> {
@@ -1099,10 +1400,10 @@ export class RenderPipeline {
     }
 
     const cssCacheKey = getPageCssCacheKey(
-      options?.projectId ?? this.config.projectId ?? this.config.projectDir,
+      identity.projectId,
       options?.environment,
       slug,
-      projectUpdatedAt ?? options?.contentSourceId ?? this.config.contentSourceId,
+      projectUpdatedAt ?? identity.contentSourceId,
     );
 
     const cachedCss = getCachedPageCss(cssCacheKey);
@@ -1118,6 +1419,7 @@ export class RenderPipeline {
         skipCacheCheck: true,
         skipCachePersist: true,
         [PRE_RESOLVED_DATA]: dataResolution,
+        [PIPELINE_REQUEST_IDENTITY]: identity,
       };
 
       const renderResult = await profilePhase(
@@ -1140,7 +1442,7 @@ export class RenderPipeline {
         () =>
           this.resolveCssFromRenderedHtml(
             renderResult.html,
-            options?.projectSlug ?? options?.projectId,
+            options?.projectSlug ?? identity.projectId,
           ),
       );
 
@@ -1171,7 +1473,7 @@ export class RenderPipeline {
       resolvePageDataLog.error("CSS generation failed", {
         slug,
         error: errorMessage,
-        projectId: options?.projectId,
+        projectId: identity.projectId,
       });
       return {
         css: undefined,

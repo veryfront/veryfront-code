@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { EMPTY_LAYOUT_RESULT, isDotPath, isHiddenSegment } from "./path-helpers.ts";
+import {
+  EMPTY_LAYOUT_RESULT,
+  isDotPath,
+  isHiddenSegment,
+  normalizeRoutePathname,
+} from "./path-helpers.ts";
 
 describe("path-helpers", () => {
   describe("isHiddenSegment", () => {
@@ -94,6 +99,27 @@ describe("path-helpers", () => {
 
     it("has empty nestedLayouts array", () => {
       assertEquals(EMPTY_LAYOUT_RESULT.nestedLayouts, []);
+    });
+  });
+
+  describe("normalizeRoutePathname", () => {
+    it("normalizes roots, indexes, queries, fragments, and trailing slashes", () => {
+      assertEquals(normalizeRoutePathname(""), "/");
+      assertEquals(normalizeRoutePathname("index"), "/");
+      assertEquals(normalizeRoutePathname("/index/"), "/");
+      assertEquals(normalizeRoutePathname("/docs/?draft=1#top"), "/docs");
+    });
+
+    it("keeps every input in pathname form instead of changing URL authority", () => {
+      assertEquals(normalizeRoutePathname("//tenant.example/path"), "/tenant.example/path");
+      assertEquals(normalizeRoutePathname("/\\evil.example/path"), "/evil.example/path");
+      assertEquals(normalizeRoutePathname("scheme:value"), "/scheme:value");
+    });
+
+    it("uses URL pathname encoding and dot-segment semantics", () => {
+      assertEquals(normalizeRoutePathname("/café"), "/caf%C3%A9");
+      assertEquals(normalizeRoutePathname("/a/../b/"), "/b");
+      assertEquals(normalizeRoutePathname("/a/%2e%2e/b"), "/b");
     });
   });
 });

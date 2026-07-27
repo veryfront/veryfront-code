@@ -1,7 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
+import {
+  buildQueryAwareCacheKey,
+  buildRenderCacheKey,
+  buildRenderCachePrefix,
+} from "#veryfront/cache/keys.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
@@ -31,6 +40,7 @@ import {
 } from "./renderer-concurrency.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { destroySharedServices } from "./shared/shared-services.ts";
+import { WorkerExecutionScopeOwner } from "./worker-execution-scope.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -334,6 +344,196 @@ describe("Renderer release asset cache isolation", () => {
     });
 
     assertEquals(result.html, "<html>manifest cache hit</html>");
+  });
+
+  it("snapshots context and URL identity before awaiting the release manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const manifestRequested = Promise.withResolvers<void>();
+    const releaseManifest = Promise.withResolvers<
+      { state: "ready"; manifest: ReleaseAssetManifest }
+    >();
+    configureReleaseAssetManifestFetcher(() => {
+      manifestRequested.resolve();
+      return releaseManifest.promise;
+    });
+
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedContext:
+      | { projectId: string; contentSourceId: string; configTitle: string | undefined }
+      | undefined;
+    let observedUrl: string | undefined;
+    (renderer as unknown as {
+      createServicesForContext: (
+        context: RenderContext,
+      ) => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { url?: URL },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = (context) => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedContext = {
+            projectId: context.projectId,
+            contentSourceId: context.contentSourceId,
+            configTitle: context.config.title,
+          };
+          observedUrl = options?.url?.href;
+          return Promise.resolve({
+            html: "<html>snapshotted render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const originalConfig = {
+      title: "Original title",
+      cache: { queryParams: { policy: "include-all" as const } },
+    };
+    const context = {
+      ...makeRenderContext(),
+      config: originalConfig,
+    } as RenderContext;
+    const url = new URL("https://example.test/snapshot?variant=original");
+    const pending = renderer.renderPage("/snapshot", context, {
+      url,
+      environment: "production",
+      releaseId: "rel-1",
+    });
+
+    await manifestRequested.promise;
+    context.projectId = "mutated-project";
+    context.contentSourceId = "mutated-source";
+    context.cachePrefix = "mutated-prefix";
+    originalConfig.title = "Mutated title";
+    url.searchParams.set("variant", "mutated");
+    releaseManifest.resolve({ state: "ready", manifest: makeReadyManifest() });
+
+    const result = await pending;
+    assertEquals(result.html, "<html>snapshotted render</html>");
+    assertEquals(observedContext, {
+      projectId: "proj-1",
+      contentSourceId: "release-rel-1",
+      configTitle: "Original title",
+    });
+    assertEquals(
+      observedUrl,
+      "https://example.test/snapshot?variant=original",
+    );
+
+    const expectedContext = {
+      ...makeRenderContext(),
+      config: {
+        title: "Original title",
+        cache: { queryParams: { policy: "include-all" as const } },
+      },
+    } as RenderContext;
+    const expectedPrefix = buildRenderCachePrefix(
+      "proj-1",
+      "production",
+      "rel-1",
+      1,
+    );
+    const expectedBaseKey = buildQueryAwareCacheKey(
+      "/snapshot",
+      new URL("https://example.test/snapshot?variant=original"),
+      { policy: "include-all" },
+    );
+    assertEquals(
+      store.data.has(
+        await buildRendererStorageKey(expectedContext, expectedBaseKey, {
+          cachePrefix: expectedPrefix,
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("snapshots request headers before awaiting the release manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const manifestRequested = Promise.withResolvers<void>();
+    const releaseManifest = Promise.withResolvers<
+      { state: "ready"; manifest: ReleaseAssetManifest }
+    >();
+    configureReleaseAssetManifestFetcher(() => {
+      manifestRequested.resolve();
+      return releaseManifest.promise;
+    });
+
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedHeader: string | null | undefined;
+    let observedUrl: string | undefined;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { request?: Request; url?: URL },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedHeader = options?.request?.headers.get("x-render-variant");
+          observedUrl = options?.url?.href;
+          return Promise.resolve({
+            html: "<html>snapshotted request</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const request = new Request(
+      "https://example.test/request-snapshot?variant=original",
+      { headers: { "x-render-variant": "original" } },
+    );
+    const url = new URL(request.url);
+    const pending = renderer.renderPage(
+      "/request-snapshot",
+      makeRenderContext(),
+      {
+        request,
+        url,
+        cacheKey: "request-snapshot",
+        environment: "production",
+        releaseId: "rel-1",
+      },
+    );
+
+    await manifestRequested.promise;
+    request.headers.set("x-render-variant", "mutated");
+    url.searchParams.set("variant", "mutated");
+    releaseManifest.resolve({ state: "ready", manifest: makeReadyManifest() });
+
+    assertEquals((await pending).html, "<html>snapshotted request</html>");
+    assertEquals(observedHeader, "original");
+    assertEquals(
+      observedUrl,
+      "https://example.test/request-snapshot?variant=original",
+    );
   });
 
   it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
@@ -1732,6 +1932,35 @@ describe("Renderer release asset cache isolation", () => {
     ]);
   });
 
+  it("rotates the persistent context worker scope while active pipelines retain their snapshot", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const ctx = makeRenderContext();
+    const internals = renderer as unknown as {
+      getContextServices(context: RenderContext): {
+        workerExecutionScopes: WorkerExecutionScopeOwner;
+      };
+    };
+
+    const firstServices = internals.getContextServices(ctx);
+    const sameServices = internals.getContextServices(ctx);
+    assertStrictEquals(firstServices, sameServices);
+
+    const activeOldPipeline = firstServices.workerExecutionScopes.acquire();
+    const oldScopeId = activeOldPipeline.scopeId;
+    await renderer.clearCache(ctx, "/changed-route");
+
+    const servicesAfterRotation = internals.getContextServices(ctx);
+    assertStrictEquals(servicesAfterRotation, firstServices);
+    const freshPipeline = servicesAfterRotation.workerExecutionScopes.acquire();
+    assertEquals(activeOldPipeline.scopeId, oldScopeId);
+    assertEquals(freshPipeline.scopeId === oldScopeId, false);
+
+    activeOldPipeline.release();
+    freshPipeline.release();
+    await renderer.destroy();
+  });
+
   it("preserves streaming delivery and never persists the stream variant", async () => {
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -2196,6 +2425,137 @@ describe("Renderer release asset cache isolation", () => {
   });
 });
 
+describe("rendering/renderer destruction lifecycle", () => {
+  it("shares concurrent destruction and disposes local resources exactly once", async () => {
+    const store = createInMemoryStore();
+    const storeCleanup = Promise.withResolvers<void>();
+    let storeDestroyCalls = 0;
+    store.destroy = () => {
+      storeDestroyCalls++;
+      return storeCleanup.promise;
+    };
+
+    const renderer = new Renderer({ cache: { store } });
+    let dataFetcherDestroyCalls = 0;
+    let componentRegistryClearCalls = 0;
+    let virtualModulesClearCalls = 0;
+    const internals = renderer as unknown as {
+      dataFetcher?: { destroy(): void };
+      contextServices: Map<
+        string,
+        {
+          projectId: string;
+          contentSourceId: string;
+          workerExecutionScopes: WorkerExecutionScopeOwner;
+          componentRegistry: { clear(): void };
+          virtualModules: { clear(): void };
+        }
+      >;
+      productionPrewarmContexts: Map<string, Promise<void>>;
+    };
+    internals.dataFetcher = {
+      destroy() {
+        dataFetcherDestroyCalls++;
+      },
+    };
+    const evictedWorkerScopes: string[] = [];
+    const workerExecutionScopes = new WorkerExecutionScopeOwner({
+      initialScopeId: "renderer-destruction-scope",
+      evictScope: (scopeId) => evictedWorkerScopes.push(scopeId),
+    });
+    internals.contextServices.set("context", {
+      projectId: "project",
+      contentSourceId: "source",
+      workerExecutionScopes,
+      componentRegistry: {
+        clear() {
+          componentRegistryClearCalls++;
+        },
+      },
+      virtualModules: {
+        clear() {
+          virtualModulesClearCalls++;
+        },
+      },
+    });
+    internals.productionPrewarmContexts.set("prewarm", Promise.resolve());
+
+    const first = renderer.destroy();
+    const second = renderer.destroy();
+
+    assertStrictEquals(first, second);
+    assertEquals(dataFetcherDestroyCalls, 1);
+    assertEquals(componentRegistryClearCalls, 1);
+    assertEquals(virtualModulesClearCalls, 1);
+    assertEquals(evictedWorkerScopes, ["renderer-destruction-scope"]);
+    assertEquals(storeDestroyCalls, 1);
+    assertEquals(internals.contextServices.size, 0);
+    assertEquals(internals.productionPrewarmContexts.size, 0);
+
+    storeCleanup.resolve();
+    await Promise.all([first, second]);
+    await renderer.destroy();
+
+    assertEquals(dataFetcherDestroyCalls, 1);
+    assertEquals(componentRegistryClearCalls, 1);
+    assertEquals(virtualModulesClearCalls, 1);
+    assertEquals(storeDestroyCalls, 1);
+  });
+
+  it("retries failed store destruction without repeating local cleanup", async () => {
+    const store = createInMemoryStore();
+    const disconnectFailure = new Error("cache disconnect failed");
+    let storeDestroyCalls = 0;
+    store.destroy = () => {
+      storeDestroyCalls++;
+      return storeDestroyCalls === 1 ? Promise.reject(disconnectFailure) : Promise.resolve();
+    };
+
+    const renderer = new Renderer({ cache: { store } });
+    let dataFetcherDestroyCalls = 0;
+    (renderer as unknown as { dataFetcher?: { destroy(): void } }).dataFetcher = {
+      destroy() {
+        dataFetcherDestroyCalls++;
+      },
+    };
+
+    await assertRejects(() => renderer.destroy(), Error, disconnectFailure.message);
+    await renderer.destroy();
+    await renderer.destroy();
+
+    assertEquals(dataFetcherDestroyCalls, 1);
+    assertEquals(storeDestroyCalls, 2);
+  });
+
+  it("creates one lazy data fetcher and destroys it with its renderer", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    const internals = renderer as unknown as {
+      initialized: boolean;
+      dataFetcher?: { destroy(): void };
+      getDataFetcher(): { destroy(): void };
+    };
+    internals.initialized = true;
+    assertEquals(internals.dataFetcher, undefined);
+
+    const first = internals.getDataFetcher();
+    const second = internals.getDataFetcher();
+    assertStrictEquals(first, second);
+
+    const originalDestroy = first.destroy.bind(first);
+    let dataFetcherDestroyCalls = 0;
+    first.destroy = () => {
+      dataFetcherDestroyCalls++;
+      originalDestroy();
+    };
+
+    await renderer.destroy();
+
+    assertEquals(dataFetcherDestroyCalls, 1);
+    assertEquals(internals.dataFetcher, undefined);
+    assertThrows(() => internals.getDataFetcher(), Error, "not initialized");
+  });
+});
+
 describe("rendering/renderer singleton initialization", () => {
   it("runs authoritative project invalidation when the renderer pod is cold", async () => {
     await destroyRenderer();
@@ -2342,6 +2702,104 @@ describe("rendering/renderer singleton initialization", () => {
       assertEquals(initializeCalls, 2);
     } finally {
       for (const resolve of resolvers) resolve();
+      Renderer.prototype.initialize = originalInitialize;
+      Renderer.prototype.destroy = originalDestroy;
+      await destroyRenderer();
+    }
+  });
+
+  it("retains failed cleanup and blocks replacement initialization until retry succeeds", async () => {
+    await destroyRenderer();
+
+    const originalInitialize = Renderer.prototype.initialize;
+    const originalDestroy = Renderer.prototype.destroy;
+    const cleanupGate = Promise.withResolvers<void>();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    let replacement: Promise<Renderer> | undefined;
+
+    Renderer.prototype.initialize = function () {
+      initializeCalls++;
+      return Promise.resolve();
+    };
+    Renderer.prototype.destroy = function () {
+      destroyCalls++;
+      if (destroyCalls === 1) {
+        return Promise.reject(new Error("singleton cache disconnect failed"));
+      }
+      return cleanupGate.promise;
+    };
+
+    try {
+      const firstRenderer = await initializeRenderer({
+        cache: { store: createInMemoryStore() },
+      });
+      await assertRejects(
+        () => destroyRenderer(),
+        Error,
+        "singleton cache disconnect failed",
+      );
+      assertThrows(() => getRenderer());
+
+      replacement = initializeRenderer({
+        cache: { store: createInMemoryStore() },
+      });
+      assertEquals(destroyCalls, 2);
+      assertEquals(initializeCalls, 1);
+
+      cleanupGate.resolve();
+      const secondRenderer = await replacement;
+      assertEquals(initializeCalls, 2);
+      assertEquals(firstRenderer === secondRenderer, false);
+    } finally {
+      cleanupGate.resolve();
+      await replacement?.catch(() => undefined);
+      Renderer.prototype.initialize = originalInitialize;
+      Renderer.prototype.destroy = originalDestroy;
+      await destroyRenderer();
+    }
+  });
+
+  it("cancels initialization that was already waiting for singleton cleanup", async () => {
+    await destroyRenderer();
+
+    const originalInitialize = Renderer.prototype.initialize;
+    const originalDestroy = Renderer.prototype.destroy;
+    const cleanupGate = Promise.withResolvers<void>();
+    const pendingOperations: Promise<unknown>[] = [];
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+
+    Renderer.prototype.initialize = function () {
+      initializeCalls++;
+      return Promise.resolve();
+    };
+    Renderer.prototype.destroy = function () {
+      destroyCalls++;
+      return cleanupGate.promise;
+    };
+
+    try {
+      await initializeRenderer({ cache: { store: createInMemoryStore() } });
+      const firstShutdown = destroyRenderer();
+      pendingOperations.push(firstShutdown);
+
+      const waitingInitialization = initializeRenderer({
+        cache: { store: createInMemoryStore() },
+      });
+      pendingOperations.push(waitingInitialization);
+      const secondShutdown = destroyRenderer();
+      pendingOperations.push(secondShutdown);
+
+      cleanupGate.resolve();
+      await Promise.all([firstShutdown, secondShutdown]);
+      await assertRejects(() => waitingInitialization, Error, "cancelled");
+      assertEquals(initializeCalls, 1);
+      assertEquals(destroyCalls, 1);
+      assertThrows(() => getRenderer());
+    } finally {
+      cleanupGate.resolve();
+      await Promise.allSettled(pendingOperations);
       Renderer.prototype.initialize = originalInitialize;
       Renderer.prototype.destroy = originalDestroy;
       await destroyRenderer();

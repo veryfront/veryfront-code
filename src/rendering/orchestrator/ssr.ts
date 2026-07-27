@@ -9,6 +9,7 @@ import { LayoutOrchestrator } from "./layout.ts";
 import { createLayoutComponentCache } from "../layouts/utils/component-loader.ts";
 import { HTMLGenerator } from "./html.ts";
 import { RenderPipeline } from "./pipeline.ts";
+import { normalizeRoutePathname } from "./path-helpers.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 
@@ -103,6 +104,9 @@ export class VeryfrontRenderer {
   }
 
   private initializeModules(): void {
+    // Re-initialization replaces the owned pipeline generation.
+    this.renderPipeline?.destroy();
+
     const projectDir = this.configManager.getProjectDir();
     const mode = this.configManager.getMode();
     const adapter = this.configManager.getAdapter();
@@ -160,6 +164,13 @@ export class VeryfrontRenderer {
       contentSourceId: this.contentSourceId,
       config,
       directories: config.directories,
+      dataCacheScope: mode === "production"
+        ? {
+          projectId: this.projectId,
+          mode: "production",
+          versionId: this.contentSourceId,
+        }
+        : null,
     });
   }
 
@@ -200,7 +211,11 @@ export class VeryfrontRenderer {
 
   clearCache(slug?: string): void {
     if (slug) {
-      this.lifecycle.clearSlugCache(slug);
+      try {
+        this.lifecycle.clearSlugCache(slug);
+      } finally {
+        this.renderPipeline?.clearDataCacheForRoute(normalizeRoutePathname(slug));
+      }
       return;
     }
 
@@ -208,8 +223,26 @@ export class VeryfrontRenderer {
   }
 
   clearAllState(): void {
-    this.lifecycle.clearAllCaches();
-    this.layoutOrchestrator.clearCache();
+    const failures: unknown[] = [];
+    try {
+      this.lifecycle?.clearAllCaches();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      this.layoutOrchestrator?.clearCache();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      this.renderPipeline?.clearDataCache();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Failed to clear renderer state");
+    }
   }
 
   getVirtualModuleSystem() {
@@ -228,8 +261,22 @@ export class VeryfrontRenderer {
     return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 
-  destroy(): Promise<void> {
-    return this.lifecycle.destroy();
+  async destroy(): Promise<void> {
+    const failures: unknown[] = [];
+    try {
+      this.renderPipeline?.destroy();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await this.lifecycle?.destroy();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Failed to destroy renderer");
+    }
   }
 }
 

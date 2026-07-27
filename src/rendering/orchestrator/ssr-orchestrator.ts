@@ -16,6 +16,11 @@ import {
   type WorkerPool,
 } from "#veryfront/security/sandbox/worker-pool.ts";
 import type { WorkerResponse } from "#veryfront/security/sandbox/worker-types.ts";
+import {
+  resolveWorkerGeneration,
+  snapshotWorkerGenerationIdentity,
+  type WorkerGenerationIdentity,
+} from "#veryfront/security/sandbox/worker-generation.ts";
 import { requireActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
   endRenderSession,
@@ -59,7 +64,7 @@ export interface SSRRenderingResult {
 
 /** @internal Construction seam for isolated-rendering lifecycle tests. */
 export interface SSROrchestratorDependencies {
-  getWorkerPool?: () => Pick<WorkerPool, "execute" | "executeStream">;
+  getWorkerPool?: () => Pick<WorkerPool, "execute" | "executeStream" | "evictWorker">;
   isSSRIsolationEnabled?: () => boolean;
 }
 
@@ -79,6 +84,167 @@ export interface SSRIsolationOptions {
   layoutProps: Record<string, unknown>[];
   /** Project directory for worker scoping */
   projectDir: string;
+  /** Host-owned worker lifetime scope; paired with workerGenerationId. */
+  workerScopeId?: string;
+  /** Immutable source identity; paired with workerScopeId. */
+  workerGenerationId?: string;
+}
+
+interface SnapshottedSSRIsolationOptions {
+  readonly pageModulePath: string;
+  readonly layoutModulePaths: string[];
+  readonly pageProps: Record<string, unknown>;
+  readonly layoutProps: Record<string, unknown>[];
+  readonly projectDir: string;
+  readonly generationIdentity?: Readonly<WorkerGenerationIdentity>;
+}
+
+function requireIsolationString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`SSR isolation ${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validateStructuredRenderData(value: unknown, label: string): void {
+  type ValidationFrame =
+    | { readonly kind: "visit"; readonly value: unknown }
+    | { readonly kind: "leave"; readonly value: object };
+
+  const active = new WeakSet<object>();
+  const stack: ValidationFrame[] = [{ kind: "visit", value }];
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    if (frame.kind === "leave") {
+      active.delete(frame.value);
+      continue;
+    }
+
+    const current = frame.value;
+    if (
+      current === null ||
+      typeof current === "string" ||
+      typeof current === "boolean"
+    ) {
+      continue;
+    }
+    if (typeof current === "number" && Number.isFinite(current)) continue;
+    if (typeof current !== "object") {
+      throw new TypeError(
+        `SSR isolation ${label} must contain only finite JSON-compatible data`,
+      );
+    }
+    if (active.has(current)) {
+      throw new TypeError(`SSR isolation ${label} must not contain circular references`);
+    }
+
+    active.add(current);
+    stack.push({ kind: "leave", value: current });
+    if (Array.isArray(current)) {
+      for (let index = current.length - 1; index >= 0; index--) {
+        if (!(index in current)) {
+          throw new TypeError(`SSR isolation ${label} must not contain sparse arrays`);
+        }
+        stack.push({ kind: "visit", value: current[index] });
+      }
+      continue;
+    }
+
+    const prototype = Object.getPrototypeOf(current);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(`SSR isolation ${label} must contain only plain data records`);
+    }
+    const record = current as Record<string, unknown>;
+    const keys = Object.keys(record);
+    for (let index = keys.length - 1; index >= 0; index--) {
+      stack.push({ kind: "visit", value: record[keys[index]!] });
+    }
+  }
+}
+
+function cloneStructuredRenderData(value: unknown, label: string): unknown {
+  let snapshot: unknown;
+  try {
+    snapshot = structuredClone(value);
+  } catch (cause) {
+    throw new TypeError(`SSR isolation ${label} must be structured-cloneable`, { cause });
+  }
+  validateStructuredRenderData(snapshot, label);
+  return snapshot;
+}
+
+function snapshotStringArray(value: unknown, label: string): string[] {
+  const snapshot = cloneStructuredRenderData(value, label);
+  if (!Array.isArray(snapshot)) {
+    throw new TypeError(`SSR isolation ${label} must be an array`);
+  }
+  return snapshot.map((entry, index) => requireIsolationString(entry, `${label}[${index}]`));
+}
+
+function snapshotDataRecord(value: unknown, label: string): Record<string, unknown> {
+  const snapshot = cloneStructuredRenderData(value, label);
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    throw new TypeError(`SSR isolation ${label} must be a data record`);
+  }
+  return snapshot as Record<string, unknown>;
+}
+
+function snapshotLayoutProps(value: unknown): Record<string, unknown>[] {
+  const snapshot = cloneStructuredRenderData(value, "layoutProps");
+  if (!Array.isArray(snapshot)) {
+    throw new TypeError("SSR isolation layoutProps must be an array");
+  }
+  for (let index = 0; index < snapshot.length; index++) {
+    const entry = snapshot[index];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new TypeError(`SSR isolation layoutProps[${index}] must be a data record`);
+    }
+  }
+  return snapshot as Record<string, unknown>[];
+}
+
+/**
+ * Detach an isolated-render request synchronously at the ingress boundary.
+ *
+ * Worker generation resolution hashes asynchronously. No caller-owned object
+ * may remain reachable across that await or eligibility could be decided from
+ * one source tree while a different tree is executed.
+ */
+function snapshotSSRIsolationOptions(
+  value: SSRIsolationOptions,
+): Readonly<SnapshottedSSRIsolationOptions> {
+  if (value === null || typeof value !== "object") {
+    throw new TypeError("SSR isolation options must be an object");
+  }
+
+  // Snapshot each field immediately after its single read. Later accessors
+  // cannot mutate a previously detached field.
+  const projectDir = requireIsolationString(value.projectDir, "projectDir");
+  const pageModulePath = requireIsolationString(value.pageModulePath, "pageModulePath");
+  const layoutModulePaths = snapshotStringArray(
+    value.layoutModulePaths,
+    "layoutModulePaths",
+  );
+  const pageProps = snapshotDataRecord(value.pageProps, "pageProps");
+  const layoutProps = snapshotLayoutProps(value.layoutProps);
+  if (layoutProps.length !== layoutModulePaths.length) {
+    throw new TypeError(
+      "SSR isolation layoutProps must have one entry per layoutModulePath",
+    );
+  }
+  const generationIdentity = snapshotWorkerGenerationIdentity(
+    value.workerScopeId,
+    value.workerGenerationId,
+  );
+
+  return Object.freeze({
+    projectDir,
+    pageModulePath,
+    layoutModulePaths,
+    pageProps,
+    layoutProps,
+    generationIdentity,
+  });
 }
 
 function getElementTypeName(el: React.ReactElement | null | undefined): string {
@@ -102,7 +268,10 @@ function attachAllReady<T extends ReadableStream | null>(
 
 export class SSROrchestrator {
   private readonly config: SSROrchestratorConfig;
-  private readonly resolveWorkerPool: () => Pick<WorkerPool, "execute" | "executeStream">;
+  private readonly resolveWorkerPool: () => Pick<
+    WorkerPool,
+    "execute" | "executeStream" | "evictWorker"
+  >;
   private readonly isolationEnabled: () => boolean;
 
   constructor(
@@ -130,15 +299,12 @@ export class SSROrchestrator {
     isolationOptions?: SSRIsolationOptions,
   ): Promise<SSRRenderingResult> {
     // Isolated SSR path: render in per-project Worker
-    if (
-      this.isolationEnabled() &&
-      isolationOptions?.pageModulePath &&
-      isolationOptions?.projectDir
-    ) {
+    if (this.isolationEnabled() && isolationOptions !== undefined) {
+      const isolation = snapshotSSRIsolationOptions(isolationOptions);
       // NOTE: the app-router error.tsx catch below is scoped to the main-process
       // render path. Under SSR isolation (per-project Worker) a page throw is not
       // yet routed to error.tsx — a follow-up, isolation being off by default.
-      return this.performIsolatedSSR(generationContext, options, isolationOptions);
+      return this.performIsolatedSSR(generationContext, options, isolation);
     }
 
     // Default path: render in main process
@@ -344,11 +510,15 @@ export class SSROrchestrator {
   private async performIsolatedSSR(
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options: RenderOptions | undefined,
-    isolation: SSRIsolationOptions,
+    isolation: Readonly<SnapshottedSSRIsolationOptions>,
   ): Promise<SSRRenderingResult> {
     const wantsStream = options?.delivery === "stream";
     const pool = this.resolveWorkerPool();
     const requestId = crypto.randomUUID();
+    const generation = await resolveWorkerGeneration(
+      "ssr",
+      isolation.generationIdentity,
+    );
 
     return withSpan(
       "ssr.isolated_render",
@@ -356,20 +526,30 @@ export class SSROrchestrator {
         if (wantsStream) {
           // Admission and stream execution are one pool lifecycle operation, so
           // capacity eviction cannot land between acquiring and starting work.
-          const stream = pool.executeStream(
-            isolation.projectDir,
-            [isolation.projectDir],
-            {
-              type: "render-ssr",
-              id: requestId,
-              pageModulePath: isolation.pageModulePath,
-              layoutModulePaths: isolation.layoutModulePaths,
-              pageProps: isolation.pageProps,
-              layoutProps: isolation.layoutProps,
-              delivery: "stream",
-              sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-            },
-          );
+          let stream: ReadableStream<Uint8Array>;
+          try {
+            stream = pool.executeStream(
+              generation.workerId,
+              [isolation.projectDir],
+              {
+                type: "render-ssr",
+                id: requestId,
+                pageModulePath: isolation.pageModulePath,
+                layoutModulePaths: isolation.layoutModulePaths,
+                pageProps: isolation.pageProps,
+                layoutProps: isolation.layoutProps,
+                delivery: "stream",
+                sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
+              },
+            );
+          } finally {
+            // Retirement is deferred by WorkerPool until the active stream
+            // finishes, while preventing a later request from reusing an
+            // unversioned module graph.
+            if (!generation.reusable) {
+              pool.evictWorker(generation.workerId);
+            }
+          }
 
           const ssrHash = `stream-isolated-${Date.now()}`;
 
@@ -385,20 +565,27 @@ export class SSROrchestrator {
         }
 
         // String mode: render to HTML in Worker, get result back
-        const workerResponse: WorkerResponse = await pool.execute(
-          isolation.projectDir,
-          [isolation.projectDir],
-          {
-            type: "render-ssr",
-            id: requestId,
-            pageModulePath: isolation.pageModulePath,
-            layoutModulePaths: isolation.layoutModulePaths,
-            pageProps: isolation.pageProps,
-            layoutProps: isolation.layoutProps,
-            delivery: "string",
-            sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
-          },
-        );
+        let workerResponse: WorkerResponse;
+        try {
+          workerResponse = await pool.execute(
+            generation.workerId,
+            [isolation.projectDir],
+            {
+              type: "render-ssr",
+              id: requestId,
+              pageModulePath: isolation.pageModulePath,
+              layoutModulePaths: isolation.layoutModulePaths,
+              pageProps: isolation.pageProps,
+              layoutProps: isolation.layoutProps,
+              delivery: "string",
+              sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
+            },
+          );
+        } finally {
+          if (!generation.reusable) {
+            pool.evictWorker(generation.workerId);
+          }
+        }
 
         if (workerResponse.type === "error") {
           const err = new Error(workerResponse.error.message);

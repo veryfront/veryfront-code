@@ -91,6 +91,12 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import type { ComponentRegistry } from "./ssr/component-registry.ts";
 import type { VirtualModuleSystem } from "./virtual-module-system.ts";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
+import { type DataCacheScope, DataFetcher } from "#veryfront/data/index.ts";
+import { normalizeRoutePathname } from "./orchestrator/path-helpers.ts";
+import { WorkerExecutionScopeOwner } from "./worker-execution-scope.ts";
+import { snapshotRenderOptions } from "./orchestrator/request-snapshot.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -111,14 +117,118 @@ const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
 const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
 /** Bound project-scoped virtual-module/component registries in shared runtimes. */
 const RENDER_CONTEXT_SERVICE_MAX_ENTRIES = 500;
+const RENDER_CONFIG_IDENTITY = Symbol("veryfront.renderConfigIdentity");
+
+interface RenderConfigIdentity {
+  readonly serialized: string | undefined;
+  readonly serializationError: string | undefined;
+}
+
+type SnapshottedRenderContext = RenderContext & {
+  readonly [RENDER_CONFIG_IDENTITY]: RenderConfigIdentity;
+};
+
+function snapshotVeryfrontConfig(config: VeryfrontConfig): VeryfrontConfig {
+  const input = { ...config };
+  const queryParams = input.cache?.queryParams;
+  const importMap = input.resolve?.importMap;
+  const versions = input.client?.cdn?.versions;
+
+  return Object.freeze({
+    ...input,
+    ...(input.cache
+      ? {
+        cache: Object.freeze({
+          ...input.cache,
+          ...(queryParams
+            ? {
+              queryParams: Object.freeze({
+                ...queryParams,
+                ...("params" in queryParams && queryParams.params
+                  ? { params: Object.freeze([...queryParams.params]) }
+                  : {}),
+              }),
+            }
+            : {}),
+        }),
+      }
+      : {}),
+    ...(input.resolve
+      ? {
+        resolve: Object.freeze({
+          ...input.resolve,
+          ...(importMap ? { importMap: snapshotImportMap(importMap) } : {}),
+        }),
+      }
+      : {}),
+    ...(input.directories
+      ? {
+        directories: Object.freeze({
+          ...input.directories,
+          ...(input.directories.components
+            ? { components: Object.freeze([...input.directories.components]) }
+            : {}),
+        }),
+      }
+      : {}),
+    ...(input.react ? { react: Object.freeze({ ...input.react }) } : {}),
+    ...(input.client
+      ? {
+        client: Object.freeze({
+          ...input.client,
+          ...(input.client.cdn
+            ? {
+              cdn: Object.freeze({
+                ...input.client.cdn,
+                ...(versions && versions !== "auto"
+                  ? { versions: Object.freeze({ ...versions }) }
+                  : {}),
+              }),
+            }
+            : {}),
+        }),
+      }
+      : {}),
+    ...(input.fs ? { fs: Object.freeze({ ...input.fs }) } : {}),
+    ...(input.extensions ? { extensions: Object.freeze([...input.extensions]) } : {}),
+  }) as VeryfrontConfig;
+}
+
+function snapshotRenderContext(ctx: RenderContext): SnapshottedRenderContext {
+  const input = { ...ctx };
+  const config = snapshotVeryfrontConfig(input.config);
+  let serialized: string | undefined;
+  let serializationError: string | undefined;
+  try {
+    serialized = JSON.stringify(config);
+  } catch (error) {
+    serializationError = error instanceof Error ? error.message : String(error);
+  }
+
+  return Object.freeze({
+    ...input,
+    config,
+    [RENDER_CONFIG_IDENTITY]: Object.freeze({
+      serialized,
+      serializationError,
+    }),
+  });
+}
 
 interface RendererContextServices {
   readonly projectId: string;
   readonly contentSourceId: string;
+  readonly workerExecutionScopes: WorkerExecutionScopeOwner;
   readonly virtualModules: VirtualModuleSystem;
   readonly componentRegistry: ComponentRegistry;
   componentInitialization: Promise<void> | null;
   componentsInitialized: boolean;
+}
+
+interface RendererRequestServices {
+  readonly pipeline: RenderPipeline;
+  /** Optional so narrow test doubles do not need to model production ownership. */
+  release?(): void;
 }
 
 type RenderAdmission = "foreground" | "background";
@@ -227,29 +337,19 @@ function getBoundedEnvNumber(
   return Math.min(max, Math.max(min, value));
 }
 
-function normalizeComparableSlug(slug: string): string {
-  const trimmed = slug.trim();
-  if (!trimmed || trimmed === "index" || trimmed === "/index") return "/";
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
-  const normalized = withoutTrailingSlash.startsWith("/")
-    ? withoutTrailingSlash
-    : `/${withoutTrailingSlash}`;
-  return normalized || "/";
-}
-
 function isConcretePrewarmSlug(slug: string): boolean {
-  const comparable = normalizeComparableSlug(slug);
+  const comparable = normalizeRoutePathname(slug);
   return !comparable.includes("[") && !comparable.includes("]") && !comparable.includes("*");
 }
 
 function prewarmSlugDepth(slug: string): number {
-  const comparable = normalizeComparableSlug(slug);
+  const comparable = normalizeRoutePathname(slug);
   if (comparable === "/") return 0;
   return comparable.split("/").filter(Boolean).length;
 }
 
 function prewarmSlugSegments(slug: string): string[] {
-  const comparable = normalizeComparableSlug(slug);
+  const comparable = normalizeRoutePathname(slug);
   if (comparable === "/") return [];
   return comparable.split("/").filter(Boolean);
 }
@@ -269,14 +369,14 @@ function selectPrewarmSlugs(
   currentSlug: string,
   pages: string[],
 ): string[] {
-  const currentComparable = normalizeComparableSlug(currentSlug);
+  const currentComparable = normalizeRoutePathname(currentSlug);
   const seen = new Set<string>();
   const candidates: Array<{ comparable: string }> = [];
 
   for (const page of pages) {
     if (!isConcretePrewarmSlug(page)) continue;
 
-    const comparable = normalizeComparableSlug(page);
+    const comparable = normalizeRoutePathname(page);
     if (comparable === currentComparable || seen.has(comparable)) continue;
 
     seen.add(comparable);
@@ -313,11 +413,15 @@ function selectPrewarmSlugs(
  */
 export class Renderer {
   private cache: ContextAwareCacheCoordinator;
+  private dataFetcher: DataFetcher | undefined;
   private layoutComponentCache = createLayoutComponentCache();
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
   private lifecycleGeneration = 0;
   private destroyed = false;
+  private localResourcesDisposed = false;
+  private renderCacheDisposed = false;
+  private destroyPromise: Promise<void> | null = null;
 
   /**
    * Singleflight for render deduplication. Caches HTML string results so
@@ -458,7 +562,21 @@ export class Renderer {
   }
 
   renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
-    return this.renderPageWithAdmission(slug, ctx, options, "foreground");
+    if (!this.initialized) {
+      return this.renderPageWithAdmission(slug, ctx, options, "foreground");
+    }
+    try {
+      const stableContext = snapshotRenderContext(ctx);
+      const stableOptions = snapshotRenderOptions(options);
+      return this.renderPageWithAdmission(
+        slug,
+        stableContext,
+        stableOptions,
+        "foreground",
+      );
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   private renderPageWithAdmission(
@@ -624,13 +742,22 @@ export class Renderer {
     const baseKey = options?.cacheKey ||
       buildQueryAwareCacheKey(slug, options?.url, queryParamOptions);
 
-    let serializedConfig: string | undefined;
-    try {
-      serializedConfig = JSON.stringify(ctx.config);
-    } catch (error) {
+    const configIdentity = (ctx as Partial<SnapshottedRenderContext>)[
+      RENDER_CONFIG_IDENTITY
+    ];
+    let serializedConfig = configIdentity?.serialized;
+    let serializationError = configIdentity?.serializationError;
+    if (!configIdentity) {
+      try {
+        serializedConfig = JSON.stringify(ctx.config);
+      } catch (error) {
+        serializationError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (serializationError !== undefined) {
       logger.warn("Render cache bypassed because configuration is not serializable", {
         projectId: ctx.projectId,
-        error: error instanceof Error ? error.message : String(error),
+        error: serializationError,
       });
       return BYPASS_RENDER_CACHE;
     }
@@ -773,7 +900,7 @@ export class Renderer {
   ): RenderOptions {
     if (!options.url) return options;
 
-    const url = new URL(normalizeComparableSlug(slug), options.url);
+    const url = new URL(normalizeRoutePathname(slug), options.url);
     return {
       ...options,
       cacheKey: buildQueryAwareCacheKey(slug, url),
@@ -1138,26 +1265,31 @@ export class Renderer {
       const request = cachePolicy.cacheKey !== null && pipelineOptions?.request
         ? new Request(pipelineOptions.request, { signal: renderAbortController.signal })
         : pipelineOptions?.request;
-      const result = await withTimeoutThrow(
-        services.pipeline.renderPage(slug, {
-          ...pipelineOptions,
-          request,
-          abortSignal: renderAbortController.signal,
-          projectId: ctx.projectId,
-          projectSlug: ctx.projectSlug,
-          environment: ctx.environment,
-          contentSourceId: ctx.contentSourceId,
-          skipCacheCheck: true,
-          skipCachePersist: true,
-        }),
-        RENDER_PIPELINE_TIMEOUT_MS,
-        `Render pipeline for ${ctx.projectId}:${slug}`,
-        {
-          signal: cachePolicy.singleflight ? undefined : callerSignal,
-          onAbort: (reason) => renderAbortController.abort(reason),
-          onTimeout: (error) => renderAbortController.abort(error),
-        },
-      );
+      let result: RenderResult;
+      try {
+        result = await withTimeoutThrow(
+          services.pipeline.renderPage(slug, {
+            ...pipelineOptions,
+            request,
+            abortSignal: renderAbortController.signal,
+            projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
+            environment: ctx.environment,
+            contentSourceId: ctx.contentSourceId,
+            skipCacheCheck: true,
+            skipCachePersist: true,
+          }),
+          RENDER_PIPELINE_TIMEOUT_MS,
+          `Render pipeline for ${ctx.projectId}:${slug}`,
+          {
+            signal: cachePolicy.singleflight ? undefined : callerSignal,
+            onAbort: (reason) => renderAbortController.abort(reason),
+            onTimeout: (error) => renderAbortController.abort(error),
+          },
+        );
+      } finally {
+        services.release?.();
+      }
 
       if (
         cachePolicy.persist && cachePolicy.cacheKey !== null &&
@@ -1196,26 +1328,38 @@ export class Renderer {
         detail: "Renderer not initialized. Call initialize() first.",
       });
     }
+    const stableContext = snapshotRenderContext(ctx);
+    const stableOptions = snapshotRenderOptions(options);
 
     return withSpan("renderer.resolvePageData", async () => {
-      const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
-      const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
+      const releaseManifest = await this.resolveReleaseAssetManifest(
+        stableContext,
+        stableOptions,
+      );
+      const effectiveCtx = this.withManifestCachePrefix(
+        stableContext,
+        releaseManifest,
+      );
       await this.initializeComponents(effectiveCtx);
       const services = this.createServicesForContext(effectiveCtx);
 
-      return services.pipeline.resolvePageData(slug, {
-        ...options,
-        projectId: effectiveCtx.projectId,
-        projectSlug: effectiveCtx.projectSlug,
-        environment: effectiveCtx.environment,
-        contentSourceId: effectiveCtx.contentSourceId,
-        releaseId: effectiveCtx.releaseId,
-        releaseAssetManifest: releaseManifest,
-      });
+      try {
+        return await services.pipeline.resolvePageData(slug, {
+          ...stableOptions,
+          projectId: effectiveCtx.projectId,
+          projectSlug: effectiveCtx.projectSlug,
+          environment: effectiveCtx.environment,
+          contentSourceId: effectiveCtx.contentSourceId,
+          releaseId: effectiveCtx.releaseId,
+          releaseAssetManifest: releaseManifest,
+        });
+      } finally {
+        services.release?.();
+      }
     }, {
       "renderer.slug": slug,
-      "renderer.projectId": ctx.projectId,
-      "renderer.environment": ctx.environment,
+      "renderer.projectId": stableContext.projectId,
+      "renderer.environment": stableContext.environment,
     });
   }
 
@@ -1270,9 +1414,12 @@ export class Renderer {
   async clearCache(ctx: RenderContext, slug?: string): Promise<void> {
     await this.runProjectCacheInvalidation(ctx.projectId, async () => {
       if (slug) {
+        this.rotateWorkerExecutionScopeForContext(ctx);
+        this.clearDataCacheForRoute(ctx, slug);
         await this.cache.clearSlug(slug, ctx);
         return;
       }
+      this.clearDataCacheForContext(ctx);
       await this.cache.clearForContext(ctx);
       this.releaseContextServices(ctx);
     });
@@ -1281,6 +1428,7 @@ export class Renderer {
   async clearCacheForProject(projectId: string): Promise<void> {
     logger.debug("Clearing render cache for project", { projectId });
     await this.runProjectCacheInvalidation(projectId, async () => {
+      this.dataFetcher?.clearCacheForProject(projectId);
       await this.cache.clearForProject(projectId);
       for (const [key, services] of this.contextServices) {
         if (services.projectId !== projectId) continue;
@@ -1328,30 +1476,53 @@ export class Renderer {
 
   async releaseContext(ctx: RenderContext): Promise<void> {
     await this.runProjectCacheInvalidation(ctx.projectId, async () => {
+      this.clearDataCacheForContext(ctx);
       await this.cache.clearForContext(ctx);
       this.releaseContextServices(ctx);
     });
   }
 
-  async destroy(): Promise<void> {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    this.lifecycleGeneration++;
-    this.invalidateAllProjectRenders();
-    this.initialized = false;
-    this.initializationPromise = null;
-    for (const [key, services] of this.contextServices) {
-      this.disposeContextServices(key, services);
+  destroy(): Promise<void> {
+    if (this.destroyPromise) return this.destroyPromise;
+    if (this.localResourcesDisposed && this.renderCacheDisposed) {
+      return Promise.resolve();
     }
-    await this.cache.destroy();
-    this.productionPrewarmContexts.clear();
+
+    const destruction = this.destroyResources();
+    this.destroyPromise = destruction;
+    void destruction.finally(() => {
+      if (this.destroyPromise === destruction) this.destroyPromise = null;
+    }).catch(() => undefined);
+    return destruction;
+  }
+
+  private async destroyResources(): Promise<void> {
+    if (!this.localResourcesDisposed) {
+      this.destroyed = true;
+      this.lifecycleGeneration++;
+      this.invalidateAllProjectRenders();
+      this.initialized = false;
+      this.initializationPromise = null;
+      this.dataFetcher?.destroy();
+      this.dataFetcher = undefined;
+      for (const [key, services] of this.contextServices) {
+        this.disposeContextServices(key, services);
+      }
+      this.productionPrewarmContexts.clear();
+      this.localResourcesDisposed = true;
+    }
+
+    if (!this.renderCacheDisposed) {
+      await this.cache.destroy();
+      this.renderCacheDisposed = true;
+    }
     logger.debug("Destroyed");
   }
 
   private createServicesForContext(
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
-  ): { pipeline: RenderPipeline } {
+  ): RendererRequestServices {
     const shared = getSharedServices();
 
     const mdxCacheAdapter = new MDXCacheAdapter({
@@ -1368,7 +1539,8 @@ export class Renderer {
 
     const compileMDX = mdxCompiler.compileMDX.bind(mdxCompiler);
 
-    const { componentRegistry } = this.getContextServices(ctx);
+    const contextServices = this.getContextServices(ctx);
+    const { componentRegistry } = contextServices;
     const pageResolver = createPageResolver(ctx);
     const layoutCollector = createLayoutCollector(ctx, compileMDX);
     const layoutCompiler = createLayoutCompiler(ctx, compileMDX);
@@ -1427,24 +1599,46 @@ export class Renderer {
       destroy: () => this.cache.destroy(),
     };
 
-    const pipeline = new RenderPipeline({
-      pageResolver,
-      cacheCoordinator: pipelineCacheCoordinator,
-      pageRenderer,
-      layoutOrchestrator,
-      ssrOrchestrator,
-      adapter: ctx.adapter,
-      mode: ctx.mode,
-      projectDir: ctx.projectDir,
-      isLocalProject: ctx.isLocalProject === true,
-      projectId: ctx.projectId,
-      contentSourceId: ctx.contentSourceId,
-      config: ctx.config,
-      directories: ctx.config.directories,
-      queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
-    });
+    const workerScopeLease = contextServices.workerExecutionScopes.acquire();
+    let pipeline: RenderPipeline;
+    try {
+      pipeline = new RenderPipeline({
+        pageResolver,
+        cacheCoordinator: pipelineCacheCoordinator,
+        pageRenderer,
+        layoutOrchestrator,
+        ssrOrchestrator,
+        adapter: ctx.adapter,
+        mode: ctx.mode,
+        projectDir: ctx.projectDir,
+        isLocalProject: ctx.isLocalProject === true,
+        projectId: ctx.projectId,
+        contentSourceId: ctx.contentSourceId,
+        config: ctx.config,
+        directories: ctx.config.directories,
+        queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
+        dataFetcher: this.getDataFetcher(),
+        dataCacheScope: this.dataCacheScope(ctx),
+        workerExecutionScopeId: workerScopeLease.scopeId,
+      });
+    } catch (error) {
+      workerScopeLease.release();
+      throw error;
+    }
 
-    return { pipeline };
+    let released = false;
+    return {
+      pipeline,
+      release: () => {
+        if (released) return;
+        released = true;
+        try {
+          pipeline.destroy();
+        } finally {
+          workerScopeLease.release();
+        }
+      },
+    };
   }
 
   private assertReady(): void {
@@ -1453,6 +1647,39 @@ export class Renderer {
         detail: "Renderer not initialized. Call initialize() first.",
       });
     }
+  }
+
+  private getDataFetcher(): DataFetcher {
+    this.assertReady();
+    this.dataFetcher ??= new DataFetcher();
+    return this.dataFetcher;
+  }
+
+  private dataCacheScope(ctx: RenderContext): DataCacheScope | null {
+    if (
+      ctx.mode !== "production" ||
+      ctx.environment !== "production" ||
+      !ctx.releaseId
+    ) {
+      return null;
+    }
+    return {
+      projectId: ctx.projectId,
+      mode: "production",
+      versionId: ctx.releaseId,
+    };
+  }
+
+  private clearDataCacheForContext(ctx: RenderContext): void {
+    const scope = this.dataCacheScope(ctx);
+    if (scope) this.dataFetcher?.clearCacheForScope(scope);
+  }
+
+  private clearDataCacheForRoute(ctx: RenderContext, slug: string): void {
+    const scope = this.dataCacheScope(ctx);
+    if (!scope) return;
+    const pathname = normalizeRoutePathname(slug);
+    this.dataFetcher?.clearCacheForRoute(scope, pathname);
   }
 
   private contextServicesKey(ctx: RenderContext): string {
@@ -1480,6 +1707,7 @@ export class Renderer {
     const services: RendererContextServices = {
       projectId: ctx.projectId,
       contentSourceId: ctx.contentSourceId,
+      workerExecutionScopes: new WorkerExecutionScopeOwner(),
       virtualModules,
       componentRegistry: createComponentRegistry(ctx, virtualModules),
       componentInitialization: null,
@@ -1503,9 +1731,15 @@ export class Renderer {
     if (services) this.disposeContextServices(key, services);
   }
 
+  private rotateWorkerExecutionScopeForContext(ctx: RenderContext): void {
+    const services = this.contextServices.get(this.contextServicesKey(ctx));
+    services?.workerExecutionScopes.rotate();
+  }
+
   private disposeContextServices(key: string, services: RendererContextServices): void {
     if (this.contextServices.get(key) !== services) return;
     this.contextServices.delete(key);
+    services.workerExecutionScopes.close(true);
     services.componentRegistry.clear();
     services.virtualModules.clear();
   }
@@ -1519,10 +1753,41 @@ export {
 };
 
 let renderer: Renderer | null = null;
+let rendererInitializing: Renderer | null = null;
 let rendererInitializationPromise: Promise<Renderer> | null = null;
+// Keep failed cleanup at the head so another singleton cannot overlap resources
+// whose external store has not finished closing.
+const rendererCleanupQueue: Renderer[] = [];
+const rendererCleanupScheduled = new WeakSet<Renderer>();
+let rendererCleanupPromise: Promise<void> | null = null;
 let rendererGeneration = 0;
 
 type ColdProjectCacheInvalidator = (projectId: string) => Promise<boolean>;
+
+function scheduleRendererCleanup(target: Renderer): boolean {
+  if (rendererCleanupScheduled.has(target)) return false;
+  rendererCleanupScheduled.add(target);
+  rendererCleanupQueue.push(target);
+  return true;
+}
+
+function drainRendererCleanupQueue(): Promise<void> {
+  if (rendererCleanupPromise) return rendererCleanupPromise;
+  if (rendererCleanupQueue.length === 0) return Promise.resolve();
+
+  const cleanup = (async () => {
+    while (rendererCleanupQueue.length > 0) {
+      const target = rendererCleanupQueue[0]!;
+      await target.destroy();
+      rendererCleanupQueue.shift();
+    }
+  })();
+  rendererCleanupPromise = cleanup;
+  void cleanup.finally(() => {
+    if (rendererCleanupPromise === cleanup) rendererCleanupPromise = null;
+  }).catch(() => undefined);
+  return cleanup;
+}
 
 async function invalidateConfiguredColdProjectCache(projectId: string): Promise<boolean> {
   const proxyMode = getEnvBoolean("PROXY_MODE", false, {
@@ -1569,18 +1834,48 @@ export async function initializeRenderer(options?: RendererOptions): Promise<Ren
   if (renderer) return renderer;
   if (rendererInitializationPromise) return rendererInitializationPromise;
 
-  const nextRenderer = new Renderer(options);
-  const generation = rendererGeneration;
-  const initialization = (async () => {
-    await nextRenderer.initialize(options?.shared);
-    if (generation !== rendererGeneration) {
-      await nextRenderer.destroy();
+  const requestedGeneration = rendererGeneration;
+  if (rendererCleanupPromise || rendererCleanupQueue.length > 0) {
+    await drainRendererCleanupQueue();
+    if (requestedGeneration !== rendererGeneration) {
       throw INITIALIZATION_ERROR.create({
         detail: "Renderer initialization was cancelled before it completed.",
       });
     }
-    renderer = nextRenderer;
-    return nextRenderer;
+    if (renderer) return renderer;
+    if (rendererInitializationPromise) return rendererInitializationPromise;
+  }
+
+  const nextRenderer = new Renderer(options);
+  const generation = rendererGeneration;
+  rendererInitializing = nextRenderer;
+  const initialization = (async () => {
+    try {
+      await nextRenderer.initialize(options?.shared);
+      if (generation !== rendererGeneration) {
+        throw INITIALIZATION_ERROR.create({
+          detail: "Renderer initialization was cancelled before it completed.",
+        });
+      }
+      renderer = nextRenderer;
+      return nextRenderer;
+    } catch (initializationError) {
+      const newlyScheduled = scheduleRendererCleanup(nextRenderer);
+      const cleanup = newlyScheduled ? drainRendererCleanupQueue() : rendererCleanupPromise;
+      if (cleanup) {
+        try {
+          await cleanup;
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [initializationError, cleanupError],
+            "Renderer initialization and cleanup failed",
+          );
+        }
+      }
+      throw initializationError;
+    } finally {
+      if (rendererInitializing === nextRenderer) rendererInitializing = null;
+    }
   })();
   rendererInitializationPromise = initialization;
   try {
@@ -1600,10 +1895,13 @@ export async function destroyRenderer(): Promise<void> {
   rendererGeneration++;
   rendererInitializationPromise = null;
   const currentRenderer = renderer;
+  const initializingRenderer = rendererInitializing;
   renderer = null;
-  if (!currentRenderer) return;
+  rendererInitializing = null;
 
-  await currentRenderer.destroy();
+  if (currentRenderer) scheduleRendererCleanup(currentRenderer);
+  if (initializingRenderer) scheduleRendererCleanup(initializingRenderer);
+  await drainRendererCleanupQueue();
 }
 
 export async function clearRendererCacheForProject(projectId: string): Promise<void> {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
@@ -35,6 +35,10 @@ import type {
   LayoutRequestIdentity,
   LayoutRequestOverrides,
 } from "./layout.ts";
+import { __resetPoolForTests, getWorkerPool } from "#veryfront/security/sandbox/worker-pool.ts";
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { DataFetcher } from "#veryfront/data/index.ts";
+import { WorkerExecutionScopeOwner } from "../worker-execution-scope.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -812,6 +816,7 @@ describe("RenderPipeline behavior", () => {
         url: new URL("https://example.test/static-only"),
         staticDataOnly: true,
       },
+      { projectId: "/project", contentSourceId: undefined },
     );
 
     assertEquals(serverCalls, 0);
@@ -994,6 +999,724 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(pageData.params, { id: "42" });
     assertEquals(pageData.props, { loadedUserId: "42" });
+  });
+
+  it("passes the trusted request project identity into data execution", async () => {
+    const slug = "/behavior-data-project-identity";
+    const projectId = "proj-data-project-identity";
+    const pagePath = "/project/pages/behavior-data-project-identity.tsx";
+    const pipeline = createPipeline(pagePath);
+    primeCssCache(slug, projectId);
+    let observedOptions: Record<string, unknown> | undefined;
+
+    (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
+    (pipeline as any).dataFetcher = {
+      fetchData: async (
+        _module: unknown,
+        _context: unknown,
+        _mode: unknown,
+        options: Record<string, unknown>,
+      ) => {
+        observedOptions = options;
+        return { props: {} };
+      },
+    };
+
+    await pipeline.resolvePageData(slug, {
+      projectId,
+      request: new Request(`http://localhost${slug}`, {
+        headers: { "x-project-id": "spoofed-project" },
+      }),
+      url: new URL(`http://localhost${slug}`),
+    });
+
+    assertEquals(observedOptions, {
+      modulePath: pagePath,
+      projectDir: "/project",
+      projectId,
+    });
+  });
+
+  it("uses an explicit data scope as project identity when config omits projectId", async () => {
+    const slug = "/scope-owned-project-identity";
+    const pagePath = "/project/pages/scope-owned-project-identity.tsx";
+    const scope = {
+      projectId: "scope-owned-project",
+      mode: "production" as const,
+      versionId: "release-1",
+    };
+    let observedOptions: Record<string, unknown> | undefined;
+    const borrowedFetcher = {
+      fetchData: async (
+        _module: unknown,
+        _context: unknown,
+        _mode: unknown,
+        options: Record<string, unknown>,
+      ) => {
+        observedOptions = options;
+        return { props: {} };
+      },
+    } as unknown as DataFetcher;
+    const pipeline = createPipeline(pagePath, {
+      dataFetcher: borrowedFetcher,
+      dataCacheScope: scope,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getStaticData: () => ({ props: {} }),
+    });
+    primeCssCache(slug, scope.projectId);
+
+    try {
+      await pipeline.resolvePageData(slug, {
+        request: new Request(`https://example.test${slug}`),
+        url: new URL(`https://example.test${slug}`),
+      });
+
+      const { workerScopeId, ...stableOptions } = observedOptions!;
+      assertEquals(typeof workerScopeId, "string");
+      assertEquals(stableOptions, {
+        modulePath: pagePath,
+        projectDir: "/project",
+        projectId: scope.projectId,
+        cacheScope: scope,
+        workerGenerationId: "release-1",
+      });
+    } finally {
+      pipeline.destroy();
+    }
+  });
+
+  it("snapshots a borrowed cache scope before asynchronous module loading", async () => {
+    const slug = "/borrowed-scope-snapshot";
+    const pagePath = "/project/pages/borrowed-scope-snapshot.tsx";
+    const scope = {
+      projectId: "borrowed-scope-project-a",
+      mode: "production" as const,
+      versionId: "release-a",
+    };
+    let observedLoaderIdentity:
+      | { projectId: string; contentSourceId: string | undefined }
+      | undefined;
+    let observedFetchOptions: Record<string, unknown> | undefined;
+    let markLoadStarted!: () => void;
+    const loadStarted = new Promise<void>((resolve) => {
+      markLoadStarted = resolve;
+    });
+    let releaseLoad!: () => void;
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    const borrowedFetcher = {
+      fetchData: async (
+        _module: unknown,
+        _context: unknown,
+        _mode: unknown,
+        options: Record<string, unknown>,
+      ) => {
+        observedFetchOptions = options;
+        return { props: {} };
+      },
+    } as unknown as DataFetcher;
+    const pipeline = createPipeline(pagePath, {
+      dataFetcher: borrowedFetcher,
+      dataCacheScope: scope,
+      contentSourceId: "release-a",
+    });
+    (pipeline as any).loadModule = async (
+      _path: string,
+      moduleLoaderConfig: { projectId: string; contentSourceId?: string },
+    ) => {
+      observedLoaderIdentity = {
+        projectId: moduleLoaderConfig.projectId,
+        contentSourceId: moduleLoaderConfig.contentSourceId,
+      };
+      markLoadStarted();
+      await loadGate;
+      return { getStaticData: () => ({ props: {} }) };
+    };
+    primeCssCache(slug, "borrowed-scope-project-a");
+    primeCssCache(slug, "borrowed-scope-project-b");
+
+    const pending = pipeline.resolvePageData(slug, {
+      request: new Request(`https://example.test${slug}`),
+      url: new URL(`https://example.test${slug}`),
+    });
+    try {
+      await loadStarted;
+      scope.projectId = "borrowed-scope-project-b";
+      scope.versionId = "release-b";
+      releaseLoad();
+      await pending;
+
+      assertEquals(observedLoaderIdentity, {
+        projectId: "borrowed-scope-project-a",
+        contentSourceId: "release-a",
+      });
+      const { workerScopeId, ...stableOptions } = observedFetchOptions!;
+      assertEquals(typeof workerScopeId, "string");
+      assertEquals(stableOptions, {
+        modulePath: pagePath,
+        projectDir: "/project",
+        projectId: "borrowed-scope-project-a",
+        cacheScope: {
+          projectId: "borrowed-scope-project-a",
+          mode: "production",
+          versionId: "release-a",
+        },
+        workerGenerationId: "release-a",
+      });
+    } finally {
+      releaseLoad();
+      await Promise.allSettled([pending]);
+      pipeline.destroy();
+    }
+  });
+
+  it("snapshots request-local identity before asynchronous module loading", async () => {
+    const slug = "/request-identity-snapshot";
+    const pagePath = "/project/pages/request-identity-snapshot.tsx";
+    const projectA = "request-project-a";
+    const projectB = "request-project-b";
+    const sourceA = "source-a";
+    const sourceB = "source-b";
+    let observedLoaderIdentity:
+      | { projectId: string; contentSourceId: string | undefined }
+      | undefined;
+    let observedFetchOptions: Record<string, unknown> | undefined;
+    let observedDataContext:
+      | { authorization: string | null; query: string; url: string }
+      | undefined;
+    let markLoadStarted!: () => void;
+    const loadStarted = new Promise<void>((resolve) => {
+      markLoadStarted = resolve;
+    });
+    let releaseLoad!: () => void;
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    const pipeline = createPipeline(pagePath, {
+      projectId: projectA,
+      contentSourceId: sourceA,
+      dataCacheScope: {
+        projectId: projectA,
+        mode: "production",
+        versionId: sourceA,
+      },
+    });
+    (pipeline as any).dataFetcher = {
+      fetchData: async (
+        _module: unknown,
+        context: {
+          request: Request;
+          query: URLSearchParams;
+          url: URL;
+        },
+        _mode: unknown,
+        options: Record<string, unknown>,
+      ) => {
+        observedFetchOptions = options;
+        observedDataContext = {
+          authorization: context.request.headers.get("authorization"),
+          query: context.query.toString(),
+          url: context.url.href,
+        };
+        return { props: {} };
+      },
+      destroy: () => {},
+    };
+    (pipeline as any).loadModule = async (
+      _path: string,
+      moduleLoaderConfig: { projectId: string; contentSourceId?: string },
+    ) => {
+      observedLoaderIdentity = {
+        projectId: moduleLoaderConfig.projectId,
+        contentSourceId: moduleLoaderConfig.contentSourceId,
+      };
+      markLoadStarted();
+      await loadGate;
+      return { getStaticData: () => ({ props: {} }) };
+    };
+    cachePageCss(
+      getPageCssCacheKey(projectA, undefined, slug, sourceA),
+      "/* cached css A */",
+    );
+    cachePageCss(
+      getPageCssCacheKey(projectB, undefined, slug, sourceB),
+      "/* cached css B */",
+    );
+    const options = {
+      projectId: projectA,
+      contentSourceId: sourceA,
+      request: new Request(`https://example.test${slug}`, {
+        headers: { authorization: "Bearer original" },
+      }),
+      url: new URL(`https://example.test${slug}?variant=original`),
+    };
+
+    const pending = pipeline.resolvePageData(slug, options);
+    const oldWorkerScopeId = (pipeline as unknown as {
+      workerExecutionScopes: { currentScopeId: string };
+    }).workerExecutionScopes.currentScopeId;
+    try {
+      await loadStarted;
+      options.projectId = projectB;
+      options.contentSourceId = sourceB;
+      options.request.headers.set("authorization", "Bearer mutated");
+      options.url.searchParams.set("variant", "mutated");
+      pipeline.clearModuleCache();
+      const replacementWorkerScopeId = (pipeline as unknown as {
+        workerExecutionScopes: { currentScopeId: string };
+      }).workerExecutionScopes.currentScopeId;
+      releaseLoad();
+      await pending;
+
+      assertEquals(observedLoaderIdentity, {
+        projectId: projectA,
+        contentSourceId: sourceA,
+      });
+      const { workerScopeId, ...stableOptions } = observedFetchOptions!;
+      assertEquals(workerScopeId, oldWorkerScopeId);
+      assertEquals(replacementWorkerScopeId === oldWorkerScopeId, false);
+      assertEquals(stableOptions, {
+        modulePath: pagePath,
+        projectDir: "/project",
+        projectId: projectA,
+        cacheScope: {
+          projectId: projectA,
+          mode: "production",
+          versionId: sourceA,
+        },
+        workerGenerationId: sourceA,
+      });
+      assertEquals(observedDataContext, {
+        authorization: "Bearer original",
+        query: "variant=original",
+        url: `https://example.test${slug}?variant=original`,
+      });
+    } finally {
+      releaseLoad();
+      await Promise.allSettled([pending]);
+      pipeline.destroy();
+    }
+  });
+
+  it("lets a fresh shared scope run while an old pre-worker pipeline drains", async () => {
+    const slug = "/shared-worker-scope-rotation";
+    const projectId = "shared-worker-scope-project";
+    const sourceId = "shared-worker-source";
+    const pagePath = "/project/pages/shared-worker-scope-rotation.tsx";
+    const evicted: string[] = [];
+    const enclosingOwner = new WorkerExecutionScopeOwner({
+      initialScopeId: "shared-worker-scope-old",
+      createScopeId: () => "shared-worker-scope-fresh",
+      evictScope: (scopeId) => evicted.push(scopeId),
+    });
+    const oldOwnerLease = enclosingOwner.acquire();
+    const oldPipeline = createPipeline(pagePath, {
+      projectId,
+      contentSourceId: sourceId,
+      workerExecutionScopeId: oldOwnerLease.scopeId,
+    });
+    const loadStarted = Promise.withResolvers<void>();
+    const loadGate = Promise.withResolvers<void>();
+    const observedWorkerScopes: string[] = [];
+    (oldPipeline as any).loadModule = async () => {
+      loadStarted.resolve();
+      await loadGate.promise;
+      return { getStaticData: () => ({ props: { generation: "old" } }) };
+    };
+    (oldPipeline as any).dataFetcher = {
+      fetchData: async (
+        _module: unknown,
+        _context: unknown,
+        _mode: unknown,
+        options: { workerScopeId?: string },
+      ) => {
+        observedWorkerScopes.push(options.workerScopeId!);
+        return { props: { generation: "old" } };
+      },
+      destroy: () => {},
+    };
+    const renderOptions = {
+      projectId,
+      contentSourceId: sourceId,
+      environment: "production" as const,
+      releaseAssetManifest: releaseManifestWithCss(),
+      request: new Request(`https://example.test${slug}`),
+      url: new URL(`https://example.test${slug}`),
+    };
+
+    const oldResult = oldPipeline.resolvePageData(slug, renderOptions);
+    let freshPipeline: RenderPipeline | undefined;
+    let freshOwnerLease: ReturnType<WorkerExecutionScopeOwner["acquire"]> | undefined;
+    try {
+      await loadStarted.promise;
+      const freshScopeId = enclosingOwner.rotate();
+      freshOwnerLease = enclosingOwner.acquire();
+      assertEquals(freshOwnerLease.scopeId, freshScopeId);
+      assertEquals(evicted, []);
+
+      freshPipeline = createPipeline(pagePath, {
+        projectId,
+        contentSourceId: sourceId,
+        workerExecutionScopeId: freshOwnerLease.scopeId,
+      });
+      (freshPipeline as any).loadModule = async () => ({
+        getStaticData: () => ({ props: { generation: "fresh" } }),
+      });
+      (freshPipeline as any).dataFetcher = {
+        fetchData: async (
+          _module: unknown,
+          _context: unknown,
+          _mode: unknown,
+          options: { workerScopeId?: string },
+        ) => {
+          observedWorkerScopes.push(options.workerScopeId!);
+          return { props: { generation: "fresh" } };
+        },
+        destroy: () => {},
+      };
+
+      const freshResult = await freshPipeline.resolvePageData(
+        slug,
+        renderOptions,
+      );
+      assertEquals(freshResult.props, { generation: "fresh" });
+      assertEquals(observedWorkerScopes, [freshScopeId]);
+      assertEquals(evicted, []);
+
+      loadGate.resolve();
+      assertEquals((await oldResult).props, { generation: "old" });
+      assertEquals(observedWorkerScopes, [
+        freshScopeId,
+        oldOwnerLease.scopeId,
+      ]);
+
+      oldPipeline.destroy();
+      assertEquals(evicted, []);
+      oldOwnerLease.release();
+      assertEquals(evicted, ["shared-worker-scope-old"]);
+    } finally {
+      loadGate.resolve();
+      await Promise.allSettled([oldResult]);
+      oldPipeline.destroy();
+      oldOwnerLease.release();
+      freshPipeline?.destroy();
+      freshOwnerLease?.release();
+      enclosingOwner.close(true);
+    }
+
+    assertEquals(evicted, [
+      "shared-worker-scope-old",
+      "shared-worker-scope-fresh",
+    ]);
+  });
+
+  it("shares one scoped data cache across distinct pipeline instances", async () => {
+    const sharedFetcher = new DataFetcher();
+    const slug = "/shared-data-cache";
+    const projectId = "shared-data-project";
+    const pagePath = "/project/pages/shared-data-cache.tsx";
+    const scope = {
+      projectId,
+      mode: "production" as const,
+      versionId: "source-a",
+    };
+    let calls = 0;
+    let releaseLoad!: () => void;
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    let markLoadStarted!: () => void;
+    const loadStarted = new Promise<void>((resolve) => {
+      markLoadStarted = resolve;
+    });
+    const pageModule = {
+      getStaticData: async () => {
+        calls++;
+        markLoadStarted();
+        await loadGate;
+        return { props: { version: calls }, revalidate: 3600 };
+      },
+    };
+    const first = createPipeline(pagePath, {
+      dataFetcher: sharedFetcher,
+      dataCacheScope: scope,
+      projectId,
+      contentSourceId: "source-a",
+    });
+    const second = createPipeline(pagePath, {
+      dataFetcher: sharedFetcher,
+      dataCacheScope: scope,
+      projectId,
+      contentSourceId: "source-a",
+    });
+    (first as any).loadModule = async () => pageModule;
+    (second as any).loadModule = async () => pageModule;
+    primeCssCache(slug, projectId);
+    const options = {
+      projectId,
+      contentSourceId: "source-a",
+      request: new Request(`https://example.test${slug}`),
+      url: new URL(`https://example.test${slug}`),
+    };
+
+    const pendingResults = [
+      first.resolvePageData(slug, options),
+      second.resolvePageData(slug, options),
+    ];
+    try {
+      await loadStarted;
+      assertEquals(calls, 1);
+      releaseLoad();
+
+      const [firstData, secondData] = await Promise.all(pendingResults);
+      assert(firstData);
+      assert(secondData);
+      assertEquals(firstData.props, { version: 1 });
+      assertEquals(secondData.props, { version: 1 });
+
+      const cached = await second.resolvePageData(slug, options);
+      assertEquals(cached.props, { version: 1 });
+      assertEquals(calls, 1);
+    } finally {
+      releaseLoad();
+      await Promise.allSettled(pendingResults);
+      first.destroy();
+      second.destroy();
+      sharedFetcher.destroy();
+    }
+  });
+
+  it("isolates static data when a direct caller overrides content source", async () => {
+    const slug = "/source-override";
+    const projectId = "source-override-project";
+    const pagePath = "/project/pages/source-override.tsx";
+    let calls = 0;
+    const pipeline = createPipeline(pagePath, {
+      dataCacheScope: {
+        projectId,
+        mode: "production",
+        versionId: "source-a",
+      },
+      projectId,
+      contentSourceId: "source-a",
+    });
+    (pipeline as any).loadModule = async () => ({
+      getStaticData: () => ({ props: { version: ++calls } }),
+    });
+    primeCssCache(slug, projectId);
+    const base = {
+      projectId,
+      request: new Request(`https://example.test${slug}`),
+      url: new URL(`https://example.test${slug}`),
+    };
+
+    try {
+      const sourceA = await pipeline.resolvePageData(slug, {
+        ...base,
+        contentSourceId: "source-a",
+      });
+      const sourceB = await pipeline.resolvePageData(slug, {
+        ...base,
+        contentSourceId: "source-b",
+      });
+      const sourceAAgain = await pipeline.resolvePageData(slug, {
+        ...base,
+        contentSourceId: "source-a",
+      });
+      pipeline.clearDataCacheForRoute(slug);
+      const sourceBAfterClear = await pipeline.resolvePageData(slug, {
+        ...base,
+        contentSourceId: "source-b",
+      });
+
+      assertEquals(sourceA.props, { version: 1 });
+      assertEquals(sourceB.props, { version: 2 });
+      assertEquals(sourceAAgain.props, { version: 1 });
+      assertEquals(sourceBAfterClear.props, { version: 3 });
+      assertEquals(calls, 3);
+    } finally {
+      pipeline.destroy();
+    }
+  });
+
+  it("clears only a borrowing pipeline's exact release scope", async () => {
+    const sharedFetcher = new DataFetcher();
+    const pagePath = "/project/pages/scoped-clear.tsx";
+    const scopeA = {
+      projectId: "scoped-clear-project",
+      mode: "production" as const,
+      versionId: "rel-1",
+    };
+    const scopeB = {
+      projectId: "scoped-clear-project",
+      mode: "production" as const,
+      versionId: "rel-2",
+    };
+    const pipelineA = createPipeline(pagePath, {
+      dataFetcher: sharedFetcher,
+      dataCacheScope: scopeA,
+    });
+    const pipelineB = createPipeline(pagePath, {
+      dataFetcher: sharedFetcher,
+      dataCacheScope: scopeB,
+    });
+    let callsA = 0;
+    let callsB = 0;
+    const context = {
+      params: {},
+      query: new URLSearchParams(),
+      request: new Request("https://example.test/scoped-clear"),
+      url: new URL("https://example.test/scoped-clear"),
+    };
+    const pageA = {
+      default: () => null,
+      getStaticData: () => ({ props: { version: ++callsA } }),
+    };
+    const pageB = {
+      default: () => null,
+      getStaticData: () => ({ props: { version: ++callsB } }),
+    };
+
+    try {
+      await sharedFetcher.fetchData(pageA, context, "production", {
+        cacheScope: scopeA,
+      });
+      await sharedFetcher.fetchData(pageB, context, "production", {
+        cacheScope: scopeB,
+      });
+      pipelineA.clearDataCache();
+
+      await sharedFetcher.fetchData(pageA, context, "production", {
+        cacheScope: scopeA,
+      });
+      await sharedFetcher.fetchData(pageB, context, "production", {
+        cacheScope: scopeB,
+      });
+      assertEquals(callsA, 2);
+      assertEquals(callsB, 1);
+    } finally {
+      pipelineA.destroy();
+      pipelineB.destroy();
+      sharedFetcher.destroy();
+    }
+  });
+
+  it("does not destroy a borrowed data fetcher with its pipeline", async () => {
+    const sharedFetcher = new DataFetcher();
+    const pipeline = createPipeline("/project/pages/borrowed.tsx", {
+      dataFetcher: sharedFetcher,
+      dataCacheScope: null,
+    });
+    pipeline.destroy();
+    pipeline.destroy();
+
+    const result = await sharedFetcher.fetchData(
+      { default: () => null },
+      {
+        params: {},
+        query: new URLSearchParams(),
+        request: new Request("https://example.test/borrowed"),
+        url: new URL("https://example.test/borrowed"),
+      },
+    );
+    assertEquals(result.props, {});
+    sharedFetcher.destroy();
+  });
+
+  it("requires borrowed data fetchers to declare cache-scope intent", () => {
+    const sharedFetcher = new DataFetcher();
+    try {
+      assertThrows(
+        () => {
+          createPipeline("/project/pages/ambiguous-borrow.tsx", {
+            dataFetcher: sharedFetcher,
+          });
+        },
+        TypeError,
+        "explicit dataCacheScope or null",
+      );
+    } finally {
+      sharedFetcher.destroy();
+    }
+  });
+
+  it("requires externally owned worker scopes to rotate with module invalidation", () => {
+    const pipeline = createPipeline("/project/pages/external-worker-scope.tsx", {
+      workerExecutionScopeId: "external-worker-scope-a",
+    });
+    try {
+      assertThrows(
+        () => pipeline.clearModuleCache(),
+        TypeError,
+        "requires the enclosing owner's replacement scope ID",
+      );
+
+      pipeline.clearModuleCache("external-worker-scope-b");
+      const currentScopeId = (pipeline as unknown as {
+        workerExecutionScopes: { currentScopeId: string };
+      }).workerExecutionScopes.currentScopeId;
+      assertEquals(currentScopeId, "external-worker-scope-b");
+    } finally {
+      pipeline.destroy();
+    }
+  });
+
+  it("rejects a cache scope owned by a different configured project", () => {
+    assertThrows(
+      () =>
+        createPipeline("/project/pages/mismatched-scope.tsx", {
+          projectId: "pipeline-project",
+          dataCacheScope: {
+            projectId: "other-project",
+            mode: "production",
+            versionId: "release-1",
+          },
+        }),
+      TypeError,
+      "must match the pipeline projectId",
+    );
+  });
+
+  it("rejects request-local source overrides on a borrowed data fetcher", async () => {
+    const sharedFetcher = new DataFetcher();
+    const slug = "/borrowed-source-override";
+    const projectId = "borrowed-source-project";
+    const pipeline = createPipeline(
+      "/project/pages/borrowed-source-override.tsx",
+      {
+        projectId,
+        contentSourceId: "source-a",
+        dataFetcher: sharedFetcher,
+        dataCacheScope: {
+          projectId,
+          mode: "production",
+          versionId: "source-a",
+        },
+      },
+    );
+    (pipeline as any).loadModule = async () => ({
+      getStaticData: () => ({ props: {} }),
+    });
+    primeCssCache(slug, projectId);
+
+    try {
+      await assertRejects(
+        () =>
+          pipeline.resolvePageData(slug, {
+            projectId,
+            contentSourceId: "source-b",
+            request: new Request(`https://example.test${slug}`),
+            url: new URL(`https://example.test${slug}`),
+          }),
+        TypeError,
+        "cannot override its configured contentSourceId",
+      );
+    } finally {
+      pipeline.destroy();
+      sharedFetcher.destroy();
+    }
   });
 
   it("keeps Pages Router index and catch-all params aligned in rendering", async () => {
@@ -1394,6 +2117,79 @@ describe("RenderPipeline behavior", () => {
       },
       pageData.layoutProps,
     );
+  });
+
+  it("shares one isolated POST body across concurrent page and layout data jobs", async () => {
+    const slug = "/behavior-shared-isolated-body";
+    const projectId = "proj-shared-isolated-body";
+    const pagePath = "/project/pages/behavior-shared-isolated-body.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const payload = new TextEncoder().encode("shared request body");
+    const observedBodies = new Map<string, Uint8Array>();
+
+    Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+    Deno.env.set("WORKER_ISOLATION_DATA", "1");
+    __resetPoolForTests();
+    const pool = getWorkerPool();
+    const originalExecute = pool.execute;
+    pool.execute = async (_workerProjectId, _readPaths, workerRequest) => {
+      if (workerRequest.type !== "fetch-data") {
+        throw new Error(`Unexpected worker request: ${workerRequest.type}`);
+      }
+      const body = workerRequest.context.request.body;
+      if (body) observedBodies.set(workerRequest.modulePath, body.slice());
+      return {
+        type: "data-result",
+        id: workerRequest.id,
+        result: {
+          props: workerRequest.modulePath === pagePath ? { page: "loaded" } : { theme: "docs" },
+        },
+      };
+    };
+
+    const pipeline = createPipeline(pagePath);
+    primeCssCache(slug, projectId);
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({ props: {} }),
+    });
+    (pipeline as any).config.layoutOrchestrator.collectLayouts = async () => ({
+      layoutBundle: undefined,
+      nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+    });
+    const request = new Request(`http://localhost${slug}`, {
+      method: "POST",
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(payload);
+          controller.close();
+        },
+      }),
+    });
+
+    try {
+      const pageData = await runWithExactSourceIntegrationPolicy(
+        { schemaVersion: 1, mode: "unrestricted" },
+        () =>
+          pipeline.resolvePageData(slug, {
+            projectId,
+            request,
+            url: new URL(request.url),
+          }),
+      );
+
+      assertEquals(pageData.props, { page: "loaded" });
+      assertEquals(pageData.layoutProps, {
+        "layouts/root.tsx": { theme: "docs" },
+      });
+      assertEquals(observedBodies.size, 2);
+      assertEquals(observedBodies.get(pagePath), payload);
+      assertEquals(observedBodies.get(layoutPath), payload);
+    } finally {
+      pool.execute = originalExecute;
+      __resetPoolForTests();
+      Deno.env.delete("WORKER_ISOLATION_ENABLED");
+      Deno.env.delete("WORKER_ISOLATION_DATA");
+    }
   });
 
   it("resolvePageData reuses resolved page and layout data for CSS SSR", async () => {

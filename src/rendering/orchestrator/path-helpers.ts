@@ -8,6 +8,7 @@
 
 import type { LayoutItem } from "#veryfront/types";
 import { isAbsolute, relative } from "#veryfront/compat/path";
+export { normalizeRoutePathname } from "#veryfront/utils/route-pathname.ts";
 
 /** Check if a path segment is a hidden dot-directory (not . or ..) */
 export function isHiddenSegment(segment: string): boolean {
