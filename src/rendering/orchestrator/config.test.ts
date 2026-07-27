@@ -66,7 +66,7 @@ describe("rendering/orchestrator/config", () => {
   describe("getConfig with preloaded config", () => {
     it("should throw before initialize even with preloaded config", () => {
       const adapter = createMockAdapter();
-      const config = createMockConfig({ name: "test-project" });
+      const config = createMockConfig();
       const cm = new ConfigurationManager({
         projectDir: "/project",
         mode: "production",

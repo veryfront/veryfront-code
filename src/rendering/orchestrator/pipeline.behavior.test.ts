@@ -1603,6 +1603,68 @@ describe("RenderPipeline behavior", () => {
     }
   });
 
+  it("uses a borrowed unscoped fetcher for the pipeline's configured project", async () => {
+    const sharedFetcher = new DataFetcher();
+    const slug = "/borrowed-unscoped-configured-project";
+    const projectId = "borrowed-unscoped-project";
+    const pagePath = "/project/pages/borrowed-unscoped-configured-project.tsx";
+    const pipeline = createPipeline(pagePath, {
+      projectId,
+      contentSourceId: "preview-main",
+      dataFetcher: sharedFetcher,
+      dataCacheScope: null,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getStaticData: () => ({ props: { projectId } }),
+    });
+    primeCssCache(slug, projectId);
+
+    try {
+      const result = await pipeline.resolvePageData(slug, {
+        projectId,
+        contentSourceId: "preview-main",
+        request: new Request(`https://example.test${slug}`),
+        url: new URL(`https://example.test${slug}`),
+      });
+
+      assertEquals(result.props, { projectId });
+    } finally {
+      pipeline.destroy();
+      sharedFetcher.destroy();
+    }
+  });
+
+  it("rejects a different request project on a borrowed unscoped fetcher", async () => {
+    const sharedFetcher = new DataFetcher();
+    const slug = "/borrowed-unscoped-cross-project";
+    const pipeline = createPipeline(
+      "/project/pages/borrowed-unscoped-cross-project.tsx",
+      {
+        projectId: "configured-project",
+        contentSourceId: "preview-main",
+        dataFetcher: sharedFetcher,
+        dataCacheScope: null,
+      },
+    );
+
+    try {
+      await assertRejects(
+        () =>
+          pipeline.resolvePageData(slug, {
+            projectId: "other-project",
+            contentSourceId: "preview-main",
+            request: new Request(`https://example.test${slug}`),
+            url: new URL(`https://example.test${slug}`),
+          }),
+        TypeError,
+        "cannot override its configured projectId",
+      );
+    } finally {
+      pipeline.destroy();
+      sharedFetcher.destroy();
+    }
+  });
+
   it("does not destroy a borrowed data fetcher with its pipeline", async () => {
     const sharedFetcher = new DataFetcher();
     const pipeline = createPipeline("/project/pages/borrowed.tsx", {

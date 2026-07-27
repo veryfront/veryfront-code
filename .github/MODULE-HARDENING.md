@@ -4903,13 +4903,14 @@ Current reproducible evidence:
   configured source/browser entrypoint; and the rebuilt npm package passes its
   documented consumer `tsc --noEmit` lifecycle.
 
-The broader RSC browser suite still has a known pre-existing Rendering/Data
-failure: three scenarios return 500 because a pipeline borrowing a
-`dataFetcher` tries to override its cache-scope project ID. A detached worktree
-at untouched pre-Client HEAD `efc2abf3e` reproduces the same three failures,
-while its remote-production scenario and both legacy-router scenarios pass.
-That blocker remains assigned to the open `rendering` and `data` units and is
-not Client closure evidence.
+The broader RSC browser suite exposed a pre-existing Rendering/Data failure
+during Client verification: three scenarios returned 500 because a pipeline
+borrowing an unscoped `dataFetcher` compared the request project against an
+absent cache scope. A detached worktree at untouched pre-Client HEAD
+`efc2abf3e` reproduced the same failures, confirming that the Client changes
+did not cause them. The follow-up checkpoint below corrects the open-module
+defect and all six browser scenarios now pass; it does not change the Client
+closure decision.
 
 Correcting the routing page loader's public return type to model the
 redirect-only wire variant remains part of the open `routing` review; the
@@ -4919,5 +4920,44 @@ package-facing contract is unchanged. No known unresolved critical or
 high-confidence production risk remains within the Client-owned boundary.
 `client` is closed at 41 of 58 formal units; 17 units remain to be closed or
 revalidated.
+
+### Rendering/Data borrowed-fetcher identity checkpoint
+
+The complete RSC browser portfolio exposed an identity check that made local
+production, preview, and preview-chat rendering unusable whenever the pipeline
+borrowed a deliberately unscoped `DataFetcher`:
+
+- **Symptom -> Source -> Consequence -> Remedy:** three browser scenarios
+  returned 500 before page rendering. The request guard compared the request's
+  project ID with `dataCacheScope?.projectId`, even though `null` is the
+  supported configuration for disabling cache scope and the pipeline already
+  retains an immutable configured project ID. Every valid request therefore
+  appeared to override the project in cache-disabled modes. The guard now
+  compares against `configuredProjectId`; same-project unscoped borrowing is
+  admitted, while a different request project still fails closed before data
+  resolution.
+- Two focused behavior regressions cover the valid same-project and rejected
+  cross-project cases. The latter asserts the public diagnostic against the
+  configured-project boundary.
+- Two stale checked-test fixtures also stopped supplying fields removed from
+  `MdxBundle` and an unsupported `VeryfrontConfig.name`, so checked execution
+  exercises the current contracts instead of relying on no-check behavior.
+
+Current reproducible evidence:
+
+- the checked pipeline behavior suite passes 53 nested steps;
+- the complete checked Rendering orchestrator and renderer portfolio passes 32
+  top-level tests and 468 nested steps;
+- all Data suites pass eight top-level tests and 314 nested steps, and the
+  affected SSR consumer portfolio passes five tests and 143 nested steps;
+- `deno task test:e2e:rsc-browser` passes both top-level tests and all six
+  local-production, remote-production, preview, preview-chat, and legacy-router
+  scenarios.
+
+This is a regression checkpoint, not a premature closure decision:
+`rendering` still requires its complete top-level production review, and
+`data` retains the explicitly documented cache-identity breaking-change
+decision. The formal count therefore remains 41 of 58, with 17 units open or
+awaiting revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

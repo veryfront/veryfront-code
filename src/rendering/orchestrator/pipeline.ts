@@ -357,10 +357,10 @@ export class RenderPipeline {
     if (
       !this.ownsDataFetcher &&
       rawProjectId !== undefined &&
-      projectId !== this.dataCacheScope?.projectId
+      projectId !== this.configuredProjectId
     ) {
       throw new TypeError(
-        "A pipeline borrowing a dataFetcher cannot override its cache-scope projectId",
+        "A pipeline borrowing a dataFetcher cannot override its configured projectId",
       );
     }
     if (
