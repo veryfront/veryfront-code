@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   parseClientRef,
@@ -6,6 +6,7 @@ import {
   readClientBoundaryProps,
   resolveClientBoundaryModuleUrl,
   selectTopLevelClientBoundaries,
+  shouldHydrateClientBoundary,
 } from "./hydrate-client.ts";
 
 describe("rendering/rsc/hydrate-client", () => {
@@ -28,12 +29,38 @@ describe("rendering/rsc/hydrate-client", () => {
     );
   });
 
+  it("rejects traversal and control characters in logical client references", () => {
+    assertEquals(parseClientRef("/app/../secrets.ts#default"), null);
+    assertEquals(parseClientRef("/app/client\n.ts#default"), null);
+    assertEquals(parseClientRef("/_veryfront/rsc/module?rel=ok%0a.ts#default"), null);
+    assertEquals(parseClientRef("/_veryfront/../admin.js#default"), null);
+    assertEquals(parseClientRef("/_veryfront/%2e%2e/admin.js#default"), null);
+  });
+
   it("reads the serialized props emitted for a client boundary", () => {
     const element = {
       dataset: { rscProps: '{"label":"Save","count":2}' },
     } as unknown as HTMLElement;
 
     assertEquals(readClientBoundaryProps(element), { label: "Save", count: 2 });
+  });
+
+  it("rejects malformed client boundary props instead of hydrating with empty props", () => {
+    const element = {
+      dataset: { rscProps: "not-json" },
+    } as unknown as HTMLElement;
+
+    assertEquals(readClientBoundaryProps(element), null);
+  });
+
+  it("rejects non-object client boundary props instead of hydrating with empty props", () => {
+    for (const rscProps of ["null", "[]", '"text"', "42"]) {
+      const element = {
+        dataset: { rscProps },
+      } as unknown as HTMLElement;
+
+      assertEquals(readClientBoundaryProps(element), null);
+    }
   });
 
   it("reads the versioned recursive children emitted for a client boundary", () => {
@@ -59,6 +86,17 @@ describe("rendering/rsc/hydrate-client", () => {
     }]);
   });
 
+  it("rejects malformed boundary children instead of silently deleting them", () => {
+    const element = {
+      dataset: { rscChildren: "not-json" },
+    } as unknown as HTMLElement;
+
+    assertThrows(
+      () => readClientBoundaryChildren(element),
+      SyntaxError,
+    );
+  });
+
   it("selects only top-level DOM boundaries so nested payload children do not get a second root", () => {
     type TestElement = HTMLElement & { id: string; parentElement: TestElement | null };
     const outer = { id: "outer", parentElement: null } as TestElement;
@@ -73,6 +111,18 @@ describe("rendering/rsc/hydrate-client", () => {
       selectTopLevelClientBoundaries(doc).map((element) => element.id),
       ["outer", "sibling"],
     );
+  });
+
+  it("rehydrates a boundary when its manifest hash changes", () => {
+    const element = {
+      dataset: {
+        hydrated: "true",
+        hydrationHash: "old-hash",
+      },
+    } as unknown as HTMLElement;
+
+    assertEquals(shouldHydrateClientBoundary(element, "old-hash"), false);
+    assertEquals(shouldHydrateClientBoundary(element, "new-hash"), true);
   });
 
   it("resolves logical refs to local and remote hydration module URLs", () => {

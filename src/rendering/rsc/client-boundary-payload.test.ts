@@ -2,6 +2,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RSCNode } from "./types.ts";
 import {
+  decodeClientBoundaryChildren,
   encodeClientBoundaryChildren,
   materializeClientBoundaryChildren,
   parseClientBoundaryChildren,
@@ -79,6 +80,10 @@ describe("rendering/rsc/client-boundary-payload", () => {
     assertEquals(
       parseClientBoundaryChildren('{"version":1,"nodes":[{"type":"script"}]}'),
       [],
+    );
+    assertThrows(
+      () => decodeClientBoundaryChildren("not json"),
+      SyntaxError,
     );
   });
 
@@ -211,5 +216,23 @@ describe("rendering/rsc/client-boundary-payload", () => {
       "component identifier",
     );
     assertEquals(resolutions, 0);
+  });
+
+  it("fails hydration when a nested client component is missing from the manifest", async () => {
+    await assertRejects(
+      () =>
+        materializeClientBoundaryChildren(
+          [{ type: "client", component: "MissingClient" }],
+          {
+            Fragment: "Fragment",
+            createElement() {
+              return null;
+            },
+          },
+          async () => null,
+        ),
+      TypeError,
+      "could not be resolved",
+    );
   });
 });

@@ -49,6 +49,158 @@ export interface ClientModuleUrlOptions {
   releaseAssetModules?: Record<string, string> | null;
 }
 
+const MAX_HYDRATION_DATA_UTF8_BYTES = 1024 * 1024;
+const MAX_HYDRATION_STRING_CHARACTERS = 65_536;
+const MAX_HYDRATION_PARAMS = 1_024;
+const MAX_HYDRATION_PARAM_SEGMENTS = 1_024;
+const MAX_RELEASE_ASSET_MODULES = 10_000;
+const textEncoder = new TextEncoder();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1F || code === 0x7F) return true;
+  }
+  return false;
+}
+
+function isBoundedHydrationString(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length <= MAX_HYDRATION_STRING_CHARACTERS &&
+    !hasControlCharacters(value);
+}
+
+function isSafeClientModuleUrl(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_HYDRATION_STRING_CHARACTERS ||
+    hasControlCharacters(value)
+  ) {
+    return false;
+  }
+  if (value.startsWith("/")) {
+    try {
+      const url = new URL(value, "https://veryfront.invalid");
+      return !value.startsWith("//") &&
+        url.origin === "https://veryfront.invalid" &&
+        url.pathname.startsWith("/");
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function snapshotReleaseAssetModules(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new TypeError("Hydration release asset modules must be an object");
+  }
+
+  const keys = Object.keys(value);
+  if (keys.length > MAX_RELEASE_ASSET_MODULES) {
+    throw new RangeError("Hydration release asset module limit was exceeded");
+  }
+
+  const snapshot = Object.create(null) as Record<string, string>;
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      !descriptor ||
+      !Object.hasOwn(descriptor, "value") ||
+      !isBoundedHydrationString(key) ||
+      !isSafeClientModuleUrl(descriptor.value)
+    ) {
+      throw new TypeError("Hydration release asset module entry is invalid");
+    }
+    Object.defineProperty(snapshot, key, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
+}
+
+function validateHydrationParams(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw new TypeError("Hydration params must be an object");
+
+  const entries = Object.entries(value);
+  if (entries.length > MAX_HYDRATION_PARAMS) {
+    throw new RangeError("Hydration param limit was exceeded");
+  }
+  for (const [key, param] of entries) {
+    if (!isBoundedHydrationString(key)) {
+      throw new TypeError("Hydration param name is invalid");
+    }
+    if (typeof param === "string") {
+      if (!isBoundedHydrationString(param)) {
+        throw new TypeError("Hydration param value is invalid");
+      }
+      continue;
+    }
+    if (
+      !Array.isArray(param) ||
+      param.length > MAX_HYDRATION_PARAM_SEGMENTS ||
+      !param.every(isBoundedHydrationString)
+    ) {
+      throw new TypeError("Hydration catch-all param is invalid");
+    }
+  }
+}
+
+function parseClientRuntimeHydrationData(
+  value: unknown,
+): ClientRuntimeHydrationData | null {
+  try {
+    if (!isRecord(value)) return null;
+    if (
+      value.clientModuleStrategy !== undefined &&
+      value.clientModuleStrategy !== "fs" &&
+      value.clientModuleStrategy !== "rsc-module"
+    ) {
+      return null;
+    }
+    for (const field of ["pagePath", "reactVersion", "slug"] as const) {
+      if (value[field] !== undefined && !isBoundedHydrationString(value[field])) {
+        return null;
+      }
+    }
+    for (const field of ["isolatedClientPage", "dev"] as const) {
+      if (value[field] !== undefined && typeof value[field] !== "boolean") {
+        return null;
+      }
+    }
+    if (value.frontmatter !== undefined && !isRecord(value.frontmatter)) return null;
+    if (value.props !== undefined && !isRecord(value.props)) return null;
+    validateHydrationParams(value.params);
+
+    return {
+      ...(value as ClientRuntimeHydrationData),
+      releaseAssetModules: snapshotReleaseAssetModules(
+        value.releaseAssetModules,
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function determineClientModuleStrategy(
   options: ClientModuleStrategyOptions,
 ): ClientModuleStrategy {
@@ -69,7 +221,14 @@ export function readHydrationData(
   try {
     const el = doc.getElementById(HYDRATION_DATA_ID);
     if (!el) return null;
-    return JSON.parse(el.textContent || "{}") as ClientRuntimeHydrationData;
+    const serialized = el.textContent || "{}";
+    if (
+      serialized.length > MAX_HYDRATION_DATA_UTF8_BYTES ||
+      textEncoder.encode(serialized).byteLength > MAX_HYDRATION_DATA_UTF8_BYTES
+    ) {
+      throw new RangeError("Hydration data byte limit was exceeded");
+    }
+    return parseClientRuntimeHydrationData(JSON.parse(serialized) as unknown);
   } catch (e) {
     rscLogger.debug("hydration data parse failed", e);
     return null;
@@ -79,11 +238,10 @@ export function readHydrationData(
 export function resolveClientModuleStrategy(
   hydrationData: ClientRuntimeHydrationData | null,
 ): ClientModuleStrategy {
-  if (hydrationData?.clientModuleStrategy) {
-    return hydrationData.clientModuleStrategy;
-  }
+  if (hydrationData?.clientModuleStrategy === "fs") return "fs";
+  if (hydrationData?.clientModuleStrategy === "rsc-module") return "rsc-module";
 
-  return hydrationData?.dev ? "fs" : "rsc-module";
+  return hydrationData?.dev === true ? "fs" : "rsc-module";
 }
 
 export function appendClientModuleVersion(url: string, version?: string): string {
@@ -108,12 +266,14 @@ function normalizeReleaseAssetModulePath(path: string): string {
   return path
     .replace(/^\/+_vf_modules\//, "")
     .replace(/^\/+/, "")
+    .replace(/[?#].*$/, "")
     .replace(/\.js$/, "");
 }
 
 const RELEASE_ASSET_SOURCE_EXTENSION = /\.(tsx|ts|jsx|mdx|js)$/;
 
 function releaseAssetModuleCandidates(path: string): string[] {
+  if (!isBoundedHydrationString(path) || path.length === 0) return [];
   const normalized = normalizeReleaseAssetModulePath(path);
   const candidates = [path, normalized];
   if (!RELEASE_ASSET_SOURCE_EXTENSION.test(normalized)) {
@@ -132,11 +292,24 @@ export function resolveReleaseAssetModuleUrl(
   releaseAssetModules: Record<string, string> | null | undefined,
   path: string,
 ): string | null {
-  if (!releaseAssetModules) return null;
+  if (!isRecord(releaseAssetModules)) return null;
 
   for (const candidate of releaseAssetModuleCandidates(path)) {
-    const url = releaseAssetModules[candidate];
-    if (url) return url;
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        releaseAssetModules,
+        candidate,
+      );
+      if (
+        descriptor &&
+        Object.hasOwn(descriptor, "value") &&
+        isSafeClientModuleUrl(descriptor.value)
+      ) {
+        return descriptor.value;
+      }
+    } catch {
+      return null;
+    }
   }
 
   return null;

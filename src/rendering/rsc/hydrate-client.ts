@@ -1,5 +1,4 @@
-// Experimental client-side hydrator for RSC "use client" boundaries
-// Minimal: hydrate default export without props in dev
+// Client-side hydrator for versioned RSC "use client" boundaries.
 
 import { rscLogger } from "../client/browser-logger.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
@@ -13,21 +12,15 @@ import {
   resolveClientModuleStrategy,
 } from "./client-module-strategy.ts";
 import {
+  decodeClientBoundaryChildren,
   materializeClientBoundaryChildren,
-  parseClientBoundaryChildren,
 } from "./client-boundary-payload.ts";
 import type { RSCNode } from "./types.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
-export type HydrationManifest = {
-  version: number;
-  hash?: string;
-  components?: Record<string, string>;
-  modules: { id: string; clientRef: string; exports: string[] }[];
-  graphIds?: {
-    client: { id: string; path: string; rel: string }[];
-    server: { id: string; path: string; rel: string }[];
-  };
-};
+import { type HydrationManifest, parseHydrationManifest } from "./hydration-manifest.ts";
+import { createClientRequestLifetime, readJsonResponseWithinLimit } from "./client-transport.ts";
+
+export type { HydrationManifest } from "./hydration-manifest.ts";
 
 interface ClientModule {
   default?: ReactTypes.ComponentType<unknown>;
@@ -41,6 +34,7 @@ interface ReactRoot {
 
 interface GlobalHydrationState {
   __VF_CLIENT_MOD_CACHE?: Map<string, ClientModule>;
+  __VF_CLIENT_ROOTS?: WeakMap<HTMLElement, ReactRoot>;
   __VF_MANIFEST_HASH?: string;
   __VF_TEST_MODE__?: boolean;
   __VF_HYDRATE_CALLED?: boolean;
@@ -49,16 +43,79 @@ interface GlobalHydrationState {
 declare const globalThis: typeof window & GlobalHydrationState;
 
 const MAX_CLIENT_MOD_CACHE_SIZE = 100;
+const MAX_CLIENT_REF_CHARACTERS = 65_536;
+const MAX_CLIENT_BOUNDARY_PROPS_BYTES = 1024 * 1024;
+const MAX_CLIENT_BOUNDARY_PROPS = 1_024;
+const MAX_HYDRATION_MANIFEST_RESPONSE_BYTES = 8 * 1024 * 1024;
+const propsEncoder = new TextEncoder();
+const fallbackRootRegistry = new WeakMap<HTMLElement, ReactRoot>();
+
+function getClientModCache(): Map<string, ClientModule> {
+  const current = globalThis.__VF_CLIENT_MOD_CACHE;
+  if (current instanceof Map) return current;
+
+  const cache = new Map<string, ClientModule>();
+  globalThis.__VF_CLIENT_MOD_CACHE = cache;
+  return cache;
+}
 
 function setClientModCache(key: string, mod: ClientModule): void {
-  globalThis.__VF_CLIENT_MOD_CACHE ??= new Map();
+  const cache = getClientModCache();
 
-  if (globalThis.__VF_CLIENT_MOD_CACHE.size >= MAX_CLIENT_MOD_CACHE_SIZE) {
-    const oldest = globalThis.__VF_CLIENT_MOD_CACHE.keys().next().value;
-    if (oldest) globalThis.__VF_CLIENT_MOD_CACHE.delete(oldest);
+  if (cache.size >= MAX_CLIENT_MOD_CACHE_SIZE) {
+    const oldest = cache.keys().next().value;
+    if (oldest) cache.delete(oldest);
   }
 
-  globalThis.__VF_CLIENT_MOD_CACHE.set(key, mod);
+  cache.set(key, mod);
+}
+
+function getClientRootRegistry(): WeakMap<HTMLElement, ReactRoot> {
+  try {
+    const current = globalThis.__VF_CLIENT_ROOTS;
+    if (current instanceof WeakMap) return current;
+
+    const roots = new WeakMap<HTMLElement, ReactRoot>();
+    globalThis.__VF_CLIENT_ROOTS = roots;
+    return roots;
+  } catch {
+    return fallbackRootRegistry;
+  }
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1F || code === 0x7F) return true;
+  }
+  return /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value);
+}
+
+function isCanonicalLogicalClientPath(value: string): boolean {
+  if (
+    value.length === 0 ||
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    hasControlCharacters(value)
+  ) {
+    return false;
+  }
+
+  return value.split("/").every((segment) =>
+    segment.length > 0 && segment !== "." && segment !== ".."
+  );
+}
+
+function isCanonicalDirectModuleUrl(value: string): boolean {
+  if (!value.startsWith("/_veryfront/") || value.startsWith("//")) return false;
+
+  try {
+    const url = new URL(value, "https://veryfront.invalid");
+    return url.origin === "https://veryfront.invalid" &&
+      url.pathname.startsWith("/_veryfront/");
+  } catch {
+    return false;
+  }
 }
 
 export interface ParsedClientRef {
@@ -68,51 +125,100 @@ export interface ParsedClientRef {
 }
 
 export function parseClientRef(ref: string): ParsedClientRef | null {
+  if (
+    typeof ref !== "string" ||
+    ref.length === 0 ||
+    ref.length > MAX_CLIENT_REF_CHARACTERS ||
+    hasControlCharacters(ref)
+  ) {
+    return null;
+  }
+
   // Export names may include $, -, and . in addition to alphanumeric + underscore.
   // Path portion allows any characters up to the last #.
   const m = ref.match(/^\/app\/(.+)#([\w$.-]+)$/);
-  if (m) {
-    return { rel: `/${m[1] || ""}`, exportName: m[2] || "default" };
+  if (m && isCanonicalLogicalClientPath(m[1]!)) {
+    return { rel: `/${m[1]}`, exportName: m[2]! };
   }
 
   const direct = ref.match(/^(\/_veryfront\/[^#]+)#([\w$.-]+)$/);
-  if (direct) {
-    return { moduleUrl: direct[1], exportName: direct[2] || "default" };
+  if (direct && isCanonicalDirectModuleUrl(direct[1]!)) {
+    return { moduleUrl: direct[1], exportName: direct[2]! };
   }
 
   rscLogger.debug("hydrate: unrecognised client ref format, skipping", { ref });
   return null;
 }
 
-export function readClientBoundaryProps(el: HTMLElement): Record<string, unknown> {
+export function readClientBoundaryProps(
+  el: HTMLElement,
+): Record<string, unknown> | null {
   const serialized = el.dataset?.rscProps;
   if (!serialized) return {};
 
   try {
+    if (
+      serialized.length > MAX_CLIENT_BOUNDARY_PROPS_BYTES ||
+      propsEncoder.encode(serialized).byteLength > MAX_CLIENT_BOUNDARY_PROPS_BYTES
+    ) {
+      throw new RangeError("Client boundary props byte limit was exceeded");
+    }
     const props = JSON.parse(serialized) as unknown;
-    return props && typeof props === "object" && !Array.isArray(props)
-      ? props as Record<string, unknown>
-      : {};
+    if (!props || typeof props !== "object" || Array.isArray(props)) return null;
+
+    const entries = Object.entries(props);
+    if (entries.length > MAX_CLIENT_BOUNDARY_PROPS) {
+      throw new RangeError("Client boundary prop limit was exceeded");
+    }
+
+    const snapshot: Record<string, unknown> = {};
+    for (const [key, value] of entries) {
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+      });
+    }
+    return snapshot;
   } catch (error) {
-    rscLogger.debug("hydrate: invalid client boundary props, using empty props", error);
-    return {};
+    rscLogger.debug("hydrate: invalid client boundary props, rejecting boundary", error);
+    return null;
   }
 }
 
 export function readClientBoundaryChildren(el: HTMLElement): RSCNode[] {
-  return parseClientBoundaryChildren(el.dataset?.rscChildren);
+  const serialized = el.dataset?.rscChildren;
+  return serialized ? decodeClientBoundaryChildren(serialized) : [];
 }
 
 export const base64url = base64urlEncode;
 
 async function fetchManifest(): Promise<HydrationManifest | null> {
+  const lifetime = createClientRequestLifetime();
   try {
-    const res = await fetch("/_veryfront/rsc/manifest");
-    if (!res.ok) return null;
-    return (await res.json()) as HydrationManifest;
+    const res = await fetch("/_veryfront/rsc/manifest", {
+      headers: { Accept: "application/json" },
+      signal: lifetime.signal,
+    });
+    if (!res.ok) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        // The request lifetime may already have cancelled the body.
+      }
+      return null;
+    }
+    const value = await readJsonResponseWithinLimit(
+      res,
+      MAX_HYDRATION_MANIFEST_RESPONSE_BYTES,
+    );
+    return parseHydrationManifest(value);
   } catch (_) {
     /* expected: manifest fetch may fail when RSC is not configured */
     return null;
+  } finally {
+    lifetime.dispose();
   }
 }
 
@@ -121,25 +227,24 @@ async function importClientModule(
   reference: ParsedClientRef,
   strategy: ClientModuleStrategy,
   releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"],
+  clientPathByRel?: ReadonlyMap<string, string>,
 ): Promise<ClientModule | null> {
   const moduleUrl = resolveClientBoundaryModuleUrl(
     manifest,
     reference,
     strategy,
     releaseAssetModules,
+    clientPathByRel,
   );
-  const cacheIdentity = reference.moduleUrl ?? reference.rel;
-  if (!cacheIdentity) return null;
-  const cacheKey = `${cacheIdentity}#${manifest.hash ?? ""}`;
+  if (!moduleUrl) return null;
+  const cacheKey = `${moduleUrl}#${manifest.hash ?? ""}`;
 
   try {
-    const cached = globalThis.__VF_CLIENT_MOD_CACHE?.get(cacheKey);
+    const cached = getClientModCache().get(cacheKey);
     if (cached) return cached;
   } catch (e) {
     rscLogger.debug("hydrate: cache get failed", e);
   }
-
-  if (!moduleUrl) return null;
 
   try {
     const mod = (await import(moduleUrl)) as ClientModule;
@@ -162,11 +267,13 @@ export function resolveClientBoundaryModuleUrl(
   reference: ParsedClientRef,
   strategy: ClientModuleStrategy,
   releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"],
+  clientPathByRel?: ReadonlyMap<string, string>,
 ): string | null {
   if (reference.moduleUrl) return reference.moduleUrl;
   if (!reference.rel) return null;
 
-  const absPath = manifest.graphIds?.client.find((entry) => entry.rel === reference.rel)?.path;
+  const absPath = clientPathByRel?.get(reference.rel) ??
+    manifest.graphIds?.client.find((entry) => entry.rel === reference.rel)?.path;
   return buildClientModuleUrl({
     strategy,
     rel: reference.rel,
@@ -192,6 +299,14 @@ export function selectTopLevelClientBoundaries(doc: Document): HTMLElement[] {
   });
 }
 
+export function shouldHydrateClientBoundary(
+  element: HTMLElement,
+  manifestIdentity: string,
+): boolean {
+  return element.dataset?.hydrated !== "true" ||
+    element.dataset?.hydrationHash !== manifestIdentity;
+}
+
 export async function hydrateAllClientBoundaries(doc: Document = document): Promise<void> {
   let manifest: HydrationManifest | null = null;
 
@@ -207,16 +322,12 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   }
 
   const nodes = selectTopLevelClientBoundaries(doc);
+  const manifestIdentity = manifest.hash ?? `version-${manifest.version}`;
+  const nodesToHydrate = nodes.filter((element) =>
+    shouldHydrateClientBoundary(element, manifestIdentity)
+  );
 
-  try {
-    const lastHash = globalThis.__VF_MANIFEST_HASH;
-    const needsHydrate = nodes.some((el) => el.dataset?.hydrated !== "true");
-    if (!needsHydrate && lastHash && manifest.hash && lastHash === manifest.hash) return;
-  } catch (e) {
-    rscLogger.debug("hydrate: hmr hash read failed", e);
-  }
-
-  if (nodes.length === 0) {
+  if (nodesToHydrate.length === 0) {
     try {
       globalThis.__VF_MANIFEST_HASH = manifest.hash ?? "";
     } catch (e) {
@@ -228,6 +339,12 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   const hydrationData = readHydrationData(doc);
   const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
   const releaseAssetModules = hydrationData?.releaseAssetModules;
+  const moduleById = new Map(
+    manifest.modules.map((entry) => [entry.id, entry] as const),
+  );
+  const clientPathByRel = new Map(
+    (manifest.graphIds?.client ?? []).map((entry) => [entry.rel, entry.path] as const),
+  );
 
   try {
     if (globalThis.__VF_TEST_MODE__) {
@@ -248,9 +365,10 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     import(reactSpecifiers.reactDomClient),
   ]);
 
-  for (const el of nodes) {
+  const rootRegistry = getClientRootRegistry();
+  for (const el of nodesToHydrate) {
     const ref = el.dataset?.clientRef ?? "";
-    if (!ref || el.dataset?.hydrated === "true") continue;
+    if (!ref) continue;
 
     const parsed = parseClientRef(ref);
     if (!parsed) continue;
@@ -260,6 +378,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
       parsed,
       clientModuleStrategy,
       releaseAssetModules,
+      clientPathByRel,
     );
     if (!mod) continue;
 
@@ -267,8 +386,15 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     if (typeof Cmp !== "function") continue;
 
     try {
-      const root: ReactRoot = createRoot(el);
+      const existingRoot = rootRegistry.get(el);
+      const root: ReactRoot = existingRoot ?? createRoot(el);
+      if (!existingRoot) {
+        rootRegistry.set(el, root);
+      }
       const props = readClientBoundaryProps(el);
+      if (!props) {
+        throw new TypeError("Client boundary props failed admission");
+      }
       const childNodes = readClientBoundaryChildren(el);
       const children = await materializeClientBoundaryChildren(
         childNodes,
@@ -283,7 +409,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
           },
         },
         async (componentId) => {
-          const moduleEntry = manifest.modules.find((entry) => entry.id === componentId);
+          const moduleEntry = moduleById.get(componentId);
           const componentUrl = manifest.components?.[componentId];
           const clientRef = moduleEntry?.clientRef ??
             (componentUrl ? `${componentUrl}#default` : undefined);
@@ -296,6 +422,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
             childReference,
             clientModuleStrategy,
             releaseAssetModules,
+            clientPathByRel,
           );
           if (!childModule) return null;
           const Child = childModule[childReference.exportName] ?? childModule.default;
@@ -313,6 +440,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
       );
       root.render(tree);
       el.dataset.hydrated = "true";
+      el.dataset.hydrationHash = manifestIdentity;
     } catch (e) {
       rscLogger.warn("hydrate: render failed", e);
     }

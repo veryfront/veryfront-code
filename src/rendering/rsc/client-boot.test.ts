@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  applyRscPayload,
   selectHydrationRoot,
   shouldAttemptRSCTransport,
   shouldHydrateOnly,
@@ -32,6 +33,55 @@ function toCandidate(element: MockElement) {
 }
 
 describe("rendering/rsc/client-boot", () => {
+  describe("applyRscPayload", () => {
+    class PayloadElement {
+      id = "";
+      innerHTML = "";
+      children: PayloadElement[] = [];
+
+      appendChild(child: PayloadElement): PayloadElement {
+        this.children.push(child);
+        return child;
+      }
+    }
+
+    class PayloadDocument {
+      readonly body = new PayloadElement();
+
+      createElement(): PayloadElement {
+        return new PayloadElement();
+      }
+
+      getElementById(id: string): PayloadElement | null {
+        return this.body.children.find((child) => child.id === id) ?? null;
+      }
+    }
+
+    it("writes the fallback HTML payload into the canonical RSC root", () => {
+      const doc = new PayloadDocument() as unknown as Document;
+
+      assertEquals(applyRscPayload(doc, { html: "<main>Ready</main>" }), true);
+      assertEquals(doc.getElementById("rsc-root")?.innerHTML, "<main>Ready</main>");
+      assertEquals(doc.getElementById("rsc-slot-rsc-root"), null);
+    });
+
+    it("rejects malformed payload slots atomically", () => {
+      const doc = new PayloadDocument() as unknown as Document;
+
+      assertEquals(
+        applyRscPayload(doc, {
+          slots: {
+            sidebar: "<aside>Safe</aside>",
+            "../escape": "<div>Unsafe</div>",
+          },
+        }),
+        false,
+      );
+      assertEquals(doc.getElementById("rsc-slot-sidebar"), null);
+      assertEquals(doc.getElementById("rsc-slot-../escape"), null);
+    });
+  });
+
   describe("shouldRenderPageComponent", () => {
     it("client-renders proxy modules that cannot hydrate server-owned markup", () => {
       assertEquals(shouldRenderPageComponent("rsc-module"), true);

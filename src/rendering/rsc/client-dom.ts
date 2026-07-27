@@ -1,12 +1,22 @@
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rscLogger } from "../client/browser-logger.ts";
+import { isValidRscSlotId, MAX_RSC_CLIENT_SLOTS } from "./client-transport.ts";
 import { RSC_ROOT_ID } from "./constants.ts";
 
 type SlotMessage = { type: "slot"; id: string; html: string };
 
 const MAX_NDJSON_RECORD_BYTES = 1024 * 1024;
+const MAX_NDJSON_RECORDS = 10_000;
+
+interface NdjsonStreamState {
+  records: number;
+  readonly slotIds: Set<string>;
+}
 
 export function getContainer(doc: Document, id: string): HTMLElement {
+  if (!isValidRscSlotId(id)) {
+    throw new TypeError("RSC slot id must be a bounded canonical identifier");
+  }
   const elementId = id === "root" ? RSC_ROOT_ID : `rsc-slot-${id}`;
 
   const existing = doc.getElementById(elementId);
@@ -18,21 +28,66 @@ export function getContainer(doc: Document, id: string): HTMLElement {
   return el;
 }
 
-function applySlotMessage(doc: Document, msg: SlotMessage): void {
-  if (msg.type !== "slot") return;
-
+function applySlotMessage(
+  doc: Document,
+  msg: SlotMessage,
+  state: NdjsonStreamState,
+): void {
+  if (!state.slotIds.has(msg.id)) {
+    if (state.slotIds.size >= MAX_RSC_CLIENT_SLOTS) {
+      throw new RangeError(
+        `RSC NDJSON slot limit of ${MAX_RSC_CLIENT_SLOTS} was exceeded`,
+      );
+    }
+    state.slotIds.add(msg.id);
+  }
   const el = getContainer(doc, msg.id);
   // Server-rendered RSC HTML is trusted; validateTrustedHtml provides defense-in-depth
-  el.innerHTML = validateTrustedHtml(String(msg.html ?? ""));
+  el.innerHTML = validateTrustedHtml(msg.html);
 }
 
-function processNdjsonChunk(doc: Document, buffered: string): string {
+function parseSlotMessage(value: unknown): SlotMessage | null {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.type !== "slot" ||
+    !isValidRscSlotId(candidate.id) ||
+    typeof candidate.html !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    type: "slot",
+    id: candidate.id,
+    html: candidate.html,
+  };
+}
+
+function processNdjsonChunk(
+  doc: Document,
+  buffered: string,
+  state: NdjsonStreamState,
+): string {
   const parts = buffered.split("\n");
   const remainder = parts.pop() ?? "";
 
   for (const line of parts) {
     const s = line.trim();
     if (!s) continue;
+    state.records++;
+    if (state.records > MAX_NDJSON_RECORDS) {
+      throw new RangeError(
+        `RSC NDJSON record limit of ${MAX_NDJSON_RECORDS} was exceeded`,
+      );
+    }
 
     let parsed: unknown;
     try {
@@ -45,16 +100,9 @@ function processNdjsonChunk(doc: Document, buffered: string): string {
       continue;
     }
 
-    if (!parsed || typeof parsed !== "object") continue;
-    const msg = parsed as SlotMessage;
-    if (msg.type !== "slot") continue;
-
-    applySlotMessage(doc, msg);
-    try {
-      hydrateClientBoundaries(doc, msg.id || "root");
-    } catch (e) {
-      rscLogger.debug("[client-dom] hydration optional failed", e);
-    }
+    const msg = parseSlotMessage(parsed);
+    if (!msg) continue;
+    applySlotMessage(doc, msg, state);
   }
 
   return remainder;
@@ -121,6 +169,10 @@ export async function consumeNdjsonStream(
   let buffer = "";
   let bufferedRecordBytes = 0;
   let streamFinished = false;
+  const state: NdjsonStreamState = {
+    records: 0,
+    slotIds: new Set(),
+  };
   const abortWaiter = signal ? createAbortWaiter(signal) : undefined;
 
   try {
@@ -141,10 +193,10 @@ export async function consumeNdjsonStream(
       if (!value) continue;
       bufferedRecordBytes = countBufferedRecordBytes(value, bufferedRecordBytes);
       buffer += decoder.decode(value, { stream: true });
-      buffer = processNdjsonChunk(doc, buffer);
+      buffer = processNdjsonChunk(doc, buffer, state);
     }
 
-    if (buffer) processNdjsonChunk(doc, `${buffer}\n`);
+    if (buffer) processNdjsonChunk(doc, `${buffer}\n`, state);
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") throw e;
     rscLogger.debug("[client-dom] consumeNdjsonStream error", e);
@@ -165,32 +217,5 @@ export async function consumeNdjsonStream(
     } catch (e) {
       rscLogger.debug("[client-dom] reader.releaseLock failed", e);
     }
-  }
-}
-
-function findClientBoundaries(doc: Document, slotId: string): HTMLElement[] {
-  const root = getContainer(doc, slotId);
-  const out: HTMLElement[] = [];
-
-  const walker = (node: Element): void => {
-    const el = node as HTMLElement;
-    if (el.dataset?.clientRef) out.push(el);
-    for (const child of node.children) walker(child);
-  };
-
-  walker(root);
-  return out;
-}
-
-function hydrateClientBoundaries(doc: Document, slotId: string): void {
-  const nodes = findClientBoundaries(doc, slotId);
-
-  for (const el of nodes) {
-    const ref = el.dataset?.clientRef;
-    if (!ref) continue;
-
-    // Mark as seen - real hydration happens via hydrate-client.ts after streaming
-    el.dataset.hydrated = "true";
-    rscLogger.debug("[client-dom] marked for hydration", ref);
   }
 }

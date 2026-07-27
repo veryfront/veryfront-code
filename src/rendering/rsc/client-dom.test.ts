@@ -109,7 +109,7 @@ function toDatasetKey(value: string): string {
 }
 
 describe("rendering/rsc/client-dom", () => {
-  it("applies streamed slot HTML and marks client boundaries as hydrated", async () => {
+  it("applies streamed slot HTML without claiming React hydration completed", async () => {
     const doc = createDocument();
 
     await consumeNdjsonStream(
@@ -125,7 +125,7 @@ describe("rendering/rsc/client-dom", () => {
 
     const button = root.querySelector("[data-client-ref='Counter']") as HTMLElement | null;
     assertExists(button);
-    assertEquals(button.dataset.hydrated, "true");
+    assertEquals(button.dataset.hydrated, undefined);
   });
 
   it("buffers partial NDJSON lines and ignores malformed chunks", async () => {
@@ -213,6 +213,43 @@ describe("rendering/rsc/client-dom", () => {
       () => consumeNdjsonStream(createStream([oversizedRecord]), doc),
       Error,
       "buffer limit",
+    );
+  });
+
+  it("ignores malformed slot records instead of creating attacker-selected containers", async () => {
+    const doc = createDocument();
+
+    await consumeNdjsonStream(
+      createStream([
+        '{"type":"slot","id":{"nested":true},"html":"bad id"}\n',
+        '{"type":"slot","id":"../escape","html":"unsafe id"}\n',
+        '{"type":"slot","id":"sidebar","html":{"nested":true}}\n',
+        '{"type":"slot","id":"sidebar","html":"<div>Ready</div>"}\n',
+      ]),
+      doc,
+    );
+
+    assertEquals(doc.getElementById("rsc-slot-[object Object]"), null);
+    assertEquals(doc.getElementById("rsc-slot-../escape"), null);
+    assertEquals(doc.getElementById("rsc-slot-sidebar")?.innerHTML, "<div>Ready</div>");
+  });
+
+  it("bounds the number of distinct streamed slots", async () => {
+    const doc = createDocument();
+    const records = Array.from(
+      { length: 257 },
+      (_, index) =>
+        JSON.stringify({
+          type: "slot",
+          id: `slot-${index}`,
+          html: `<div>${index}</div>`,
+        }) + "\n",
+    );
+
+    await assertRejects(
+      () => consumeNdjsonStream(createStream(records), doc),
+      Error,
+      "slot limit",
     );
   });
 });

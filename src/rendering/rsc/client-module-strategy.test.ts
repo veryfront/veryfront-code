@@ -5,6 +5,7 @@ import {
   buildClientModuleUrl,
   determineClientModuleStrategy,
   getHydrationReactImportSpecifiers,
+  readHydrationData,
   resolveClientModuleStrategy,
   resolveReleaseAssetModuleUrl,
 } from "./client-module-strategy.ts";
@@ -87,6 +88,31 @@ describe("rendering/rsc/client-module-strategy", () => {
     );
   });
 
+  it("does not resolve inherited or executable release asset entries", () => {
+    const inherited = Object.create({
+      "app/page.tsx": "/_vf/assets/inherited.js",
+    }) as Record<string, string>;
+
+    assertEquals(
+      resolveReleaseAssetModuleUrl(inherited, "app/page.tsx"),
+      null,
+    );
+    assertEquals(
+      resolveReleaseAssetModuleUrl(
+        { "app/page.tsx": "javascript:alert(1)" },
+        "app/page.tsx",
+      ),
+      null,
+    );
+    assertEquals(
+      resolveReleaseAssetModuleUrl(
+        { "app/page.tsx": "/\\attacker.example/asset.js" },
+        "app/page.tsx",
+      ),
+      null,
+    );
+  });
+
   it("does not fabricate extension variants for source paths that already have one", () => {
     assertEquals(
       resolveReleaseAssetModuleUrl(
@@ -122,5 +148,48 @@ describe("rendering/rsc/client-module-strategy", () => {
 
     assertEquals(specifiers.react.includes("react@18.3.1"), true);
     assertEquals(specifiers.reactDomClient.includes("react-dom@18.3.1/client"), true);
+  });
+
+  it("rejects malformed hydration data instead of trusting its TypeScript cast", () => {
+    const doc = {
+      getElementById: () => ({
+        textContent: JSON.stringify({
+          pagePath: "app/page.tsx",
+          clientModuleStrategy: "arbitrary",
+        }),
+      }),
+    } as unknown as Document;
+
+    assertEquals(readHydrationData(doc), null);
+  });
+
+  it("bounds hydration data before parsing", () => {
+    const doc = {
+      getElementById: () => ({
+        textContent: `{"padding":"${"x".repeat(2 * 1024 * 1024)}"}`,
+      }),
+    } as unknown as Document;
+
+    assertEquals(readHydrationData(doc), null);
+  });
+
+  it("admits and snapshots valid release asset hydration data", () => {
+    const doc = {
+      getElementById: () => ({
+        textContent: JSON.stringify({
+          pagePath: "app/page.tsx",
+          clientModuleStrategy: "rsc-module",
+          releaseAssetModules: {
+            "app/page.tsx": "/_vf/assets/page-hash.js",
+          },
+        }),
+      }),
+    } as unknown as Document;
+
+    const hydrationData = readHydrationData(doc);
+    assertEquals(hydrationData?.releaseAssetModules, {
+      "app/page.tsx": "/_vf/assets/page-hash.js",
+    });
+    assertEquals(Object.isFrozen(hydrationData?.releaseAssetModules), true);
   });
 });

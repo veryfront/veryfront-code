@@ -48,20 +48,25 @@ export function parseClientBoundaryChildren(serialized: string | undefined): RSC
   if (!serialized) return [];
 
   try {
-    assertUtf8Size(serialized);
-    const payload = JSON.parse(serialized) as unknown;
-    const fields = inspectRecord(payload, "RSC child payload");
-    assertExactFields(fields, new Set(["version", "nodes"]), "RSC child payload");
-    if (readRequired(fields, "version", "RSC child payload") !== PAYLOAD_VERSION) {
-      throw new TypeError("Unsupported RSC child payload version");
-    }
-    return snapshotNodes(
-      readRequired(fields, "nodes", "RSC child payload"),
-      false,
-    );
+    return decodeClientBoundaryChildren(serialized);
   } catch {
     return [];
   }
+}
+
+/** Strict decoder for hydration boundaries that must not drop malformed children. */
+export function decodeClientBoundaryChildren(serialized: string): RSCNode[] {
+  assertUtf8Size(serialized);
+  const payload = JSON.parse(serialized) as unknown;
+  const fields = inspectRecord(payload, "RSC child payload");
+  assertExactFields(fields, new Set(["version", "nodes"]), "RSC child payload");
+  if (readRequired(fields, "version", "RSC child payload") !== PAYLOAD_VERSION) {
+    throw new TypeError("Unsupported RSC child payload version");
+  }
+  return snapshotNodes(
+    readRequired(fields, "nodes", "RSC child payload"),
+    false,
+  );
 }
 
 export async function materializeClientBoundaryChildren(
@@ -116,7 +121,9 @@ async function materializeNode(
   }
 
   const Component = await resolveClientComponent(node.component!);
-  if (!Component) return null;
+  if (!Component) {
+    throw new TypeError("RSC client boundary component could not be resolved");
+  }
   return runtime.createElement(Component, node.props ?? {}, ...children);
 }
 

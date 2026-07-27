@@ -17,6 +17,14 @@ import { hydrateAllClientBoundaries } from "./hydrate-client.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
 import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 import { rscLogger } from "../client/browser-logger.ts";
+import {
+  createClientRequestLifetime,
+  isValidRscSlotId,
+  MAX_RSC_CLIENT_SLOTS,
+  readJsonResponseWithinLimit,
+} from "./client-transport.ts";
+
+const MAX_RSC_PAYLOAD_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 /**
  * Import React using the page's import map when available.
@@ -130,18 +138,28 @@ export function shouldRenderPageComponent(strategy: ClientModuleStrategy): boole
 }
 
 async function tryStream(q: string): Promise<boolean> {
+  const lifetime = createClientRequestLifetime();
   try {
-    const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
-    if (!res.ok || !res.body) return false;
+    const res = await fetch(RSC_PATH_PREFIX + "stream" + q, {
+      headers: { Accept: "application/x-ndjson" },
+      signal: lifetime.signal,
+    });
+    if (!res.ok || !res.body) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        // The request lifetime may already have cancelled the body.
+      }
+      return false;
+    }
 
-    const ctrl = new AbortController();
-    addEventListener("pagehide", () => ctrl.abort(), { once: true });
-
-    await consumeNdjsonStream(res, document, ctrl.signal);
+    await consumeNdjsonStream(res, document, lifetime.signal);
     return true;
   } catch (e) {
     rscLogger.debug("tryStream failed", e);
     return false;
+  } finally {
+    lifetime.dispose();
   }
 }
 
@@ -203,25 +221,107 @@ async function hydratePageComponent(
   }
 }
 
-async function applyPayload(q: string): Promise<boolean> {
-  try {
-    const res = await fetch(RSC_PATH_PREFIX + "payload" + q);
-    if (!res.ok) return false;
+interface RscPayloadSlot {
+  readonly id: string;
+  readonly html: string;
+}
 
-    const data = await res.json();
+function readPayloadSlots(value: unknown): readonly RscPayloadSlot[] | null {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
 
-    if (data?.slots) {
-      for (const [id, html] of Object.entries(data.slots)) {
-        getContainer(document, id).innerHTML = validateTrustedHtml(String(html || ""));
-      }
-      return true;
+  const keys = Object.keys(value);
+  if (keys.length > MAX_RSC_CLIENT_SLOTS) return null;
+
+  const slots: RscPayloadSlot[] = [];
+  for (const id of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, id);
+    if (
+      !descriptor ||
+      !Object.hasOwn(descriptor, "value") ||
+      !isValidRscSlotId(id) ||
+      typeof descriptor.value !== "string"
+    ) {
+      return null;
+    }
+    slots.push({ id, html: descriptor.value });
+  }
+  return slots;
+}
+
+/**
+ * Validate a complete payload before mutating any DOM container.
+ */
+export function applyRscPayload(doc: Document, value: unknown): boolean {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+
+  const payload = value as Record<string, unknown>;
+  if (Object.hasOwn(payload, "slots")) {
+    const slots = readPayloadSlots(payload.slots);
+    if (!slots) return false;
+
+    let admittedSlots: readonly RscPayloadSlot[];
+    try {
+      admittedSlots = slots.map(({ id, html }) => ({
+        id,
+        html: validateTrustedHtml(html),
+      }));
+    } catch {
+      return false;
     }
 
-    getContainer(document, RSC_ROOT_ID).innerHTML = validateTrustedHtml(String(data?.html || ""));
+    for (const { id, html } of admittedSlots) {
+      getContainer(doc, id).innerHTML = html;
+    }
     return true;
+  }
+
+  if (typeof payload.html !== "string") return false;
+  try {
+    getContainer(doc, "root").innerHTML = validateTrustedHtml(payload.html);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function applyPayload(q: string): Promise<boolean> {
+  const lifetime = createClientRequestLifetime();
+  try {
+    const res = await fetch(RSC_PATH_PREFIX + "payload" + q, {
+      headers: { Accept: "application/json" },
+      signal: lifetime.signal,
+    });
+    if (!res.ok) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        // The request lifetime may already have cancelled the body.
+      }
+      return false;
+    }
+
+    const data = await readJsonResponseWithinLimit(
+      res,
+      MAX_RSC_PAYLOAD_RESPONSE_BYTES,
+    );
+    return applyRscPayload(document, data);
   } catch (e) {
     rscLogger.debug("payload fetch failed", e);
     return false;
+  } finally {
+    lifetime.dispose();
   }
 }
 
