@@ -110,6 +110,50 @@ describe(
       assertEquals(updatedAgent.config.system, "SECOND");
     });
 
+    it("reuses unchanged preview primitive modules across requests", async () => {
+      agentRegistry.clearAll();
+      toolRegistry.clearAll();
+      skillRegistry.clearAll();
+
+      const ctx = createHandlerContext(
+        "/preview-module-cache-project",
+        "preview-module-cache-project",
+        "preview",
+      );
+      const counterKey = "__veryfrontPreviewDiscoveryImportCount";
+      const globals = globalThis as typeof globalThis & Record<string, unknown>;
+      delete globals[counterKey];
+
+      await ctx.adapter.fs.writeFile(
+        `${ctx.projectDir}/tools/counter.ts`,
+        [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+          "",
+          `const counterKey = "${counterKey}";`,
+          "const globals = globalThis as typeof globalThis & Record<string, unknown>;",
+          "globals[counterKey] = Number(globals[counterKey] ?? 0) + 1;",
+          "",
+          "export default tool({",
+          '  id: "counter",',
+          '  description: "Count module evaluations.",',
+          "  inputSchema: defineSchema((v) => v.object({}))(),",
+          "  execute: async () => ({ count: globals[counterKey] }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+
+      try {
+        await ensureProjectDiscovery(ctx);
+        await ensureProjectDiscovery(ctx);
+
+        assertEquals(globals[counterKey], 1);
+      } finally {
+        delete globals[counterKey];
+      }
+    });
+
     it("reuses preview discovery for one source snapshot generation", async () => {
       agentRegistry.clearAll();
       toolRegistry.clearAll();
