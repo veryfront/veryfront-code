@@ -82,7 +82,7 @@ Clear model providers registered in the current project source scope.
 | `findVeryfrontCloudModelByModelId` | Find Veryfront Cloud model by model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L261) |
 | `getCurrentVeryfrontCloudContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L31) |
 | `getRegisteredModelProviders` | Get provider names available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L348) |
-| `getVeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L124) |
+| `getVeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L181) |
 | `getVeryfrontCloudProviderFromModelId` | Return Veryfront Cloud provider from model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L269) |
 | `groupVeryfrontCloudModelsByProvider` | Group Veryfront Cloud models by provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L455) |
 | `hasModelProvider` | Check whether a model provider is available in the current scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L334) |
@@ -112,7 +112,7 @@ Clear model providers registered in the current project source scope.
 | `RuntimePromptMessage` | Historical mutable provider-facing prompt contract retained for source compatibility. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L62) |
 | `RuntimeReasoningOption` | Provider-neutral reasoning controls accepted by model runtimes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L131) |
 | `RuntimeResponseFormat` | Provider-neutral structured-output request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts#L153) |
-| `VeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L52) |
+| `VeryfrontCloudBootstrap` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/cloud/resolver.ts#L93) |
 | `VeryfrontCloudChatModel` | Public API contract for Veryfront Cloud chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L19) |
 | `VeryfrontCloudContext` | Context for Veryfront Cloud. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L4) |
 | `VeryfrontCloudModelThinkingConfig` | Configuration used by Veryfront Cloud model thinking. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L12) |

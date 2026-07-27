@@ -238,6 +238,15 @@ export async function executeAgent(
   }
 }
 
+/** @internal Applies the reusable-agent override policy without loading the SDK. */
+export function mergeAgentConfig(
+  defaults: AgentConfig,
+  overrides: AgentConfig,
+): AgentConfig {
+  const { bypassPermissions: _, ...safeOverrides } = overrides;
+  return { ...defaults, ...safeOverrides };
+}
+
 /**
  * Create a reusable agent function with preset configuration.
  *
@@ -255,15 +264,6 @@ export async function executeAgent(
  * const result = await reviewer("Review src/auth/ for security issues");
  * ```
  */
-/** @internal Applies the reusable-agent override policy without loading the SDK. */
-export function mergeAgentConfig(
-  defaults: AgentConfig,
-  overrides: AgentConfig,
-): AgentConfig {
-  const { bypassPermissions: _, ...safeOverrides } = overrides;
-  return { ...defaults, ...safeOverrides };
-}
-
 export function createAgent(
   defaults: AgentConfig = {},
 ): (task: string, overrides?: AgentConfig) => Promise<ClaudeCodeResult> {

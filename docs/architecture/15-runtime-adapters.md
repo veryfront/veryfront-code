@@ -29,8 +29,30 @@ Primary source areas:
 - Runtime adapter support is separate from deployment product support.
 - Build pipeline code can target a runtime, but adapters own runtime capability
   normalization.
+- Automatic registry construction is limited to Deno, Node.js, and Bun.
+  Cloudflare requires request-scoped bindings and explicit adapter
+  construction. Unknown or overlapping host signals are classified
+  deterministically and unsupported initialization fails explicitly.
+- Registry get, set, and reset operations are ordered. Concurrent reads share
+  initialization, replacement initializes before publication, and superseded
+  adapters are shut down once.
 - Security checks for paths and sandbox behavior belong in dedicated security
   modules.
+- Local filesystem `exists()` returns false only for a recognized missing path;
+  invalid paths and operational errors propagate. Temporary-directory prefixes
+  are filename fragments and reject path separators or null bytes before
+  reaching a native API.
+- Cloudflare environment adapters snapshot own string bindings at construction
+  and place later writes in an adapter-local overlay. Inherited values,
+  non-string resources, and request mutations never become deployment binding
+  mutations.
+- The remote filesystem factory creates only Veryfront and GitHub adapters.
+  Local files remain owned by the runtime adapter, while unsupported backend
+  discriminators fail explicitly rather than falling back to local storage.
+- Hosted and GitHub caches include source authority in their identity. GitHub
+  entries are repository and ref scoped; hosted reads are project and source
+  snapshot scoped. In-flight work is deduplicated only when the full operation
+  identity agrees.
 - A WebSocket upgrade is authorized by the normal request handler before the
   transport commits it. Node and Bun use an explicit non-DOM upgrade signal;
   Cloudflare and Deno return their runtime-native upgrade responses.

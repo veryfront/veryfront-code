@@ -1,6 +1,7 @@
 # Adapters Module
 
-The Adapters module provides runtime abstraction layer for cross-platform compatibility across Deno, Node.js, Bun, and Cloudflare Workers.
+The Adapters module provides the runtime abstraction layer for cross-platform
+compatibility across Deno, Node.js, Bun, and Cloudflare Workers.
 
 ## Imports
 
@@ -19,6 +20,7 @@ The Adapters module exports:
 - **`RuntimeAdapter`** - Base adapter interface for runtime abstraction
 - **`runtime.get()`** - Auto-detects and returns the singleton runtime adapter
 - **Runtime-Specific Adapters** - BunAdapter, DenoAdapter, NodeAdapter
+- **Cloudflare Factory** - Request-scoped `createCloudflareAdapter()`
 - **Filesystem Abstraction** - FSAdapter, VeryfrontFSAdapter, FSAdapterWrapper
 - **API Client** - VeryfrontApiClient for remote filesystem access
 - **Security Adapter Helpers** - Permission and sandbox utilities
@@ -52,11 +54,16 @@ import { runtime } from "veryfront/platform";
 const adapter = await runtime.get();
 
 // Check which runtime
-console.log(adapter.name); // 'deno' | 'node' | 'bun' | 'cloudflare'
+console.log(adapter.id); // "deno" | "node" | "bun"
 
 // Use adapter APIs
 const config = await adapter.fs.readFile("./config.json");
 ```
+
+The registry automatically constructs adapters only for Deno, Node.js, and
+Bun. Cloudflare Workers require request-scoped bindings and must use
+`createCloudflareAdapter(env, files?)`. Unknown hosts and automatic Cloudflare
+initialization reject instead of selecting a fallback adapter.
 
 ### Runtime-Specific Adapters
 
@@ -76,13 +83,10 @@ const bunAdapter = new BunAdapter();
 ### Filesystem Abstraction
 
 ```ts
-import { createFSAdapter, type FSAdapter } from "#veryfront/platform/adapters/index.ts";
+import { createFSAdapter, type FSAdapter, runtime } from "#veryfront/platform/adapters/index.ts";
 
 // Local filesystem
-const fsAdapter: FSAdapter = await createFSAdapter({
-  type: "local",
-  projectDir: "/path/to/project",
-});
+const localFS = (await runtime.get()).fs;
 
 // Remote Veryfront API
 const remoteFS: FSAdapter = await createFSAdapter({
@@ -98,10 +102,17 @@ const content = await remoteFS.readFile("/src/index.ts");
 const exists = await remoteFS.exists("/config.json");
 
 // Directory operations
+if (!remoteFS.readDir) throw new Error("Remote adapter cannot list directories");
 for await (const entry of remoteFS.readDir("/src")) {
   console.log(entry.name, entry.isDirectory);
 }
 ```
+
+`createFSAdapter()` owns only remote Veryfront and GitHub filesystems. Passing
+`type: "local"` is an error because the runtime adapter already owns local
+filesystem lifecycle. The retained `"memory"` discriminator is not a supported
+filesystem backend and also rejects; use `createMockAdapter()` for isolated
+tests.
 
 ## RuntimeAdapter Interface
 
@@ -109,9 +120,9 @@ All runtime adapters implement the `RuntimeAdapter` interface:
 
 ```ts
 interface RuntimeAdapter {
-  id: "deno" | "node" | "bun" | "cloudflare" | "memory";
-  name: string;
-  capabilities: RuntimeCapabilities;
+  readonly id: "deno" | "node" | "bun" | "cloudflare" | "memory";
+  readonly name: string;
+  readonly capabilities: RuntimeCapabilities;
 
   // Lifecycle
   initialize?(): Promise<void>;
@@ -126,6 +137,7 @@ interface RuntimeAdapter {
     readDir(path: string): AsyncIterable<DirEntry>;
     mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
     remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+    makeTempDir(prefix: string): Promise<string>;
     watch(paths: string | string[], options?: WatchOptions): FileWatcher;
   };
 
@@ -133,6 +145,7 @@ interface RuntimeAdapter {
   env: {
     get(key: string): string | undefined;
     set(key: string, value: string): void;
+    toObject(): Record<string, string>;
   };
 
   // Server
@@ -143,6 +156,10 @@ interface RuntimeAdapter {
 
   // Runtime-specific WebSocket upgrade transport
   server: ServerAdapter;
+
+  shell?: ShellAdapter;
+  kv?: KVStoreAdapter;
+  watcher?: FileWatcherAdapter;
 }
 ```
 
@@ -249,7 +266,9 @@ const file = await fsAdapter.readTextFile("/config.json");
 
 ```ts
 interface FSAdapterConfig {
-  type?: "local" | "veryfront-api" | "memory" | "github";
+  // Supported construction paths are local, veryfront-api, and github.
+  // Local is supplied by RuntimeAdapter.fs rather than createFSAdapter().
+  type?: "local" | "veryfront-api" | "github";
   projectDir?: string;
   veryfront?: {
     apiToken?: string;
@@ -333,6 +352,25 @@ process-local singleton for the current environment configuration; concurrent
 creation is coalesced, and `resetTokenStorageAdapter()` invalidates any creation
 still in flight.
 
+This memory adapter stores tokens only. It is unrelated to the unsupported
+`"memory"` filesystem discriminator.
+
+## Filesystem failure semantics
+
+Local Deno, Node.js, and Bun `fs.exists()` implementations return `false` only
+for a recognized missing path. Invalid paths, permission failures, and other
+operational errors propagate with their native error identity. Shell adapter
+methods likewise preserve native `ENOENT` or `Deno.errors.NotFound` failures.
+
+`makeTempDir(prefix)` treats the prefix as a filename fragment. Path separators
+and null bytes reject before the operating-system temp directory is touched.
+The mock adapter follows the same asynchronous rejection and path-registration
+contract as local runtime adapters.
+
+Cloudflare environment adapters snapshot only the binding object's own string
+values at construction. `set()` updates an adapter-local overlay, so request
+code cannot mutate deployment bindings or expose inherited properties.
+
 ## Runtime Detection
 
 ```ts
@@ -341,20 +379,23 @@ import { runtime } from "veryfront/platform";
 const adapter = await runtime.get();
 
 // Detect specific runtime
-if (adapter.name === "deno") {
+if (adapter.id === "deno") {
   // Deno-specific code
-} else if (adapter.name === "node") {
+} else if (adapter.id === "node") {
   // Node-specific code
-} else if (adapter.name === "bun") {
+} else if (adapter.id === "bun") {
   // Bun-specific code
 }
 
 // Or check capabilities
-if (adapter.watch) {
+if (adapter.capabilities.fileWatching) {
   // Runtime supports file watching
-  for await (const event of adapter.watch(["./src"])) {
-    console.log("File changed:", event.path);
+  const watcher = adapter.fs.watch(["./src"]);
+  await watcher.ready;
+  for await (const event of watcher) {
+    console.log("Files changed:", event.paths);
   }
+  await watcher.done;
 }
 ```
 
@@ -384,21 +425,23 @@ try {
 
 ## Best Practices
 
-1. **Use `runtime.get()` for auto-detection** - Let the runtime be detected automatically and reused
-2. **Initialize adapters** - Always call `initialize()` after creating an adapter
-3. **Handle missing features** - Check for optional methods before using them
-4. **Cache remote FS calls** - Enable caching for Veryfront API to reduce latency
-5. **Use FSAdapter interface** - Abstract filesystem access for portability
+1. **Use `runtime.get()` for local auto-detection** - The registry initializes
+   and reuses the adapter.
+2. **Use factories for remote adapters** - Factory construction validates
+   configuration and completes initialization before returning.
+3. **Check capabilities** - Guard runtime-dependent behavior with
+   `adapter.capabilities` and optional-method checks.
+4. **Dispose owned resources** - Await returned server stops, adapter shutdown,
+   watcher completion, and remote adapter shutdown at lifecycle boundaries.
+5. **Keep authority request-scoped** - Do not retain proxy request tokens as
+   background connection credentials.
 
 ## Testing with Adapters
 
 ```ts
-import { createFSAdapter } from "#veryfront/platform/adapters/index.ts";
+import { createMockAdapter } from "veryfront/platform";
 
-// Use memory adapter for tests
-const testFS = await createFSAdapter({
-  type: "memory",
-});
+const testFS = createMockAdapter().fs;
 
 // Mock filesystem operations
 await testFS.writeFile("/test.txt", "test content");
@@ -407,7 +450,8 @@ const exists = await testFS.exists("/test.txt"); // true
 
 ## Performance Tips
 
-- Use file watching (`adapter.watch()`) instead of polling
+- Use file watching (`adapter.fs.watch()`) instead of polling when
+  `adapter.capabilities.fileWatching` is true
 - Enable caching for remote filesystem operations
 - Batch filesystem reads when possible
 - Use async iterators for directory traversal (memory efficient)

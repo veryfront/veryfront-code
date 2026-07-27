@@ -13,7 +13,9 @@ const DEPRECATED_GET_ADAPTER_EXAMPLE =
   /\b(?:import\s+\{[^}]*\bgetAdapter\b[^}]*\}|\bgetAdapter\s*\()/;
 const STALE_ADAPTER_ALIAS = /["']#adapters["']|#adapters\b/;
 const STALE_RUNTIME_ADAPTER_EXAMPLE =
-  /\badapter\.runtime\b|\badapter\.fs\.readTextFile\b|\badapter\.fs\.writeTextFile\b|\bnew MockAdapter\b|\bcreateFileCacheAdapter\b|\bserver\.listen\s*\(/;
+  /\badapter\.runtime\b|\badapter\.watch\b|\badapter\.fs\.readTextFile\b|\badapter\.fs\.writeTextFile\b|\bnew MockAdapter\b|\bcreateFileCacheAdapter\b|\bserver\.listen\s*\(|\bhttp:\s*HttpAdapter\b|\bprocess:\s*ProcessAdapter\b/;
+const UNSUPPORTED_FS_FACTORY_EXAMPLE =
+  /createFSAdapter\s*\(\s*\{\s*type:\s*["'](?:local|memory)["']/s;
 
 describe("platform adapter README guidance", () => {
   it("uses current runtime adapter examples and import paths", async () => {
@@ -24,7 +26,8 @@ describe("platform adapter README guidance", () => {
       if (
         DEPRECATED_GET_ADAPTER_EXAMPLE.test(contents) ||
         STALE_ADAPTER_ALIAS.test(contents) ||
-        STALE_RUNTIME_ADAPTER_EXAMPLE.test(contents)
+        STALE_RUNTIME_ADAPTER_EXAMPLE.test(contents) ||
+        UNSUPPORTED_FS_FACTORY_EXAMPLE.test(contents)
       ) {
         offenders.push(file);
       }
