@@ -415,10 +415,15 @@ describe(
 
       const result = await discoverWebhooks({ projectDir: "/project", adapter });
 
-      assertEquals(result.items.map((item) => item.id), ["ticket-created"]);
-      assertEquals(result.errors.length, 1);
-      assertEquals(result.errors[0]?.code, "duplicate_source_id");
-      assertEquals(result.errors[0]?.sourceId, "ticket-created");
+      assertEquals(result.items, []);
+      assertEquals(result.errors.length, 2);
+      assertEquals(
+        result.errors.map((error) => [error.code, error.sourceId]),
+        [
+          ["duplicate_source_id", "ticket-created"],
+          ["duplicate_source_id", "ticket-created"],
+        ],
+      );
     });
 
     it("rejects structurally incomplete source-defined webhooks", async () => {

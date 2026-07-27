@@ -5,6 +5,7 @@ import {
   type SourceTriggerDiscoveryResult,
 } from "#veryfront/trigger/discovery.ts";
 import { isScheduleDefinition, type ScheduleDefinition } from "./types.ts";
+import { normalizeScheduleDefinition } from "./validation.ts";
 
 export interface ScheduleDiscoveryOptions {
   projectDir: string;
@@ -26,5 +27,6 @@ export async function discoverSchedules(
     triggerDir: options.schedulesDir ?? "schedules",
     sourceKind: "schedule",
     validate: isScheduleDefinition,
+    normalize: normalizeScheduleDefinition,
   });
 }

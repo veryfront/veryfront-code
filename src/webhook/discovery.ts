@@ -5,6 +5,7 @@ import {
   type SourceTriggerDiscoveryResult,
 } from "#veryfront/trigger/discovery.ts";
 import { isWebhookDefinition, type WebhookDefinition } from "./types.ts";
+import { normalizeWebhookDefinition } from "./validation.ts";
 
 export interface WebhookDiscoveryOptions {
   projectDir: string;
@@ -26,5 +27,6 @@ export async function discoverWebhooks(
     triggerDir: options.webhooksDir ?? "webhooks",
     sourceKind: "webhook",
     validate: isWebhookDefinition,
+    normalize: normalizeWebhookDefinition,
   });
 }

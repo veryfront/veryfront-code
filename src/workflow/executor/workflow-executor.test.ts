@@ -986,6 +986,48 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
+  it("cancels a result waiter without leaking its poll timer or cancelling the run", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const started = Promise.withResolvers<void>();
+    const blockingTool: Tool = {
+      id: "result-waiter",
+      type: "function",
+      description: "Wait until the workflow itself is cancelled",
+      inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+      execute: (_input, context) => {
+        started.resolve();
+        return new Promise((_resolve, reject) => {
+          const signal = context?.abortSignal;
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    };
+    executor.register(
+      workflow({
+        id: "result-waiter",
+        steps: [step("blocking", { tool: blockingTool })],
+      }).definition,
+    );
+
+    const handle = await executor.start("result-waiter", {});
+    await started.promise;
+    const controller = new AbortController();
+    const result = handle.result(controller.signal);
+    controller.abort(new Error("stop waiting for the workflow result"));
+
+    await assertRejects(
+      () => result,
+      Error,
+      "stop waiting for the workflow result",
+    );
+    assertEquals((await handle.status()).status, "running");
+
+    await handle.cancel();
+    await handle.settled();
+    assertEquals((await handle.status()).status, "cancelled");
+  });
+
   it("does not report a failure while cancellation is still being persisted", async () => {
     const backend = new DelayedCancellationBackend();
     let errorCallbacks = 0;

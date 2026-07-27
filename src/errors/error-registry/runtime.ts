@@ -56,22 +56,22 @@ export const MIDDLEWARE_ERROR = defineError({
   suggestion: "Check middleware function for errors",
 });
 
-/** Trigger target (task or workflow) not found during local run */
+/** Trigger target not found during local execution. */
 export const TRIGGER_TARGET_NOT_FOUND = defineError({
   slug: "trigger-target-not-found",
   category: "RUNTIME",
   status: 404,
   title: "Trigger target not found",
-  suggestion: "Ensure the referenced task or workflow ID is registered in the project",
+  suggestion: "Ensure the referenced task, workflow, or agent ID is registered in the project",
 });
 
-/** Trigger target task or workflow failed during local run */
+/** Trigger target failed during local execution. */
 export const TRIGGER_EXECUTION_FAILED = defineError({
   slug: "trigger-execution-failed",
   category: "RUNTIME",
   status: 500,
   title: "Trigger target execution failed",
-  suggestion: "Check the task or workflow for errors and review the trigger input",
+  suggestion: "Check the task, workflow, or agent for errors and review the trigger input",
 });
 
 /** Trigger target type is not supported in the current runtime context */
@@ -79,9 +79,8 @@ export const TRIGGER_NOT_SUPPORTED = defineError({
   slug: "trigger-not-supported",
   category: "RUNTIME",
   status: 501,
-  title: "Trigger target type not supported in local runtime",
-  suggestion:
-    "Use a workflow or task target for local trigger runs; agent targets require the Cloud runtime",
+  title: "Trigger target type not supported in the current runtime",
+  suggestion: "Use a task, workflow, or agent target supported by the active runtime",
 });
 
 /** Registry fragment for RUNTIME errors (slug → definition). */

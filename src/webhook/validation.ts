@@ -1,6 +1,6 @@
 import { VeryfrontError, WEBHOOK_CONFIG_INVALID } from "#veryfront/errors";
 import { isTriggerTarget, type TriggerTarget } from "#veryfront/trigger/target.ts";
-import { assertSerializable, isTriggerId } from "#veryfront/trigger/validation.ts";
+import { isTriggerId, snapshotSerializable } from "#veryfront/trigger/validation.ts";
 import type {
   WebhookAgentMessageMapping,
   WebhookDefinition,
@@ -65,15 +65,17 @@ function normalizeFilterCondition(
   if (!OPERATORS.has(operator as WebhookEventFilterOperator)) {
     invalid(`${label} operator is not supported.`);
   }
-  const conditionValue = getOwn(condition, "value");
-
-  try {
-    assertSerializable(conditionValue, `${label} value`);
-  } catch (error) {
-    const detail = error instanceof VeryfrontError && error.detail
-      ? error.detail
-      : `${label} value must be JSON-serializable.`;
-    invalid(detail, error);
+  const rawConditionValue = getOwn(condition, "value");
+  let conditionValue: unknown;
+  if (rawConditionValue !== undefined) {
+    try {
+      conditionValue = snapshotSerializable(rawConditionValue, `${label} value`);
+    } catch (error) {
+      const detail = error instanceof VeryfrontError && error.detail
+        ? error.detail
+        : `${label} value must be JSON-serializable.`;
+      invalid(detail, error);
+    }
   }
 
   return {

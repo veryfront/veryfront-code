@@ -1,6 +1,6 @@
 import { SCHEDULE_CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
 import { isTriggerTarget, type TriggerTarget } from "#veryfront/trigger/target.ts";
-import { assertSerializable, isTriggerId } from "#veryfront/trigger/validation.ts";
+import { isTriggerId, snapshotSerializable } from "#veryfront/trigger/validation.ts";
 import type {
   ScheduleConcurrencyPolicy,
   ScheduleDefinition,
@@ -194,14 +194,13 @@ function normalizeInput(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   const input = requireRecord(value, "Schedule input");
   try {
-    assertSerializable(input, "Schedule input");
+    return snapshotSerializable(input, "Schedule input") as Record<string, unknown>;
   } catch (error) {
     const detail = error instanceof VeryfrontError && error.detail
       ? error.detail
       : "Schedule input must be JSON-serializable.";
     invalid(detail, error);
   }
-  return input;
 }
 
 function normalizeScheduleHealth(
@@ -441,9 +440,14 @@ export function normalizeScheduleConfig(value: unknown): ScheduleDefinition {
   return normalizeSchedule(value, "config");
 }
 
+/** Validate and copy an already-canonical source schedule definition. */
+export function normalizeScheduleDefinition(value: unknown): ScheduleDefinition {
+  return normalizeSchedule(value, "definition");
+}
+
 export function isValidScheduleDefinition(value: unknown): value is ScheduleDefinition {
   try {
-    normalizeSchedule(value, "definition");
+    normalizeScheduleDefinition(value);
     return true;
   } catch {
     return false;

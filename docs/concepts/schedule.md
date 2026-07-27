@@ -16,8 +16,8 @@ business logic.
 - A trigger defines when work starts.
 - A target defines what work runs.
 - Each trigger creates a run.
-- Pausing or deleting the schedule affects future runs, not the task or workflow
-  definition.
+- Pausing or deleting the schedule affects future runs, not the task, workflow,
+  or agent definition.
 
 ## Boundary
 

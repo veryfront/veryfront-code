@@ -36,7 +36,7 @@ export default webhook({
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `discoverWebhooks` | Discover and validate source-defined webhooks beneath the configured directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L19) |
+| `discoverWebhooks` | Discover and validate source-defined webhooks beneath the configured directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L20) |
 | `isWebhookDefinition` | Return true only when every webhook field and nested invariant is valid. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L39) |
 | `webhook` | Validate and normalize a source-defined webhook configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/factory.ts#L10) |
 
@@ -47,8 +47,8 @@ export default webhook({
 | `WebhookAgentMessageMapping` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L23) |
 | `WebhookConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L36) |
 | `WebhookDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L27) |
-| `WebhookDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L9) |
-| `WebhookDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L16) |
+| `WebhookDiscoveryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L10) |
+| `WebhookDiscoveryResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/discovery.ts#L17) |
 | `WebhookEventFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L18) |
 | `WebhookEventFilterCondition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L12) |
 | `WebhookEventFilterMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/webhook/types.ts#L4) |

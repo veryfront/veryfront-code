@@ -1,15 +1,17 @@
 # Runs and tasks
 
-This page describes run client operations, the boundary between runs and
-schedules, task definition discovery, and local task execution. It does not
-cover workflow DAG execution internals.
+This page describes run client operations, the boundary between source
+triggers and runs, task definition discovery, and local target execution. It
+does not cover workflow DAG execution internals.
 
 ## Responsibility
 
 Runs code exposes the public client for project-scoped task, workflow, and
 knowledge ingest runs, plus event streams and runtime environment helpers.
 Task code discovers project task definitions and runs them with a sanitized task
-context.
+context. Trigger code discovers source schedule and webhook definitions and
+dispatches their canonical task, workflow, or agent target through the unified
+project runtime.
 
 Primary source areas:
 
@@ -20,16 +22,29 @@ Primary source areas:
 - [`src/task/`](../../src/task/)
 - [`src/task/discovery.ts`](../../src/task/discovery.ts)
 - [`src/task/runner.ts`](../../src/task/runner.ts)
+- [`src/trigger/`](../../src/trigger/)
+- [`src/schedule/`](../../src/schedule/)
+- [`src/webhook/`](../../src/webhook/)
 
 ## Runtime flow
 
 ```mermaid
 flowchart TD
+  sourceFile[Schedule or webhook source] --> sourceDiscovery[Source trigger discovery]
+  sourceDiscovery --> triggerTarget[Canonical task, workflow, or agent target]
+  triggerTarget --> projectDiscovery[Unified project runtime discovery]
+  projectDiscovery --> targetDispatch[Local target dispatch]
+
   taskFile[Project task file] --> discovery[Task discovery]
   discovery --> taskDef[Task definition]
   taskDef --> localRun[Local task runner]
+  targetDispatch --> localRun
+  targetDispatch --> workflowRun[Local workflow client]
+  targetDispatch --> agentRun[Project agent runtime]
   localRun --> taskContext[Task context: env, config, project and environment ids, signal]
   taskContext --> result[Task result or message-only error]
+  workflowRun --> result
+  agentRun --> result
 
   client[Runs client] --> api[Runs API]
   api --> create[Create run]
@@ -45,6 +60,9 @@ flowchart TD
    project runs, reading events, and cancelling execution.
 4. Public schemas validate run and event response shapes.
 5. Cloud execution is delegated to the configured runtime adapter.
+6. Local schedule and webhook execution validates a canonical target, snapshots
+   bounded JSON input, performs unified runtime discovery, and dispatches the
+   task, workflow, or agent with the caller's cancellation signal.
 
 Schedule APIs live outside the runs client. A schedule eventually creates a
 canonical run, after which the same run detail, event, and cancellation
@@ -72,6 +90,20 @@ contracts apply.
 - Task IDs are deterministic, retain nested path segments, and normalize
   native paths and file URLs to `/`. Ambiguous legacy definitions that collapse
   to the same ID are rejected instead of depending on filesystem order.
+- Source trigger IDs contain bounded slash-separated lowercase segments. Empty,
+  dot, traversal-shaped, oversized, inherited, and accessor-backed target
+  identities fail before project discovery.
+- Source files and results are ordered by code units. If multiple valid files
+  declare one source ID, every conflicting definition is rejected with the full
+  deterministic path set; no filesystem-dependent winner executes.
+- Trigger input and agent context become bounded, descriptor-safe JSON
+  snapshots before asynchronous discovery. Sparse arrays, accessors, cycles,
+  unsupported values, and resource-limit violations fail without invoking
+  caller code or retaining mutable input.
+- Cancellation is checked before and after discovery, passed to tasks and
+  agents, and actively cancels and settles workflow handles before their local
+  client is destroyed. Successful trigger durations cover discovery and
+  execution using a monotonic clock.
 
 ## Canonical run model
 
@@ -104,6 +136,8 @@ schedule creates a workflow run.
 - Add schema tests when changing run, event, or schedule shapes.
 - Add discovery or runner tests when changing task file detection, import
   behavior, context construction, or env allowlisting.
+- Add trigger tests when changing source ordering, duplicate handling, target
+  identity, JSON input ownership, cancellation, or local dispatch behavior.
 - Run the `src/runs` tests with type checking enabled; the repository's broad
   behavioral suite intentionally uses `--no-check`.
 - Update [Runs](../guides/runs.md) and [Tasks](../guides/tasks.md)
@@ -117,3 +151,4 @@ schedule creates a workflow run.
 ## Related reference
 
 - [`veryfront/runs`](../api-reference/veryfront/runs.md)
+- [`veryfront/trigger`](../api-reference/veryfront/trigger.md)

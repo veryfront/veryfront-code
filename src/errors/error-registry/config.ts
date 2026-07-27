@@ -93,7 +93,7 @@ export const TRIGGER_CONFIG_INVALID = defineError({
   status: 400,
   title: "Invalid trigger configuration",
   suggestion:
-    "Check trigger ID format (lowercase, alphanumeric, dots/slashes/hyphens) and ensure all input values are JSON-serializable",
+    "Use bounded slash-separated lowercase IDs and data-only JSON inputs without accessors, sparse arrays, cycles, or unsupported values",
 });
 
 /** Registry fragment for CONFIG errors (slug → definition). */

@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    28 |      48.3% | Current formal closure evidence remains valid       |
+| Closed                         |    29 |      50.0% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    28 |      48.3% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    27 |      46.6% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -64,6 +64,7 @@ stricter closure count.
 - `schemas`
 - `studio`
 - `task`
+- `trigger`
 - `types`
 - `version.ts`
 
@@ -98,7 +99,6 @@ stricter closure count.
 - `testing`
 - `tool`
 - `transforms`
-- `trigger`
 - `webhook`
 - `workflow`
 - `index.ts`
@@ -125,7 +125,7 @@ The current closed review chain covers `cache`, `channels`, `chat`, `config`,
 `embedding`, `errors`, `eval`, `extensions`, `fs`, `issues`, `knowledge`,
 `markdown`, `mdx`, `metrics`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schemas`,
-`studio`, `task`, `types`, and `version.ts`.
+`studio`, `task`, `trigger`, `types`, and `version.ts`.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
 and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
@@ -149,6 +149,10 @@ type-level regressions were remediated and revalidated.
 adapters, filesystem, HTTP and WebSocket lifecycle, KV and cache behavior,
 native compatibility, environment, process, path, test-support, public
 contracts, and cross-runtime consumers were remediated and revalidated.
+`trigger` is closed after its source discovery, canonical identity, bounded
+input, deterministic duplicate handling, local task/workflow/agent execution,
+cancellation, lifecycle, public surface, and direct consumers were remediated
+and revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -278,8 +282,104 @@ task definition, discovery, lookup, context, or execution boundary.
 `schedulable` remains scheduling eligibility metadata; schedule admission,
 timeouts, and enforcement belong to the still-open `schedule` and control-plane
 units rather than being hidden inside the generic task runner. The `task` unit
-is closed. Adjacent edits keep `discovery`, `server`, and `trigger` in
-revalidation.
+is closed. Adjacent edits keep `discovery` and `server` in revalidation.
+
+### Trigger closure checkpoint
+
+The `trigger` audit unit owns the public `veryfront/trigger` contracts for
+canonical target identity, shared schedule/webhook source discovery, and local
+task, workflow, or agent execution. Its direct dependencies are configuration,
+project discovery, structured errors, platform adapters, bounded JSON schemas,
+the unified task runtime, the workflow client, and project agent/tool
+registries. Direct production consumers are schedule and webhook discovery and
+the local `veryfront schedule run` and `veryfront webhook run` command paths.
+
+The current trigger findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** empty path segments,
+  traversal-shaped IDs, inherited fields, accessors, cycles, sparse arrays,
+  custom serialization, and caller-owned mutable values could cross trigger
+  admission. The source was a permissive ID regex, ordinary property reads,
+  and a hand-written walk that validated without copying. The consequence was
+  ambiguous target identity, caller-code execution during validation,
+  post-validation mutation, and unbounded work. IDs now use bounded canonical
+  slash-separated segments; targets use own data descriptors; and trigger,
+  schedule, and webhook values become bounded data-only JSON snapshots with
+  precise safe rejection paths before asynchronous work.
+- **Symptom -> Source -> Consequence -> Remedy:** adapter order selected source
+  order, the first duplicate ID won, one of several valid exports in a file was
+  silently selected, and unsafe source directories reached the filesystem.
+  The source was unsorted collection, incremental first-wins de-duplication,
+  export-order selection, and no runtime directory boundary. The consequence
+  was deployment-dependent behavior and configuration-driven path escape.
+  Discovery now validates relative directories before adapter access, sorts
+  paths and results by code unit, rejects every member of an ambiguous ID
+  group, rejects distinct definitions in one file while accepting aliases of
+  the same object, and copies definitions through their owning normalizers.
+- **Symptom -> Source -> Consequence -> Remedy:** module-load errors could
+  expose credentials or unbounded hostile throwable text. The source was
+  direct `Error.message` or `String` coercion. The consequence was secret
+  disclosure, accessor execution, or diagnostic resource abuse. Discovery now
+  uses the shared bounded, credential-redacting throwable snapshot and emits
+  stable structured errors in deterministic order.
+- **Symptom -> Source -> Consequence -> Remedy:** malformed target kinds fell
+  through to agent execution, local agent targets were reported as
+  unsupported, malformed agent responses crossed the typed boundary, and task
+  input could change while discovery yielded. The source was branch fallthrough,
+  stale capability assumptions, trusted response property access, and late
+  input consumption. The runner now snapshots and validates its target and
+  inputs before yielding, executes every documented target kind, validates
+  agent results through own data descriptors, and reports structured
+  configuration, lookup, or execution failures.
+- **Symptom -> Source -> Consequence -> Remedy:** cancellation did not
+  consistently reach agents or workflows; workflow cancellation could leave
+  an active run and a result-poll timer after the caller returned. The source
+  was signal propagation limited to tasks plus a race against an
+  uncancellable polling promise. The consequence was continued work, leaked
+  timers, and unreliable shutdown evidence. Agents receive the caller signal;
+  `WorkflowHandle.result(signal?)` cancels only its waiter without leaking its
+  timer; and trigger failure or abort cancels and settles any active workflow
+  before destroying the client. Simultaneous execution and cleanup failures
+  retain both causes.
+- **Symptom -> Source -> Consequence -> Remedy:** durations mixed target-local
+  wall clocks, public exports lacked ownership tests and runtime guards, and
+  docs/error guidance still described task/workflow-only execution. The
+  consequence was non-monotonic evidence and contract drift. Total
+  discovery-plus-execution duration now uses the monotonic clock and a
+  non-negative integer result; an exact public-surface test owns every runtime
+  export; JSDoc, generated references, architecture guidance, schedule
+  concepts, and trigger error recovery text match current behavior.
+
+Reproducible checkpoint evidence:
+
+- Eleven trigger, workflow, schedule, webhook, discovery, schema, and error
+  suites pass 198 nested steps with zero failures and with resource/operation
+  sanitizers enabled, including adversarial IDs and values, caller-mutation
+  isolation, same-file and cross-file ambiguity, redacted module failures,
+  pre-abort behavior, agent response validation, workflow cancellation, and
+  result-waiter timer cleanup.
+- The broader error/schema and direct bounded-JSON consumer portfolio passes
+  47 tests and 904 nested steps with zero behavioral failures. The four
+  pre-existing typed fixture diagnostics remain confined to their already-open
+  owners; production entrypoints typecheck in the repository gate.
+- `deno task docs:validate` passes all 40 generated API pages, 66 published
+  guides, 111 public documentation files, executable examples, and 744 links.
+- `deno task verify:quick` passes manifest freshness, formatting of 4,401
+  files, lint and policy ratchets, dependency and module boundaries with zero
+  cyclic edges, extension audits, documentation validation, and every
+  configured production entrypoint typecheck.
+- `deno task typecheck:consumer` rebuilds the npm package and every first-party
+  extension, reports zero npm vulnerabilities, verifies root-import
+  lifecycle, and compiles the documented consumer composition against the
+  generated declarations. `git diff --check` also passes.
+
+No unresolved critical or high-confidence production risk remains inside the
+trigger identity, source discovery, local execution, cancellation, or public
+contract boundary. The narrow bounded-JSON diagnostic additions and trigger
+error guidance were revalidated across `schemas` and `errors`, so those units
+remain closed. The owning `schedule`, `webhook`, and `workflow` units remain in
+top-level revalidation; their narrow normalization and result-waiter changes
+are evidence for, but do not substitute for, their complete module reviews.
 
 ### Issues closure checkpoint
 

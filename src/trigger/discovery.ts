@@ -1,7 +1,11 @@
 import { join } from "@std/path";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { normalizeDiscoveryPath } from "#veryfront/discovery/discovery-utils.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
+import { TRIGGER_CONFIG_INVALID } from "#veryfront/errors";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/index.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 
 const TRIGGER_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
@@ -13,8 +17,10 @@ const TRIGGER_IGNORE_PATTERNS = [
   "*.spec.*",
 ] as const;
 
+/** Source definition families handled by shared trigger discovery. */
 export type SourceTriggerKind = "schedule" | "webhook";
 
+/** Stable failure categories emitted while discovering source triggers. */
 export type SourceTriggerDiscoveryErrorCode =
   | "parse_error"
   | "invalid_definition"
@@ -23,31 +29,122 @@ export type SourceTriggerDiscoveryErrorCode =
   | "unsupported_target"
   | "manual_conflict";
 
+/** Structured failure produced while discovering one source definition. */
 export interface SourceTriggerDiscoveryError {
+  /** Stable discriminator for structured source discovery failures. */
   kind: "source_trigger_discovery_error";
+  /** Definition kind being discovered. */
   sourceKind: SourceTriggerKind;
+  /** Source path that produced the failure. */
   sourcePath: string;
+  /** Definition id when it could be safely determined. */
   sourceId?: string;
+  /** Machine-readable discovery failure category. */
   code: SourceTriggerDiscoveryErrorCode;
+  /** Human-readable, safe error description. */
   message: string;
+  /** Structured diagnostic context such as every ambiguous source path. */
   details?: Record<string, unknown>;
 }
 
+/** Deterministic source trigger discovery result. */
 export interface SourceTriggerDiscoveryResult<T> {
+  /** Unique, normalized definitions in deterministic id order. */
   items: T[];
+  /** Deterministically ordered source failures. */
   errors: SourceTriggerDiscoveryError[];
 }
 
+/** Shared filesystem and source-kind options for trigger discovery. */
 export interface TriggerDiscoveryOptions {
+  /** Project root used to resolve local source paths and module imports. */
   projectDir: string;
+  /** Runtime-specific filesystem and module execution adapter. */
   adapter: RuntimeAdapter;
+  /** Optional project configuration, including virtual filesystem mode. */
   config?: VeryfrontConfig;
+  /** Source directory relative to the project or virtual filesystem root. */
   triggerDir: string;
+  /** Source definition kind used in diagnostics. */
   sourceKind: SourceTriggerKind;
 }
 
+/** Minimum contract required for source trigger de-duplication. */
 export interface TriggerDefinitionWithId {
+  /** Canonical source trigger identifier. */
   id: string;
+}
+
+/** Validation and normalization contract for source trigger discovery. */
+export interface SourceTriggerDiscoveryOptions<T extends TriggerDefinitionWithId>
+  extends TriggerDiscoveryOptions {
+  /** Reject module exports that are not definitions of the expected kind. */
+  validate: (value: unknown) => value is T;
+  /** Copy and normalize a validated definition before returning it. */
+  normalize?: (value: T) => T;
+}
+
+function invalidDiscoveryConfiguration(detail: string, cause?: unknown): never {
+  throw TRIGGER_CONFIG_INVALID.create({
+    detail,
+    ...(cause === undefined ? {} : { cause }),
+  });
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+function normalizeTriggerDirectory(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_PATH_LENGTH_CHARS ||
+    containsControlCharacter(value) ||
+    value.startsWith("file://")
+  ) {
+    invalidDiscoveryConfiguration(
+      `Trigger source directory must be a non-empty relative path of at most ${MAX_PATH_LENGTH_CHARS} characters without control characters.`,
+    );
+  }
+
+  let normalized: string;
+  try {
+    normalized = normalizeDiscoveryPath(value).replace(/\/+$/, "");
+  } catch (error) {
+    invalidDiscoveryConfiguration("Trigger source directory is invalid.", error);
+  }
+
+  if (
+    normalized.length === 0 ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.split("/").some((segment) =>
+      segment.length === 0 || segment === "." || segment === ".."
+    )
+  ) {
+    invalidDiscoveryConfiguration(
+      "Trigger source directory must stay within the project and cannot contain empty, dot, or traversal segments.",
+    );
+  }
+  return normalized;
+}
+
+function validateDiscoveryProjectDir(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_PATH_LENGTH_CHARS ||
+    containsControlCharacter(value)
+  ) {
+    invalidDiscoveryConfiguration(
+      `Trigger project directory must be a non-empty path of at most ${MAX_PATH_LENGTH_CHARS} characters without control characters.`,
+    );
+  }
 }
 
 function resolveTriggerBaseDir(
@@ -62,7 +159,11 @@ function resolveTriggerBaseDir(
 }
 
 function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return snapshotThrowableDiagnostic(error);
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function createError(input: {
@@ -85,45 +186,100 @@ function createError(input: {
 }
 
 async function collectTriggerFiles(baseDir: string, adapter: RuntimeAdapter) {
-  return await collectFiles({
+  const files = await collectFiles({
     baseDir,
     extensions: [...TRIGGER_FILE_EXTENSIONS],
     recursive: true,
     ignorePatterns: [...TRIGGER_IGNORE_PATTERNS],
     adapter,
   });
+  return files.sort((left, right) =>
+    compareText(left.path.replaceAll("\\", "/"), right.path.replaceAll("\\", "/"))
+  );
 }
 
-function extractTriggerExport<T>(
+type TriggerExportSelection<T> =
+  | { kind: "missing" }
+  | { kind: "selected"; exportName: string; definition: T }
+  | { kind: "ambiguous"; exportNames: string[] };
+
+function selectTriggerExport<T>(
   module: Record<string, unknown>,
   validate: (value: unknown) => value is T,
-): { exportName: string; definition: T } | null {
-  if (validate(module.default)) {
-    return { exportName: "default", definition: module.default };
+): TriggerExportSelection<T> {
+  const candidates: Array<{ exportNames: string[]; definition: T }> = [];
+
+  function addCandidate(exportName: string, value: unknown): void {
+    if (!validate(value)) return;
+    const alias = candidates.find((candidate) => Object.is(candidate.definition, value));
+    if (alias) {
+      alias.exportNames.push(exportName);
+      return;
+    }
+    candidates.push({ exportNames: [exportName], definition: value });
   }
 
-  for (const [exportName, value] of Object.entries(module)) {
-    if (exportName === "default") continue;
-    if (validate(value)) return { exportName, definition: value };
+  addCandidate("default", module.default);
+  for (
+    const [exportName, value] of Object.entries(module).sort(([left], [right]) =>
+      compareText(left, right)
+    )
+  ) {
+    if (exportName !== "default") addCandidate(exportName, value);
   }
 
-  return null;
+  if (candidates.length === 0) return { kind: "missing" };
+  if (candidates.length > 1) {
+    return {
+      kind: "ambiguous",
+      exportNames: candidates.flatMap((candidate) => candidate.exportNames).sort(compareText),
+    };
+  }
+
+  const candidate = candidates[0]!;
+  return {
+    kind: "selected",
+    exportName: candidate.exportNames.includes("default") ? "default" : candidate.exportNames[0]!,
+    definition: candidate.definition,
+  };
 }
 
+/**
+ * Discover, validate, normalize, and deterministically de-duplicate source
+ * trigger definitions.
+ */
 export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
-  options: TriggerDiscoveryOptions & {
-    validate: (value: unknown) => value is T;
-  },
+  options: SourceTriggerDiscoveryOptions<T>,
 ): Promise<SourceTriggerDiscoveryResult<T>> {
-  const { projectDir, adapter, config, triggerDir, sourceKind, validate } = options;
-  const baseDir = resolveTriggerBaseDir(projectDir, triggerDir, config);
-  const items: T[] = [];
+  const {
+    projectDir,
+    adapter,
+    config,
+    triggerDir,
+    sourceKind,
+    validate,
+    normalize = (value: T): T => value,
+  } = options;
+  validateDiscoveryProjectDir(projectDir);
+  if (sourceKind !== "schedule" && sourceKind !== "webhook") {
+    invalidDiscoveryConfiguration("Trigger source kind must be schedule or webhook.");
+  }
+  if (typeof validate !== "function" || typeof normalize !== "function") {
+    invalidDiscoveryConfiguration(
+      "Trigger discovery requires callable validation and normalization contracts.",
+    );
+  }
+  const baseDir = resolveTriggerBaseDir(
+    projectDir,
+    normalizeTriggerDirectory(triggerDir),
+    config,
+  );
+  const candidates: Array<{ definition: T; sourcePath: string }> = [];
   const errors: SourceTriggerDiscoveryError[] = [];
-  const seenIds = new Map<string, string>();
 
   try {
     const dirExists = await adapter.fs.exists(baseDir);
-    if (!dirExists) return { items, errors };
+    if (!dirExists) return { items: [], errors };
 
     const files = await collectTriggerFiles(baseDir, adapter);
     for (const file of files) {
@@ -132,9 +288,9 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
           adapter,
           projectDir,
         }) as Record<string, unknown>;
-        const triggerExport = extractTriggerExport(module, validate);
+        const triggerExport = selectTriggerExport(module, validate);
 
-        if (!triggerExport) {
+        if (triggerExport.kind === "missing") {
           errors.push(createError({
             sourceKind,
             sourcePath: file.path,
@@ -143,22 +299,34 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
           }));
           continue;
         }
-
-        const existingPath = seenIds.get(triggerExport.definition.id);
-        if (existingPath) {
+        if (triggerExport.kind === "ambiguous") {
           errors.push(createError({
             sourceKind,
             sourcePath: file.path,
-            sourceId: triggerExport.definition.id,
-            code: "duplicate_source_id",
-            message: `Duplicate ${sourceKind} id "${triggerExport.definition.id}".`,
-            details: { firstSourcePath: existingPath },
+            code: "invalid_definition",
+            message: `File exports multiple distinct ${sourceKind} definitions: ${
+              triggerExport.exportNames.join(", ")
+            }. Export exactly one definition.`,
+            details: { exportNames: [...triggerExport.exportNames] },
           }));
           continue;
         }
 
-        seenIds.set(triggerExport.definition.id, file.path);
-        items.push(triggerExport.definition);
+        let definition: T;
+        try {
+          definition = normalize(triggerExport.definition);
+        } catch (error) {
+          errors.push(createError({
+            sourceKind,
+            sourcePath: file.path,
+            sourceId: triggerExport.definition.id,
+            code: "invalid_definition",
+            message: toErrorMessage(error),
+          }));
+          continue;
+        }
+
+        candidates.push({ definition, sourcePath: file.path });
       } catch (error) {
         errors.push(createError({
           sourceKind,
@@ -169,7 +337,7 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
       }
     }
 
-    return { items, errors };
+    return finalizeDiscoveryResult(candidates, errors, sourceKind);
   } catch (error) {
     errors.push(createError({
       sourceKind,
@@ -177,6 +345,49 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
       code: "parse_error",
       message: toErrorMessage(error),
     }));
-    return { items, errors };
+    return finalizeDiscoveryResult(candidates, errors, sourceKind);
   }
+}
+
+function finalizeDiscoveryResult<T extends TriggerDefinitionWithId>(
+  candidates: Array<{ definition: T; sourcePath: string }>,
+  errors: SourceTriggerDiscoveryError[],
+  sourceKind: SourceTriggerKind,
+): SourceTriggerDiscoveryResult<T> {
+  const candidatesById = new Map<string, Array<{ definition: T; sourcePath: string }>>();
+  for (const candidate of candidates) {
+    const matches = candidatesById.get(candidate.definition.id) ?? [];
+    matches.push(candidate);
+    candidatesById.set(candidate.definition.id, matches);
+  }
+
+  const items: T[] = [];
+  for (const [sourceId, matches] of candidatesById) {
+    if (matches.length === 1) {
+      items.push(matches[0]!.definition);
+      continue;
+    }
+
+    const sourcePaths = matches.map((match) => match.sourcePath).sort(compareText);
+    for (const sourcePath of sourcePaths) {
+      errors.push(createError({
+        sourceKind,
+        sourcePath,
+        sourceId,
+        code: "duplicate_source_id",
+        message: `Duplicate ${sourceKind} id "${sourceId}" was declared by: ${
+          sourcePaths.join(", ")
+        }.`,
+        details: { sourcePaths: [...sourcePaths] },
+      }));
+    }
+  }
+
+  items.sort((left, right) => compareText(left.id, right.id));
+  errors.sort((left, right) =>
+    compareText(left.sourcePath, right.sourcePath) ||
+    compareText(left.code, right.code) ||
+    compareText(left.message, right.message)
+  );
+  return { items, errors };
 }

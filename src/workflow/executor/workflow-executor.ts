@@ -95,8 +95,8 @@ export interface WorkflowHandle<TOutput = unknown> {
   settled(): Promise<void>;
   /** Get current status */
   status(): Promise<WorkflowRun>;
-  /** Wait for completion and get result */
-  result(): Promise<TOutput>;
+  /** Wait for completion and get the result; a signal cancels only this wait. */
+  result(signal?: AbortSignal): Promise<TOutput>;
   /** Cancel the workflow */
   cancel(): Promise<void>;
 }
@@ -585,7 +585,7 @@ export class WorkflowExecutor {
       runId,
       settled: () => settled,
       status: () => this.config.backend.getRun(runId) as Promise<WorkflowRun>,
-      result: () => this.waitForResult<TOutput>(runId),
+      result: (signal) => this.waitForResult<TOutput>(runId, signal),
       cancel: () => this.cancel(runId),
     };
   }
@@ -595,13 +595,16 @@ export class WorkflowExecutor {
    */
   private async waitForResult<TOutput>(
     runId: string,
+    signal?: AbortSignal,
     pollInterval = DEFAULT_RESULT_POLL_INTERVAL_MS,
     timeoutMs = this.config.resultWaitTimeout ?? DEFAULT_RESULT_WAIT_TIMEOUT_MS,
   ): Promise<TOutput> {
+    signal?.throwIfAborted();
     const deadline = Date.now() + timeoutMs;
 
     while (true) {
       const run = await this.config.backend.getRun(runId);
+      signal?.throwIfAborted();
       if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
       if (run.status === "completed") return run.output as TOutput;
@@ -620,7 +623,7 @@ export class WorkflowExecutor {
         });
       }
 
-      await sleep(Math.min(pollInterval, remaining));
+      await sleep(Math.min(pollInterval, remaining), signal);
     }
   }
 

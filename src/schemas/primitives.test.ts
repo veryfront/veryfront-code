@@ -13,6 +13,7 @@ import {
   getSemverSchema,
   getTimestampSchema,
 } from "./index.ts";
+import { snapshotBoundedJsonValue } from "./json-value.ts";
 import { MAX_PATH_LENGTH_CHARS } from "../utils/constants/index.ts";
 
 function assertParseSuccess(result: { success: boolean }): void {
@@ -99,6 +100,20 @@ describe("primitive schemas", () => {
       cyclic.self = cyclic;
 
       assertParseFailure(getJsonValueSchema().safeParse(cyclic));
+    });
+
+    it("reports the narrowest safely observed rejection path", () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
+
+      assertEquals(snapshotBoundedJsonValue({ nested: { invalid: undefined } }), {
+        success: false,
+        path: ["nested", "invalid"],
+      });
+      assertEquals(snapshotBoundedJsonValue({ nested: cyclic }), {
+        success: false,
+        path: ["nested", "self"],
+      });
     });
 
     it("rejects values deeper than the validation limit without throwing", () => {

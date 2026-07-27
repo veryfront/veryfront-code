@@ -29,6 +29,21 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("copies caller-owned input before retaining a schedule definition", () => {
+    const input = { queue: { name: "priority" } };
+    const definition = schedule({
+      id: "daily-triage",
+      schedule: "0 8 * * 1-5",
+      target: { kind: "task", id: "sync-helpdesk" },
+      input,
+    });
+
+    input.queue.name = "mutated";
+
+    assertEquals(definition.input, { queue: { name: "priority" } });
+    assertEquals(definition.input === input, false);
+  });
+
   it("preserves task targets for scheduled tasks", () => {
     const definition = schedule({
       id: "triage-sweep",
@@ -516,7 +531,7 @@ describe("schedule/factory", () => {
             target: { kind: "workflow", id: "escalate-ticket" },
             input: customSerializationInput,
           },
-          "Schedule input must be JSON-serializable.",
+          "Schedule input.toJSON must be JSON-serializable.",
         ],
         [
           {

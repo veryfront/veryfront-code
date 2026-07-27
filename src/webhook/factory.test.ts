@@ -33,6 +33,25 @@ describe("webhook/factory", () => {
     assertEquals(isWebhookDefinition(definition), true);
   });
 
+  it("copies caller-owned filter values before retaining a webhook definition", () => {
+    const filterValue = { project: { id: "project-1" } };
+    const definition = webhook({
+      id: "ticket-created",
+      target: { kind: "workflow", id: "escalate-ticket" },
+      eventFilter: {
+        mode: "all",
+        conditions: [{ path: "$.project", operator: "equals", value: filterValue }],
+      },
+    });
+
+    filterValue.project.id = "mutated";
+
+    assertEquals(definition.eventFilter?.conditions[0]?.value, {
+      project: { id: "project-1" },
+    });
+    assertEquals(definition.eventFilter?.conditions[0]?.value === filterValue, false);
+  });
+
   it("requires an agent message mapping for agent targets", () => {
     assertThrows(
       () =>
