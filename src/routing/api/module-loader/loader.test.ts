@@ -186,6 +186,52 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("resolves npm dependencies declared by adapter-backed virtual projects", async () => {
+    const realDir = await makeTempDir();
+    await fs.mkdir(join(realDir, "lib"), { recursive: true });
+    await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(realDir, "package.json"),
+      JSON.stringify({ dependencies: { zod: "4.3.6" } }),
+    );
+    await fs.writeTextFile(
+      join(realDir, "lib", "schema.ts"),
+      [
+        `import { z } from "zod";`,
+        `export const result = z.object({ ok: z.boolean() }).parse({ ok: true }).ok;`,
+      ].join("\n"),
+    );
+    await fs.writeTextFile(
+      join(realDir, "pages", "api", "activity.ts"),
+      [
+        `import { result } from "@/lib/schema.ts";`,
+        `export function GET() { return new Response(result ? "parsed" : "bad"); }`,
+      ].join("\n"),
+    );
+
+    const tempRoot = await makeTempDir();
+    const virtualBase = join(tempRoot, `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "pages", "api", "activity.ts"),
+      adapter: virtualAdapter,
+      config: undefined,
+    });
+
+    assertEquals(typeof route?.GET, "function");
+  });
+
   // Deno resolves the direct import itself and knows nothing about `@/`, so the
   // route only loads if the failed direct import falls back to bundling, where
   // the import map plugin resolves the alias.
