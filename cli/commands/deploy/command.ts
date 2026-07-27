@@ -39,6 +39,7 @@ import {
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
 /**
@@ -69,6 +70,8 @@ export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
   skipSourcePush?: boolean;
   assetManifestPollIntervalMs?: number;
   assetManifestTimeoutMs?: number;
+  environmentPollIntervalMs?: number;
+  environmentTimeoutMs?: number;
 };
 
 /**
@@ -169,6 +172,20 @@ export interface ReleaseSourceVerification {
   sourceDigest: string;
 }
 
+export interface EnvironmentReadinessOptions {
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+}
+
+export interface EnvironmentReadinessTarget {
+  projectSlug: string;
+  environmentName: string;
+  url: string;
+  route?: string | null;
+  protected: boolean;
+  apiToken: string;
+}
+
 interface ReleaseSourceExpectation {
   projectId: string;
   releaseId: string;
@@ -201,6 +218,8 @@ interface DeploymentVerificationOptions extends VerificationRetryOptions {
 
 const MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS = 20;
 const MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS = 500;
+const DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS = 2_000;
+const DEFAULT_ENVIRONMENT_TIMEOUT_MS = 120_000;
 
 // Release creation can precede source-snapshot materialization. Only a
 // successfully read, well-formed digest mismatch enters this convergence loop;
@@ -625,6 +644,193 @@ function buildEnvironmentUrl(projectSlug: string, environment: Environment): str
   return `https://${projectSlug}.${environment.name}.veryfront.com`;
 }
 
+function buildCanonicalEnvironmentUrl(
+  projectSlug: string,
+  environmentName: string,
+): string {
+  return `https://${projectSlug}.${environmentName}.veryfront.com`;
+}
+
+function isMatchingVeryfrontHostedUrl(
+  url: URL,
+  target: EnvironmentReadinessTarget,
+): boolean {
+  const hostname = url.hostname.toLowerCase();
+  if (!hostname.endsWith(".veryfront.com") && !hostname.endsWith(".veryfront.org")) {
+    return false;
+  }
+  const parsed = parseProjectDomain(hostname);
+  return parsed.isVeryfrontDomain &&
+    parsed.slug === target.projectSlug.toLowerCase() &&
+    parsed.environment === target.environmentName.toLowerCase();
+}
+
+function isVeryfrontSignInUrl(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase();
+  return (hostname === "veryfront.com" || hostname === "veryfront.org") &&
+    (url.pathname === "/sign-in" || url.pathname.startsWith("/sign-in/"));
+}
+
+interface EnvironmentReadinessProbe {
+  url: string;
+  authenticate: boolean;
+  acceptAuthenticationChallenge: boolean;
+}
+
+function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error(
+      `Environment URL "${baseUrl}" is invalid. Check the environment configuration and deploy again.`,
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      `Environment URL "${baseUrl}" must use HTTP or HTTPS. Check the environment configuration and deploy again.`,
+    );
+  }
+  if (!route.startsWith("/")) {
+    throw new Error(`Environment readiness route "${route}" must start with "/".`);
+  }
+
+  const probeUrl = new URL(route, url);
+  return route === "/" ? probeUrl.origin : probeUrl.href;
+}
+
+function secureEnvironmentProbeUrl(url: string): string {
+  const secureUrl = new URL(url);
+  secureUrl.protocol = "https:";
+  return secureUrl.href;
+}
+
+function buildEnvironmentReadinessProbes(
+  target: EnvironmentReadinessTarget,
+): EnvironmentReadinessProbe[] {
+  const route = target.route === undefined ? "/" : target.route;
+  if (route === null) return [];
+
+  const targetUrl = buildEnvironmentProbeUrl(target.url, route);
+  if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
+    return [
+      {
+        url: targetUrl,
+        authenticate: false,
+        acceptAuthenticationChallenge: true,
+      },
+      {
+        url: buildEnvironmentProbeUrl(
+          buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
+          route,
+        ),
+        authenticate: true,
+        acceptAuthenticationChallenge: false,
+      },
+    ];
+  }
+  return [{
+    url: target.protected ? secureEnvironmentProbeUrl(targetUrl) : targetUrl,
+    authenticate: target.protected,
+    acceptAuthenticationChallenge: false,
+  }];
+}
+
+function isSignInRedirect(response: Response, requestUrl: string): boolean {
+  if (response.status < 300 || response.status >= 400) return false;
+  const location = response.headers.get("location");
+  if (!location) return false;
+
+  try {
+    return isVeryfrontSignInUrl(new URL(location, requestUrl));
+  } catch {
+    return false;
+  }
+}
+
+function isTransientEnvironmentStatus(status: number): boolean {
+  return status === 404 || status === 408 || status === 425 || status === 429 ||
+    status >= 500;
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Readiness does not depend on response payload cleanup.
+  }
+}
+
+export async function waitForEnvironmentReady(
+  target: EnvironmentReadinessTarget,
+  options: EnvironmentReadinessOptions = {},
+): Promise<void> {
+  const pollIntervalMs = options.pollIntervalMs === undefined ||
+      !Number.isFinite(options.pollIntervalMs)
+    ? DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS
+    : Math.max(1, Math.trunc(options.pollIntervalMs));
+  const timeoutMs = options.timeoutMs === undefined || !Number.isFinite(options.timeoutMs)
+    ? DEFAULT_ENVIRONMENT_TIMEOUT_MS
+    : Math.max(1, Math.trunc(options.timeoutMs));
+  const deadline = Date.now() + timeoutMs;
+  for (const probe of buildEnvironmentReadinessProbes(target)) {
+    const headers = new Headers({ "Cache-Control": "no-cache" });
+    if (probe.authenticate) {
+      headers.set("Cookie", `authToken=${target.apiToken}`);
+    }
+    let lastResponse = "no response";
+
+    for (;;) {
+      let response: Response | undefined;
+      try {
+        response = await fetch(probe.url, {
+          method: "GET",
+          redirect: "manual",
+          headers,
+          signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        });
+      } catch {
+        lastResponse = "network error";
+      }
+
+      if (response) {
+        lastResponse = `HTTP ${response.status}`;
+        const signInRedirect = isSignInRedirect(response, probe.url);
+        const authenticationChallenge = signInRedirect ||
+          response.status === 401 ||
+          response.status === 403;
+        const ready = response.status >= 200 && response.status < 300 ||
+          response.status >= 300 && response.status < 400 && !signInRedirect ||
+          probe.acceptAuthenticationChallenge && authenticationChallenge;
+        await cancelResponseBody(response);
+
+        if (ready) break;
+        if (authenticationChallenge) {
+          const message = probe.authenticate
+            ? `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`
+            : `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
+          throw new Error(message);
+        }
+        if (!isTransientEnvironmentStatus(response.status)) {
+          throw new Error(
+            `Environment URL ${probe.url} returned HTTP ${response.status}. Check the environment configuration and deploy again.`,
+          );
+        }
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(
+          `Environment URL ${probe.url} did not become ready within ${
+            Math.ceil(timeoutMs / 1000)
+          }s (last response: ${lastResponse}). Check the deployment and run deploy again.`,
+        );
+      }
+      await wait(Math.min(pollIntervalMs, remainingMs));
+    }
+  }
+}
+
 async function inferDeployProjectSlug(projectDir: string): Promise<string> {
   const fs = createFileSystem();
   const packagePath = join(projectDir, "package.json");
@@ -892,6 +1098,8 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     skipSourcePush,
     assetManifestPollIntervalMs,
     assetManifestTimeoutMs,
+    environmentPollIntervalMs,
+    environmentTimeoutMs,
   } = options;
 
   if (isJsonMode()) {
@@ -1000,6 +1208,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   let release: Release;
   let deployment: Deployment;
   let verification: DeploymentVerification;
+  let environmentUrl: string;
   try {
     release = await createRelease(client, project.id, { name: releaseName, branch });
     if (!release.version) throw new Error(`Release ${release.id} has no version`);
@@ -1036,6 +1245,23 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       commitSha: source.commitSha,
       sourceDigest: source.sourceDigest,
     }, { verifiedRelease });
+
+    environmentUrl = buildEnvironmentUrl(verification.projectSlug, environment);
+    spinner.update(`Waiting for ${env} URL...`);
+    await waitForEnvironmentReady(
+      {
+        projectSlug: verification.projectSlug,
+        environmentName: environment.name,
+        url: environmentUrl,
+        route: expectedPageRoutes.find((route) => !route.includes("[")) ?? null,
+        protected: environment.protected,
+        apiToken: config.apiToken,
+      },
+      {
+        pollIntervalMs: environmentPollIntervalMs,
+        timeoutMs: environmentTimeoutMs,
+      },
+    );
     spinner.stop();
   } catch (error) {
     spinner.stop();
@@ -1058,7 +1284,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
   const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
   if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
-  logInfo(`  URL: ${buildEnvironmentUrl(verification.projectSlug, environment)}`);
+  logInfo(`  URL: ${environmentUrl}`);
   logInfo(`  Protected: ${environment.protected ? "yes" : "no"}`);
   logInfo(
     verification.commitSha
@@ -1083,6 +1309,8 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     skipSourcePush,
     assetManifestPollIntervalMs,
     assetManifestTimeoutMs,
+    environmentPollIntervalMs,
+    environmentTimeoutMs,
   } = options;
 
   try {
@@ -1236,6 +1464,24 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }, { verifiedRelease });
     streamJsonLine({ type: "step", name: "verify-deployment", status: "completed" });
 
+    const environmentUrl = buildEnvironmentUrl(verification.projectSlug, environment);
+    streamJsonLine({ type: "step", name: "wait-environment-url", status: "started" });
+    await waitForEnvironmentReady(
+      {
+        projectSlug: verification.projectSlug,
+        environmentName: environment.name,
+        url: environmentUrl,
+        route: expectedPageRoutes.find((route) => !route.includes("[")) ?? null,
+        protected: environment.protected,
+        apiToken: config.apiToken,
+      },
+      {
+        pollIntervalMs: environmentPollIntervalMs,
+        timeoutMs: environmentTimeoutMs,
+      },
+    );
+    streamJsonLine({ type: "step", name: "wait-environment-url", status: "completed" });
+
     const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
     if (routingConvergenceWarning) {
       streamJsonLine({
@@ -1259,7 +1505,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
         environment: env,
         environmentId: verification.environmentId,
         deploymentId: verification.deploymentId,
-        url: buildEnvironmentUrl(verification.projectSlug, environment),
+        url: environmentUrl,
         protected: environment.protected,
         routingConvergence: deployment.routing_convergence ?? null,
         commitSha: verification.commitSha,

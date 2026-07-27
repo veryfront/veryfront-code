@@ -1917,6 +1917,10 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assert(candidates.has("h-16"));
     assert(candidates.has("md:h-[4.5rem]"));
     assert(candidates.has("lg:h-[5rem]"));
+    assert(
+      candidates.has("rounded-full"),
+      "framework chat candidates must be included in release CSS compilation",
+    );
   });
 
   // B2: route closure includes transitive imports, not just page entrypoint.

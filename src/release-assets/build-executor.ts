@@ -53,6 +53,7 @@ import { register, tryResolve } from "../extensions/contracts.ts";
 import type { Plugin } from "veryfront/extensions/bundler";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
+import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { validatePathSync } from "#veryfront/security/path-validation.ts";
 import {
   collectCssImportPaths,
@@ -2891,9 +2892,11 @@ function mergeModuleCssImports(
 
 /** Extract Tailwind class candidates from materialized source. */
 function collectClassCandidates(sourceByPath: Map<string, string>): Set<string> {
-  return extractCandidatesFromFiles(
+  const candidates = extractCandidatesFromFiles(
     [...sourceByPath.entries()].map(([path, content]) => ({ path, content })),
   );
+  for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
+  return candidates;
 }
 
 /** Run an async task over items with a fixed concurrency limit.
