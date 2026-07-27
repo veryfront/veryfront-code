@@ -28,7 +28,7 @@ export const NODE_BUILTINS = ROUTE_NODE_BUILTINS;
 
 export async function readProjectDependencies(
   projectDir: string,
-  fs: FileSystem,
+  fs: Pick<FileSystem, "readTextFile">,
 ): Promise<Map<string, string>> {
   return await readProjectDependenciesForRoute(projectDir, fs);
 }
