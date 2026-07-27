@@ -155,7 +155,7 @@ export interface DeploymentVerification {
   releaseId: string;
   releaseVersion: string;
   deploymentId: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
 }
 
@@ -163,14 +163,14 @@ export interface ReleaseSourceVerification {
   projectId: string;
   releaseId: string;
   releaseVersion: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
 }
 
 interface ReleaseSourceExpectation {
   projectId: string;
   releaseId: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
   releaseName?: string;
 }
@@ -182,7 +182,7 @@ interface DeploymentExpectation {
   environmentName: string;
   releaseId: string;
   deploymentId: string;
-  commitSha: string;
+  commitSha: string | null;
   sourceDigest: string;
   releaseName?: string;
 }
@@ -456,6 +456,10 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function formatSourceReference(commitSha: string | null): string {
+  return commitSha ? `pushed commit ${commitSha}` : "pushed source digest";
+}
+
 export async function verifyReleaseSource(
   client: ApiClient,
   projectReference: string,
@@ -493,7 +497,9 @@ export async function verifyReleaseSource(
   }
 
   throw new Error(
-    `Release ${expected.releaseId} source does not match pushed commit ${expected.commitSha}: expected source digest ${expected.sourceDigest}; last observed ${sourceDigest}`,
+    `Release ${expected.releaseId} source does not match ${
+      formatSourceReference(expected.commitSha)
+    }: expected source digest ${expected.sourceDigest}; last observed ${sourceDigest}`,
   );
 }
 
@@ -580,7 +586,7 @@ export async function resolvePushedSource(input: {
   projectSlug: string;
   branch: string;
   requireClean: boolean;
-}): Promise<{ commitSha: string; sourceDigest: string }> {
+}): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
     throw new Error(
@@ -854,7 +860,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
 
   spinner.update("Verifying pushed source...");
-  let source: { commitSha: string; sourceDigest: string };
+  let source: { commitSha: string | null; sourceDigest: string };
   try {
     source = await resolvePushedSource({
       projectDir,
@@ -943,7 +949,11 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
   logInfo(`  URL: ${buildEnvironmentUrl(verification.projectSlug, environment)}`);
   logInfo(`  Protected: ${environment.protected ? "yes" : "no"}`);
-  logInfo(`  Commit: ${verification.commitSha}`);
+  logInfo(
+    verification.commitSha
+      ? `  Commit: ${verification.commitSha}`
+      : "  Commit: unavailable (source digest verified)",
+  );
   logInfo(`  Source digest: ${verification.sourceDigest}`);
   logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
 

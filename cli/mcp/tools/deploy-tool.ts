@@ -46,7 +46,7 @@ export interface TriggerDeployResult {
   deploymentId?: string;
   release?: { id: string; name: string; version: string };
   environment?: { id: string; name: string };
-  commitSha?: string;
+  commitSha?: string | null;
   sourceDigest?: string;
   controlPlane?: string;
   error?: string;
