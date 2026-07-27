@@ -170,7 +170,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           null,
           React.createElement(
             "section",
-            { className: "content" },
+            { className: "content", style: { color: "red" } },
             React.createElement(ServerChild),
             React.createElement(NestedClient, { count: 2 }, "nested text"),
           ),
@@ -208,6 +208,7 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
       assertEquals(payload.tree?.children?.[0]?.children?.[1]?.type, "client");
       assertStringIncludes(payload.html, "data-rsc-children=");
       assertStringIncludes(payload.html, "server text");
+      assertStringIncludes(payload.html, 'style="color:red"');
       assertStringIncludes(
         payload.html,
         'data-client-ref="/_veryfront/fs/nested-client.js#default"',

@@ -9,8 +9,16 @@ import {
   type RSCComponent,
   type RSCComponentProps,
 } from "./component-detector.ts";
-import { escapeHtml, renderAttributes, treeToHTML } from "./html-generator.ts";
+import { escapeHtml, renderHostElement, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
+import {
+  assertRscRenderCapacity,
+  claimRscRenderNode,
+  createRscRenderBudget,
+  mapRscRenderChildren,
+  MAX_RSC_RENDER_NODES,
+  type RscRenderBudget,
+} from "./tree-budget.ts";
 
 const logger = serverLogger.component("rsc");
 
@@ -22,21 +30,55 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
   clientRefs: Map<string, string>,
   reactVersion?: string,
 ): Promise<RSCNode> {
+  return await renderTreeWithBudget(
+    Component,
+    props,
+    clientManifest,
+    clientRefs,
+    reactVersion,
+    createRscRenderBudget(),
+    0,
+  );
+}
+
+async function renderTreeWithBudget<Props extends RSCComponentProps = RSCComponentProps>(
+  Component: React.ComponentType<Props> | React.ReactElement | string | number | null | undefined,
+  props: Props,
+  clientManifest: Map<string, ClientComponentMeta>,
+  clientRefs: Map<string, string>,
+  reactVersion: string | undefined,
+  budget: RscRenderBudget,
+  depth: number,
+): Promise<RSCNode> {
+  assertRscRenderCapacity(budget, 0, depth);
+
   if (Component == null || typeof Component === "string" || typeof Component === "number") {
-    return { type: "html", html: Component == null ? "" : escapeHtml(String(Component)) };
+    return createHtmlNode(
+      Component == null ? "" : escapeHtml(String(Component)),
+      budget,
+      depth,
+    );
   }
 
   if (React.isValidElement(Component)) {
-    return processElement(Component, clientManifest, clientRefs, reactVersion);
+    return processElementWithBudget(
+      Component,
+      clientManifest,
+      clientRefs,
+      reactVersion,
+      budget,
+      depth,
+    );
   }
 
   if (typeof Component !== "function") {
-    return { type: "html", html: escapeHtml(String(Component)) };
+    throw new TypeError("RSC root must be a React component, element, string, number, or null");
   }
 
   const rscComponent = Component as unknown as RSCComponent;
 
   if (isClientComponent(rscComponent, clientManifest)) {
+    claimRscRenderNode(budget, depth);
     const componentId = getComponentId(rscComponent);
     registerClientRef(componentId, rscComponent, clientManifest, clientRefs);
 
@@ -44,11 +86,13 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
       type: "client",
       component: componentId,
       props: serializeProps(props),
-      children: await renderBoundaryChildren(
-        props.children as React.ReactNode,
+      children: await renderBoundaryChildrenWithBudget(
+        readChildrenProp(props),
         clientManifest,
         clientRefs,
         reactVersion,
+        budget,
+        depth + 1,
       ),
     };
   }
@@ -58,12 +102,27 @@ export async function renderTree<Props extends RSCComponentProps = RSCComponentP
       ? React.createElement(Component as React.ComponentClass<Props>, props)
       : await (Component as React.FC<Props>)(props);
 
-    if (!element) return { type: "html", html: "" };
-    if (React.isValidElement(element)) {
-      return processElement(element, clientManifest, clientRefs, reactVersion);
+    if (element == null || typeof element === "boolean") {
+      return createHtmlNode("", budget, depth);
     }
-
-    return { type: "html", html: escapeHtml(String(element)) };
+    if (React.isValidElement(element)) {
+      return processElementWithBudget(
+        element,
+        clientManifest,
+        clientRefs,
+        reactVersion,
+        budget,
+        depth + 1,
+      );
+    }
+    if (
+      typeof element === "string" ||
+      typeof element === "number" ||
+      typeof element === "bigint"
+    ) {
+      return createHtmlNode(escapeHtml(String(element)), budget, depth);
+    }
+    throw new TypeError("RSC server components must return a valid React node");
   } catch (error) {
     logger.error("Error rendering component:", error);
     throw error;
@@ -77,85 +136,158 @@ export async function processElement(
   clientRefs: Map<string, string>,
   reactVersion?: string,
 ): Promise<RSCNode> {
+  return await processElementWithBudget(
+    element,
+    clientManifest,
+    clientRefs,
+    reactVersion,
+    createRscRenderBudget(),
+    0,
+  );
+}
+
+async function processElementWithBudget(
+  element: React.ReactElement,
+  clientManifest: Map<string, ClientComponentMeta>,
+  clientRefs: Map<string, string>,
+  reactVersion: string | undefined,
+  budget: RscRenderBudget,
+  depth: number,
+): Promise<RSCNode> {
+  assertRscRenderCapacity(budget, 0, depth);
   const { type } = element;
   // Cast props for React 19 compatibility (props is unknown in R19 types)
   const props = element.props as Record<string, unknown>;
 
   if (type === React.Fragment) {
-    const children = await renderChildren(
-      props.children as React.ReactNode,
+    claimRscRenderNode(budget, depth);
+    const children = await renderChildrenWithBudget(
+      readChildrenProp(props),
       clientManifest,
       clientRefs,
       reactVersion,
+      budget,
+      depth + 1,
     );
     return { type: "fragment", children };
   }
 
   if (typeof type === "string") {
-    const processedChildren = await renderChildren(
-      props.children as React.ReactNode,
+    const processedChildren = await renderChildrenWithBudget(
+      readChildrenProp(props),
       clientManifest,
       clientRefs,
       reactVersion,
+      budget,
+      depth + 1,
     );
 
     if (processedChildren.every((child) => child.type === "html")) {
       const html = await renderToStringAdapter(element, { reactVersion });
-      return { type: "html", html };
+      return createHtmlNode(html, budget, depth);
     }
 
-    const attrs = renderAttributes(props);
-    const childrenHtml = await Promise.all(
-      processedChildren.map((child) => treeToHTML(child, clientRefs, clientManifest)),
+    const childrenHtml = await treeToHTML(
+      { type: "fragment", children: processedChildren },
+      clientRefs,
+      clientManifest,
+      reactVersion,
     );
-    const html = `<${type}${attrs}>${childrenHtml.join("")}</${type}>`;
+    const html = await renderHostElement(type, props, childrenHtml, reactVersion);
 
-    return { type: "html", html };
+    return createHtmlNode(html, budget, depth);
   }
 
   if (typeof type === "function") {
-    return renderTree(
+    return renderTreeWithBudget(
       type as React.ComponentType<RSCComponentProps>,
       props,
       clientManifest,
       clientRefs,
       reactVersion,
+      budget,
+      depth + 1,
     );
   }
 
   const html = await renderToStringAdapter(element, { reactVersion });
-  return { type: "html", html };
+  return createHtmlNode(html, budget, depth);
 }
 
-export function renderChildren(
+export async function renderChildren(
   children: React.ReactNode,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
   reactVersion?: string,
 ): Promise<RSCNode[]> {
-  if (!children) return Promise.resolve([]);
-
-  return Promise.all(
-    React.Children.toArray(children).map((child) => {
-      if (React.isValidElement(child)) {
-        return processElement(child, clientManifest, clientRefs, reactVersion);
-      }
-
-      return Promise.resolve({ type: "html" as const, html: escapeHtml(String(child)) });
-    }),
+  return await renderChildrenWithBudget(
+    children,
+    clientManifest,
+    clientRefs,
+    reactVersion,
+    createRscRenderBudget(),
+    0,
   );
 }
 
-async function renderBoundaryChildren(
+async function renderChildrenWithBudget(
   children: React.ReactNode,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
-  reactVersion?: string,
+  reactVersion: string | undefined,
+  budget: RscRenderBudget,
+  depth: number,
 ): Promise<RSCNode[]> {
-  return await Promise.all(
-    React.Children.toArray(children).map((child) =>
-      renderBoundaryChild(child, clientManifest, clientRefs, reactVersion)
-    ),
+  if (children == null || typeof children === "boolean") return [];
+  const childValues = collectReactChildren(children, budget, depth);
+
+  return await mapRscRenderChildren(
+    childValues,
+    async (child) => {
+      if (React.isValidElement(child)) {
+        return await processElementWithBudget(
+          child,
+          clientManifest,
+          clientRefs,
+          reactVersion,
+          budget,
+          depth,
+        );
+      }
+
+      if (
+        typeof child !== "string" &&
+        typeof child !== "number" &&
+        typeof child !== "bigint"
+      ) {
+        throw new TypeError("RSC children must be valid React nodes");
+      }
+      return createHtmlNode(escapeHtml(String(child)), budget, depth);
+    },
+  );
+}
+
+async function renderBoundaryChildrenWithBudget(
+  children: React.ReactNode,
+  clientManifest: Map<string, ClientComponentMeta>,
+  clientRefs: Map<string, string>,
+  reactVersion: string | undefined,
+  budget: RscRenderBudget,
+  depth: number,
+): Promise<RSCNode[]> {
+  if (children == null || typeof children === "boolean") return [];
+  const childValues = collectReactChildren(children, budget, depth);
+  return await mapRscRenderChildren(
+    childValues,
+    (child) =>
+      renderBoundaryChild(
+        child,
+        clientManifest,
+        clientRefs,
+        reactVersion,
+        budget,
+        depth,
+      ),
   );
 }
 
@@ -163,40 +295,54 @@ async function renderBoundaryChild(
   child: React.ReactNode,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
-  reactVersion?: string,
+  reactVersion: string | undefined,
+  budget: RscRenderBudget,
+  depth: number,
 ): Promise<RSCNode> {
-  if (typeof child === "string" || typeof child === "number") {
+  assertRscRenderCapacity(budget, 0, depth);
+  if (
+    typeof child === "string" ||
+    typeof child === "number" ||
+    typeof child === "bigint"
+  ) {
+    claimRscRenderNode(budget, depth);
     return { type: "html", text: String(child) };
   }
 
   if (!React.isValidElement(child)) {
-    return { type: "fragment", children: [] };
+    throw new TypeError("RSC boundary children must be valid React nodes");
   }
 
   const type = child.type;
   const props = child.props as Record<string, unknown>;
   if (type === React.Fragment) {
+    claimRscRenderNode(budget, depth);
     return {
       type: "fragment",
-      children: await renderBoundaryChildren(
-        props.children as React.ReactNode,
+      children: await renderBoundaryChildrenWithBudget(
+        readChildrenProp(props),
         clientManifest,
         clientRefs,
         reactVersion,
+        budget,
+        depth + 1,
       ),
     };
   }
 
   if (typeof type === "string") {
+    claimRscRenderNode(budget, depth);
     return {
       type: "server",
       component: type,
       props: serializeProps(props),
-      children: await renderBoundaryChildren(
-        props.children as React.ReactNode,
+      children: await renderBoundaryChildrenWithBudget(
+        readChildrenProp(props),
         clientManifest,
         clientRefs,
         reactVersion,
+        budget,
+        depth + 1,
       ),
     };
   }
@@ -204,17 +350,20 @@ async function renderBoundaryChild(
   if (typeof type === "function") {
     const Component = type as RSCComponent;
     if (isClientComponent(Component, clientManifest)) {
+      claimRscRenderNode(budget, depth);
       const componentId = getComponentId(Component);
       registerClientRef(componentId, Component, clientManifest, clientRefs);
       return {
         type: "client",
         component: componentId,
         props: serializeProps(props),
-        children: await renderBoundaryChildren(
-          props.children as React.ReactNode,
+        children: await renderBoundaryChildrenWithBudget(
+          readChildrenProp(props),
           clientManifest,
           clientRefs,
           reactVersion,
+          budget,
+          depth + 1,
         ),
       };
     }
@@ -222,17 +371,59 @@ async function renderBoundaryChild(
     const rendered = Component.prototype?.render
       ? new (Component as React.ComponentClass<RSCComponentProps>)(props).render()
       : await (Component as React.FC<RSCComponentProps>)(props);
-    const renderedChildren = await renderBoundaryChildren(
+    const renderedChildren = await renderBoundaryChildrenWithBudget(
       rendered,
       clientManifest,
       clientRefs,
       reactVersion,
+      budget,
+      depth + 1,
     );
-    return renderedChildren.length === 1
-      ? renderedChildren[0]!
-      : { type: "fragment", children: renderedChildren };
+    if (renderedChildren.length === 1) return renderedChildren[0]!;
+    claimRscRenderNode(budget, depth);
+    return { type: "fragment", children: renderedChildren };
   }
 
   const html = await renderToStringAdapter(child, { reactVersion });
+  return createHtmlNode(html, budget, depth);
+}
+
+function createHtmlNode(
+  html: string,
+  budget: RscRenderBudget,
+  depth: number,
+): RSCNode {
+  claimRscRenderNode(budget, depth);
   return { type: "html", html };
+}
+
+function collectReactChildren(
+  children: React.ReactNode,
+  budget: RscRenderBudget,
+  depth: number,
+): React.ReactNode[] {
+  const collected: React.ReactNode[] = [];
+  React.Children.forEach(children, (child) => {
+    if (child == null) return;
+    if (collected.length >= MAX_RSC_RENDER_NODES - budget.nodes) {
+      assertRscRenderCapacity(budget, collected.length + 1, depth);
+    }
+    collected.push(child);
+  });
+  assertRscRenderCapacity(budget, collected.length, depth);
+  return collected;
+}
+
+function readChildrenProp(props: Record<string, unknown>): React.ReactNode {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(props, "children");
+  } catch {
+    throw new TypeError("RSC children could not be inspected safely");
+  }
+  if (!descriptor) return undefined;
+  if (!Object.hasOwn(descriptor, "value")) {
+    throw new TypeError("RSC children must be supplied as a data property");
+  }
+  return descriptor.value as React.ReactNode;
 }

@@ -204,13 +204,20 @@ function snapshotArray(
   }
 
   const keys = inspectOwnKeys(value);
-  if (keys.length !== length + 1) {
+  if (keys.length < length + 1 || keys.length > length + 2) {
     throw new NonSerializablePropError();
   }
 
   const sourceValues: unknown[] = new Array(length);
+  let indexCount = 0;
+  let serializationGuardCount = 0;
   for (const key of keys) {
     if (key === "length") continue;
+    const descriptor = inspectOwnDescriptor(value, key);
+    if (isSerializationGuard(key, descriptor)) {
+      serializationGuardCount += 1;
+      continue;
+    }
     if (typeof key !== "string") throw new NonSerializablePropError();
 
     const index = Number(key);
@@ -223,7 +230,6 @@ function snapshotArray(
       throw new NonSerializablePropError();
     }
 
-    const descriptor = inspectOwnDescriptor(value, key);
     if (
       descriptor.enumerable !== true ||
       !Object.hasOwn(descriptor, "value")
@@ -231,6 +237,14 @@ function snapshotArray(
       throw new NonSerializablePropError();
     }
     sourceValues[index] = descriptor.value;
+    indexCount += 1;
+  }
+  if (
+    indexCount !== length ||
+    serializationGuardCount > 1 ||
+    keys.length !== length + 1 + serializationGuardCount
+  ) {
+    throw new NonSerializablePropError();
   }
 
   addBytes(state, 1);
@@ -263,9 +277,9 @@ function snapshotObject(
   const snapshot: Record<string, unknown> = {};
   let propertyIndex = 0;
   for (const key of keys) {
-    if (typeof key !== "string") throw new NonSerializablePropError();
-
     const descriptor = inspectOwnDescriptor(value, key);
+    if (isSerializationGuard(key, descriptor)) continue;
+    if (typeof key !== "string") throw new NonSerializablePropError();
     if (
       descriptor.enumerable !== true ||
       !Object.hasOwn(descriptor, "value")
@@ -404,6 +418,18 @@ function installSerializationGuard(target: object): void {
     value: undefined,
     writable: false,
   });
+}
+
+function isSerializationGuard(
+  key: string | symbol,
+  descriptor: PropertyDescriptor,
+): boolean {
+  return key === "toJSON" &&
+    descriptor.configurable === false &&
+    descriptor.enumerable === false &&
+    descriptor.writable === false &&
+    Object.hasOwn(descriptor, "value") &&
+    descriptor.value === undefined;
 }
 
 function assertRawUtf8Size(value: string): void {

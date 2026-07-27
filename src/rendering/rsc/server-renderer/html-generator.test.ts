@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { renderAttributes } from "./html-generator.ts";
+import type { RSCNode } from "../types.ts";
+import { renderAttributes, treeToHTML } from "./html-generator.ts";
 
-describe("rendering/rsc/server-renderer/html-generator", () => {
+describe("rendering/rsc/server-renderer/html-generator", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   describe("renderAttributes", () => {
     it("should return empty string for empty props", () => {
       assertEquals(renderAttributes({}), "");
@@ -19,6 +23,10 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       const result = renderAttributes({ className: "container" });
       assertEquals(result.includes('class="container"'), true);
       assertEquals(result.includes("className"), false);
+    });
+
+    it("converts React's htmlFor prop to the HTML for attribute", () => {
+      assertEquals(renderAttributes({ htmlFor: "field" }), ' for="field"');
     });
 
     it("should render boolean true as attribute name only", () => {
@@ -72,9 +80,90 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       assertEquals(result.toLowerCase().includes("onclick"), false);
       assertEquals(result.toLowerCase().includes("onload"), false);
       assertEquals(result.includes('class="safe"'), true);
-      assertEquals(result.includes('htmlFor="field"'), true);
+      assertEquals(result.includes('for="field"'), true);
       assertEquals(result.includes('aria-label="Field"'), true);
       assertEquals(result.includes('data-test-id="field"'), true);
+    });
+
+    it("does not invoke accessors or custom primitive coercion", () => {
+      let getterCalls = 0;
+      let coercionCalls = 0;
+      const props = Object.create({
+        get inherited() {
+          getterCalls++;
+          return "inherited";
+        },
+      }) as Record<string, unknown>;
+      Object.defineProperty(props, "accessor", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "accessor";
+        },
+      });
+      props.safe = "value";
+      props.object = {
+        toString() {
+          coercionCalls++;
+          return "coerced";
+        },
+      };
+
+      assertEquals(renderAttributes(props), ' safe="value"');
+      assertEquals(getterCalls, 0);
+      assertEquals(coercionCalls, 0);
+    });
+  });
+
+  describe("treeToHTML", () => {
+    it("uses React's host markup semantics for aliases, styles, and void elements", async () => {
+      assertEquals(
+        await treeToHTML({
+          type: "server",
+          component: "label",
+          props: {
+            className: "field",
+            htmlFor: "name",
+            style: { color: "red" },
+          },
+          children: [{ type: "html", text: "Name" }],
+        }),
+        '<label class="field" for="name" style="color:red">Name</label>',
+      );
+      assertEquals(
+        await treeToHTML({
+          type: "server",
+          component: "input",
+          props: { disabled: true, name: "name" },
+        }),
+        '<input disabled="" name="name"/>',
+      );
+    });
+
+    it("rejects trees deeper than the rendering budget", async () => {
+      let node: RSCNode = { type: "html", text: "leaf" };
+      for (let depth = 0; depth < 65; depth++) {
+        node = { type: "fragment", children: [node] };
+      }
+
+      await assertRejects(
+        () => treeToHTML(node),
+        RangeError,
+        "depth limit",
+      );
+    });
+
+    it("rejects trees larger than the rendering budget", async () => {
+      const children = Array.from(
+        { length: 10_001 },
+        (): RSCNode => ({ type: "html", text: "x" }),
+      );
+
+      await assertRejects(
+        () => treeToHTML({ type: "fragment", children }),
+        RangeError,
+        "node limit",
+      );
     });
   });
 });

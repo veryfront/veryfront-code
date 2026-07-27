@@ -3,7 +3,22 @@ import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { HASH_SEED_FNV1A } from "#veryfront/utils";
 
 const FNV1A_PRIME = 16_777_619;
+const FNV1A_OFFSET_BASIS_64 = 14_695_981_039_346_656_037n;
+const FNV1A_PRIME_64 = 1_099_511_628_211n;
+const FNV1A_MASK_64 = (1n << 64n) - 1n;
 const MAX_SAFE_CACHE_AGE_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 4);
+const RAW_TEXT_ELEMENTS = new Set([
+  "iframe",
+  "noembed",
+  "noframes",
+  "noscript",
+  "plaintext",
+  "script",
+  "style",
+  "textarea",
+  "title",
+  "xmp",
+]);
 
 function updateHash(hash: number, value: string): number {
   for (let index = 0; index < value.length; index++) {
@@ -13,12 +28,24 @@ function updateHash(hash: number, value: string): number {
   return hash;
 }
 
-function updateLengthDelimitedHash(hash: number, label: string, value: string): number {
-  hash = updateHash(hash, label);
-  hash = updateHash(hash, ":");
-  hash = updateHash(hash, String(value.length));
-  hash = updateHash(hash, ":");
-  return updateHash(hash, value);
+function updateHash64(hash: bigint, value: string): bigint {
+  for (let index = 0; index < value.length; index++) {
+    hash ^= BigInt(value.charCodeAt(index));
+    hash = (hash * FNV1A_PRIME_64) & FNV1A_MASK_64;
+  }
+  return hash;
+}
+
+function updateLengthDelimitedHash64(
+  hash: bigint,
+  label: string,
+  value: string,
+): bigint {
+  hash = updateHash64(hash, label);
+  hash = updateHash64(hash, ":");
+  hash = updateHash64(hash, String(value.length));
+  hash = updateHash64(hash, ":");
+  return updateHash64(hash, value);
 }
 
 function hashText(value: string): string {
@@ -41,7 +68,7 @@ export class RSCProductionOptimizer {
   }
 
   private static minifyHTML(html: string): string {
-    return html.replace(/<!--[\s\S]*?-->/g, "").trim();
+    return stripHtmlComments(html).trim();
   }
 
   static getCacheHeaders(
@@ -69,24 +96,28 @@ export class RSCProductionOptimizer {
   }
 
   static generateETag(payload: RSCPayload): string {
-    let hash = HASH_SEED_FNV1A;
+    let hash = FNV1A_OFFSET_BASIS_64;
 
-    hash = updateLengthDelimitedHash(hash, "html", payload.html);
+    hash = updateLengthDelimitedHash64(hash, "html", payload.html);
 
     for (const key of Object.keys(payload.clientRefs).sort()) {
-      hash = updateLengthDelimitedHash(hash, "client-ref-key", key);
-      hash = updateLengthDelimitedHash(hash, "client-ref-value", payload.clientRefs[key] ?? "");
+      hash = updateLengthDelimitedHash64(hash, "client-ref-key", key);
+      hash = updateLengthDelimitedHash64(
+        hash,
+        "client-ref-value",
+        payload.clientRefs[key] ?? "",
+      );
     }
 
     for (const asset of payload.assets?.css ?? []) {
-      hash = updateLengthDelimitedHash(hash, "css-asset", asset);
+      hash = updateLengthDelimitedHash64(hash, "css-asset", asset);
     }
 
     for (const asset of payload.assets?.js ?? []) {
-      hash = updateLengthDelimitedHash(hash, "js-asset", asset);
+      hash = updateLengthDelimitedHash64(hash, "js-asset", asset);
     }
 
-    return `"${(hash >>> 0).toString(36)}"`;
+    return `"${hash.toString(36).padStart(13, "0")}"`;
   }
 
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
@@ -184,4 +215,153 @@ export class RSCProductionOptimizer {
       .map(([key, values]) => (values.length === 0 ? key : `${key} ${values.join(" ")}`))
       .join("; ");
   }
+}
+
+function stripHtmlComments(html: string): string {
+  let cursor = 0;
+  let rawTextElement: string | undefined;
+  const output: string[] = [];
+
+  while (cursor < html.length) {
+    if (rawTextElement) {
+      if (rawTextElement === "plaintext") {
+        output.push(html.slice(cursor));
+        break;
+      }
+
+      const closingTag = findRawTextClosingTag(html, rawTextElement, cursor);
+      if (closingTag < 0) {
+        output.push(html.slice(cursor));
+        break;
+      }
+      output.push(html.slice(cursor, closingTag));
+      cursor = closingTag;
+      rawTextElement = undefined;
+      continue;
+    }
+
+    if (html.startsWith("<!--", cursor)) {
+      const commentEnd = html.indexOf("-->", cursor + 4);
+      if (commentEnd < 0) {
+        output.push(html.slice(cursor));
+        break;
+      }
+      cursor = commentEnd + 3;
+      continue;
+    }
+
+    if (html[cursor] !== "<") {
+      const nextTag = html.indexOf("<", cursor);
+      const end = nextTag < 0 ? html.length : nextTag;
+      output.push(html.slice(cursor, end));
+      cursor = end;
+      continue;
+    }
+
+    const tagEnd = findTagEnd(html, cursor + 1);
+    if (tagEnd < 0) {
+      output.push(html.slice(cursor));
+      break;
+    }
+
+    const tag = html.slice(cursor, tagEnd + 1);
+    output.push(tag);
+    const openedRawTextElement = getOpenedRawTextElement(tag);
+    if (openedRawTextElement) rawTextElement = openedRawTextElement;
+    cursor = tagEnd + 1;
+  }
+
+  return output.join("");
+}
+
+function findTagEnd(html: string, start: number): number {
+  let quote: '"' | "'" | undefined;
+  for (let index = start; index < html.length; index++) {
+    const character = html[index];
+    if (quote) {
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === ">") return index;
+  }
+  return -1;
+}
+
+function getOpenedRawTextElement(tag: string): string | undefined {
+  let cursor = 1;
+  while (cursor < tag.length && isHtmlWhitespace(tag[cursor])) cursor++;
+  if (
+    tag[cursor] === "/" ||
+    tag[cursor] === "!" ||
+    tag[cursor] === "?" ||
+    tag[cursor] === undefined
+  ) {
+    return undefined;
+  }
+
+  const nameStart = cursor;
+  while (cursor < tag.length && isTagNameCharacter(tag[cursor])) cursor++;
+  if (cursor === nameStart) return undefined;
+  const name = tag.slice(nameStart, cursor).toLowerCase();
+  if (!RAW_TEXT_ELEMENTS.has(name)) return undefined;
+  return name;
+}
+
+function findRawTextClosingTag(
+  html: string,
+  tagName: string,
+  start: number,
+): number {
+  let candidate = html.indexOf("<", start);
+  while (candidate >= 0) {
+    const nameStart = candidate + 2;
+    const following = html[nameStart + tagName.length];
+    if (
+      html[candidate + 1] === "/" &&
+      matchesAsciiCaseInsensitive(html, nameStart, tagName) &&
+      (following === ">" ||
+        following === "/" ||
+        isHtmlWhitespace(following))
+    ) {
+      return candidate;
+    }
+    candidate = html.indexOf("<", candidate + 1);
+  }
+  return -1;
+}
+
+function matchesAsciiCaseInsensitive(
+  value: string,
+  start: number,
+  expectedLowercase: string,
+): boolean {
+  if (start + expectedLowercase.length > value.length) return false;
+  for (let index = 0; index < expectedLowercase.length; index++) {
+    const code = value.charCodeAt(start + index);
+    const lowercaseCode = code >= 65 && code <= 90 ? code + 32 : code;
+    if (lowercaseCode !== expectedLowercase.charCodeAt(index)) return false;
+  }
+  return true;
+}
+
+function isHtmlWhitespace(value: string | undefined): boolean {
+  return value === " " ||
+    value === "\t" ||
+    value === "\n" ||
+    value === "\r" ||
+    value === "\f";
+}
+
+function isTagNameCharacter(value: string | undefined): boolean {
+  if (!value) return false;
+  const code = value.charCodeAt(0);
+  return (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    value === ":" ||
+    value === "-";
 }

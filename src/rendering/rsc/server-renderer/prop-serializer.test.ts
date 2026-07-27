@@ -109,6 +109,18 @@ describe("rendering/rsc/server-renderer/prop-serializer", () => {
       });
     });
 
+    it("can safely snapshot its own guarded nested output again", () => {
+      const first = serializeProps({
+        nested: { enabled: true },
+        items: [{ id: 1 }, { id: 2 }],
+      });
+
+      assertEquals(serializeProps(first), {
+        nested: { enabled: true },
+        items: [{ id: 1 }, { id: 2 }],
+      });
+    });
+
     it("rejects custom prototypes without invoking custom serialization", () => {
       let toJsonCalls = 0;
       const custom = {

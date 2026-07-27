@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { renderChildren, renderTree } from "./tree-processor.ts";
 import * as React from "react";
@@ -184,6 +184,36 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       ];
       const result = await renderChildren(children, new Map(), new Map());
       assertEquals(result.length, 2);
+    });
+
+    it("bounds concurrent sibling component rendering", async () => {
+      let active = 0;
+      let maximumActive = 0;
+      async function Child() {
+        active++;
+        maximumActive = Math.max(maximumActive, active);
+        await Promise.resolve();
+        active--;
+        return React.createElement("span", null, "child");
+      }
+      const children = Array.from(
+        { length: 64 },
+        (_, index) => React.createElement(Child, { key: index }),
+      );
+
+      await renderChildren(children, new Map(), new Map());
+
+      assertEquals(maximumActive <= 16, true);
+    });
+
+    it("rejects more children than the render tree can retain", async () => {
+      const children = Array.from({ length: 10_001 }, (_, index) => String(index));
+
+      await assertRejects(
+        () => renderChildren(children, new Map(), new Map()),
+        RangeError,
+        "node limit",
+      );
     });
 
     it("should HTML-escape raw text children (XSS H14)", async () => {

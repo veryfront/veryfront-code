@@ -41,7 +41,12 @@ export class RSCRenderer {
             clientRefs,
             this.reactVersion,
           );
-          const html = await treeToHTML(tree, clientRefs, this.clientManifest);
+          const html = await treeToHTML(
+            tree,
+            clientRefs,
+            this.clientManifest,
+            this.reactVersion,
+          );
 
           return {
             html,

@@ -21,6 +21,29 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals(result.html.includes("<!--"), false);
     });
 
+    it("preserves comment-like text in raw-text elements and attributes", () => {
+      const payload = makePayload({
+        html: `<p>İ</p>` +
+          `<div data-marker="<!--attribute-->"><!-- remove --></div>` +
+          `<script>globalThis.marker = "<!--script-->";</script>` +
+          `<script/>globalThis.legacy = "<!--self-closing-script-->";</script>` +
+          `<style>.marker::after { content: "<!--style-->"; }</style>` +
+          `<textarea><!--textarea--></textarea>` +
+          `<title><!--title--></title>`,
+      });
+
+      assertEquals(
+        RSCProductionOptimizer.optimizePayload(payload).html,
+        `<p>İ</p>` +
+          `<div data-marker="<!--attribute-->"></div>` +
+          `<script>globalThis.marker = "<!--script-->";</script>` +
+          `<script/>globalThis.legacy = "<!--self-closing-script-->";</script>` +
+          `<style>.marker::after { content: "<!--style-->"; }</style>` +
+          `<textarea><!--textarea--></textarea>` +
+          `<title><!--title--></title>`,
+      );
+    });
+
     it("preserves visible whitespace between inline elements", () => {
       const payload = makePayload({ html: "<span>hello</span> <span>world</span>" });
       const result = RSCProductionOptimizer.optimizePayload(payload);
@@ -85,10 +108,9 @@ describe("rendering/rsc/production-optimizer", () => {
   });
 
   describe("generateETag", () => {
-    it("should return a quoted base36 string", () => {
+    it("should return a quoted 64-bit base36 string", () => {
       const etag = RSCProductionOptimizer.generateETag(makePayload());
-      assertEquals(etag.startsWith('"'), true);
-      assertEquals(etag.endsWith('"'), true);
+      assertEquals(/^"[0-9a-z]{12,13}"$/.test(etag), true);
     });
 
     it("should be deterministic", () => {
