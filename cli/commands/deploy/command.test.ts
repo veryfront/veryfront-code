@@ -89,6 +89,46 @@ describe("environment URL readiness", () => {
     assertEquals(requests, 2);
   });
 
+  it("probes the discovered page route instead of requiring the root route", async () => {
+    let requestedUrl = "";
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          route: "/dashboard",
+        }),
+    );
+
+    assertEquals(
+      requestedUrl,
+      "https://my-project.production.veryfront.com/dashboard",
+    );
+  });
+
+  it("does not require a browser URL for projects without page routes", async () => {
+    let requests = 0;
+
+    await withMockFetch(
+      () => {
+        requests++;
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          route: null,
+        }),
+    );
+
+    assertEquals(requests, 0);
+  });
+
   it("authenticates a protected Veryfront environment with the stored token", async () => {
     let cookie: string | null = null;
 
@@ -190,6 +230,31 @@ describe("environment URL readiness", () => {
 
     assertEquals(requestedUrl, "https://app.example.com/");
     assertEquals(cookie, null);
+  });
+
+  it("reports malformed environment URLs without polling", async () => {
+    await assertRejects(
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://[invalid",
+        }),
+      Error,
+      'Environment URL "https://[invalid" is invalid',
+    );
+  });
+
+  it("does not crash on a malformed redirect location", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://[" },
+          }),
+        ),
+      () => waitForEnvironmentReady(hostedTarget),
+    );
   });
 
   it("reports an actionable authentication error for sign-in redirects", async () => {

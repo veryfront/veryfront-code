@@ -56,12 +56,14 @@ it("uses canonical production read-back in human and JSON modes", async () => {
   let environmentUrlReads = 0;
 
   try {
+    const currentReleaseSource = "export default function Dashboard() { return null; }\n";
+    await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
-    await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+    await Deno.writeTextFile(`${projectDir}/pages/dashboard.tsx`, currentReleaseSource);
     const actualSha = await commitProject(projectDir);
     const sourceDigest = await computeSourceDigest([
-      { path: "app.ts", content: "export const value = 1;\n" },
+      { path: "pages/dashboard.tsx", content: currentReleaseSource },
     ]);
 
     await writePushReceipt(projectDir, {
@@ -80,7 +82,6 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
     _resetEnvironmentConfig();
 
-    const currentReleaseSource = "export const value = 1;\n";
     let releaseSourceContents: string[] | null = null;
     let releaseSourceReads = 0;
     let releaseSourceReadGate: Promise<void> | null = null;
@@ -171,14 +172,18 @@ it("uses canonical production read-back in human and JSON modes", async () => {
             createdAt: "2026-07-10T09:20:00.000Z",
             assetBasePath: "/_vf/assets",
             modules: {
-              "app.ts": {
+              "pages/dashboard.tsx": {
                 contentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 size: 10,
                 contentType: "text/javascript",
               },
             },
             css: [],
-            routes: {},
+            routes: {
+              "/dashboard": {
+                modules: ["pages/dashboard.tsx"],
+              },
+            },
             dependencies: {},
             fallback: { mode: "jit", gaps: [] },
           },
@@ -194,10 +199,10 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         if (releaseSourceReadGate) await releaseSourceReadGate;
         return Response.json({
           data: [{
-            path: "app.ts",
+            path: "pages/dashboard.tsx",
             data: JSON.stringify({
               body: releaseSourceContents?.shift() ?? currentReleaseSource,
-              path: "app.ts",
+              path: "pages/dashboard.tsx",
             }),
           }],
           page_info: {},
@@ -253,8 +258,8 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         `POST /api/projects/${PROJECT_ID}/deployments`,
         `GET /api/projects/${PROJECT_ID}/deployments/${DEPLOYMENT_ID}`,
         `GET /api/projects/${PROJECT_ID}/environments`,
-        "GET /",
-        "GET /",
+        "GET /dashboard",
+        "GET /dashboard",
       ]);
       if (jsonMode) {
         const events = output.map((line) =>
@@ -468,6 +473,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
   ];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const createSlugs: string[] = [];
+  let environmentUrlReads = 0;
 
   try {
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
@@ -492,6 +498,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
         request.method === "GET" &&
         url.hostname.endsWith(".preview.veryfront.com")
       ) {
+        environmentUrlReads++;
         return new Response("ready");
       }
       if (request.method === "GET" && url.pathname === "/api/projects/taken-app") {
@@ -612,6 +619,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
       }));
 
     assertEquals(createSlugs.length, 2);
+    assertEquals(environmentUrlReads, 0);
     assertEquals(createSlugs[0], "taken-app");
     assertEquals(/^taken-app-[a-z0-9]+$/.test(createSlugs[1] ?? ""), true);
     const linkedConfig = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)) as {
