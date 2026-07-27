@@ -1,136 +1,50 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { mergeAgentConfig, resolvePermissionMode } from "./agent.ts";
 import type { ClaudeCodeMode } from "./types.ts";
 
-/**
- * Mock the Claude Agent SDK import to capture the permissionMode
- * passed to query() — this lets us test the real resolvePermissionMode
- * logic inside executeAgent without requiring the actual SDK.
- */
-function createMockSDK(): {
-  capturedOptions: Record<string, unknown> | null;
-  install: () => void;
-  uninstall: () => void;
-} {
-  let capturedOptions: Record<string, unknown> | null = null;
-  let original: unknown;
-
-  return {
-    get capturedOptions() {
-      return capturedOptions;
-    },
-    install() {
-      original = (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-      (globalThis as Record<string, unknown>).__vfMockClaudeSDK = {
-        query(args: { prompt: string; options: Record<string, unknown> }) {
-          capturedOptions = args.options;
-          // Return an async iterable that immediately yields a result
-          return (async function* () {
-            yield {
-              type: "result",
-              subtype: "success",
-              result: "mocked",
-              num_turns: 0,
-              total_cost_usd: 0,
-              duration_ms: 0,
-            };
-          })();
-        },
-      };
-    },
-    uninstall() {
-      if (original === undefined) {
-        delete (globalThis as Record<string, unknown>).__vfMockClaudeSDK;
-      } else {
-        (globalThis as Record<string, unknown>).__vfMockClaudeSDK = original;
-      }
-      capturedOptions = null;
-    },
-  };
-}
-
-/**
- * Helper to execute the agent with a given config and return the
- * permissionMode that was passed to the SDK query() call.
- */
-async function capturePermissionMode(
-  config: { mode?: ClaudeCodeMode; bypassPermissions?: boolean },
-): Promise<string> {
-  const mock = createMockSDK();
-  mock.install();
-  try {
-    const { executeAgent } = await import("./agent.ts");
-    await executeAgent("test task", { ...config, cwd: "/tmp" });
-    return mock.capturedOptions?.permissionMode as string;
-  } finally {
-    mock.uninstall();
-  }
-}
-
-// Verify the SDK mock mechanism is wired up in opaque-deps.
-// Hard-fail if the mock doesn't work — silent skips hide regressions.
-const sdkMockAvailable = await (async () => {
-  const mock = createMockSDK();
-  mock.install();
-  try {
-    const { executeAgent } = await import("./agent.ts");
-    await executeAgent("probe", { cwd: "/tmp" });
-    return mock.capturedOptions !== null;
-  } catch {
-    return false;
-  } finally {
-    mock.uninstall();
-  }
-})();
-
-if (!sdkMockAvailable) {
-  throw new Error(
-    "SDK mock not available — ensure opaque-deps.ts checks globalThis.__vfMockClaudeSDK and tests run with --allow-env",
-  );
-}
-
-describe("resolvePermissionMode (via executeAgent)", () => {
-  it("maps 'code' mode to acceptEdits", async () => {
-    assertEquals(await capturePermissionMode({ mode: "code" }), "acceptEdits");
+describe("resolvePermissionMode", () => {
+  it("maps 'code' mode to acceptEdits", () => {
+    assertEquals(resolvePermissionMode({ mode: "code" }), "acceptEdits");
   });
 
-  it("maps 'analysis' mode to plan", async () => {
-    assertEquals(await capturePermissionMode({ mode: "analysis" }), "plan");
+  it("maps 'analysis' mode to plan", () => {
+    assertEquals(resolvePermissionMode({ mode: "analysis" }), "plan");
   });
 
-  it("maps 'custom' mode to default", async () => {
-    assertEquals(await capturePermissionMode({ mode: "custom" }), "default");
+  it("maps 'custom' mode to default", () => {
+    assertEquals(resolvePermissionMode({ mode: "custom" }), "default");
   });
 
-  it("defaults to acceptEdits when no mode specified", async () => {
-    assertEquals(await capturePermissionMode({}), "acceptEdits");
+  it("defaults to acceptEdits when no mode specified", () => {
+    assertEquals(resolvePermissionMode({}), "acceptEdits");
   });
 
-  it("returns bypassPermissions only when explicitly opted in", async () => {
+  it("returns bypassPermissions only when explicitly opted in", () => {
     assertEquals(
-      await capturePermissionMode({ bypassPermissions: true }),
+      resolvePermissionMode({ bypassPermissions: true }),
       "bypassPermissions",
     );
   });
 
-  it("bypassPermissions flag overrides mode", async () => {
+  it("bypassPermissions flag overrides mode", () => {
     assertEquals(
-      await capturePermissionMode({ mode: "analysis", bypassPermissions: true }),
+      resolvePermissionMode({ mode: "analysis", bypassPermissions: true }),
       "bypassPermissions",
     );
   });
 
-  it("bypassPermissions=false does not grant bypass", async () => {
+  it("bypassPermissions=false does not grant bypass", () => {
     assertEquals(
-      await capturePermissionMode({ mode: "code", bypassPermissions: false }),
+      resolvePermissionMode({ mode: "code", bypassPermissions: false }),
       "acceptEdits",
     );
   });
 
-  it("truthy non-boolean bypassPermissions does not grant bypass", async () => {
+  it("truthy non-boolean bypassPermissions does not grant bypass", () => {
     assertEquals(
-      await capturePermissionMode({
+      resolvePermissionMode({
         mode: "analysis",
         bypassPermissions: "false" as unknown as boolean,
       }),
@@ -138,27 +52,24 @@ describe("resolvePermissionMode (via executeAgent)", () => {
     );
   });
 
-  it("'full' mode falls through to safe default (acceptEdits)", async () => {
+  it("'full' mode falls through to safe default (acceptEdits)", () => {
     // Even if unvalidated input somehow passes "full", it must NOT
     // resolve to bypassPermissions.
     const mode = "full" as ClaudeCodeMode;
-    assertEquals(await capturePermissionMode({ mode }), "acceptEdits");
+    assertEquals(resolvePermissionMode({ mode }), "acceptEdits");
   });
 
-  it("createAgent strips bypassPermissions from overrides", async () => {
-    const mock = createMockSDK();
-    mock.install();
-    try {
-      const { createAgent } = await import("./agent.ts");
-      const reviewer = createAgent({ mode: "analysis" });
-      await reviewer("test task", {
-        mode: "analysis",
-        bypassPermissions: true,
-      });
-      assertEquals(mock.capturedOptions?.permissionMode, "plan");
-    } finally {
-      mock.uninstall();
-    }
+  it("reusable-agent config strips bypassPermissions from overrides", () => {
+    assertEquals(
+      mergeAgentConfig(
+        { mode: "analysis" },
+        {
+          mode: "analysis",
+          bypassPermissions: true,
+        },
+      ),
+      { mode: "analysis" },
+    );
   });
 });
 

@@ -70,7 +70,8 @@ const DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
  * `config.bypassPermissions = true` — it cannot be selected from
  * user-facing tool input schemas.
  */
-function resolvePermissionMode(
+/** @internal Pure policy mapping exported for direct regression tests. */
+export function resolvePermissionMode(
   config: AgentConfig,
 ): "default" | "acceptEdits" | "bypassPermissions" | "plan" {
   if (config.bypassPermissions === true) {
@@ -254,11 +255,19 @@ export async function executeAgent(
  * const result = await reviewer("Review src/auth/ for security issues");
  * ```
  */
+/** @internal Applies the reusable-agent override policy without loading the SDK. */
+export function mergeAgentConfig(
+  defaults: AgentConfig,
+  overrides: AgentConfig,
+): AgentConfig {
+  const { bypassPermissions: _, ...safeOverrides } = overrides;
+  return { ...defaults, ...safeOverrides };
+}
+
 export function createAgent(
   defaults: AgentConfig = {},
 ): (task: string, overrides?: AgentConfig) => Promise<ClaudeCodeResult> {
   return (task: string, overrides: AgentConfig = {}) => {
-    const { bypassPermissions: _, ...safeOverrides } = overrides;
-    return executeAgent(task, { ...defaults, ...safeOverrides });
+    return executeAgent(task, mergeAgentConfig(defaults, overrides));
   };
 }

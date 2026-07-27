@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ensureDir, exists, existsSync, walk } from "./std-fs.ts";
 
@@ -17,6 +17,10 @@ describe("platform/compat/shims/std-fs", () => {
     it("should return true for an existing directory", async () => {
       assertEquals(await exists("src"), true);
     });
+
+    it("propagates failures that do not mean the path is missing", async () => {
+      await assertRejects(() => exists("\0"), TypeError);
+    });
   });
 
   describe("existsSync", () => {
@@ -26,6 +30,10 @@ describe("platform/compat/shims/std-fs", () => {
 
     it("should return false for a non-existing file", () => {
       assertEquals(existsSync("/nonexistent/path/file.txt"), false);
+    });
+
+    it("propagates synchronous failures that are not missing paths", () => {
+      assertThrows(() => existsSync("\0"), TypeError);
     });
   });
 
@@ -96,6 +104,19 @@ describe("platform/compat/shims/std-fs", () => {
       await Deno.remove(tmpDir, { recursive: true });
     });
 
+    it("accepts extensions with or without a leading dot", async () => {
+      const tmpDir = await Deno.makeTempDir({ prefix: "vf-walk-" });
+      await Deno.writeTextFile(`${tmpDir}/file.ts`, "ts");
+
+      const entries = [];
+      for await (const entry of walk(tmpDir, { exts: [".ts"] })) {
+        entries.push(entry);
+      }
+
+      assertEquals(entries.map((entry) => entry.name), ["file.ts"]);
+      await Deno.remove(tmpDir, { recursive: true });
+    });
+
     it("should skip paths matching skip patterns", async () => {
       const tmpDir = await Deno.makeTempDir({ prefix: "vf-walk-" });
       await Deno.mkdir(`${tmpDir}/node_modules`, { recursive: true });
@@ -108,6 +129,21 @@ describe("platform/compat/shims/std-fs", () => {
       }
 
       assertEquals(entries.every((e) => !e.path.includes("node_modules")), true);
+      await Deno.remove(tmpDir, { recursive: true });
+    });
+
+    it("handles global skip expressions deterministically", async () => {
+      const tmpDir = await Deno.makeTempDir({ prefix: "vf-walk-" });
+      await Deno.writeTextFile(`${tmpDir}/skip-a.ts`, "a");
+      await Deno.writeTextFile(`${tmpDir}/skip-b.ts`, "b");
+      await Deno.writeTextFile(`${tmpDir}/visible.ts`, "visible");
+
+      const names = [];
+      for await (const entry of walk(tmpDir, { skip: [/skip-/g] })) {
+        names.push(entry.name);
+      }
+
+      assertEquals(names, ["visible.ts"]);
       await Deno.remove(tmpDir, { recursive: true });
     });
 
@@ -137,6 +173,18 @@ describe("platform/compat/shims/std-fs", () => {
 
       assertEquals(entries.every((e) => e.isDirectory), true);
       await Deno.remove(tmpDir, { recursive: true });
+    });
+
+    it("rejects invalid maxDepth values", async () => {
+      await assertRejects(
+        async () => {
+          for await (const _entry of walk(".", { maxDepth: -1 })) {
+            // The iterator rejects before walking.
+          }
+        },
+        RangeError,
+        "maxDepth",
+      );
     });
   });
 });
