@@ -58,6 +58,14 @@ export interface LogEntry {
   spanId?: string;
   /** @deprecated Use `project_slug` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   projectSlug?: string;
+  /** @deprecated Use `project_id` instead. Kept for proxy dashboard compatibility. */
+  projectId?: string;
+  /** @deprecated Use `release_id` instead. Kept for proxy dashboard compatibility. */
+  releaseId?: string;
+  /** @deprecated Use `branch_id` instead. Kept for proxy dashboard compatibility. */
+  branchId?: string;
+  /** @deprecated Use `branch_name` instead. Kept for proxy dashboard compatibility. */
+  branchName?: string;
   // Standard fields for Loki filtering (snake_case)
   request_id?: string;
   trace_id?: string;
@@ -84,6 +92,7 @@ export interface LogEntry {
   user_visible?: string;
   user_id?: string;
   conversation_id?: string;
+  environment?: string;
   /** @deprecated Use `user_id` instead. Kept for Grafana dashboard transition. */
   userId?: string;
   /** @deprecated Use `conversation_id` instead. Kept for Grafana dashboard transition. */
@@ -497,6 +506,10 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "traceId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "spanId", (v) => String(v));
     extractToEntryField(entry, mergedContext, "projectSlug", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "projectId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "releaseId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "branchId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "branchName", (v) => String(v));
     extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
 
     // Auto-inject trace context from OTel when not already set
@@ -548,6 +561,7 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
     extractToEntryField(entry, mergedContext, "user_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "conversation_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "environment", (v) => String(v));
 
     // Also extract camelCase variants so callers can use either convention
     extractToEntryField(entry, mergedContext, "userId", (v) => String(v));
@@ -571,6 +585,14 @@ class ConsoleLogger implements Logger {
     if (entry.traceId && !entry.trace_id) entry.trace_id = entry.traceId;
     if (entry.spanId && !entry.span_id) entry.span_id = entry.spanId;
     if (entry.projectSlug && !entry.project_slug) entry.project_slug = entry.projectSlug;
+    if (entry.projectId && !entry.project_id) entry.project_id = entry.projectId;
+    if (entry.releaseId && !entry.release_id) entry.release_id = entry.releaseId;
+    if (entry.branchId && !entry.branch_id) entry.branch_id = entry.branchId;
+    if (entry.branchName && !entry.branch_name) entry.branch_name = entry.branchName;
+    if (entry.project_id && !entry.projectId) entry.projectId = entry.project_id;
+    if (entry.release_id && !entry.releaseId) entry.releaseId = entry.release_id;
+    if (entry.branch_id && !entry.branchId) entry.branchId = entry.branch_id;
+    if (entry.branch_name && !entry.branchName) entry.branchName = entry.branch_name;
     if (entry.durationMs != null && entry.duration_ms == null) entry.duration_ms = entry.durationMs;
     if (entry.userId && !entry.user_id) entry.user_id = entry.userId;
     if (entry.conversationId && !entry.conversation_id) {

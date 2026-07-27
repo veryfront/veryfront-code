@@ -26,6 +26,20 @@ Primary source areas:
 4. Log subscribers and buffers expose recent runtime output.
 5. Request profiling records route-level timing and resource use.
 
+## Logging boundary
+
+Runtime and split-proxy loggers use the same bounded serialization boundary.
+Credential-shaped keys and credentials embedded in URLs are redacted before
+output. Cycles, `BigInt` values, hostile accessors, custom serializers, and
+oversized strings cannot make structured logging fail or grow without bounds.
+Diagnostic sink failures do not become request or shutdown failures.
+
+The split proxy snapshots child and request context before retaining it.
+Request, project, release, branch, environment, trace, and span identifiers are
+available in JSON for filtering and in text output for local diagnosis. JSON
+keeps the proxy dashboard's camel-case fields while also emitting canonical
+snake-case aliases during the dashboard transition.
+
 ## OpenTelemetry Runtime Modes
 
 OpenTelemetry exporter routing is process-level runtime configuration. In shared

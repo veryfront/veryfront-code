@@ -103,6 +103,14 @@ configuration.
 | `SHUTDOWN_CLEANUP_TIMEOUT_MS`         | `4000`                   | `0..2147483647`                                                |
 | `VERYFRONT_PROXY_EXPECTED_REPLICAS`   | unset                    | `1..10000`; required in production                             |
 
+Upstream retry counts are validated as integers in the documented range before
+attempt streams are allocated. GET, HEAD, and OPTIONS requests may use the
+configured retry budget. Other requests remain single-shot except for the
+signed control-plane run-stream POST: it can retry once when its declared body
+is present, bounded to 1 MiB, and the dedicated server refused the connection.
+Missing, contradictory, chunked, malformed, or oversized body metadata disables
+replay without discarding the original stream.
+
 On `SIGINT` or `SIGTERM`, new requests receive a retryable `503` while the
 proxy waits for tracked response bodies, including event streams, to finish.
 After the drain deadline, cleanup has one shared four-second budget by default.

@@ -32,7 +32,7 @@ import {
   importFirstPartyExtensionModule,
   isMissingFirstPartyExtensionModule,
 } from "#veryfront/extensions/first-party-import.ts";
-import { proxyLogger } from "./logger.ts";
+import { __registerProxyTraceContextGetter, proxyLogger } from "./logger.ts";
 
 const TRACING_EXTENSION_SOURCE_DIRECTORY = "ext-observability-opentelemetry";
 const TRACING_EXTENSION_PACKAGE = "@veryfront/ext-observability-opentelemetry";
@@ -333,6 +333,8 @@ export function getTraceContext(): { traceId?: string; spanId?: string } {
   if (!spanContext) return {};
   return { traceId: spanContext.traceId, spanId: spanContext.spanId };
 }
+
+__registerProxyTraceContextGetter(getTraceContext);
 
 /**
  * Span names for proxy tracing.
