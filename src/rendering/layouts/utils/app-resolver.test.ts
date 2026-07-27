@@ -81,6 +81,20 @@ describe("rendering/layouts/utils/app-resolver", () => {
       assertEquals(result, "/absolute/app.tsx");
     });
 
+    it("should preserve an absolute Windows path outside the project drive", async () => {
+      const appPath = "D:\\shared\\app.tsx";
+      const adapter = createMockAdapter(new Set([appPath]));
+      const config = { app: appPath } as unknown as VeryfrontConfig;
+
+      const result = await resolveAppComponentPath(
+        "C:\\project",
+        adapter,
+        config,
+      );
+
+      assertEquals(result, appPath);
+    });
+
     it("should throw when config.app path does not exist", async () => {
       const adapter = createMockAdapter();
       const config = { app: "nonexistent/app.tsx" } as unknown as VeryfrontConfig;

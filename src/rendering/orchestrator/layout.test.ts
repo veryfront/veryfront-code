@@ -393,4 +393,51 @@ describe("rendering/orchestrator/layout", () => {
     assertEquals(packageImport, "https://config.example/exact-package.ts");
     assertEquals(identityThenLookups, 0);
   });
+
+  it("clears layout caches for every request-level project identity", async () => {
+    const clearedProjects: string[] = [];
+    const orchestrator = new LayoutOrchestrator({
+      projectDir: "/cache-identities",
+      projectId: "constructor-project",
+      projectSlug: "constructor-project",
+      contentSourceId: "constructor-source",
+      adapter: createMockAdapter(),
+      config: validateVeryfrontConfig({ react: { version: "19.2.4" } }),
+      mode: "production",
+      layoutCollector: {
+        collectLayouts: () =>
+          Promise.resolve({
+            layoutBundle: undefined,
+            nestedLayouts: [],
+          }),
+      } as unknown as LayoutCollector,
+      layoutCompiler: {
+        compileLayouts: () => Promise.resolve(),
+      } as unknown as LayoutCompiler,
+      layoutCache: {
+        get: () => undefined,
+        set: () => {},
+        delete: () => {},
+        clear: () => {},
+        clearForProject: (projectId) => {
+          clearedProjects.push(projectId);
+        },
+      },
+      componentRegistry: {},
+    });
+
+    await orchestrator.preloadLayoutModules([], {
+      projectId: "request-project-a",
+    });
+    await orchestrator.preloadLayoutModules([], {
+      projectId: "request-project-b",
+    });
+    orchestrator.clearCache();
+
+    assertEquals(clearedProjects.sort(), [
+      "constructor-project",
+      "request-project-a",
+      "request-project-b",
+    ]);
+  });
 });

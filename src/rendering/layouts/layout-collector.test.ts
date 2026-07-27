@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   discoverComponentsLayoutPath,
@@ -267,6 +267,41 @@ describe("LayoutCollector", () => {
         isLayout: true,
       });
     });
+
+    it("propagates operational components-layout discovery failures", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.stat = (path: string) => {
+        if (path.includes("/components/")) {
+          return Promise.reject(
+            Object.assign(new Error("layout backend unavailable"), { code: "EIO" }),
+          );
+        }
+        return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+      };
+      const collector = new LayoutCollector({
+        projectDir: "/project",
+        adapter,
+        config: {},
+        compileMDX: () => Promise.resolve({ compiledCode: "" }),
+      });
+      const pageInfo: EntityInfo = {
+        entity: {
+          id: "page",
+          path: "/project/pages/index.mdx",
+          slug: "",
+          type: "page",
+          content: "# Page",
+          frontmatter: {},
+          isPage: true,
+        },
+      };
+
+      await assertRejects(
+        () => collector.collectLayouts(pageInfo),
+        Error,
+        "layout backend unavailable",
+      );
+    });
   });
 
   describe(".veryfront path detection", () => {
@@ -280,6 +315,34 @@ describe("LayoutCollector", () => {
 
     it("should not flag non-.veryfront paths", () => {
       assertEquals(isVeryfrontPath("/project/pages/about.tsx"), false);
+    });
+
+    it("does not skip a page whose directory merely ends with .veryfront", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/pages/layout.tsx",
+        "export default function Layout({ children }) { return children; }",
+      );
+      const collector = new LayoutCollector({
+        projectDir: "/project",
+        adapter,
+        config: {},
+        compileMDX: () => Promise.resolve({ compiledCode: "" }),
+      });
+
+      const result = await collector.collectLayouts({
+        entity: {
+          id: "page",
+          path: "/project/pages/not.veryfront/page.tsx",
+          slug: "not.veryfront/page",
+          type: "page",
+          content: "",
+          frontmatter: {},
+          isPage: true,
+        },
+      });
+
+      assertEquals(result.nestedLayouts[0]?.path, "/project/pages/layout.tsx");
     });
   });
 });

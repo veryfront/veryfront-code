@@ -23,7 +23,7 @@ function createMockAdapter(existingFiles: Set<string>): RuntimeAdapter {
   const mockFS: FileSystemAdapter = {
     stat: async (path: string) => {
       if (!existingFiles.has(path)) {
-        throw new Error(`File not found: ${path}`);
+        throw Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" });
       }
 
       return {

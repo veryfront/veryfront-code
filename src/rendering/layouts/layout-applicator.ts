@@ -29,6 +29,7 @@ import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-re
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { toMDXFrontmatter } from "../frontmatter.ts";
 import { isDotPath } from "../orchestrator/path-helpers.ts";
+import { assertReactComponentType } from "../react-component-type.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -53,6 +54,13 @@ export interface LayoutApplicationOptions {
   reactVersion?: string;
 }
 
+type LoadComponentFromSource =
+  typeof import("#veryfront/modules/react-loader/component-loader.ts")["loadComponentFromSource"];
+
+export interface LayoutApplicatorDependencies {
+  loadComponentFromSource?: LoadComponentFromSource;
+}
+
 export class LayoutApplicator {
   private projectDir: string;
   private adapter: RuntimeAdapter;
@@ -60,6 +68,7 @@ export class LayoutApplicator {
   private layoutCache: LayoutComponentCache;
   private mergedComponents: MDXComponents;
   private mode: "development" | "production";
+  private moduleServerUrl?: string;
   private requestUrl?: URL;
   private params?: Record<string, string | string[]>;
   private frontmatter?: Record<string, unknown>;
@@ -70,13 +79,17 @@ export class LayoutApplicator {
   private contentSourceId: string;
   private preloadedImportMap?: ImportMapConfig | null;
   private readonly configuredReactVersion?: string;
+  private readonly loadComponentFromSourceOverride?: LoadComponentFromSource;
   private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
     RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
   }>;
 
-  constructor(options: LayoutApplicationOptions) {
+  constructor(
+    options: LayoutApplicationOptions,
+    dependencies: LayoutApplicatorDependencies = {},
+  ) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
     this.projectSlug = options.projectSlug;
@@ -87,12 +100,14 @@ export class LayoutApplicator {
     this.layoutCache = options.layoutCache;
     this.mergedComponents = options.mergedComponents;
     this.mode = options.mode;
+    this.moduleServerUrl = options.moduleServerUrl;
     this.requestUrl = options.requestUrl;
     this.params = options.params;
     this.frontmatter = options.frontmatter;
     this.pageProps = options.pageProps;
     this.headings = options.headings;
     this.configuredReactVersion = options.reactVersion;
+    this.loadComponentFromSourceOverride = dependencies.loadComponentFromSource;
   }
 
   private getReactVersion(): Promise<string> {
@@ -270,6 +285,8 @@ export class LayoutApplicator {
             this.contentSourceId,
             this.preloadedImportMap ?? undefined,
             reactVersion,
+            this.mode,
+            this.moduleServerUrl,
           );
         }
 
@@ -287,6 +304,8 @@ export class LayoutApplicator {
           this.contentSourceId,
           reactVersion,
           this.preloadedImportMap ?? undefined,
+          this.mode,
+          this.moduleServerUrl,
         );
       },
       {
@@ -379,45 +398,39 @@ export class LayoutApplicator {
         const appPath = await resolveAppComponentPath(this.projectDir, this.adapter, this.config);
         if (!appPath) return pageElement;
 
-        try {
-          logger.debug("Loading App component from", appPath);
-          const appSource = await this.adapter.fs.readFile(appPath);
-          const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
+        logger.debug("Loading App component from", appPath);
+        const appSource = await this.adapter.fs.readFile(appPath);
+        const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
-          let App: BundledReact.ComponentType<Record<string, unknown>> | null;
+        let App: BundledReact.ComponentType<Record<string, unknown>>;
 
-          if (isMdx) {
-            App = await this.loadMdxAppComponent(appSource, appPath);
-          } else {
-            const { loadComponentFromSource } = await import(
-              "#veryfront/modules/react-loader/index.ts"
-            );
-            App = await loadComponentFromSource(
-              appSource,
-              appPath,
-              this.projectDir,
-              this.adapter,
-              {
-                projectId: this.projectId ?? this.projectDir,
-                projectSlug: this.projectSlug,
-                dev: this.mode === "development",
-                moduleServerUrl: this.config?.dev?.moduleServerUrl,
-                contentSourceId: this.contentSourceId,
-                reactVersion: await this.getReactVersion(),
-                importMap: this.preloadedImportMap ?? undefined,
-              },
-            );
-          }
-
-          if (!App) return pageElement;
-
-          const React = await getProjectReact(await this.getReactVersion());
-          logger.debug("Wrapped page with App component");
-          return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
-        } catch (error) {
-          logger.warn("Failed to load App component:", error);
-          return pageElement;
+        if (isMdx) {
+          App = await this.loadMdxAppComponent(appSource, appPath);
+        } else {
+          const loadComponentFromSource = this.loadComponentFromSourceOverride ??
+            (await import("#veryfront/modules/react-loader/index.ts")).loadComponentFromSource;
+          const exported = await loadComponentFromSource(
+            appSource,
+            appPath,
+            this.projectDir,
+            this.adapter,
+            {
+              projectId: this.projectId ?? this.projectDir,
+              projectSlug: this.projectSlug,
+              dev: this.mode === "development",
+              mode: this.mode,
+              moduleServerUrl: this.moduleServerUrl ?? this.config?.dev?.moduleServerUrl,
+              contentSourceId: this.contentSourceId,
+              reactVersion: await this.getReactVersion(),
+              importMap: this.preloadedImportMap ?? undefined,
+            },
+          );
+          App = assertReactComponentType(exported, `App module "${appPath}"`);
         }
+
+        const React = await getProjectReact(await this.getReactVersion());
+        logger.debug("Wrapped page with App component");
+        return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
       },
       {
         "layout.project_dir": this.projectDir,
@@ -428,42 +441,38 @@ export class LayoutApplicator {
   private async loadMdxAppComponent(
     source: string,
     appPath: string,
-  ): Promise<BundledReact.ComponentType<Record<string, unknown>> | null> {
-    try {
-      const body = source.trim().startsWith("---") ? extract(source).body : source;
+  ): Promise<BundledReact.ComponentType<Record<string, unknown>>> {
+    const body = source.trim().startsWith("---") ? extract(source).body : source;
 
-      const processor = resolveContract<ContentProcessor>("ContentProcessor");
-      const compiled = await processor.compileMdx({
-        projectDir: this.projectDir,
-        content: body,
-        filePath: appPath,
+    const processor = resolveContract<ContentProcessor>("ContentProcessor");
+    const compiled = await processor.compileMdx({
+      projectDir: this.projectDir,
+      content: body,
+      filePath: appPath,
+      mode: this.mode,
+      target: "server",
+    });
+
+    const loadComponentFromSource = this.loadComponentFromSourceOverride ??
+      (await import("#veryfront/modules/react-loader/index.ts")).loadComponentFromSource;
+
+    const exported = await loadComponentFromSource(
+      compiled.compiledCode,
+      appPath.replace(/\.mdx?$/, ".jsx"),
+      this.projectDir,
+      this.adapter,
+      {
+        projectId: this.projectId ?? this.projectDir,
+        projectSlug: this.projectSlug,
+        dev: this.mode === "development",
         mode: this.mode,
-        target: "server",
-      });
-
-      const { loadComponentFromSource } = await import(
-        "#veryfront/modules/react-loader/index.ts"
-      );
-
-      return await loadComponentFromSource(
-        compiled.compiledCode,
-        appPath.replace(/\.mdx?$/, ".jsx"),
-        this.projectDir,
-        this.adapter,
-        {
-          projectId: this.projectId ?? this.projectDir,
-          projectSlug: this.projectSlug,
-          dev: this.mode === "development",
-          moduleServerUrl: this.config?.dev?.moduleServerUrl,
-          contentSourceId: this.contentSourceId,
-          reactVersion: await this.getReactVersion(),
-          importMap: this.preloadedImportMap ?? undefined,
-        },
-      );
-    } catch (error) {
-      logger.error("Failed to compile MDX app component:", error);
-      return null;
-    }
+        moduleServerUrl: this.moduleServerUrl ?? this.config?.dev?.moduleServerUrl,
+        contentSourceId: this.contentSourceId,
+        reactVersion: await this.getReactVersion(),
+        importMap: this.preloadedImportMap ?? undefined,
+      },
+    );
+    return assertReactComponentType(exported, `MDX App module "${appPath}"`);
   }
 
   private async wrapWithReservedComponents(
@@ -476,58 +485,54 @@ export class LayoutApplicator {
         const reactVersion = await this.getReactVersion();
         const React = await getProjectReact(reactVersion);
 
-        try {
-          const segmentDir = dirname(pageFilePath);
-          const appRootDir = join(
+        const segmentDir = dirname(pageFilePath);
+        const appRootDir = join(
+          this.projectDir,
+          this.config?.directories?.app ?? "app",
+        );
+        const searchDirs = collectAncestorDirs(segmentDir, appRootDir);
+
+        const [loadingComp, errorComp] = await Promise.all([
+          tryLoadReservedInDirs(
+            searchDirs,
+            "loading",
             this.projectDir,
-            this.config?.directories?.app ?? "app",
-          );
-          const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
+            this.mode,
+            this.adapter,
+            this.projectId,
+            this.contentSourceId,
+            reactVersion,
+            this.preloadedImportMap ?? undefined,
+          ),
+          tryLoadReservedInDirs(
+            searchDirs,
+            "error",
+            this.projectDir,
+            this.mode,
+            this.adapter,
+            this.projectId,
+            this.contentSourceId,
+            reactVersion,
+            this.preloadedImportMap ?? undefined,
+          ),
+        ]);
 
-          const [loadingComp, errorComp] = await Promise.all([
-            tryLoadReservedInDirs(
-              searchDirs,
-              "loading",
-              this.projectDir,
-              this.mode,
-              this.adapter,
-              this.projectId,
-              this.contentSourceId,
-              reactVersion,
-              this.preloadedImportMap ?? undefined,
-            ),
-            tryLoadReservedInDirs(
-              searchDirs,
-              "error",
-              this.projectDir,
-              this.mode,
-              this.adapter,
-              this.projectId,
-              this.contentSourceId,
-              reactVersion,
-              this.preloadedImportMap ?? undefined,
-            ),
-          ]);
+        if (loadingComp) {
+          const fallbackEl = React.createElement(loadingComp, {});
+          pageElement = React.createElement(
+            React.Suspense,
+            { fallback: fallbackEl },
+            pageElement,
+          ) as BundledReact.ReactElement;
+        }
 
-          if (loadingComp) {
-            const fallbackEl = React.createElement(loadingComp, {});
-            pageElement = React.createElement(
-              React.Suspense,
-              { fallback: fallbackEl },
-              pageElement,
-            ) as BundledReact.ReactElement;
-          }
-
-          if (errorComp) {
-            const Boundary = createErrorBoundary(errorComp, React);
-            pageElement = React.createElement(
-              Boundary,
-              {},
-              pageElement,
-            ) as BundledReact.ReactElement;
-          }
-        } catch (error) {
-          logger.warn("Failed applying reserved loading/error components", error);
+        if (errorComp) {
+          const Boundary = createErrorBoundary(errorComp, React);
+          pageElement = React.createElement(
+            Boundary,
+            {},
+            pageElement,
+          ) as BundledReact.ReactElement;
         }
 
         return pageElement;

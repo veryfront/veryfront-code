@@ -11,6 +11,7 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
 import { toMDXFrontmatter } from "../frontmatter.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const logger = rendererLogger.component("layout-collector");
 
@@ -29,6 +30,10 @@ function resolvePagePath(pageFilePath: string, projectDir: string): string {
   return normalize(
     isAbsolute(pageFilePath) ? pageFilePath : join(projectDir, pageFilePath),
   );
+}
+
+function isVeryfrontInternalPath(path: string): boolean {
+  return normalize(path).replaceAll("\\", "/").split("/").includes(".veryfront");
 }
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
@@ -97,6 +102,7 @@ export interface LayoutCollectionResult {
 export interface LayoutCollectorOptions {
   projectDir: string;
   projectId?: string;
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   compileMDX: (
@@ -108,7 +114,7 @@ export interface LayoutCollectorOptions {
 
 export class LayoutCollector {
   private projectDir: string;
-  private projectId?: string;
+  private readonly discoveryCacheScope: string;
   private adapter: RuntimeAdapter;
   private config: VeryfrontConfig;
   private compileMDX: (
@@ -119,7 +125,10 @@ export class LayoutCollector {
 
   constructor(options: LayoutCollectorOptions) {
     this.projectDir = options.projectDir;
-    this.projectId = options.projectId;
+    this.discoveryCacheScope = JSON.stringify([
+      options.projectId ?? options.projectDir,
+      options.contentSourceId ?? null,
+    ]);
     this.adapter = options.adapter;
     this.config = options.config;
     this.compileMDX = options.compileMDX;
@@ -138,7 +147,7 @@ export class LayoutCollector {
           layout: this.config?.layout,
         });
 
-        if (pagePath.includes("/.veryfront/") || pagePath.includes(".veryfront/")) {
+        if (isVeryfrontInternalPath(pagePath)) {
           logger.debug("Skipping layouts for .veryfront path", { pagePath });
           return { layoutBundle: undefined, nestedLayouts: [] };
         }
@@ -353,6 +362,7 @@ export class LayoutCollector {
       rootDir,
       this.projectDir,
       this.adapter,
+      { cacheScope: this.discoveryCacheScope },
     );
 
     if (nestedLayouts.length > 0) {
@@ -390,9 +400,9 @@ export class LayoutCollector {
         try {
           const stat = await this.adapter.fs.stat(path);
           return stat.isFile;
-        } catch (_) {
-          /* expected: file may not exist */
-          return false;
+        } catch (error) {
+          if (isNotFoundError(error)) return false;
+          throw error;
         }
       },
     };

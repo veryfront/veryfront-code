@@ -13,6 +13,7 @@ import {
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
@@ -359,6 +360,67 @@ describe("rendering/layouts/utils/component-loader", () => {
   });
 
   describe("loadTSXComponent", () => {
+    it("isolates cache entries by runtime mode and threads loader options", async () => {
+      const cache = createLayoutComponentCache();
+      const receivedOptions: Array<{
+        dev: boolean | undefined;
+        mode: string | undefined;
+        moduleServerUrl: string | undefined;
+      }> = [];
+      function Layout() {
+        return null;
+      }
+      const load = (
+        _source: string,
+        _componentPath: string,
+        _projectDir: string,
+        _adapter: RuntimeAdapter,
+        options?: LoadComponentOptions,
+      ) => {
+        receivedOptions.push({
+          dev: options?.dev,
+          mode: options?.mode,
+          moduleServerUrl: options?.moduleServerUrl,
+        });
+        return Promise.resolve(Layout);
+      };
+      const args = [
+        "/project/app/layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        EMPTY_IMPORT_MAP,
+      ] as const;
+
+      await loadTSXComponent(...args, {
+        mode: "production",
+        moduleServerUrl: "https://modules.example.test",
+        loadComponentFromSource: load,
+      });
+      await loadTSXComponent(...args, {
+        mode: "development",
+        moduleServerUrl: "https://modules.example.test",
+        loadComponentFromSource: load,
+      });
+
+      assertEquals(receivedOptions, [
+        {
+          dev: false,
+          mode: "production",
+          moduleServerUrl: "https://modules.example.test",
+        },
+        {
+          dev: true,
+          mode: "development",
+          moduleServerUrl: "https://modules.example.test",
+        },
+      ]);
+    });
+
     it("shares one component load for concurrent cold misses", async () => {
       const cache = createLayoutComponentCache();
       const loaded = Promise.withResolvers<React.ComponentType>();
@@ -409,6 +471,73 @@ describe("rendering/layouts/utils/component-loader", () => {
 
       assertEquals(await Promise.all([first, second]), [Layout, Layout]);
       assertEquals(loadCalls, 1);
+    });
+
+    it("keeps colon-bearing project IDs in independent cache buckets", async () => {
+      const cache = createLayoutComponentCache(10, 1);
+      const loadCalls = new Map<string, number>();
+      const adapter = layoutAdapter("export default function Layout() { return null; }");
+
+      async function loadForProject(projectId: string): Promise<React.ComponentType> {
+        return await loadTSXComponent(
+          "/shared/app/layout.tsx",
+          "/shared",
+          cache,
+          adapter,
+          projectId,
+          "shared",
+          "release-1",
+          "19.1.0",
+          EMPTY_IMPORT_MAP,
+          {
+            loadComponentFromSource: () => {
+              loadCalls.set(projectId, (loadCalls.get(projectId) ?? 0) + 1);
+              return Promise.resolve(function Layout() {
+                return null;
+              });
+            },
+          },
+        );
+      }
+
+      await loadForProject("tenant:alpha");
+      await loadForProject("tenant:beta");
+      await loadForProject("tenant:alpha");
+
+      assertEquals(
+        loadCalls,
+        new Map([
+          ["tenant:alpha", 1],
+          ["tenant:beta", 1],
+        ]),
+      );
+    });
+
+    it("rejects invalid TSX component exports before caching them", async () => {
+      const cache = createLayoutComponentCache();
+      let loadCalls = 0;
+      const loadInvalid = () =>
+        loadTSXComponent(
+          "/project/app/invalid-layout.tsx",
+          "/project",
+          cache,
+          layoutAdapter("export default 42;"),
+          "project",
+          "project",
+          "release-1",
+          "19.1.0",
+          EMPTY_IMPORT_MAP,
+          {
+            loadComponentFromSource: () => {
+              loadCalls++;
+              return Promise.resolve(42 as unknown as React.ComponentType<Record<string, unknown>>);
+            },
+          },
+        );
+
+      await assertRejects(loadInvalid, TypeError, "React component");
+      await assertRejects(loadInvalid, TypeError, "React component");
+      assertEquals(loadCalls, 2);
     });
 
     it("retries after a failed component load", async () => {
@@ -548,6 +677,34 @@ describe("rendering/layouts/utils/component-loader", () => {
 
       assertEquals(moduleReactVersion, "18.3.1");
       assertEquals(moduleImportMap, { imports: {} });
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("rejects an MDX layout module without a component export", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    mutableRenderer.loadModuleESM = (() => Promise.resolve({})) as typeof mdxRenderer.loadModuleESM;
+
+    try {
+      await assertRejects(
+        () =>
+          loadMDXLayout(
+            { compiledCode: "export const metadata = {};" } as MdxBundle,
+            "/project",
+            { fs: {} } as unknown as RuntimeAdapter,
+            "project",
+            "project-slug",
+            "preview-main",
+            EMPTY_IMPORT_MAP,
+            "19.1.0",
+          ),
+        TypeError,
+        "React component",
+      );
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }

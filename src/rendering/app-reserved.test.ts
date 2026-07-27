@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { collectAncestorDirs, createErrorBoundary, RESERVED_COMPONENTS } from "./app-reserved.ts";
+import {
+  collectAncestorDirs,
+  createErrorBoundary,
+  loadReservedWithPath,
+  RESERVED_COMPONENTS,
+} from "./app-reserved.ts";
 import * as React from "react";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 describe("rendering/app-reserved", () => {
   describe("RESERVED_COMPONENTS", () => {
@@ -54,10 +60,113 @@ describe("rendering/app-reserved", () => {
       assertEquals(dirs.length, 0);
     });
 
+    it("rejects prefix-colliding paths outside the app root", () => {
+      assertEquals(
+        collectAncestorDirs("/project/application/blog", "/project/app"),
+        [],
+      );
+    });
+
     it("should handle identical segment and root", () => {
       const dirs = collectAncestorDirs("/root", "/root");
       assertEquals(dirs.length, 1);
       assertEquals(dirs[0], "/root");
+    });
+  });
+
+  describe("loadReservedWithPath", () => {
+    function adapterWithReader(
+      readFile: (path: string) => Promise<string>,
+    ): RuntimeAdapter {
+      return {
+        fs: { readFile },
+      } as unknown as RuntimeAdapter;
+    }
+
+    it("propagates operational reads instead of treating the component as absent", async () => {
+      const adapter = adapterWithReader(() =>
+        Promise.reject(Object.assign(new Error("reserved backend unavailable"), {
+          code: "EIO",
+        }))
+      );
+
+      await assertRejects(
+        () =>
+          loadReservedWithPath(
+            ["/project/app"],
+            "loading",
+            "/project",
+            "production",
+            adapter,
+          ),
+        Error,
+        "reserved backend unavailable",
+      );
+    });
+
+    it("does not fall through to an ancestor when the nearer component is invalid", async () => {
+      const reads: string[] = [];
+      const adapter = adapterWithReader((path) => {
+        reads.push(path);
+        if (path === "/project/app/blog/loading.tsx") {
+          return Promise.resolve("export const value = 1");
+        }
+        if (path === "/project/app/loading.tsx") {
+          return Promise.resolve("export default function Loading() {}");
+        }
+        return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+      });
+
+      await assertRejects(
+        () =>
+          loadReservedWithPath(
+            ["/project/app/blog", "/project/app"],
+            "loading",
+            "/project",
+            "production",
+            adapter,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+              loadComponentFromSource: () => Promise.resolve(null),
+            },
+          ),
+        TypeError,
+        "React component",
+      );
+      assertEquals(reads.includes("/project/app/loading.tsx"), false);
+    });
+
+    it("uses the requested runtime mode when compiling a reserved component", async () => {
+      let receivedDev: boolean | undefined;
+      const adapter = adapterWithReader((path) =>
+        path === "/project/app/loading.tsx"
+          ? Promise.resolve("export default function Loading() {}")
+          : Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }))
+      );
+
+      const result = await loadReservedWithPath(
+        ["/project/app"],
+        "loading",
+        "/project",
+        "production",
+        adapter,
+        "project",
+        "content",
+        "19.2.4",
+        undefined,
+        {
+          loadComponentFromSource: (_source, _path, _root, _adapter, options) => {
+            receivedDev = options?.dev;
+            return Promise.resolve(() => null);
+          },
+        },
+      );
+
+      assertEquals(result?.filePath, "/project/app/loading.tsx");
+      assertEquals(receivedDev, false);
     });
   });
 

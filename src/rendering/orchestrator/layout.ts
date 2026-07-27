@@ -93,9 +93,11 @@ export interface LayoutPreloadSummary {
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
   private reactVersionPromise: Promise<string> | null = null;
+  private readonly observedProjectIds = new Set<string>();
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
+    this.observedProjectIds.add(config.projectId);
   }
 
   private getReactVersion(): Promise<string> {
@@ -108,12 +110,18 @@ export class LayoutOrchestrator {
 
   clearCache(): void {
     if (this.config.layoutCache.clearForProject) {
-      this.config.layoutCache.clearForProject(this.config.projectId);
+      for (const projectId of this.observedProjectIds) {
+        this.config.layoutCache.clearForProject(projectId);
+      }
     } else {
       this.config.layoutCache.clear();
     }
-    clearSSRModuleCacheForProject(this.config.projectId);
-    clearImportMapCache(this.config.projectId);
+    for (const projectId of this.observedProjectIds) {
+      clearSSRModuleCacheForProject(projectId);
+      clearImportMapCache(projectId);
+    }
+    this.observedProjectIds.clear();
+    this.observedProjectIds.add(this.config.projectId);
   }
 
   collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
@@ -144,6 +152,7 @@ export class LayoutOrchestrator {
         const projectId = overrides.projectId ?? this.config.projectId;
         const projectSlug = overrides.projectSlug ?? this.config.projectSlug;
         const contentSourceId = overrides.contentSourceId ?? this.config.contentSourceId;
+        this.observedProjectIds.add(projectId);
 
         // Start both prerequisites before awaiting either. Capturing each outcome
         // immediately keeps a fast rejection observed while its sibling settles.
@@ -198,6 +207,10 @@ export class LayoutOrchestrator {
                   contentSourceId,
                   reactVersion,
                   importMapIdentity.importMap,
+                  {
+                    mode: this.config.mode,
+                    moduleServerUrl: this.config.moduleServerUrl,
+                  },
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -311,6 +324,7 @@ export class LayoutOrchestrator {
       "layout.applyLayoutsAndWrappers",
       async () => {
         assertImportMapIdentity(requestIdentity.importMapIdentity);
+        this.observedProjectIds.add(requestIdentity.projectId);
         const reactVersion = await this.getReactVersion();
         const mergedComponents = {
           ...createDefaultMDXComponents(),

@@ -1,4 +1,4 @@
-import { join } from "#veryfront/compat/path";
+import { isAbsolute, join } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { rendererLogger } from "#veryfront/utils";
@@ -40,9 +40,7 @@ export async function resolveAppComponentPath(
       });
     }
 
-    const appPath = configApp.startsWith("/") || configApp.startsWith(projectDir)
-      ? configApp
-      : join(projectDir, configApp);
+    const appPath = isAbsolute(configApp) ? configApp : join(projectDir, configApp);
 
     if (!(await adapter.fs.exists(appPath))) {
       throw CONFIG_INVALID.create({

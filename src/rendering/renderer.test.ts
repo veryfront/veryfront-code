@@ -149,6 +149,22 @@ function makeReadyManifest(): ReleaseAssetManifest {
   };
 }
 
+function makeRenderAdapter(
+  fsOverrides: Record<string, unknown> = {},
+): RenderContext["adapter"] {
+  return {
+    fs: {
+      exists: async () => false,
+      readDir: () => {
+        throw Object.assign(new Error("components directory not found"), {
+          code: "ENOENT",
+        });
+      },
+      ...fsOverrides,
+    },
+  } as unknown as RenderContext["adapter"];
+}
+
 function makeRenderContext(): RenderContext {
   return {
     projectId: "proj-1",
@@ -156,7 +172,7 @@ function makeRenderContext(): RenderContext {
     projectDir: "/project",
     config: {} as RenderContext["config"],
     mode: "production",
-    adapter: {} as RenderContext["adapter"],
+    adapter: makeRenderAdapter(),
     cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1"),
     environment: "production",
     contentSourceId: "release-rel-1",
@@ -603,7 +619,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: makeRenderAdapter({ exists: async () => true }),
     } as unknown as RenderContext;
     const cacheKey = await buildRendererStorageKey(ctx, "/stale");
     store.data.set(cacheKey, {
@@ -699,7 +715,7 @@ describe("Renderer release asset cache isolation", () => {
       projectId,
       projectSlug: projectId,
       cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
-      adapter: { fs: { exists: async () => true } },
+      adapter: makeRenderAdapter({ exists: async () => true }),
     } as unknown as RenderContext;
     const cacheKey = await buildRendererStorageKey(ctx, "/stale-at-capacity");
     store.data.set(cacheKey, {
@@ -761,7 +777,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: makeRenderAdapter({ exists: async () => true }),
     } as unknown as RenderContext;
     const url = new URL("https://example.com/data?filter=recent");
     const requestAbort = new AbortController();
@@ -874,7 +890,7 @@ describe("Renderer release asset cache isolation", () => {
       const store = createInMemoryStore();
       const ctx = {
         ...makeRenderContext(),
-        adapter: { fs: { exists: async () => true } },
+        adapter: makeRenderAdapter({ exists: async () => true }),
       } as unknown as RenderContext;
       const cacheKey = await buildRendererStorageKey(ctx, "/prewarm-disabled");
       store.data.set(cacheKey, {
@@ -963,7 +979,7 @@ describe("Renderer release asset cache isolation", () => {
     const store = createInMemoryStore();
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: { exists: async () => true } },
+      adapter: makeRenderAdapter({ exists: async () => true }),
     } as unknown as RenderContext;
     const themedCacheKey = await buildRendererStorageKey(ctx, "/stale-themed", {
       colorScheme: "dark",
@@ -1134,7 +1150,7 @@ describe("Renderer release asset cache isolation", () => {
 
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: {} } as RenderContext["adapter"],
+      adapter: makeRenderAdapter(),
     };
     const url = new URL("https://preview.example.test/?utm_source=smoke");
     const result = await renderer.renderPage("/", ctx, {
@@ -1243,7 +1259,7 @@ describe("Renderer release asset cache isolation", () => {
 
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: {} } as RenderContext["adapter"],
+      adapter: makeRenderAdapter(),
     };
     await renderer.renderPage("/blog/articles/terraform-azure-kubernetes", ctx, {
       environment: "production",
@@ -1304,7 +1320,7 @@ describe("Renderer release asset cache isolation", () => {
 
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: {} } as RenderContext["adapter"],
+      adapter: makeRenderAdapter(),
     };
     const url = new URL("https://example.com/");
     await renderer.renderPage("/", ctx, {
@@ -1519,7 +1535,7 @@ describe("Renderer release asset cache isolation", () => {
 
     const ctx = {
       ...makeRenderContext(),
-      adapter: { fs: {} } as RenderContext["adapter"],
+      adapter: makeRenderAdapter(),
     };
     const prewarm = (renderer as unknown as {
       runProductionRenderPrewarm: (

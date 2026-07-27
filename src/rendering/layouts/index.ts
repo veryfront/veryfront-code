@@ -10,7 +10,11 @@ export {
   type LayoutCollectorOptions,
 } from "./layout-collector.ts";
 export { LayoutCompiler, type LayoutCompilerOptions } from "./layout-compiler.ts";
-export { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
+export {
+  type LayoutApplicationOptions,
+  LayoutApplicator,
+  type LayoutApplicatorDependencies,
+} from "./layout-applicator.ts";
 
 export type { LayoutDiscoveryOptions, NestedLayoutsResult } from "./types.ts";
 
@@ -22,5 +26,6 @@ export {
   applyTSXLayout,
   loadMDXLayout,
   loadTSXComponent,
+  type LoadTSXComponentOptions,
 } from "./utils/component-loader.ts";
 export { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";

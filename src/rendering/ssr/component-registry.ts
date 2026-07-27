@@ -14,6 +14,7 @@ import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { containsPathControlCharacters } from "#veryfront/utils/route-path-utils.ts";
 import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { type VirtualModuleRegistration, VirtualModuleSystem } from "../virtual-module-system.ts";
+import { assertReactComponentType } from "../react-component-type.ts";
 
 const COMPONENT_EXTENSION = /^(.*)\.(tsx|jsx|ts|js)$/;
 const NON_RUNTIME_COMPONENT_SUFFIX = /\.(?:d|spec|test|stories|story)$/;
@@ -24,11 +25,6 @@ const MAX_COMPONENTS = 10_000;
 const MAX_COMPONENT_SOURCE_BYTES = DEFAULT_MAX_FILE_SIZE_BYTES;
 const MAX_DEFERRED_SOURCE_BYTES = 32 * 1024 * 1024;
 const MAX_ERROR_MESSAGE_LENGTH = 4_096;
-const REACT_COMPONENT_SYMBOLS = new Set([
-  Symbol.for("react.forward_ref"),
-  Symbol.for("react.lazy"),
-  Symbol.for("react.memo"),
-]);
 const VERYFRONT_SYSTEM_DIRECTORIES = new Set([
   "cache",
   "compiled",
@@ -208,7 +204,7 @@ export class ComponentRegistry {
                 this.adapter,
                 loaderOptions,
               ),
-              info.filePath,
+              `Module "${info.filePath}"`,
             ),
           );
         } catch (error) {
@@ -335,7 +331,7 @@ export class ComponentRegistry {
                 this.adapter,
                 loaderOptions,
               ),
-              component.filePath,
+              `Module "${component.filePath}"`,
             ),
           );
         } catch (error) {
@@ -693,32 +689,6 @@ function assertSafeIdentity(value: unknown, label: string): asserts value is str
 function safeErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return "Unknown component loading error";
   return error.message.slice(0, MAX_ERROR_MESSAGE_LENGTH);
-}
-
-function assertReactComponentType(
-  value: unknown,
-  filePath: string,
-): React.ComponentType<Record<string, unknown>> {
-  if (typeof value === "function") {
-    return value as React.ComponentType<Record<string, unknown>>;
-  }
-  if (typeof value === "object" && value !== null) {
-    try {
-      const descriptor = Object.getOwnPropertyDescriptor(value, "$$typeof");
-      if (
-        descriptor &&
-        Object.hasOwn(descriptor, "value") &&
-        typeof descriptor.value === "symbol" &&
-        REACT_COMPONENT_SYMBOLS.has(descriptor.value)
-      ) {
-        return value as React.ComponentType<Record<string, unknown>>;
-      }
-    } catch {
-      // The generic invalid-export error below is deterministic and does not
-      // expose proxy traps or arbitrary stringification.
-    }
-  }
-  throw new TypeError(`Module "${filePath}" did not export a React component`);
 }
 
 function componentLoadError(

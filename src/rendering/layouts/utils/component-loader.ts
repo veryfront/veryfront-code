@@ -8,7 +8,6 @@ import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
-import { createError, toError } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { preloadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -24,10 +23,10 @@ import {
   snapshotImportMap,
 } from "#veryfront/transforms/pipeline/cache-identity.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { assertReactComponentType } from "../../react-component-type.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
-const applyMdxLayoutLog = logger.component("apply-mdx-layout");
 const APP_ROUTER_SCRIPT_LAYOUT_EXTENSIONS = LAYOUT_EXTENSIONS.filter((extension) =>
   extension !== "md" && extension !== "mdx"
 );
@@ -39,14 +38,25 @@ type AppRouterDocumentLayoutFunction = (
 
 export interface LayoutComponentCache {
   get(key: string): BundledReact.ComponentType | undefined;
+  getForProject?(
+    projectId: string,
+    key: string,
+  ): BundledReact.ComponentType | undefined;
   set(key: string, value: BundledReact.ComponentType): void;
+  setForProject?(
+    projectId: string,
+    key: string,
+    value: BundledReact.ComponentType,
+  ): void;
   delete(key: string): void;
   clear(): void;
   clearForProject?(projectId: string): void;
 }
 
-interface LoadTSXComponentDeps {
-  loadComponentFromSource: typeof loadComponentFromSource;
+export interface LoadTSXComponentOptions {
+  loadComponentFromSource?: typeof loadComponentFromSource;
+  mode?: "development" | "production";
+  moduleServerUrl?: string;
 }
 
 const tsxComponentFlights = new WeakMap<
@@ -175,8 +185,23 @@ class PerProjectLayoutComponentCache implements LayoutComponentCache {
     return this.projects.get(projectId)?.get(key);
   }
 
+  getForProject(
+    projectId: string,
+    key: string,
+  ): BundledReact.ComponentType | undefined {
+    return this.projects.get(projectId)?.get(key);
+  }
+
   set(key: string, value: BundledReact.ComponentType): void {
     const projectId = this.projectIdFromKey(key);
+    this.getOrCreateBucket(projectId).set(key, value);
+  }
+
+  setForProject(
+    projectId: string,
+    key: string,
+    value: BundledReact.ComponentType,
+  ): void {
     this.getOrCreateBucket(projectId).set(key, value);
   }
 
@@ -204,6 +229,28 @@ export function createLayoutComponentCache(
   const perProject = Math.max(1, Math.min(perProjectMaxEntries, maxEntries));
   const maxProjects = Math.max(1, Math.floor(maxEntries / perProject));
   return new PerProjectLayoutComponentCache(perProject, maxProjects);
+}
+
+function getCachedLayout(
+  cache: LayoutComponentCache,
+  projectId: string,
+  key: string,
+): BundledReact.ComponentType | undefined {
+  if (cache.getForProject) return cache.getForProject(projectId, key);
+  return cache.get(key);
+}
+
+function setCachedLayout(
+  cache: LayoutComponentCache,
+  projectId: string,
+  key: string,
+  value: BundledReact.ComponentType,
+): void {
+  if (cache.setForProject) {
+    cache.setForProject(projectId, key, value);
+    return;
+  }
+  cache.set(key, value);
 }
 
 export function shouldUnwrapAppRouterDocumentLayout(
@@ -256,15 +303,22 @@ export async function loadTSXComponent(
   contentSourceId: string,
   reactVersion?: string,
   importMap?: ImportMapConfig,
-  deps: LoadTSXComponentDeps = { loadComponentFromSource },
+  options: LoadTSXComponentOptions = {},
 ): Promise<BundledReact.ComponentType> {
+  const mode = options.mode ?? "development";
   const source = await adapter.fs.readFile(componentPath);
   const resolvedImportMap = snapshotImportMap(
     importMap ?? await preloadImportMap(projectDir, adapter, projectId),
   );
-  const [hash, importMapFingerprint] = await Promise.all([
+  const [hash, importMapFingerprint, runtimeFingerprint] = await Promise.all([
     computeHash(source),
     fingerprintPipelineImportMap(resolvedImportMap),
+    computeHash(JSON.stringify([
+      projectSlug,
+      reactVersion ?? null,
+      mode,
+      options.moduleServerUrl ?? null,
+    ])),
   ]);
   const cacheKey = buildLayoutComponentCacheKey(
     projectId,
@@ -272,44 +326,41 @@ export async function loadTSXComponent(
     hash,
     contentSourceId,
     importMapFingerprint,
-  ) + ":" + (reactVersion ?? "default");
+  ) + ":" + runtimeFingerprint;
 
-  const cached = cache.get(cacheKey);
+  const cached = getCachedLayout(cache, projectId, cacheKey);
   if (cached) return cached;
 
   const loaded = await getTSXComponentFlights(cache).do(
     cacheKey,
     async (control) => {
-      const cachedDuringFlight = cache.get(cacheKey);
+      const cachedDuringFlight = getCachedLayout(cache, projectId, cacheKey);
       if (cachedDuringFlight) return cachedDuringFlight;
 
-      const loaded = await deps.loadComponentFromSource(
+      const exported = await (options.loadComponentFromSource ?? loadComponentFromSource)(
         source,
         componentPath,
         projectDir,
         adapter,
         {
-          dev: true,
+          dev: mode === "development",
+          mode,
           projectId,
           projectSlug,
+          moduleServerUrl: options.moduleServerUrl,
           ssr: true,
           contentSourceId,
           reactVersion,
           importMap: resolvedImportMap,
         },
       );
-
-      if (!loaded) {
-        throw toError(
-          createError({
-            type: "render",
-            message: "Component loading failed",
-          }),
-        );
-      }
+      const loaded = assertReactComponentType(
+        exported,
+        `TSX layout module "${componentPath}"`,
+      );
 
       if (control.isCurrent()) {
-        cache.set(cacheKey, loaded);
+        setCachedLayout(cache, projectId, cacheKey, loaded);
       }
       return loaded;
     },
@@ -335,7 +386,7 @@ export function loadMDXLayout(
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
   reactVersion?: string,
-): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
+): Promise<BundledReact.ComponentType<{ components?: MDXComponents }>> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
     async () => {
@@ -371,7 +422,10 @@ export function loadMDXLayout(
         exports: Object.keys(mod),
       });
 
-      return mod.MDXLayout || mod.MainLayout || mod.default;
+      return assertReactComponentType(
+        mod.MDXLayout || mod.MainLayout || mod.default,
+        `MDX layout module for project "${projectSlug}"`,
+      ) as BundledReact.ComponentType<{ components?: MDXComponents }>;
     },
     {
       "layout.project_slug": projectSlug || "",
@@ -416,6 +470,8 @@ export async function applyTSXLayout(
   contentSourceId: string,
   reactVersion?: string,
   importMap?: ImportMapConfig,
+  mode: "development" | "production" = "development",
+  moduleServerUrl?: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -440,6 +496,7 @@ export async function applyTSXLayout(
       contentSourceId,
       reactVersion,
       importMap,
+      { mode, moduleServerUrl },
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -488,11 +545,6 @@ export async function applyMDXLayout(
     preloadedImportMap,
     reactVersion,
   );
-
-  if (!LayoutFn) {
-    applyMdxLayoutLog.debug("No layout function found");
-    return element;
-  }
 
   const child = ensureValidChild(element, React);
   return React.createElement(

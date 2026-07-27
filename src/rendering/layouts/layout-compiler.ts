@@ -1,9 +1,7 @@
-import { computeHash, rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { compileMDXLayouts } from "./utils/compiler.ts";
-
-const logger = rendererLogger.component("layout-compiler");
+import { computeDepsHash } from "./utils/hash-calculator.ts";
 
 export interface LayoutCompilerOptions {
   adapter: RuntimeAdapter;
@@ -35,41 +33,6 @@ export class LayoutCompiler {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
   ): Promise<string> {
-    try {
-      const depParts: string[] = [];
-
-      if (layoutBundle) {
-        depParts.push(await computeHash(String(layoutBundle.compiledCode ?? "")));
-      }
-
-      for (const item of nestedLayouts) {
-        if (!item) continue;
-
-        const { componentPath } = item;
-
-        if (componentPath) {
-          try {
-            const src = await this.adapter.fs.readFile(componentPath);
-            depParts.push(await computeHash(src));
-          } catch (e) {
-            logger.debug(
-              "[LayoutCompiler] reading tsx layout for dep hash failed",
-              e as Error,
-            );
-          }
-          continue;
-        }
-
-        const compiledCode = item.bundle?.compiledCode;
-        if (compiledCode) {
-          depParts.push(await computeHash(String(compiledCode)));
-        }
-      }
-
-      return depParts.join(":");
-    } catch (e) {
-      logger.debug("dep hash computation failed", e as Error);
-      return "";
-    }
+    return await computeDepsHash(layoutBundle, nestedLayouts, this.adapter);
   }
 }

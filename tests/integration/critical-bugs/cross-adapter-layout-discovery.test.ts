@@ -48,7 +48,11 @@ function createMockFSAdapter(
     stat(path: string) {
       const entry = files.get(path);
       if (!entry) {
-        return Promise.reject(new Error(`ENOENT: no such file or directory: ${path}`));
+        return Promise.reject(
+          Object.assign(new Error(`ENOENT: no such file or directory: ${path}`), {
+            code: "ENOENT",
+          }),
+        );
       }
 
       return Promise.resolve({
@@ -68,7 +72,11 @@ function createMockFSAdapter(
     readFile(path: string) {
       const entry = files.get(path);
       if (!entry?.content) {
-        return Promise.reject(new Error(`ENOENT: no such file or directory: ${path}`));
+        return Promise.reject(
+          Object.assign(new Error(`ENOENT: no such file or directory: ${path}`), {
+            code: "ENOENT",
+          }),
+        );
       }
       return Promise.resolve(entry.content);
     },
@@ -265,7 +273,9 @@ describe(
           try {
             return await originalGithubStat(path);
           } catch {
-            throw new Error(`GitHub API: Not Found - ${path}`);
+            throw Object.assign(new Error(`GitHub API: Not Found - ${path}`), {
+              code: "ENOENT",
+            });
           }
         };
 

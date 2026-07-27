@@ -1,8 +1,10 @@
 import * as BundledReact from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { dirname, isAbsolute, normalize, parse, relative } from "#veryfront/compat/path";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { assertReactComponentType } from "./react-component-type.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -12,18 +14,48 @@ export const RESERVED_COMPONENTS = {
   notFound: "not-found.tsx",
 };
 
+const MAX_RESERVED_COMPONENT_ANCESTORS = 256;
+
+function normalizeDirectoryPath(path: string): string {
+  let normalized = normalize(path);
+  const rootLength = parse(normalized).root?.length ?? 0;
+
+  while (
+    normalized.length > rootLength &&
+    (normalized.endsWith("/") || normalized.endsWith("\\"))
+  ) {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+function isSameOrDescendant(rootDir: string, path: string): boolean {
+  const relativePath = relative(rootDir, path).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath));
+}
+
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const getDirname = (p: string) => normalizePath(p).replace(/\/?[^/]+\/?$/, "");
-
   const dirs: string[] = [];
-  let current = normalizePath(segmentDir);
-  const root = normalizePath(appRootDir);
+  let current = normalizeDirectoryPath(segmentDir);
+  const root = normalizeDirectoryPath(appRootDir);
 
-  while (current.startsWith(root)) {
+  if (!isSameOrDescendant(root, current)) return dirs;
+
+  while (isSameOrDescendant(root, current)) {
+    if (dirs.length >= MAX_RESERVED_COMPONENT_ANCESTORS) {
+      throw new RangeError(
+        `Reserved component ancestor limit of ${MAX_RESERVED_COMPONENT_ANCESTORS} was exceeded`,
+      );
+    }
     dirs.push(current);
 
-    const parent = getDirname(current) || "/";
-    if (parent === current || parent.length < root.length) break;
+    if (current === root) break;
+    const parent = dirname(current);
+    if (parent === current) break;
 
     current = parent;
   }
@@ -43,6 +75,15 @@ interface ErrorBoundaryProps {
 type ReactLike = {
   createElement: typeof BundledReact.createElement;
 };
+
+type LoadComponentFromSource =
+  typeof import("#veryfront/modules/react-loader/component-loader.ts")["loadComponentFromSource"];
+
+export interface ReservedComponentLoaderDeps {
+  loadComponentFromSource: (
+    ...args: Parameters<LoadComponentFromSource>
+  ) => Promise<unknown>;
+}
 
 export function createErrorBoundary(
   ErrorComponent: ReservedComponent,
@@ -83,37 +124,44 @@ export async function loadReservedWithPath(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
-  _mode: "development" | "production",
+  mode: "development" | "production",
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
   reactVersion?: string,
   importMap?: ImportMapConfig,
+  deps?: ReservedComponentLoaderDeps,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
-  const { loadComponentFromSource } = await import(
-    "#veryfront/modules/react-loader/component-loader.ts"
-  );
+  const loadComponentFromSource = deps?.loadComponentFromSource ??
+    (await import("#veryfront/modules/react-loader/component-loader.ts"))
+      .loadComponentFromSource;
 
   for (const dir of dirs) {
     for (const ext of [".tsx", ".jsx"]) {
       const file = join(dir, candidateName.replace(/\.tsx$/, ext));
+      let src: string;
       try {
-        const src = await adapter.fs.readFile(file);
-        const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
-          projectId: projectId ?? projectDir,
-          dev: true,
-          contentSourceId,
-          reactVersion,
-          importMap,
-        });
-        if (typeof Cmp === "function") {
-          return { component: Cmp as ReservedComponent, filePath: file };
-        }
-      } catch (_) {
-        /* expected: component not found in this path, continue to next */
+        src = await adapter.fs.readFile(file);
+      } catch (error) {
+        if (isNotFoundError(error)) continue;
+        throw error;
       }
+
+      const exported = await loadComponentFromSource(src, file, projectDir, adapter, {
+        projectId: projectId ?? projectDir,
+        dev: mode === "development",
+        mode,
+        contentSourceId,
+        reactVersion,
+        importMap,
+      });
+      const component = assertReactComponentType(
+        exported,
+        `Reserved ${which} module "${file}"`,
+      ) as ReservedComponent;
+      return { component, filePath: file };
     }
   }
 
@@ -130,6 +178,7 @@ export async function tryLoadReservedInDirs(
   contentSourceId?: string,
   reactVersion?: string,
   importMap?: ImportMapConfig,
+  deps?: ReservedComponentLoaderDeps,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -141,6 +190,7 @@ export async function tryLoadReservedInDirs(
     contentSourceId,
     reactVersion,
     importMap,
+    deps,
   );
   return loaded?.component ?? null;
 }

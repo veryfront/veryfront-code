@@ -1,29 +1,37 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
-import { dirname, extname, join } from "#veryfront/compat/path";
+import { dirname, extname, isAbsolute, join, normalize, relative } from "#veryfront/compat/path";
 import { LAYOUT_EXTENSIONS } from "../types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const discoveryLog = logger.component("discovery");
-const layoutLog = logger.component("layout");
 
 interface CacheEntry {
-  layouts: LayoutItem[];
-  accessedAt: number;
+  layouts: readonly Readonly<LayoutItem>[];
   projectDir: string;
 }
 
 const MAX_CACHE_SIZE = 500;
+const MAX_LAYOUT_ANCESTOR_DIRECTORIES = 256;
 const layoutDiscoveryCache = new LRUCache<string, CacheEntry>({
   maxEntries: MAX_CACHE_SIZE,
 });
+const adapterCacheIds = new WeakMap<RuntimeAdapter, number>();
+let nextAdapterCacheId = 1;
+let cacheGeneration = 0;
+
+function normalizeDirectoryPath(path: string): string {
+  return normalize(join(path, "."));
+}
 
 // Register cache for monitoring and bulk clearing
 registerLRUCache("layout-discovery-cache", layoutDiscoveryCache);
 
 export function clearLayoutDiscoveryCache(projectDir?: string): void {
+  cacheGeneration++;
   if (!projectDir) {
     discoveryLog.debug("Clearing entire layout discovery cache", {
       size: layoutDiscoveryCache.size,
@@ -32,10 +40,11 @@ export function clearLayoutDiscoveryCache(projectDir?: string): void {
     return;
   }
 
+  const normalizedProjectDir = normalizeDirectoryPath(projectDir);
   let cleared = 0;
   for (const key of [...layoutDiscoveryCache.keys()]) {
     const entry = layoutDiscoveryCache.get(key);
-    if (entry && entry.projectDir === projectDir) {
+    if (entry && entry.projectDir === normalizedProjectDir) {
       layoutDiscoveryCache.delete(key);
       cleared++;
     }
@@ -52,44 +61,73 @@ export function getLayoutDiscoveryCacheStats(): { size: number; maxSize: number 
   return { size: layoutDiscoveryCache.size, maxSize: MAX_CACHE_SIZE };
 }
 
+export interface LayoutDiscoveryOptions {
+  /**
+   * Stable content identity for adapters that can expose multiple snapshots
+   * through the same object. Distinct adapter instances are isolated even when
+   * this is omitted.
+   */
+  cacheScope?: string;
+}
+
 export async function discoverNestedLayouts(
   pageFilePath: string,
   rootDir: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  options: LayoutDiscoveryOptions = {},
 ): Promise<LayoutItem[]> {
+  const normalizedPagePath = normalize(pageFilePath);
+  const normalizedRootDir = normalizeDirectoryPath(rootDir);
+  const normalizedProjectDir = normalizeDirectoryPath(projectDir);
+
   // The tuple is collision-free for string inputs. A short non-cryptographic
   // digest is not sufficient here: a collision can cross project boundaries.
-  const key = JSON.stringify([projectDir, pageFilePath, rootDir]);
+  const key = JSON.stringify([
+    options.cacheScope ?? `adapter:${getAdapterCacheId(adapter)}`,
+    normalizedProjectDir,
+    normalizedPagePath,
+    normalizedRootDir,
+  ]);
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
-    cached.accessedAt = Date.now();
     discoveryLog.debug("Layout cache HIT", {
-      pageFilePath,
-      rootDir,
+      pageFilePath: normalizedPagePath,
+      rootDir: normalizedRootDir,
       layoutCount: cached.layouts.length,
       layoutPaths: cached.layouts.map((l) => l.path),
     });
-    return cached.layouts;
+    return cloneLayouts(cached.layouts);
   }
 
   discoveryLog.debug("Layout cache MISS, discovering layouts", {
-    pageFilePath,
-    rootDir,
-    projectDir,
+    pageFilePath: normalizedPagePath,
+    rootDir: normalizedRootDir,
+    projectDir: normalizedProjectDir,
   });
 
-  const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);
+  const generation = cacheGeneration;
+  const layouts = await discoverNestedLayoutsImpl(
+    normalizedPagePath,
+    normalizedRootDir,
+    adapter,
+  );
 
   discoveryLog.debug("Found layouts", {
-    pageFilePath,
+    pageFilePath: normalizedPagePath,
     layoutCount: layouts.length,
     layoutPaths: layouts.map((l) => l.path),
   });
 
-  layoutDiscoveryCache.set(key, { layouts, accessedAt: Date.now(), projectDir });
+  const snapshot = snapshotLayouts(layouts);
+  if (generation === cacheGeneration) {
+    layoutDiscoveryCache.set(key, {
+      layouts: snapshot,
+      projectDir: normalizedProjectDir,
+    });
+  }
 
-  return layouts;
+  return cloneLayouts(snapshot);
 }
 
 async function discoverNestedLayoutsImpl(
@@ -97,40 +135,40 @@ async function discoverNestedLayoutsImpl(
   rootDir: string,
   adapter: RuntimeAdapter,
 ): Promise<LayoutItem[]> {
+  if (!isSameOrDescendant(rootDir, pageFilePath)) return [];
+
   const nestedLayouts: LayoutItem[] = [];
+  const candidates = collectLayoutCandidates(pageFilePath, rootDir);
+  const existing = await resolveExistingFiles(candidates, adapter);
 
-  try {
-    const candidates = collectLayoutCandidates(pageFilePath, rootDir);
-    const existing = await resolveExistingFiles(candidates.reverse(), adapter);
-
-    logger.debug("Found layout files:", existing);
-    addLayoutsFromFiles(existing, nestedLayouts);
-
-    await addMissedAncestorLayouts(pageFilePath, rootDir, existing, nestedLayouts, adapter);
-  } catch (e) {
-    logger.warn("Nested layout discovery failed", e);
-  }
+  logger.debug("Found layout files:", existing);
+  addLayoutsFromFiles(existing, nestedLayouts);
 
   return nestedLayouts;
 }
 
 function collectLayoutCandidates(pageFilePath: string, rootDir: string): string[] {
-  const candidates: string[] = [];
+  const directories: string[] = [];
   let currentDir = dirname(pageFilePath);
 
-  while (currentDir.startsWith(rootDir)) {
-    for (const ext of LAYOUT_EXTENSIONS) {
-      candidates.push(join(currentDir, `layout.${ext}`));
+  while (isSameOrDescendant(rootDir, currentDir)) {
+    if (directories.length >= MAX_LAYOUT_ANCESTOR_DIRECTORIES) {
+      throw new RangeError(
+        `Layout discovery ancestor limit of ${MAX_LAYOUT_ANCESTOR_DIRECTORIES} was exceeded`,
+      );
     }
+    directories.push(currentDir);
 
+    if (currentDir === rootDir) break;
     const parent = dirname(currentDir);
-    if (parent === currentDir || currentDir === rootDir) break;
+    if (parent === currentDir) break;
     currentDir = parent;
   }
 
-  if (!candidates.includes(join(rootDir, "layout.mdx"))) {
+  const candidates: string[] = [];
+  for (const directory of directories.reverse()) {
     for (const ext of LAYOUT_EXTENSIONS) {
-      candidates.push(join(rootDir, `layout.${ext}`));
+      candidates.push(join(directory, `layout.${ext}`));
     }
   }
 
@@ -145,6 +183,7 @@ async function resolveExistingFiles(
 
   const existing: string[] = [];
   const seenDirs = new Set<string>();
+  let operationalFailure: unknown;
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
@@ -163,10 +202,12 @@ async function resolveExistingFiles(
     }
 
     if (result.status === "rejected") {
-      layoutLog.debug("stat layout candidate failed", result.reason as Error);
+      if (isNotFoundError(result.reason)) continue;
+      operationalFailure ??= result.reason;
     }
   }
 
+  if (operationalFailure !== undefined) throw operationalFailure;
   return existing;
 }
 
@@ -191,55 +232,46 @@ function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void
   }
 }
 
-async function addMissedAncestorLayouts(
-  pageFilePath: string,
-  rootDir: string,
-  existing: string[],
-  nestedLayouts: LayoutItem[],
-  adapter: RuntimeAdapter,
-): Promise<void> {
-  try {
-    const included = new Set(existing);
-    const dirsWithLayouts = new Set(existing.map((p) => dirname(p)));
+function isSameOrDescendant(rootDir: string, path: string): boolean {
+  const relativePath = relative(rootDir, path).replaceAll("\\", "/");
+  return relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !isAbsolute(relativePath));
+}
 
-    const candidates: string[] = [];
-    let dir = dirname(pageFilePath);
+function getAdapterCacheId(adapter: RuntimeAdapter): number {
+  const existing = adapterCacheIds.get(adapter);
+  if (existing !== undefined) return existing;
 
-    while (dir.startsWith(rootDir)) {
-      if (!dirsWithLayouts.has(dir)) {
-        for (const ext of LAYOUT_EXTENSIONS) {
-          const candidate = join(dir, `layout.${ext}`);
-          if (!included.has(candidate)) candidates.push(candidate);
-        }
-      }
+  const id = nextAdapterCacheId;
+  nextAdapterCacheId += 1;
+  adapterCacheIds.set(adapter, id);
+  return id;
+}
 
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
-    }
-
-    const results = await Promise.allSettled(candidates.map((cand) => adapter.fs.stat(cand)));
-
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      const cand = candidates[i];
-      if (!result || !cand) continue;
-
-      if (result.status === "fulfilled" && result.value.isFile) {
-        const candDir = dirname(cand);
-        if (dirsWithLayouts.has(candDir)) continue;
-
-        addLayoutsFromFiles([cand], nestedLayouts);
-        included.add(cand);
-        dirsWithLayouts.add(candDir);
-        continue;
-      }
-
-      if (result.status === "rejected") {
-        layoutLog.debug("stat nested tsx/jsx layout failed", result.reason as Error);
-      }
-    }
-  } catch (e) {
-    layoutLog.debug("nested layout fallback scan failed", e as Error);
+function cloneLayout(layout: Readonly<LayoutItem>): LayoutItem {
+  if (layout.kind === "mdx") {
+    const clone: LayoutItem = {
+      kind: "mdx",
+      path: layout.path,
+    };
+    if (layout.bundle !== undefined) clone.bundle = layout.bundle;
+    return clone;
   }
+
+  return {
+    kind: "tsx",
+    component: layout.component,
+    componentPath: layout.componentPath,
+    path: layout.path,
+  };
+}
+
+function cloneLayouts(layouts: readonly Readonly<LayoutItem>[]): LayoutItem[] {
+  return layouts.map(cloneLayout);
+}
+
+function snapshotLayouts(layouts: readonly LayoutItem[]): readonly Readonly<LayoutItem>[] {
+  return Object.freeze(layouts.map((layout) => Object.freeze(cloneLayout(layout))));
 }

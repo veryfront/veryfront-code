@@ -411,7 +411,7 @@ describe("Layout Handling", () => {
       });
     });
 
-    it("handles missing files gracefully", async () => {
+    it("rejects when a layout dependency disappears", async () => {
       await withLayoutsTestContext("layouts-hash-missing-file", async (context, adapter) => {
         const missingPath = `${context.projectDir}/non-existent.tsx`;
         const nestedLayouts: LayoutItem[] = [{
@@ -420,9 +420,11 @@ describe("Layout Handling", () => {
           path: missingPath,
         }];
 
-        const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
-
-        assertExists(hash);
+        await assertRejects(
+          () => computeDepsHash(undefined, nestedLayouts, adapter),
+          Error,
+          "non-existent.tsx",
+        );
       });
     });
 

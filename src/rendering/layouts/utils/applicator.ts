@@ -28,6 +28,8 @@ export function applyLayoutsESM(
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
   reactVersion?: string,
+  mode: "development" | "production" = "development",
+  moduleServerUrl?: string,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -98,6 +100,8 @@ export function applyLayoutsESM(
                 contentSourceId,
                 reactVersion,
                 preloadedImportMap,
+                mode,
+                moduleServerUrl,
               ),
             spanAttrs,
           );
@@ -158,6 +162,8 @@ export async function applyLayoutsFunctionBody(
   contentSourceId: string,
   reactVersion?: string,
   preloadedImportMap?: ImportMapConfig,
+  mode: "development" | "production" = "development",
+  moduleServerUrl?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   let element = pageElement;
@@ -202,6 +208,7 @@ export async function applyLayoutsFunctionBody(
         contentSourceId,
         reactVersion,
         preloadedImportMap,
+        { mode, moduleServerUrl },
       );
 
       const child = ensureValidChild(element, React);

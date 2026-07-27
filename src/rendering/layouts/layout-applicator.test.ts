@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { flattenRouteParams } from "#veryfront/routing";
 import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
@@ -322,7 +322,7 @@ describe("LayoutApplicator helpers", () => {
       fs: {
         readFile: (path: string) => {
           reads.push(path);
-          return Promise.reject(new Error("not found"));
+          return Promise.reject(Object.assign(new Error("not found"), { code: "ENOENT" }));
         },
       },
     } as unknown as RuntimeAdapter;
@@ -358,5 +358,126 @@ describe("LayoutApplicator helpers", () => {
       true,
     );
     assertEquals(reads.some((path) => path.startsWith("/project/app/")), false);
+  });
+
+  it("propagates App component read failures after discovery", async () => {
+    const applicator = new LayoutApplicator({
+      projectDir: "/project",
+      projectId: "project",
+      projectSlug: "project",
+      contentSourceId: "preview-main",
+      adapter: {
+        fs: {
+          exists: () => Promise.resolve(true),
+          readFile: () =>
+            Promise.reject(Object.assign(new Error("app source unavailable"), { code: "EIO" })),
+        },
+      } as unknown as RuntimeAdapter,
+      config: {
+        app: "components/app.tsx",
+        react: { version: "18.3.1" },
+      },
+      layoutCache: createLayoutComponentCache(),
+      mergedComponents: {},
+      mode: "production",
+    });
+
+    await assertRejects(
+      () =>
+        (applicator as unknown as {
+          wrapWithAppComponent(
+            element: React.ReactElement,
+          ): Promise<React.ReactElement>;
+        }).wrapWithAppComponent(React.createElement("main")),
+      Error,
+      "app source unavailable",
+    );
+  });
+
+  it("uses the request module server and production mode for App components", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+    let receivedModuleServerUrl: string | undefined;
+    let receivedMode: string | undefined;
+    let receivedDev: boolean | undefined;
+    const applicator = new LayoutApplicator(
+      {
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "preview-main",
+        adapter: {
+          fs: {
+            exists: () => Promise.resolve(true),
+            readFile: () => Promise.resolve("export default function App() { return null; }"),
+          },
+        } as unknown as RuntimeAdapter,
+        config: {
+          app: "components/app.tsx",
+          dev: { moduleServerUrl: "https://config-modules.example.test" },
+          react: { version: "18.3.1" },
+        },
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        moduleServerUrl: "https://request-modules.example.test",
+      },
+      {
+        loadComponentFromSource: (_source, _path, _root, _adapter, options) => {
+          receivedModuleServerUrl = options?.moduleServerUrl;
+          receivedMode = options?.mode;
+          receivedDev = options?.dev;
+          return Promise.resolve(() => null);
+        },
+      },
+    );
+
+    await (applicator as unknown as {
+      wrapWithAppComponent(
+        element: React.ReactElement,
+      ): Promise<React.ReactElement>;
+    }).wrapWithAppComponent(React.createElement("main"));
+
+    assertEquals(receivedModuleServerUrl, "https://request-modules.example.test");
+    assertEquals(receivedMode, "production");
+    assertEquals(receivedDev, false);
+  });
+
+  it("propagates reserved component operational failures", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+    const applicator = new LayoutApplicator({
+      projectDir: "/project",
+      projectId: "project",
+      projectSlug: "project",
+      contentSourceId: "preview-main",
+      adapter: {
+        fs: {
+          readFile: () =>
+            Promise.reject(
+              Object.assign(new Error("reserved source unavailable"), { code: "EIO" }),
+            ),
+        },
+      } as unknown as RuntimeAdapter,
+      config: {
+        react: { version: "18.3.1" },
+      },
+      layoutCache: createLayoutComponentCache(),
+      mergedComponents: {},
+      mode: "production",
+    });
+
+    await assertRejects(
+      () =>
+        (applicator as unknown as {
+          wrapWithReservedComponents(
+            element: React.ReactElement,
+            path: string,
+          ): Promise<React.ReactElement>;
+        }).wrapWithReservedComponents(
+          React.createElement("main"),
+          "/project/app/blog/page.tsx",
+        ),
+      Error,
+      "reserved source unavailable",
+    );
   });
 });
