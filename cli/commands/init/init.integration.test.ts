@@ -457,12 +457,13 @@ describe("init command integration", () => {
   });
 
   describe("wizard behavior in non-TTY", () => {
-    it("should skip wizard and use minimal template when name is provided", async () => {
+    it("should skip wizard and use ai-agent template when name is provided", async () => {
       // When a name is provided, wizard should be skipped
       const result = await runInitCommand([projectName, "--skip-install"]);
 
       assertEquals(result.code, 0);
-      assertEquals(await exists(join(projectDir, "app")), true);
+      assertEquals(await exists(join(projectDir, "agents", "assistant.ts")), true);
+      assertEquals(await exists(join(projectDir, "tools", "calculator.ts")), true);
     });
   });
 

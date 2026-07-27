@@ -3,7 +3,7 @@ import { getAgentFace } from "../../ui/dot-matrix.ts";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { select, textInput } from "../../utils/terminal-select.ts";
-import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
+import { DEFAULT_TEMPLATE, getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 
 /** Reject path separators and traversal so the name stays a single directory. */
@@ -33,7 +33,7 @@ export async function runInteractiveWizard(
   if (!canRunWizard()) {
     return {
       projectName: existingName ?? null,
-      template: "minimal",
+      template: DEFAULT_TEMPLATE,
       runtime: presetRuntime ?? "node",
       initGit: false,
       skipped: true,
@@ -74,7 +74,7 @@ export async function runInteractiveWizard(
       console.log(muted("\n  Cancelled.\n"));
       return {
         projectName: null,
-        template: "minimal",
+        template: DEFAULT_TEMPLATE,
         runtime: "node",
         initGit: false,
         skipped: false,
@@ -88,7 +88,7 @@ export async function runInteractiveWizard(
         console.log(muted("\n  Cancelled.\n"));
         return {
           projectName: null,
-          template: "minimal",
+          template: DEFAULT_TEMPLATE,
           runtime: "node",
           initGit: false,
           skipped: false,
@@ -101,7 +101,7 @@ export async function runInteractiveWizard(
         console.log(muted(`\n  ${nameError}\n`));
         return {
           projectName: null,
-          template: "minimal",
+          template: DEFAULT_TEMPLATE,
           runtime: "node",
           initGit: false,
           skipped: false,
@@ -123,7 +123,7 @@ export async function runInteractiveWizard(
     console.log(muted("\n  Cancelled.\n"));
     return {
       projectName: null,
-      template: "minimal",
+      template: DEFAULT_TEMPLATE,
       runtime: "node",
       initGit: false,
       skipped: false,
@@ -150,7 +150,7 @@ export async function runInteractiveWizard(
       console.log(muted("\n  Cancelled.\n"));
       return {
         projectName: null,
-        template: "minimal",
+        template: DEFAULT_TEMPLATE,
         runtime: "node",
         initGit: false,
         skipped: false,
@@ -175,7 +175,7 @@ export async function runInteractiveWizard(
     console.log(muted("\n  Cancelled.\n"));
     return {
       projectName: null,
-      template: "minimal",
+      template: DEFAULT_TEMPLATE,
       runtime: "node",
       initGit: false,
       skipped: false,

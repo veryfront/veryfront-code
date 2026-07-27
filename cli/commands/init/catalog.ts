@@ -21,9 +21,11 @@ export interface TemplateOption {
   description: string;
 }
 
+export const DEFAULT_TEMPLATE: InitTemplate = "ai-agent";
+
 export const TEMPLATES: readonly TemplateOption[] = [
+  { id: DEFAULT_TEMPLATE, label: "AI Agent", description: "Agent + chat UI + streaming" },
   { id: "minimal", label: "Minimal", description: "Blank canvas, no extras" },
-  { id: "ai-agent", label: "AI Agent", description: "Agent + chat UI + streaming" },
   {
     id: "docs-agent",
     label: "Docs Agent",

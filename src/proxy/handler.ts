@@ -289,6 +289,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     });
   }
 
+  function hasActiveReleaseForMatchedEnvironment(
+    result: ProjectRoutingLookupResult,
+    envMatcher: (env: ProjectLookupEnvironment) => boolean,
+  ): boolean {
+    return result.environments?.some((env) => envMatcher(env) && !!env.active_release_id) ?? false;
+  }
+
   function pruneInvalidationGenerations(generations: Map<string, number>): void {
     const oldestActiveGeneration = activeRoutingLookupGenerations.size > 0
       ? Math.min(...activeRoutingLookupGenerations.keys())
@@ -382,22 +389,44 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     token: string,
     timing?: ProxyServerTiming,
     signal?: AbortSignal,
+    isResultUsable?: (result: ProjectRoutingLookupResult) => boolean,
   ): Promise<ProjectRoutingLookupResult | null> {
     const cacheKey = normalizeProjectLookupKey(lookupKey);
+    const canUseResult = (result: ProjectRoutingLookupResult | null): boolean =>
+      !result || !isResultUsable || isResultUsable(result);
+    const discardIncompleteResult = (): void => {
+      routingLookupCache.delete(cacheKey);
+      logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
+    };
+    let hasRejectedIncompleteResult = false;
+
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
       "proxy.routing_lookup",
       async () => {
         const cached = getCachedRoutingLookup(cacheKey);
-        if (cached) {
+        if (cached && canUseResult(cached)) {
           logger?.debug("Proxy routing metadata cache hit", { lookupKey });
           return cached;
         }
+        if (cached) {
+          discardIncompleteResult();
+          hasRejectedIncompleteResult = true;
+        }
 
-        const existingLookup = routingLookupInflight.get(cacheKey);
-        if (existingLookup?.generation === routingLookupGeneration) {
+        while (true) {
+          const existingLookup = routingLookupInflight.get(cacheKey);
+          if (!existingLookup || existingLookup.generation !== routingLookupGeneration) break;
+
           logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
-          return await awaitForRequest(existingLookup.promise, signal);
+          const result = await awaitForRequest(existingLookup.promise, signal);
+          if (hasRejectedIncompleteResult || canUseResult(result)) return result;
+
+          discardIncompleteResult();
+          hasRejectedIncompleteResult = true;
+          if (routingLookupInflight.get(cacheKey) === existingLookup) {
+            routingLookupInflight.delete(cacheKey);
+          }
         }
 
         const lookupPromise = (async () => {
@@ -567,6 +596,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
     signedInternalControlPlaneRequest: boolean,
+    requireActiveRelease: boolean,
   ): Promise<ResolvedProjectMetadata> {
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
@@ -577,6 +607,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           token,
           timing,
           req.signal,
+          requireActiveRelease
+            ? (result) => hasActiveReleaseForMatchedEnvironment(result, envMatcher)
+            : undefined,
         );
         if (!routingResult) {
           return await resolveFullProjectLookupAndProtection(
@@ -735,6 +768,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           timing,
           logContext,
           signedInternalControlPlaneRequest,
+          scope === "production",
         );
 
       try {
