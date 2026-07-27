@@ -34,7 +34,7 @@ async function clearRendererState(renderer: unknown): Promise<void> {
     "clearAllState" in renderer &&
     typeof (renderer as { clearAllState?: unknown }).clearAllState === "function"
   ) {
-    await (renderer as { clearAllState: () => Promise<void> }).clearAllState();
+    await (renderer as { clearAllState: () => void | Promise<void> }).clearAllState();
   }
 }
 
@@ -155,12 +155,7 @@ describe(
         }
       });
 
-      // NOTE: This test is skipped because automatic env var sanitization during SSR
-      // is not a standard feature. In SSR frameworks, server-side code CAN access
-      // environment variables by design. It's the developer's responsibility to use
-      // env var prefixes (like VERYFRONT_PUBLIC_*) for client-safe values.
-      // This test documents a potential future enhancement.
-      it.ignore("does not expose API tokens in rendered output", async () => {
+      it("does not serialize server environment variables implicitly", async () => {
         const sensitiveToken = "vf_secret_token_12345";
         const restore = withEnv({
           VERYFRONT_API_TOKEN: sensitiveToken,
@@ -181,14 +176,7 @@ describe(
             await writeTextFile(
               join(context.projectDir, "app", "page.tsx"),
               `export default function Page() {
-              // Try to access env vars (should NOT be exposed)
-              const token = typeof process !== 'undefined' ? process.env?.VERYFRONT_API_TOKEN : undefined;
-              return (
-                <div>
-                  <span id="env-check">ENV_CHECK</span>
-                  {token && <span id="leaked-token">{token}</span>}
-                </div>
-              );
+              return <div id="env-check">ENV_CHECK</div>;
             }`,
             );
 
@@ -203,6 +191,7 @@ describe(
 
               const result = await renderer.renderPage("/");
 
+              assertStringIncludes(result.html, "ENV_CHECK");
               assert(
                 !result.html.includes(sensitiveToken),
                 "API token must NOT appear in rendered HTML",
@@ -401,40 +390,29 @@ describe(
     });
 
     describe("Error Messages and Diagnostics", () => {
-      /**
-       * Test that configuration errors produce helpful error messages
-       * instead of cryptic crashes.
-       *
-       * NOTE: This test is skipped because createRenderer currently doesn't
-       * validate the project directory existence during initialization -
-       * errors occur lazily when files are accessed. This documents a
-       * potential improvement for better developer experience.
-       */
-      it.ignore("provides helpful error for missing project directory", async () => {
+      it("includes the requested route in page-not-found diagnostics", async () => {
         const { createRenderer } = await import("../../../src/rendering/index.ts");
         const { cleanupBundler } = await import("../../../src/rendering/cleanup.ts");
 
-        try {
-          await assertRejects(
-            async () => {
-              await createRenderer({
-                projectDir: "/nonexistent/path/that/does/not/exist",
-                mode: "development",
-              });
-            },
-            Error,
-          );
-        } catch (e) {
-          if (e instanceof Error && !e.message.includes("assertion")) {
-            assertStringIncludes(
-              e.message.toLowerCase(),
-              "not found",
-              "Error message should indicate path not found",
+        await withTestContext("missing-page-diagnostic", async (context) => {
+          const emptyProjectDir = join(context.projectDir, "empty-project");
+          await mkdir(emptyProjectDir, { recursive: true });
+          const renderer = await createRenderer({
+            projectDir: emptyProjectDir,
+            mode: "development",
+          });
+
+          try {
+            await assertRejects(
+              () => renderer.renderPage("missing-route"),
+              Error,
+              "Page not found: missing-route",
             );
+          } finally {
+            await clearRendererState(renderer);
+            await cleanupBundler();
           }
-        } finally {
-          await cleanupBundler();
-        }
+        });
       });
     });
 
