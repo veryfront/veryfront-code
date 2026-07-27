@@ -10,6 +10,7 @@ import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } fro
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { assertLocalToolId, toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
@@ -98,6 +99,26 @@ export function isDynamicTool(name: string): boolean {
  */
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
+
+function getConfiguredRemoteToolName(
+  entry: ToolConfigEntry | undefined,
+): string | undefined {
+  return typeof entry === "object" ? getRemoteToolProvenance(entry) : undefined;
+}
+
+function getConfiguredToolAuthorizationName(
+  toolName: string,
+  entry: ToolConfigEntry | undefined,
+): string {
+  return getConfiguredRemoteToolName(entry) ?? toolName;
+}
+
+function isRemoteToolAllowed(
+  toolName: string,
+  allowedRemoteToolNames: readonly string[] | undefined,
+): boolean {
+  return allowedRemoteToolNames === undefined || allowedRemoteToolNames.includes(toolName);
+}
 
 /**
  * Resolve a configured tool name for a caller: the caller's own tool by short
@@ -263,7 +284,10 @@ export function resolveConfiguredTool(
   }
 
   if (configuredEntry && typeof configuredEntry === "object") {
-    if (options?.allowIntegrationStyleConcreteTools !== true) {
+    if (
+      options?.allowIntegrationStyleConcreteTools !== true &&
+      getConfiguredRemoteToolName(configuredEntry) === undefined
+    ) {
       assertLocalToolId(toolName);
       assertLocalToolId(configuredEntry.id);
     }
@@ -285,11 +309,26 @@ export async function executeConfiguredTool(
     strictConfiguredToolsOnly?: boolean;
   },
 ): Promise<unknown> {
+  const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
+  const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
+  const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
+
   if (
     sourceIntegrationPolicy &&
-    !isIntegrationToolAllowedBySourcePolicy(toolName, sourceIntegrationPolicy)
+    !isIntegrationToolAllowedBySourcePolicy(authorizationToolName, sourceIntegrationPolicy)
   ) {
-    throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
+    throw new Error(
+      `Tool "${authorizationToolName}" is not allowed by the source integration policy`,
+    );
+  }
+
+  if (
+    configuredRemoteToolName !== undefined &&
+    !isRemoteToolAllowed(configuredRemoteToolName, allowedRemoteToolNames)
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: `Tool "${configuredRemoteToolName}" is not allowed for this run`,
+    });
   }
 
   const configuredTool = resolveConfiguredTool(toolsConfig, toolName, context, {
@@ -449,11 +488,14 @@ export async function getAvailableTools(
   const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
   const explicitlyRequestedRemoteToolNames = new Set<string>();
   const unresolvedConfiguredToolNames: string[] = [];
+  const configuredAuthorizationToolNames = new Map<string, string>();
 
   for (const [name, entry] of Object.entries(toolsConfig)) {
+    const configuredRemoteToolName = getConfiguredRemoteToolName(entry);
+    const authorizationToolName = getConfiguredToolAuthorizationName(name, entry);
     if (
       sourceIntegrationPolicy &&
-      !isIntegrationToolAllowedBySourcePolicy(name, sourceIntegrationPolicy)
+      !isIntegrationToolAllowedBySourcePolicy(authorizationToolName, sourceIntegrationPolicy)
     ) {
       continue;
     }
@@ -484,10 +526,17 @@ export async function getAvailableTools(
     }
 
     if (entry && typeof entry === "object") {
-      if (!strictConfiguredToolsOnly) {
+      if (
+        configuredRemoteToolName !== undefined &&
+        !isRemoteToolAllowed(configuredRemoteToolName, options?.allowedRemoteToolNames)
+      ) {
+        continue;
+      }
+      if (!strictConfiguredToolsOnly && configuredRemoteToolName === undefined) {
         assertLocalToolId(name);
         assertLocalToolId(entry.id);
       }
+      configuredAuthorizationToolNames.set(name, authorizationToolName);
       addToolDefinition(tools, name, entry);
     }
   }
@@ -522,7 +571,10 @@ export async function getAvailableTools(
 
   return sourceIntegrationPolicy
     ? tools.filter((definition) =>
-      isIntegrationToolAllowedBySourcePolicy(definition.name, sourceIntegrationPolicy)
+      isIntegrationToolAllowedBySourcePolicy(
+        configuredAuthorizationToolNames.get(definition.name) ?? definition.name,
+        sourceIntegrationPolicy,
+      )
     )
     : tools;
 }

@@ -4438,4 +4438,63 @@ awaits explicit confirmation. Until that reference is accepted and revalidated,
 `middleware` remains `Deep reviewed, fixes pending`; this checkpoint does not
 increment formal closure.
 
+### Upstream integration revalidation checkpoint
+
+The branch integrated `origin/main` through `e135b086b`, including canonical
+remote-tool provenance and configured deploy/release route-directory support.
+The merge overlapped current `agent`, `html`, `release-assets`, and related
+consumer hardening, so the conflicts were resolved as combined contracts rather
+than by selecting either parent wholesale.
+
+The integration preserves and extends both sides:
+
+- materialized and aliased remote tools retain their canonical authorization
+  identity through host-tool and repeated child-runtime boundaries, while the
+  branch's live project-credential resolution, immutable skill-tool visibility,
+  source policy, and strict configured-tool behavior remain intact;
+- deploy route discovery accepts configured app/pages roots and Windows-style
+  separators, rejects absolute and escaping roots before filesystem traversal,
+  and uses only public framework package entrypoints;
+- release file keys canonicalize Windows separators before duplicate detection,
+  preserving traversal, source-size, manifest-entry, and materialization bounds
+  while rejecting slash/backslash aliases;
+- release route closure honors configured roots and layouts without replacing
+  the branch's iterative import walk, bounded dependency graph, upload
+  acknowledgement, pending-byte accounting, or sanitized failure paths;
+- full-document hydration prefers a validated route-scoped asset map, falls
+  back to a validated full manifest when route metadata is absent, empty, or
+  stale, omits malformed content identities, retains null-prototype results,
+  and still disables release data for Studio embeds; and
+- the generic path-containment helper is now available through
+  `veryfront/utils`, avoiding the private deep CLI imports rejected by the
+  repository's architecture boundary.
+
+Current reproducible integration evidence:
+
+- the full `agent` portfolio passes 928 tests and 1,612 nested steps, and the
+  full `release-assets` portfolio passes 11 tests and 130 nested steps;
+- the full `html` portfolio passes 40 tests and 754 nested steps, while the full
+  `tool` portfolio passes 47 tests and 139 nested steps;
+- all affected rendering orchestrator tests pass 28 tests and 404 nested steps
+  with the required worker option; version/logger tests pass 2 tests and 95
+  nested steps; and the deploy/path portfolio passes 9 tests and 69 nested
+  steps;
+- the conflict-focused deploy, agent, HTML, release-asset, and tool portfolio
+  passes 19 tests and 216 nested steps;
+- documentation generation and validation pass all 40 API pages, 67 guides,
+  112 public documentation files, executable examples, and 746 links;
+- the npm package and every first-party extension rebuild successfully, and the
+  published consumer composition compiles against the emitted declarations;
+  and
+- `deno task verify:quick` passes formatting, lint, the CLI and module
+  boundaries, policy ratchets, fresh manifests, documentation validation, and
+  every configured production and browser entrypoint typecheck.
+
+The complete current implementations of `agent` and `release-assets` were
+revalidated after the merge and remain closed. `html` remains deeply reviewed
+with only its reference replacement pending. The narrow `tool`, `rendering`,
+and `utils` changes add evidence to, but do not replace, those units' remaining
+top-level reviews, so their classifications do not change. Formal counts remain
+35 closed, 4 deeply reviewed with fixes pending, and 19 requiring revalidation.
+
 Update this ledger in the same commit that closes or reopens an audit unit.

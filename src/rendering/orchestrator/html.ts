@@ -311,6 +311,7 @@ export class HTMLGenerator {
       pageId: htmlOptions.pageId,
       sourceHash: htmlOptions.sourceHash,
       releaseAssetManifest,
+      directories: this.config.config.directories,
     });
 
     if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) return injectedHtml;

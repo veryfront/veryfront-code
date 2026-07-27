@@ -2,7 +2,13 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSource,
+  createToolsFromRemoteDefinitions,
+  type RemoteToolSource,
+  tool,
+  toolRegistry,
+} from "#veryfront/tool";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -255,6 +261,128 @@ describe("tool-helpers", () => {
       );
     });
 
+    it("does not execute a materialized remote tool excluded by the runtime allowlist", async () => {
+      const executedToolNames: string[] = [];
+      const source: RemoteToolSource = {
+        id: "veryfront-api",
+        listTools: async () => [],
+        executeTool: async (toolName) => {
+          executedToolNames.push(toolName);
+          return { ok: true };
+        },
+      };
+      const configuredTools = createToolsFromRemoteDefinitions(source, [
+        {
+          name: "gmail__list_emails",
+          description: "List emails",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "gmail__delete_email",
+          description: "Delete an email",
+          parameters: { type: "object", properties: {} },
+        },
+      ]);
+
+      await assertRejects(
+        () =>
+          executeConfiguredTool(
+            "gmail__delete_email",
+            {},
+            configuredTools,
+            { toolCallId: "tool-remote-denied" },
+            ["gmail__list_emails"],
+          ),
+        Error,
+        'Tool "gmail__delete_email" is not allowed for this run',
+      );
+      assertEquals(executedToolNames, []);
+    });
+
+    it("does not let an allowed alias execute a denied canonical remote tool", async () => {
+      const executedToolNames: string[] = [];
+      const source: RemoteToolSource = {
+        id: "veryfront-api",
+        listTools: async () => [],
+        executeTool: async (toolName) => {
+          executedToolNames.push(toolName);
+          return { ok: true };
+        },
+      };
+      const configuredTools = createToolsFromRemoteDefinitions(
+        source,
+        [{
+          name: "gmail__delete_email",
+          description: "Delete an email",
+          parameters: { type: "object", properties: {} },
+        }],
+        {
+          toolNameAliases: {
+            gmail__delete_email: "delete_email",
+          },
+        },
+      );
+
+      await assertRejects(
+        () =>
+          executeConfiguredTool(
+            "delete_email",
+            {},
+            configuredTools,
+            { toolCallId: "tool-remote-alias-denied" },
+            ["delete_email"],
+          ),
+        Error,
+        'Tool "gmail__delete_email" is not allowed for this run',
+      );
+      assertEquals(executedToolNames, []);
+    });
+
+    it("applies source integration policy to an aliased remote tool's canonical name", async () => {
+      const executedToolNames: string[] = [];
+      const source: RemoteToolSource = {
+        id: "veryfront-api",
+        listTools: async () => [],
+        executeTool: async (toolName) => {
+          executedToolNames.push(toolName);
+          return { ok: true };
+        },
+      };
+      const configuredTools = createToolsFromRemoteDefinitions(
+        source,
+        [{
+          name: "gmail__delete_email",
+          description: "Delete an email",
+          parameters: { type: "object", properties: {} },
+        }],
+        {
+          toolNameAliases: {
+            gmail__delete_email: "delete_email",
+          },
+        },
+      );
+
+      await assertRejects(
+        () =>
+          executeConfiguredTool(
+            "delete_email",
+            {},
+            configuredTools,
+            { toolCallId: "tool-remote-alias-policy-denied" },
+            ["gmail__delete_email"],
+            undefined,
+            {
+              schemaVersion: 1,
+              mode: "allowlist",
+              integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+            },
+          ),
+        Error,
+        'Tool "gmail__delete_email" is not allowed by the source integration policy',
+      );
+      assertEquals(executedToolNames, []);
+    });
+
     it("enforces source integration policy before inline or fallback execution", async () => {
       let executed = false;
       const deniedTool = tool({
@@ -452,6 +580,120 @@ describe("tool-helpers", () => {
         SKILL_TOOL_IDS.add("load_skill_reference");
         toolRegistryInternal.clearAll();
       }
+    });
+
+    it("does not advertise materialized remote tools excluded by the runtime allowlist", async () => {
+      const source: RemoteToolSource = {
+        id: "veryfront-api",
+        listTools: async () => [],
+        executeTool: async () => ({ ok: true }),
+      };
+      const configuredTools = createToolsFromRemoteDefinitions(source, [
+        {
+          name: "gmail__list_emails",
+          description: "List emails",
+          parameters: { type: "object", properties: {} },
+        },
+        {
+          name: "gmail__delete_email",
+          description: "Delete an email",
+          parameters: { type: "object", properties: {} },
+        },
+      ]);
+
+      const defs = await getAvailableTools(configuredTools, {
+        includeIntegrationTools: false,
+        allowedRemoteToolNames: ["gmail__list_emails"],
+      });
+
+      assertEquals(defs.map((def) => def.name), ["gmail__list_emails"]);
+    });
+
+    it("does not advertise an alias for a denied canonical remote tool", async () => {
+      const source: RemoteToolSource = {
+        id: "veryfront-api",
+        listTools: async () => [],
+        executeTool: async () => ({ ok: true }),
+      };
+      const configuredTools = createToolsFromRemoteDefinitions(
+        source,
+        [{
+          name: "gmail__delete_email",
+          description: "Delete an email",
+          parameters: { type: "object", properties: {} },
+        }],
+        {
+          toolNameAliases: {
+            gmail__delete_email: "delete_email",
+          },
+        },
+      );
+
+      const allowlistFiltered = await getAvailableTools(configuredTools, {
+        includeIntegrationTools: false,
+        allowedRemoteToolNames: ["delete_email"],
+      });
+      const policyFiltered = await getAvailableTools(configuredTools, {
+        includeIntegrationTools: false,
+        allowedRemoteToolNames: ["gmail__delete_email"],
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+        },
+      });
+
+      assertEquals(allowlistFiltered, []);
+      assertEquals(policyFiltered, []);
+    });
+
+    it("advertises and executes an allowed canonical remote tool through an integration-style alias", async () => {
+      const executedToolNames: string[] = [];
+      const source: RemoteToolSource = {
+        id: "veryfront-api",
+        listTools: async () => [],
+        executeTool: async (toolName) => {
+          executedToolNames.push(toolName);
+          return { ok: true };
+        },
+      };
+      const configuredTools = createToolsFromRemoteDefinitions(
+        source,
+        [{
+          name: "gmail__list_emails",
+          description: "List emails",
+          parameters: { type: "object", properties: {} },
+        }],
+        {
+          toolNameAliases: {
+            gmail__list_emails: "mail__list",
+          },
+        },
+      );
+      const sourceIntegrationPolicy = {
+        schemaVersion: 1 as const,
+        mode: "allowlist" as const,
+        integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+      };
+
+      const definitions = await getAvailableTools(configuredTools, {
+        includeIntegrationTools: false,
+        allowedRemoteToolNames: ["gmail__list_emails"],
+        sourceIntegrationPolicy,
+      });
+      const result = await executeConfiguredTool(
+        "mail__list",
+        {},
+        configuredTools,
+        { toolCallId: "tool-remote-integration-alias-allowed" },
+        ["gmail__list_emails"],
+        undefined,
+        sourceIntegrationPolicy,
+      );
+
+      assertEquals(definitions.map((definition) => definition.name), ["mail__list"]);
+      assertEquals(result, { ok: true });
+      assertEquals(executedToolNames, ["gmail__list_emails"]);
     });
 
     it("enforces source integration policy for tools true and unknown connector versions", async () => {

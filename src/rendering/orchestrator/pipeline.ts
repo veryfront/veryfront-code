@@ -1316,12 +1316,14 @@ export class RenderPipeline {
       releaseId: options?.releaseId,
       releaseAssetModules: buildReleaseAssetModules(
         options?.releaseAssetManifest,
-        [
-          pagePath,
-          ...layouts.map((layout) => layout.path),
-          appPath,
-          errorPath,
-        ].filter((path): path is string => Boolean(path)),
+        {
+          logicalPaths: [
+            pagePath,
+            ...layouts.map((layout) => layout.path),
+            appPath,
+            errorPath,
+          ].filter((path): path is string => Boolean(path)),
+        },
       ),
       headings,
       css,

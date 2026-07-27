@@ -4,7 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
-import type { ToolExecutionContext, ToolSet } from "./types.ts";
+import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
+import { getRemoteToolProvenance } from "./remote-tool-provenance.ts";
+import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts";
 
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
@@ -79,6 +81,37 @@ describe("tool/host-tools", () => {
       title: "Search documentation",
       annotations: { readOnlyHint: true },
     });
+  });
+
+  it("preserves canonical remote provenance through host materialization", async () => {
+    let executedToolName = "";
+    const source: RemoteToolSource = {
+      id: "veryfront-api",
+      listTools: async () => [],
+      executeTool: async (toolName) => {
+        executedToolName = toolName;
+        return { ok: true };
+      },
+    };
+    const remoteTools = createToolsFromRemoteDefinitions(
+      source,
+      [{
+        name: "gmail__delete_email",
+        description: "Delete an email",
+        parameters: emptyJsonSchema,
+      }],
+      {
+        toolNameAliases: {
+          gmail__delete_email: "delete_email",
+        },
+      },
+    );
+
+    const tools = createToolsFromHostDefinitions(remoteTools);
+
+    assertEquals(getRemoteToolProvenance(tools.delete_email), "gmail__delete_email");
+    assertEquals(await tools.delete_email?.execute({}), { ok: true });
+    assertEquals(executedToolName, "gmail__delete_email");
   });
 
   it("materializes precomputed schemas from external host tool providers", async () => {

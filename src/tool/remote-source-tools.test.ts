@@ -6,6 +6,7 @@ import {
   createToolsFromRemoteDefinitions,
   loadRemoteToolsFromSource,
 } from "./remote-source-tools.ts";
+import { getRemoteToolProvenance } from "./remote-tool-provenance.ts";
 
 describe("tool/remote-source-tools", () => {
   it("materializes runtime tools from remote definitions while preserving remote schemas", async () => {
@@ -52,6 +53,7 @@ describe("tool/remote-source-tools", () => {
 
     assertEquals(Object.keys(tools), ["docs_search"]);
     assertEquals(tools.docs_search?.id, "docs_search");
+    assertEquals(getRemoteToolProvenance(tools.docs_search), "search_docs");
     assertEquals(tools.docs_search?.inputSchemaJson, {
       type: "object",
       properties: {

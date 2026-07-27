@@ -113,7 +113,7 @@ export function generateHydrationData(
     releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(
       options.releaseAssetManifest,
-      hydrationModulePaths,
+      { logicalPaths: hydrationModulePaths },
     ),
     buildVersion: createBuildVersion(),
     frontmatter: options.frontmatter,

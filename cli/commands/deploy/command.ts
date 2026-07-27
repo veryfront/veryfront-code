@@ -9,9 +9,9 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { createFileSystem, cwd } from "veryfront/platform";
-import { join, relative } from "veryfront/platform/path";
-import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { createFileSystem, cwd, runtime } from "veryfront/platform";
+import { join, relative, resolve } from "veryfront/platform/path";
+import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfront/config";
 import {
   type ApiClient,
   createApiClient,
@@ -39,6 +39,7 @@ import {
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
 /**
  * Schema factory for deploy command arguments
@@ -723,11 +724,52 @@ async function ensureProjectLinkedForDeploy(
   };
 }
 
+async function getProjectRouteDirectories(
+  projectDir: string,
+): Promise<{ app: string; pages: string }> {
+  const adapter = await runtime.get();
+  const config = await getConfig(projectDir, adapter);
+  return {
+    app: normalizeConfiguredRouteDirectory(config.directories?.app ?? "app"),
+    pages: normalizeConfiguredRouteDirectory(config.directories?.pages ?? "pages"),
+  };
+}
+
+function normalizeConfiguredRouteDirectory(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function isAbsoluteConfiguredRouteDirectory(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
+}
+
+function resolveProjectRouteDirectory(
+  projectDir: string,
+  directory: string,
+  name: "app" | "pages",
+): string {
+  if (isAbsoluteConfiguredRouteDirectory(directory)) {
+    throw new Error(
+      `Configured ${name} directory "${directory}" must be project-relative. Set directories.${name} to a path inside the project, for example "${name}" or "src/${name}".`,
+    );
+  }
+
+  const projectRoot = normalizePath(projectDir);
+  const routeRoot = normalizePath(resolve(projectRoot, directory));
+  if (!isWithinDirectory(projectRoot, routeRoot)) {
+    throw new Error(
+      `Configured ${name} directory "${directory}" resolves outside the project directory. Set directories.${name} to a project-relative path inside the project.`,
+    );
+  }
+  return routeRoot;
+}
+
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
   const fs = createFileSystem();
+  const directories = await getProjectRouteDirectories(projectDir);
   const routes = new Set<string>();
 
-  async function walk(dir: string): Promise<void> {
+  async function walk(rootDir: string, dir: string, routeRoot: "app" | "pages"): Promise<void> {
     let entries;
     try {
       if (!(await fs.exists(dir))) return;
@@ -739,23 +781,25 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
     for await (const entry of entries) {
       const path = join(dir, entry.name);
       if (entry.isDirectory) {
-        await walk(path);
+        await walk(rootDir, path, routeRoot);
         continue;
       }
       if (!/\.(tsx|ts|jsx|mdx|js)$/.test(entry.name)) continue;
 
-      const relativePath = relative(projectDir, path).replace(/\\/g, "/");
+      const relativePath = relative(rootDir, path).replace(/\\/g, "/");
       if (relativePath === "." || relativePath === ".." || relativePath.startsWith("../")) {
         continue;
       }
-      const route = routeForPage(relativePath);
+      const route = routeForPage(`${routeRoot}/${relativePath}`);
       if (route) routes.add(route);
     }
   }
 
+  const appDir = resolveProjectRouteDirectory(projectDir, directories.app, "app");
+  const pagesDir = resolveProjectRouteDirectory(projectDir, directories.pages, "pages");
   await Promise.all([
-    walk(join(projectDir, "app")),
-    walk(join(projectDir, "pages")),
+    walk(appDir, appDir, "app"),
+    walk(pagesDir, pagesDir, "pages"),
   ]);
 
   return [...routes].sort();
@@ -859,14 +903,14 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   const environmentConfig = getEnvironmentConfig();
   const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet);
   let { config, client, project } = setup;
-  const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
 
   if (dryRun && !project) {
     spinner.stop();
     if (!quiet) {
-      logInfo(
-        `Would push source to "${branch}", create release, and deploy to "${env}" for project ${setup.plannedProjectSlug}`,
-      );
+      const actions = skipSourcePush
+        ? `create release and deploy to "${env}"`
+        : `push source to "${branch}", create release, and deploy to "${env}"`;
+      logInfo(`Would ${actions} for project ${setup.plannedProjectSlug}`);
     }
     return;
   }
@@ -970,6 +1014,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     });
 
     spinner.update(`Waiting for release assets for ${release.version}...`);
+    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     await waitForReleaseAssetManifest(client, project.slug, release.id, {
       expectedRoutes: expectedPageRoutes,
       pollIntervalMs: assetManifestPollIntervalMs,
@@ -1058,7 +1103,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     const environmentConfig = getEnvironmentConfig();
     const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);
     let { config, client, project } = setup;
-    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
     if (dryRun && !project) {
@@ -1161,6 +1205,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     streamJsonLine({ type: "step", name: "verify-release-source", status: "completed" });
 
     streamJsonLine({ type: "step", name: "wait-release-assets", status: "started" });
+    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     await waitForReleaseAssetManifest(client, project.slug, release.id, {
       expectedRoutes: expectedPageRoutes,
       pollIntervalMs: assetManifestPollIntervalMs,

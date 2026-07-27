@@ -21,6 +21,10 @@ import {
   getStudioScripts,
 } from "./dev-scripts.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
+import {
+  type ConfiguredRouteDirectories,
+  routeForConfiguredPage,
+} from "#veryfront/release-assets/route-path.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 
@@ -134,6 +138,8 @@ export interface InjectHTMLContentOptions {
   projectStylesheetHref?: string;
   /** Ready release asset manifest used to hydrate full HTML client pages */
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Configured route directories used to map physical page paths to route keys */
+  directories?: ConfiguredRouteDirectories;
 }
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
@@ -263,7 +269,9 @@ export function injectHTMLContent(
         environment: options.environment,
       }),
       releaseId: releaseManifest?.releaseId,
-      releaseAssetModules: buildReleaseAssetModules(releaseManifest, [pagePath]),
+      releaseAssetModules: buildReleaseAssetModules(releaseManifest, {
+        route: routeForConfiguredPage(pagePath, options.directories),
+      }),
       buildVersion: createBuildVersion(),
       dev: options.mode === "development",
       studioEmbed: options.studioEmbed,

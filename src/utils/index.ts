@@ -133,7 +133,7 @@ export { createSubscriberSet, type SubscriberSet } from "./subscriber-set.ts";
 
 export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./memoize.ts";
 
-export { normalizePath } from "./path-utils.ts";
+export { isWithinDirectory, normalizePath } from "./path-utils.ts";
 
 export { type BundleCode, type BundleMetadata, getBundleManifestStore } from "./bundle-manifest.ts";
 

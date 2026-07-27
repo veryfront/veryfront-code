@@ -3,8 +3,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildReleaseAssetModules } from "./client-module-map.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
+const PAGE_HASH = "a".repeat(64);
+const FALLBACK_HASH = "b".repeat(64);
+
 function manifestWithModules(
   modules: ReleaseAssetManifest["modules"],
+  routes: ReleaseAssetManifest["routes"] = {},
 ): ReleaseAssetManifest {
   return {
     schemaVersion: 1,
@@ -18,23 +22,46 @@ function manifestWithModules(
     assetBasePath: "/_vf/assets",
     modules,
     css: [],
-    routes: {},
+    routes,
     dependencies: {},
     fallback: { mode: "jit", gaps: [] },
   };
 }
 
+function manifest(): ReleaseAssetManifest {
+  return manifestWithModules(
+    {
+      "app/page.tsx": {
+        contentHash: PAGE_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+      "components/Fallback.tsx": {
+        contentHash: FALLBACK_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    {
+      "/": { modules: ["app/page.tsx"], css: [] },
+      "/empty": { modules: [], css: [] },
+      "/partial-stale": { modules: ["app/page.tsx", "src/site/page.tsx"], css: [] },
+      "/stale": { modules: ["src/site/page.tsx"], css: [] },
+    },
+  );
+}
+
 describe("release asset client module map", () => {
   it("uses an own-property-only result for adversarial module keys", () => {
     const modules = JSON.parse(
-      `{"__proto__":{"contentHash":"${"a".repeat(64)}","size":1,"contentType":"text/javascript"}}`,
+      `{"__proto__":{"contentHash":"${PAGE_HASH}","size":1,"contentType":"text/javascript"}}`,
     ) as ReleaseAssetManifest["modules"];
 
     const result = buildReleaseAssetModules(manifestWithModules(modules));
 
     assertEquals(Object.getPrototypeOf(result), null);
     assertEquals(Object.hasOwn(result ?? {}, "__proto__"), true);
-    assertEquals(result?.["__proto__"], `/_vf/assets/${"a".repeat(64)}.js`);
+    assertEquals(result?.["__proto__"], `/_vf/assets/${PAGE_HASH}.js`);
   });
 
   it("omits malformed runtime entries instead of emitting unsafe URLs", () => {
@@ -51,11 +78,11 @@ describe("release asset client module map", () => {
     assertEquals(result, undefined);
   });
 
-  it("can scope a browser map to the modules needed by one route", () => {
+  it("can scope a browser map to an explicit module set", () => {
     const result = buildReleaseAssetModules(
       manifestWithModules({
         "app/page.tsx": {
-          contentHash: "b".repeat(64),
+          contentHash: FALLBACK_HASH,
           size: 1,
           contentType: "text/javascript",
         },
@@ -65,11 +92,53 @@ describe("release asset client module map", () => {
           contentType: "text/javascript",
         },
       }),
-      ["app/page.tsx", "app/page.tsx", "app/missing.tsx"],
+      {
+        logicalPaths: ["app/page.tsx", "app/page.tsx", "app/missing.tsx"],
+      },
     );
 
     assertEquals(result, {
-      "app/page.tsx": `/_vf/assets/${"b".repeat(64)}.js`,
+      "app/page.tsx": `/_vf/assets/${FALLBACK_HASH}.js`,
+    });
+  });
+
+  it("uses route-scoped modules when route entries match manifest modules", () => {
+    assertEquals(buildReleaseAssetModules(manifest(), { route: "/" }), {
+      "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+    });
+  });
+
+  it("does not materialize the full fallback map when route entries match manifest modules", () => {
+    const releaseManifest = manifest();
+    Object.defineProperty(releaseManifest.modules["components/Fallback.tsx"], "contentHash", {
+      get() {
+        throw new Error("fallback module was materialized");
+      },
+    });
+
+    assertEquals(buildReleaseAssetModules(releaseManifest, { route: "/" }), {
+      "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+    });
+  });
+
+  it("falls back to the full manifest when a route has no matching module keys", () => {
+    assertEquals(buildReleaseAssetModules(manifest(), { route: "/stale" }), {
+      "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+      "components/Fallback.tsx": `/_vf/assets/${FALLBACK_HASH}.js`,
+    });
+  });
+
+  it("falls back to the full manifest when a route has stale module keys", () => {
+    assertEquals(buildReleaseAssetModules(manifest(), { route: "/partial-stale" }), {
+      "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+      "components/Fallback.tsx": `/_vf/assets/${FALLBACK_HASH}.js`,
+    });
+  });
+
+  it("falls back to the full manifest when a route has an empty module list", () => {
+    assertEquals(buildReleaseAssetModules(manifest(), { route: "/empty" }), {
+      "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
+      "components/Fallback.tsx": `/_vf/assets/${FALLBACK_HASH}.js`,
     });
   });
 });

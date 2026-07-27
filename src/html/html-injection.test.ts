@@ -17,6 +17,8 @@ const baseTemplate = `<!DOCTYPE html>
 
 const minMeta: HTMLMetadata = { title: "Test", description: "Desc" };
 const PAGE_HASH = "a".repeat(64);
+const UNUSED_HASH = "b".repeat(64);
+const ABOUT_HASH = "c".repeat(64);
 
 function releaseManifest(): ReleaseAssetManifest {
   return {
@@ -31,11 +33,34 @@ function releaseManifest(): ReleaseAssetManifest {
     assetBasePath: "/_vf/assets",
     modules: {
       "app/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+      "components/Unused.tsx": {
+        contentHash: UNUSED_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
     },
     css: [],
     routes: { "/": { modules: ["app/page.tsx"], css: [] } },
     dependencies: {},
     fallback: { mode: "jit", gaps: [] },
+  };
+}
+
+function customDirectoryReleaseManifest(): ReleaseAssetManifest {
+  return {
+    ...releaseManifest(),
+    modules: {
+      "src/site/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+      "src/pages/about.tsx": {
+        contentHash: ABOUT_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
+    },
+    routes: {
+      "/": { modules: ["src/site/page.tsx"], css: [] },
+      "/about": { modules: ["src/pages/about.tsx"], css: [] },
+    },
   };
 }
 
@@ -282,7 +307,7 @@ describe("html/html-injection", () => {
       assertEquals(typeof hydrationData.buildVersion, "object");
     });
 
-    it("injects release asset modules into full-document client page hydration data", () => {
+    it("injects route-scoped release asset modules into full-document client page hydration data", () => {
       const html = injectHTMLContent(
         baseTemplate,
         "<p>content</p>",
@@ -302,6 +327,28 @@ describe("html/html-injection", () => {
         "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,
       });
       assertEquals(hydrationData.releaseId, "release-id");
+    });
+
+    it("uses configured route directories for route-scoped release asset modules", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "about",
+          pagePath: "/project/src/pages/about.tsx",
+          projectDir: "/project",
+          isClientPage: true,
+          directories: { app: "src/site", pages: "src/pages" },
+          releaseAssetManifest: customDirectoryReleaseManifest(),
+        },
+      );
+
+      const hydrationData = extractHydrationData(html);
+      assertEquals(hydrationData.releaseAssetModules, {
+        "src/pages/about.tsx": `/_vf/assets/${ABOUT_HASH}.js`,
+      });
     });
 
     it("seeds route params into client-page hydration data (issue #2741)", () => {

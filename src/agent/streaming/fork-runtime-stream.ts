@@ -6,6 +6,7 @@ import {
   traceHostTools,
   type TraceHostToolsOptions,
 } from "#veryfront/tool";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { streamDataStreamEvents } from "./data-stream.ts";
 import {
@@ -309,6 +310,18 @@ function resolveForkToolExecutionIdentity(
   };
 }
 
+function getForkRuntimeAuthorizationToolNames(
+  toolNames: readonly string[],
+  runtimeTools: Record<string, Tool | boolean>,
+): string[] {
+  return toolNames.map((toolName) => {
+    const runtimeTool = runtimeTools[toolName];
+    return runtimeTool && typeof runtimeTool === "object"
+      ? getRemoteToolProvenance(runtimeTool) ?? toolName
+      : toolName;
+  });
+}
+
 /** Run agent runtime fork step. */
 export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInput): Promise<{
   stream: ReadableStream<Uint8Array>;
@@ -351,7 +364,10 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
         }),
       }
       : {}),
-    __vfAllowedRemoteTools: input.forkToolNames,
+    __vfAllowedRemoteTools: getForkRuntimeAuthorizationToolNames(
+      input.forkToolNames,
+      input.runtimeTools,
+    ),
     ...(input.sourceIntegrationPolicy
       ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
       : {}),

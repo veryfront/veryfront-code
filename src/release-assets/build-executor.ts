@@ -70,7 +70,12 @@ import {
   type ReleaseAssetContentType,
   releaseAssetUrl,
 } from "./constants.ts";
-import { routeForPage } from "./route-path.ts";
+import {
+  configuredRoutePath,
+  normalizeLogicalPath as normalizeRouteLogicalPath,
+  routeForConfiguredPage,
+  routeForPage,
+} from "./route-path.ts";
 export { routeForPage } from "./route-path.ts";
 import { hasControlCharacters } from "./string-validation.ts";
 import {
@@ -367,6 +372,11 @@ function bytesEqual(
   return true;
 }
 
+interface ReleaseRouterDirectories {
+  app: string;
+  pages: string;
+}
+
 function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
   if (!moduleUrl.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) return null;
   const sourceKey = moduleUrl
@@ -427,32 +437,40 @@ function isTransformableBrowserModule(path: string): boolean {
 }
 
 /** True when a logical path should seed the browser module graph. */
-function isBrowserModule(path: string): boolean {
+function isBrowserModule(path: string, directories: ReleaseRouterDirectories): boolean {
   if (!isTransformableBrowserModule(path)) return false;
-  if (routeForPage(path) !== null) return true;
-  return isAppRouterLayout(path) || BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+  if (routeForConfiguredPage(path, directories) !== null) return true;
+  return isConfiguredAppRouterLayout(path, directories) ||
+    BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
 }
 
-function isAppRouterLayout(path: string): boolean {
-  if (!path.startsWith("app/")) return false;
-  const withoutPrefix = path.slice("app/".length);
+function isConfiguredAppRouterLayout(path: string, directories: ReleaseRouterDirectories): boolean {
+  const appPath = configuredRoutePath(path, directories, "app");
+  if (!appPath?.startsWith("app/")) return false;
+  const withoutPrefix = appPath.slice("app/".length);
   const segments = withoutPrefix.split("/");
   const fileName = segments.pop();
   if (!fileName || !/^layout\.(tsx|ts|jsx|mdx|js)$/.test(fileName)) return false;
   return !segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"));
 }
 
-function collectAppRouterLayoutsForPage(logicalPath: string, knownPaths: Set<string>): string[] {
-  if (!logicalPath.startsWith("app/") || routeForPage(logicalPath) === null) return [];
+function collectConfiguredAppRouterLayoutsForPage(
+  logicalPath: string,
+  directories: ReleaseRouterDirectories,
+  knownPaths: Set<string>,
+): string[] {
+  const appPath = configuredRoutePath(logicalPath, directories, "app");
+  if (!appPath || routeForPage(appPath) === null) return [];
 
   const segments = logicalPath.split("/");
   segments.pop();
+  const appRootDepth = normalizeRouteLogicalPath(directories.app).split("/").filter(Boolean).length;
 
   const layouts: string[] = [];
-  for (let depth = 1; depth <= segments.length; depth++) {
+  for (let depth = appRootDepth; depth <= segments.length; depth++) {
     const dir = segments.slice(0, depth).join("/");
     for (const ext of BROWSER_MODULE_EXTENSIONS) {
-      const candidate = `${dir}/layout${ext}`;
+      const candidate = dir ? `${dir}/layout${ext}` : `layout${ext}`;
       if (knownPaths.has(candidate)) {
         layouts.push(candidate);
         break;
@@ -460,6 +478,13 @@ function collectAppRouterLayoutsForPage(logicalPath: string, knownPaths: Set<str
     }
   }
   return layouts;
+}
+
+function releaseRouterDirectories(config: VeryfrontConfig): ReleaseRouterDirectories {
+  return {
+    app: config.directories?.app ?? "app",
+    pages: config.directories?.pages ?? "pages",
+  };
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
@@ -1136,8 +1161,10 @@ function requireCanonicalReleaseFilePath(value: unknown): string {
     value.length === 0 ||
     value.length > MAX_RELEASE_FILE_PATH_LENGTH ||
     value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
     value.endsWith("/") ||
-    value.includes("\\") ||
+    value.endsWith("\\") ||
     value.includes("?") ||
     value.includes("#") ||
     hasControlCharacters(value)
@@ -1145,15 +1172,16 @@ function requireCanonicalReleaseFilePath(value: unknown): string {
     throw new Error("Release file path must be a canonical relative path");
   }
 
-  const parts = value.split("/");
+  const normalizedValue = value.replace(/\\/g, "/");
+  const parts = normalizedValue.split("/");
   if (
     parts.some((part) => part.length === 0 || part === "." || part === "..") ||
-    normalizeLogicalPath(value) !== value
+    normalizeLogicalPath(normalizedValue) !== normalizedValue
   ) {
     throw new Error("Release file path must be a canonical relative path");
   }
 
-  return value;
+  return normalizedValue;
 }
 
 function resolveMaterializedReleasePath(tempDir: string, filePath: string): string {
@@ -2234,6 +2262,7 @@ async function runBuildInner(
     input,
     tempDir,
   );
+  const routeDirectories = releaseRouterDirectories(releaseConfig);
   const releaseReactVersion = await resolveReleaseReactVersion(
     sourceByPath,
     releaseConfig,
@@ -2338,7 +2367,7 @@ async function runBuildInner(
   const moduleQueue: string[] = [];
   const queuedModules = new Set<string>();
   for (const logicalPath of sourceByPath.keys()) {
-    if (!isBrowserModule(logicalPath)) continue;
+    if (!isBrowserModule(logicalPath, routeDirectories)) continue;
     moduleQueue.push(logicalPath);
     queuedModules.add(logicalPath);
   }
@@ -2556,15 +2585,17 @@ async function runBuildInner(
   // B2. Routes: walk the transformed browser import closure from each page entrypoint.
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
-  const pageModules = Object.keys(modules).filter((p) => routeForPage(p) !== null);
+  const pageModules = Object.keys(modules).filter((p) =>
+    routeForConfiguredPage(p, routeDirectories) !== null
+  );
 
   for (const logicalPath of pageModules) {
-    const route = routeForPage(logicalPath);
+    const route = routeForConfiguredPage(logicalPath, routeDirectories);
     if (!route) continue;
 
     const entryModules = [
       logicalPath,
-      ...collectAppRouterLayoutsForPage(logicalPath, knownPaths),
+      ...collectConfiguredAppRouterLayoutsForPage(logicalPath, routeDirectories, knownPaths),
     ];
     const { modules: closureModules, gaps: closureGaps } = await collectRouteClosure(
       entryModules,
