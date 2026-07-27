@@ -1,8 +1,17 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { CONFIG_VALIDATION_FAILED } from "#veryfront/errors/error-registry.ts";
+import {
+  MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
+  MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS,
+  MAX_SOURCE_INTEGRATION_POLICY_SEGMENT_LENGTH,
+  MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
+} from "#veryfront/integrations/limits.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
-import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
+import type {
+  SourceIntegrationPolicyConfig,
+  SourceIntegrationRestriction,
+} from "#veryfront/integrations/source-policy.ts";
 import { validateLegacyRenderRedisCacheKeyPrefix } from "#veryfront/cache/backends/redis-keyspace.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
@@ -39,6 +48,29 @@ const MAX_CSRF_NAME_LENGTH = 256;
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
 const MAX_CSRF_EXCLUDE_PATH_LIST_LENGTH = 16_384;
 const CSRF_EXCLUDE_PATH_BASE_URL = "https://csrf-policy.invalid";
+
+function isBoundedSourceIntegrationAllowlist(
+  allow: Readonly<Record<string, SourceIntegrationRestriction>>,
+): boolean {
+  const entries = Object.entries(allow);
+  if (entries.length > MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS) return false;
+
+  let totalToolIds = 0;
+  for (const [integration, restriction] of entries) {
+    const allowedTools = restriction.allowedTools;
+    if (!allowedTools) continue;
+    if (allowedTools.length > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS) return false;
+    for (const toolId of allowedTools) {
+      if (
+        ++totalToolIds > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS ||
+        integration.length + 2 + toolId.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 function isSafeRenderRedisKeyPrefix(prefix: string): boolean {
   try {
@@ -840,7 +872,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
       integrations: v
         .object({
           allow: v.record(
-            v.string().min(1).refine(
+            v.string().min(1).max(MAX_SOURCE_INTEGRATION_POLICY_SEGMENT_LENGTH).refine(
               (name) => integrationNames.has(name),
               { message: "Expected a canonical integration name from the connector catalog" },
             ),
@@ -849,15 +881,20 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 /** Exact connector-local tool IDs; omit to allow all tools. */
                 allowedTools: v
                   .array(
-                    v.string().regex(
-                      /^(?!.*__)[a-z0-9][a-z0-9_-]*$/,
-                      "Expected a canonical connector-local tool ID",
-                    ),
+                    v.string()
+                      .max(MAX_SOURCE_INTEGRATION_POLICY_SEGMENT_LENGTH)
+                      .regex(
+                        /^(?!.*__)[a-z0-9][a-z0-9_-]*$/,
+                        "Expected a canonical connector-local tool ID",
+                      ),
                   )
+                  .max(MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS)
                   .optional(),
               })
               .strict(),
-          ),
+          ).refine(isBoundedSourceIntegrationAllowlist, {
+            message: "Source integration allowlist exceeds resource limits",
+          }),
         })
         .strict()
         .optional(),

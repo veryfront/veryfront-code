@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/tes
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS } from "#veryfront/integrations/limits.ts";
 import {
   MAX_CORS_ORIGIN_COUNT,
   MAX_CORS_ORIGIN_LENGTH,
@@ -885,6 +886,28 @@ describe("configSchema", () => {
         }),
       Error,
       "Expected a canonical connector-local tool ID",
+    );
+    const firstHalfCount = Math.floor(MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS / 2) + 1;
+    const firstHalf = Array.from(
+      { length: firstHalfCount },
+      (_, index) => `tool_a_${index}`,
+    );
+    const secondHalf = Array.from(
+      { length: MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS + 1 - firstHalfCount },
+      (_, index) => `tool_b_${index}`,
+    );
+    assertThrows(
+      () =>
+        validateVeryfrontConfig({
+          integrations: {
+            allow: {
+              github: { allowedTools: firstHalf },
+              gmail: { allowedTools: secondHalf },
+            },
+          },
+        }),
+      Error,
+      "Source integration allowlist exceeds resource limits",
     );
   });
 });

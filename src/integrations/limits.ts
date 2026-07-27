@@ -25,8 +25,23 @@ export const MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES = 4 * 1024;
 /** Maximum number of remote tool definitions admitted atomically. */
 export const MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS = 1_000;
 
+/** Maximum caller or environment credential length admitted into an HTTP header. */
+export const MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH = 16_384;
+
 /** Runtime tool names use the same ceiling as the agent invocation contract. */
 export const MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH = 128;
+
+/** Maximum canonical connector-name length at lookup and policy boundaries. */
+export const MAX_INTEGRATION_NAME_LENGTH = MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH - 3;
+
+/** Maximum integrations admitted into one exact-source narrowing policy. */
+export const MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS = 512;
+
+/** A segment must leave room for the separator and the other non-empty segment. */
+export const MAX_SOURCE_INTEGRATION_POLICY_SEGMENT_LENGTH = MAX_INTEGRATION_NAME_LENGTH;
+
+/** A policy cannot usefully name more tools than remote discovery can admit. */
+export const MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS = MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS;
 
 /** Runtime tool descriptions use the same ceiling as the agent invocation contract. */
 export const MAX_REMOTE_INTEGRATION_TOOL_DESCRIPTION_LENGTH = 1_024;

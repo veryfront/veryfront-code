@@ -45,21 +45,48 @@ import {
   isVisibleIntegration,
   normalizeIntegrationName,
 } from "./feature-flags.ts";
+import { MAX_INTEGRATION_NAME_LENGTH } from "./limits.ts";
 import type { IntegrationConfig, IntegrationName } from "./schema.ts";
 
+function deepFreezeCatalog<T extends object>(root: T): T {
+  const pending: object[] = [root];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (!value || visited.has(value)) continue;
+    visited.add(value);
+
+    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+      if (
+        "value" in descriptor &&
+        typeof descriptor.value === "object" &&
+        descriptor.value !== null
+      ) {
+        pending.push(descriptor.value);
+      }
+    }
+    Object.freeze(value);
+  }
+  return root;
+}
+
+const connectorCatalog = deepFreezeCatalog(connectors);
+const connectorMap: ReadonlyMap<string, IntegrationConfig> = new Map(
+  connectorCatalog.map((connector) => [connector.name, connector] as const),
+);
 const iconMap = new Map(Object.entries(icons));
 
 /** Return a visible connector after trimming and case-normalizing its name. */
 export function getConnector(name: IntegrationName | string): IntegrationConfig | undefined {
-  if (typeof name !== "string") return undefined;
+  if (typeof name !== "string" || name.length > MAX_INTEGRATION_NAME_LENGTH) return undefined;
   const normalizedName = normalizeIntegrationName(name);
   if (!isVisibleIntegration(normalizedName)) return undefined;
-  return connectors.find((connector) => connector.name === normalizedName);
+  return connectorMap.get(normalizedName);
 }
 
-/** List connectors. */
+/** List visible connectors backed by deeply frozen catalog metadata. */
 export function listConnectors(): readonly IntegrationConfig[] {
-  return filterVisibleIntegrations(connectors);
+  return filterVisibleIntegrations(connectorCatalog);
 }
 
 /** Return connector names. */
@@ -69,7 +96,7 @@ export function getConnectorNames(): readonly string[] {
 
 /** Return a visible connector's icon after trimming and case-normalizing its name. */
 export function getIcon(name: IntegrationName | string): string | undefined {
-  if (typeof name !== "string") return undefined;
+  if (typeof name !== "string" || name.length > MAX_INTEGRATION_NAME_LENGTH) return undefined;
   const normalizedName = normalizeIntegrationName(name);
   if (!isVisibleIntegration(normalizedName)) return undefined;
   return iconMap.get(normalizedName);

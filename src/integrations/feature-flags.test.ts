@@ -7,8 +7,10 @@ import {
   filterVisibleIntegrations,
   isSupportedIntegration,
   isVisibleIntegration,
+  MAX_EXPERIMENTAL_INTEGRATIONS_ENV_LENGTH,
   SUPPORTED_INTEGRATION_NAMES,
 } from "./feature-flags.ts";
+import { MAX_INTEGRATION_NAME_LENGTH } from "./limits.ts";
 import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 
 function setFlag(value: string | undefined): void {
@@ -58,6 +60,36 @@ describe("integration feature flags", () => {
       ]).map((item) => item.id),
       ["figma"],
     );
+  });
+
+  it("fails an oversized experimental flag closed", () => {
+    setFlag(`${"x".repeat(MAX_EXPERIMENTAL_INTEGRATIONS_ENV_LENGTH + 1)},salesforce`);
+
+    assertEquals(isVisibleIntegration("salesforce"), false);
+  });
+
+  it("uses one coherent feature-flag snapshot while filtering", () => {
+    setFlag("salesforce");
+    const mutateFlagDuringLookup = {
+      get id(): string {
+        setFlag("stripe");
+        return "salesforce";
+      },
+    };
+
+    assertEquals(
+      filterVisibleIntegrations([
+        mutateFlagDuringLookup,
+        { id: "stripe" },
+      ]).map((item) => item.id),
+      ["salesforce"],
+    );
+  });
+
+  it("rejects overlong connector names before normalization", () => {
+    setFlag("all");
+
+    assertEquals(isVisibleIntegration("x".repeat(MAX_INTEGRATION_NAME_LENGTH + 1)), false);
   });
 });
 

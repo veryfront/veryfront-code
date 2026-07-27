@@ -1,24 +1,35 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   intersectSourceIntegrationPolicies,
+  parseSourceIntegrationPolicyManifest,
   resolveSourceIntegrationPolicyManifest,
   type SourceIntegrationPolicyManifest,
 } from "./source-policy.ts";
 
 const sourceIntegrationPolicyStorage = new AsyncLocalStorage<SourceIntegrationPolicyManifest>();
+const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
+const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
+const IntrinsicError = Error;
+const ReflectApply = Reflect.apply;
 
 /** Return the restriction established for the exact project source executing this run. */
 export function getActiveSourceIntegrationPolicy():
   | SourceIntegrationPolicyManifest
   | undefined {
-  return sourceIntegrationPolicyStorage.getStore();
+  return ReflectApply(
+    AsyncLocalStoragePrototypeGetStore,
+    sourceIntegrationPolicyStorage,
+    [],
+  ) as SourceIntegrationPolicyManifest | undefined;
 }
 
 /** Require the exact-source policy before crossing an isolated execution boundary. */
 export function requireActiveSourceIntegrationPolicy(): SourceIntegrationPolicyManifest {
   const policy = getActiveSourceIntegrationPolicy();
   if (!policy) {
-    throw new Error("Isolated project execution requires an exact source integration policy");
+    throw new IntrinsicError(
+      "Isolated project execution requires an exact source integration policy",
+    );
   }
   return policy;
 }
@@ -33,7 +44,11 @@ export function runWithExactSourceIntegrationPolicy<T>(
   policy: SourceIntegrationPolicyManifest,
   fn: () => T,
 ): T {
-  return sourceIntegrationPolicyStorage.run(policy, fn);
+  return ReflectApply(
+    AsyncLocalStoragePrototypeRun,
+    sourceIntegrationPolicyStorage,
+    [parseSourceIntegrationPolicyManifest(policy), fn],
+  ) as T;
 }
 
 /** Resolve the one effective restriction consumed by an agent runtime. */

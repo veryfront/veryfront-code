@@ -81,4 +81,31 @@ describe("source integration policy context", () => {
 
     assertEquals(observed, ambient);
   });
+
+  it("snapshots and freezes a mutable exact-source policy at admission", () => {
+    const input = {
+      schemaVersion: 1 as const,
+      mode: "allowlist" as const,
+      integrations: {
+        github: { allowedToolIds: ["list_repos"] },
+      },
+    };
+
+    const observed = runWithExactSourceIntegrationPolicy(input, () => {
+      input.integrations.github.allowedToolIds.push("delete_repo");
+      return getActiveSourceIntegrationPolicy();
+    });
+
+    assertEquals(observed, {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: {
+        github: { allowedToolIds: ["list_repos"] },
+      },
+    });
+    assertEquals(Object.isFrozen(observed), true);
+    if (observed?.mode === "allowlist") {
+      assertEquals(Object.isFrozen(observed.integrations.github?.allowedToolIds), true);
+    }
+  });
 });

@@ -11,6 +11,7 @@ import {
   MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
   MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
+  MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
   MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH,
   MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS,
   MAX_REMOTE_INTEGRATION_TOOL_DESCRIPTION_LENGTH,
@@ -369,6 +370,23 @@ describe("integrations/remote-tools hardening", () => {
     assertEquals(definitions, []);
   });
 
+  it("rejects duplicate remote tool names atomically", async () => {
+    configureRemoteTools();
+
+    const definitions = await withMockFetch(
+      async () =>
+        Response.json({
+          tools: [
+            createToolDefinition(),
+            createToolDefinition({ description: "Conflicting definition" }),
+          ],
+        }),
+      () => getRemoteIntegrationToolDefinitions(),
+    );
+
+    assertEquals(definitions, []);
+  });
+
   it("rejects overlong and deeply nested tool metadata atomically", async () => {
     configureRemoteTools();
     const invalidDefinitions = [
@@ -438,6 +456,88 @@ describe("integrations/remote-tools hardening", () => {
     assertEquals(fetchCalls, 0);
   });
 
+  it("does not invoke accessors in the tool execution context", async () => {
+    configureRemoteTools();
+    let getterCalled = false;
+    let fetchCalls = 0;
+    const context: Record<string, unknown> = {};
+    Object.defineProperty(context, "authToken", {
+      enumerable: true,
+      get() {
+        getterCalled = true;
+        return "accessor-token";
+      },
+    });
+
+    const errors = await withMockFetch(
+      async () => {
+        fetchCalls += 1;
+        return Response.json({ tools: [] });
+      },
+      async () => ({
+        discovery: await captureRejection(() => getRemoteIntegrationToolDefinitions(context)),
+        execution: await captureRejection(() =>
+          executeRemoteIntegrationTool(
+            "github__list_repos",
+            {},
+            context,
+          )
+        ),
+      }),
+    );
+
+    assertEquals(errors.discovery instanceof TypeError, true);
+    assertEquals(errors.execution instanceof TypeError, true);
+    assertEquals(getterCalled, false);
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("rejects oversized credentials and non-canonical project slugs before dispatch", async () => {
+    configureRemoteTools();
+    let fetchCalls = 0;
+    const oversizedToken = "t".repeat(MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH + 1);
+
+    const outcomes = await withMockFetch(
+      async () => {
+        fetchCalls += 1;
+        return Response.json({ tools: [] });
+      },
+      async () => ({
+        oversizedDiscovery: await getRemoteIntegrationToolDefinitions({
+          authToken: oversizedToken,
+        }),
+        oversizedExecution: await executeRemoteIntegrationTool(
+          "github__list_repos",
+          {},
+          { authToken: oversizedToken },
+        ),
+        invalidSlugDiscovery: await getRemoteIntegrationToolDefinitions({
+          authToken: "request-token",
+          projectSlug: "not_a_canonical_slug",
+        }),
+        invalidSlugExecution: await captureRejection(() =>
+          executeRemoteIntegrationTool(
+            "github__list_repos",
+            {},
+            {
+              authToken: "request-token",
+              projectSlug: "not_a_canonical_slug",
+            },
+          )
+        ),
+      }),
+    );
+
+    assertEquals(outcomes.oversizedDiscovery, []);
+    assertEquals(outcomes.oversizedExecution, {
+      error: "no_api_token",
+      message: "No API token available",
+    });
+    assertEquals(outcomes.invalidSlugDiscovery, []);
+    assertEquals(outcomes.invalidSlugExecution instanceof TypeError, true);
+    assertEquals(fetchCalls, 0);
+  });
+
   it("rejects deeply nested tool-call results at the JSON shape boundary", async () => {
     configureRemoteTools();
     const deeplyNestedResult = createSchemaAtDepth(129);
@@ -452,6 +552,21 @@ describe("integrations/remote-tools hardening", () => {
       (error as Error).message,
       "Integration tools API call response exceeds bounded JSON shape limits",
     );
+  });
+
+  it("rejects malformed MCP structured content", async () => {
+    configureRemoteTools();
+
+    const error = await withMockFetch(
+      async () =>
+        Response.json({
+          content: [],
+          structuredContent: "not-an-object",
+        }),
+      () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", {})),
+    );
+
+    assertEquals(error instanceof TypeError, true);
   });
 
   it("does not reintroduce an unsafe shape by parsing MCP text content", async () => {

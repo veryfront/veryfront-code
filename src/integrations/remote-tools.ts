@@ -19,6 +19,10 @@ import {
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
+import {
+  hasProjectIdentityControlCharacters,
+  isCanonicalProjectSlug,
+} from "#veryfront/utils/project-identity.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -28,6 +32,7 @@ import {
   MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
   MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
+  MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
   MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH,
   MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS,
   MAX_REMOTE_INTEGRATION_TOOL_DESCRIPTION_LENGTH,
@@ -51,14 +56,94 @@ interface IntegrationRequestSignalScope {
   dispose: () => void;
 }
 
+interface RemoteIntegrationExecutionContext {
+  readonly hasExplicitCredential: boolean;
+  readonly authToken: unknown;
+  readonly projectSlug: unknown;
+  readonly runId: unknown;
+  readonly agentId: unknown;
+  readonly abortSignal: AbortSignal | undefined;
+}
+
 const utf8Encoder = new TextEncoder();
+const EMPTY_REMOTE_INTEGRATION_CONTEXT: RemoteIntegrationExecutionContext = Object.freeze({
+  hasExplicitCredential: false,
+  authToken: undefined,
+  projectSlug: undefined,
+  runId: undefined,
+  agentId: undefined,
+  abortSignal: undefined,
+});
+
+function snapshotToolExecutionContext(
+  context: ToolExecutionContext | undefined,
+  includeCallMetadata: boolean,
+): RemoteIntegrationExecutionContext {
+  if (context === undefined) return EMPTY_REMOTE_INTEGRATION_CONTEXT;
+  if (typeof context !== "object" || context === null) {
+    throw new TypeError("Integration tool execution context must be an object");
+  }
+
+  const readOwnDataProperty = (key: string): { present: boolean; value: unknown } => {
+    const descriptor = Reflect.getOwnPropertyDescriptor(context, key);
+    if (!descriptor) return { present: false, value: undefined };
+    if (!("value" in descriptor)) {
+      throw new TypeError(
+        `Integration tool execution context property "${key}" must be a data property`,
+      );
+    }
+    return { present: true, value: descriptor.value };
+  };
+
+  try {
+    const authToken = readOwnDataProperty("authToken");
+    const projectSlug = authToken.present
+      ? readOwnDataProperty("projectSlug")
+      : { present: false, value: undefined };
+    const runId = includeCallMetadata
+      ? readOwnDataProperty("runId")
+      : { present: false, value: undefined };
+    const agentId = includeCallMetadata
+      ? readOwnDataProperty("agentId")
+      : { present: false, value: undefined };
+    const abortSignal = readOwnDataProperty("abortSignal");
+    if (
+      abortSignal.value !== undefined &&
+      !(abortSignal.value instanceof AbortSignal)
+    ) {
+      throw new TypeError("Integration tool execution context abortSignal must be an AbortSignal");
+    }
+
+    return Object.freeze({
+      hasExplicitCredential: authToken.present,
+      authToken: authToken.value,
+      projectSlug: projectSlug.value,
+      runId: runId.value,
+      agentId: agentId.value,
+      abortSignal: abortSignal.value as AbortSignal | undefined,
+    });
+  } catch (cause) {
+    throw new TypeError("Invalid integration tool execution context", { cause });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Per-request token resolution
 // ---------------------------------------------------------------------------
 
 function isValidApiToken(token: unknown): token is string {
-  return typeof token === "string" && token.length > 0 && token === token.trim();
+  if (
+    typeof token !== "string" ||
+    token.length === 0 ||
+    token.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH
+  ) {
+    return false;
+  }
+  for (let index = 0; index < token.length; index++) {
+    const code = token.charCodeAt(index);
+    if (code < 0x21 || code > 0x7e) return false;
+  }
+  return true;
 }
 
 /**
@@ -66,14 +151,8 @@ function isValidApiToken(token: unknown): token is string {
  * Proxy mode requires a valid request-scoped project token. Single-project
  * runtimes may use their process-wide environment token.
  */
-function hasExplicitRequestCredential(
-  context: ToolExecutionContext | undefined,
-): context is ToolExecutionContext & { authToken: unknown } {
-  return context !== undefined && Object.hasOwn(context, "authToken");
-}
-
-function resolveRequestToken(context?: ToolExecutionContext): string | undefined {
-  if (hasExplicitRequestCredential(context)) {
+function resolveRequestToken(context: RemoteIntegrationExecutionContext): string | undefined {
+  if (context.hasExplicitCredential) {
     return isValidApiToken(context.authToken) ? context.authToken : undefined;
   }
 
@@ -87,13 +166,23 @@ function resolveRequestToken(context?: ToolExecutionContext): string | undefined
   return isValidApiToken(environmentToken) ? environmentToken : undefined;
 }
 
-function normalizeProjectSlug(projectSlug: string | undefined): string | undefined {
-  const normalized = projectSlug?.trim();
-  return normalized || undefined;
+function normalizeProjectSlug(projectSlug: unknown): string | undefined {
+  if (projectSlug === undefined) return undefined;
+  if (typeof projectSlug !== "string") {
+    throw new TypeError("Integration project slug must be a string");
+  }
+  const normalized = projectSlug.trim();
+  if (normalized.length === 0) return undefined;
+  if (!isCanonicalProjectSlug(normalized)) {
+    throw new TypeError("Integration project slug must be canonical");
+  }
+  return normalized;
 }
 
-function resolveRequestProjectSlug(context?: ToolExecutionContext): string | undefined {
-  if (hasExplicitRequestCredential(context)) {
+function resolveRequestProjectSlug(
+  context: RemoteIntegrationExecutionContext,
+): string | undefined {
+  if (context.hasExplicitCredential) {
     return normalizeProjectSlug(context.projectSlug);
   }
 
@@ -194,9 +283,11 @@ function parseToolListResponse(value: unknown): RemoteToolDefinition[] | undefin
   }
 
   const definitions: RemoteToolDefinition[] = [];
+  const names = new Set<string>();
   for (const candidate of value.tools) {
     const definition = parseRemoteToolDefinition(candidate);
-    if (!definition) return undefined;
+    if (!definition || names.has(definition.name)) return undefined;
+    names.add(definition.name);
     definitions.push(definition);
   }
   return definitions;
@@ -322,29 +413,37 @@ function snapshotRemoteToolArguments(
 function serializeCallRequest(
   toolName: string,
   args: Record<string, unknown>,
-  context: ToolExecutionContext | undefined,
+  context: RemoteIntegrationExecutionContext,
 ): string {
   for (
     const [label, value] of [
-      ["run id", context?.runId],
-      ["agent id", context?.agentId],
+      ["run id", context.runId],
+      ["agent id", context.agentId],
     ] as const
   ) {
-    if (
-      value !== undefined &&
-      (typeof value !== "string" || value.length > MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH)
-    ) {
+    if (value === undefined) continue;
+    if (typeof value !== "string") {
+      throw new TypeError(`Integration tool call ${label} must be a string`);
+    }
+    if (value.length > MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH) {
       throw new RangeError(
         `Integration tool call ${label} exceeds the ${MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH}-character limit`,
       );
+    }
+    if (
+      value.length === 0 ||
+      value !== value.trim() ||
+      hasProjectIdentityControlCharacters(value)
+    ) {
+      throw new TypeError(`Integration tool call ${label} must be a canonical identifier`);
     }
   }
 
   const body = {
     name: toolName,
     arguments: snapshotRemoteToolArguments(args),
-    ...(context?.runId !== undefined ? { run_id: context.runId } : {}),
-    ...(context?.agentId !== undefined ? { agent_id: context.agentId } : {}),
+    ...(context.runId !== undefined ? { run_id: context.runId } : {}),
+    ...(context.agentId !== undefined ? { agent_id: context.agentId } : {}),
   };
   const serialized = JSON.stringify(body);
   if (utf8Encoder.encode(serialized).byteLength > MAX_INTEGRATION_CALL_REQUEST_BYTES) {
@@ -368,7 +467,7 @@ async function postIntegrationApi(
   path: string,
   token: string,
   serializedBody: string | undefined,
-  context: ToolExecutionContext | undefined,
+  context: RemoteIntegrationExecutionContext,
   signal: AbortSignal,
 ): Promise<Response> {
   const projectSlug = resolveRequestProjectSlug(context);
@@ -389,9 +488,9 @@ async function postIntegrationApi(
 async function fetchToolList(
   baseUrl: string,
   token: string,
-  context?: ToolExecutionContext,
+  context: RemoteIntegrationExecutionContext,
 ): Promise<RemoteToolDefinition[]> {
-  const requestScope = createIntegrationRequestSignalScope(context?.abortSignal);
+  const requestScope = createIntegrationRequestSignalScope(context.abortSignal);
   try {
     const response = await postIntegrationApi(
       baseUrl,
@@ -432,9 +531,9 @@ async function callRemoteTool(
   token: string,
   toolName: string,
   args: Record<string, unknown>,
-  context?: ToolExecutionContext,
+  context: RemoteIntegrationExecutionContext,
 ): Promise<unknown> {
-  const requestScope = createIntegrationRequestSignalScope(context?.abortSignal);
+  const requestScope = createIntegrationRequestSignalScope(context.abortSignal);
   try {
     const serializedBody = serializeCallRequest(toolName, args, context);
     const response = await postIntegrationApi(
@@ -474,11 +573,19 @@ async function callRemoteTool(
     if (isRecord(result) && Array.isArray(result.content)) {
       const text = joinCallToolText(result.content);
 
-      if (result.structuredContent) {
+      if (Object.hasOwn(result, "structuredContent")) {
+        if (!isRecord(result.structuredContent)) {
+          throw new TypeError(
+            "Integration tools API returned malformed MCP structured content",
+          );
+        }
         return result.structuredContent;
       }
 
-      if (result.isError) {
+      if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
+        throw new TypeError("Integration tools API returned a malformed MCP error marker");
+      }
+      if (result.isError === true) {
         // Preserve structured errors such as authentication_required + connectUrl.
         const parsed = parseJsonText(text);
         if (parsed && typeof parsed === "object") return parsed;
@@ -513,13 +620,14 @@ export async function getRemoteIntegrationToolDefinitions(
 ): Promise<
   ToolDefinition[]
 > {
-  context?.abortSignal?.throwIfAborted();
+  const requestContext = snapshotToolExecutionContext(context, false);
+  requestContext.abortSignal?.throwIfAborted();
   const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken(context);
+  const token = resolveRequestToken(requestContext);
   if (!baseUrl || !token) return [];
 
   try {
-    const remoteDefs = await fetchToolList(baseUrl, token, context);
+    const remoteDefs = await fetchToolList(baseUrl, token, requestContext);
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
     return remoteDefs.filter((def) =>
       sourceIntegrationPolicy === undefined ||
@@ -532,7 +640,7 @@ export async function getRemoteIntegrationToolDefinitions(
         : { type: "object", properties: {} },
     }));
   } catch (err) {
-    context?.abortSignal?.throwIfAborted();
+    requestContext.abortSignal?.throwIfAborted();
     logger.error("Failed to fetch remote integration tool definitions", {
       error: err instanceof Error ? err.message : String(err),
     });
@@ -559,8 +667,10 @@ export async function executeRemoteIntegrationTool(
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
 ): Promise<unknown> {
-  context?.abortSignal?.throwIfAborted();
+  const requestContext = snapshotToolExecutionContext(context, true);
+  requestContext.abortSignal?.throwIfAborted();
   if (
+    typeof toolName !== "string" ||
     toolName.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH ||
     !isRemoteIntegrationTool(toolName)
   ) {
@@ -578,7 +688,7 @@ export async function executeRemoteIntegrationTool(
   }
 
   const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken(context);
+  const token = resolveRequestToken(requestContext);
   if (!baseUrl || !token) {
     return { error: "no_api_token", message: "No API token available" };
   }
@@ -588,6 +698,6 @@ export async function executeRemoteIntegrationTool(
     token,
     toolName,
     args,
-    context,
+    requestContext,
   );
 }
