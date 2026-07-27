@@ -43,7 +43,8 @@ export const DECLARED_INTEGRATION_NAMES = ALL_INTEGRATION_NAMES;
 const supportedIntegrations = new Set<string>(SUPPORTED_INTEGRATION_NAMES);
 const declaredIntegrations = new Set<string>(DECLARED_INTEGRATION_NAMES);
 
-function normalizeIntegrationName(name: string): string {
+/** Normalize a connector name at public lookup and feature-flag boundaries. */
+export function normalizeIntegrationName(name: string): string {
   return name.trim().toLowerCase();
 }
 

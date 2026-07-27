@@ -40,5 +40,22 @@ describe("integrations/index", () => {
   it("returns undefined for unknown connector lookups", () => {
     assertEquals(getConnector("missing-integration"), undefined);
     assertEquals(getIcon("missing-integration"), undefined);
+    assertEquals(getConnector(null as unknown as string), undefined);
+    assertEquals(getIcon(undefined as unknown as string), undefined);
+  });
+
+  it("normalizes public connector and icon lookup names", () => {
+    assertStrictEquals(
+      getConnector(" GitHub "),
+      connectors.find((connector) => connector.name === "github"),
+    );
+    assertEquals(getIcon("GITHUB"), icons.github);
+
+    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+    assertStrictEquals(
+      getConnector(" SALESFORCE "),
+      connectors.find((connector) => connector.name === "salesforce"),
+    );
+    assertEquals(getIcon("Salesforce"), icons.salesforce);
   });
 });

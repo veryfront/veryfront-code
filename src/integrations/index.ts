@@ -40,15 +40,21 @@ export {
 } from "./schema.ts";
 
 import { connectors, icons } from "./_data.ts";
-import { filterVisibleIntegrations, isVisibleIntegration } from "./feature-flags.ts";
+import {
+  filterVisibleIntegrations,
+  isVisibleIntegration,
+  normalizeIntegrationName,
+} from "./feature-flags.ts";
 import type { IntegrationConfig, IntegrationName } from "./schema.ts";
 
 const iconMap = new Map(Object.entries(icons));
 
-/** Return connector. */
+/** Return a visible connector after trimming and case-normalizing its name. */
 export function getConnector(name: IntegrationName | string): IntegrationConfig | undefined {
-  if (!isVisibleIntegration(name)) return undefined;
-  return connectors.find((connector) => connector.name === name);
+  if (typeof name !== "string") return undefined;
+  const normalizedName = normalizeIntegrationName(name);
+  if (!isVisibleIntegration(normalizedName)) return undefined;
+  return connectors.find((connector) => connector.name === normalizedName);
 }
 
 /** List connectors. */
@@ -61,10 +67,12 @@ export function getConnectorNames(): readonly string[] {
   return listConnectors().map((connector) => connector.name);
 }
 
-/** Return icon. */
+/** Return a visible connector's icon after trimming and case-normalizing its name. */
 export function getIcon(name: IntegrationName | string): string | undefined {
-  if (!isVisibleIntegration(name)) return undefined;
-  return iconMap.get(name);
+  if (typeof name !== "string") return undefined;
+  const normalizedName = normalizeIntegrationName(name);
+  if (!isVisibleIntegration(normalizedName)) return undefined;
+  return iconMap.get(normalizedName);
 }
 
 // Remote integration tool helpers (per-request, no global registration)
