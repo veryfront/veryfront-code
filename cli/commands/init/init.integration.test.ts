@@ -200,6 +200,13 @@ describe("init command integration", () => {
       assertExists(packageJson.includes("veryfront"));
     });
 
+    it("includes a favicon fallback in the default ai-agent starter", async () => {
+      const result = await runInitCommand([projectName, "--skip-install"]);
+
+      assertEquals(result.code, 0);
+      assertEquals(await exists(join(projectDir, "public", "favicon.ico")), true);
+    });
+
     it("creates coding-agent instructions for every starter template", async () => {
       for (const template of STARTER_TEMPLATE_NAMES) {
         const name = `agents-${template}-${randomSuffix()}`;
@@ -344,7 +351,9 @@ describe("init command integration", () => {
             const pkg = JSON.parse(await readTextFile(join(dir, "package.json")));
             assertEquals(pkg.scripts.dev, "veryfront dev");
             assertEquals(pkg.scripts.build, "veryfront build");
-            assertEquals(pkg.scripts.preview, "veryfront preview");
+            assertEquals(pkg.scripts.start, "veryfront serve");
+            assertEquals(pkg.scripts.eval, "veryfront eval");
+            assertEquals(pkg.scripts.preview, undefined);
             assertExists(pkg.dependencies.veryfront);
             assertExists(pkg.dependencies.react);
             assertExists(pkg.dependencies["react-dom"]);
@@ -430,7 +439,9 @@ describe("init command integration", () => {
       assertEquals(parsed.nodeModulesDir, "auto");
       assertEquals(parsed.tasks.dev, `deno run -A npm:veryfront@${VERSION} dev`);
       assertExists(parsed.tasks.build);
-      assertExists(parsed.tasks.preview);
+      assertExists(parsed.tasks.start);
+      assertExists(parsed.tasks.eval);
+      assertEquals(parsed.tasks.preview, undefined);
     });
 
     it("rejects an invalid --runtime value before scaffolding", async () => {

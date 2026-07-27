@@ -93,6 +93,47 @@ describe("cli/templates", () => {
     assertEquals(calculator.includes("execute: ({ operation, a, b }) =>"), true);
   });
 
+  it("keeps the ai-agent starter slim, actionable, and viewport-bound", async () => {
+    const agent = await Deno.readTextFile(
+      new URL("./files/ai-agent/agents/assistant.ts", import.meta.url),
+    );
+    const assistantEval = await Deno.readTextFile(
+      new URL("./files/ai-agent/evals/assistant.eval.ts", import.meta.url),
+    );
+    const layout = await Deno.readTextFile(
+      new URL("./files/ai-agent/app/layout.tsx", import.meta.url),
+    );
+    const page = await Deno.readTextFile(
+      new URL("./files/ai-agent/app/page.tsx", import.meta.url),
+    );
+    const faviconFallback = await Deno.readTextFile(
+      new URL("./files/ai-agent/public/favicon.ico", import.meta.url),
+    );
+
+    assertEquals(
+      agent.includes(
+        'prompt: "Create a concise plan for building and launching a small web application."',
+      ),
+      true,
+    );
+    assertEquals(
+      agent.includes(
+        '"Calculate an 18% tip on $84.50, then split the total evenly among three people."',
+      ),
+      true,
+    );
+    assertEquals(assistantEval.includes('target: "agent:assistant"'), true);
+    assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
+    assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);
+    assertEquals(layout.includes("className="), false);
+    assertEquals(layout.includes("bg-white"), false);
+    assertEquals(layout.includes("dark:bg-neutral-900"), false);
+    assertEquals(page.includes('className="h-screen"'), true);
+    assertEquals(page.includes("api="), false);
+    assertEquals(page.includes("placeholder="), false);
+    assertEquals(faviconFallback.includes("<svg"), true);
+  });
+
   it("uses the current app-mode chat surface in starter templates", async () => {
     const simpleStarters: Array<{ template: TemplateName; page: string; agentId: string }> = [
       { template: "ai-agent", page: "app/page.tsx", agentId: "assistant" },
