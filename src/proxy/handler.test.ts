@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import {
@@ -267,6 +267,33 @@ afterEach(() => {
 });
 
 describe("Proxy Handler", () => {
+  it("rejects invalid routing cache configuration at construction", () => {
+    const previous = Deno.env.get("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES");
+    Deno.env.set("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES", "10001");
+    try {
+      assertThrows(
+        () =>
+          createProxyHandler({
+            config: {
+              apiBaseUrl: "https://api.example.com",
+              apiClientId: "",
+              apiClientSecret: "",
+              previewApiClientId: "",
+              previewApiClientSecret: "",
+            },
+          }),
+        RangeError,
+        "cannot exceed 10000",
+      );
+    } finally {
+      if (previous === undefined) {
+        Deno.env.delete("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES");
+      } else {
+        Deno.env.set("VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES", previous);
+      }
+    }
+  });
+
   it("uses a pre-parsed request URL when provided", async () => {
     const handler = createProxyHandler({
       config: {
@@ -312,6 +339,7 @@ describe("Proxy Handler", () => {
         const { pathname } = new URL(req.url);
 
         if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
 
         if (pathname.startsWith("/projects/")) {
           return Response.json({
@@ -343,6 +371,101 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.token, "test-token");
 
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when routing metadata has an operational failure", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return new Response("Unavailable", { status: 503 });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy routing metadata request was rejected");
+        assertEquals(fullProjectLookups, 0);
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when access metadata omits its protection decision", async () => {
+      let fullProjectLookups = 0;
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+              active_release_id: "rel-123",
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["example.com"],
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/")) {
+          fullProjectLookups++;
+          return createNotFoundResponse();
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://example.com/page", {
+            headers: { host: "example.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 502);
+        assertEquals(ctx.error?.message, "Proxy access metadata returned an invalid response");
+        assertEquals(fullProjectLookups, 0);
         await handler.close();
       } finally {
         await server.shutdown();
@@ -1287,6 +1410,8 @@ describe("Proxy Handler", () => {
           });
           return createTokenResponse();
         }
+
+        if (pathname.startsWith("/projects/-/")) return createNotFoundResponse();
 
         if (pathname.startsWith("/projects/")) {
           return Response.json({
@@ -2244,6 +2369,42 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error?.message, "Preview project not found");
         assertEquals(ctx.error?.slug, "project-not-found");
 
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("returns 404 when a project has no preview environment", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "production-only",
+            environments: [{
+              id: "env-production",
+              name: "production",
+              active_release_id: "rel-123",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request("http://production-only.preview.veryfront.com/page", {
+            headers: { host: "production-only.preview.veryfront.com" },
+          }),
+        );
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(ctx.error?.message, "Preview project not found");
         await handler.close();
       } finally {
         await server.shutdown();

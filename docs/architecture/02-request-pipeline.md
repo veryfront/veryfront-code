@@ -81,12 +81,25 @@ lookup on every request, so protection toggles and membership changes stay
 fresh while release routing avoids the full project relation query on warm
 paths.
 
+All three control-plane lookup shapes are validated before they enter request
+state or the routing cache. Responses must be JSON, are limited to 512 KiB, and
+must contain bounded project, environment, domain, release, and user
+identifiers. Access metadata must make an explicit Boolean protection decision
+for every environment. Lookups have a 10-second deadline and a shared
+200-request concurrency ceiling. A `404` is the only response interpreted as
+absence (and can trigger the legacy full-project fallback); authorization
+failures refresh the service token once, while timeouts, capacity exhaustion,
+other HTTP failures, and invalid payloads fail closed as gateway errors.
+
 Default routing cache controls:
 
-| Environment variable                        | Default |
-| ------------------------------------------- | ------- |
-| `VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS`      | `60000` |
-| `VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES` | `1000`  |
+| Environment variable                        | Default | Allowed range  |
+| ------------------------------------------- | ------- | -------------- |
+| `VERYFRONT_PROXY_ROUTING_CACHE_TTL_MS`      | `60000` | `0..86400000`  |
+| `VERYFRONT_PROXY_ROUTING_CACHE_MAX_ENTRIES` | `1000`  | `0..10000`     |
+
+`0` disables routing-cache retention. Invalid or out-of-range values stop proxy
+construction instead of silently selecting a different policy.
 
 After a deployment pointer commits, the control plane sends an authenticated,
 project-scoped invalidation through the proxy-owned Redis bus. Every subscribed
