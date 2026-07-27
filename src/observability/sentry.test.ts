@@ -5,7 +5,7 @@ import {
   captureApplicationError,
   flushApplicationErrors,
 } from "./application-errors.ts";
-import { initializeSentry, resetSentryForTests } from "./sentry.ts";
+import { initializeSentry, resetSentryForTests, resolveSentryConfigFromEnv } from "./sentry.ts";
 
 function createSentryExtension() {
   const state = {
@@ -40,6 +40,44 @@ Deno.test("Sentry stays disabled without a DSN", async () => {
 
   assertEquals(await initializeSentry({}, load), false);
   assertEquals(state.config, undefined);
+});
+
+Deno.test("Sentry environment configuration requires explicit provider opt-in", () => {
+  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+  const previousDsn = Deno.env.get("SENTRY_DSN");
+  try {
+    Deno.env.delete("VERYFRONT_ERROR_REPORTER");
+    Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+    assertEquals(resolveSentryConfigFromEnv(), undefined);
+  } finally {
+    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+    restoreEnv("SENTRY_DSN", previousDsn);
+  }
+});
+
+Deno.test("Sentry environment configuration uses the entrypoint service fallback", () => {
+  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+  const previousDsn = Deno.env.get("SENTRY_DSN");
+  const previousServiceName = Deno.env.get("SENTRY_SERVICE_NAME");
+  const previousOtelServiceName = Deno.env.get("OTEL_SERVICE_NAME");
+  try {
+    Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+    Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+    Deno.env.delete("SENTRY_SERVICE_NAME");
+    Deno.env.delete("OTEL_SERVICE_NAME");
+
+    assertEquals(resolveSentryConfigFromEnv("veryfront-proxy"), {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: undefined,
+      release: undefined,
+      serviceName: "veryfront-proxy",
+    });
+  } finally {
+    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+    restoreEnv("SENTRY_DSN", previousDsn);
+    restoreEnv("SENTRY_SERVICE_NAME", previousServiceName);
+    restoreEnv("OTEL_SERVICE_NAME", previousOtelServiceName);
+  }
 });
 
 Deno.test("Sentry loads the extension with normalized runtime configuration", async () => {
@@ -95,3 +133,11 @@ Deno.test("Sentry captures service and Grafana trace correlation", async () => {
   assertEquals(await flushApplicationErrors(1_500), true);
   assertEquals(state.flushTimeouts, [1_500]);
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    Deno.env.delete(name);
+  } else {
+    Deno.env.set(name, value);
+  }
+}

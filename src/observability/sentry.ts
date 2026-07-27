@@ -11,6 +11,7 @@ export { captureApplicationError, flushApplicationErrors };
 export type { ApplicationErrorContext, ApplicationErrorReporter } from "./application-errors.ts";
 
 const DEFAULT_SERVICE_NAME = "veryfront-server";
+const SENTRY_ERROR_REPORTER = "sentry";
 
 export type SentryConfig = {
   dsn?: string;
@@ -27,13 +28,27 @@ type SentryExtensionLoader = () => Promise<SentryExtensionModule>;
 
 let initialized = false;
 
-export function initializeSentryFromEnv(): Promise<boolean> {
-  return initializeSentry({
+export function resolveSentryConfigFromEnv(
+  defaultServiceName = DEFAULT_SERVICE_NAME,
+): SentryConfig | undefined {
+  if (getEnv("VERYFRONT_ERROR_REPORTER")?.trim().toLowerCase() !== SENTRY_ERROR_REPORTER) {
+    return undefined;
+  }
+
+  return {
     dsn: getEnv("SENTRY_DSN"),
     environment: getEnv("SENTRY_ENVIRONMENT") ?? getEnv("OTEL_DEPLOYMENT_ENVIRONMENT"),
     release: getEnv("SENTRY_RELEASE") ?? getEnv("OTEL_SERVICE_VERSION"),
-    serviceName: getEnv("SENTRY_SERVICE_NAME") ?? getEnv("OTEL_SERVICE_NAME"),
-  });
+    serviceName: getEnv("SENTRY_SERVICE_NAME") ?? getEnv("OTEL_SERVICE_NAME") ??
+      defaultServiceName,
+  };
+}
+
+export function initializeSentryFromEnv(
+  defaultServiceName = DEFAULT_SERVICE_NAME,
+): Promise<boolean> {
+  const config = resolveSentryConfigFromEnv(defaultServiceName);
+  return config ? initializeSentry(config) : Promise.resolve(false);
 }
 
 export async function initializeSentry(

@@ -113,8 +113,8 @@ function prepareSentryEvent(
   for (const value of event.exception?.values ?? []) {
     if (value.value) value.value = redactSensitiveText(value.value);
     for (const frame of value.stacktrace?.frames ?? []) {
-      if (frame.filename) frame.filename = redactSensitiveText(frame.filename);
-      if (frame.abs_path) frame.abs_path = redactSensitiveText(frame.abs_path);
+      if (frame.filename) frame.filename = sanitizeStackFramePath(frame.filename);
+      if (frame.abs_path) frame.abs_path = sanitizeStackFramePath(frame.abs_path);
     }
   }
 
@@ -128,6 +128,19 @@ function redactSensitiveText(value: string): string {
     .replace(JWT_PATTERN, "[REDACTED]")
     .replace(URL_CREDENTIAL_PATTERN, "$1[REDACTED]$2")
     .replace(SENSITIVE_QUERY_PATTERN, "$1[REDACTED]");
+}
+
+function sanitizeStackFramePath(value: string): string {
+  const redacted = redactSensitiveText(value);
+  const path = redacted.startsWith("file://") ? redacted.slice("file://".length) : redacted;
+  if (!path.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(path)) return redacted;
+
+  const normalized = path.replaceAll("\\", "/");
+  const sourcePath = normalized.match(/(?:^|\/)((?:src|extensions|cli|dist)\/.+)$/)?.[1];
+  if (sourcePath) return sourcePath;
+
+  const basename = normalized.split("/").filter(Boolean).at(-1);
+  return basename ? `[REDACTED]/${basename}` : "[REDACTED]";
 }
 
 const extSentry: ExtensionFactory = () => ({

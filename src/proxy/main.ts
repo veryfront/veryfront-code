@@ -93,7 +93,7 @@ import {
 import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
 import { getTraceContext } from "./tracing.ts";
 
-await initializeSentryFromEnv();
+await initializeSentryFromEnv("veryfront-proxy");
 
 type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;

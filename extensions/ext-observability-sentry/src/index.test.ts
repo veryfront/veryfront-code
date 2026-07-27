@@ -71,6 +71,7 @@ Deno.test("Sentry reporter uses error-only, privacy-preserving configuration", a
           stacktrace: {
             frames: [{
               filename: "https://service.test/path?token=synthetic-token-value",
+              abs_path: "/Users/test-user/private-project/src/server/render.ts",
             }],
           },
         }],
@@ -92,6 +93,52 @@ Deno.test("Sentry reporter uses error-only, privacy-preserving configuration", a
   assertEquals(
     event.exception?.values?.[0]?.stacktrace?.frames?.[0]?.filename,
     "https://service.test/path?token=[REDACTED]",
+  );
+  assertEquals(
+    event.exception?.values?.[0]?.stacktrace?.frames?.[0]?.abs_path,
+    "src/server/render.ts",
+  );
+});
+
+Deno.test("Sentry reporter removes filesystem prefixes from stack frames", async () => {
+  const { sdk, state } = createSentrySdk();
+  createSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "production",
+      release: "release-1",
+      serviceName: "veryfront-server",
+    },
+    sdk,
+  );
+
+  const beforeSend = state.initOptions?.beforeSend;
+  if (!beforeSend) throw new Error("beforeSend was not configured");
+  const event = await beforeSend(
+    {
+      exception: {
+        values: [{
+          stacktrace: {
+            frames: [
+              { filename: "file:///home/test-user/project/extensions/example/index.ts" },
+              { abs_path: "C:\\Users\\test-user\\private\\bootstrap.ts" },
+            ],
+          },
+        }],
+      },
+      type: undefined,
+    },
+    {},
+  );
+  if (!event) throw new Error("beforeSend unexpectedly dropped the event");
+
+  assertEquals(
+    event.exception?.values?.[0]?.stacktrace?.frames?.[0]?.filename,
+    "extensions/example/index.ts",
+  );
+  assertEquals(
+    event.exception?.values?.[0]?.stacktrace?.frames?.[1]?.abs_path,
+    "[REDACTED]/bootstrap.ts",
   );
 });
 
