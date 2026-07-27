@@ -4,7 +4,10 @@ description: "Expose tools, prompts, and resources over Model Context Protocol."
 order: 32
 ---
 
-Mount an MCP server route in your app to expose your project's tools, prompts, and resources to MCP clients like Claude Desktop. The runtime auto-discovers everything under `tools/`, `prompts/`, and `resources/`, so the route handler is essentially a thin auth shim.
+Mount an MCP server route in your app to expose your project's tools, prompts,
+and resources to MCP clients. The runtime auto-discovers everything under
+`tools/`, `prompts/`, and `resources/`; the route owns authentication, protocol
+negotiation, and session lifecycle.
 
 This is the application-facing MCP server. It is separate from `veryfront mcp` (the CLI's dev MCP server, see [Coding agents](./coding-agents.md)) and from the AG-UI transport Veryfront Studio uses.
 
@@ -37,6 +40,14 @@ export const OPTIONS = handler;
 
 Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
 
+The handler does not bind a network port. Your application framework owns the
+listener and route. The optional `port` configuration is validated metadata for
+hosts that choose to use it; `createHTTPHandler()` does not listen on it.
+
+Export only `POST`, `DELETE`, and `OPTIONS`. The built-in handler is a
+request/response JSON transport and intentionally returns `405 Method Not
+Allowed` for `GET`; it does not expose a standalone SSE stream.
+
 Export a local token and start the dev server:
 
 ```bash
@@ -49,8 +60,9 @@ Smoke test the route by sending an MCP `initialize` request and storing the sess
 ```bash
 SESSION_ID=$(curl -i http://localhost:3000/api/mcp \
   -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}' \
   | awk -F': ' 'tolower($1) == "mcp-session-id" {print $2}' \
   | tr -d '\r')
 ```
@@ -59,11 +71,13 @@ The response includes a `MCP-Session-Id` header and a JSON-RPC result with serve
 
 ### Auth is required
 
-`auth` is a required field. The server fails closed at construction time if
-it is missing. Options:
+`auth` is a required field. The server fails closed at construction time if it
+is missing or malformed. Options:
 
-- `{ type: "bearer", validate }` (recommended for production): validates a
-  bearer token against your own logic.
+- `{ type: "bearer", validate }` (required for a usable production endpoint):
+  validates a bearer token against your own logic. A bearer configuration
+  without `validate` remains constructible for compatibility, but rejects every
+  request.
 - `{ type: "none", allowUnauthenticated: true }`: **local development only**.
   Must be set explicitly; accepts every request without any check. Do not ship
   this to production.
@@ -72,8 +86,41 @@ The HTTP transport is session-based:
 
 - clients `POST` `initialize`
 - the server returns `MCP-Session-Id`
-- subsequent requests send that header back
-- `DELETE` with the session header ends the session
+- subsequent requests send that header and the negotiated
+  `MCP-Protocol-Version` back
+- `DELETE` with both headers ends the session
+
+A bearer-authenticated session is bound to the credential that initialized it.
+Use the same bearer token on every request and when deleting the session.
+Presenting another token produces the same not-found response as an unknown
+session.
+
+Do not use caller-supplied identity headers such as `X-Project-Id` or
+`X-End-User-Id` as authorization context. The built-in handler ignores them.
+If tools require tenant or end-user identity, resolve it in a trusted
+application boundary and use a custom host integration that passes a trusted
+execution context.
+
+When browser clients send an `Origin` header, configure an exact, canonical
+HTTP(S) allowlist:
+
+```ts
+const server = createMCPServer({
+  enabled: true,
+  auth: {
+    type: "bearer",
+    validate: async (token) => token === Deno.env.get("MCP_TOKEN"),
+  },
+  cors: {
+    enabled: true,
+    origins: ["https://app.example.com"],
+  },
+});
+```
+
+Without an explicit allowlist, browser origins are restricted to canonical
+loopback HTTP(S) origins. Non-browser clients that omit `Origin` remain
+supported.
 
 ## Tools
 
@@ -100,6 +147,20 @@ export default tool({
 ```
 
 An MCP client can discover this tool's schema and call it.
+
+List methods return at most 50 entries. When a response contains
+`nextCursor`, pass it back as `params.cursor`; cursors are opaque and belong to
+the server instance, list method, and session that issued them.
+
+Protocol version `2025-11-25` clients can request task-augmented tool execution
+and use `tasks/get`, `tasks/list`, `tasks/result`, and `tasks/cancel`. Tasks are
+isolated to the session that created them. The server bounds retained tasks and
+may reject new task work when capacity is exhausted, so clients should retrieve
+terminal results promptly.
+
+Closing an HTTP connection is not an MCP cancellation. Send
+`notifications/cancelled` for an in-flight request or `tasks/cancel` for a
+task. Deleting the session cancels and removes its outstanding work.
 
 ## Prompts
 
@@ -219,6 +280,18 @@ export default resource({
 The server returns promptly after a cancellation notification. Honor the
 signal in loader I/O to release the underlying work.
 
+## Elicitation
+
+Use `buildFormElicitation()` only with the flat primitive schema supported by
+MCP `2025-11-25`: a root object whose properties are strings, finite
+numbers/integers, booleans, or single- and multi-select string enums. Nested
+objects and unsupported JSON Schema keywords are rejected before a request is
+sent.
+
+Use `buildUrlElicitation()` for sensitive or out-of-band flows. Supply an
+absolute HTTP(S) URL and a stable elicitation ID, and verify the returned state
+inside the trusted application flow.
+
 ## Manual registration
 
 For tools, prompts, or resources not in the auto-discovered directories:
@@ -256,6 +329,12 @@ transport; reconnect or list again after an application reload. The
 `notifyPromptsChanged()` methods are available only for custom transports that
 explicitly wire a notification callback.
 
+The built-in HTTP transport enforces initialization and sessions. Calling
+`MCPServer.handleRequest()` directly is a compatibility surface for custom
+transports; that transport is responsible for JSON-RPC envelope validation,
+initialization ordering, session isolation, authentication, and protocol
+headers.
+
 ## Verify it worked
 
 Use any MCP-aware client (Claude Desktop, an MCP CLI, or `curl`) to call the
@@ -264,16 +343,20 @@ Use any MCP-aware client (Claude Desktop, an MCP CLI, or `curl`) to call the
 ```bash
 SESSION_ID=$(curl -i http://localhost:3000/api/mcp \
   -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}' \
   | awk -F': ' 'tolower($1)=="mcp-session-id"{gsub(/\r/,"",$2); print $2}')
 
 curl -X POST http://localhost:3000/api/mcp \
   -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "MCP-Session-Id: $SESSION_ID" \
+  -H "MCP-Protocol-Version: 2025-11-25" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
 
-A working server returns a JSON-RPC response that lists every registered tool.
+A working server returns a JSON-RPC response with the first page of registered
+tools.
 Calling without the bearer token returns `401 Unauthorized`.

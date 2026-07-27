@@ -19,6 +19,22 @@ const originalFetch = globalThis.fetch;
 const MCP_URL = "http://localhost/mcp";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
+function initializePayload(
+  id: string | number = 0,
+  capabilities: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities,
+      clientInfo: { name: "test", version: "1.0" },
+    },
+  };
+}
+
 function jsonRpcRequest(
   payload: Record<string, unknown>,
   headers: HeadersInit = JSON_HEADERS,
@@ -44,24 +60,22 @@ function deleteSessionRequest(sessionId: string, headers: HeadersInit = {}): Req
   });
 }
 
-async function initSession(handler: (req: Request) => Promise<Response>): Promise<string> {
-  return initSessionWithCapabilities(handler, {});
+async function initSession(
+  handler: (req: Request) => Promise<Response>,
+  headers: HeadersInit = {},
+): Promise<string> {
+  return initSessionWithCapabilities(handler, {}, headers);
 }
 
 async function initSessionWithCapabilities(
   handler: (req: Request) => Promise<Response>,
   capabilities: Record<string, unknown>,
+  headers: HeadersInit = {},
 ): Promise<string> {
-  const response = await handler(jsonRpcRequest({
-    jsonrpc: "2.0",
-    id: 0,
-    method: "initialize",
-    params: {
-      protocolVersion: "2025-11-25",
-      capabilities,
-      clientInfo: { name: "test", version: "1.0" },
-    },
-  }));
+  const response = await handler(jsonRpcRequest(
+    initializePayload(0, capabilities),
+    { ...JSON_HEADERS, ...headers },
+  ));
   const sessionId = response.headers.get("MCP-Session-Id");
   if (!sessionId) throw new Error("initSession: no MCP-Session-Id in response");
   return sessionId;
@@ -78,7 +92,7 @@ describe("mcp/server", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("does not trust caller-supplied end-user IDs from HTTP headers", async () => {
+  it("does not trust caller-supplied identity headers", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -101,6 +115,7 @@ describe("mcp/server", () => {
     );
 
     const handler = server.createHTTPHandler();
+    const sessionId = await initSession(handler);
     const request = jsonRpcRequest(
       {
         jsonrpc: "2.0",
@@ -110,6 +125,7 @@ describe("mcp/server", () => {
       },
       {
         ...JSON_HEADERS,
+        "MCP-Session-Id": sessionId,
         "x-end-user-id": "user_123",
         "x-project-id": "proj-abc_123",
       },
@@ -117,9 +133,8 @@ describe("mcp/server", () => {
 
     const response = await handler(request);
     assertEquals(response.status, 200);
-    assertExists(capturedContext);
     assertEquals(capturedContext?.endUserId, undefined);
-    assertEquals(capturedContext?.projectId, "proj-abc_123");
+    assertEquals(capturedContext?.projectId, undefined);
   });
 
   it("ignores invalid identity headers when building tool context", async () => {
@@ -145,6 +160,7 @@ describe("mcp/server", () => {
     );
 
     const handler = server.createHTTPHandler();
+    const sessionId = await initSession(handler);
     const response = await handler(
       jsonRpcRequest(
         {
@@ -155,6 +171,7 @@ describe("mcp/server", () => {
         },
         {
           ...JSON_HEADERS,
+          "MCP-Session-Id": sessionId,
           "x-end-user-id": "user 123",
           "x-project-id": "proj/abc",
         },
@@ -167,7 +184,7 @@ describe("mcp/server", () => {
     assertEquals(capturedContext?.abortSignal instanceof AbortSignal, true);
   });
 
-  it("only includes trusted integration context headers in CORS preflight response", async () => {
+  it("does not allow caller-selected identity headers in CORS preflight", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -183,7 +200,8 @@ describe("mcp/server", () => {
     const allowHeaders = response.headers.get("Access-Control-Allow-Headers");
     assertExists(allowHeaders);
     assertEquals(allowHeaders.includes("X-End-User-Id"), false);
-    assertStringIncludes(allowHeaders, "X-Project-Id");
+    assertEquals(allowHeaders.includes("X-Project-Id"), false);
+    assertStringIncludes(allowHeaders, "MCP-Protocol-Version");
   });
 
   describe("bearer auth", () => {
@@ -196,7 +214,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
       const response = await handler(
         jsonRpcRequest(
-          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          initializePayload(1),
           { ...JSON_HEADERS, Authorization: "Bearer some-token" },
         ),
       );
@@ -212,7 +230,7 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        jsonRpcRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        jsonRpcRequest(initializePayload(1)),
       );
 
       assertEquals(response.status, 401);
@@ -227,7 +245,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
       const response = await handler(
         jsonRpcRequest(
-          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          initializePayload(1),
           { ...JSON_HEADERS, Authorization: "Bearer valid-token" },
         ),
       );
@@ -244,12 +262,39 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
       const response = await handler(
         jsonRpcRequest(
-          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          initializePayload(1),
           { ...JSON_HEADERS, Authorization: "Bearer wrong-token" },
         ),
       );
 
       assertEquals(response.status, 401);
+    });
+
+    it("rejects bearer credentials outside the token grammar", async () => {
+      let validatorCalls = 0;
+      const server = createMCPServer({
+        enabled: true,
+        auth: {
+          type: "bearer",
+          validate: async () => {
+            validatorCalls++;
+            return true;
+          },
+        },
+      });
+
+      const response = await server.createHTTPHandler()(
+        jsonRpcRequest(
+          initializePayload(1),
+          {
+            ...JSON_HEADERS,
+            Authorization: "Bearer token with spaces",
+          },
+        ),
+      );
+
+      assertEquals(response.status, 401);
+      assertEquals(validatorCalls, 0);
     });
   });
 
@@ -306,7 +351,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
 
       const response = await handler(
-        jsonRpcRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        jsonRpcRequest(initializePayload(1)),
       );
 
       assertEquals(response.status, 200);
@@ -373,7 +418,7 @@ describe("mcp/server", () => {
       assertEquals(response.headers.get("Vary"), "Origin");
     });
 
-    it("returns no CORS headers when request Origin does not match", async () => {
+    it("rejects a preflight when request Origin does not match", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
@@ -385,11 +430,11 @@ describe("mcp/server", () => {
         optionsRequest("https://evil.com"),
       );
 
-      assertEquals(response.status, 204);
+      assertEquals(response.status, 403);
       assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
     });
 
-    it("returns no CORS headers when no origins configured", async () => {
+    it("rejects non-loopback preflight origins when no origins are configured", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
@@ -401,11 +446,11 @@ describe("mcp/server", () => {
         optionsRequest("https://example.com"),
       );
 
-      assertEquals(response.status, 204);
+      assertEquals(response.status, 403);
       assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
     });
 
-    it("returns no CORS headers when CORS is disabled", async () => {
+    it("still enforces origin validation when CORS response headers are disabled", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
@@ -416,7 +461,7 @@ describe("mcp/server", () => {
         optionsRequest("https://example.com"),
       );
 
-      assertEquals(response.status, 204);
+      assertEquals(response.status, 403);
       assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
     });
 
@@ -430,7 +475,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
       const response = await handler(
         jsonRpcRequest(
-          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          initializePayload(1),
           { ...JSON_HEADERS, Origin: "https://example.com" },
         ),
       );
@@ -469,6 +514,10 @@ describe("mcp/server", () => {
       });
       const result = res.result as Record<string, unknown>;
       assertEquals(result.protocolVersion, "2024-11-05");
+      assertEquals(
+        (result.capabilities as Record<string, unknown>).tasks,
+        undefined,
+      );
     });
 
     it("returns 2025-11-25 for unknown version", async () => {
@@ -583,7 +632,7 @@ describe("mcp/server", () => {
       const handler = server.createHTTPHandler();
       const response = await handler(
         jsonRpcRequest(
-          { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          initializePayload(1),
           { ...JSON_HEADERS, Origin: "https://allowed.com" },
         ),
       );
@@ -600,10 +649,29 @@ describe("mcp/server", () => {
 
       const handler = server.createHTTPHandler();
       const response = await handler(
-        jsonRpcRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        jsonRpcRequest(initializePayload(1)),
       );
 
       assertEquals(response.status, 200);
+    });
+
+    it("rejects malformed and non-HTTP loopback origins by default", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const handler = server.createHTTPHandler();
+
+      for (
+        const origin of [
+          "ftp://localhost",
+          "http://localhost/path",
+          "http://user@localhost",
+        ]
+      ) {
+        const response = await handler(optionsRequest(origin));
+        assertEquals(response.status, 403);
+      }
     });
   });
 
@@ -636,6 +704,22 @@ describe("mcp/server", () => {
       assertEquals(res.id, undefined);
       assertEquals(res.error, undefined);
     });
+  });
+
+  it("responds to the base-protocol ping method", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ping",
+    });
+
+    assertEquals(response.error, undefined);
+    assertEquals(response.result, {});
   });
 
   it("includes title and annotations in tools/list when configured", async () => {
@@ -680,6 +764,41 @@ describe("mcp/server", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+  });
+
+  it("returns defensive snapshots from tools/list", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const registered = dynamicTool({
+      id: "test:snapshotted",
+      description: "Snapshotted tool",
+      inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+      execute: async () => ({ ok: true }),
+      mcp: {
+        annotations: { readOnlyHint: true },
+      },
+    });
+    registerTool("test:snapshotted", registered);
+
+    const firstResponse = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+    const first = (firstResponse.result as { tools: ToolListEntry[] }).tools[0]!;
+    (first.inputSchema as { type: string }).type = "array";
+    first.annotations!.readOnlyHint = false;
+
+    const secondResponse = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+    });
+    const second = (secondResponse.result as { tools: ToolListEntry[] }).tools[0]!;
+    assertEquals((second.inputSchema as { type: string }).type, "object");
+    assertEquals(second.annotations, { readOnlyHint: true });
   });
 
   it("omits title and annotations from tools/list when not configured", async () => {
@@ -744,6 +863,32 @@ describe("mcp/server", () => {
     assertEquals(tool.annotations, { readOnlyHint: true });
   });
 
+  it("declares optional task execution for every listed tool", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+
+    registerTool(
+      "test:task-capable",
+      dynamicTool({
+        id: "test:task-capable",
+        description: "Task-capable tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+    });
+
+    const tools = (response.result as { tools: ToolListEntry[] }).tools;
+    assertEquals(tools[0]?.execution, { taskSupport: "optional" });
+  });
+
   describe("callTool error handling", () => {
     it("returns isError false on successful tool execution", async () => {
       const server = createMCPServer({
@@ -778,6 +923,35 @@ describe("mcp/server", () => {
       assertExists(content);
       assertEquals(content.type, "text");
       assertEquals(JSON.parse(content.text).hello, "world");
+    });
+
+    it("serializes tool results without pretty-print amplification", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+
+      registerTool(
+        "test:compact",
+        dynamicTool({
+          id: "test:compact",
+          description: "Compact tool",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: async () => ({ nested: { value: "ok" } }),
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test:compact", arguments: {} },
+      });
+
+      const result = response.result as {
+        content: { type: string; text: string }[];
+      };
+      assertEquals(result.content[0]?.text, '{"nested":{"value":"ok"}}');
     });
 
     it("returns isError true when tool execution throws", async () => {
@@ -865,28 +1039,108 @@ describe("mcp/server", () => {
   });
 
   describe("list endpoint pagination", () => {
-    it("tools/list accepts cursor param without erroring", async () => {
+    it("paginates every supported list endpoint with endpoint-bound cursors", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
       });
-      const response = await server.handleRequest({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/list",
-        params: { cursor: "abc123" },
-      });
 
-      assertEquals(response.error, undefined);
-      assertExists(response.result);
+      for (let index = 0; index < 51; index++) {
+        const suffix = String(index).padStart(2, "0");
+        registerTool(
+          `test:pagination-${suffix}`,
+          dynamicTool({
+            id: `test:pagination-${suffix}`,
+            description: `Pagination test tool ${suffix}`,
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => ({ ok: true }),
+          }),
+        );
+        registerPrompt(
+          `pagination-${suffix}`,
+          prompt({
+            id: `pagination-${suffix}`,
+            description: `Pagination test prompt ${suffix}`,
+            content: `Prompt ${suffix}`,
+          }),
+        );
+        registerResource(
+          `pagination-resource-${suffix}`,
+          resource({
+            pattern: `docs://pagination/resource-${suffix}`,
+            description: `Pagination test resource ${suffix}`,
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => ({ ok: true }),
+          }),
+        );
+        registerResource(
+          `pagination-template-${suffix}`,
+          resource({
+            pattern: `/pagination-template-${suffix}/:id`,
+            description: `Pagination test template ${suffix}`,
+            paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+            load: () => ({ ok: true }),
+          }),
+        );
+      }
+
+      const endpoints = [
+        ["tools/list", "tools"],
+        ["prompts/list", "prompts"],
+        ["resources/list", "resources"],
+        ["resources/templates/list", "resourceTemplates"],
+      ] as const;
+
+      let toolsCursor: string | undefined;
+      for (const [method, resultKey] of endpoints) {
+        const firstResponse = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+        });
+        assertEquals(firstResponse.error, undefined);
+        const first = firstResponse.result as Record<string, unknown>;
+        assertEquals((first[resultKey] as unknown[]).length, 50);
+        assertEquals(typeof first.nextCursor, "string");
+
+        const secondResponse = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 2,
+          method,
+          params: { cursor: first.nextCursor },
+        });
+        assertEquals(secondResponse.error, undefined);
+        const second = secondResponse.result as Record<string, unknown>;
+        assertEquals((second[resultKey] as unknown[]).length, 1);
+        assertEquals(second.nextCursor, undefined);
+
+        if (method === "tools/list") {
+          toolsCursor = first.nextCursor as string;
+        }
+      }
+
+      const foreignCursor = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "prompts/list",
+        params: { cursor: toolsCursor },
+      });
+      assertEquals(foreignCursor.error?.code, -32602);
+
+      const invalidCursor = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/list",
+        params: { cursor: "not-an-issued-cursor" },
+      });
+      assertEquals(invalidCursor.error?.code, -32602);
     });
 
-    it("tools/list does not include nextCursor when all results fit", async () => {
+    it("does not include nextCursor when all results fit", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
       });
-
       registerTool(
         "test:pagination",
         dynamicTool({
@@ -906,38 +1160,6 @@ describe("mcp/server", () => {
       assertEquals(response.error, undefined);
       const result = response.result as { tools: unknown[]; nextCursor?: string };
       assertEquals(result.nextCursor, undefined);
-    });
-
-    it("resources/list accepts cursor param without erroring", async () => {
-      const server = createMCPServer({
-        enabled: true,
-        auth: { type: "none", allowUnauthenticated: true },
-      });
-      const response = await server.handleRequest({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "resources/list",
-        params: { cursor: "abc123" },
-      });
-
-      assertEquals(response.error, undefined);
-      assertExists(response.result);
-    });
-
-    it("prompts/list accepts cursor param without erroring", async () => {
-      const server = createMCPServer({
-        enabled: true,
-        auth: { type: "none", allowUnauthenticated: true },
-      });
-      const response = await server.handleRequest({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "prompts/list",
-        params: { cursor: "abc123" },
-      });
-
-      assertEquals(response.error, undefined);
-      assertExists(response.result);
     });
   });
 
@@ -1820,9 +2042,46 @@ describe("mcp/server", () => {
         'Prompt "failing" could not be rendered',
       );
     });
+
+    it("rejects non-string and oversized prompt output", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerPrompt(
+        "non-string",
+        {
+          id: "non-string",
+          description: "Invalid output",
+          getContent: () => Promise.resolve(42 as unknown as string),
+        },
+      );
+      registerPrompt(
+        "oversized",
+        prompt({
+          id: "oversized",
+          description: "Oversized output",
+          generate: () => Promise.resolve("x".repeat(4 * 1024 * 1024 + 1)),
+        }),
+      );
+
+      for (const name of ["non-string", "oversized"]) {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: name,
+          method: "prompts/get",
+          params: { name },
+        });
+        assertEquals(response.error?.code, -32603);
+        assertEquals(
+          response.error?.message,
+          `Prompt "${name}" returned invalid content`,
+        );
+      }
+    });
   });
 
-  it("declares completions capability in initialize", async () => {
+  it("does not advertise unimplemented completion or logging capabilities", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -1839,7 +2098,8 @@ describe("mcp/server", () => {
     });
     const caps = (result.result as Record<string, unknown>)
       .capabilities as Record<string, unknown>;
-    assertExists(caps.completions);
+    assertEquals(caps.completions, undefined);
+    assertEquals(caps.logging, undefined);
   });
 
   it("does not advertise unsupported resource subscriptions", async () => {
@@ -1865,7 +2125,7 @@ describe("mcp/server", () => {
     assertEquals(capabilities.resources.listChanged, undefined);
   });
 
-  it("completion/complete returns empty values for unknown ref", async () => {
+  it("rejects completion requests while completion is not implemented", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -1879,54 +2139,7 @@ describe("mcp/server", () => {
         argument: { name: "param", value: "" },
       },
     });
-    assertEquals(result.error, undefined);
-    const data = result.result as {
-      completion: { values: string[]; hasMore: boolean };
-    };
-    assertEquals(data.completion.values, []);
-    assertEquals(data.completion.hasMore, false);
-  });
-
-  it("completion/complete returns empty values when argument is missing", async () => {
-    const server = createMCPServer({
-      enabled: true,
-      auth: { type: "none", allowUnauthenticated: true },
-    });
-    const result = await server.handleRequest({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "completion/complete",
-      params: {
-        ref: { type: "ref/resource", uri: "test://x" },
-      },
-    });
-    assertEquals(result.error, undefined);
-    const data = result.result as {
-      completion: { values: string[]; hasMore: boolean };
-    };
-    assertEquals(data.completion.values, []);
-    assertEquals(data.completion.hasMore, false);
-  });
-
-  it("completion/complete returns empty values when ref is missing", async () => {
-    const server = createMCPServer({
-      enabled: true,
-      auth: { type: "none", allowUnauthenticated: true },
-    });
-    const result = await server.handleRequest({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "completion/complete",
-      params: {
-        argument: { name: "param", value: "test" },
-      },
-    });
-    assertEquals(result.error, undefined);
-    const data = result.result as {
-      completion: { values: string[]; hasMore: boolean };
-    };
-    assertEquals(data.completion.values, []);
-    assertEquals(data.completion.hasMore, false);
+    assertEquals(result.error?.code, -32601);
   });
 
   it("stores client capabilities from initialize request", async () => {
@@ -1946,6 +2159,77 @@ describe("mcp/server", () => {
     });
     assertEquals(server.clientSupportsElicitation("form"), true);
     assertEquals(server.clientSupportsElicitation("url"), true);
+  });
+
+  it("snapshots client capabilities supplied to initialize", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const capabilities: {
+      elicitation: {
+        form?: Record<string, never>;
+        url?: Record<string, never>;
+      };
+    } = { elicitation: { form: {} } };
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities,
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    capabilities.elicitation = { url: {} };
+
+    assertEquals(server.clientSupportsElicitation("form"), true);
+    assertEquals(server.clientSupportsElicitation("url"), false);
+  });
+
+  it("reports malformed client capabilities as invalid params", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: [],
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+
+    assertEquals(response.error?.code, -32602);
+  });
+
+  it("advertises list-change notifications only for a wired custom transport", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    server.onNotification = () => {};
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+    });
+    const capabilities = (response.result as {
+      capabilities: Record<string, Record<string, unknown>>;
+    }).capabilities;
+    assertEquals(capabilities.tools?.listChanged, true);
+    assertEquals(capabilities.resources?.listChanged, true);
+    assertEquals(capabilities.prompts?.listChanged, true);
   });
 
   it("reports no elicitation support when client does not declare it", async () => {
@@ -2282,9 +2566,119 @@ describe("mcp/server", () => {
       const allowMethods = response.headers.get("Access-Control-Allow-Methods");
       assertExists(allowMethods);
       assertStringIncludes(allowMethods, "DELETE");
+      assertEquals(allowMethods.includes("GET"), false);
     });
 
-    it("resets session requirement after all sessions are terminated", async () => {
+    it("does not treat an HTTP disconnect as MCP cancellation", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const started = Promise.withResolvers<void>();
+      registerTool(
+        "test:http-abort",
+        dynamicTool({
+          id: "test:http-abort",
+          description: "HTTP disconnect isolation",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: (_input, context) =>
+            new Promise((resolve) => {
+              const fallback = setTimeout(() => resolve({ aborted: false }), 20);
+              context?.abortSignal?.addEventListener("abort", () => {
+                clearTimeout(fallback);
+                resolve({ aborted: true });
+              }, { once: true });
+              started.resolve();
+            }),
+        }),
+      );
+      const handler = server.createHTTPHandler();
+      const sessionId = await initSession(handler);
+      const controller = new AbortController();
+      const responsePromise = handler(
+        new Request(MCP_URL, {
+          method: "POST",
+          headers: {
+            ...JSON_HEADERS,
+            "MCP-Session-Id": sessionId,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 91,
+            method: "tools/call",
+            params: { name: "test:http-abort", arguments: {} },
+          }),
+          signal: controller.signal,
+        }),
+      );
+      await started.promise;
+      controller.abort();
+
+      const body = await (await responsePromise).json() as {
+        result: { content: Array<{ text: string }> };
+      };
+      assertEquals(JSON.parse(body.result.content[0]!.text), {
+        aborted: false,
+      });
+    });
+
+    it("aborts in-flight foreground work when its session is deleted", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const started = Promise.withResolvers<void>();
+      registerTool(
+        "test:session-delete-abort",
+        dynamicTool({
+          id: "test:session-delete-abort",
+          description: "Session deletion abort propagation",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: (_input, context) =>
+            new Promise((resolve) => {
+              const fallback = setTimeout(() => resolve({ aborted: false }), 100);
+              context?.abortSignal?.addEventListener("abort", () => {
+                clearTimeout(fallback);
+                resolve({ aborted: true });
+              }, { once: true });
+              started.resolve();
+            }),
+        }),
+      );
+      const handler = server.createHTTPHandler();
+      const sessionId = await initSession(handler);
+      const responsePromise = handler(jsonRpcRequest(
+        {
+          jsonrpc: "2.0",
+          id: 92,
+          method: "tools/call",
+          params: {
+            name: "test:session-delete-abort",
+            arguments: {},
+          },
+        },
+        {
+          ...JSON_HEADERS,
+          "MCP-Session-Id": sessionId,
+          "MCP-Protocol-Version": "2025-11-25",
+        },
+      ));
+      await started.promise;
+
+      const deleted = await handler(deleteSessionRequest(sessionId, {
+        "MCP-Protocol-Version": "2025-11-25",
+      }));
+      assertEquals(deleted.status, 200);
+
+      const body = await (await responsePromise).json() as {
+        result: { content: Array<{ text: string }> };
+      };
+      assertEquals(JSON.parse(body.result.content[0]!.text), {
+        aborted: true,
+      });
+    });
+
+    it("requires a new initialization after all sessions are terminated", async () => {
       const server = createMCPServer({
         enabled: true,
         auth: { type: "none", allowUnauthenticated: true },
@@ -2299,8 +2693,7 @@ describe("mcp/server", () => {
         deleteSessionRequest(sessionId),
       );
 
-      // After all sessions terminated, server should not require MCP-Session-Id
-      // (no active sessions = pre-init state)
+      // Operation requests never become stateless again after termination.
       const response = await handler(
         new Request("http://localhost/mcp", {
           method: "POST",
@@ -2308,7 +2701,7 @@ describe("mcp/server", () => {
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
         }),
       );
-      assertEquals(response.status, 200);
+      assertEquals(response.status, 400);
     });
 
     it("isolates concurrent sessions independently", async () => {
@@ -2412,10 +2805,76 @@ describe("mcp/server", () => {
     const caps = (result.result as Record<string, unknown>)
       .capabilities as Record<string, Record<string, unknown>>;
     assertExists(caps.tasks);
-    assertExists(caps.logging);
+    assertEquals(caps.logging, undefined);
   });
 
-  it("logging/setLevel stores the level and returns empty result", async () => {
+  it("does not expose task augmentation to a 2024-11-05 session", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:legacy-tool",
+      dynamicTool({
+        id: "test:legacy-tool",
+        description: "Legacy protocol tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ legacy: true }),
+      }),
+    );
+    const handler = server.createHTTPHandler();
+    const initializeResponse = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "legacy", version: "1.0" },
+      },
+    }));
+    const sessionId = initializeResponse.headers.get("MCP-Session-Id");
+    assertExists(sessionId);
+    const headers = { ...JSON_HEADERS, "MCP-Session-Id": sessionId };
+
+    const listResponse = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+    }, headers));
+    const listBody = await listResponse.json() as {
+      result: { tools: ToolListEntry[] };
+    };
+    assertEquals(listBody.result.tools[0]?.execution, undefined);
+
+    const callResponse = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "test:legacy-tool",
+        arguments: {},
+        task: "unsupported metadata must be ignored",
+      },
+    }, headers));
+    const callBody = await callResponse.json() as {
+      result: { task?: unknown; isError?: boolean };
+    };
+    assertEquals(callBody.result.task, undefined);
+    assertEquals(callBody.result.isError, false);
+
+    const tasksResponse = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tasks/list",
+    }, headers));
+    assertEquals(
+      (await tasksResponse.json() as { error?: { code: number } }).error?.code,
+      -32601,
+    );
+  });
+
+  it("rejects logging/setLevel while client log delivery is not implemented", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -2426,8 +2885,7 @@ describe("mcp/server", () => {
       method: "logging/setLevel",
       params: { level: "warning" },
     });
-    assertEquals(result.error, undefined);
-    assertEquals(result.result, {});
+    assertEquals(result.error?.code, -32601);
   });
 
   it("extracts progressToken from _meta and passes to tool context", async () => {
@@ -2530,7 +2988,9 @@ describe("mcp/server", () => {
 
     const response = await call;
     const result = response.result as { content: Array<{ text: string }> };
-    assertStringIncludes(result.content[0]!.text, '"aborted": true');
+    assertEquals(JSON.parse(result.content[0]!.text), {
+      aborted: true,
+    });
   });
 
   it("scopes foreground request cancellation to the HTTP session", async () => {
@@ -2629,7 +3089,56 @@ describe("mcp/server", () => {
     assertEquals(resultB, { label: "b", aborted: false });
   });
 
-  it("logging/setLevel rejects invalid level", async () => {
+  it("rejects duplicate in-flight request IDs without replacing cancellation state", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    let calls = 0;
+    let resolveStarted!: () => void;
+    let resolveFirst!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    registerTool(
+      "test:duplicate-request",
+      dynamicTool({
+        id: "test:duplicate-request",
+        description: "Detect duplicate requests",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => {
+          calls++;
+          if (calls > 1) return { duplicateRan: true };
+          resolveStarted();
+          return new Promise((resolve) => {
+            resolveFirst = () => resolve({ duplicateRan: false });
+          });
+        },
+      }),
+    );
+
+    const first = server.handleRequest({
+      jsonrpc: "2.0",
+      id: 91,
+      method: "tools/call",
+      params: { name: "test:duplicate-request", arguments: {} },
+    });
+    await started;
+    const duplicate = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 91,
+      method: "tools/call",
+      params: { name: "test:duplicate-request", arguments: {} },
+    });
+    resolveFirst();
+    await first;
+
+    assertEquals(duplicate.error?.code, -32600);
+    assertEquals(calls, 1);
+  });
+
+  it("does not partially implement logging/setLevel validation", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -2640,8 +3149,183 @@ describe("mcp/server", () => {
       method: "logging/setLevel",
       params: { level: "invalid_level" },
     });
-    assertExists(result.error);
-    assertEquals(result.error.code, -32602);
+    assertEquals(result.error?.code, -32601);
+  });
+
+  it("rejects malformed task augmentation metadata", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:task-validation",
+      dynamicTool({
+        id: "test:task-validation",
+        description: "Task validation tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+
+    for (
+      const task of [
+        "task",
+        [],
+        { ttl: 0 },
+        { ttl: -1 },
+        { ttl: 1.5 },
+        { ttl: Number.NaN },
+        { ttl: Number.POSITIVE_INFINITY },
+        { ttl: "60000" },
+      ]
+    ) {
+      const result = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "test:task-validation", arguments: {}, task },
+      });
+      assertEquals(result.error?.code, -32602);
+    }
+  });
+
+  it("reports task admission pressure as a bounded server error", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:task-capacity",
+      dynamicTool({
+        id: "test:task-capacity",
+        description: "Keeps task slots active for admission testing",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input, context) =>
+          new Promise((resolve) => {
+            const finish = () => resolve({ stopped: true });
+            if (context?.abortSignal?.aborted) {
+              finish();
+            } else {
+              context?.abortSignal?.addEventListener("abort", finish, {
+                once: true,
+              });
+            }
+          }),
+      }),
+    );
+    const handler = server.createHTTPHandler();
+    const sessionId = await initSession(handler);
+    const headers = {
+      ...JSON_HEADERS,
+      "MCP-Session-Id": sessionId,
+      "MCP-Protocol-Version": "2025-11-25",
+    };
+
+    for (let index = 0; index < 100; index++) {
+      const accepted = await handler(jsonRpcRequest({
+        jsonrpc: "2.0",
+        id: index,
+        method: "tools/call",
+        params: {
+          name: "test:task-capacity",
+          arguments: {},
+          task: { ttl: 60_000 },
+        },
+      }, headers));
+      assertEquals(accepted.status, 200);
+    }
+
+    const rejected = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 101,
+      method: "tools/call",
+      params: {
+        name: "test:task-capacity",
+        arguments: {},
+        task: { ttl: 60_000 },
+      },
+    }, headers));
+    const body = await rejected.json() as {
+      error: { code: number; message: string };
+    };
+    assertEquals(body.error.code, -32000);
+    assertEquals(body.error.message, "Task capacity reached");
+
+    await handler(deleteSessionRequest(sessionId, {
+      "MCP-Protocol-Version": "2025-11-25",
+    }));
+    await server.waitForPendingTasks();
+  });
+
+  it("keeps a task running when its originating HTTP request disconnects", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const started = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    registerTool(
+      "test:task-disconnect",
+      dynamicTool({
+        id: "test:task-disconnect",
+        description: "Task disconnect isolation",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input, context) =>
+          new Promise((resolve) => {
+            context?.abortSignal?.addEventListener("abort", () => {
+              aborted.resolve();
+              resolve({ stopped: true });
+            }, { once: true });
+            started.resolve();
+          }),
+      }),
+    );
+    const handler = server.createHTTPHandler();
+    const sessionId = await initSession(handler);
+    const headers = {
+      ...JSON_HEADERS,
+      "MCP-Session-Id": sessionId,
+      "MCP-Protocol-Version": "2025-11-25",
+    };
+    const controller = new AbortController();
+    const taskResponse = await handler(
+      new Request(MCP_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "test:task-disconnect",
+            arguments: {},
+            task: { ttl: 60_000 },
+          },
+        }),
+        signal: controller.signal,
+      }),
+    );
+    const taskBody = await taskResponse.json() as {
+      result: { task: { taskId: string } };
+    };
+    await started.promise;
+    controller.abort();
+
+    const abortedOnDisconnect = await Promise.race([
+      aborted.promise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
+    ]);
+    assertEquals(abortedOnDisconnect, false);
+
+    const cancelResponse = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/cancel",
+      params: { taskId: taskBody.result.task.taskId },
+    }, headers));
+    assertEquals(cancelResponse.status, 200);
+    await aborted.promise;
+    await server.waitForPendingTasks();
   });
 
   it("tools/call with task field returns CreateTaskResult immediately", async () => {
@@ -2763,11 +3447,15 @@ describe("mcp/server", () => {
         inputSchema: defineSchema((v) => v.object({}))(),
         execute: (_input, context) =>
           new Promise((resolve) => {
+            const fallbackTimer = setTimeout(
+              () => resolve({ aborted: false }),
+              200,
+            );
             context?.abortSignal?.addEventListener("abort", () => {
+              clearTimeout(fallbackTimer);
               resolveAbort();
               resolve({ aborted: true });
             });
-            setTimeout(() => resolve({ aborted: false }), 200);
           }),
       }),
     );
@@ -2786,12 +3474,20 @@ describe("mcp/server", () => {
       params: { taskId },
     });
 
-    await Promise.race([
-      abortObserved,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("cancel did not abort tool execution")), 50)
-      ),
-    ]);
+    let timeout: number | undefined;
+    try {
+      await Promise.race([
+        abortObserved,
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("cancel did not abort tool execution")),
+            50,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
     await server.waitForPendingTasks();
 
     const getResult = await server.handleRequest({
@@ -2831,26 +3527,34 @@ describe("mcp/server", () => {
       method: "tasks/result",
       params: { taskId },
     });
-    const payload = resultResp.result as { content: { text: string }[]; isError: boolean };
+    const payload = resultResp.result as {
+      content: { text: string }[];
+      isError: boolean;
+      _meta: Record<string, unknown>;
+    };
     assertEquals(payload.isError, false);
     assertExists(payload.content);
+    assertEquals(payload._meta["io.modelcontextprotocol/related-task"], {
+      taskId,
+    });
   });
 
-  it("tasks/result returns error when task is still working", async () => {
+  it("tasks/result blocks until the task reaches a terminal state", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
     });
+    let finish!: () => void;
     registerTool(
       "test:slow4",
       dynamicTool({
         id: "test:slow4",
         description: "Slow tool",
         inputSchema: defineSchema((v) => v.object({}))(),
-        execute: async () => {
-          await new Promise((r) => setTimeout(r, 200));
-          return { done: true };
-        },
+        execute: () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ done: true });
+          }),
       }),
     );
     const createResult = await server.handleRequest({
@@ -2860,18 +3564,96 @@ describe("mcp/server", () => {
       params: { name: "test:slow4", arguments: {}, task: { ttl: 60000 } },
     });
     const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
-    const resultResp = await server.handleRequest({
+    const pendingResult = server.handleRequest({
       jsonrpc: "2.0",
       id: 2,
       method: "tasks/result",
       params: { taskId },
     });
-    assertExists(resultResp.error);
-    assertEquals(resultResp.error!.code, -32002);
+
+    const settledEarly = await Promise.race([
+      pendingResult.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 20)),
+    ]);
+    assertEquals(settledEarly, false);
+
+    finish();
+    const resultResp = await pendingResult;
+    assertEquals(resultResp.error, undefined);
+    assertEquals(
+      (resultResp.result as {
+        _meta: Record<string, unknown>;
+      })._meta["io.modelcontextprotocol/related-task"],
+      { taskId },
+    );
     await server.waitForPendingTasks();
   });
 
-  it("async tool failure sets task status to failed", async () => {
+  it("cancels a blocked tasks/result request without cancelling its task", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    let finish!: () => void;
+    registerTool(
+      "test:cancel-result-wait",
+      dynamicTool({
+        id: "test:cancel-result-wait",
+        description: "Cancelable result waiter",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ done: true });
+          }),
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "test:cancel-result-wait",
+        arguments: {},
+        task: { ttl: 60_000 },
+      },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    const waiting = server.handleRequest({
+      jsonrpc: "2.0",
+      id: 77,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    await Promise.resolve();
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 77 },
+    });
+
+    const cancelledWait = await waiting;
+    assertEquals(cancelledWait.error?.code, -32603);
+
+    const status = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 78,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    assertEquals((status.result as { status: string }).status, "working");
+
+    finish();
+    await server.waitForPendingTasks();
+    const completed = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 79,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    assertEquals(completed.error, undefined);
+  });
+
+  it("async tool failure preserves a retrievable tool error result", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -2904,6 +3686,155 @@ describe("mcp/server", () => {
     const task = getResult.result as Record<string, unknown>;
     assertEquals(task.status, "failed");
     assertEquals(task.statusMessage, "tool broke");
+
+    const resultResponse = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    const failedResult = resultResponse.result as {
+      content: Array<{ type: string; text: string }>;
+      isError: boolean;
+      _meta: Record<string, unknown>;
+    };
+    assertEquals(failedResult.isError, true);
+    assertEquals(failedResult.content, [
+      { type: "text", text: "tool broke" },
+    ]);
+    assertEquals(failedResult._meta["io.modelcontextprotocol/related-task"], {
+      taskId,
+    });
+  });
+
+  it("bounds and sanitizes async tool failures before task storage", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const secret = "mcp-secret";
+    registerTool(
+      "test:oversized-failure",
+      dynamicTool({
+        id: "test:oversized-failure",
+        description: "Oversized failing tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => {
+          throw new Error(
+            `https://user:${secret}@example.com/${"x".repeat(1_100_000)}`,
+          );
+        },
+      }),
+    );
+
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "test:oversized-failure",
+        arguments: {},
+        task: { ttl: 60_000 },
+      },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+    await server.waitForPendingTasks();
+
+    const statusResponse = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    const task = statusResponse.result as {
+      status: string;
+      statusMessage: string;
+    };
+    assertEquals(task.status, "failed");
+    assertEquals(task.statusMessage.includes(secret), false);
+    assertEquals(task.statusMessage.length < 10_000, true);
+
+    const resultResponse = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/result",
+      params: { taskId },
+    });
+    const failedResult = resultResponse.result as {
+      content: Array<{ type: string; text: string }>;
+      isError: boolean;
+    };
+    assertEquals(failedResult.isError, true);
+    assertEquals(failedResult.content[0]?.text.includes(secret), false);
+    assertEquals((failedResult.content[0]?.text.length ?? 10_000) < 10_000, true);
+  });
+
+  it("isolates task access and listings between HTTP sessions", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    registerTool(
+      "test:scoped-task",
+      dynamicTool({
+        id: "test:scoped-task",
+        description: "Session-scoped task",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({ ok: true }),
+      }),
+    );
+    const handler = server.createHTTPHandler();
+    const sessionA = await initSession(handler);
+    const sessionB = await initSession(handler);
+    const headersA = { ...JSON_HEADERS, "MCP-Session-Id": sessionA };
+    const headersB = { ...JSON_HEADERS, "MCP-Session-Id": sessionB };
+
+    const createResponse = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "test:scoped-task",
+        arguments: {},
+        task: { ttl: 60_000 },
+      },
+    }, headersA));
+    const createBody = await createResponse.json() as {
+      result: { task: { taskId: string } };
+    };
+    const taskId = createBody.result.task.taskId;
+    await server.waitForPendingTasks();
+
+    const crossSessionGet = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/get",
+      params: { taskId },
+    }, headersB));
+    const crossSessionBody = await crossSessionGet.json() as {
+      error?: { code: number };
+    };
+    assertEquals(crossSessionBody.error?.code, -32602);
+
+    const listA = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/list",
+    }, headersA));
+    const listB = await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tasks/list",
+    }, headersB));
+    assertEquals(
+      (await listA.json() as { result: { tasks: Array<{ taskId: string }> } })
+        .result.tasks.map((task) => task.taskId),
+      [taskId],
+    );
+    assertEquals(
+      (await listB.json() as { result: { tasks: unknown[] } }).result.tasks,
+      [],
+    );
   });
 
   it("tasks/get returns error for unknown taskId", async () => {
@@ -3137,6 +4068,52 @@ describe("mcp/server", () => {
       assertEquals(res.status, 401);
     });
 
+    it("binds an HTTP session to the bearer credential that created it", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: {
+          type: "bearer",
+          validate: async (token: string) => token === "token-a" || token === "token-b",
+        },
+      });
+      const handler = server.createHTTPHandler();
+      const initialized = await handler(jsonRpcRequest(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "test", version: "1.0" },
+          },
+        },
+        { ...JSON_HEADERS, Authorization: "Bearer token-a" },
+      ));
+      const sessionId = initialized.headers.get("MCP-Session-Id");
+      assertExists(sessionId);
+
+      const wrongCredential = await handler(jsonRpcRequest(
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+        {
+          ...JSON_HEADERS,
+          Authorization: "Bearer token-b",
+          "MCP-Session-Id": sessionId,
+        },
+      ));
+      assertEquals(wrongCredential.status, 404);
+
+      const originalCredential = await handler(jsonRpcRequest(
+        { jsonrpc: "2.0", id: 3, method: "tools/list" },
+        {
+          ...JSON_HEADERS,
+          Authorization: "Bearer token-a",
+          "MCP-Session-Id": sessionId,
+        },
+      ));
+      assertEquals(originalCredential.status, 200);
+    });
+
     it("http-transport: none + allowUnauthenticated accepts requests", async () => {
       const server = createMCPServer({
         enabled: true,
@@ -3144,13 +4121,105 @@ describe("mcp/server", () => {
       });
       const handler = server.createHTTPHandler();
       const res = await handler(
-        new Request("http://localhost/mcp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-        }),
+        jsonRpcRequest(initializePayload(1)),
       );
       assertEquals(res.status, 200);
+    });
+  });
+
+  describe("server configuration boundary", () => {
+    it("snapshots auth and CORS configuration at construction", async () => {
+      const origins = ["https://allowed.example"];
+      const auth = {
+        type: "bearer" as const,
+        validate: async (token: string) => token === "valid",
+      };
+      const server = createMCPServer({
+        enabled: true,
+        auth,
+        cors: { enabled: true, origins },
+      });
+
+      auth.validate = async () => true;
+      origins[0] = "https://attacker.example";
+      const handler = server.createHTTPHandler();
+
+      const allowed = await handler(jsonRpcRequest(
+        initializePayload(1),
+        {
+          ...JSON_HEADERS,
+          Origin: "https://allowed.example",
+          Authorization: "Bearer valid",
+        },
+      ));
+      assertEquals(allowed.status, 200);
+
+      const mutatedOrigin = await handler(jsonRpcRequest(
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+        {
+          ...JSON_HEADERS,
+          Origin: "https://attacker.example",
+          Authorization: "Bearer valid",
+        },
+      ));
+      assertEquals(mutatedOrigin.status, 403);
+
+      const mutatedValidator = await handler(jsonRpcRequest(
+        { jsonrpc: "2.0", id: 3, method: "tools/list" },
+        {
+          ...JSON_HEADERS,
+          Origin: "https://allowed.example",
+          Authorization: "Bearer invalid",
+        },
+      ));
+      assertEquals(mutatedValidator.status, 401);
+    });
+
+    it("rejects malformed runtime configuration", () => {
+      for (
+        const config of [
+          {
+            enabled: "yes",
+            auth: { type: "none", allowUnauthenticated: true },
+          },
+          {
+            enabled: true,
+            auth: { type: "none", allowUnauthenticated: true },
+            cors: { enabled: "yes" },
+          },
+          {
+            enabled: true,
+            auth: { type: "none", allowUnauthenticated: true },
+            port: 65_536,
+          },
+        ]
+      ) {
+        assertThrows(
+          () => createMCPServer(config as never),
+          Error,
+          "MCP",
+        );
+      }
+    });
+
+    it("keeps a disabled server off both direct and HTTP surfaces", async () => {
+      const server = createMCPServer({
+        enabled: false,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      const direct = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      assertEquals(direct.error?.code, -32601);
+
+      const response = await server.createHTTPHandler()(jsonRpcRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      }));
+      assertEquals(response.status, 404);
     });
   });
 });

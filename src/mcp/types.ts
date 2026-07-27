@@ -27,6 +27,9 @@ export interface ToolListEntry {
   inputSchema: unknown;
   title?: string;
   annotations?: ToolAnnotations;
+  execution?: {
+    taskSupport: "required" | "optional" | "forbidden";
+  };
 }
 
 export interface MCPRegistry {

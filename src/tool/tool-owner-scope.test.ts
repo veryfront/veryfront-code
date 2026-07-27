@@ -31,6 +31,30 @@ function setupTools(): void {
   registerTool("researcher--fetch", makeTool("researcher--fetch", "researcher"));
 }
 
+async function initializeMCP(
+  handler: (request: Request) => Promise<Response>,
+): Promise<string> {
+  const response = await handler(
+    new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "tool-owner-scope-test", version: "1.0" },
+        },
+      }),
+    }),
+  );
+  const sessionId = response.headers.get("MCP-Session-Id");
+  if (!sessionId) throw new Error("MCP initialization did not create a session");
+  return sessionId;
+}
+
 Deno.test("executeTool runs an owned tool for its owning agent", async () => {
   setupTools();
   try {
@@ -75,10 +99,14 @@ Deno.test("MCP tools/list excludes agent-owned tools and keeps unowned ones", as
       auth: { type: "none", allowUnauthenticated: true },
     });
     const handler = server.createHTTPHandler();
+    const sessionId = await initializeMCP(handler);
     const response = await handler(
       new Request("http://localhost/mcp", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "MCP-Session-Id": sessionId,
+        },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       }),
     );
@@ -103,10 +131,14 @@ Deno.test("MCP tools/call cannot execute an agent-owned tool", async () => {
       auth: { type: "none", allowUnauthenticated: true },
     });
     const handler = server.createHTTPHandler();
+    const sessionId = await initializeMCP(handler);
     const response = await handler(
       new Request("http://localhost/mcp", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "MCP-Session-Id": sessionId,
+        },
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: 2,
@@ -118,11 +150,11 @@ Deno.test("MCP tools/call cannot execute an agent-owned tool", async () => {
 
     const body = await response.json() as {
       result?: { isError?: boolean; content?: Array<{ text?: string }> };
-      error?: { message?: string };
+      error?: { code?: number; message?: string };
     };
-    const text = JSON.stringify(body);
-    assertEquals(text.includes("not found"), true);
-    assertEquals(body.result?.isError === true || body.error !== undefined, true);
+    assertEquals(body.result, undefined);
+    assertEquals(body.error?.code, -32602);
+    assertEquals(body.error?.message, "Unknown tool: researcher--fetch");
   } finally {
     clearMCPRegistry();
   }

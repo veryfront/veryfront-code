@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TaskStore } from "./task-store.ts";
 
@@ -21,6 +26,85 @@ describe("mcp/task-store", () => {
     const retrieved = store.get(created.taskId);
     assertExists(retrieved);
     assertEquals(retrieved!.taskId, created.taskId);
+  });
+
+  it("does not expose mutable task state to callers", () => {
+    const store = new TaskStore();
+    const created = store.create(60000);
+    created.status = "completed";
+    created.statusMessage = "caller mutation";
+
+    assertEquals(store.get(created.taskId)?.status, "working");
+    assertEquals(store.get(created.taskId)?.statusMessage, undefined);
+
+    const listed = store.list();
+    listed[0]!.status = "failed";
+    assertEquals(store.get(created.taskId)?.status, "working");
+  });
+
+  it("isolates task metadata, results, and cancellation by scope", () => {
+    const store = new TaskStore();
+    const taskA = store.create(60000, "session-a");
+    const taskB = store.create(60000, "session-b");
+    store.complete(taskA.taskId, { owner: "a" }, "session-a");
+
+    assertEquals(store.get(taskA.taskId, "session-b"), undefined);
+    assertEquals(store.getResult(taskA.taskId, "session-b"), undefined);
+    assertEquals(store.cancel(taskB.taskId, "session-a"), false);
+    assertEquals(store.list("session-a").map((task) => task.taskId), [taskA.taskId]);
+    assertEquals(store.list("session-b").map((task) => task.taskId), [taskB.taskId]);
+  });
+
+  it("paginates task listings with scope-bound opaque cursors", () => {
+    const store = new TaskStore();
+    for (let index = 0; index < 55; index++) {
+      store.create(60000, "session-a");
+    }
+    store.create(60000, "session-b");
+
+    const first = store.listPage("session-a");
+    assertEquals(first.tasks.length, 50);
+    assertExists(first.nextCursor);
+
+    const second = store.listPage("session-a", first.nextCursor);
+    assertEquals(second.tasks.length, 5);
+    assertEquals(second.nextCursor, undefined);
+    assertEquals(
+      new Set([...first.tasks, ...second.tasks].map((task) => task.taskId))
+        .size,
+      55,
+    );
+
+    assertThrows(
+      () => store.listPage("session-b", first.nextCursor),
+      TypeError,
+      "Task cursor",
+    );
+  });
+
+  it("prevents one scoped client from consuming the global task store", () => {
+    const store = new TaskStore();
+    for (let index = 0; index < 100; index++) {
+      store.create(60000, "session-a");
+    }
+
+    assertThrows(
+      () => store.create(60000, "session-a"),
+      Error,
+      "Task scope capacity reached",
+    );
+    assertExists(store.create(60000, "session-b"));
+  });
+
+  it("rejects invalid task lifetimes", () => {
+    const store = new TaskStore();
+    for (const ttl of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      assertThrows(
+        () => store.create(ttl),
+        TypeError,
+        "Task TTL must be a positive safe integer",
+      );
+    }
   });
 
   it("returns undefined for unknown task ID", () => {
@@ -82,6 +166,57 @@ describe("mcp/task-store", () => {
     store.complete(task.taskId, resultData);
     const result = store.getResult(task.taskId);
     assertEquals(result, resultData);
+  });
+
+  it("snapshots task results at both storage and retrieval boundaries", () => {
+    const store = new TaskStore();
+    const task = store.create(60000);
+    const resultData = { nested: { value: "original" } };
+    store.complete(task.taskId, resultData);
+
+    resultData.nested.value = "mutated after completion";
+    const first = store.getResult(task.taskId) as {
+      nested: { value: string };
+    };
+    assertEquals(first.nested.value, "original");
+
+    first.nested.value = "mutated after retrieval";
+    assertEquals(store.getResult(task.taskId), {
+      nested: { value: "original" },
+    });
+  });
+
+  it("waits for a non-terminal task result", async () => {
+    const store = new TaskStore();
+    const task = store.create(60000);
+    const waiting = store.waitForResult(task.taskId);
+
+    const settledEarly = await Promise.race([
+      waiting.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 10)),
+    ]);
+    assertEquals(settledEarly, false);
+
+    store.complete(task.taskId, { done: true });
+    assertEquals(await waiting, { done: true });
+  });
+
+  it("releases a cancelled result waiter without changing task state", async () => {
+    const store = new TaskStore();
+    const task = store.create(60000);
+    const controller = new AbortController();
+    const waiting = store.waitForResult(task.taskId, undefined, controller.signal);
+
+    controller.abort(new DOMException("Request cancelled", "AbortError"));
+    await assertRejects(
+      () => waiting,
+      DOMException,
+      "Request cancelled",
+    );
+    assertEquals(store.get(task.taskId)?.status, "working");
+
+    store.complete(task.taskId, { done: true });
+    assertEquals(await store.waitForResult(task.taskId), { done: true });
   });
 
   it("returns undefined result for non-terminal task", () => {
@@ -193,5 +328,29 @@ describe("mcp/task-store", () => {
 
     assertEquals(store.get(oldest.taskId), undefined);
     assertEquals(store.list().length, 1000);
+  });
+
+  it("reclaims terminal work across scopes at global capacity", () => {
+    const store = new TaskStore();
+    const reclaimable = store.create(60_000, "session-0");
+    store.complete(reclaimable.taskId, { ok: true }, "session-0");
+    for (let index = 1; index < 100; index++) {
+      store.create(60_000, "session-0");
+    }
+    for (let scope = 1; scope < 10; scope++) {
+      for (let index = 0; index < 100; index++) {
+        store.create(60_000, `session-${scope}`);
+      }
+    }
+
+    assertExists(store.create(60_000, "session-10"));
+    assertEquals(store.get(reclaimable.taskId, "session-0"), undefined);
+    assertEquals(
+      Array.from({ length: 11 }, (_, scope) => store.list(`session-${scope}`).length).reduce(
+        (total, count) => total + count,
+        0,
+      ),
+      1000,
+    );
   });
 });

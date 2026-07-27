@@ -56,4 +56,4 @@ export {
 export { formatSSEEvent, formatSSEPrimingEvent, formatSSERetry } from "./sse.ts";
 export { SessionManager } from "./session.ts";
 export { TaskStore } from "./task-store.ts";
-export type { Task } from "./task-store.ts";
+export type { Task, TaskPage } from "./task-store.ts";

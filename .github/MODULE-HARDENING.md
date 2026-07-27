@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    39 |      67.2% | Current formal closure evidence remains valid       |
+| Closed                         |    40 |      69.0% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    17 |      29.3% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    16 |      27.6% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -56,6 +56,7 @@ stricter closure count.
 - `issues`
 - `knowledge`
 - `markdown`
+- `mcp`
 - `mdx`
 - `metrics`
 - `middleware`
@@ -88,7 +89,6 @@ stricter closure count.
 - `build`
 - `client`
 - `data`
-- `mcp`
 - `modules`
 - `oauth`
 - `observability`
@@ -124,7 +124,7 @@ every affected unit.
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`internal-agents`, `middleware`, `platform`, `provider`, `prompt`, `registry`,
+`internal-agents`, `mcp`, `middleware`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, `index.ts`, and
 `version.ts`.
@@ -4649,5 +4649,103 @@ remains. The remaining strict-delegation policy question belongs to the
 top-level `tool` revalidation because it governs the public tool-surface
 contract rather than control-plane transport. `internal-agents` is closed at 39
 of 58 formal units; 19 units remain to be closed or revalidated.
+
+### MCP closure checkpoint
+
+The `mcp` audit unit owns application-facing protocol negotiation and dispatch,
+Streamable HTTP admission, authentication and session lifecycle, tool,
+resource, and prompt projection, pagination, cancellation, elicitation, SSE
+serialization helpers, and experimental task state. Its direct consumers
+include application MCP routes, discovery registries, tool owner-scope policy,
+the issues MCP catalog, integrations cutover checks, public documentation, and
+the separately owned development CLI MCP surface.
+
+The current MCP findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** HTTP admission accepted
+  malformed JSON-RPC shapes, refreshed sessions before completing protocol
+  checks, trusted truthy authentication results, retained no credential
+  binding, and treated caller identity headers as execution authority. Invalid
+  or cross-credential traffic could reach or prolong another security
+  principal's session. Admission now validates Origin, exact boolean auth,
+  bearer grammar, envelopes, initialization order, session ownership, and
+  negotiated versions before touching a session; credentials are one-way
+  bound to sessions; and the built-in transport supplies no caller-selected
+  tenant context.
+- **Symptom -> Source -> Consequence -> Remedy:** sessions and tasks retained
+  mutable caller values, lacked per-principal admission bounds, exposed task
+  state across scopes, polled or stranded result waiters, and did not
+  consistently release foreground and background work. Sessions are capped
+  and lifecycle-owned; task state and results are defensive data-only
+  snapshots; task access, pagination, and cancellation are session-scoped;
+  result waiting is event-driven and explicitly abortable; and deletion or
+  expiry releases every owned request and task.
+- **Symptom -> Source -> Consequence -> Remedy:** global task pressure reclaimed
+  terminal work only from the incoming scope. A new healthy session could be
+  rejected even while another scope held reclaimable terminal records. The
+  global ceiling now reclaims the oldest eligible terminal record across
+  scopes, while the 100-task per-session ceiling remains scope-local; the
+  regression failed before and passed after this separation.
+- **Symptom -> Source -> Consequence -> Remedy:** protocol versions,
+  capabilities, and list behavior drifted across dispatch and transport.
+  Unsupported completion, logging, and list-change capabilities were
+  advertised; `ping` and real pagination were absent; tasks leaked onto the
+  legacy version; and cursors were not bound to their issuer. One protocol
+  source now governs negotiation and headers, only implemented capabilities
+  are advertised, `ping` is implemented, every list endpoint returns bounded
+  pages with server/method/session-bound cursors, and tasks are gated to
+  `2025-11-25`.
+- **Symptom -> Source -> Consequence -> Remedy:** transport-visible tool,
+  prompt, resource, SSE, task, and elicitation values could retain caller
+  mutation, exceed response bounds, execute coercion hooks, or admit schema
+  shapes outside the implemented protocol subset. Each boundary now snapshots
+  bounded data-only values, constrains text and identifiers, rejects unsafe SSE
+  values, serializes tool JSON without whitespace amplification, sanitizes and
+  bounds thrown diagnostics before task storage, preserves retrievable task
+  failures, and validates the exact flat primitive form-elicitation subset
+  before dispatch.
+- **Symptom -> Source -> Consequence -> Remedy:** cancellation followed an HTTP
+  disconnect even though transport closure is not an MCP cancellation, while
+  explicit cancellation and session deletion did not cover every owned
+  operation. Request disconnects are now isolated from runtime signals;
+  `notifications/cancelled`, `tasks/cancel`, and session teardown are the
+  explicit cancellation authorities for foreground work, result waiters, and
+  background task execution.
+- **Symptom -> Source -> Consequence -> Remedy:** the public guide described an
+  older protocol request and omitted the listener, authentication, identity,
+  Origin, task, pagination, and custom-transport boundaries. The MCP how-to,
+  architecture explanation, generated API reference, and public JSDoc now
+  match the verified runtime contract.
+
+Current reproducible evidence:
+
+- the MCP, tool owner-scope, integrations cutover, and issues MCP portfolio
+  passes 19 top-level tests and 244 nested steps with zero failures;
+- the affected production-start and development CLI MCP portfolio passes three
+  suites and 92 nested steps, preserving the separation between application and
+  development transports;
+- all 21 changed MCP and affected tool files pass direct typecheck and lint,
+  formatting and diff hygiene pass, and the published npm consumer
+  composition compiles against a fresh package build;
+- documentation generation refreshes the MCP reference, documentation
+  validation passes all 40 API pages, 67 guides, 112 public documentation
+  files, executable examples, and 746 links; and
+- `deno task verify:quick` passes generated-manifest freshness, repository-wide
+  formatting and lint, architecture and policy ratchets, zero cyclic module
+  edges, documentation validation, and every configured production and browser
+  entrypoint typecheck.
+
+Intentional compatibility and capability boundaries remain explicit:
+
+| Severity | Boundary                                                                                           | Current control                                                                                                                                                                            | Follow-up trigger                                                                                   |
+| -------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Low      | Direct `MCPServer.handleRequest()` does not impose the built-in HTTP lifecycle.                    | The public guide and architecture reference assign envelope, initialization, authentication, protocol-header, and session enforcement to a custom transport.                               | Introduce a transport contract abstraction before making the direct compatibility surface stricter. |
+| Low      | Initialization accepts omitted legacy client metadata and negotiates the latest supported version. | The built-in HTTP flow remains bounded and documents the complete initialization request; task methods still require a negotiated `2025-11-25` session.                                    | Remove the compatibility path only through an announced breaking protocol change.                   |
+| Low      | Bearer configuration keeps an optional validator in the public schema.                             | Construction remains compatible, but every HTTP request fails closed when no validator is installed; the guide marks a validator as required for a usable production endpoint.             | Make the validator type-required in the next approved breaking configuration revision.              |
+| Low      | The built-in handler has no standalone server-to-client SSE stream.                                | Request/response JSON is complete for the implemented surface, `GET` returns `405`, and safe SSE formatting helpers remain available to explicitly notification-capable custom transports. | Add owned connection lifecycle, replay, and backpressure before advertising a built-in SSE stream.  |
+
+No known unresolved critical or high-confidence MCP production risk remains.
+`mcp` is closed at 40 of 58 formal units; 18 units remain to be closed or
+revalidated.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

@@ -38,7 +38,7 @@ export const getMCPAuthConfigSchema = defineSchema((v) =>
 export const getMCPServerConfigSchema = defineSchema((v) =>
   v.object({
     enabled: v.boolean(),
-    port: v.number().int().positive().optional(),
+    port: v.number().int().positive().max(65_535).optional(),
     auth: getMCPAuthConfigSchema(),
     cors: v
       .object({

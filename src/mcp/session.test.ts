@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SessionManager } from "./session.ts";
 
@@ -87,5 +87,48 @@ describe("mcp/session", () => {
 
     manager.terminate(id);
     assertEquals(manager.requiresSessionHeader(), false);
+  });
+
+  it("bounds live sessions and reports every removal to lifecycle owners", () => {
+    let clock = 1_000;
+    const removed: string[] = [];
+    const manager = new SessionManager({
+      ttlMs: 5_000,
+      maxSessions: 2,
+      now: () => clock,
+      onSessionRemoved: (id) => removed.push(id),
+    });
+    const first = manager.create();
+    const second = manager.create();
+
+    assertThrows(
+      () => manager.create(),
+      Error,
+      "MCP session capacity",
+    );
+
+    manager.terminate(first);
+    assertEquals(removed, [first]);
+    const third = manager.create();
+    clock += 6_000;
+    assertEquals(manager.size, 0);
+    assertEquals(new Set(removed), new Set([first, second, third]));
+  });
+
+  it("rejects invalid lifecycle options", () => {
+    for (const ttlMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      assertThrows(
+        () => new SessionManager({ ttlMs }),
+        TypeError,
+        "Session TTL",
+      );
+    }
+    for (const maxSessions of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      assertThrows(
+        () => new SessionManager({ maxSessions }),
+        TypeError,
+        "session capacity",
+      );
+    }
   });
 });
