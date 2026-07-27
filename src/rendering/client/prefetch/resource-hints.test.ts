@@ -103,6 +103,7 @@ function setupMocks(): {
       };
     },
     querySelector: (_selector: string) => null,
+    querySelectorAll: (_selector: string) => [],
   };
 
   return {
@@ -246,12 +247,14 @@ describe("ResourceHintsManager", () => {
 
     it("should not apply hint if already exists in DOM", () => {
       withMocks((mocks) => {
-        (globalThis as any).document.querySelector = (selector: string) => {
-          if (selector === 'link[rel="prefetch"][href="http://example.com/page"]') {
-            return { rel: "prefetch", href: "http://example.com/page" };
-          }
-          return null;
-        };
+        (globalThis as any).document.querySelectorAll = (selector: string) =>
+          selector === 'link[rel="prefetch"]'
+            ? [{
+              rel: "prefetch",
+              href: "http://example.com/page",
+              getAttribute: (name: string) => name === "href" ? "http://example.com/page" : null,
+            }]
+            : [];
 
         const manager = new ResourceHintsManager();
         manager.applyResourceHints([{ type: "prefetch", href: "http://example.com/page" }]);
@@ -271,6 +274,41 @@ describe("ResourceHintsManager", () => {
         ]);
 
         assertEquals(mocks.getCreatedElements().length, 2);
+      });
+    });
+
+    it("does not interpolate untrusted hrefs into CSS selectors", () => {
+      withMocks((mocks) => {
+        (globalThis as any).document.querySelector = (selector: string) => {
+          if (selector.includes("onload")) throw new SyntaxError("Invalid selector");
+          return null;
+        };
+        (globalThis as any).document.querySelectorAll = () => [];
+
+        const manager = new ResourceHintsManager();
+        manager.applyResourceHints([{
+          type: "prefetch",
+          href: '/module.js" onload="alert(1)',
+        }]);
+
+        assertEquals(mocks.getCreatedElements().length, 1);
+      });
+    });
+
+    it("bounds remembered hint identities during long browser sessions", () => {
+      withMocks(() => {
+        const manager = new ResourceHintsManager();
+        for (let index = 0; index < 501; index++) {
+          manager.applyResourceHints([{
+            type: "prefetch",
+            href: `/asset-${index}.js`,
+          }]);
+        }
+
+        const appliedHints = (
+          manager as unknown as { appliedHints: Set<string> }
+        ).appliedHints;
+        assertEquals(appliedHints.size <= 500, true);
       });
     });
   });
@@ -534,6 +572,15 @@ describe("ResourceHintsManager", () => {
         hints.includes('<link rel="preload" as="style" href="./styles/main.css">'),
         true,
       );
+    });
+
+    it("escapes asset paths before generating HTML", () => {
+      const hints = ResourceHintsManager.generateResourceHints("/route", [
+        '/app.js" onload="alert(1).js',
+      ]);
+
+      assertEquals(hints.includes('" onload="'), false);
+      assertEquals(hints.includes("&quot;"), true);
     });
   });
 

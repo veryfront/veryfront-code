@@ -1,4 +1,5 @@
 import { prefetchLogger } from "../browser-logger.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 
 export interface ResourceHint {
   type: "prefetch" | "preload" | "preconnect" | "dns-prefetch";
@@ -8,6 +9,8 @@ export interface ResourceHint {
   media?: string;
 }
 
+const MAX_REMEMBERED_RESOURCE_HINTS = 500;
+
 export class ResourceHintsManager {
   private appliedHints = new Set<string>();
 
@@ -16,24 +19,61 @@ export class ResourceHintsManager {
       const key = `${hint.type}:${hint.href}`;
       if (this.appliedHints.has(key)) continue;
 
-      const existing = document.querySelector(
-        `link[rel="${hint.type}"][href="${hint.href}"]`,
-      );
-      if (existing) {
-        this.appliedHints.add(key);
+      if (this.hasExistingHint(hint)) {
+        this.rememberHint(key);
         continue;
       }
 
-      this.createAndAppendHint(hint);
-      this.appliedHints.add(key);
+      if (!this.createAndAppendHint(hint)) continue;
+      this.rememberHint(key);
       prefetchLogger.debug(`Added resource hint: ${hint.type} ${hint.href}`);
     }
   }
 
-  private createAndAppendHint(hint: ResourceHint): void {
+  clear(): void {
+    this.appliedHints.clear();
+  }
+
+  private hasExistingHint(hint: ResourceHint): boolean {
+    const selector = `link[rel="${hint.type}"]`;
+    let candidates: Iterable<Element>;
+
+    try {
+      candidates = typeof document.querySelectorAll === "function"
+        ? document.querySelectorAll(selector)
+        : [];
+    } catch {
+      return false;
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const rawHref = candidate.getAttribute?.("href");
+        const resolvedHref = (candidate as HTMLLinkElement).href;
+        if (rawHref === hint.href || resolvedHref === hint.href) return true;
+      } catch {
+        continue;
+      }
+    }
+
+    return false;
+  }
+
+  private rememberHint(key: string): void {
+    this.appliedHints.delete(key);
+    this.appliedHints.add(key);
+
+    while (this.appliedHints.size > MAX_REMEMBERED_RESOURCE_HINTS) {
+      const oldestKey = this.appliedHints.values().next().value as string | undefined;
+      if (oldestKey === undefined) break;
+      this.appliedHints.delete(oldestKey);
+    }
+  }
+
+  private createAndAppendHint(hint: ResourceHint): boolean {
     if (!document.head) {
       prefetchLogger.warn("document.head is not available, skipping resource hint");
-      return;
+      return false;
     }
 
     const link = document.createElement("link");
@@ -45,6 +85,7 @@ export class ResourceHintsManager {
     if (hint.media) link.setAttribute("media", hint.media);
 
     document.head.appendChild(link);
+    return true;
   }
 
   extractResourceHints(html: string, prefetchedUrls: Set<string>): ResourceHint[] {
@@ -132,18 +173,19 @@ export class ResourceHintsManager {
     ];
 
     for (const asset of assets) {
+      const escapedAsset = escapeHtml(asset);
       if (asset.endsWith(".js")) {
-        hints.push(`<link rel="modulepreload" href="${asset}">`);
+        hints.push(`<link rel="modulepreload" href="${escapedAsset}">`);
         continue;
       }
 
       if (asset.endsWith(".css")) {
-        hints.push(`<link rel="preload" as="style" href="${asset}">`);
+        hints.push(`<link rel="preload" as="style" href="${escapedAsset}">`);
         continue;
       }
 
       if (/\.(woff2?|ttf|otf)$/.test(asset)) {
-        hints.push(`<link rel="preload" as="font" href="${asset}" crossorigin>`);
+        hints.push(`<link rel="preload" as="font" href="${escapedAsset}" crossorigin>`);
       }
     }
 

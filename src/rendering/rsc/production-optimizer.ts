@@ -1,18 +1,47 @@
 import type { RSCPayload } from "./types.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { HASH_SEED_FNV1A } from "#veryfront/utils";
+
+const FNV1A_PRIME = 16_777_619;
+const MAX_SAFE_CACHE_AGE_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 4);
+
+function updateHash(hash: number, value: string): number {
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, FNV1A_PRIME);
+  }
+  return hash;
+}
+
+function updateLengthDelimitedHash(hash: number, label: string, value: string): number {
+  hash = updateHash(hash, label);
+  hash = updateHash(hash, ":");
+  hash = updateHash(hash, String(value.length));
+  hash = updateHash(hash, ":");
+  return updateHash(hash, value);
+}
+
+function hashText(value: string): string {
+  return (updateHash(HASH_SEED_FNV1A, value) >>> 0).toString(36);
+}
 
 export class RSCProductionOptimizer {
   static optimizePayload(payload: RSCPayload): RSCPayload {
     return {
       html: RSCProductionOptimizer.minifyHTML(payload.html),
-      clientRefs: payload.clientRefs,
-      assets: payload.assets,
+      clientRefs: { ...payload.clientRefs },
+      assets: payload.assets
+        ? {
+          css: payload.assets.css ? [...payload.assets.css] : undefined,
+          js: payload.assets.js ? [...payload.assets.js] : undefined,
+        }
+        : undefined,
       tree: undefined,
     };
   }
 
   private static minifyHTML(html: string): string {
-    return html.replace(/<!--[\s\S]*?-->/g, "").replace(/>\s+</g, "><").trim();
+    return html.replace(/<!--[\s\S]*?-->/g, "").trim();
   }
 
   static getCacheHeaders(
@@ -20,7 +49,12 @@ export class RSCProductionOptimizer {
   ): Record<string, string> {
     const { isStatic = false, maxAge = 0 } = options;
 
-    if (!isStatic || maxAge <= 0) {
+    if (
+      !isStatic ||
+      !Number.isSafeInteger(maxAge) ||
+      maxAge <= 0 ||
+      maxAge > MAX_SAFE_CACHE_AGE_SECONDS
+    ) {
       return {
         "Cache-Control": "no-cache, no-store, must-revalidate",
         Pragma: "no-cache",
@@ -37,16 +71,19 @@ export class RSCProductionOptimizer {
   static generateETag(payload: RSCPayload): string {
     let hash = HASH_SEED_FNV1A;
 
-    for (let i = 0; i < payload.html.length; i++) {
-      hash ^= payload.html.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
+    hash = updateLengthDelimitedHash(hash, "html", payload.html);
 
     for (const key of Object.keys(payload.clientRefs).sort()) {
-      for (let i = 0; i < key.length; i++) {
-        hash ^= key.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-      }
+      hash = updateLengthDelimitedHash(hash, "client-ref-key", key);
+      hash = updateLengthDelimitedHash(hash, "client-ref-value", payload.clientRefs[key] ?? "");
+    }
+
+    for (const asset of payload.assets?.css ?? []) {
+      hash = updateLengthDelimitedHash(hash, "css-asset", asset);
+    }
+
+    for (const asset of payload.assets?.js ?? []) {
+      hash = updateLengthDelimitedHash(hash, "js-asset", asset);
     }
 
     return `"${(hash >>> 0).toString(36)}"`;
@@ -55,9 +92,20 @@ export class RSCProductionOptimizer {
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
     if (!requestETag) return false;
 
-    const normalizeETag = (etag: string): string => etag.replace(/^W\//, "").replace(/"/g, "");
+    const normalizeETag = (etag: string): string => {
+      let normalized = etag.trim();
+      if (normalized.startsWith("W/")) normalized = normalized.slice(2).trimStart();
+      if (normalized.startsWith('"') && normalized.endsWith('"')) {
+        normalized = normalized.slice(1, -1);
+      }
+      return normalized;
+    };
+    const normalizedPayloadETag = normalizeETag(payloadETag);
 
-    return normalizeETag(requestETag) === normalizeETag(payloadETag);
+    return requestETag.split(",").some((candidate) => {
+      const trimmed = candidate.trim();
+      return trimmed === "*" || normalizeETag(trimmed) === normalizedPayloadETag;
+    });
   }
 
   static optimizeClientRefs(
@@ -77,9 +125,20 @@ export class RSCProductionOptimizer {
   } {
     const bundles: Record<string, RSCPayload> = {};
     const manifest: Record<string, string[]> = {};
+    const baseCounts = new Map<string, number>();
+
+    for (const route of payloads.keys()) {
+      const base = RSCProductionOptimizer.generateBundleId(route);
+      baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
+    }
 
     for (const [route, payload] of payloads) {
-      const bundleId = RSCProductionOptimizer.generateBundleId(route);
+      const base = RSCProductionOptimizer.generateBundleId(route);
+      let bundleId = (baseCounts.get(base) ?? 0) > 1 ? `${base}_${hashText(route)}` : base;
+      let collisionIndex = 1;
+      while (Object.hasOwn(bundles, bundleId)) {
+        bundleId = `${base}_${hashText(route)}_${collisionIndex++}`;
+      }
       bundles[bundleId] = RSCProductionOptimizer.optimizePayload(payload);
       manifest[route] = Object.keys(payload.clientRefs);
     }
@@ -93,7 +152,7 @@ export class RSCProductionOptimizer {
 
   static generatePreloadLinks(clientRefs: Record<string, string>): string[] {
     return Object.values(clientRefs).map(
-      (path) => `<link rel="modulepreload" href="${path}" as="script" crossorigin>`,
+      (path) => `<link rel="modulepreload" href="${escapeHtml(path)}" as="script" crossorigin>`,
     );
   }
 

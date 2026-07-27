@@ -21,10 +21,10 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals(result.html.includes("<!--"), false);
     });
 
-    it("should remove whitespace between tags", () => {
-      const payload = makePayload({ html: "<div>  <span>  text  </span>  </div>" });
+    it("preserves visible whitespace between inline elements", () => {
+      const payload = makePayload({ html: "<span>hello</span> <span>world</span>" });
       const result = RSCProductionOptimizer.optimizePayload(payload);
-      assertEquals(result.html.includes(">  <"), false);
+      assertEquals(result.html, "<span>hello</span> <span>world</span>");
     });
 
     it("should strip tree from output", () => {
@@ -41,6 +41,21 @@ describe("rendering/rsc/production-optimizer", () => {
       const result = RSCProductionOptimizer.optimizePayload(payload);
       assertEquals(result.clientRefs, { Button: "/btn.js" });
       assertEquals(result.assets, { css: ["/style.css"], js: ["/main.js"] });
+    });
+
+    it("returns metadata snapshots that do not alias the source payload", () => {
+      const payload = makePayload({
+        clientRefs: { Button: "/button-v1.js" },
+        assets: { css: ["/app-v1.css"], js: ["/app-v1.js"] },
+      });
+      const result = RSCProductionOptimizer.optimizePayload(payload);
+
+      payload.clientRefs.Button = "/button-v2.js";
+      payload.assets?.css?.push("/app-v2.css");
+      payload.assets?.js?.push("/app-v2.js");
+
+      assertEquals(result.clientRefs, { Button: "/button-v1.js" });
+      assertEquals(result.assets, { css: ["/app-v1.css"], js: ["/app-v1.js"] });
     });
   });
 
@@ -59,6 +74,13 @@ describe("rendering/rsc/production-optimizer", () => {
       const headers = RSCProductionOptimizer.getCacheHeaders({ isStatic: true, maxAge: 3600 });
       assertEquals(headers["Cache-Control"], "public, max-age=3600, stale-while-revalidate=7200");
       assertEquals(headers["CDN-Cache-Control"], "max-age=14400");
+    });
+
+    it("fails closed to no-cache for invalid max-age values", () => {
+      for (const maxAge of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+        const headers = RSCProductionOptimizer.getCacheHeaders({ isStatic: true, maxAge });
+        assertEquals(headers["Cache-Control"], "no-cache, no-store, must-revalidate");
+      }
     });
   });
 
@@ -82,6 +104,32 @@ describe("rendering/rsc/production-optimizer", () => {
       const b = RSCProductionOptimizer.generateETag(makePayload({ html: "<div>b</div>" }));
       assertEquals(a !== b, true);
     });
+
+    it("changes when client module URLs or assets change", () => {
+      const baseline = makePayload({
+        clientRefs: { Button: "/button-v1.js" },
+        assets: { css: ["/app-v1.css"], js: ["/app-v1.js"] },
+      });
+      const changedRef = makePayload({
+        clientRefs: { Button: "/button-v2.js" },
+        assets: baseline.assets,
+      });
+      const changedAssets = makePayload({
+        clientRefs: baseline.clientRefs,
+        assets: { css: ["/app-v2.css"], js: ["/app-v2.js"] },
+      });
+
+      assertEquals(
+        RSCProductionOptimizer.generateETag(baseline) !==
+          RSCProductionOptimizer.generateETag(changedRef),
+        true,
+      );
+      assertEquals(
+        RSCProductionOptimizer.generateETag(baseline) !==
+          RSCProductionOptimizer.generateETag(changedAssets),
+        true,
+      );
+    });
   });
 
   describe("checkETag", () => {
@@ -95,6 +143,14 @@ describe("rendering/rsc/production-optimizer", () => {
 
     it("should match weak ETags", () => {
       assertEquals(RSCProductionOptimizer.checkETag('W/"abc"', '"abc"'), true);
+    });
+
+    it("matches wildcard and comma-separated validators", () => {
+      assertEquals(RSCProductionOptimizer.checkETag("*", '"abc"'), true);
+      assertEquals(
+        RSCProductionOptimizer.checkETag('"old", W/"abc", "other"', '"abc"'),
+        true,
+      );
     });
   });
 
@@ -121,6 +177,18 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals("_" in bundles, true);
       assertEquals(manifest["/"], ["App"]);
     });
+
+    it("does not overwrite bundles whose route slugs sanitize identically", () => {
+      const payloads = new Map<string, RSCPayload>([
+        ["/a-b", makePayload({ html: "<div>hyphen</div>" })],
+        ["/a_b", makePayload({ html: "<div>underscore</div>" })],
+      ]);
+
+      const { bundles, manifest } = RSCProductionOptimizer.bundlePayloads(payloads);
+
+      assertEquals(Object.keys(bundles).length, 2);
+      assertEquals(Object.keys(manifest).sort(), ["/a-b", "/a_b"]);
+    });
   });
 
   describe("generatePreloadLinks", () => {
@@ -135,6 +203,16 @@ describe("rendering/rsc/production-optimizer", () => {
 
     it("should return empty for no refs", () => {
       assertEquals(RSCProductionOptimizer.generatePreloadLinks({}).length, 0);
+    });
+
+    it("escapes module URLs before emitting HTML attributes", () => {
+      const [link] = RSCProductionOptimizer.generatePreloadLinks({
+        Unsafe: '/module.js" onload="alert(1)',
+      });
+
+      assertExists(link);
+      assertEquals(link.includes('" onload="'), false);
+      assertEquals(link.includes("&quot;"), true);
     });
   });
 

@@ -13,9 +13,16 @@ interface SourceFileLike {
 }
 
 interface CandidateManifest {
+  projectScope: string;
   fileCandidates: Map<string, Set<string>>;
   allCandidates: Set<string>;
   builtAt: number;
+}
+
+interface RouteCandidateCacheEntry {
+  manifestKey: string;
+  projectScope: string;
+  candidates: Set<string>;
 }
 
 interface RouteCandidateOptions {
@@ -41,14 +48,16 @@ interface ProjectCandidateOptions {
 const logger = rendererLogger.component("css-candidate-manifest");
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 const DEV_MANIFEST_TTL_MS = 2_000;
+const CANDIDATE_MANIFEST_CACHE_MAX_ENTRIES = 200;
 const ROUTE_CANDIDATE_CACHE_MAX_ENTRIES = 200;
 
 const manifestCache = new Map<string, CandidateManifest>();
-const routeCandidateCache = new Map<string, Set<string>>();
+const routeCandidateCache = new Map<string, RouteCandidateCacheEntry>();
 
 registerCache("css-candidate-manifests", () => ({
   name: "css-candidate-manifests",
   entries: manifestCache.size,
+  maxEntries: CANDIDATE_MANIFEST_CACHE_MAX_ENTRIES,
 }));
 
 registerCache("css-route-candidates", () => ({
@@ -58,12 +67,13 @@ registerCache("css-route-candidates", () => ({
 }));
 
 export function getCandidateManifestCacheStats(): {
-  manifests: { entries: number };
+  manifests: { entries: number; maxEntries: number };
   routeCandidates: { entries: number; maxEntries: number };
 } {
   return {
     manifests: {
       entries: manifestCache.size,
+      maxEntries: CANDIDATE_MANIFEST_CACHE_MAX_ENTRIES,
     },
     routeCandidates: {
       entries: routeCandidateCache.size,
@@ -90,7 +100,11 @@ function buildManifestCacheKey(
   projectVersion: string,
   styleProfileHash?: string,
 ): string {
-  return `${projectScope}:${projectVersion}:${styleProfileHash ?? "default"}`;
+  return JSON.stringify([projectScope, projectVersion, styleProfileHash ?? null]);
+}
+
+function buildRouteCacheKey(manifestKey: string, routeKey: string): string {
+  return JSON.stringify([manifestKey, routeKey]);
 }
 
 function shouldRebuildManifest(
@@ -115,7 +129,11 @@ function buildSourceCandidatePaths(modulePath: string): string[] {
   ];
 }
 
-function buildCandidateManifest(files: SourceFileLike[], projectDir: string): CandidateManifest {
+function buildCandidateManifest(
+  projectScope: string,
+  files: SourceFileLike[],
+  projectDir: string,
+): CandidateManifest {
   const fileCandidates = new Map<string, Set<string>>();
   const allCandidates = new Set<string>();
 
@@ -133,7 +151,43 @@ function buildCandidateManifest(files: SourceFileLike[], projectDir: string): Ca
     for (const cls of candidates) allCandidates.add(cls);
   }
 
-  return { fileCandidates, allCandidates, builtAt: Date.now() };
+  return { projectScope, fileCandidates, allCandidates, builtAt: Date.now() };
+}
+
+function deleteRouteEntriesForManifest(manifestKey: string): void {
+  for (const [routeKey, entry] of routeCandidateCache) {
+    if (entry.manifestKey === manifestKey) routeCandidateCache.delete(routeKey);
+  }
+}
+
+function touchManifest(manifestKey: string, manifest: CandidateManifest): void {
+  manifestCache.delete(manifestKey);
+  manifestCache.set(manifestKey, manifest);
+}
+
+function cacheManifest(manifestKey: string, manifest: CandidateManifest): void {
+  touchManifest(manifestKey, manifest);
+
+  while (manifestCache.size > CANDIDATE_MANIFEST_CACHE_MAX_ENTRIES) {
+    const oldestKey = manifestCache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    manifestCache.delete(oldestKey);
+    deleteRouteEntriesForManifest(oldestKey);
+  }
+}
+
+function cacheRouteCandidates(
+  routeCacheKey: string,
+  entry: RouteCandidateCacheEntry,
+): void {
+  routeCandidateCache.delete(routeCacheKey);
+  routeCandidateCache.set(routeCacheKey, entry);
+
+  while (routeCandidateCache.size > ROUTE_CANDIDATE_CACHE_MAX_ENTRIES) {
+    const oldestKey = routeCandidateCache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    routeCandidateCache.delete(oldestKey);
+  }
 }
 
 function getOrBuildManifest(
@@ -152,15 +206,14 @@ function getOrBuildManifest(
     ? filterFilesForStyleScope(options.files, options.styleProfile, options.projectDir)
     : options.files;
   const manifest = shouldRebuildManifest(existingManifest, options.developmentMode)
-    ? buildCandidateManifest(scopedFiles, options.projectDir)
+    ? buildCandidateManifest(options.projectScope, scopedFiles, options.projectDir)
     : existingManifest!;
 
   if (manifest !== existingManifest) {
-    manifestCache.set(manifestKey, manifest);
-
-    for (const key of routeCandidateCache.keys()) {
-      if (key.startsWith(`${manifestKey}:`)) routeCandidateCache.delete(key);
-    }
+    deleteRouteEntriesForManifest(manifestKey);
+    cacheManifest(manifestKey, manifest);
+  } else {
+    touchManifest(manifestKey, manifest);
   }
 
   return manifest;
@@ -190,9 +243,12 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
     options.styleProfile?.hash,
   );
   const manifest = getOrBuildManifest(options);
-  const routeCacheKey = `${manifestKey}:${options.routeKey}`;
+  const routeCacheKey = buildRouteCacheKey(manifestKey, options.routeKey);
   const cachedRoute = routeCandidateCache.get(routeCacheKey);
-  if (cachedRoute) return new Set(cachedRoute);
+  if (cachedRoute) {
+    cacheRouteCandidates(routeCacheKey, cachedRoute);
+    return new Set(cachedRoute.candidates);
+  }
 
   const routeCandidates = new Set<string>();
 
@@ -215,15 +271,11 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
   }
 
   if (!usedFullProjectFallback) {
-    if (
-      routeCandidateCache.size >= ROUTE_CANDIDATE_CACHE_MAX_ENTRIES &&
-      !routeCandidateCache.has(routeCacheKey)
-    ) {
-      const oldestKey = routeCandidateCache.keys().next().value as string | undefined;
-      if (oldestKey) routeCandidateCache.delete(oldestKey);
-    }
-
-    routeCandidateCache.set(routeCacheKey, routeCandidates);
+    cacheRouteCandidates(routeCacheKey, {
+      manifestKey,
+      projectScope: options.projectScope,
+      candidates: routeCandidates,
+    });
   }
 
   logger.debug("Resolved route candidates", {
@@ -255,11 +307,13 @@ export function invalidateProjectCandidateManifests(projectScope?: string): void
     return;
   }
 
-  for (const key of manifestCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) manifestCache.delete(key);
+  for (const [key, manifest] of manifestCache) {
+    if (manifest.projectScope !== projectScope) continue;
+    manifestCache.delete(key);
+    deleteRouteEntriesForManifest(key);
   }
 
-  for (const key of routeCandidateCache.keys()) {
-    if (key.startsWith(`${projectScope}:`)) routeCandidateCache.delete(key);
+  for (const [key, entry] of routeCandidateCache) {
+    if (entry.projectScope === projectScope) routeCandidateCache.delete(key);
   }
 }

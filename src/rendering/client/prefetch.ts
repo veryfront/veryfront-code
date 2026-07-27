@@ -43,14 +43,56 @@ interface ResolvedPrefetchOptions {
   timeout: number;
 }
 
+async function readResponseTextWithinLimit(
+  response: Response,
+  maxBytes: number,
+): Promise<string | null> {
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = "";
+  let finished = false;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        finished = true;
+        text += decoder.decode();
+        return text;
+      }
+      if (!value) continue;
+
+      bytesRead += value.byteLength;
+      if (bytesRead > maxBytes) return null;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    if (!finished) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The body can already be cancelled by a concurrent manager shutdown.
+      }
+    }
+    reader.releaseLock();
+  }
+}
+
 export class PrefetchManager {
-  private options: ResolvedPrefetchOptions;
+  private readonly options: ResolvedPrefetchOptions;
   private prefetchedUrls = new Set<string>();
 
-  private networkUtils: NetworkUtils;
+  private readonly networkUtils: NetworkUtils;
   private linkObserver: LinkObserver | null = null;
-  private resourceHintsManager: ResourceHintsManager;
-  private prefetchQueue: PrefetchQueue;
+  private readonly resourceHintsManager: ResourceHintsManager;
+  private readonly prefetchQueue: PrefetchQueue;
+  private initialized = false;
+  private destroyed = false;
+  private removeNetworkListener: (() => void) | null = null;
+  private removeReadyListener: (() => void) | null = null;
 
   constructor(options: PrefetchOptions = {}) {
     this.options = {
@@ -79,13 +121,42 @@ export class PrefetchManager {
   }
 
   init(): void {
+    if (this.initialized || this.destroyed) return;
+    this.initialized = true;
     prefetchLogger.info("Initializing prefetch manager");
 
-    if (!this.networkUtils.shouldPrefetch()) {
-      prefetchLogger.info("Prefetching disabled due to network conditions");
+    this.removeNetworkListener = this.networkUtils.onNetworkChange(() => this.applyNetworkState());
+    this.applyNetworkState();
+  }
+
+  initWhenReady(doc: Document = document): void {
+    if (this.initialized || this.destroyed || this.removeReadyListener) return;
+    if (doc.readyState !== "loading") {
+      this.init();
       return;
     }
 
+    const onReady = (): void => {
+      this.removeReadyListener?.();
+      this.removeReadyListener = null;
+      this.init();
+    };
+    doc.addEventListener("DOMContentLoaded", onReady, { once: true });
+    this.removeReadyListener = () => doc.removeEventListener("DOMContentLoaded", onReady);
+  }
+
+  private applyNetworkState(): void {
+    if (this.destroyed) return;
+    if (!this.networkUtils.shouldPrefetch()) {
+      prefetchLogger.info("Prefetching disabled due to network conditions");
+      this.linkObserver?.destroy();
+      this.linkObserver = null;
+      this.prefetchQueue.stop();
+      return;
+    }
+
+    this.prefetchQueue.start();
+    if (this.linkObserver) return;
     this.linkObserver = new LinkObserver(
       {
         rootMargin: this.options.rootMargin,
@@ -96,23 +167,27 @@ export class PrefetchManager {
     );
 
     this.linkObserver.init();
-
-    this.networkUtils.onNetworkChange(() => {
-      if (!this.networkUtils.shouldPrefetch()) this.prefetchQueue.stopAll();
-    });
   }
 
   private async prefetchPageResources(response: Response, _pageUrl: string): Promise<void> {
-    const html = await response.text();
+    if (this.destroyed) return;
+    const html = await readResponseTextWithinLimit(response, this.options.maxSize);
+    if (html === null) {
+      prefetchLogger.debug("Prefetched response body exceeds the configured size limit");
+      return;
+    }
+    if (this.destroyed) return;
     const hints = this.resourceHintsManager.extractResourceHints(html, this.prefetchedUrls);
     this.resourceHintsManager.applyResourceHints(hints);
   }
 
   applyResourceHints(hints: ResourceHint[]): void {
+    if (this.destroyed) return;
     this.resourceHintsManager.applyResourceHints(hints);
   }
 
   async prefetch(url: string): Promise<void> {
+    if (this.destroyed) return;
     await this.prefetchQueue.prefetch(url);
   }
 
@@ -121,22 +196,26 @@ export class PrefetchManager {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.removeReadyListener?.();
+    this.removeReadyListener = null;
+    this.removeNetworkListener?.();
+    this.removeNetworkListener = null;
     this.linkObserver?.destroy();
-    this.prefetchQueue.stopAll();
+    this.linkObserver = null;
+    this.prefetchQueue.stop();
+    this.resourceHintsManager.clear();
     this.prefetchedUrls.clear();
   }
 }
 
 export function initPrefetch(options?: PrefetchOptions): PrefetchManager {
   const prefetchManager = new PrefetchManager(options);
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => prefetchManager.init(), { once: true });
-  } else {
-    prefetchManager.init();
-  }
-
-  (globalThis as GlobalWithPrefetch).veryFrontPrefetch = prefetchManager;
+  const global = globalThis as GlobalWithPrefetch;
+  global.veryFrontPrefetch?.destroy();
+  global.veryFrontPrefetch = prefetchManager;
+  prefetchManager.initWhenReady(document);
   return prefetchManager;
 }
 

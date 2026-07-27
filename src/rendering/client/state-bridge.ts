@@ -56,7 +56,13 @@ class StateBridge implements StateStore {
     const callbacks = this.listeners.get(key);
     if (!callbacks) return;
 
-    for (const callback of callbacks) callback(value);
+    for (const callback of [...callbacks]) {
+      try {
+        callback(value);
+      } catch (error) {
+        logger.error("State subscriber failed:", error);
+      }
+    }
   }
 
   subscribe<T>(key: string, callback: (value: T) => void): () => void {
@@ -70,7 +76,10 @@ class StateBridge implements StateStore {
     callbacks.add(typedCallback);
 
     return () => {
-      this.listeners.get(key)?.delete(typedCallback);
+      const currentCallbacks = this.listeners.get(key);
+      if (!currentCallbacks) return;
+      currentCallbacks.delete(typedCallback);
+      if (currentCallbacks.size === 0) this.listeners.delete(key);
     };
   }
 
@@ -84,33 +93,59 @@ class StateBridge implements StateStore {
   clear(): void {
     this.state.clear();
     this.listeners.clear();
-    sessionStorage?.removeItem("veryfront-state");
+    this.persistKeys.clear();
+
+    const storage = this.getSessionStorage();
+    if (!storage) return;
+    try {
+      storage.removeItem("veryfront-state");
+    } catch (error) {
+      logger.error("Failed to clear persisted state:", error);
+    }
   }
 
   private saveState(): void {
-    if (typeof sessionStorage === "undefined") return;
+    const storage = this.getSessionStorage();
+    if (!storage) return;
 
-    const persistedState: Record<string, unknown> = {};
+    const persistedState = Object.create(null) as Record<string, unknown>;
     for (const key of this.persistKeys) {
       const value = this.state.get(key);
       if (value !== undefined) persistedState[key] = value;
     }
 
-    sessionStorage.setItem("veryfront-state", JSON.stringify(persistedState));
+    try {
+      storage.setItem("veryfront-state", JSON.stringify(persistedState));
+    } catch (error) {
+      logger.error("Failed to save persisted state:", error);
+    }
   }
 
   private saveKey(key: string, value: unknown): void {
-    if (typeof sessionStorage === "undefined") return;
+    const storage = this.getSessionStorage();
+    if (!storage) return;
 
-    const state = this.readPersistedState() ?? {};
+    const state = Object.create(null) as Record<string, unknown>;
+    for (
+      const [persistedKey, persistedValue] of Object.entries(
+        this.readPersistedState(storage) ?? {},
+      )
+    ) {
+      state[persistedKey] = persistedValue;
+    }
     state[key] = value;
-    sessionStorage.setItem("veryfront-state", JSON.stringify(state));
+    try {
+      storage.setItem("veryfront-state", JSON.stringify(state));
+    } catch (error) {
+      logger.error(`Failed to persist state key "${key}":`, error);
+    }
   }
 
   private restoreState(): void {
-    if (typeof sessionStorage === "undefined") return;
+    const storage = this.getSessionStorage();
+    if (!storage) return;
 
-    const state = this.readPersistedState();
+    const state = this.readPersistedState(storage);
     if (!state) return;
 
     for (const [key, value] of Object.entries(state)) {
@@ -119,10 +154,23 @@ class StateBridge implements StateStore {
     }
   }
 
-  private readPersistedState(): Record<string, unknown> | null {
-    if (typeof sessionStorage === "undefined") return null;
+  private getSessionStorage(): Storage | null {
+    try {
+      return typeof globalThis.sessionStorage === "undefined" ? null : globalThis.sessionStorage;
+    } catch (error) {
+      logger.error("Failed to access sessionStorage:", error);
+      return null;
+    }
+  }
 
-    const stored = sessionStorage.getItem("veryfront-state");
+  private readPersistedState(storage: Storage): Record<string, unknown> | null {
+    let stored: string | null;
+    try {
+      stored = storage.getItem("veryfront-state");
+    } catch (error) {
+      logger.error("Failed to read persisted state:", error);
+      return null;
+    }
     if (!stored) return null;
 
     try {
@@ -134,7 +182,7 @@ class StateBridge implements StateStore {
     } catch (error) {
       logger.error("Failed to parse state from sessionStorage:", error);
       try {
-        sessionStorage.removeItem("veryfront-state");
+        storage.removeItem("veryfront-state");
       } catch (clearError) {
         logger.error("Failed to clear corrupted state:", clearError);
       }

@@ -313,6 +313,42 @@ describe("PrefetchQueue", () => {
 
       mocks.cleanup();
     });
+
+    it("does not let an aborted generation remove a replacement request", async () => {
+      const mocks = setupMocks();
+      let callCount = 0;
+      let rejectFirst!: (reason?: unknown) => void;
+      let resolveSecond!: (response: Response) => void;
+      mocks.setMockFetch((_url, _init) => {
+        callCount++;
+        if (callCount === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            rejectFirst = reject;
+          });
+        }
+        return new Promise<Response>((resolve) => {
+          resolveSecond = resolve;
+        });
+      });
+
+      const queue = new PrefetchQueue(createOptions(), new Set<string>());
+      const link = createLink("http://example.com/replaced");
+      const first = queue.prefetchLink(link);
+      await Promise.resolve();
+      queue.stopAll();
+      const second = queue.prefetchLink(link);
+      await Promise.resolve();
+
+      rejectFirst(new DOMException("The operation was aborted", "AbortError"));
+      await first;
+
+      assertEquals(queue.getQueueSize(), 1);
+      assertEquals(queue.getConcurrentCount(), 1);
+
+      resolveSecond(new Response("OK", { status: 200 }));
+      await second;
+      mocks.cleanup();
+    });
   });
 
   describe("Response Size Limiting", () => {
@@ -557,6 +593,20 @@ describe("PrefetchQueue", () => {
 
       assertEquals(prefetchedUrls.size, 3);
 
+      mocks.cleanup();
+    });
+
+    it("bounds remembered URLs during long browser sessions", async () => {
+      const mocks = setupMocks();
+      mocks.setMockFetch(createMockFetch({ ok: true }));
+
+      const prefetchedUrls = new Set<string>();
+      const queue = new PrefetchQueue(createOptions(), prefetchedUrls);
+      for (let index = 0; index < 501; index++) {
+        await queue.prefetch(`http://example.com/page-${index}`);
+      }
+
+      assertEquals(prefetchedUrls.size <= 500, true);
       mocks.cleanup();
     });
 

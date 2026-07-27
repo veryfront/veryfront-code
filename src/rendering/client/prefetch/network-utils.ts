@@ -2,6 +2,7 @@ export interface NetworkInfo {
   effectiveType?: string;
   saveData?: boolean;
   addEventListener?: (event: string, handler: () => void) => void;
+  removeEventListener?: (event: string, handler: () => void) => void;
 }
 
 interface NavigatorWithConnection extends Navigator {
@@ -38,8 +39,12 @@ export class NetworkUtils {
     return true;
   }
 
-  onNetworkChange(callback: () => void): void {
-    this.networkInfo?.addEventListener?.("change", callback);
+  onNetworkChange(callback: () => void): () => void {
+    const networkInfo = this.networkInfo;
+    if (!networkInfo?.addEventListener) return () => {};
+
+    networkInfo.addEventListener("change", callback);
+    return () => networkInfo.removeEventListener?.("change", callback);
   }
 
   getNetworkInfo(): NetworkInfo | null {

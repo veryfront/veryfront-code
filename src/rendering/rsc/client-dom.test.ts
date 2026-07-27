@@ -172,4 +172,47 @@ describe("rendering/rsc/client-dom", () => {
     );
     assertEquals(cancelCount > 0, true);
   });
+
+  it("installs one abort listener for the complete stream lifecycle", async () => {
+    const doc = createDocument();
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const originalAdd = signal.addEventListener.bind(signal);
+    const originalRemove = signal.removeEventListener.bind(signal);
+    let additions = 0;
+    let removals = 0;
+
+    signal.addEventListener = ((...args: Parameters<AbortSignal["addEventListener"]>) => {
+      additions++;
+      return originalAdd(...args);
+    }) as AbortSignal["addEventListener"];
+    signal.removeEventListener = ((...args: Parameters<AbortSignal["removeEventListener"]>) => {
+      removals++;
+      return originalRemove(...args);
+    }) as AbortSignal["removeEventListener"];
+
+    await consumeNdjsonStream(
+      createStream([
+        '{"type":"slot","id":"one","html":"<div>One</div>"}\n',
+        '{"type":"slot","id":"two","html":"<div>Two</div>"}\n',
+        '{"type":"slot","id":"three","html":"<div>Three</div>"}\n',
+      ]),
+      doc,
+      signal,
+    );
+
+    assertEquals(additions, 1);
+    assertEquals(removals, 1);
+  });
+
+  it("rejects an unterminated NDJSON record beyond the client buffer budget", async () => {
+    const doc = createDocument();
+    const oversizedRecord = "x".repeat(1024 * 1024 + 1);
+
+    await assertRejects(
+      () => consumeNdjsonStream(createStream([oversizedRecord]), doc),
+      Error,
+      "buffer limit",
+    );
+  });
 });

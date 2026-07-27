@@ -265,6 +265,20 @@ describe("State Bridge", () => {
       assertEquals(updates1, ["value1"]);
       assertEquals(updates2, ["value2"]);
     });
+
+    it("isolates a throwing subscriber and continues notifying others", () => {
+      const bridge = getStateBridge();
+      const updates: string[] = [];
+      bridge.subscribe("key", () => {
+        throw new Error("subscriber failed");
+      });
+      bridge.subscribe<string>("key", (value) => updates.push(value));
+
+      bridge.set("key", "value");
+
+      assertEquals(updates, ["value"]);
+      assertEquals(bridge.get("key"), "value");
+    });
   });
 
   describe("Persistence", () => {
@@ -355,6 +369,65 @@ describe("State Bridge", () => {
       bridge.set("key", "value");
       bridge.persist("key");
       bridge.clear();
+
+      assertEquals(mockSessionStorage.getItem("veryfront-state"), null);
+    });
+
+    it("keeps in-memory state usable when sessionStorage rejects writes", () => {
+      Object.defineProperty(globalThis, "sessionStorage", {
+        value: {
+          getItem: () => null,
+          setItem: () => {
+            throw new DOMException("Storage is unavailable", "SecurityError");
+          },
+          removeItem: () => {
+            throw new DOMException("Storage is unavailable", "SecurityError");
+          },
+        },
+        configurable: true,
+        writable: true,
+      });
+      const bridge = getStateBridge();
+
+      bridge.set("key", "value");
+      bridge.persist("key");
+
+      assertEquals(bridge.get("key"), "value");
+    });
+
+    it("does not let circular persisted values break state updates", () => {
+      const bridge = getStateBridge();
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+
+      bridge.set("circular", circular);
+      bridge.persist("circular");
+      bridge.set("circular", { recovered: true });
+
+      assertEquals(bridge.get("circular"), { recovered: true });
+    });
+
+    it("keeps in-memory state usable when the storage getter throws", () => {
+      Object.defineProperty(globalThis, "sessionStorage", {
+        get: () => {
+          throw new DOMException("Storage is unavailable", "SecurityError");
+        },
+        configurable: true,
+      });
+      const bridge = getStateBridge();
+
+      bridge.set("key", "value");
+      bridge.persist("key");
+
+      assertEquals(bridge.get("key"), "value");
+    });
+
+    it("does not resume persistence for cleared keys implicitly", () => {
+      const bridge = getStateBridge();
+      bridge.set("key", "before");
+      bridge.persist("key");
+      bridge.clear();
+      bridge.set("key", "after");
 
       assertEquals(mockSessionStorage.getItem("veryfront-state"), null);
     });
@@ -518,6 +591,13 @@ describe("State Bridge", () => {
       }
 
       callbacks.forEach((cb) => cb());
+
+      const listenerMap = (
+        bridge as unknown as {
+          listeners: Map<string, Set<(value: unknown) => void>>;
+        }
+      ).listeners;
+      assertEquals(listenerMap.size, 0);
 
       const updates: string[] = [];
       bridge.subscribe("key0", (value) => updates.push(value as string));

@@ -519,6 +519,37 @@ describe("LinkObserver", () => {
         );
       });
     });
+
+    it("keeps only one pending visibility callback per link", async () => {
+      await withMocksAsync(async (mocks) => {
+        const link = createLink();
+        mocks.setDocument({
+          querySelectorAll: () => [link],
+          body: {},
+        });
+        let callbackCount = 0;
+
+        await withObserverAsync(
+          mocks,
+          createOptions({
+            delay: 5,
+            onLinkVisible: () => {
+              callbackCount++;
+            },
+          }),
+          new Set<string>(),
+          async (observer) => {
+            observer.init();
+            const intersectionObserver = mocks.getMockIntersectionObserver();
+            intersectionObserver.triggerIntersection(link as any, true);
+            intersectionObserver.triggerIntersection(link as any, true);
+
+            await delay(20);
+            assertEquals(callbackCount, 1);
+          },
+        );
+      });
+    });
   });
 
   describe("Dynamic Link Detection", () => {

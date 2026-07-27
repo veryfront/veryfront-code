@@ -228,6 +228,28 @@ describe("NetworkUtils", () => {
         assertEquals(receivedCallback, callback);
       });
     });
+
+    it("returns a disposer that removes the registered listener", () => {
+      let removedEvent = "";
+      let removedCallback: (() => void) | null = null;
+      const mockConnection: NetworkInfo = {
+        effectiveType: "4g",
+        addEventListener: () => {},
+        removeEventListener: (event, handler) => {
+          removedEvent = event;
+          removedCallback = handler;
+        },
+      };
+
+      withMockNavigator({ connection: mockConnection }, () => {
+        const callback = () => {};
+        const dispose = new NetworkUtils().onNetworkChange(callback);
+        dispose();
+
+        assertEquals(removedEvent, "change");
+        assertEquals(removedCallback, callback);
+      });
+    });
   });
 
   describe("getNetworkInfo", () => {

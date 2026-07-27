@@ -14,6 +14,7 @@ const DEFAULT_OPTIONS: PrefetchQueueOptions = {
   maxSize: PREFETCH_QUEUE_MAX_SIZE_BYTES,
   timeout: 5_000,
 };
+const MAX_REMEMBERED_PREFETCH_URLS = 500;
 
 function isAbortError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
@@ -114,7 +115,8 @@ export class PrefetchQueue {
         return;
       }
 
-      this.prefetchedUrls.add(url);
+      if (controller.signal.aborted || this.controllers.get(url) !== controller) return;
+      this.rememberPrefetchedUrl(url);
 
       if (!this.onResourcesFetched) return;
 
@@ -130,8 +132,10 @@ export class PrefetchQueue {
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
 
-      this.controllers.delete(url);
-      this.concurrent = Math.max(0, this.concurrent - 1);
+      if (this.controllers.get(url) === controller) {
+        this.controllers.delete(url);
+        this.concurrent = Math.max(0, this.concurrent - 1);
+      }
     }
   }
 
@@ -151,6 +155,17 @@ export class PrefetchQueue {
 
     this.controllers.clear();
     this.concurrent = 0;
+  }
+
+  private rememberPrefetchedUrl(url: string): void {
+    this.prefetchedUrls.delete(url);
+    this.prefetchedUrls.add(url);
+
+    while (this.prefetchedUrls.size > MAX_REMEMBERED_PREFETCH_URLS) {
+      const oldestUrl = this.prefetchedUrls.values().next().value as string | undefined;
+      if (oldestUrl === undefined) break;
+      this.prefetchedUrls.delete(oldestUrl);
+    }
   }
 
   private isResponseTooLarge(response: Response): boolean {

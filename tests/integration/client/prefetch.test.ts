@@ -70,6 +70,16 @@ describe("Prefetch Manager", () => {
       assertExists(manager);
     });
 
+    it("initializes at most once", () => {
+      const manager = createManager();
+
+      manager.init();
+      const observerCount = env.mockObservers.length;
+      manager.init();
+
+      assertEquals(env.mockObservers.length, observerCount);
+    });
+
     it("should not initialize when saveData is enabled", () => {
       (globalThis.navigator as any).connection.saveData = true;
 
@@ -85,6 +95,28 @@ describe("Prefetch Manager", () => {
       const manager = createManager({ allowedNetworks: ["4g", "wifi"] });
       manager.init();
 
+      assertEquals(env.mockObservers.length, 0);
+    });
+
+    it("removes a deferred initialization listener when destroyed", () => {
+      const manager = createManager();
+      let readyListener: (() => void) | null = null;
+      let removed = false;
+      const loadingDocument = {
+        readyState: "loading",
+        addEventListener: (_event: string, listener: () => void) => {
+          readyListener = listener;
+        },
+        removeEventListener: (_event: string, listener: () => void) => {
+          removed = listener === readyListener;
+        },
+      } as unknown as Document;
+
+      manager.initWhenReady(loadingDocument);
+      manager.destroy();
+      readyListener?.();
+
+      assertEquals(removed, true);
       assertEquals(env.mockObservers.length, 0);
     });
   });
@@ -241,6 +273,25 @@ describe("Prefetch Manager", () => {
       await manager.prefetch("/large");
 
       assertExists(manager);
+    });
+
+    it("bounds response bodies when content-length is absent", async () => {
+      env.fetchMock.set(
+        "/streamed-large",
+        new Response("x".repeat(33), { status: 200 }),
+      );
+      const manager = createManager({ maxSize: 32 });
+      let extracted = false;
+      (manager as unknown as {
+        resourceHintsManager: { extractResourceHints: () => [] };
+      }).resourceHintsManager.extractResourceHints = () => {
+        extracted = true;
+        return [];
+      };
+
+      await manager.prefetch("/streamed-large");
+
+      assertEquals(extracted, false);
     });
   });
 
@@ -466,12 +517,17 @@ describe("Prefetch Manager", () => {
     });
 
     it("should handle prefetch after destroy", async () => {
+      let fetchCount = 0;
+      env.fetchMock.set("/test", () => {
+        fetchCount++;
+        return new Response("OK", { status: 200 });
+      });
       const manager = createManager();
       manager.init();
       manager.destroy();
 
       await manager.prefetch("/test");
-      assertExists(manager);
+      assertEquals(fetchCount, 0);
     });
   });
 });

@@ -10,6 +10,8 @@ function isAnchorElement(element: Element): element is HTMLAnchorElement {
     : element.tagName === "A";
 }
 
+const MAX_PENDING_VISIBILITY_CALLBACKS = 500;
+
 export class LinkObserver {
   private options: LinkObserverOptions;
   private intersectionObserver: IntersectionObserver | null = null;
@@ -25,6 +27,7 @@ export class LinkObserver {
   }
 
   init(): void {
+    if (this.intersectionObserver || this.mutationObserver) return;
     this.createIntersectionObserver();
     this.observeLinks();
     this.setupMutationObserver();
@@ -43,15 +46,17 @@ export class LinkObserver {
       if (!isAnchorElement(entry.target)) continue;
 
       const link = entry.target;
+      if (this.elementTimeoutMap.has(link)) continue;
+      if (this.pendingTimeouts.size >= MAX_PENDING_VISIBILITY_CALLBACKS) continue;
 
-      // Reset counter if it gets too high (prevents unbounded growth in long-running sessions)
-      if (this.timeoutCounter > 1_000_000) this.timeoutCounter = 0;
+      if (this.timeoutCounter >= Number.MAX_SAFE_INTEGER) this.timeoutCounter = 0;
+      while (this.pendingTimeouts.has(this.timeoutCounter)) this.timeoutCounter++;
       const timeoutKey = this.timeoutCounter++;
 
       const timeoutId = setTimeout(() => {
         this.pendingTimeouts.delete(timeoutKey);
         this.elementTimeoutMap.delete(link);
-        this.options.onLinkVisible(link);
+        if (this.isValidLink(link)) this.options.onLinkVisible(link);
       }, this.options.delay);
 
       this.pendingTimeouts.set(timeoutKey, timeoutId);
@@ -140,6 +145,7 @@ export class LinkObserver {
       clearTimeout(timeoutId);
     }
     this.pendingTimeouts.clear();
+    this.elementTimeoutMap = new WeakMap();
     this.timeoutCounter = 0;
 
     this.intersectionObserver?.disconnect();

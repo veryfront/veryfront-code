@@ -25,6 +25,86 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       invalidateProjectCandidateManifests();
       invalidateProjectCandidateManifests();
     });
+
+    it("invalidates only the exact project scope", () => {
+      invalidateProjectCandidateManifests();
+      const projectOptions = {
+        projectVersion: "v1",
+        projectDir: "/project",
+        developmentMode: false,
+      };
+
+      getProjectCandidates({
+        ...projectOptions,
+        projectScope: "tenant",
+        files: [{
+          path: "/project/pages/index.tsx",
+          content: '<div className="tenant-old">Tenant</div>',
+        }],
+      });
+      getProjectCandidates({
+        ...projectOptions,
+        projectScope: "tenant:child",
+        files: [{
+          path: "/project/pages/index.tsx",
+          content: '<div className="child-old">Child</div>',
+        }],
+      });
+
+      invalidateProjectCandidateManifests("tenant");
+
+      const tenant = getProjectCandidates({
+        ...projectOptions,
+        projectScope: "tenant",
+        files: [{
+          path: "/project/pages/index.tsx",
+          content: '<div className="tenant-new">Tenant</div>',
+        }],
+      });
+      const child = getProjectCandidates({
+        ...projectOptions,
+        projectScope: "tenant:child",
+        files: [{
+          path: "/project/pages/index.tsx",
+          content: '<div className="child-new">Child</div>',
+        }],
+      });
+
+      assertEquals(tenant.has("tenant-new"), true);
+      assertEquals(child.has("child-old"), true);
+      assertEquals(child.has("child-new"), false);
+    });
+
+    it("keeps delimiter-containing project identities distinct", () => {
+      invalidateProjectCandidateManifests();
+      const common = {
+        projectDir: "/project",
+        developmentMode: false,
+      };
+
+      const first = getProjectCandidates({
+        ...common,
+        projectScope: "tenant:release",
+        projectVersion: "v1",
+        files: [{
+          path: "/project/pages/index.tsx",
+          content: '<div className="first-project">First</div>',
+        }],
+      });
+      const second = getProjectCandidates({
+        ...common,
+        projectScope: "tenant",
+        projectVersion: "release:v1",
+        files: [{
+          path: "/project/pages/index.tsx",
+          content: '<div className="second-project">Second</div>',
+        }],
+      });
+
+      assertEquals(first.has("first-project"), true);
+      assertEquals(second.has("second-project"), true);
+      assertEquals(second.has("first-project"), false);
+    });
   });
 
   describe("getRouteCandidates", () => {
@@ -250,6 +330,27 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       });
 
       assertEquals(result.has("text-emerald-500"), true);
+    });
+
+    it("bounds retained manifests across project versions", () => {
+      invalidateProjectCandidateManifests();
+
+      for (let index = 0; index < 201; index++) {
+        const result = getProjectCandidates({
+          projectScope: `project-${index}`,
+          projectVersion: `release-${index}`,
+          projectDir: "/project",
+          files: [{
+            path: "/project/pages/index.tsx",
+            content: `<div className="project-${index}">Project</div>`,
+          }],
+          developmentMode: false,
+        });
+        assertEquals(result.has(`project-${index}`), true);
+      }
+
+      const stats = getCandidateManifestCacheStats();
+      assertEquals(stats.manifests.entries <= 200, true);
     });
   });
 });
