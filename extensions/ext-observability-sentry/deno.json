@@ -9,7 +9,7 @@
     ]
   },
   "imports": {
-    "@sentry/deno": "npm:@sentry/deno@^10.68.0",
+    "@sentry/deno": "npm:@sentry/deno@10.68.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/observability/sentry": "../../src/observability/sentry.ts"
