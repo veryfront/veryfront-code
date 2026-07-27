@@ -23,9 +23,10 @@
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total cleanup budget after request draining
  */
 
-import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
+import { createProxyHandler, INTERNAL_PROXY_HEADERS } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { ensureRedisTokenCacheStoreFromEnv } from "./cache/redis-extension.ts";
 import {
@@ -42,8 +43,7 @@ import {
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
-import { ENV_VAR_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
-import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import {
   endSpan,
   extractContext,
@@ -59,8 +59,7 @@ import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
-import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
-import { isProduction } from "#veryfront/platform/environment.ts";
+import { exit, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
@@ -81,7 +80,6 @@ import { removeStickyCookieFromPublicCacheableResponse } from "./response-header
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
-  parseProxyDrainTimeoutMs,
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
 import {
@@ -89,115 +87,48 @@ import {
   PROXY_ROUTING_INVALIDATION_PATH,
 } from "./routing-invalidation.ts";
 import { startProxyRoutingInvalidationBus } from "./routing-invalidation-redis.ts";
+import { readProxyStartupConfig } from "./startup-config.ts";
+import { createProxyAuthProvider } from "./auth-extension.ts";
+import { runProxyShutdownSteps } from "./shutdown.ts";
 
-type AuthJwtExtensionModule = {
-  createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
-};
-
-function getLocalProjects(): Record<string, string> {
-  const raw = getEnv("LOCAL_PROJECTS");
-  return raw ? (JSON.parse(raw) as Record<string, string>) : {};
-}
-
-// Configuration from environment variables
-const apiClientId = getEnv("VERYFRONT_PROXY_API_CLIENT_ID") || "";
-const apiClientSecret = getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") || "";
-
-const config: ProxyConfig = {
-  apiBaseUrl: getEnv("VERYFRONT_PROXY_API_BASE_URL") || "https://api.veryfront.com",
-  apiClientId,
-  apiClientSecret,
-  // Preview uses same service account (scopes determine access)
-  previewApiClientId: apiClientId,
-  previewApiClientSecret: apiClientSecret,
-  localProjects: getLocalProjects(),
-};
-
-function resolveProxyBinding(): { hostname: string; port: number } {
-  const proxyUrlRaw = getEnv("VERYFRONT_PROXY_URL");
-  if (proxyUrlRaw) {
-    const proxyUrl = new URL(proxyUrlRaw);
-    const port = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
-    return { hostname: proxyUrl.hostname, port };
-  }
-
-  const port = parseInt(getEnv("PORT") || "8080");
-  const hostname = getEnv("HOST") || "0.0.0.0";
-  return { hostname, port };
-}
-
-const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
-// Fail closed in production: never silently forward to localhost.
-if (!serverUrlFromEnv && isProduction()) {
-  throw ENV_VAR_MISSING.create({
-    detail:
-      "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
-  });
-}
-const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
+const startupConfig = readProxyStartupConfig();
+const config = startupConfig.proxyConfig;
+const PRODUCTION_SERVER_URL = startupConfig.productionServerUrl;
 
 const rendererRouter = createRendererRouterFromEnvironment(
   PRODUCTION_SERVER_URL,
 );
 
 // Dedicated server resolver: routes environments to their dedicated server if assigned
-const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
-const apiInternalUser = getEnv("VERYFRONT_API_INTERNAL_USER") || "";
-const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
-const serverResolver = new ServerResolver(apiInternalUrl, apiInternalUser, apiInternalPass);
+const serverResolver = new ServerResolver(
+  startupConfig.apiInternalUrl,
+  startupConfig.apiInternalUser,
+  startupConfig.apiInternalPass,
+);
 
-const { hostname: HOST, port: PORT } = resolveProxyBinding();
+const { hostname: HOST, port: PORT } = startupConfig.binding;
 const WS_CONNECT_TIMEOUT_MS = 30_000;
-// Timeout for forwarding requests to production server (SSR can take time on cold start)
-const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
-const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
-const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
-  getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || String(DEFAULT_SERVER_REQUEST_TIMEOUT_MS),
-);
-// Retry configuration for transient connection errors
-const DEFAULT_SERVER_RETRY_COUNT = 1;
-const DEFAULT_SERVER_RETRY_DELAY_MS = 100;
-const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
-  getEnv("VERYFRONT_SERVER_RETRY_COUNT") || String(DEFAULT_SERVER_RETRY_COUNT),
-);
-const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
-  getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
-);
-const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
-  getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
-  DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
-);
-const routingInvalidationSecret = getEnv("VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET") ?? "";
-const routingInvalidationSecretBytes =
-  new TextEncoder().encode(routingInvalidationSecret).byteLength;
-const expectedReplicasRaw = getEnv("VERYFRONT_PROXY_EXPECTED_REPLICAS");
-const expectedReplicas = Number(expectedReplicasRaw);
-const hasValidExpectedReplicas = Number.isInteger(expectedReplicas) && expectedReplicas > 0;
-if (isProduction() && !hasValidExpectedReplicas) {
-  throw new Error("VERYFRONT_PROXY_EXPECTED_REPLICAS must be a positive integer in production");
-}
-if (isProduction() && routingInvalidationSecretBytes < 32) {
-  throw new Error(
-    "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET must contain at least 32 bytes in production",
-  );
-}
+const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = startupConfig.serverRequestTimeoutMs;
+const VERYFRONT_SERVER_RETRY_COUNT = startupConfig.serverRetryCount;
+const VERYFRONT_SERVER_RETRY_DELAY_MS = startupConfig.serverRetryDelayMs;
+const SHUTDOWN_DRAIN_TIMEOUT_MS = startupConfig.shutdownDrainTimeoutMs;
+const SHUTDOWN_CLEANUP_TIMEOUT_MS = startupConfig.shutdownCleanupTimeoutMs;
+const routingInvalidationSecret = startupConfig.routingInvalidationSecret;
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
 let shuttingDown = false;
 
-const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
+const authProvider = await importFirstPartyExtensionModule<unknown>(
   "ext-auth-jwt",
   "@veryfront/ext-auth-jwt",
-).catch((error) => {
+).then(createProxyAuthProvider).catch((error) => {
   throw INITIALIZATION_ERROR.create({
-    detail:
-      `The Veryfront proxy requires the ext-auth-jwt extension. In npm deployments install @veryfront/ext-auth-jwt alongside veryfront. ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+    detail: "The Veryfront proxy requires a valid ext-auth-jwt extension. " +
+      "In npm deployments install @veryfront/ext-auth-jwt alongside veryfront.",
     cause: error,
   });
 });
-register("AuthProvider", createAuthProvider({}));
+register("AuthProvider", authProvider);
 
 // Initialize cache and proxy handler
 await ensureRedisTokenCacheStoreFromEnv();
@@ -215,12 +146,12 @@ const proxyHandler = createProxyHandler({
   logger: routingInvalidationLogger,
 });
 const routingInvalidationBus = await startProxyRoutingInvalidationBus({
-  expectedReplicas: hasValidExpectedReplicas ? expectedReplicas : undefined,
+  expectedReplicas: startupConfig.expectedReplicas,
   integritySecret: routingInvalidationSecret,
   logger: routingInvalidationLogger,
   onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup,
 }).catch((error) => {
-  if (isProduction()) {
+  if (startupConfig.production) {
     throw new Error("Proxy routing invalidation bus failed to start", { cause: error });
   }
   proxyLogger.error(
@@ -230,7 +161,7 @@ const routingInvalidationBus = await startProxyRoutingInvalidationBus({
   );
   return null;
 });
-if (isProduction() && !routingInvalidationBus) {
+if (startupConfig.production && !routingInvalidationBus) {
   throw new Error(
     "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
   );
@@ -755,6 +686,7 @@ const server = createHttpServer();
 async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  let shutdownFailed = false;
 
   proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
@@ -778,31 +710,74 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
         ),
       });
     }
+  } catch (error) {
+    shutdownFailed = true;
+    proxyLogger.error("Proxy request drain failed", { signal }, error);
+  }
 
-    await routingInvalidationBus?.close();
+  let serverClosed = false;
+  const cleanupFailures = await runProxyShutdownSteps([
+    {
+      name: "routing-invalidation-bus",
+      run: async () => await routingInvalidationBus?.close(),
+    },
+    {
+      name: "http-server",
+      run: async () => {
+        serverClosed = await closeProxyServerWithin(
+          () => server.close(),
+          PROXY_SERVER_CLOSE_TIMEOUT_MS,
+        );
+      },
+    },
+    {
+      name: "renderer-router",
+      run: () => rendererRouter?.close(),
+    },
+    {
+      name: "server-resolver",
+      run: () => serverResolver.close(),
+    },
+    {
+      name: "proxy-handler",
+      run: async () => await proxyHandler.close(),
+    },
+    {
+      name: "telemetry",
+      run: async () => await shutdownOTLP(),
+    },
+  ], SHUTDOWN_CLEANUP_TIMEOUT_MS);
 
-    const closed = await closeProxyServerWithin(
-      () => server.close(),
-      PROXY_SERVER_CLOSE_TIMEOUT_MS,
-    );
-    if (!closed) {
-      proxyLogger.warn(
-        "Proxy server close timed out; process exit will close remaining connections",
-        {
-          closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS,
-        },
+  for (const failure of cleanupFailures) {
+    if (failure.status === "timeout") {
+      proxyLogger.error("Proxy shutdown step timed out", {
+        step: failure.step,
+        cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      });
+    } else {
+      proxyLogger.error(
+        "Proxy shutdown step failed",
+        { step: failure.step },
+        failure.error,
       );
     }
-    rendererRouter?.close();
-    serverResolver.close();
-    await proxyHandler.close();
-    await shutdownOTLP();
-    proxyLogger.info("Closed connections");
-  } catch (error) {
-    proxyLogger.error("Error while shutting down proxy", error);
-  } finally {
-    exit(0);
   }
+  if (cleanupFailures.length > 0) shutdownFailed = true;
+
+  const serverCloseFailed = cleanupFailures.some(({ step }) => step === "http-server");
+  if (!serverCloseFailed && !serverClosed) {
+    proxyLogger.warn(
+      "Proxy server close timed out; process exit will close remaining connections",
+      {
+        closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS,
+      },
+    );
+  }
+
+  proxyLogger.info("Proxy shutdown cleanup finished", {
+    failed: shutdownFailed,
+  });
+  exit(shutdownFailed ? 1 : 0);
 }
 
 const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {

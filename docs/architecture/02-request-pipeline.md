@@ -71,6 +71,47 @@ flowchart TD
 5. Protocol and control-plane paths enter their dedicated handlers.
 6. Response helpers normalize headers, CORS, errors, and not-found behavior.
 
+## Standalone proxy lifecycle
+
+The split-mode proxy captures its core listener, upstream, retry, drain, and
+routing-authority settings in one immutable configuration snapshot before it
+creates network clients or listeners. Explicit malformed values stop startup;
+they do not fall back to a different port, upstream, retry policy, or local
+project map. API and renderer endpoints must be canonical HTTP(S) URLs without
+credentials, queries, or fragments. `LOCAL_PROJECTS` must be a JSON object with
+at most 1,000 canonical project slugs mapped to normalized absolute paths.
+
+Production startup additionally requires `VERYFRONT_SERVER_URL`,
+`VERYFRONT_PROXY_EXPECTED_REPLICAS`, and a
+`VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET` of at least 32 UTF-8 bytes. OAuth
+client credentials are validated when present. Their absence remains a
+separate deployment-policy decision and currently emits the proxy's existing
+unauthenticated-forwarding warning rather than being treated as malformed
+configuration.
+
+| Environment variable                  | Default                  | Allowed value or range                                         |
+| ------------------------------------- | ------------------------ | -------------------------------------------------------------- |
+| `VERYFRONT_PROXY_API_BASE_URL`        | Veryfront Cloud API      | Canonical HTTP(S) URL, optional path                           |
+| `VERYFRONT_SERVER_URL`                | localhost in development | HTTP(S) origin; required in production                         |
+| `VERYFRONT_PROXY_URL`                 | unset                    | HTTP(S) bind origin; mutually exclusive with `HOST` and `PORT` |
+| `HOST`                                | `0.0.0.0`                | Canonical hostname or IP address                               |
+| `PORT`                                | `8080`                   | `1..65535`                                                     |
+| `VERYFRONT_SERVER_REQUEST_TIMEOUT_MS` | `90000`                  | `1..900000`                                                    |
+| `VERYFRONT_SERVER_RETRY_COUNT`        | `1`                      | `0..5`                                                         |
+| `VERYFRONT_SERVER_RETRY_DELAY_MS`     | `100`                    | `0..60000`                                                     |
+| `SHUTDOWN_DRAIN_TIMEOUT_MS`           | `25000`                  | `0..600000`                                                    |
+| `SHUTDOWN_CLEANUP_TIMEOUT_MS`         | `4000`                   | `0..2147483647`                                                |
+| `VERYFRONT_PROXY_EXPECTED_REPLICAS`   | unset                    | `1..10000`; required in production                             |
+
+On `SIGINT` or `SIGTERM`, new requests receive a retryable `503` while the
+proxy waits for tracked response bodies, including event streams, to finish.
+After the drain deadline, cleanup has one shared four-second budget by default.
+Every cleanup action is started even if an earlier action rejects or stalls:
+the routing bus, HTTP listener, renderer router, dedicated-server resolver,
+token/cache handler, and telemetry exporter. A cleanup rejection or deadline
+overrun produces a non-zero process exit after the remaining actions have been
+attempted.
+
 ## Runtime caches
 
 ### OAuth token cache

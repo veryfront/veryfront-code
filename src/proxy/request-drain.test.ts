@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   closeProxyServerWithin,
@@ -101,10 +101,40 @@ describe("proxy request drain", () => {
     assertEquals(tracker.getInFlightCount(), 0);
   });
 
-  it("uses a safe default for invalid drain timeout values", () => {
+  it("rejects invalid drain timing instead of risking an unbounded loop", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+
+    await assertRejects(
+      () => tracker.waitForDrain(Number.NaN),
+      RangeError,
+      "drain timeout",
+    );
+    await assertRejects(
+      () => tracker.waitForDrain(100, 0),
+      RangeError,
+      "poll interval",
+    );
+  });
+
+  it("defaults only absent drain timeouts and rejects malformed policy", () => {
     assertEquals(parseProxyDrainTimeoutMs("290000", 25_000), 290_000);
-    assertEquals(parseProxyDrainTimeoutMs("invalid", 25_000), 25_000);
-    assertEquals(parseProxyDrainTimeoutMs("-1", 25_000), 25_000);
+    assertEquals(parseProxyDrainTimeoutMs(undefined, 25_000), 25_000);
+    assertEquals(parseProxyDrainTimeoutMs("", 25_000), 25_000);
+    assertThrows(
+      () => parseProxyDrainTimeoutMs("invalid", 25_000),
+      TypeError,
+      "decimal integer",
+    );
+    assertThrows(
+      () => parseProxyDrainTimeoutMs("-1", 25_000),
+      TypeError,
+      "decimal integer",
+    );
+    assertThrows(
+      () => parseProxyDrainTimeoutMs("600001", 25_000),
+      RangeError,
+      "between 0 and 600000",
+    );
   });
 
   it("returns a retryable connection-closing response while draining", () => {
@@ -118,5 +148,10 @@ describe("proxy request drain", () => {
   it("bounds server close when an adapter keeps waiting on open connections", async () => {
     assertEquals(await closeProxyServerWithin(() => new Promise(() => {}), 5), false);
     assertEquals(await closeProxyServerWithin(() => Promise.resolve(), 50), true);
+    await assertRejects(
+      () => closeProxyServerWithin(() => Promise.resolve(), Number.POSITIVE_INFINITY),
+      RangeError,
+      "server close timeout",
+    );
   });
 });

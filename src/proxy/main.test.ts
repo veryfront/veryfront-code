@@ -37,17 +37,21 @@ describe("proxy main request URL parsing", () => {
 
   it("starts acknowledged routing invalidation fan-out and handles signed ingress", async () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+    const startupConfigSource = await Deno.readTextFile(
+      new URL("./startup-config.ts", import.meta.url),
+    );
 
     assertStringIncludes(source, "startProxyRoutingInvalidationBus");
+    assertStringIncludes(source, "readProxyStartupConfig");
     assertStringIncludes(source, "onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup");
     assertStringIncludes(source, "handleProxyRoutingInvalidationRequest");
-    assertStringIncludes(source, "if (isProduction() && !routingInvalidationBus)");
+    assertStringIncludes(source, "if (startupConfig.production && !routingInvalidationBus)");
     assertStringIncludes(
-      source,
+      startupConfigSource,
       "VERYFRONT_PROXY_EXPECTED_REPLICAS must be a positive integer in production",
     );
     assertStringIncludes(
-      source,
+      startupConfigSource,
       "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET must contain at least 32 bytes in production",
     );
     assertStringIncludes(source, "integritySecret: routingInvalidationSecret");
@@ -58,5 +62,14 @@ describe("proxy main request URL parsing", () => {
     assertEquals(drainIndex >= 0, true);
     assertEquals(busCloseIndex > drainIndex, true);
     assertEquals(serverCloseIndex > busCloseIndex, true);
+  });
+
+  it("uses bounded behavioral cleanup and exits nonzero when a step fails", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "runProxyShutdownSteps");
+    assertStringIncludes(source, "SHUTDOWN_CLEANUP_TIMEOUT_MS");
+    assertStringIncludes(source, "exit(shutdownFailed ? 1 : 0)");
+    assertEquals(source.includes("finally {\n    exit(0)"), false);
   });
 });
