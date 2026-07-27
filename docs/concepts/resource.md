@@ -39,8 +39,18 @@ advertised to MCP clients aligned.
 JSON is the default MCP content mode because it gives loaders a bounded,
 data-only transport contract. A resource can instead declare text or binary
 content together with its media type. The declared mode is checked against the
-loader result before content crosses the MCP boundary, and every mode has a
-four-megabyte payload limit.
+loader result before content crosses the MCP boundary. JSON and text content
+fields are limited to four mebibytes. Blob content is limited to three
+mebibytes of source bytes so its base64-encoded MCP field remains within the
+same four-mebibyte bound.
+
+Resource construction and registration capture the schema parser, loader,
+subscription callback, metadata, and read context instead of retaining
+caller-controlled accessors. Later mutation therefore cannot change the
+advertised contract or swap runtime validation after registration. Unknown MCP
+metadata fields fail at the boundary rather than being silently discarded.
+Descriptions, titles, and definition IDs also have explicit limits so
+discovery and list responses cannot grow from unbounded metadata.
 
 MCP cancellation reaches the loader through its optional read context. The
 server can stop waiting even when a loader ignores the signal, but the loader

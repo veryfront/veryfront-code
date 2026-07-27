@@ -1369,8 +1369,9 @@ Prompt findings are remediated:
 - MCP hides disabled resources, separates resources from templates, and does
   not advertise unsupported subscriptions. JSON remains the bounded default;
   explicit text and blob modes enforce their declared MIME type and loader
-  result, every final transport payload is byte-bounded at four megabytes, and
-  binary bytes are snapshotted before base64 encoding.
+  result, JSON and text content fields are bounded at four mebibytes, and blob
+  source bytes are bounded so their snapshotted base64 field stays within the
+  same limit.
 - The Prompt concept page, MCP how-to, Resource explanation, README transport
   wording, generated API reference, and published-package consumer fixtures
   match the implemented contracts.
@@ -1422,6 +1423,79 @@ The following findings keep `resource` in
 - Resource `mcp.cachePolicy` remains a reserved but unenforced setting. Cache
   key, TTL, invalidation, and failure semantics require a deliberate API
   decision; no behavior was invented for an existing no-op knob.
+
+### Resource boundary revalidation checkpoint (cache policy pending)
+
+The post-MCP Resource pass found and remediated additional boundary defects
+without claiming formal closure while the public cache-policy decision remains
+unapproved:
+
+- **Symptom -> Source -> Consequence -> Remedy:** frozen configuration objects
+  could retain live getters, configuration fields were reread across validation
+  and capture, schema `parse` methods remained mutable after registration, and
+  read-context URI accessors were evaluated repeatedly. A caller could
+  therefore advertise one contract and execute another despite the documented
+  immutable boundary. Resource construction and literal registration now
+  capture every field once, retain the exact schema parser and receiver, copy
+  MCP metadata even when its source is frozen, and snapshot read context before
+  asynchronous work begins.
+- **Symptom -> Source -> Consequence -> Remedy:** blob admission bounded raw
+  bytes at four mebibytes before base64 encoding. A valid admitted value could
+  therefore expand its MCP content field beyond the documented four-mebibyte
+  transport bound. Blob source input is now capped at three mebibytes and the
+  encoded field is checked defensively; the exact boundary and first rejected
+  byte have regression coverage.
+- **Symptom -> Source -> Consequence -> Remedy:** template-overlap detection
+  treated every literal segment as compatible with a parameter, while the
+  actual parameter expression rejects empty segments and URI delimiters. Valid
+  custom-scheme templates could be rejected as ambiguous even though no URI
+  could match both. Overlap analysis now uses the same non-empty,
+  delimiter-excluding condition as matching, with registration and lookup
+  coverage for the previously rejected pair.
+- **Symptom -> Source -> Consequence -> Remedy:** the root URI produced an
+  empty derived ID, unknown MCP fields were silently discarded by runtime
+  validation, schema and runtime strictness differed, and model-facing
+  metadata and literal definition IDs were unbounded. Root resources now
+  receive a usable deterministic ID, runtime and schema validation both reject
+  unknown MCP fields, descriptions and titles have explicit limits, and
+  definition IDs are bounded and reject control characters.
+- A proposed registry-ID equality check was deliberately removed after the
+  affected MCP portfolio proved that `registerResource(exposureName,
+  definition)` supports a public exposure name distinct from the definition's
+  derived ID. The consumer contract, rather than an internal consistency
+  preference, remains authoritative.
+- **Symptom -> Source -> Consequence -> Remedy:** the merged deploy readiness
+  flow imported the canonical hosted-domain parser through a deep Server
+  implementation alias. The CLI boundary gate failed, and either copying the
+  hostname rules or importing the full public Server barrel would introduce
+  security-sensitive drift or load an unrelated server graph. An exact private
+  `#veryfront/server-cli-domain` port now exposes only the parser, remains
+  absent from package exports, and rejects prefix, suffix, query, and deep-path
+  variants through the boundary regression test.
+
+Current reproducible evidence:
+
+- The focused Resource surface passes 6 top-level tests and 59 nested checks
+  across factory, runtime loading and cancellation, registry matching,
+  configuration schemas, and MCP content encoding.
+- The complete affected Resource portfolio passes 30 top-level tests and 348
+  nested checks across Resource, discovery, request-time rediscovery,
+  development dashboard reads, and the MCP server.
+- Direct `deno check`, `deno lint src/resource`, formatting, and
+  `git diff --check` pass.
+- The documentation generator refreshed the Resource reference. The
+  documentation gate validates 40 reference pages, 67 guides, 112 public
+  documentation files, executable guide contracts and examples, and all 746
+  links.
+- `deno task typecheck:consumer` rebuilds the npm package and every first-party
+  extension, verifies the npm root import lifecycle, and passes external
+  TypeScript composition against the emitted Resource declarations.
+- The branch merged `origin/main` commit `cdccb25a7` without rewriting its
+  hardening history. The complete deploy/release-asset portfolio passes 37
+  top-level tests and 222 nested checks. The exact private-port regression
+  passes 3 tests, `deno task verify:quick` passes every configured source,
+  documentation, lint, architecture, and typecheck gate, and the branch remains
+  zero commits behind upstream.
 
 ### Cross-module cache, routing, and production-server remediation checkpoint
 

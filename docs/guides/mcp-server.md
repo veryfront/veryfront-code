@@ -256,13 +256,19 @@ export default resource({
 ```
 
 To serve binary content, use `type: "blob"` with a media type and return a
-`Uint8Array`. The MCP server base64-encodes the bytes. JSON, text, and blob
-payloads are limited to four megabytes.
+`Uint8Array`. The MCP server base64-encodes the bytes. JSON and text content
+fields are limited to four mebibytes. Blob inputs are limited to three
+mebibytes so the encoded field remains within four mebibytes.
 
 Parameterized URI segments do not absorb raw `?` or `#` delimiters. Percent-
 encode a reserved delimiter when it belongs inside a parameter value. Resource
 patterns and requested URIs are limited to 8,192 characters and reject raw
 whitespace and control characters.
+
+Resource descriptions are limited to 16,384 characters, titles to 1,024
+characters, and definition IDs to 8,192 characters. MCP configuration objects
+are strict: unknown fields are rejected when the resource is constructed or
+registered.
 
 Loaders receive MCP cancellation through the optional read context:
 
