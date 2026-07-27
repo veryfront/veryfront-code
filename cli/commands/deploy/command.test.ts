@@ -171,6 +171,45 @@ describe("environment URL readiness", () => {
     assertEquals(cookie, "authToken=test-token");
   });
 
+  it("does not send credentials to a mismatched Veryfront project host", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(
+          request.url === "https://other-project.production.veryfront.com/"
+            ? new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            })
+            : new Response("ready"),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://other-project.production.veryfront.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [
+      {
+        url: "https://other-project.production.veryfront.com/",
+        cookie: null,
+      },
+      {
+        url: "https://my-project.production.veryfront.com/",
+        cookie: "authToken=test-token",
+      },
+    ]);
+  });
+
   it("authenticates a protected veryfront.org environment directly", async () => {
     const requests: Array<{ url: string; cookie: string | null }> = [];
 

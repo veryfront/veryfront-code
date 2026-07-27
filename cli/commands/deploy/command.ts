@@ -652,13 +652,18 @@ function buildCanonicalEnvironmentUrl(
   return `https://${projectSlug}.${environmentName}.veryfront.com`;
 }
 
-function isVeryfrontHostedUrl(url: URL): boolean {
+function isMatchingVeryfrontHostedUrl(
+  url: URL,
+  target: EnvironmentReadinessTarget,
+): boolean {
   const hostname = url.hostname.toLowerCase();
   if (!hostname.endsWith(".veryfront.com") && !hostname.endsWith(".veryfront.org")) {
     return false;
   }
   const parsed = parseProjectDomain(hostname);
-  return parsed.isVeryfrontDomain && parsed.slug !== null && parsed.environment !== null;
+  return parsed.isVeryfrontDomain &&
+    parsed.slug === target.projectSlug.toLowerCase() &&
+    parsed.environment === target.environmentName.toLowerCase();
 }
 
 function isVeryfrontSignInUrl(url: URL): boolean {
@@ -708,7 +713,7 @@ function buildEnvironmentReadinessProbes(
   if (route === null) return [];
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
-  if (target.protected && !isVeryfrontHostedUrl(new URL(targetUrl))) {
+  if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
     return [
       {
         url: targetUrl,
