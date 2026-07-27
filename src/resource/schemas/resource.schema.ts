@@ -39,7 +39,7 @@ export const getMcpConfigSchema = defineSchema((v) =>
     enabled: v.boolean().optional(),
     cachePolicy: getCachePolicySchema().optional(),
     content: getMcpContentConfigSchema().optional(),
-  })
+  }).strict()
 );
 
 // Backward-compat aliases

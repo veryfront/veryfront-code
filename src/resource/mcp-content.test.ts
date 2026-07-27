@@ -66,9 +66,23 @@ Deno.test("MCP text and blob bounds are measured in transport bytes", () => {
       toMCPResourceContents(
         blob.id,
         blob,
-        new Uint8Array(MAX_RESOURCE_CONTENT_BYTES + 1),
+        new Uint8Array((MAX_RESOURCE_CONTENT_BYTES / 4) * 3 + 1),
         blob.pattern,
       ),
     ResourceContentValidationError,
+  );
+
+  const largestBlob = toMCPResourceContents(
+    blob.id,
+    blob,
+    new Uint8Array((MAX_RESOURCE_CONTENT_BYTES / 4) * 3),
+    blob.pattern,
+  );
+  if (!("blob" in largestBlob)) {
+    throw new Error("Expected blob resource content");
+  }
+  assertLessOrEqual(
+    new TextEncoder().encode(largestBlob.blob).byteLength,
+    MAX_RESOURCE_CONTENT_BYTES,
   );
 });

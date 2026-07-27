@@ -8,7 +8,7 @@
 
 import type { Resource, ResourceConfig } from "./types.ts";
 import { compileResourcePattern } from "./pattern.ts";
-import { assertResourceConfig, createResourceDefinition } from "./validation.ts";
+import { captureResourceConfig, createResourceDefinition } from "./validation.ts";
 
 let resourcePatternCounter = 0;
 
@@ -16,11 +16,9 @@ let resourcePatternCounter = 0;
 export function resource<TParams = unknown, TData = unknown>(
   config: ResourceConfig<TParams, TData>,
 ): Resource<TParams, TData> {
-  // Validate before reading optional fields so malformed JavaScript callers
-  // fail at the construction boundary rather than producing a partial value.
-  assertResourceConfig(config);
-  const pattern = config.pattern ?? generateFallbackPattern();
-  const generatedPattern = config.pattern === undefined ? pattern : undefined;
+  const captured = captureResourceConfig(config);
+  const pattern = captured.pattern ?? generateFallbackPattern();
+  const generatedPattern = captured.pattern === undefined ? pattern : undefined;
   compileResourcePattern(pattern);
   const id = resourcePatternToId(pattern);
 
@@ -28,7 +26,7 @@ export function resource<TParams = unknown, TData = unknown>(
     id,
     pattern,
     generatedPattern,
-    config,
+    config: captured,
   });
 }
 
@@ -47,5 +45,6 @@ function generateFallbackPattern(): string {
  * Example: "/users/:userId/profile" -> "users_userId_profile"
  */
 function resourcePatternToId(pattern: string): string {
-  return pattern.replace(/^\//, "").replace(/\//g, "_").replace(/:/g, "");
+  return pattern.replace(/^\//, "").replace(/\//g, "_").replace(/:/g, "") ||
+    "root";
 }

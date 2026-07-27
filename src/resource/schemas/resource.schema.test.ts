@@ -19,3 +19,18 @@ Deno.test("resource MCP schema rejects malformed media types", () => {
     );
   }
 });
+
+Deno.test("resource MCP schema rejects unknown configuration fields", () => {
+  const schema = getMcpConfigSchema();
+
+  assertThrows(() => schema.parse({ enabled: true, typo: true }));
+  assertThrows(() =>
+    schema.parse({
+      content: {
+        type: "text",
+        mimeType: "text/plain",
+        typo: true,
+      },
+    })
+  );
+});

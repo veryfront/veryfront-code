@@ -3,6 +3,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { encodeBase64Bytes } from "#veryfront/utils/base64url.ts";
 
 const MAX_RESOURCE_CONTENT_BYTES = 4 * 1024 * 1024;
+const MAX_RESOURCE_BLOB_SOURCE_BYTES = Math.floor(MAX_RESOURCE_CONTENT_BYTES / 4) * 3;
 const JsonStringify = JSON.stringify.bind(JSON);
 const TextEncoderConstructor = TextEncoder;
 const Uint8ArrayConstructor = Uint8Array;
@@ -93,14 +94,18 @@ export function toMCPResourceContents(
 
   if (
     !(data instanceof Uint8ArrayConstructor) ||
-    data.byteLength > MAX_RESOURCE_CONTENT_BYTES
+    data.byteLength > MAX_RESOURCE_BLOB_SOURCE_BYTES
   ) {
     throw new ResourceContentValidationError(resourceId, "blob");
   }
   const snapshot = new Uint8ArrayConstructor(data);
+  const blob = encodeBase64Bytes(snapshot);
+  if (blob.length > MAX_RESOURCE_CONTENT_BYTES) {
+    throw new ResourceContentValidationError(resourceId, "blob");
+  }
   return {
     uri,
     mimeType: content.mimeType,
-    blob: encodeBase64Bytes(snapshot),
+    blob,
   };
 }

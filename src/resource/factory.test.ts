@@ -115,6 +115,64 @@ describe("resource factory", () => {
       });
     });
 
+    it("should snapshot frozen accessor-backed configuration exactly once", async () => {
+      let loadReads = 0;
+      let enabledReads = 0;
+      let enabled = true;
+      const config = {
+        pattern: "/accessor-backed",
+        description: "Accessor backed",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        get load() {
+          loadReads += 1;
+          return () => "captured";
+        },
+        mcp: Object.freeze({
+          get enabled() {
+            enabledReads += 1;
+            return enabled;
+          },
+        }),
+      };
+
+      const r = resource(config);
+      enabled = false;
+
+      assertEquals(loadReads, 1);
+      assertEquals(enabledReads, 1);
+      assertEquals(await r.load({}), "captured");
+      assertEquals(r.mcp?.enabled, true);
+    });
+
+    it("should capture the schema parser used by runtime validation", async () => {
+      const paramsSchema = {
+        parse: (value: unknown) => ({
+          value: String((value as { value?: unknown }).value),
+        }),
+      };
+      const r = resource({
+        pattern: "/captured-schema/:value",
+        description: "Captured schema",
+        paramsSchema: paramsSchema as never,
+        load: ({ value }: { value: string }) => value,
+      });
+
+      paramsSchema.parse = () => ({ value: "mutated" });
+
+      assertEquals(await r.load({ value: "original" }), "original");
+    });
+
+    it("should derive a usable id for the root URI", () => {
+      const root = resource({
+        pattern: "/",
+        description: "Root",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: () => ({}),
+      });
+
+      assertEquals(root.id, "root");
+    });
+
     it("should reject malformed runtime configuration", () => {
       assertThrows(
         () => resource(null as never),
@@ -165,6 +223,62 @@ describe("resource factory", () => {
           }),
         TypeError,
         "MCP content mimeType must be a valid media type",
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/unknown-mcp-field",
+            description: "Invalid MCP field",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => ({}),
+            mcp: {
+              enabled: true,
+              typo: true,
+            } as never,
+          }),
+        TypeError,
+        'Resource MCP configuration contains unsupported field "typo"',
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/unknown-content-field",
+            description: "Invalid content field",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => "content",
+            mcp: {
+              content: {
+                type: "text",
+                mimeType: "text/plain",
+                typo: true,
+              } as never,
+            },
+          }),
+        TypeError,
+        'Resource MCP content configuration contains unsupported field "typo"',
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/oversized-description",
+            description: "x".repeat(16 * 1024 + 1),
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => ({}),
+          }),
+        TypeError,
+        "Resource description must not exceed 16384 characters",
+      );
+      assertThrows(
+        () =>
+          resource({
+            pattern: "/oversized-title",
+            description: "Oversized title",
+            title: "x".repeat(1024 + 1),
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => ({}),
+          }),
+        TypeError,
+        "Resource title must not exceed 1024 characters",
       );
     });
 
@@ -317,6 +431,34 @@ describe("resource factory", () => {
         "Resource loading aborted",
       );
       assertEquals(receivedSignal, controller.signal);
+    });
+
+    it("should snapshot read-context accessors exactly once", async () => {
+      let uriReads = 0;
+      let currentUri = "/context/original";
+      let receivedUri: string | undefined;
+      const r = resource({
+        pattern: "/context/:value",
+        description: "Context snapshot",
+        paramsSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+        load: (_params, context) => {
+          receivedUri = context?.uri;
+          return {};
+        },
+      });
+      const context = Object.freeze({
+        get uri() {
+          uriReads += 1;
+          return currentUri;
+        },
+      });
+
+      const pending = r.load({ value: "original" }, context);
+      currentUri = "/context/mutated";
+      await pending;
+
+      assertEquals(uriReads, 1);
+      assertEquals(receivedUri, "/context/original");
     });
   });
 

@@ -252,6 +252,38 @@ describe("resource registry", () => {
       );
     });
 
+    it("should allow templates separated by an empty literal segment", () => {
+      const doubleSlash = resource({
+        pattern: "custom://:id",
+        description: "Double-slash resource",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      const scoped = resource({
+        pattern: "custom:/:scope/:id",
+        description: "Scoped resource",
+        paramsSchema: defineSchema((v) =>
+          v.object({
+            scope: v.string(),
+            id: v.string(),
+          })
+        )(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(doubleSlash.id, doubleSlash);
+      resourceRegistry.register(scoped.id, scoped);
+
+      assertEquals(
+        resourceRegistry.findByPattern("custom://value"),
+        doubleSlash,
+      );
+      assertEquals(
+        resourceRegistry.findByPattern("custom:/scope/value"),
+        scoped,
+      );
+    });
+
     it("should reject derived-id collisions with different patterns", () => {
       const nested = resource({
         pattern: "/a/b",
@@ -411,6 +443,18 @@ describe("resource registry", () => {
           }),
         TypeError,
         "paramsSchema.parse must be a function",
+      );
+      assertThrows(
+        () =>
+          resourceRegistry.register("oversized", {
+            id: "x".repeat(8 * 1024 + 1),
+            pattern: "/oversized-id",
+            description: "Oversized id",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => ({}),
+          }),
+        TypeError,
+        "Resource definition id must not exceed 8192 characters",
       );
     });
   });

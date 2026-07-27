@@ -3,14 +3,19 @@ import type { McpConfig, McpContentConfig } from "./schemas/index.ts";
 import type { Resource, ResourceConfig, ResourceDefinition, ResourceLoadContext } from "./types.ts";
 import { ResourceParamsValidationError } from "./errors.ts";
 import { isValidResourceMimeType } from "./mime-type.ts";
+import { containsControlCharacter } from "./string-validation.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectFreeze = Object.freeze;
-const ObjectIsFrozen = Object.isFrozen;
 const ReflectApply = Reflect.apply;
+const ReflectOwnKeys = Reflect.ownKeys;
+const MAX_RESOURCE_DESCRIPTION_LENGTH = 16 * 1024;
+const MAX_RESOURCE_TITLE_LENGTH = 1024;
+const MAX_RESOURCE_ID_LENGTH = 8 * 1024;
 
 interface ResourceDefinitionState<TParams, TData> {
   readonly paramsSchema: Schema<TParams>;
+  readonly parseParams: (data: unknown) => TParams;
   readonly load: ResourceConfig<TParams, TData>["load"];
   readonly subscribe: ResourceConfig<TParams, TData>["subscribe"];
 }
@@ -24,16 +29,77 @@ interface CreateResourceDefinitionOptions<TParams, TData> {
   readonly id: string;
   readonly pattern: string;
   readonly generatedPattern?: string;
-  readonly config: ResourceConfig<TParams, TData>;
+  readonly config: CapturedResourceConfig<TParams, TData>;
+}
+
+/** Captured resource configuration used across framework-owned boundaries. */
+interface CapturedResourceConfig<TParams, TData> {
+  readonly pattern?: string;
+  readonly description: string;
+  readonly title?: string;
+  readonly mcp?: McpConfig;
+  readonly state: ResourceDefinitionState<TParams, TData>;
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !ArrayIsArray(value);
 }
 
-function assertOptionalString(value: unknown, field: string): void {
+function assertOptionalString(
+  value: unknown,
+  field: string,
+): asserts value is string | undefined {
   if (value !== undefined && typeof value !== "string") {
     throw new TypeError(`${field} must be a string`);
+  }
+}
+
+function assertMaximumStringLength(
+  value: string,
+  field: string,
+  maximum: number,
+): void {
+  if (value.length > maximum) {
+    throw new TypeError(
+      `${field} must not exceed ${maximum} characters`,
+    );
+  }
+}
+
+function assertKnownFields(
+  value: object,
+  label: string,
+  allowedFields: readonly string[],
+): void {
+  for (const key of ReflectOwnKeys(value)) {
+    if (typeof key === "string") {
+      let supported = false;
+      for (let index = 0; index < allowedFields.length; index++) {
+        if (key === allowedFields[index]) {
+          supported = true;
+          break;
+        }
+      }
+      if (supported) continue;
+    }
+    const field = typeof key === "string" ? key : "symbol";
+    throw new TypeError(
+      `${label} contains unsupported field "${field}"`,
+    );
+  }
+}
+
+function assertResourceId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError("Resource definition id must be a non-empty string");
+  }
+  assertMaximumStringLength(
+    value,
+    "Resource definition id",
+    MAX_RESOURCE_ID_LENGTH,
+  );
+  if (containsControlCharacter(value)) {
+    throw new TypeError("Resource definition id must not contain control characters");
   }
 }
 
@@ -47,36 +113,40 @@ function assertMimeType(value: unknown): asserts value is string {
 export function assertResourceMCPConfig(
   value: unknown,
 ): asserts value is McpConfig {
+  captureResourceMCPConfig(value);
+}
+
+function captureResourceMCPConfig(value: unknown): McpConfig {
   if (!isObjectRecord(value)) {
     throw new TypeError("Resource MCP configuration must be an object");
   }
-  if (value.enabled !== undefined && typeof value.enabled !== "boolean") {
+  assertKnownFields(
+    value,
+    "Resource MCP configuration",
+    ["enabled", "cachePolicy", "content"],
+  );
+  const enabled = value.enabled;
+  const cachePolicy = value.cachePolicy;
+  const contentValue = value.content;
+
+  if (enabled !== undefined && typeof enabled !== "boolean") {
     throw new TypeError("Resource MCP enabled must be a boolean");
   }
   if (
-    value.cachePolicy !== undefined &&
-    value.cachePolicy !== "no-cache" &&
-    value.cachePolicy !== "cache" &&
-    value.cachePolicy !== "cache-first"
+    cachePolicy !== undefined &&
+    cachePolicy !== "no-cache" &&
+    cachePolicy !== "cache" &&
+    cachePolicy !== "cache-first"
   ) {
     throw new TypeError("Resource MCP cachePolicy is invalid");
   }
-  if (value.content === undefined) return;
-  if (!isObjectRecord(value.content)) {
-    throw new TypeError("Resource MCP content configuration must be an object");
-  }
+  const content = contentValue === undefined ? undefined : snapshotMCPContentConfig(contentValue);
 
-  const type = value.content.type;
-  if (type === "json") {
-    if (value.content.mimeType !== undefined) {
-      throw new TypeError("JSON resource content always uses application/json");
-    }
-    return;
-  }
-  if (type !== "text" && type !== "blob") {
-    throw new TypeError('Resource MCP content type must be "json", "text", or "blob"');
-  }
-  assertMimeType(value.content.mimeType);
+  const snapshot: McpConfig = {};
+  if (enabled !== undefined) snapshot.enabled = enabled;
+  if (cachePolicy !== undefined) snapshot.cachePolicy = cachePolicy;
+  if (content !== undefined) snapshot.content = content;
+  return ObjectFreeze(snapshot);
 }
 
 /** Snapshot metadata so caller mutation cannot change an advertised contract. */
@@ -84,34 +154,102 @@ export function snapshotResourceMCPConfig(
   config: McpConfig | undefined,
 ): McpConfig | undefined {
   if (config === undefined) return undefined;
-  assertResourceMCPConfig(config);
-
-  if (
-    ObjectIsFrozen(config) &&
-    (config.content === undefined || ObjectIsFrozen(config.content))
-  ) {
-    return config;
-  }
-
-  const content = config.content === undefined
-    ? undefined
-    : snapshotMCPContentConfig(config.content);
-  const snapshot: McpConfig = {};
-  if (config.enabled !== undefined) snapshot.enabled = config.enabled;
-  if (config.cachePolicy !== undefined) {
-    snapshot.cachePolicy = config.cachePolicy;
-  }
-  if (content !== undefined) snapshot.content = content;
-  return ObjectFreeze(snapshot);
+  return captureResourceMCPConfig(config);
 }
 
 function snapshotMCPContentConfig(
-  content: McpContentConfig,
+  value: unknown,
 ): McpContentConfig {
-  if (ObjectIsFrozen(content)) return content;
-  return content.type === "json" ? ObjectFreeze({ type: "json" as const }) : ObjectFreeze({
-    type: content.type,
-    mimeType: content.mimeType,
+  if (!isObjectRecord(value)) {
+    throw new TypeError("Resource MCP content configuration must be an object");
+  }
+  assertKnownFields(
+    value,
+    "Resource MCP content configuration",
+    ["type", "mimeType"],
+  );
+  const type = value.type;
+  const mimeType = value.mimeType;
+  if (type === "json") {
+    if (mimeType !== undefined) {
+      throw new TypeError("JSON resource content always uses application/json");
+    }
+    return ObjectFreeze({ type: "json" as const });
+  }
+  if (type !== "text" && type !== "blob") {
+    throw new TypeError('Resource MCP content type must be "json", "text", or "blob"');
+  }
+  assertMimeType(mimeType);
+  return ObjectFreeze({ type, mimeType });
+}
+
+/** Capture and validate a resource configuration with one read per field. */
+export function captureResourceConfig<TParams, TData>(
+  value: ResourceConfig<TParams, TData>,
+): CapturedResourceConfig<TParams, TData>;
+export function captureResourceConfig(
+  value: unknown,
+): CapturedResourceConfig<unknown, unknown>;
+export function captureResourceConfig(
+  value: unknown,
+): CapturedResourceConfig<unknown, unknown> {
+  if (!isObjectRecord(value)) {
+    throw new TypeError("Resource configuration must be an object");
+  }
+
+  const pattern = value.pattern;
+  const description = value.description;
+  const title = value.title;
+  const paramsSchema = value.paramsSchema;
+  const load = value.load;
+  const subscribe = value.subscribe;
+  const mcpValue = value.mcp;
+
+  assertOptionalString(pattern, "Resource pattern");
+  if (typeof description !== "string") {
+    throw new TypeError("Resource description must be a string");
+  }
+  assertMaximumStringLength(
+    description,
+    "Resource description",
+    MAX_RESOURCE_DESCRIPTION_LENGTH,
+  );
+  assertOptionalString(title, "Resource title");
+  if (title !== undefined) {
+    assertMaximumStringLength(
+      title,
+      "Resource title",
+      MAX_RESOURCE_TITLE_LENGTH,
+    );
+  }
+  if (!isObjectRecord(paramsSchema)) {
+    throw new TypeError("Resource paramsSchema.parse must be a function");
+  }
+  const parseParams = paramsSchema.parse;
+  if (typeof parseParams !== "function") {
+    throw new TypeError("Resource paramsSchema.parse must be a function");
+  }
+  if (typeof load !== "function") {
+    throw new TypeError("Resource load must be a function");
+  }
+  if (subscribe !== undefined && typeof subscribe !== "function") {
+    throw new TypeError("Resource subscribe must be a function");
+  }
+  const mcp = mcpValue === undefined ? undefined : captureResourceMCPConfig(mcpValue);
+  const schema = paramsSchema as unknown as Schema<unknown>;
+  const state = ObjectFreeze({
+    paramsSchema: schema,
+    parseParams: parseParams as (data: unknown) => unknown,
+    load: load as ResourceConfig<unknown, unknown>["load"],
+    subscribe: subscribe as ResourceConfig<unknown, unknown>["subscribe"],
+  });
+
+  return ObjectFreeze({
+    pattern,
+    description,
+    title,
+    mcp,
+    state,
   });
 }
 
@@ -123,47 +261,21 @@ export function assertResourceConfig(
   value: unknown,
 ): asserts value is ResourceConfig<unknown, unknown>;
 export function assertResourceConfig(value: unknown): void {
-  if (!isObjectRecord(value)) {
-    throw new TypeError("Resource configuration must be an object");
-  }
-  assertOptionalString(value.pattern, "Resource pattern");
-  if (typeof value.description !== "string") {
-    throw new TypeError("Resource description must be a string");
-  }
-  assertOptionalString(value.title, "Resource title");
-  if (
-    !isObjectRecord(value.paramsSchema) ||
-    typeof value.paramsSchema.parse !== "function"
-  ) {
-    throw new TypeError("Resource paramsSchema.parse must be a function");
-  }
-  if (typeof value.load !== "function") {
-    throw new TypeError("Resource load must be a function");
-  }
-  if (value.subscribe !== undefined && typeof value.subscribe !== "function") {
-    throw new TypeError("Resource subscribe must be a function");
-  }
-  if (value.mcp !== undefined) assertResourceMCPConfig(value.mcp);
+  captureResourceConfig(value);
 }
 
 /** Build a resource while capturing validation, loaders, and metadata. */
 export function createResourceDefinition<TParams, TData>(
   options: CreateResourceDefinitionOptions<TParams, TData>,
 ): Resource<TParams, TData> {
-  assertResourceConfig(options.config);
-  const state = ObjectFreeze({
-    paramsSchema: options.config.paramsSchema,
-    load: options.config.load,
-    subscribe: options.config.subscribe,
-  });
   return buildResourceDefinition({
     id: options.id,
     pattern: options.pattern,
     generatedPattern: options.generatedPattern,
     description: options.config.description,
     title: options.config.title,
-    mcp: snapshotResourceMCPConfig(options.config.mcp),
-    state,
+    mcp: options.config.mcp,
+    state: options.config.state,
   });
 }
 
@@ -178,20 +290,16 @@ export function replaceResourceDefinitionMetadata<TParams, TData>(
 ): Resource<TParams, TData> {
   // Discovery also accepts literal ResourceConfig-shaped exports that do not
   // yet have an id or pattern. The derived metadata completes that boundary.
-  assertResourceConfig(value);
+  const captured = captureResourceConfig(value);
   const state = getResourceDefinitionState<TParams, TData>(value) ??
-    ObjectFreeze({
-      paramsSchema: value.paramsSchema,
-      load: value.load,
-      subscribe: value.subscribe,
-    });
+    captured.state;
 
   return buildResourceDefinition({
     id,
     pattern,
-    description: value.description,
-    title: value.title,
-    mcp: snapshotResourceMCPConfig(value.mcp),
+    description: captured.description,
+    title: captured.title,
+    mcp: captured.mcp,
     state,
   });
 }
@@ -206,32 +314,26 @@ export function replaceResourceDefinitionMetadata<TParams, TData>(
 export function normalizeResourceDefinition<TParams, TData>(
   value: ResourceDefinition<TParams, TData>,
 ): Resource<TParams, TData> {
-  assertResourceDefinition(value);
   if (isNormalizedResourceDefinition(value)) {
     return value;
   }
-  const capturedState = getResourceDefinitionState<TParams, TData>(value);
-  const state = capturedState ?? ObjectFreeze({
-    paramsSchema: value.paramsSchema,
-    load: value.load,
-    subscribe: value.subscribe,
-  });
+  const captured = captureResourceDefinition(value);
 
   return buildResourceDefinition({
-    id: value.id,
-    pattern: value.pattern,
-    generatedPattern: value.__veryfrontGeneratedPattern,
-    description: value.description,
-    title: value.title,
-    mcp: snapshotResourceMCPConfig(value.mcp),
-    state,
+    id: captured.id,
+    pattern: captured.pattern,
+    generatedPattern: captured.generatedPattern,
+    description: captured.config.description,
+    title: captured.config.title,
+    mcp: captured.config.mcp,
+    state: captured.config.state,
   });
 }
 
 function isNormalizedResourceDefinition<TParams, TData>(
   value: ResourceDefinition<TParams, TData>,
 ): value is Resource<TParams, TData> {
-  return ObjectIsFrozen(value) && resourceDefinitionStates.has(value);
+  return resourceDefinitionStates.has(value);
 }
 
 function getResourceDefinitionState<TParams, TData>(
@@ -242,39 +344,42 @@ function getResourceDefinitionState<TParams, TData>(
     | undefined;
 }
 
-function assertResourceDefinition<TParams, TData>(
+interface CapturedResourceDefinition<TParams, TData> {
+  readonly id: string;
+  readonly pattern: string;
+  readonly generatedPattern?: string;
+  readonly config: CapturedResourceConfig<TParams, TData>;
+}
+
+function captureResourceDefinition<TParams, TData>(
   value: ResourceDefinition<TParams, TData>,
-): void;
-function assertResourceDefinition(
+): CapturedResourceDefinition<TParams, TData>;
+function captureResourceDefinition(
   value: unknown,
-): asserts value is ResourceDefinition<unknown, unknown>;
-function assertResourceDefinition(value: unknown): void {
+): CapturedResourceDefinition<unknown, unknown>;
+function captureResourceDefinition(
+  value: unknown,
+): CapturedResourceDefinition<unknown, unknown> {
   if (!isObjectRecord(value)) {
     throw new TypeError("Resource definition must be an object");
   }
-  if (typeof value.id !== "string" || value.id.length === 0) {
-    throw new TypeError("Resource definition id must be a non-empty string");
-  }
-  if (typeof value.pattern !== "string" || value.pattern.length === 0) {
+  const id = value.id;
+  const generatedPattern = value.__veryfrontGeneratedPattern;
+  const config = captureResourceConfig(value);
+  assertResourceId(id);
+  if (typeof config.pattern !== "string" || config.pattern.length === 0) {
     throw new TypeError("Resource definition pattern must be a non-empty string");
   }
-  if (typeof value.description !== "string") {
-    throw new TypeError("Resource description must be a string");
-  }
-  assertOptionalString(value.title, "Resource title");
-  if (
-    !isObjectRecord(value.paramsSchema) ||
-    typeof value.paramsSchema.parse !== "function"
-  ) {
-    throw new TypeError("Resource paramsSchema.parse must be a function");
-  }
-  if (typeof value.load !== "function") {
-    throw new TypeError("Resource load must be a function");
-  }
-  if (value.subscribe !== undefined && typeof value.subscribe !== "function") {
-    throw new TypeError("Resource subscribe must be a function");
-  }
-  if (value.mcp !== undefined) assertResourceMCPConfig(value.mcp);
+  assertOptionalString(
+    generatedPattern,
+    "Resource definition generated pattern",
+  );
+  return {
+    id,
+    pattern: config.pattern,
+    generatedPattern,
+    config,
+  };
 }
 
 function buildResourceDefinition<TParams, TData>(
@@ -288,10 +393,11 @@ function buildResourceDefinition<TParams, TData>(
     readonly state: ResourceDefinitionState<TParams, TData>;
   },
 ): Resource<TParams, TData> {
+  assertResourceId(options.id);
   const validateParams = (params: TParams): TParams => {
     try {
       return ReflectApply(
-        options.state.paramsSchema.parse,
+        options.state.parseParams,
         options.state.paramsSchema,
         [params],
       ) as TParams;
@@ -352,13 +458,14 @@ async function runResourceLoader<TParams, TData>(
   ) {
     throw new TypeError("Resource load context must be an object");
   }
+  const uri = requestedContext?.uri;
+  const signal = requestedContext?.abortSignal;
   if (
-    requestedContext?.uri !== undefined &&
-    typeof requestedContext.uri !== "string"
+    uri !== undefined &&
+    typeof uri !== "string"
   ) {
     throw new TypeError("Resource load context uri must be a string");
   }
-  const signal = requestedContext?.abortSignal;
   if (signal !== undefined && !(signal instanceof AbortSignal)) {
     throw new TypeError("Resource load context abortSignal must be an AbortSignal");
   }
@@ -366,7 +473,7 @@ async function runResourceLoader<TParams, TData>(
 
   const context = requestedContext === undefined ? undefined : ObjectFreeze({
     abortSignal: signal,
-    uri: requestedContext.uri,
+    uri,
   });
   const operation = Promise.resolve().then(() => {
     if (signal?.aborted) throw createResourceAbortError();

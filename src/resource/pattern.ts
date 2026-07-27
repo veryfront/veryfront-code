@@ -156,9 +156,28 @@ export function resourceTemplatePatternsOverlap(
 
   return left.segments.every((leftSegment, index) => {
     const rightSegment = right.segments[index]!;
-    return leftSegment.kind === "parameter" ||
-      rightSegment.kind === "parameter" ||
-      leftSegment.value === rightSegment.value;
+    if (
+      leftSegment.kind === "literal" &&
+      rightSegment.kind === "literal"
+    ) {
+      return leftSegment.value === rightSegment.value;
+    }
+    if (
+      leftSegment.kind === "parameter" &&
+      rightSegment.kind === "parameter"
+    ) {
+      return true;
+    }
+    const literal = leftSegment.kind === "literal"
+      ? leftSegment.value
+      : rightSegment.kind === "literal"
+      ? rightSegment.value
+      : "";
+    // Parameter expressions require one or more characters and cannot consume
+    // URI path, query, or fragment delimiters. Treating those literals as
+    // wildcards produced false ambiguity conflicts that the matcher itself
+    // could never realize.
+    return literal.length > 0 && !/[/?#]/.test(literal);
   });
 }
 
