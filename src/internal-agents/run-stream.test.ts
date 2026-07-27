@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { type Agent, agent as createAgent, type AgentMessage } from "#veryfront/agent";
@@ -1537,6 +1537,122 @@ describe("internal-agents/run-stream", () => {
     );
   });
 
+  it("clears run admission when sandbox setup rejects", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "sandbox-failure-agent",
+      config: {
+        id: "sandbox-failure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_sandbox_setup_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: () => Promise.reject(new Error("sandbox setup failed")),
+        }),
+      Error,
+      "sandbox setup failed",
+    );
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
+  it("closes an acquired sandbox once after runtime construction fails and permits retry", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let closeSandboxCalls = 0;
+    const inputSchemaJson = {
+      type: "object" as const,
+      properties: {},
+      additionalProperties: true,
+    };
+    const sandboxAgent = {
+      id: "sandbox-runtime-failure-agent",
+      config: {
+        id: "sandbox-runtime-failure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: sandboxAgent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_runtime_setup_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, sandboxAgent, {
+          sessionManager,
+          createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+          createAgentServiceSandboxTools: () =>
+            Promise.resolve({
+              tools: {
+                bash: {
+                  description: "Run bash",
+                  inputSchemaJson,
+                  execute: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
+                },
+              },
+              sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+              closeSandbox: () => {
+                closeSandboxCalls++;
+                return Promise.resolve();
+              },
+            }),
+          createRuntime: () => {
+            throw new Error("runtime construction failed");
+          },
+        }),
+      Error,
+      "runtime construction failed",
+    );
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeSandboxCalls, 1);
+
+    const retryAgent = {
+      id: sandboxAgent.id,
+      config: {
+        id: sandboxAgent.id,
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const retryResponse = await createRuntimeAgentStreamResponse(input, retryAgent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+      }),
+    });
+    await retryResponse.text();
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeSandboxCalls, 1);
+  });
+
   it("does not materialize sandbox bash without an explicit bash tool declaration", async () => {
     const sessionManager = new AgentRunSessionManager();
     let sandboxToolCalls = 0;
@@ -1918,6 +2034,98 @@ describe("internal-agents/run-stream", () => {
     await reader.cancel();
   });
 
+  it("cancels and releases a runtime reader when the run is already aborted", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "pre-aborted-agent",
+      config: {
+        id: "pre-aborted-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_pre_aborted",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    let runtimeCancelCalls = 0;
+    let runtimeStream: ReadableStream<Uint8Array> | undefined;
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () => {
+          sessionManager.cancelRun(input.runId);
+          runtimeStream = new ReadableStream<Uint8Array>({
+            cancel() {
+              runtimeCancelCalls++;
+            },
+          });
+          return runtimeStream;
+        },
+      }),
+    });
+    await response.text();
+
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(runtimeStream?.locked, false);
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
+  it("cancels and releases a runtime reader after a non-EOF mapping failure", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "mapping-failure-agent",
+      config: {
+        id: "mapping-failure-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_mapping_failure",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    let runtimeCancelCalls = 0;
+    let runtimeStream: ReadableStream<Uint8Array> | undefined;
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () => {
+          runtimeStream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              sessionManager.failRun(input.runId);
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"bash"}\n\n',
+                ),
+              );
+            },
+            cancel() {
+              runtimeCancelCalls++;
+            },
+          });
+          return runtimeStream;
+        },
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(runtimeStream?.locked, false);
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+  });
+
   it("cancels an active runtime stream when the client disconnects before a tool wait", async () => {
     const sessionManager = new AgentRunSessionManager();
     const agent = {
@@ -1973,7 +2181,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sessionManager.getRunStatus(input.runId), null);
   });
 
-  it("debug logs runtime reader cancellation failures during abort cleanup", async () => {
+  it("debug logs runtime reader cancellation failures during cleanup", async () => {
     const logs = captureConsoleJsonLogs();
     try {
       await withJsonDebugLogFormat(async () => {
@@ -2033,7 +2241,7 @@ describe("internal-agents/run-stream", () => {
 
     const debugEntry = logs.getEntries().find((entry) =>
       entry.level === "debug" &&
-      entry.message === "Internal agent runtime reader cancellation failed during abort cleanup"
+      entry.message === "Internal agent runtime reader cancellation failed during cleanup"
     );
     assertEquals(debugEntry?.component, "internal-agent-run-stream");
   });

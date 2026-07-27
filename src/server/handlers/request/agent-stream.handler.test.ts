@@ -1918,7 +1918,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
-    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
+    const configuredApiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
+    const apiBaseUrl = new URL(configuredApiBaseUrl).origin;
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
 
@@ -1981,7 +1982,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", "https://wrong-api.example.test");
-    Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
+    Deno.env.set("VERYFRONT_API_BASE_URL", configuredApiBaseUrl);
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
@@ -2474,11 +2475,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
+    const sessionManager = new AgentRunSessionManager();
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
-      sessionManager: new AgentRunSessionManager(),
+      sessionManager,
       createRuntime: () => {
         throw new Error("runtime boom");
       },
@@ -2502,6 +2504,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 500);
     assertEquals(await result.response.json(), { error: "Internal agent stream failed" });
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
