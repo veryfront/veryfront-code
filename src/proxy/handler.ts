@@ -83,7 +83,6 @@ interface ProjectRoutingCacheEntry {
 
 interface ProjectRoutingInflightEntry {
   generation: number;
-  isRefreshAfterIncompleteResult: boolean;
   promise: Promise<ProjectRoutingLookupResult | null>;
 }
 
@@ -609,7 +608,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       routingLookupCache.delete(cacheKey);
       logger?.info("Refreshing incomplete proxy routing metadata", { lookupKey });
     };
-    let refreshAfterIncompleteResult = false;
+    let hasRejectedIncompleteResult = false;
 
     return await profileProxyServerTimingPhase(
       timing ?? { enabled: false, startedAt: 0, phases: new Map() },
@@ -622,7 +621,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
         if (cached) {
           discardIncompleteResult();
-          refreshAfterIncompleteResult = true;
+          hasRejectedIncompleteResult = true;
         }
 
         while (true) {
@@ -631,10 +630,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
           logger?.debug("Proxy routing metadata lookup joined in-flight request", { lookupKey });
           const result = await existingLookup.promise;
-          if (existingLookup.isRefreshAfterIncompleteResult || canUseResult(result)) return result;
+          if (hasRejectedIncompleteResult || canUseResult(result)) return result;
 
           discardIncompleteResult();
-          refreshAfterIncompleteResult = true;
+          hasRejectedIncompleteResult = true;
           if (routingLookupInflight.get(cacheKey) === existingLookup) {
             routingLookupInflight.delete(cacheKey);
           }
@@ -682,7 +681,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         })();
         const inflightEntry: ProjectRoutingInflightEntry = {
           generation: routingLookupGeneration,
-          isRefreshAfterIncompleteResult: refreshAfterIncompleteResult,
           promise: lookupPromise,
         };
         routingLookupInflight.set(cacheKey, inflightEntry);

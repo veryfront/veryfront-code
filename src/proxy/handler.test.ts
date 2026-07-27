@@ -697,6 +697,98 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("refreshes for a caller arriving after activation during an incomplete refresh", async () => {
+      let routingLookups = 0;
+      let activeReleaseId: string | null = null;
+      let releaseIncompleteRefresh!: () => void;
+      let markIncompleteRefreshStarted!: () => void;
+      let markLookupJoined!: () => void;
+      const incompleteRefreshStarted = new Promise<void>((resolve) => {
+        markIncompleteRefreshStarted = resolve;
+      });
+      const lookupJoined = new Promise<void>((resolve) => {
+        markLookupJoined = resolve;
+      });
+      const incompleteRefreshRelease = new Promise<void>((resolve) => {
+        releaseIncompleteRefresh = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          markLookupJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          const releaseIdAtLookupStart = activeReleaseId;
+          if (routingLookups === 2) {
+            markIncompleteRefreshStarted();
+            await incompleteRefreshRelease;
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: releaseIdAtLookupStart,
+            }],
+          });
+        }
+
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const req = () =>
+          new Request("http://my-project.staging.veryfront.com/page", {
+            headers: { host: "my-project.staging.veryfront.com" },
+          });
+
+        assertEquals((await handler.processRequest(req())).error?.status, 404);
+
+        const beforeActivation = handler.processRequest(req());
+        await incompleteRefreshStarted;
+        activeReleaseId = "rel-456";
+        const afterActivation = handler.processRequest(req());
+        await lookupJoined;
+        releaseIncompleteRefresh();
+
+        assertEquals((await beforeActivation).error?.status, 404);
+        const afterActivationResult = await afterActivation;
+        assertEquals(afterActivationResult.error, undefined);
+        assertEquals(afterActivationResult.releaseId, "rel-456");
+        assertEquals(routingLookups, 3);
+
+        await handler.close();
+      } finally {
+        releaseIncompleteRefresh();
+        await server.shutdown();
+      }
+    });
+
     it("invalidates routing metadata only for the targeted project", async () => {
       const routingLookups = new Map<string, number>();
       const { server, port } = createMockServer((req: Request) => {
