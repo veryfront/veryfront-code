@@ -67,6 +67,43 @@ class RecordingSpan implements Span {
   updateName(): void {}
 }
 
+function installRecordingTracer(): RecordingSpan[] {
+  const spans: RecordingSpan[] = [];
+  const tracer: Tracer = {
+    startSpan(name) {
+      const span = new RecordingSpan(name);
+      spans.push(span);
+      return span;
+    },
+    startActiveSpan<T>(
+      name: string,
+      optionsOrFn: ((span: Span) => T) | {
+        kind?: number;
+        attributes?: Record<string, AttributeValue>;
+      },
+      contextOrFn?: unknown,
+      fn?: (span: Span) => T,
+    ): T {
+      const span = this.startSpan(name);
+      const callback: ((span: Span) => T) | undefined = typeof optionsOrFn === "function"
+        ? optionsOrFn
+        : typeof contextOrFn === "function"
+        ? contextOrFn as (span: Span) => T
+        : fn;
+      if (!callback) {
+        throw new Error("Expected an active span callback");
+      }
+      try {
+        return callback(span);
+      } finally {
+        span.end();
+      }
+    },
+  };
+  setGlobalTracerProvider({ getTracer: () => tracer });
+  return spans;
+}
+
 function remoteToolSource(toolNames: string[]): RemoteToolSource {
   return {
     id: "test-remote-source",
@@ -157,6 +194,47 @@ describe("internal-agents/run-stream", () => {
       ]);
     } finally {
       toolRegistry.clearAll();
+    }
+  });
+
+  it("keeps visible registry tools authoritative over same-named injected tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      execute: () => ({ randomNumber: 7 }),
+    } as unknown as Tool;
+
+    toolRegistry.register("number-generator", projectTool);
+    try {
+      const runtimeAgent = {
+        id: "random",
+        config: {
+          id: "random",
+          system: "test",
+          tools: { "number-generator": true },
+        },
+      } as unknown as Agent;
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{
+            name: "number-generator",
+            description: "Caller-supplied shadow definition",
+          }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      assertEquals(mergedTools?.["number-generator"], true);
+    } finally {
+      toolRegistry.delete("number-generator");
     }
   });
 
@@ -258,8 +336,8 @@ describe("internal-agents/run-stream", () => {
     });
 
     const system = capturedAgent?.config.system;
-    assertEquals(typeof system, "function");
-    const prompt = await (system as () => Promise<string>)();
+    assertEquals(typeof system, "string");
+    const prompt = system as string;
     assertStringIncludes(prompt, "You are Custom Agent.");
     assertStringIncludes(prompt, 'project_reference: "project-1"');
     assertStringIncludes(prompt, "branch_id: main (no branch_id needed for file operations)");
@@ -269,6 +347,68 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(prompt, "Current run tool inventory:");
     assertStringIncludes(prompt, "- create_file");
     assertStringIncludes(prompt, "- outlook__send_email");
+  });
+
+  it("includes the resolved system prompt in message compaction overhead", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedMessages: AgentMessage[] = [];
+    const agent = {
+      id: "large-context-agent",
+      config: {
+        id: "large-context-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: `System context\n${"s".repeat(120_000)}`,
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_compaction_overhead",
+      messages: [
+        {
+          id: "oldest",
+          role: "user",
+          content: `oldest-turn\n${"a".repeat(200_000)}`,
+        },
+        {
+          id: "middle",
+          role: "user",
+          content: `middle-turn\n${"b".repeat(200_000)}`,
+        },
+        {
+          id: "latest",
+          role: "user",
+          content: `latest-turn\n${"c".repeat(200_000)}`,
+        },
+      ],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (messages) => {
+          capturedMessages = messages;
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    await response.text();
+
+    const firstMessage = capturedMessages[0];
+    assertEquals(firstMessage?.role, "user");
+    const firstText = (firstMessage as unknown as {
+      parts?: Array<{ type?: string; text?: string }>;
+    })?.parts?.find((part) => part.type === "text")?.text;
+    assertEquals(
+      firstText?.startsWith("[Compressed: oldest-turn"),
+      true,
+    );
   });
 
   it("filters unavailable boolean source tool declarations before constructing the runtime", async () => {
@@ -890,8 +1030,8 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, undefined);
-    assertEquals(typeof runtimeSystem, "function");
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
     assertEquals(prompt.includes("- gmail__list_emails"), false);
   });
 
@@ -962,8 +1102,8 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedAllowedRemoteTools, ["gmail__list_emails"]);
-    assertEquals(typeof runtimeSystem, "function");
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
     assertStringIncludes(prompt, "- gmail__list_emails");
     assertEquals(prompt.includes("- gmail__delete_email"), false);
   });
@@ -1220,8 +1360,8 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    assertEquals(typeof runtimeSystem, "function");
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
     assertStringIncludes(prompt, "- zzz_local");
     assertEquals(prompt.includes("- remote_127"), false);
   });
@@ -1653,6 +1793,59 @@ describe("internal-agents/run-stream", () => {
     assertEquals(closeSandboxCalls, 1);
   });
 
+  it("rejects a locked runtime stream during setup and releases acquired resources", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let closeSandboxCalls = 0;
+    const lockedStream = new ReadableStream<Uint8Array>();
+    const lockedReader = lockedStream.getReader();
+    const agent = {
+      id: "locked-stream-agent",
+      config: {
+        id: "locked-stream-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { bash: true },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_locked_stream",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    try {
+      await assertRejects(
+        () =>
+          createRuntimeAgentStreamResponse(input, agent, {
+            sessionManager,
+            createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+            createAgentServiceSandboxTools: () =>
+              Promise.resolve({
+                tools: {},
+                sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+                closeSandbox: () => {
+                  closeSandboxCalls++;
+                  return Promise.resolve();
+                },
+              }),
+            createRuntime: () => ({
+              stream: () => Promise.resolve(lockedStream),
+            }),
+          }),
+        TypeError,
+        "Internal agent runtime returned a locked stream",
+      );
+    } finally {
+      lockedReader.releaseLock();
+    }
+
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
+    assertEquals(closeSandboxCalls, 1);
+  });
+
   it("does not materialize sandbox bash without an explicit bash tool declaration", async () => {
     const sessionManager = new AgentRunSessionManager();
     let sandboxToolCalls = 0;
@@ -1860,39 +2053,7 @@ describe("internal-agents/run-stream", () => {
   });
 
   it("records completed runtime token usage on the agent.run span", async () => {
-    const spans: RecordingSpan[] = [];
-    const tracer: Tracer = {
-      startSpan(name) {
-        const span = new RecordingSpan(name);
-        spans.push(span);
-        return span;
-      },
-      startActiveSpan<T>(
-        name: string,
-        optionsOrFn: ((span: Span) => T) | {
-          kind?: number;
-          attributes?: Record<string, AttributeValue>;
-        },
-        contextOrFn?: unknown,
-        fn?: (span: Span) => T,
-      ): T {
-        const span = this.startSpan(name);
-        const callback: ((span: Span) => T) | undefined = typeof optionsOrFn === "function"
-          ? optionsOrFn
-          : typeof contextOrFn === "function"
-          ? contextOrFn as (span: Span) => T
-          : fn;
-        if (!callback) {
-          throw new Error("Expected an active span callback");
-        }
-        try {
-          return callback(span);
-        } finally {
-          span.end();
-        }
-      },
-    };
-    setGlobalTracerProvider({ getTracer: () => tracer });
+    const spans = installRecordingTracer();
 
     const sessionManager = new AgentRunSessionManager();
     const agent = {
@@ -1945,6 +2106,18 @@ describe("internal-agents/run-stream", () => {
             });
             return new ReadableStream<Uint8Array>({
               start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    [
+                      'data: {"type":"message-start","messageId":"assistant-1"}',
+                      'data: {"type":"text-start","id":"text-1"}',
+                      'data: {"type":"text-delta","id":"text-1","delta":"done"}',
+                      'data: {"type":"text-end","id":"text-1"}',
+                      "",
+                      "",
+                    ].join("\n\n"),
+                  ),
+                );
                 controller.close();
               },
             });
@@ -1972,6 +2145,52 @@ describe("internal-agents/run-stream", () => {
     assertEquals(runSpan?.attributes["agent.usage.cost_source"], "gateway");
     assertEquals(runSpan?.attributes["agent.usage.billing_mode"], "deferred");
     assertEquals(runSpan?.attributes["agent.usage.capture_status"], "complete");
+  });
+
+  it("records terminal runtime error events as failed instead of completed", async () => {
+    const spans = installRecordingTracer();
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "failing-agent",
+      config: {
+        id: "failing-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_terminal_error",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"type":"error","error":"provider stream failed"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+      }),
+    });
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(body.includes("event: RunFinished"), false);
+    const runSpan = spans.find((span) => span.name === "agent.run");
+    assertEquals(runSpan?.attributes["agent.run.final_status"], "failed");
+    assertEquals(runSpan?.events.some((event) => event.name === "agent.run.failed"), true);
+    assertEquals(runSpan?.events.some((event) => event.name === "agent.run.completed"), false);
   });
 
   it("emits comment heartbeats while the runtime stream is idle", async () => {
