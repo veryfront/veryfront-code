@@ -26,6 +26,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   captureBrowserDiagnostics,
+  closeChromium,
   getBrowserDiagnosticMessages,
   launchChromium,
 } from "../../_helpers/playwright.ts";
@@ -75,6 +76,32 @@ export function hydrateRoot() {
 `;
 
 const LEGACY_ROUTER_MODULE = `
+const navigationStoreKey = Symbol.for("veryfront.navigation.store.v1");
+const navigationState = { navigator: null };
+const listeners = new Set();
+const navigationStore = {
+  subscribe(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
+  getHref() {
+    return location.pathname + location.search + location.hash;
+  },
+  notify() {
+    for (const listener of listeners) listener();
+  },
+  navigate(href, options) {
+    if (navigationState.navigator) return navigationState.navigator(href, options);
+    location.assign(href);
+    return Promise.resolve();
+  },
+  setNavigator(navigator) {
+    navigationState.navigator = navigator;
+  }
+};
+globalThis[navigationStoreKey] = navigationStore;
+globalThis.__legacyRouterNavigationState = navigationState;
+
 export function RouterProvider({ children }) {
   return children;
 }
@@ -101,9 +128,29 @@ function javascript(source: string): Response {
   });
 }
 
+async function waitForHydration(
+  page: import("npm:playwright@1.60.0").Page,
+  diagnostics: ReturnType<typeof captureBrowserDiagnostics>,
+): Promise<void> {
+  try {
+    await page.waitForFunction(
+      () => document.documentElement.dataset.hydrated === "yes",
+      undefined,
+      { timeout: 5_000 },
+    );
+  } catch (error) {
+    const missingExport = getBrowserDiagnosticMessages(diagnostics).find((message) =>
+      message.includes("does not provide an export named 'getNavigationStore'")
+    );
+    if (missingExport) {
+      throw new Error(`Hydration module linking failed: ${missingExport}`, { cause: error });
+    }
+    throw error;
+  }
+}
+
 describe(
   "Regression: shared hydration runtime supports legacy router release assets",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     it("hydrates without requiring getNavigationStore", async () => {
       const hydrationModule = generateProdHydrationModule();
@@ -139,7 +186,7 @@ describe(
         const response = await page.goto(`http://127.0.0.1:${port}/`);
 
         assertEquals(response?.status(), 200);
-        await page.waitForFunction(() => document.documentElement.dataset.hydrated === "yes");
+        await waitForHydration(page, diagnostics);
 
         const messages = getBrowserDiagnosticMessages(diagnostics);
         assertEquals(
@@ -155,8 +202,17 @@ describe(
           await page.locator("#root").textContent(),
           "Existing release content",
         );
+        assertEquals(
+          await page.evaluate(() => {
+            const state = Reflect.get(globalThis, "__legacyRouterNavigationState") as
+              | { navigator?: unknown }
+              | undefined;
+            return typeof state?.navigator === "function";
+          }),
+          true,
+        );
       } finally {
-        await browser?.close();
+        await closeChromium(browser);
         await server.shutdown();
         await server.finished;
       }

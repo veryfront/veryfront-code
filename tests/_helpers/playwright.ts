@@ -35,6 +35,8 @@ interface BrowserBridgeMessage {
   wsEndpoint: string;
 }
 
+const browserBridgeCleanups = new WeakMap<Browser, () => Promise<void>>();
+
 export function parseBrowserBridgeMessage(message: string): BrowserBridgeMessage {
   let parsed: unknown;
   try {
@@ -61,12 +63,17 @@ async function readBrowserBridgeMessage(
   const decoder = new TextDecoder();
   let output = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) throw new Error("Playwright browser bridge exited before reporting an endpoint");
-    output += decoder.decode(value, { stream: true });
-    const newline = output.indexOf("\n");
-    if (newline >= 0) return parseBrowserBridgeMessage(output.slice(0, newline));
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("Playwright browser bridge exited before reporting an endpoint");
+      output += decoder.decode(value, { stream: true });
+      const newline = output.indexOf("\n");
+      if (newline >= 0) return parseBrowserBridgeMessage(output.slice(0, newline));
+    }
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
   }
 }
 
@@ -92,13 +99,37 @@ async function launchChromiumThroughNode(chromium: ChromiumConnector): Promise<B
     stdout: "piped",
     stderr: "piped",
   }).spawn();
+  const statusPromise = child.status;
   const stderrPromise = new Response(child.stderr).text();
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      try {
+        const writer = child.stdin.getWriter();
+        try {
+          await writer.close();
+        } finally {
+          writer.releaseLock();
+        }
+      } catch {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* expected: bridge may already have exited */
+        }
+      }
+
+      await statusPromise;
+      await stderrPromise;
+    })();
+    return cleanupPromise;
+  };
 
   try {
     const bridge = await withTimeout(
       Promise.race([
         readBrowserBridgeMessage(child.stdout),
-        child.status.then(async (status) => {
+        statusPromise.then(async (status) => {
           const stderr = (await stderrPromise).trim();
           throw new Error(
             `Playwright browser bridge exited with code ${status.code}${
@@ -114,31 +145,14 @@ async function launchChromiumThroughNode(chromium: ChromiumConnector): Promise<B
       timeout: CHROMIUM_LAUNCH_TIMEOUT_MS,
     });
 
-    let cleanedUp = false;
+    browserBridgeCleanups.set(browser, cleanup);
     browser.on("disconnected", () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      void (async () => {
-        try {
-          const writer = child.stdin.getWriter();
-          await writer.close();
-        } catch {
-          try {
-            child.kill("SIGTERM");
-          } catch {
-            /* expected: bridge may already have exited */
-          }
-        }
-      })();
+      void cleanup();
     });
 
     return browser;
   } catch (error) {
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      /* expected: bridge may already have exited */
-    }
+    await cleanup();
     throw error;
   }
 }
@@ -176,6 +190,18 @@ export async function launchChromium(): Promise<Browser | null> {
       return null;
     }
     throw error;
+  }
+}
+
+/** Close a browser and await any Node bridge subprocess cleanup. */
+export async function closeChromium(browser: Browser | null): Promise<void> {
+  if (!browser) return;
+  const cleanup = browserBridgeCleanups.get(browser);
+  try {
+    await browser.close();
+  } finally {
+    await cleanup?.();
+    browserBridgeCleanups.delete(browser);
   }
 }
 

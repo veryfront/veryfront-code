@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
+import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 import {
   generateProdHydrationModule,
   getProdHydrationModulePath,
@@ -36,6 +37,9 @@ async function bundleHydrationModuleAgainstLegacyRouter(hydrationModule: string)
     write: false,
     format: "esm",
     platform: "browser",
+    // A missing namespace property is the compatibility path under test, so the
+    // expected esbuild warning is intentionally quiet. Any static named import
+    // still fails the build.
     logLevel: "silent",
     plugins: [{
       name: "legacy-router-fixture",
@@ -51,6 +55,13 @@ async function bundleHydrationModuleAgainstLegacyRouter(hydrationModule: string)
       },
     }],
   });
+}
+
+function extractModuleScript(scriptTag: string): string {
+  const start = scriptTag.indexOf(">") + 1;
+  const end = scriptTag.lastIndexOf("</script>");
+  if (start === 0 || end < start) throw new Error("Expected a module script tag");
+  return scriptTag.slice(start, end);
 }
 
 describe("hydration-script-builder/prod-scripts", () => {
@@ -128,12 +139,13 @@ describe("hydration-script-builder/prod-scripts", () => {
 });
 
 Deno.test({
-  name: "prod hydration module links against router assets from existing releases",
-  sanitizeOps: false,
-  sanitizeResources: false,
+  name: "generated hydration modules link against router assets from existing releases",
   async fn() {
     try {
       await bundleHydrationModuleAgainstLegacyRouter(generateProdHydrationModule());
+      await bundleHydrationModuleAgainstLegacyRouter(
+        extractModuleScript(generateDevClientRendererScript()),
+      );
     } finally {
       await esbuild.stop();
     }

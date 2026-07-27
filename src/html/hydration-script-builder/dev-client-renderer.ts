@@ -1,4 +1,9 @@
-import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
+import {
+  getLoaderScript,
+  getNavigationStoreCompatibilityScript,
+  getRendererScript,
+  getRouterScript,
+} from "./templates/index.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 
 export function generateDevClientRendererScript(nonce?: string): string {
@@ -11,7 +16,7 @@ export function generateDevClientRendererScript(nonce?: string): string {
     import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';
     import * as RouterRuntime from 'veryfront/router';
     import { PageContextProvider } from 'veryfront/context';
-    const getNavigationStore = RouterRuntime.getNavigationStore;
+    ${getNavigationStoreCompatibilityScript()}
 
     ${getRouterScript()}
     ${getLoaderScript()}

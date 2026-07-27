@@ -1,4 +1,9 @@
-import { getLoaderScript, getRendererScript, getRouterScript } from "./templates/index.ts";
+import {
+  getLoaderScript,
+  getNavigationStoreCompatibilityScript,
+  getRendererScript,
+  getRouterScript,
+} from "./templates/index.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
 
@@ -15,7 +20,7 @@ export function generateProdHydrationModule(): string {
     `import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';`,
     `import * as RouterRuntime from 'veryfront/router';`,
     `import { PageContextProvider } from 'veryfront/context';`,
-    `const getNavigationStore = RouterRuntime.getNavigationStore;`,
+    getNavigationStoreCompatibilityScript().trim(),
     getRouterScript().trim(),
     getLoaderScript().trim(),
     getRendererScript().trim(),
