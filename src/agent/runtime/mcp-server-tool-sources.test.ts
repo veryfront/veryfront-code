@@ -190,6 +190,7 @@ Deno.test("getRuntimeRemoteToolSources hydrates a Veryfront API MCP server from 
 
   assertEquals(listContexts, [
     { projectId: "server-project" },
+    { projectId: "server-project" },
   ]);
   assertEquals(executeCalls, [{
     toolName: "get_file",

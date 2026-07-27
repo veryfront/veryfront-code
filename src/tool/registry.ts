@@ -7,6 +7,9 @@ import {
 } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { INVALID_ARGUMENT, TOOL_ID_CONFLICT } from "#veryfront/errors";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
+import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
 
 /**
  * Returns true when `incoming` is considered the same definition as `existing`:
@@ -79,9 +82,55 @@ class ToolRegistry extends ScopedRegistryView<Tool> {
 /** Project-scoped tool registry value. */
 export const toolRegistry = new ToolRegistry(toolRegistryInternal);
 
+function snapshotProviderSchema(value: unknown, toolId: string): JsonSchema {
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (
+    !snapshot.success ||
+    typeof snapshot.value !== "object" ||
+    snapshot.value === null ||
+    Array.isArray(snapshot.value)
+  ) {
+    throw new TypeError(`Tool "${toolId}" provider schema must be a bounded JSON object`);
+  }
+  return snapshot.value;
+}
+
+function snapshotProviderMcpMetadata(
+  value: Tool["mcp"],
+  toolId: string,
+): Pick<ToolDefinition, "annotations" | "title"> {
+  if (value === undefined) return {};
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (
+    !snapshot.success ||
+    typeof snapshot.value !== "object" ||
+    snapshot.value === null ||
+    Array.isArray(snapshot.value)
+  ) {
+    throw new TypeError(`Tool "${toolId}" MCP metadata must be a bounded JSON object`);
+  }
+
+  const title = typeof snapshot.value.title === "string" &&
+      snapshot.value.title.length > 0
+    ? snapshot.value.title
+    : undefined;
+  const annotations = typeof snapshot.value.annotations === "object" &&
+      snapshot.value.annotations !== null &&
+      !Array.isArray(snapshot.value.annotations)
+    ? snapshot.value.annotations as ToolAnnotations
+    : undefined;
+  return {
+    ...(title ? { title } : {}),
+    ...(annotations ? { annotations } : {}),
+  };
+}
+
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   const hasPreConvertedSchema = tool.inputSchemaJson != null;
-  const jsonSchema = tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema);
+  const jsonSchema = snapshotProviderSchema(
+    tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
+    tool.id,
+  );
 
   agentLogger.info(
     `[TOOL] Using ${
@@ -93,5 +142,6 @@ export function toolToProviderDefinition(tool: Tool): ToolDefinition {
     name: tool.id,
     description: tool.description,
     parameters: jsonSchema,
+    ...snapshotProviderMcpMetadata(tool.mcp, tool.id),
   };
 }

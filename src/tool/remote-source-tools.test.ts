@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RemoteToolSource } from "./types.ts";
 import {
@@ -148,5 +148,79 @@ describe("tool/remote-source-tools", () => {
       type: "tool-lifecycle",
       data: { phase: "started" },
     }]);
+  });
+
+  it("rejects duplicate materialized aliases instead of silently overwriting tools", () => {
+    const source: RemoteToolSource = {
+      id: "docs-source",
+      async listTools() {
+        return [];
+      },
+      async executeTool() {
+        return null;
+      },
+    };
+
+    assertThrows(
+      () =>
+        createToolsFromRemoteDefinitions(
+          source,
+          [
+            {
+              name: "search_docs",
+              description: "Search docs",
+              parameters: { type: "object" },
+            },
+            {
+              name: "find_docs",
+              description: "Find docs",
+              parameters: { type: "object" },
+            },
+          ],
+          {
+            toolNameAliases: {
+              search_docs: "docs",
+              find_docs: "docs",
+            },
+          },
+        ),
+      Error,
+      'duplicate materialized tool name "docs"',
+    );
+  });
+
+  it("rejects accessor-backed remote input without invoking caller code", async () => {
+    let getterCalls = 0;
+    let executionCalls = 0;
+    const source: RemoteToolSource = {
+      id: "docs-source",
+      async listTools() {
+        return [];
+      },
+      async executeTool() {
+        executionCalls += 1;
+        return null;
+      },
+    };
+    const tools = createToolsFromRemoteDefinitions(source, [{
+      name: "search_docs",
+      description: "Search docs",
+      parameters: { type: "object" },
+    }]);
+    const input = Object.defineProperty({}, "query", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "secret";
+      },
+    });
+
+    await assertRejects(
+      () => tools.search_docs!.execute(input),
+      Error,
+      "bounded JSON object",
+    );
+    assertEquals(getterCalls, 0);
+    assertEquals(executionCalls, 0);
   });
 });

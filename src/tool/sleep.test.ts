@@ -56,6 +56,25 @@ describe("tool/sleep", () => {
     assertEquals(testSleepTool.inputSchema.safeParse({ seconds: 11 }).success, false);
   });
 
+  it("rejects invalid timer configuration before schema construction", () => {
+    for (const maxSeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_484]) {
+      assertThrows(
+        () => createSleepTool({ maxSeconds, wait: () => undefined }),
+        RangeError,
+        "maxSeconds",
+      );
+    }
+
+    assertThrows(
+      () =>
+        createSleepTool({
+          wait: "not-a-function" as unknown as () => void,
+        }),
+      TypeError,
+      "wait",
+    );
+  });
+
   it("rejects values outside the configured public schema bounds", async () => {
     await assertRejects(
       () => sleepTool.execute({ seconds: 0 }),
