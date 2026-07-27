@@ -6,6 +6,10 @@ import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-co
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
 import { VeryfrontError } from "#veryfront/errors";
+import { resolveRequestedDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+
+const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
 
 function isPageModuleNotFound(error: unknown): boolean {
   return error instanceof VeryfrontError &&
@@ -30,11 +34,40 @@ export function handlePageModule(
           .replace(/\/$/, "");
         const slug = slugPath || "index";
 
+        const requestUrl = new URL(req.url);
+        const requestedPinKeys = requestUrl.searchParams.getAll("pins");
+        const requestedPinKey = requestedPinKeys[0];
+        if (
+          requestedPinKeys.length > 1 ||
+          (requestedPinKey !== undefined &&
+            !DEPENDENCY_PIN_PATTERN.test(requestedPinKey))
+        ) {
+          return respondDependencyConflict(req, ctx, createResponseBuilder, respond);
+        }
+
+        const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+        const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+          dependencyPinningSource,
+          requestedPinKey,
+        );
+        if (
+          !dependencySnapshot ||
+          (requestedPinKey === undefined &&
+            dependencySnapshot.cacheKey.startsWith("on:"))
+        ) {
+          return respondDependencyConflict(req, ctx, createResponseBuilder, respond);
+        }
+
+        const applicationUrl = new URL(requestUrl);
+        if (requestedPinKey !== undefined) applicationUrl.searchParams.delete("pins");
         const renderer = await getRendererForProject(ctx);
         const { pageModule } = await renderer.renderPage(slug, {
           params: undefined,
           props: undefined,
-          url: new URL(req.url),
+          url: applicationUrl,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource,
         });
 
         const code = pageModule?.code;
@@ -95,5 +128,20 @@ export function handlePageModule(
       "module.page.pathname": pathname,
       "module.page.projectSlug": ctx.projectSlug || "unknown",
     },
+  );
+}
+
+function respondDependencyConflict(
+  req: Request,
+  ctx: HandlerContext,
+  createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
+  respond: (response: Response) => HandlerResult,
+): HandlerResult {
+  return respond(
+    createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache("no-store")
+      .text("Unknown dependency snapshot", 409),
   );
 }

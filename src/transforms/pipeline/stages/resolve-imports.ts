@@ -9,9 +9,18 @@ import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { stripJsonImportAttributes } from "../../esm/import-attributes.ts";
 import type { DependencyResolutionObservation } from "../../import-rewriter/dependency-resolution.ts";
 import { type RewriteContext, rewriteImports } from "../../import-rewriter/index.ts";
+import { extractDependencyPinningPathKey } from "../../import-rewriter/url-builder.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 const DEPENDENCY_RESOLUTION_OBSERVATIONS = "dependencyResolutionObservations";
+const DENO_CONFIG_STUB_PATH = "/_vf_modules/_veryfront/_deno-config.js";
+
+function isDenoConfigStubUrl(specifier: string): boolean {
+  const separatorIndex = specifier.search(/[?#]/);
+  const pathname = separatorIndex === -1 ? specifier : specifier.slice(0, separatorIndex);
+  const extracted = extractDependencyPinningPathKey(pathname);
+  return !extracted.malformed && extracted.pathname === DENO_CONFIG_STUB_PATH;
+}
 
 export function getDependencyResolutionObservations(
   ctx: TransformContext,
@@ -69,11 +78,6 @@ export const resolveImportsPlugin: TransformPlugin = {
   async transform(ctx: TransformContext): Promise<string> {
     const rewriteCtx = await buildRewriteContext(ctx);
     const code = await rewriteImports(ctx.code, rewriteCtx);
-    return stripJsonImportAttributes(
-      code,
-      (specifier) =>
-        specifier === "/_vf_modules/_veryfront/_deno-config.js" ||
-        specifier.startsWith("/_vf_modules/_veryfront/_deno-config.js?"),
-    );
+    return stripJsonImportAttributes(code, isDenoConfigStubUrl);
   },
 };
