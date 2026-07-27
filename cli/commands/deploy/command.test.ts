@@ -148,6 +148,29 @@ describe("environment URL readiness", () => {
     assertEquals(cookie, "authToken=test-token");
   });
 
+  it("upgrades authenticated Veryfront environment probes to HTTPS", async () => {
+    let requestedUrl = "";
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "http://my-project.production.veryfront.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requestedUrl, "https://my-project.production.veryfront.com/");
+    assertEquals(cookie, "authToken=test-token");
+  });
+
   it("authenticates a protected veryfront.org environment directly", async () => {
     const requests: Array<{ url: string; cookie: string | null }> = [];
 

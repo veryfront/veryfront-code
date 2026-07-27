@@ -695,6 +695,12 @@ function buildEnvironmentProbeUrl(baseUrl: string, route: string): string {
   return route === "/" ? probeUrl.origin : probeUrl.href;
 }
 
+function secureEnvironmentProbeUrl(url: string): string {
+  const secureUrl = new URL(url);
+  secureUrl.protocol = "https:";
+  return secureUrl.href;
+}
+
 function buildEnvironmentReadinessProbes(
   target: EnvironmentReadinessTarget,
 ): EnvironmentReadinessProbe[] {
@@ -720,7 +726,7 @@ function buildEnvironmentReadinessProbes(
     ];
   }
   return [{
-    url: targetUrl,
+    url: target.protected ? secureEnvironmentProbeUrl(targetUrl) : targetUrl,
     authenticate: target.protected,
     acceptAuthenticationChallenge: false,
   }];
