@@ -68,6 +68,14 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
           }
           return Promise.reject(new Error("not found"));
         },
+        stat: () =>
+          Promise.resolve({
+            size: 72,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: null,
+          }),
       };
       const handler = new ManifestHandler("/project", {
         appDir: "frontend",
@@ -297,6 +305,14 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
           }
           return `'use client';\nexport default function Counter() { return "fresh"; }`;
         },
+        stat: () =>
+          Promise.resolve({
+            size: 80,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: null,
+          }),
       };
       const handler = new ManifestHandler("/project", { fs: fs as any });
 

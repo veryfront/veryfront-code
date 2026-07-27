@@ -242,6 +242,34 @@ describe("rendering/rsc/component-analyzer", () => {
 
       assertEquals(result.id, "MyWidgetComponent");
     });
+
+    it("normalizes Windows path separators when deriving component IDs", async () => {
+      const path = String.raw`C:\project\app\my-widget.tsx`;
+      const fs = createMockFs(
+        new Map([[path, `export default function MyWidget() {}`]]),
+      );
+
+      const result = await analyzeComponent(path, fs);
+
+      assertEquals(result.id, "MyWidget");
+    });
+
+    it("uses bounded byte reads and rejects oversized component sources", async () => {
+      const maxSourceBytes = 5 * 1024 * 1024;
+      const path = "/project/app/Oversized.tsx";
+      const fs = createMockFs(new Map());
+      fs.readFile = () => Promise.reject(new Error("unbounded read must not be used"));
+      fs.readFileBytesBounded = (_path: string, byteLimit: number) => {
+        assertEquals(byteLimit, maxSourceBytes + 1);
+        return Promise.resolve(new Uint8Array(byteLimit));
+      };
+
+      await assertRejects(
+        () => analyzeComponent(path, fs),
+        Error,
+        `${maxSourceBytes}-byte limit`,
+      );
+    });
   });
 
   describe("buildClientManifest", () => {
@@ -273,6 +301,116 @@ describe("rendering/rsc/component-analyzer", () => {
         () => buildClientManifest("/project", "app", fs),
         Error,
         'Duplicate client component ID "Button"',
+      );
+    });
+
+    it("propagates operational scan failures instead of returning a partial manifest", async () => {
+      const files = new Map([
+        [
+          "/project/app/Button.tsx",
+          `'use client';\nexport default function Button() { return null; }`,
+        ],
+      ]);
+      const fs = createMockFs(files);
+      fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "Button.tsx", isFile: true, isDirectory: false, isSymlink: false };
+            yield { name: "broken", isFile: false, isDirectory: true, isSymlink: false };
+            return;
+          }
+          if (path === "/project/app/broken") {
+            throw new Error("remote component listing failed");
+          }
+        })();
+
+      await assertRejects(
+        () => buildClientManifest("/project", "app", fs),
+        Error,
+        "remote component listing failed",
+      );
+    });
+
+    it("does not mistake a listed source read failure for a missing directory", async () => {
+      const fs = createMockFs(new Map());
+      fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "Gone.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+      fs.readFile = () =>
+        Promise.reject(
+          Object.assign(new Error("source disappeared"), { code: "ENOENT" }),
+        );
+
+      await assertRejects(
+        () => buildClientManifest("/project", "app", fs),
+        Error,
+        "source disappeared",
+      );
+    });
+
+    it("rejects configured manifest roots that escape the project", async () => {
+      const files = new Map([
+        [
+          "/outside/Escape.tsx",
+          `'use client';\nexport default function Escape() { return null; }`,
+        ],
+      ]);
+      const fs = createMockFs(files);
+      fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/outside") {
+            yield { name: "Escape.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      await assertRejects(
+        () => buildClientManifest("/project", "../outside", fs),
+        TypeError,
+        "stay within the project",
+      );
+    });
+
+    it("does not follow symlinked directories while constructing a manifest", async () => {
+      const files = new Map([
+        [
+          "/project/app/external/Escape.tsx",
+          `'use client';\nexport default function Escape() { return null; }`,
+        ],
+      ]);
+      const fs = createMockFs(files);
+      fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "external", isFile: false, isDirectory: true, isSymlink: true };
+          } else if (path === "/project/app/external") {
+            yield { name: "Escape.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      const manifest = await buildClientManifest("/project", "app", fs);
+
+      assertEquals(manifest.size, 0);
+    });
+
+    it("bounds recursive manifest discovery", async () => {
+      const maxDirectories = 1_024;
+      const fs = createMockFs(new Map());
+      fs.readDir = (path: string) =>
+        (async function* () {
+          if (!path.startsWith("/project/app")) return;
+          const depth = path.split("/").filter((segment) => segment === "d").length;
+          if (depth < maxDirectories) {
+            yield { name: "d", isFile: false, isDirectory: true, isSymlink: false };
+          }
+        })();
+
+      await assertRejects(
+        () => buildClientManifest("/project", "app", fs),
+        Error,
+        "directory limit",
       );
     });
   });
