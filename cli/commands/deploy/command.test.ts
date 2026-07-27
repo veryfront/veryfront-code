@@ -1148,4 +1148,25 @@ describe("waitForReleaseAssetManifest", () => {
       "Missing routes: /, /about",
     );
   });
+
+  it("accepts empty manifests when no page routes are expected", async () => {
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          ...readyManifest({}),
+          manifest: {
+            ...readyManifest({}).manifest,
+            modules: {},
+          },
+        }),
+    });
+
+    const result = await waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+      expectedRoutes: [],
+      pollIntervalMs: 100,
+      timeoutMs: 100,
+    });
+
+    assertEquals(result.state, "ready");
+  });
 });

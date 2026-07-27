@@ -8,6 +8,9 @@ order: -1
 
 - Node.js 18.18 or later.
 
+The examples use `veryfront` commands. If you have not installed the CLI
+globally, run them with `npx veryfront ...`.
+
 ## Create the app
 
 ```bash

@@ -17,6 +17,7 @@ import {
   createApiClient,
   readConfigFile,
   resolveConfigWithAuth,
+  resolveConfigWithAuthDetails,
   type ResolvedConfig,
   writeProjectSlug,
 } from "#cli/shared/config";
@@ -32,6 +33,7 @@ import {
   computeSourceDigest,
   getProjectTarget,
   normalizeControlPlane,
+  type ProjectTarget,
   readPushReceipt,
   resolveGitSource,
   validatePushReceipt,
@@ -645,35 +647,60 @@ async function ensureProjectLinkedForDeploy(
   env: EnvironmentConfig,
   dryRun: boolean,
   quiet: boolean,
-): Promise<ResolvedConfig> {
-  const initial = await resolveConfigWithAuth(projectDir, env);
+): Promise<{
+  config: ResolvedConfig;
+  client: ApiClient;
+  project: ProjectTarget | null;
+  plannedProjectSlug: string;
+}> {
+  const details = await resolveConfigWithAuthDetails(projectDir, env);
+  const initial = details.config;
   const configFile = await readConfigFile(projectDir);
   const hasPersistedSlug = Boolean(configFile?.projectSlug);
-  const suggestedSlug = normalizeProjectSlug(
-    initial.projectSlug || await inferDeployProjectSlug(projectDir),
-  );
-  const client = createApiClient({ ...initial, projectSlug: suggestedSlug });
+  const isInferredReference = details.projectReferenceSource.kind === "inferred";
+  const projectReference = isInferredReference
+    ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
+    : initial.projectSlug;
+  const config = { ...initial, projectSlug: projectReference };
+  const client = createApiClient(config);
 
   try {
-    await getProject(client, suggestedSlug);
-    if (!hasPersistedSlug && !dryRun) {
-      await writeProjectSlug(projectDir, suggestedSlug);
-      if (!quiet) logInfo(`Linked project ${suggestedSlug}`);
+    const project = await getProject(client, projectReference);
+    if (isInferredReference && !hasPersistedSlug && !dryRun) {
+      await writeProjectSlug(projectDir, project.slug);
+      if (!quiet) logInfo(`Linked project ${project.slug}`);
     }
-    return { ...initial, projectSlug: suggestedSlug };
+    return {
+      config: { ...config, projectSlug: project.slug },
+      client,
+      project,
+      plannedProjectSlug: project.slug,
+    };
   } catch (error) {
     if (getErrorStatus(error) !== 404) {
       throw new Error(
-        `Could not check project "${suggestedSlug}": ${
+        `Could not check project "${projectReference}": ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     }
   }
 
+  if (!isInferredReference) {
+    throw new Error(
+      `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
+    );
+  }
+
+  const suggestedSlug = normalizeProjectSlug(projectReference);
   if (dryRun) {
     if (!quiet) logInfo(`Would create project ${suggestedSlug}`);
-    return { ...initial, projectSlug: suggestedSlug };
+    return {
+      config: { ...initial, projectSlug: suggestedSlug },
+      client: createApiClient({ ...initial, projectSlug: suggestedSlug }),
+      project: null,
+      plannedProjectSlug: suggestedSlug,
+    };
   }
 
   const created = await reserveProjectSlug(
@@ -685,7 +712,17 @@ async function ensureProjectLinkedForDeploy(
   );
   await writeProjectSlug(projectDir, created.slug);
   if (!quiet) logInfo(`Created project ${created.slug}`);
-  return { ...initial, projectSlug: created.slug };
+  const createdConfig = { ...initial, projectSlug: created.slug };
+  const createdClient = createApiClient(createdConfig);
+  const project = created.projectId
+    ? { id: created.projectId, slug: created.slug }
+    : await getProject(createdClient, created.slug);
+  return {
+    config: createdConfig,
+    client: createdClient,
+    project,
+    plannedProjectSlug: created.slug,
+  };
 }
 
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
@@ -737,7 +774,7 @@ function assertReadyManifestCoversPageRoutes(
 
   const moduleCount = Object.keys(manifest.modules).length;
   const missingRoutes = expectedRoutes.filter((route) => !manifest.routes[route]);
-  if (moduleCount === 0 || missingRoutes.length > 0) {
+  if (expectedRoutes.length > 0 && (moduleCount === 0 || missingRoutes.length > 0)) {
     throw new Error(
       `Release assets for ${releaseId} are ready but do not include browser modules for this app. ${
         missingRoutes.length > 0 ? `Missing routes: ${missingRoutes.join(", ")}. ` : ""
@@ -816,8 +853,32 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
   const environmentConfig = getEnvironmentConfig();
-  let config = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet);
+  const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet);
+  let { config, client, project } = setup;
   const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
+
+  if (dryRun && !project) {
+    spinner.stop();
+    if (!quiet) {
+      logInfo(
+        `Would push source to "${branch}", create release, and deploy to "${env}" for project ${setup.plannedProjectSlug}`,
+      );
+    }
+    return;
+  }
+
+  if (!force && !dryRun && !skipSourcePush) {
+    spinner.stop();
+    const confirmed = await confirmPrompt(
+      `Push source to "${branch}", create release, and deploy to "${env}"?`,
+      true,
+    );
+    if (!confirmed) {
+      console.log(`  ${muted("Deploy cancelled.")}`);
+      return;
+    }
+    spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
+  }
 
   if (!skipSourcePush) {
     spinner.update(`Pushing source to "${branch}"...`);
@@ -831,12 +892,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     });
     spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
     config = await resolveConfigWithAuth(projectDir, environmentConfig);
+    client = createApiClient(config);
   }
 
-  const client = createApiClient(config);
-
-  spinner.update("Resolving project...");
-  const project = await getProject(client, config.projectSlug);
+  if (!project) {
+    spinner.update("Resolving project...");
+    project = await getProject(client, config.projectSlug);
+  }
 
   spinner.update(`Looking up environment "${env}"...`);
 
@@ -874,7 +936,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     spinner.stop();
   }
 
-  if (!force) {
+  if (!force && skipSourcePush) {
     const confirmed = await confirmPrompt(
       `Create release from "${branch}" and deploy to "${env}"?`,
       true,
@@ -969,6 +1031,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     releaseName,
     dryRun,
     force,
+    skipSourcePush,
     assetManifestPollIntervalMs,
     assetManifestTimeoutMs,
   } = options;
@@ -988,13 +1051,51 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }
 
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
-    const config = await resolveConfigWithAuth(projectDir);
-    const client = createApiClient(config);
+    const environmentConfig = getEnvironmentConfig();
+    const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);
+    let { config, client, project } = setup;
     const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
+    if (dryRun && !project) {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: {
+          dryRun: true,
+          branch,
+          projectId: null,
+          projectSlug: setup.plannedProjectSlug,
+          environment: env,
+          environmentId: null,
+          controlPlane: normalizeControlPlane(config.apiUrl),
+          plannedActions: [
+            "create-project",
+            ...(skipSourcePush ? [] : ["push-source"]),
+            "create-release",
+            "deploy",
+          ],
+        },
+      });
+      return;
+    }
+
+    if (!skipSourcePush) {
+      streamJsonLine({ type: "step", name: "push-source", status: "started" });
+      await pushCommand({
+        projectDir,
+        branch,
+        force: true,
+        dryRun,
+        quiet: true,
+      });
+      config = await resolveConfigWithAuth(projectDir, environmentConfig);
+      client = createApiClient(config);
+      streamJsonLine({ type: "step", name: "push-source", status: "completed" });
+    }
+
     streamJsonLine({ type: "step", name: "resolve-target", status: "started" });
-    const project = await getProject(client, config.projectSlug);
+    if (!project) project = await getProject(client, config.projectSlug);
     const environment = await getEnvironmentByName(client, project.id, env);
     if (!environment) {
       streamJsonLine({

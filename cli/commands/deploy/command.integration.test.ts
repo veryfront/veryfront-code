@@ -216,7 +216,6 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       assertEquals(environmentReads, 2);
       assertEquals(releaseSourceReads, 2);
       assertEquals(requests, [
-        ...(jsonMode ? [] : ["GET /api/projects/my-project"]),
         "GET /api/projects/my-project",
         `GET /api/projects/${PROJECT_ID}/environments`,
         `POST /api/projects/${PROJECT_ID}/releases`,
@@ -285,10 +284,10 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     assertEquals(releaseSourceReads, 20);
     assertEquals(requests.slice(0, 5), [
       "GET /api/projects/my-project",
-      "GET /api/projects/my-project",
       `GET /api/projects/${PROJECT_ID}/environments`,
       `POST /api/projects/${PROJECT_ID}/releases`,
       `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}`,
+      `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
     ]);
     assertEquals(
       requests.filter((request) =>
@@ -309,6 +308,103 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     });
     _resetEnvironmentConfig();
     setJsonMode(false);
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("models an inferred missing project during dry-run deploy", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const requests: string[] = [];
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"missing-app"}\n');
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}`);
+      return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+    }, () =>
+      deployCommand({
+        projectDir,
+        branch: "main",
+        env: "production",
+        dryRun: true,
+        force: true,
+        quiet: true,
+      }));
+
+    assertEquals(requests, ["GET /api/projects/missing-app"]);
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("preserves explicit project ids during deploy project lookup", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const requests: string[] = [];
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"ignored-name"}\n');
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.set("VERYFRONT_PROJECT_ID", "proj_123");
+    _resetEnvironmentConfig();
+
+    await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}`);
+      return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+    }, () =>
+      assertRejects(
+        () =>
+          deployCommand({
+            projectDir,
+            branch: "main",
+            env: "production",
+            dryRun: true,
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        'Project "proj_123" was not found',
+      ));
+
+    assertEquals(requests, ["GET /api/projects/proj_123"]);
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
     await Deno.remove(projectDir, { recursive: true });
   }
 });

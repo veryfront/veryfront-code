@@ -75,7 +75,8 @@ const logger = serverLogger.component("release-asset-build");
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories used as browser graph entry seeds. Imports may reach any project directory. */
-const BROWSER_MODULE_DIRS = ["app/", "pages/", "components/", "layouts/", "lib/", "src/"];
+const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
+const PROJECT_IMPORT_ROOTS = ["app/", ...BROWSER_MODULE_DIRS];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react",
@@ -283,7 +284,37 @@ function isTransformableBrowserModule(path: string): boolean {
 /** True when a logical path should seed the browser module graph. */
 function isBrowserModule(path: string): boolean {
   if (!isTransformableBrowserModule(path)) return false;
-  return BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+  if (routeForPage(path) !== null) return true;
+  return isAppRouterLayout(path) || BROWSER_MODULE_DIRS.some((dir) => path.startsWith(dir));
+}
+
+function isAppRouterLayout(path: string): boolean {
+  if (!path.startsWith("app/")) return false;
+  const withoutPrefix = path.slice("app/".length);
+  const segments = withoutPrefix.split("/");
+  const fileName = segments.pop();
+  if (!fileName || !/^layout\.(tsx|ts|jsx|mdx|js)$/.test(fileName)) return false;
+  return !segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"));
+}
+
+function collectAppRouterLayoutsForPage(logicalPath: string, knownPaths: Set<string>): string[] {
+  if (!logicalPath.startsWith("app/") || routeForPage(logicalPath) === null) return [];
+
+  const segments = logicalPath.split("/");
+  segments.pop();
+
+  const layouts: string[] = [];
+  for (let depth = 1; depth <= segments.length; depth++) {
+    const dir = segments.slice(0, depth).join("/");
+    for (const ext of BROWSER_MODULE_EXTENSIONS) {
+      const candidate = `${dir}/layout${ext}`;
+      if (knownPaths.has(candidate)) {
+        layouts.push(candidate);
+        break;
+      }
+    }
+  }
+  return layouts;
 }
 
 function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
@@ -344,7 +375,7 @@ function normalizeProjectSpecifier(specifier: string, logicalPath: string): stri
 
   if (specifier.startsWith("/")) return specifier;
 
-  if (BROWSER_MODULE_DIRS.some((dir) => specifier.startsWith(dir))) return specifier;
+  if (PROJECT_IMPORT_ROOTS.some((dir) => specifier.startsWith(dir))) return specifier;
 
   return null;
 }
@@ -1780,8 +1811,12 @@ async function runBuildInner(
     const route = routeForPage(logicalPath);
     if (!route) continue;
 
+    const entryModules = [
+      logicalPath,
+      ...collectAppRouterLayoutsForPage(logicalPath, knownPaths),
+    ];
     const { modules: closureModules, gaps: closureGaps } = await collectRouteClosure(
-      [logicalPath],
+      entryModules,
       transformedModules,
       knownPaths,
     );

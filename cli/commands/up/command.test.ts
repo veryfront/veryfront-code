@@ -6,6 +6,7 @@ import { join } from "veryfront/platform/path";
 import { parseUpArgs, UpArgsSchema, upCommand } from "./index.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import { normalizeProjectSlug } from "#cli/shared/slug";
+import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
   return { _: ["up"], ...flags };
@@ -195,7 +196,7 @@ describe("Up Command", () => {
           false,
         );
         const expectedSlug = normalizeProjectSlug(tempDir.split(/[/\\]/).pop() ?? "");
-        const expectedName = expectedSlug.charAt(0).toUpperCase() + expectedSlug.slice(1);
+        const expectedName = capitalizeSeparatedWords(expectedSlug, "-", " ");
         assertEquals(projectCreateBody, { slug: expectedSlug, name: expectedName });
       } finally {
         globalThis.fetch = originalFetch;

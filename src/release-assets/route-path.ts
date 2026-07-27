@@ -11,7 +11,19 @@ export function routeForPage(logicalPath: string): string | null {
     const withoutPrefix = logicalPath.slice("app/".length);
     const withoutExt = withoutPrefix.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
     if (withoutExt !== "page" && !withoutExt.endsWith("/page")) return null;
-    const route = withoutExt.replace(/\/page$/, "").replace(/^page$/, "");
+
+    const segments = withoutExt
+      .replace(/\/page$/, "")
+      .replace(/^page$/, "")
+      .split("/")
+      .filter(Boolean);
+    if (segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"))) {
+      return null;
+    }
+
+    const route = segments
+      .filter((segment) => !segment.startsWith("("))
+      .join("/");
     return `/${route}`.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
   }
 

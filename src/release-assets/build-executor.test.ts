@@ -219,6 +219,7 @@ describe("release asset build executor", () => {
       { path: "app/page.tsx", content: "export default () => null;" },
       { path: "app/about/page.tsx", content: "export default () => null;" },
       { path: "app/layout.tsx", content: "export default ({ children }) => children;" },
+      { path: "app/api/ag-ui/route.ts", content: "export async function POST() {}" },
     ];
     const client = makeClient(files, rec);
     const transform = (source: string) => Promise.resolve(source);
@@ -230,8 +231,10 @@ describe("release asset build executor", () => {
     assertExists(manifest);
     assertExists(manifest.modules["app/page.tsx"]);
     assertExists(manifest.modules["app/about/page.tsx"]);
-    assertEquals(manifest.routes["/"]?.modules, ["app/page.tsx"]);
-    assertEquals(manifest.routes["/about"]?.modules, ["app/about/page.tsx"]);
+    assertExists(manifest.modules["app/layout.tsx"]);
+    assertEquals(manifest.modules["app/api/ag-ui/route.ts"], undefined);
+    assertEquals(manifest.routes["/"]?.modules, ["app/page.tsx", "app/layout.tsx"]);
+    assertEquals(manifest.routes["/about"]?.modules, ["app/about/page.tsx", "app/layout.tsx"]);
     assertEquals(routeForPage("app/layout.tsx"), null);
   });
 
@@ -1932,6 +1935,11 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage("pages/blog/index.tsx"), "/blog");
     assertEquals(routeForPage("pages/blog/post.tsx"), "/blog/post");
     assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
+    assertEquals(routeForPage("app/page.tsx"), "/");
+    assertEquals(routeForPage("app/(marketing)/page.tsx"), "/");
+    assertEquals(routeForPage("app/(marketing)/blog/page.tsx"), "/blog");
+    assertEquals(routeForPage("app/@modal/page.tsx"), null);
+    assertEquals(routeForPage("app/_components/page.tsx"), null);
     assertEquals(routeForPage("components/Button.tsx"), null);
   });
 });
