@@ -1942,12 +1942,17 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
     assertEquals(routeForPage("pages/api/hello.ts"), null);
     assertEquals(routeForPage("pages/api/users/[id].ts"), null);
+    assertEquals(routeForPage("pages/index.d.ts"), null);
+    assertEquals(routeForPage("pages/blog/post.d.ts"), null);
+    assertEquals(routeForPage("pages/index.css"), null);
     assertEquals(routeForPage("pages/_app.tsx"), null);
     assertEquals(routeForPage("pages/_document.tsx"), null);
     assertEquals(routeForPage("pages/blog/_draft.tsx"), null);
     assertEquals(routeForPage("app/page.tsx"), "/");
     assertEquals(routeForPage("app/(marketing)/page.tsx"), "/");
     assertEquals(routeForPage("app/(marketing)/blog/page.tsx"), "/blog");
+    assertEquals(routeForPage("app/page.d.ts"), null);
+    assertEquals(routeForPage("app/page.css"), null);
     assertEquals(routeForPage("app/@modal/page.tsx"), null);
     assertEquals(routeForPage("app/_components/page.tsx"), null);
     assertEquals(routeForPage("components/Button.tsx"), null);
