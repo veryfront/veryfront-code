@@ -52,6 +52,48 @@ describe("tool registry", () => {
     });
   });
 
+  it("preserves MCP presentation metadata and returns a defensive schema snapshot", () => {
+    const registeredTool = tool({
+      id: "metadata-tool",
+      description: "desc",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+      },
+      mcp: {
+        title: "Search",
+        annotations: { readOnlyHint: true },
+      },
+      execute: async () => null,
+    });
+
+    const definition = toolToProviderDefinition(registeredTool);
+    assertEquals(definition, {
+      name: "metadata-tool",
+      description: "desc",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+      },
+      title: "Search",
+      annotations: { readOnlyHint: true },
+    });
+
+    (definition.parameters.properties?.query as { type?: string }).type = "number";
+    definition.annotations!.readOnlyHint = false;
+
+    assertEquals(toolToProviderDefinition(registeredTool), {
+      name: "metadata-tool",
+      description: "desc",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+      },
+      title: "Search",
+      annotations: { readOnlyHint: true },
+    });
+  });
+
   it("should return provider definitions for all registered tools", () => {
     toolRegistry.register(
       "first-tool",

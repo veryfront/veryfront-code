@@ -3,6 +3,7 @@ import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 
 interface ContractSchemaShape {
   __zod?: unknown;
@@ -15,10 +16,14 @@ interface SchemaWithParse {
   parse: (input: unknown) => unknown;
 }
 
-function isJsonSchemaObject(value: unknown): value is JsonSchema {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const type = (value as { type?: unknown }).type;
-  return typeof type === "string";
+function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
+  const snapshot = snapshotBoundedJsonValue(value);
+  return snapshot.success &&
+      typeof snapshot.value === "object" &&
+      snapshot.value !== null &&
+      !Array.isArray(snapshot.value)
+    ? snapshot.value
+    : undefined;
 }
 
 function isContractSchema(value: unknown): value is ContractSchemaShape {
@@ -32,6 +37,14 @@ function isContractSchema(value: unknown): value is ContractSchemaShape {
 
 function hasSchemaParse(schema: unknown): schema is SchemaWithParse {
   return typeof (schema as { parse?: unknown } | null | undefined)?.parse === "function";
+}
+
+function captureSchemaParser(
+  schema: unknown,
+): ((input: unknown) => unknown) | undefined {
+  if (!hasSchemaParse(schema)) return undefined;
+  const parse = schema.parse;
+  return (input) => Reflect.apply(parse, schema, [input]);
 }
 
 function permissiveFallback(logPrefix: string, toolId: string, detail: string): JsonSchema {
@@ -72,11 +85,6 @@ function convertSchemaToJson(
   logPrefix: string,
   permissive = false,
 ): JsonSchema {
-  if (isJsonSchemaObject(schema)) {
-    logSchemaResult(logPrefix, toolId, "Raw JSON", schema);
-    return schema;
-  }
-
   // Contract Schema<T> values route through the SchemaValidator contract.
   if (isContractSchema(schema)) {
     const result = tryConvert(
@@ -90,12 +98,59 @@ function convertSchemaToJson(
     return result;
   }
 
+  const jsonSchema = snapshotJsonSchemaObject(schema);
+  if (jsonSchema && (!permissive || Object.keys(jsonSchema).length > 0)) {
+    logSchemaResult(logPrefix, toolId, "Raw JSON", jsonSchema);
+    return jsonSchema;
+  }
+
   if (permissive) return permissiveFallback(logPrefix, toolId, "Using fully dynamic schema");
 
   schemaError(
     toolId,
     "input schema is not a valid Veryfront schema. Use defineSchema() or set allowUnknownSchema to true.",
   );
+}
+
+function snapshotMcpConfig(
+  value: ToolConfig["mcp"] | undefined,
+  toolId: string,
+): ToolConfig["mcp"] | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    schemaError(toolId, "MCP configuration must be a bounded JSON object");
+  }
+
+  const canonicalInput: Record<string, unknown> = {};
+  let keys: PropertyKey[];
+  try {
+    keys = Reflect.ownKeys(value);
+  } catch {
+    schemaError(toolId, "MCP configuration must be a bounded JSON object");
+  }
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      schemaError(toolId, "MCP configuration must be a bounded JSON object");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
+    if (descriptor.enumerable && descriptor.value !== undefined) {
+      canonicalInput[key] = descriptor.value;
+    }
+  }
+
+  const snapshot = snapshotBoundedJsonValue(canonicalInput);
+  if (
+    !snapshot.success ||
+    typeof snapshot.value !== "object" ||
+    snapshot.value === null ||
+    Array.isArray(snapshot.value)
+  ) {
+    schemaError(toolId, "MCP configuration must be a bounded JSON object");
+  }
+  return snapshot.value as ToolConfig["mcp"];
 }
 
 let toolIdCounter = 0;
@@ -117,38 +172,47 @@ export function tool<TInput = unknown, TOutput = unknown>(
 ): Tool<TInput, TOutput> {
   const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
   const id = explicitId ?? generateToolId();
+  const inputSchema = config.inputSchema;
+  const outputSchema = config.outputSchema;
+  const parseInput = captureSchemaParser(inputSchema);
+  const execute = config.execute;
+  if (typeof execute !== "function") {
+    schemaError(id, "execute must be a function");
+  }
 
   const inputSchemaJson = convertSchemaToJson(
-    config.inputSchema,
+    inputSchema,
     id,
     "TOOL",
     config.allowUnknownSchema ?? false,
   );
-  const outputSchemaJson = config.outputSchema
+  const outputSchemaJson = outputSchema
     ? convertSchemaToJson(
-      config.outputSchema,
+      outputSchema,
       id,
       "TOOL_OUTPUT",
       config.allowUnknownSchema ?? false,
     )
     : undefined;
+  const delegatedIntegrationTools = config.delegatedIntegrationTools
+    ? [...config.delegatedIntegrationTools]
+    : undefined;
+  const mcp = snapshotMcpConfig(config.mcp, id);
 
   const createdTool: Tool<TInput, TOutput> = {
     id,
     type: "function" as const,
     description: config.description,
-    ...(config.delegatedIntegrationTools
-      ? { delegatedIntegrationTools: [...config.delegatedIntegrationTools] }
-      : {}),
-    inputSchema: config.inputSchema as Schema<TInput>,
+    ...(delegatedIntegrationTools ? { delegatedIntegrationTools } : {}),
+    inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
-    outputSchema: config.outputSchema as Schema<TOutput> | undefined,
+    outputSchema: outputSchema as Schema<TOutput> | undefined,
     outputSchemaJson,
     execute: async (input: TInput, context?: ToolExecutionContext) => {
       let validated = input;
-      if (hasSchemaParse(config.inputSchema)) {
+      if (parseInput) {
         try {
-          validated = config.inputSchema.parse(input) as TInput;
+          validated = parseInput(input) as TInput;
         } catch (error) {
           throw toError(
             createError({
@@ -159,9 +223,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
         }
       }
 
-      return await config.execute(validated, context);
+      return await execute(validated, context);
     },
-    mcp: config.mcp,
+    mcp,
   };
 
   return explicitId ? createdTool : markGeneratedToolId(createdTool);
@@ -182,28 +246,43 @@ export interface DynamicToolConfig {
 export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
   const id = explicitId ?? generateToolId();
+  const inputSchema = config.inputSchema;
+  const parseInput = captureSchemaParser(inputSchema);
+  const execute = config.execute;
+  const toModelOutput = config.toModelOutput;
+  if (typeof execute !== "function") {
+    schemaError(id, "execute must be a function");
+  }
+  if (toModelOutput !== undefined && typeof toModelOutput !== "function") {
+    schemaError(id, "toModelOutput must be a function");
+  }
 
-  const inputSchemaJson = config.inputSchemaJson ??
-    convertSchemaToJson(config.inputSchema, id, "DYNAMIC_TOOL", true);
+  const inputSchemaJson = config.inputSchemaJson === undefined
+    ? convertSchemaToJson(inputSchema, id, "DYNAMIC_TOOL", true)
+    : snapshotJsonSchemaObject(config.inputSchemaJson);
+  if (!inputSchemaJson) {
+    schemaError(id, "inputSchemaJson must be a bounded JSON Schema object");
+  }
+  const mcp = snapshotMcpConfig(config.mcp, id);
 
   const createdTool: Tool<unknown, unknown> = {
     id,
     type: "dynamic" as const,
     description: config.description,
-    inputSchema: config.inputSchema as Schema<unknown>,
+    inputSchema: inputSchema as Schema<unknown>,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
-      if (hasSchemaParse(config.inputSchema)) {
-        input = config.inputSchema.parse(input);
+      if (parseInput) {
+        input = parseInput(input);
       } else if (input === undefined) {
         input = {};
       } else if (input === null || typeof input !== "object") {
         throw INVALID_ARGUMENT.create({ detail: "dynamicTool: input must be a non-null object" });
       }
-      const result = await config.execute(input, context);
-      return config.toModelOutput ? config.toModelOutput(result) : result;
+      const result = await execute(input, context);
+      return toModelOutput ? toModelOutput(result) : result;
     },
-    mcp: config.mcp,
+    mcp,
   };
 
   return explicitId ? createdTool : markGeneratedToolId(createdTool);

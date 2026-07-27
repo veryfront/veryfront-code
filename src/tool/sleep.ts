@@ -5,6 +5,7 @@ import type { Tool } from "./types.ts";
 
 /** Default value for sleep tool max seconds. */
 export const DEFAULT_SLEEP_TOOL_MAX_SECONDS = 60;
+const MAX_PORTABLE_TIMER_SECONDS = Math.floor(2_147_483_647 / 1_000);
 
 /** Public API contract for sleep tool wait. */
 export type SleepToolWait = (milliseconds: number) => Promise<void> | void;
@@ -53,6 +54,18 @@ export type SleepToolOutput = {
 export function createSleepTool(options: CreateSleepToolOptions = {}) {
   const maxSeconds = options.maxSeconds ?? DEFAULT_SLEEP_TOOL_MAX_SECONDS;
   const wait = options.wait ?? defaultSleepToolWait;
+  if (
+    !Number.isFinite(maxSeconds) ||
+    maxSeconds < 1 ||
+    maxSeconds > MAX_PORTABLE_TIMER_SECONDS
+  ) {
+    throw new RangeError(
+      `createSleepTool: maxSeconds must be finite and between 1 and ${MAX_PORTABLE_TIMER_SECONDS}`,
+    );
+  }
+  if (typeof wait !== "function") {
+    throw new TypeError("createSleepTool: wait must be a function");
+  }
 
   return tool<SleepToolInput, SleepToolOutput>({
     id: "sleep",
@@ -60,11 +73,10 @@ export function createSleepTool(options: CreateSleepToolOptions = {}) {
       `Wait for a specified number of seconds before continuing. Use this when a task needs to pause execution, such as waiting for an external process to complete or adding a delay between operations. Maximum sleep time is ${maxSeconds} seconds.`,
     inputSchema: createSleepToolInputSchema(maxSeconds),
     execute: async ({ seconds }) => {
-      const clampedSeconds = Math.min(Math.max(1, seconds), maxSeconds);
-      await wait(clampedSeconds * 1000);
+      await wait(seconds * 1000);
       return {
-        sleptFor: clampedSeconds,
-        message: `Waited for ${clampedSeconds} second${clampedSeconds === 1 ? "" : "s"}`,
+        sleptFor: seconds,
+        message: `Waited for ${seconds} second${seconds === 1 ? "" : "s"}`,
       };
     },
   });
