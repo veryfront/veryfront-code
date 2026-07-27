@@ -93,6 +93,8 @@ function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
+  /** Authenticated project identity used to isolate otherwise caller-chosen run ids. */
+  sessionScope?: string;
   localTools?: Record<string, Tool | boolean>;
   projectAgentSandbox?: {
     apiUrl?: string;
@@ -128,6 +130,7 @@ function createInjectedStudioTool(
   description: string | undefined,
   parameters: Record<string, unknown> | undefined,
   sessionManager: AgentRunSessionManager,
+  sessionScope?: string,
 ): Tool {
   return {
     id: toolName,
@@ -142,8 +145,12 @@ function createInjectedStudioTool(
         throw new Error(`Missing toolCallId for injected tool "${toolName}"`);
       }
 
-      sessionManager.prepareForToolResult(runId, toolCallId);
-      const waitResult = await sessionManager.waitForToolResult(runId, toolCallId);
+      sessionManager.prepareForToolResult(runId, toolCallId, sessionScope);
+      const waitResult = await sessionManager.waitForToolResult(
+        runId,
+        toolCallId,
+        sessionScope,
+      );
       if (waitResult.isError) {
         throw new Error(
           typeof waitResult.result === "string"
@@ -162,6 +169,7 @@ export function buildMergedTools(
   sessionManager: AgentRunSessionManager,
   availableForwardedToolNames?: string[],
   availableLocalTools?: Record<string, Tool | boolean>,
+  sessionScope?: string,
 ) {
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const concreteSourceToolNames = agent.config.tools && agent.config.tools !== true
@@ -185,6 +193,7 @@ export function buildMergedTools(
           tool.description,
           tool.inputSchema ?? tool.parameters,
           sessionManager,
+          sessionScope,
         ),
       ]),
   );
@@ -573,6 +582,7 @@ function getRemoteToolDiscoveryContext(input: {
   agent: Agent;
   runInput: RuntimeRunAgentInput;
   deps: RuntimeAgentStreamExecutionDeps;
+  abortSignal?: AbortSignal;
 }): ToolExecutionContext {
   return {
     agentId: input.agent.id,
@@ -585,6 +595,7 @@ function getRemoteToolDiscoveryContext(input: {
       : {}),
     ...(input.runInput.parentRunId ? { parentRunId: input.runInput.parentRunId } : {}),
     ...(input.runInput.state !== undefined ? { state: input.runInput.state } : {}),
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     context: input.runInput.context,
     forwardedProps: input.runInput.forwardedProps,
   };
@@ -594,6 +605,7 @@ async function getDeclaredRemoteSourceToolNames(input: {
   agent: Agent;
   runInput: RuntimeRunAgentInput;
   deps: RuntimeAgentStreamExecutionDeps;
+  abortSignal?: AbortSignal;
 }): Promise<string[]> {
   const sources = getRuntimeRemoteToolSources(input.agent.config);
   if (!sources?.length) {
@@ -603,13 +615,17 @@ async function getDeclaredRemoteSourceToolNames(input: {
   const context = getRemoteToolDiscoveryContext(input);
   const toolNames = new Set<string>();
   for (const source of sources) {
+    input.abortSignal?.throwIfAborted();
     try {
-      for (const definition of await source.listTools(context)) {
+      const definitions = await source.listTools(context);
+      input.abortSignal?.throwIfAborted();
+      for (const definition of definitions) {
         if (typeof definition.name === "string" && definition.name.length > 0) {
           toolNames.add(definition.name);
         }
       }
     } catch (error) {
+      input.abortSignal?.throwIfAborted();
       logger.warn("Failed to inspect remote tool source for restrictive allowlist fallback", {
         runId: input.runInput.runId,
         agentId: input.agent.id,
@@ -650,6 +666,7 @@ export async function createRuntimeAgentStreamResponse(
   const abortSignal = deps.sessionManager.startRun({
     runId: input.runId,
     threadId: input.threadId,
+    scopeId: deps.sessionScope,
   });
 
   let completedResponse: AgentResponse | null = null;
@@ -687,7 +704,12 @@ export async function createRuntimeAgentStreamResponse(
     const remoteFallbackBase = runtimeToolAllowlist !== null &&
         grantedRemoteToolNames === undefined &&
         sourceRemoteFilterBase === undefined
-      ? await getDeclaredRemoteSourceToolNames({ agent, runInput: input, deps })
+      ? await getDeclaredRemoteSourceToolNames({
+        agent,
+        runInput: input,
+        deps,
+        abortSignal,
+      })
       : undefined;
     const allowedRemoteToolNames = runtimeToolAllowlist === null
       ? grantedRemoteToolNames
@@ -707,6 +729,7 @@ export async function createRuntimeAgentStreamResponse(
         deps.sessionManager,
         availableForwardedToolNames,
         Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
+        deps.sessionScope,
       ),
       runtimeToolAllowlist,
       agent,
@@ -816,7 +839,7 @@ export async function createRuntimeAgentStreamResponse(
       agentId: agent.id,
     });
   } catch (error) {
-    deps.sessionManager.failRun(input.runId);
+    deps.sessionManager.failRun(input.runId, deps.sessionScope);
     await closeSandbox().catch((cleanupError) => {
       logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
         runId: input.runId,
@@ -904,7 +927,11 @@ export async function createRuntimeAgentStreamResponse(
               return;
             }
 
-            deps.sessionManager.prepareForToolResult(input.runId, toolCallId);
+            deps.sessionManager.prepareForToolResult(
+              input.runId,
+              toolCallId,
+              deps.sessionScope,
+            );
           };
 
           const throwIfAborted = () => {
@@ -1006,9 +1033,9 @@ export async function createRuntimeAgentStreamResponse(
             }
             const finalStatus = state.sawTerminalError ? "failed" : "completed";
             if (state.sawTerminalError) {
-              deps.sessionManager.failRun(input.runId);
+              deps.sessionManager.failRun(input.runId, deps.sessionScope);
             } else {
-              deps.sessionManager.completeRun(input.runId);
+              deps.sessionManager.completeRun(input.runId, deps.sessionScope);
             }
             setSpanAttributes(runSpan, {
               ...buildInternalAgentRunTraceAttributes({
@@ -1042,7 +1069,7 @@ export async function createRuntimeAgentStreamResponse(
           } catch (error) {
             readerExitReason = error;
             if (error instanceof AgentRunCancelledError) {
-              deps.sessionManager.cancelRun(input.runId);
+              deps.sessionManager.cancelRun(input.runId, deps.sessionScope);
               setSpanAttributes(runSpan, {
                 ...buildInternalAgentRunTraceAttributes({
                   runInput: input,
@@ -1066,7 +1093,7 @@ export async function createRuntimeAgentStreamResponse(
                 message: error.message,
               });
             } else {
-              deps.sessionManager.failRun(input.runId);
+              deps.sessionManager.failRun(input.runId, deps.sessionScope);
               const errorMessage = error instanceof Error ? error.message : String(error);
               setSpanAttributes(runSpan, {
                 ...buildInternalAgentRunTraceAttributes({
@@ -1144,10 +1171,10 @@ export async function createRuntimeAgentStreamResponse(
       clientAttached = false;
       stopHeartbeat?.();
       stopHeartbeat = undefined;
-      const status = deps.sessionManager.getRunStatus(input.runId);
+      const status = deps.sessionManager.getRunStatus(input.runId, deps.sessionScope);
       const shouldCancelActiveRun = status !== null && status !== "waiting";
       if (shouldCancelActiveRun) {
-        deps.sessionManager.cancelRun(input.runId);
+        deps.sessionManager.cancelRun(input.runId, deps.sessionScope);
       }
       logger.info("Internal agent runtime client detached", {
         runId: input.runId,

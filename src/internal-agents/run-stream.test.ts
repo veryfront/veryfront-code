@@ -17,7 +17,12 @@ import type {
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
-import { type RemoteToolSource, type Tool, toolRegistry } from "#veryfront/tool";
+import {
+  type RemoteToolSource,
+  type Tool,
+  type ToolExecutionContext,
+  toolRegistry,
+} from "#veryfront/tool";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
@@ -909,6 +914,66 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, []);
+  });
+
+  it("propagates run cancellation into remote tool discovery", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let discoverySignal: AbortSignal | undefined;
+    let runtimeCreationCalls = 0;
+    const agent = {
+      id: "discovery-agent",
+      config: {
+        id: "discovery-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { remote_tool: true },
+        __vfRemoteToolSources: [{
+          id: "remote-source",
+          listTools: async (context: ToolExecutionContext) => {
+            discoverySignal = context.abortSignal;
+            sessionManager.cancelRun("run_discovery_abort");
+            return [{
+              name: "remote_tool",
+              description: "Remote tool",
+              parameters: { type: "object", properties: {} },
+            }];
+          },
+          executeTool: async () => ({}),
+        }],
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_discovery_abort",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["remote_tool"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => {
+            runtimeCreationCalls++;
+            return {
+              stream: async () => new ReadableStream<Uint8Array>(),
+            };
+          },
+        }),
+      DOMException,
+      "Run cancelled",
+    );
+
+    assertEquals(discoverySignal?.aborted, true);
+    assertEquals(runtimeCreationCalls, 0);
+    assertEquals(sessionManager.getRunStatus(input.runId), null);
   });
 
   it("does not grant remote integration tools via the toolAllowlist fallback", async () => {

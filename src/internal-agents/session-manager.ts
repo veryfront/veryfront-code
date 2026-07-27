@@ -99,9 +99,23 @@ export class AgentRunSessionManager {
     this.sessions = new RunResumeSessionManager(managerOptions);
   }
 
-  startRun(input: { runId: string; threadId: string }): AbortSignal {
+  private getSessionKey(runId: string, scopeId: string | undefined): string {
+    if (scopeId === undefined) {
+      return `unscoped:${runId}`;
+    }
+    if (scopeId.length === 0) {
+      throw new TypeError("Agent run session scope must not be empty");
+    }
+    return `scoped:${scopeId.length}:${scopeId}:${runId}`;
+  }
+
+  startRun(input: { runId: string; threadId: string; scopeId?: string }): AbortSignal {
+    const sessionKey = this.getSessionKey(input.runId, input.scopeId);
     try {
-      return this.sessions.startRun(input);
+      return this.sessions.startRun({
+        runId: sessionKey,
+        threadId: input.threadId,
+      });
     } catch (error) {
       if (error instanceof RunAlreadyExistsError) {
         throw new AgentRunAlreadyExistsError(input.runId);
@@ -110,12 +124,13 @@ export class AgentRunSessionManager {
     }
   }
 
-  async waitForToolResult(runId: string, toolCallId: string): Promise<{
+  async waitForToolResult(runId: string, toolCallId: string, scopeId?: string): Promise<{
     result: unknown;
     isError: boolean;
   }> {
+    const sessionKey = this.getSessionKey(runId, scopeId);
     try {
-      const value = await this.sessions.waitForSignal(runId, toolCallId);
+      const value = await this.sessions.waitForSignal(sessionKey, toolCallId);
       return { result: value.result, isError: value.isError };
     } catch (error) {
       if (error instanceof RunCancelledError) {
@@ -124,17 +139,28 @@ export class AgentRunSessionManager {
       if (error instanceof WaitNotPendingError) {
         throw new ToolResultNotWaitingError(runId, toolCallId);
       }
+      if (error instanceof RunNotActiveError) {
+        throw new RunNotActiveError(runId);
+      }
       throw error;
     }
   }
 
-  prepareForToolResult(runId: string, toolCallId: string): void {
-    this.sessions.prepareForSignal(runId, toolCallId);
+  prepareForToolResult(runId: string, toolCallId: string, scopeId?: string): void {
+    try {
+      this.sessions.prepareForSignal(this.getSessionKey(runId, scopeId), toolCallId);
+    } catch (error) {
+      if (error instanceof RunNotActiveError) {
+        throw new RunNotActiveError(runId);
+      }
+      throw error;
+    }
   }
 
   submitToolResult(
     runId: string,
     input: { toolCallId: string; result: unknown; isError?: boolean },
+    scopeId?: string,
   ): SubmitToolResultOutcome {
     const normalized: SubmittedToolResult = {
       result: input.result,
@@ -143,7 +169,7 @@ export class AgentRunSessionManager {
     };
 
     try {
-      return this.sessions.submitSignal(runId, {
+      return this.sessions.submitSignal(this.getSessionKey(runId, scopeId), {
         waitKey: input.toolCallId,
         value: normalized,
       });
@@ -154,24 +180,27 @@ export class AgentRunSessionManager {
       if (error instanceof WaitNotPendingError) {
         throw new ToolResultNotWaitingError(runId, input.toolCallId);
       }
+      if (error instanceof RunNotActiveError) {
+        throw new RunNotActiveError(runId);
+      }
       throw error;
     }
   }
 
-  cancelRun(runId: string): boolean {
-    return this.sessions.cancelRun(runId);
+  cancelRun(runId: string, scopeId?: string): boolean {
+    return this.sessions.cancelRun(this.getSessionKey(runId, scopeId));
   }
 
-  completeRun(runId: string): void {
-    this.sessions.completeRun(runId);
+  completeRun(runId: string, scopeId?: string): void {
+    this.sessions.completeRun(this.getSessionKey(runId, scopeId));
   }
 
-  failRun(runId: string): void {
-    this.sessions.failRun(runId);
+  failRun(runId: string, scopeId?: string): void {
+    this.sessions.failRun(this.getSessionKey(runId, scopeId));
   }
 
-  getRunStatus(runId: string): SessionStatus | null {
-    return this.sessions.getRunStatus(runId);
+  getRunStatus(runId: string, scopeId?: string): SessionStatus | null {
+    return this.sessions.getRunStatus(this.getSessionKey(runId, scopeId));
   }
 
   reset(): void {

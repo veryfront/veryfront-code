@@ -184,4 +184,49 @@ describe("internal-agents/session-manager", () => {
       "Maximum concurrent sessions (1) reached",
     );
   });
+
+  it("isolates identical run ids by authenticated project scope", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "shared_run",
+      threadId: crypto.randomUUID(),
+      scopeId: "project-a",
+    });
+    sessionManager.startRun({
+      runId: "shared_run",
+      threadId: crypto.randomUUID(),
+      scopeId: "project-b",
+    });
+    const projectAResult = sessionManager.waitForToolResult(
+      "shared_run",
+      "tool_1",
+      "project-a",
+    );
+    const projectBResult = sessionManager.waitForToolResult(
+      "shared_run",
+      "tool_1",
+      "project-b",
+    );
+
+    assertEquals(
+      sessionManager.submitToolResult(
+        "shared_run",
+        { toolCallId: "tool_1", result: { project: "a" } },
+        "project-a",
+      ),
+      { accepted: true },
+    );
+    assertEquals(await projectAResult, {
+      result: { project: "a" },
+      isError: false,
+    });
+    assertEquals(sessionManager.getRunStatus("shared_run", "project-a"), "running");
+    assertEquals(sessionManager.getRunStatus("shared_run", "project-b"), "waiting");
+
+    assertEquals(sessionManager.cancelRun("shared_run", "project-b"), true);
+    await assertRejects(() => projectBResult, AgentRunCancelledError);
+    assertEquals(sessionManager.getRunStatus("shared_run", "project-b"), null);
+    sessionManager.completeRun("shared_run", "project-a");
+    assertEquals(sessionManager.getRunStatus("shared_run", "project-a"), null);
+  });
 });

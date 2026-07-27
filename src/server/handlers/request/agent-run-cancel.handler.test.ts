@@ -5,10 +5,54 @@ import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manag
 import { AgentRunCancelHandler } from "./agent-run-cancel.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 
+const TEST_SESSION_SCOPE = "proj-1";
+
 describe("server/handlers/request/agent-run-cancel.handler", () => {
+  it("cancels only the run in the authenticated project scope", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: "project-a",
+    });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: "project-b",
+    });
+    const handler = new AgentRunCancelHandler(sessionManager);
+    const body = JSON.stringify({ runId: "run_1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+      projectId: "project-a",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1", {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      { ...createCtx(publicKeyPem), projectId: "project-a" },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 202);
+    assertEquals(sessionManager.getRunStatus("run_1", "project-a"), null);
+    assertEquals(sessionManager.getRunStatus("run_1", "project-b"), "running");
+    assertEquals(sessionManager.cancelRun("run_1", "project-b"), true);
+  });
+
   it("cancels an active run with a valid control-plane signature", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
 
     const handler = new AgentRunCancelHandler(sessionManager);
     const body = JSON.stringify({ runId: "run_1" });
@@ -29,12 +73,16 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 202);
     assertEquals(await result.response.json(), { accepted: true });
-    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.getRunStatus("run_1", TEST_SESSION_SCOPE), null);
   });
 
   it("accepts the public control-plane cancel route", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
 
     const handler = new AgentRunCancelHandler(sessionManager);
     const body = JSON.stringify({ runId: "run_1" });
@@ -54,7 +102,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 202);
-    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.getRunStatus("run_1", TEST_SESSION_SCOPE), null);
   });
 
   it("returns 204 when the run is already inactive", async () => {

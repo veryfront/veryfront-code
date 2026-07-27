@@ -55,6 +55,10 @@ Primary source areas:
 - Signed request bodies are byte-capped before verification. Signature
   verification precedes JSON/schema interpretation, so unauthenticated payloads
   cannot drive protocol parsing or discovery.
+- Agent run sessions are keyed by the verified project claim and run ID.
+  Stream, resume, and cancel handlers use the signed `project_id`; an unsigned
+  header, request context, or caller-chosen run ID cannot select another
+  project's session. Identical run IDs in different projects remain isolated.
 - Conversation-history timestamps use ISO 8601 date-time strings. Orphan tool
   results and duplicate tool-call identities are discarded rather than assigned
   a fabricated or ambiguous tool name.
@@ -79,6 +83,8 @@ Primary source areas:
 - Preserve signature validation before any dispatch.
 - Keep proxy signature-family selection aligned with the downstream route.
 - Keep public app route handlers separate from control-plane handlers.
+- Preserve project-scoped session identity across stream, resume, and cancel
+  operations, and propagate cancellation through setup and remote discovery.
 - Add tests for invalid/non-canonical signatures, malformed payloads, queue and
   cancellation behavior, and successful dispatch paths when changing channel
   behavior.

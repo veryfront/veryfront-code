@@ -55,19 +55,19 @@ export class TrackingSessionManager extends AgentRunSessionManager {
     failCalls: 0,
   };
 
-  override cancelRun(runId: string): boolean {
+  override cancelRun(runId: string, scopeId?: string): boolean {
     this.stats.cancelCalls += 1;
-    return super.cancelRun(runId);
+    return super.cancelRun(runId, scopeId);
   }
 
-  override completeRun(runId: string): void {
+  override completeRun(runId: string, scopeId?: string): void {
     this.stats.completeCalls += 1;
-    super.completeRun(runId);
+    super.completeRun(runId, scopeId);
   }
 
-  override failRun(runId: string): void {
+  override failRun(runId: string, scopeId?: string): void {
     this.stats.failCalls += 1;
-    super.failRun(runId);
+    super.failRun(runId, scopeId);
   }
 }
 

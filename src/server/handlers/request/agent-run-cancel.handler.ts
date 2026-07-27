@@ -54,12 +54,12 @@ export class AgentRunCancelHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        await verifyControlPlaneRequest(req, ctx, rawBody, {
+        const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
         });
 
-        const accepted = this.sessionManager.cancelRun(runId);
+        const accepted = this.sessionManager.cancelRun(runId, verifiedClaims.project_id);
         if (accepted) {
           return this.respond(builder.json({ accepted: true }, 202));
         }

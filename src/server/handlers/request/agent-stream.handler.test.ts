@@ -311,8 +311,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(typeof runtimeSystem, "function");
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
     assertStringIncludes(
       prompt,
       'branch_id: "10000000-1000-4000-8000-100000000006"',
@@ -2933,7 +2933,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 500);
     assertEquals(await result.response.json(), { error: "Internal agent stream failed" });
-    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.getRunStatus("run_1", "proj-1"), null);
   });
 
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
@@ -2974,7 +2974,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const reader = result.response.body.getReader();
     let text = await readUntil(reader, (chunk) => chunk.includes("event: RunStarted"));
 
-    assertEquals(sessionManager.cancelRun("run_1"), true);
+    assertEquals(sessionManager.cancelRun("run_1", "proj-1"), true);
 
     text += await readRemainingText(reader);
 
@@ -3024,13 +3024,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     for (
       let attempt = 0;
-      attempt < 20 && sessionManager.getRunStatus("run_1") !== "waiting";
+      attempt < 20 && sessionManager.getRunStatus("run_1", "proj-1") !== "waiting";
       attempt += 1
     ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    assertEquals(sessionManager.getRunStatus("run_1"), "waiting");
+    assertEquals(sessionManager.getRunStatus("run_1", "proj-1"), "waiting");
     assertEquals(sessionManager.stats.cancelCalls, 0);
 
     const resumeBody = JSON.stringify({
@@ -3057,13 +3057,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     for (
       let attempt = 0;
-      attempt < 20 && sessionManager.getRunStatus("run_1") !== null;
+      attempt < 20 && sessionManager.getRunStatus("run_1", "proj-1") !== null;
       attempt += 1
     ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
 
-    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.getRunStatus("run_1", "proj-1"), null);
     assertEquals(sessionManager.stats.completeCalls, 1);
     assertEquals(sessionManager.stats.cancelCalls, 0);
     assertEquals(sessionManager.stats.failCalls, 0);
@@ -3166,7 +3166,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const reader = result.response.body.getReader();
     const initialText = await readUntil(reader, (chunk) => chunk.includes("event: ToolCallEnd"));
-    assertEquals(sessionManager.getRunStatus("run_1"), "running");
+    assertEquals(sessionManager.getRunStatus("run_1", "proj-1"), "running");
     assertStringIncludes(initialText, "event: ToolCallStart");
 
     const resumeBody = JSON.stringify({
@@ -3195,7 +3195,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const finalText = initialText + await readRemainingText(reader);
     assertStringIncludes(finalText, "event: ToolCallResult");
     assertStringIncludes(finalText, "event: RunFinished");
-    assertEquals(sessionManager.getRunStatus("run_1"), null);
+    assertEquals(sessionManager.getRunStatus("run_1", "proj-1"), null);
     assertEquals(sessionManager.stats.completeCalls, 1);
     assertEquals(sessionManager.stats.cancelCalls, 0);
     assertEquals(sessionManager.stats.failCalls, 0);

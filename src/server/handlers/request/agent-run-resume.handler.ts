@@ -58,7 +58,7 @@ export class AgentRunResumeHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        await verifyControlPlaneRequest(req, ctx, rawBody, {
+        const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
         });
@@ -68,7 +68,7 @@ export class AgentRunResumeHandler extends BaseHandler {
           toolCallId: signal.toolCallId,
           result: signal.result,
           isError: signal.isError,
-        });
+        }, verifiedClaims.project_id);
 
         return this.respond(builder.json(outcome, 200));
       } catch (error) {

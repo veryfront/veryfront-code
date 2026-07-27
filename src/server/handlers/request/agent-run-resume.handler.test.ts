@@ -6,11 +6,66 @@ import { INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES } from "#veryfront/internal
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 
+const TEST_SESSION_SCOPE = "proj-1";
+
 describe("server/handlers/request/agent-run-resume.handler", () => {
+  it("resumes only the run in the authenticated project scope", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: "project-a",
+    });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: "project-b",
+    });
+    const projectAResult = sessionManager.waitForToolResult("run_1", "tool_1", "project-a");
+    const projectBResult = sessionManager.waitForToolResult("run_1", "tool_1", "project-b");
+    const handler = new AgentRunResumeHandler(sessionManager);
+    const body = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: { project: "a" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+      projectId: "project-a",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      { ...createCtx(publicKeyPem), projectId: "project-a" },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await projectAResult, {
+      result: { project: "a" },
+      isError: false,
+    });
+    assertEquals(sessionManager.getRunStatus("run_1", "project-b"), "waiting");
+    assertEquals(sessionManager.cancelRun("run_1", "project-b"), true);
+    await projectBResult.catch(() => undefined);
+    sessionManager.completeRun("run_1", "project-a");
+  });
+
   it("accepts a signed tool result for a waiting run", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
-    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE);
 
     const handler = new AgentRunResumeHandler(sessionManager);
     const body = JSON.stringify({
@@ -40,8 +95,12 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
   it("accepts the public control-plane resume route", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
-    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE);
 
     const handler = new AgentRunResumeHandler(sessionManager);
     const body = JSON.stringify({
@@ -70,9 +129,17 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
   it("returns duplicate=true for a repeated identical tool result", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
-    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
-    sessionManager.submitToolResult("run_1", { toolCallId: "tool_1", result: { ok: true } });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE);
+    sessionManager.submitToolResult(
+      "run_1",
+      { toolCallId: "tool_1", result: { ok: true } },
+      TEST_SESSION_SCOPE,
+    );
     await pending;
 
     const handler = new AgentRunResumeHandler(sessionManager);
@@ -150,9 +217,17 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
   it("returns 409 for conflicting duplicate tool results", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
-    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
-    sessionManager.submitToolResult("run_1", { toolCallId: "tool_1", result: { ok: true } });
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE);
+    sessionManager.submitToolResult(
+      "run_1",
+      { toolCallId: "tool_1", result: { ok: true } },
+      TEST_SESSION_SCOPE,
+    );
     await pending;
 
     const handler = new AgentRunResumeHandler(sessionManager);
@@ -182,8 +257,12 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
 
   it("accepts a tool result before the runtime registers the wait", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
-    sessionManager.prepareForToolResult("run_1", "tool_1");
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
+    sessionManager.prepareForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE);
 
     const handler = new AgentRunResumeHandler(sessionManager);
     const body = JSON.stringify({
@@ -208,17 +287,21 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(await result.response.json(), { accepted: true });
-    assertEquals(await sessionManager.waitForToolResult("run_1", "tool_1"), {
+    assertEquals(await sessionManager.waitForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE), {
       result: { ok: true },
       isError: false,
     });
-    sessionManager.completeRun("run_1");
+    sessionManager.completeRun("run_1", TEST_SESSION_SCOPE);
   });
 
   it("returns 409 when a different tool call is submitted while another wait is active", async () => {
     const sessionManager = new AgentRunSessionManager();
-    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
-    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+    sessionManager.startRun({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      scopeId: TEST_SESSION_SCOPE,
+    });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1", TEST_SESSION_SCOPE);
 
     const handler = new AgentRunResumeHandler(sessionManager);
     const body = JSON.stringify({
@@ -243,7 +326,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 409);
     assertEquals(await result.response.json(), { error: "TOOL_RESULT_NOT_WAITING" });
-    assertEquals(sessionManager.cancelRun("run_1"), true);
+    assertEquals(sessionManager.cancelRun("run_1", TEST_SESSION_SCOPE), true);
     await pending.catch(() => undefined);
   });
 

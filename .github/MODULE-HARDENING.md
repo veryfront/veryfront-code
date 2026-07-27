@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    38 |      65.5% | Current formal closure evidence remains valid       |
+| Closed                         |    39 |      67.2% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    18 |      31.0% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    17 |      29.3% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -51,6 +51,7 @@ stricter closure count.
 - `fs`
 - `html`
 - `index.ts`
+- `internal-agents`
 - `integrations`
 - `issues`
 - `knowledge`
@@ -87,7 +88,6 @@ stricter closure count.
 - `build`
 - `client`
 - `data`
-- `internal-agents`
 - `mcp`
 - `modules`
 - `oauth`
@@ -124,9 +124,10 @@ every affected unit.
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`middleware`, `platform`, `provider`, `prompt`, `registry`, `release-assets`,
-`repositories`, `runs`, `runtime`, `sandbox`, `schedule`, `schemas`, `studio`,
-`task`, `trigger`, `types`, `webhook`, `index.ts`, and `version.ts`.
+`internal-agents`, `middleware`, `platform`, `provider`, `prompt`, `registry`,
+`release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
+`schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, `index.ts`, and
+`version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
 remediated and revalidated.
@@ -189,6 +190,11 @@ revalidated.
 `html` is closed after its document assembly, full-document adaptation,
 metadata, escaping, hydration and navigation runtime, release identity, module
 and CSS caching, import maps, internal reference, and direct consumers were
+remediated and revalidated.
+`internal-agents` is closed after its signed control-plane admission, bounded
+schema and compatibility normalization, project-scoped session identity,
+resumable tool lifecycle, cancellation, runtime setup and teardown, terminal
+event accounting, prompt compaction, AG-UI encoding, and direct consumers were
 remediated and revalidated.
 The root entrypoint unit is closed after its exact public and client-safe export
 contracts, runtime dependency ownership, browser graph, rewrite target, Deno and
@@ -4580,5 +4586,68 @@ Current reproducible evidence:
 No known unresolved critical or high-confidence integrations production risk
 remains. `integrations` is closed at 36 of 58 formal units; 22 units remain to
 be closed or revalidated.
+
+### Internal agents closure checkpoint
+
+The `internal-agents` audit unit owns signed control-plane authentication and
+body admission, runtime invocation normalization, server-owned tool assembly,
+project-agent prompt construction, resumable tool-result sessions, runtime
+stream lifecycle, runtime-owner discovery, and AG-UI event encoding. Its direct
+production consumers are the control-plane stream, resume, cancel, and agent
+listing handlers plus the shared Agent, Cache, and Security boundaries.
+
+The current internal-agents findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** terminal runtime error events
+  were finalized as successful runs, and a locked runtime stream could bypass
+  setup cleanup. Terminal-error state now fails the session and trace, emits no
+  successful finish, and locked streams are rejected while acquired resources
+  are released.
+- **Symptom -> Source -> Consequence -> Remedy:** compaction estimated a
+  placeholder instead of the resolved dynamic system prompt, while same-named
+  caller tools could shadow server-owned tools. The prompt is resolved exactly
+  once before compaction and execution, and authoritative materialized tools
+  replace injected placeholders deterministically.
+- **Symptom -> Source -> Consequence -> Remedy:** malformed streamed legacy tool
+  JSON, duplicate injected tool names, and invalid output-token limits could be
+  silently normalized into executable defaults. Admission now rejects each
+  malformed or ambiguous shape before runtime construction.
+- **Symptom -> Source -> Consequence -> Remedy:** AG-UI encoding discarded
+  extended billing fields and session-manager reset abandoned active signals.
+  The bounded event schema preserves the supported billing contract, and reset
+  cancels every active session so parked waiters settle.
+- **Symptom -> Source -> Consequence -> Remedy:** the global resumable-session
+  map used only a caller-chosen run ID, while signed resume and cancel handlers
+  discarded the verified project claim. Runs with identical IDs could collide
+  across tenants. Internal control-plane sessions now use a collision-safe
+  verified-project/run identity, and stream, resume, cancel, tool waits, and
+  lifecycle cleanup carry that same scope end to end.
+- **Symptom -> Source -> Consequence -> Remedy:** cancellation during remote
+  tool discovery was omitted from the discovery context and then swallowed by
+  the optional-source fallback. Discovery receives the run signal, checks it
+  around each asynchronous source, and rethrows cancellation before logging or
+  constructing a runtime.
+
+Current reproducible evidence:
+
+- all 12 internal-agents suites pass 111 nested steps with zero failures;
+- affected Agent consumers pass eight suites with 89 nested steps, affected
+  Server handlers pass six suites with 100 nested steps, and focused Cache and
+  Security consumers pass without failure;
+- the changed internal and server production entrypoints typecheck directly,
+  all 24 changed and affected files pass lint, formatting and diff hygiene
+  pass; and
+- the control-plane architecture reference records verified project-scoped
+  session identity and cancellation propagation; and
+- `deno task verify:quick` passes formatting, repository-wide lint and policy
+  ratchets, zero cyclic module edges, extension contracts, all 745
+  documentation links, and every configured production and browser entrypoint
+  typecheck.
+
+No known unresolved critical or high-confidence internal-agents production risk
+remains. The remaining strict-delegation policy question belongs to the
+top-level `tool` revalidation because it governs the public tool-surface
+contract rather than control-plane transport. `internal-agents` is closed at 39
+of 58 formal units; 19 units remain to be closed or revalidated.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

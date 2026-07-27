@@ -806,6 +806,7 @@ export class AgentStreamHandler extends BaseHandler {
                   createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                     ...this.deps,
                     localTools,
+                    sessionScope: verifiedClaims.project_id,
                     projectAgentSandbox: {
                       apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
                       authToken: apiAuthToken || undefined,
