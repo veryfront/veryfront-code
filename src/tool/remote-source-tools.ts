@@ -1,5 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { dynamicTool } from "./factory.ts";
+import { markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
 /** Options accepted by remote tool materialization. */
@@ -33,9 +34,7 @@ export function createToolsFromRemoteDefinitions(
   return Object.fromEntries(
     definitions.map((definition) => {
       const toolName = options.toolNameAliases?.[definition.name] ?? definition.name;
-
-      return [
-        toolName,
+      const remoteTool = markRemoteToolProvenance(
         dynamicTool({
           id: toolName,
           description: definition.description,
@@ -48,6 +47,12 @@ export function createToolsFromRemoteDefinitions(
           execute: async (input, context) =>
             await source.executeTool(definition.name, toToolInputRecord(input), context),
         }),
+        definition.name,
+      );
+
+      return [
+        toolName,
+        remoteTool,
       ];
     }),
   );
