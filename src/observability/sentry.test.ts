@@ -63,7 +63,7 @@ Deno.test("Sentry environment configuration uses the entrypoint service fallback
   try {
     Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
     Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
-    Deno.env.delete("SENTRY_SERVICE_NAME");
+    Deno.env.set("SENTRY_SERVICE_NAME", "   ");
     Deno.env.delete("OTEL_SERVICE_NAME");
 
     assertEquals(resolveSentryConfigFromEnv("veryfront-proxy"), {

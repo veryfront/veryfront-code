@@ -39,7 +39,7 @@ export function resolveSentryConfigFromEnv(
     dsn: getEnv("SENTRY_DSN"),
     environment: getEnv("SENTRY_ENVIRONMENT") ?? getEnv("OTEL_DEPLOYMENT_ENVIRONMENT"),
     release: getEnv("SENTRY_RELEASE") ?? getEnv("OTEL_SERVICE_VERSION"),
-    serviceName: getEnv("SENTRY_SERVICE_NAME") ?? getEnv("OTEL_SERVICE_NAME") ??
+    serviceName: (getEnv("SENTRY_SERVICE_NAME") ?? getEnv("OTEL_SERVICE_NAME"))?.trim() ||
       defaultServiceName,
   };
 }
