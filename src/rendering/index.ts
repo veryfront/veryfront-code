@@ -10,6 +10,13 @@ export { VeryfrontRenderer } from "./orchestrator/ssr.ts";
 
 // Chunk analysis
 export { analyzeProjectChunks, generateChunkManifest } from "./chunk-optimizer.ts";
+export type {
+  ChunkAnalysis,
+  ChunkManifest,
+  ChunkOptimizerFileSystem,
+  ChunkSuggestion,
+  PageImports,
+} from "./chunk-optimizer.ts";
 
 // Cache stores
 export { CacheCoordinator, type CacheCoordinatorOptions } from "./cache/cache-coordinator.ts";
