@@ -50,6 +50,7 @@
     "npm:@opentelemetry/sdk-trace-base@2.9.0": "2.9.0_@opentelemetry+api@1.9.1",
     "npm:@opentelemetry/semantic-conventions@1.43.0": "1.43.0",
     "npm:@redis/client@1.5.8": "1.5.8",
+    "npm:@sentry/deno@^10.68.0": "10.68.0",
     "npm:@types/better-sqlite3@7.6.13": "7.6.13",
     "npm:@types/hast@3.0.3": "3.0.3",
     "npm:@types/mdast@4.0.3": "4.0.3",
@@ -200,6 +201,35 @@
       "integrity": "sha512-5X1k57JBJ4H7H1QjX7CnJYAB1I19r/trVZTMcSms7/kLNZ8RaU4Nt2agcwZzv82Hfx6Q7/TOLU7agAKeFfc8cA==",
       "dependencies": [
         "json-schema"
+      ]
+    },
+    "@apm-js-collab/code-transformer-bundler-plugins@0.7.1": {
+      "integrity": "sha512-Yidf5GOl60db80UxUtNdKK3pnY7obU/gs0xOfA0SCdnvVLMCvfYIer/egC3TqpPiT0Jg22eg3RlzcO+zKfPMcA==",
+      "dependencies": [
+        "@apm-js-collab/code-transformer",
+        "es-module-lexer@2.3.1",
+        "magic-string",
+        "module-details-from-path"
+      ]
+    },
+    "@apm-js-collab/code-transformer@0.18.1": {
+      "integrity": "sha512-u1Hb6bHjWtkSpiprwVP6YaHC1DTN4RAU3zYkUDUe7WMnJwdyU1pwTL9dFKiSJB9IiLue/EQovmyx6xhU7FFtAQ==",
+      "dependencies": [
+        "@types/estree",
+        "astring",
+        "esquery",
+        "meriyah",
+        "semifies",
+        "source-map@0.6.1"
+      ],
+      "bin": true
+    },
+    "@apm-js-collab/tracing-hooks@0.13.0": {
+      "integrity": "sha512-mTvWz9rnQwx1U3h0XPTHaX7bgfkpipLLTQyjlC2cdhQpQEuoLT0AGzoydeoq2NxfEVv6fWOOETcSbb2nptleyw==",
+      "dependencies": [
+        "@apm-js-collab/code-transformer",
+        "debug",
+        "module-details-from-path"
       ]
     },
     "@asamuzakjp/css-color@4.1.2": {
@@ -779,7 +809,7 @@
         "remark-mdx",
         "remark-parse",
         "remark-rehype",
-        "source-map",
+        "source-map@0.7.6",
         "unified",
         "unist-util-position-from-estree",
         "unist-util-stringify-position",
@@ -1699,6 +1729,33 @@
         "@redis/client@5.11.0"
       ]
     },
+    "@sentry/conventions@0.16.0": {
+      "integrity": "sha512-fO9PLmHdVURcSPUpWCItWAtgKiMwGdJHbovoSEyLplX5sxs2ugvI4CBPTrkkgqhObnZOD0CnWBKDzSVQYBKEyQ=="
+    },
+    "@sentry/core@10.68.0": {
+      "integrity": "sha512-5Amhx8ltVz7vb1bRGyf3c4J69/iHW8R/H+SJxTRILHlsSOBrnVVc/IQEYDC6PTRdRdZ3x2u7RVjxZi2Mhe525g==",
+      "dependencies": [
+        "@sentry/conventions"
+      ]
+    },
+    "@sentry/deno@10.68.0": {
+      "integrity": "sha512-5RJZeXE/vrjt7YeiSkSNX2jNu4omNkPq3XCfs5k7LeyLNbu+7NoC96Dwo0uubni4a3cqULbhAwuDQXKk2M/PbQ==",
+      "dependencies": [
+        "@opentelemetry/api",
+        "@sentry/core",
+        "@sentry/server-utils"
+      ]
+    },
+    "@sentry/server-utils@10.68.0": {
+      "integrity": "sha512-lp1ZSs1auw7HrCESSYt/n4dOUaKPVUIAKyVYRk6xVr4bMIN3RPub/H5Wm7QPj9CpXVC5bQFvB6+dHZXz809oMg==",
+      "dependencies": [
+        "@apm-js-collab/code-transformer-bundler-plugins",
+        "@apm-js-collab/tracing-hooks",
+        "@sentry/conventions",
+        "@sentry/core",
+        "meriyah"
+      ]
+    },
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
     },
@@ -2188,6 +2245,15 @@
     "escape-string-regexp@5.0.0": {
       "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw=="
     },
+    "esquery@1.7.0": {
+      "integrity": "sha512-Ap6G0WQwcU/LHsvLwON1fAQX9Zp0A2Y6Y/cJBl9r/JbW90Zyg4/zbG6zzKa2OTALELarYHmKu0GhpM5EO+7T0g==",
+      "dependencies": [
+        "estraverse"
+      ]
+    },
+    "estraverse@5.3.0": {
+      "integrity": "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA=="
+    },
     "estree-util-attach-comments@3.0.0": {
       "integrity": "sha512-cKUwm/HUcTDsYh/9FgnuFqpfquUbwIqwKM26BVCGDPVgvaCl/nDCCjUfiLlx6lsEZ3Z4RFxNbOQ60pkaEwFxGw==",
       "dependencies": [
@@ -2218,7 +2284,7 @@
       "dependencies": [
         "@types/estree-jsx",
         "astring",
-        "source-map"
+        "source-map@0.7.6"
       ]
     },
     "estree-util-visit@2.0.0": {
@@ -2768,6 +2834,12 @@
     "lru-cache@11.5.1": {
       "integrity": "sha512-RPimw/7aMdv2oqRrxKwvZXcPfwBrn/JZ2xYcY9Hus/6LaS3VOAKVWKWgNLCFSiOm1ESXinjsDlidVU7JlnCN2A=="
     },
+    "magic-string@0.30.21": {
+      "integrity": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==",
+      "dependencies": [
+        "@jridgewell/sourcemap-codec"
+      ]
+    },
     "markdown-extensions@2.0.0": {
       "integrity": "sha512-o5vL7aDWatOTX8LzaS1WMoaoxIiLRQJuIKKe2wAw6IeULDHaqbiqiggmx+pKvZDb1Sj+pE46Sn1T7lCqfFtg1Q=="
     },
@@ -2971,6 +3043,9 @@
     },
     "merge2@1.4.1": {
       "integrity": "sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg=="
+    },
+    "meriyah@6.1.4": {
+      "integrity": "sha512-Sz8FzjzI0kN13GK/6MVEsVzMZEPvOhnmmI1lU5+/1cGOiK3QUahntrNNtdVeihrO7t9JpoH75iMNXg6R6uWflQ=="
     },
     "micromark-core-commonmark@2.0.3": {
       "integrity": "sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==",
@@ -3829,6 +3904,9 @@
       ],
       "bin": true
     },
+    "semifies@1.0.0": {
+      "integrity": "sha512-xXR3KGeoxTNWPD4aBvL5NUpMTT7WMANr3EWnaS190QVkY52lqqcVRD7Q05UVbBhiWDGWMlJEUam9m7uFFGVScw=="
+    },
     "semver-compare@1.0.0": {
       "integrity": "sha512-YM3/ITh2MJ5MtzaM429anh+x2jiLVjqILF4m4oyQB18W7Ggea7BfqdH/wGMK7dDiMghv/6WG7znWMwUDzJiXow=="
     },
@@ -3896,6 +3974,9 @@
     },
     "source-map-js@1.2.1": {
       "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="
+    },
+    "source-map@0.6.1": {
+      "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g=="
     },
     "source-map@0.7.6": {
       "integrity": "sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ=="
@@ -5155,6 +5236,12 @@
           "npm:gaxios@7.2.0",
           "npm:gcp-metadata@8.1.2",
           "npm:protobufjs@7.6.5"
+        ]
+      },
+      "extensions/ext-observability-sentry": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "npm:@sentry/deno@^10.68.0"
         ]
       },
       "extensions/ext-parser-babel": {

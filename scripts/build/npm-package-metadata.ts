@@ -54,6 +54,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+	"@sentry/deno",
 	"bash-tool",
 	"brace-expansion",
 	"es-module-lexer",

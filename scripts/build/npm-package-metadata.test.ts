@@ -598,6 +598,7 @@ describe("npm supply-chain policy", () => {
       "ext-document-kreuzberg",
       "ext-eval-report-mlflow",
       "ext-observability-opentelemetry",
+      "ext-observability-sentry",
       "ext-parser-babel",
       "ext-sandbox-shell-tools",
     ];
