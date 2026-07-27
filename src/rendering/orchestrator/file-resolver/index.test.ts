@@ -25,7 +25,7 @@ describe("rendering/orchestrator/file-resolver", () => {
               mtime: new Date(),
             };
           }
-          throw new Error("File not found");
+          throw Object.assign(new Error("File not found"), { code: "ENOENT" });
         },
       },
     } as unknown as RuntimeAdapter;
@@ -76,7 +76,7 @@ describe("rendering/orchestrator/file-resolver", () => {
               mtime: new Date(),
             };
           }
-          throw new Error("File not found");
+          throw Object.assign(new Error("File not found"), { code: "ENOENT" });
         },
       },
     } as unknown as RuntimeAdapter;

@@ -5,7 +5,12 @@
  * @module rendering
  */
 
-export type { PageDataResponse, RendererOptions, RenderResult } from "./orchestrator/types.ts";
+export type {
+  PageDataResponse,
+  RendererOptions,
+  RenderOptions,
+  RenderResult,
+} from "./orchestrator/types.ts";
 export { VeryfrontRenderer } from "./orchestrator/ssr.ts";
 
 // Chunk analysis

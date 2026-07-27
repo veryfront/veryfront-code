@@ -1,409 +1,190 @@
-# Rendering Module
+# Rendering runtime
 
-## Purpose
+`src/rendering` is Veryfront's internal page-rendering runtime. It resolves page
+sources, compiles MDX and script modules, composes layouts, renders React on the
+server, assembles the HTML document, and prepares browser hydration data.
 
-The rendering module handles server-side rendering (SSR), React Server Components (RSC), streaming, and HTML generation for delivering fast, SEO-friendly web applications.
+Application authors normally use the public server and routing APIs. The
+`veryfront/rendering` and `#veryfront/rendering` specifiers are repository
+import-map entries used by framework services, builds, and integration tests;
+they are not currently package exports.
 
-## Scope
+## Responsibility
 
-What this module does:
+The module owns:
 
-- Server-Side Rendering (SSR) with React 17/18/19
-- React Server Components (RSC) with streaming
-- Progressive rendering with React Suspense
-- Complete HTML document generation
-- Layout system with nested layouts
-- Render caching for performance
-- Client-side hydration coordination
-- Page and route resolution
+- Pages Router and App Router source resolution.
+- Request-scoped MDX, layout, SSR, and HTML orchestration.
+- React Server Component analysis, payloads, and client hydration support.
+- Render-result caching and cache-store adapters.
+- Browser navigation, prefetch, and shared-state helpers used by generated
+  runtime assets.
+- Chunk dependency analysis for authored Markdown and MDX pages.
+- Snippet rendering used by internal consumers.
 
-### What this module does NOT do:
+The adjacent modules retain these boundaries:
 
-- HTTP server implementation (see `server/`)
-- Build/bundling (see `build/`)
-- Client-side routing (see `routing/client/`)
-- API route handling (see `routing/api/`)
+- `server` admits requests, owns HTTP responses, and maps render failures to
+  transport responses.
+- `routing` matches routes and owns public routing contracts.
+- `build` creates production artifacts and release manifests.
+- `html` generates and injects document markup.
+- `modules` and `transforms` load, rewrite, and compile source modules.
+- `data` resolves page data hooks.
 
-## Architecture
+## Runtime flow
 
-```
-rendering/
-├── entity-resolution.ts        # Bounded page and layout source resolution
-├── orchestrator/              # Rendering orchestration
-│   ├── ssr.ts                # Main SSR renderer
-│   ├── types.ts              # Renderer types
-│   └── config.ts             # Configuration
-├── ssr/                       # SSR implementation
-│   ├── renderer.ts           # React SSR engine
-│   ├── component-registry.ts # Component registration
-│   └── html-wrapper.ts       # HTML shell
-├── rsc/                       # React Server Components
-│   ├── server-renderer/      # RSC rendering
-│   ├── dev-server-handler/   # Dev mode RSC
-│   └── types.ts              # RSC types
-├── layouts/                   # Layout system
-│   ├── discovery.ts          # Layout file discovery
-│   ├── compiler.ts           # Layout compilation
-│   └── utils/                # Layout utilities
-├── streaming/                 # Streaming SSR
-│   ├── stream-renderer.ts    # Stream coordination
-│   └── types.ts              # Stream types
-├── cache/                     # Render caching
-│   ├── render-cache.ts       # Cache implementation
-│   └── types.ts              # Cache types
-└── client/                    # Client-side utilities
-    ├── hydration.ts          # Hydration coordination
-    └── index.ts              # Client exports
-```
+1. A server or build consumer creates a renderer with an explicit project,
+   mode, adapter, and content-source identity.
+2. Page resolution chooses one current source snapshot and returns the matched
+   route entity.
+3. The pipeline resolves request data, compiles the page, discovers and
+   preloads layouts, and snapshots the request identity.
+4. The SSR orchestrator validates the React tree and renders a string or
+   stream. App Router error components are resolved from the same project and
+   content source.
+5. The HTML generator combines metadata, CSS, import maps, hydration payloads,
+   nonces, and release assets into the final document.
+6. Cache persistence occurs only for cacheable, complete render variants.
+7. `destroy()` releases renderer-owned resources. Long-lived consumers must
+   call it during shutdown.
 
-## Key Exports
+## Source map
 
-### Main Renderer
+| Area                                                                | Responsibility                                                                    |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `page-resolution/`, `app-route-resolver.ts`, `entity-resolution.ts` | Bounded route and source discovery                                                |
+| `orchestrator/`                                                     | Configuration, lifecycle, page pipeline, layouts, SSR, CSS, and HTML assembly     |
+| `layouts/`, `app-reserved.ts`                                       | Layout discovery, compilation, application, and reserved App Router components    |
+| `ssr/`, `ssr-renderer.ts`                                           | React SSR and component registration                                              |
+| `rsc/`                                                              | RSC analysis, bounded payloads, transport, and browser hydration                  |
+| `cache/`, `shared/`                                                 | Render cache coordination, stores, payload validation, and context-aware services |
+| `client/`                                                           | Browser router, prefetch, navigation state, and state bridge                      |
+| `chunk-optimizer/`                                                  | Deterministic page-import analysis and chunk manifests                            |
+| `element-validator/`                                                | React element validation and normalization                                        |
+| `renderer.ts`                                                       | Server-owned, request-context renderer used by the HTTP runtime                   |
+| `index.ts`                                                          | Internal facade used by builds and direct renderer integration tests              |
 
-- `createRenderer(options)` - Create renderer instance
-- `VeryfrontRenderer` - Main renderer class
+## Core invariants
 
-### Layout System
+- Project, content-source, release, React-version, import-map, and runtime mode
+  are part of the relevant cache and module identities.
+- Default standalone renderer project IDs are derived from the full SHA-256
+  digest of `projectDir`; callers should still provide the authoritative
+  project UUID in multi-tenant production services.
+- A request cannot replace the configured project identity while borrowing
+  renderer-owned services.
+- Mutable inputs and cached outputs are snapshotted at asynchronous boundaries.
+- Missing optional files are distinguished from operational filesystem
+  failures. Permission, transport, malformed-source, and backend failures
+  reject instead of silently producing partial output.
+- Discovery, tree processing, serialization, manifests, source bytes, streams,
+  queues, and caches are bounded.
+- App, layout, reserved-component, RSC, and component-registry exports must be
+  valid React component types before use.
+- Production release assets are consumed only from a ready, request-consistent
+  manifest.
+- Cache invalidation cannot let an older in-flight generation republish stale
+  state.
 
-- `discoverLayouts(dir)` - Find layout files
-- `compileLayout(source)` - Compile layout to React
-- `resolveLayoutChain(path)` - Get layout hierarchy
+## Internal facade
 
-### Client Exports
+`src/rendering/index.ts` exports:
 
-- Hydration utilities for client-side initialization
-- Client-side routing helpers
+- `createRenderer`, `VeryfrontRenderer`, `RendererOptions`, `RenderOptions`,
+  `RenderResult`, and `PageDataResponse`.
+- Chunk analysis and manifest helpers.
+- Cache coordination and the API, filesystem, KV, memory, and Redis stores.
+- Low-level layout helpers.
+- Snippet rendering helpers.
 
-## Dependencies
+The facade's renderer constructor accepts these options:
 
-### Internal
+| Option            | Meaning                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| `projectDir`      | Required project source root                                     |
+| `mode`            | Required `development` or `production` runtime mode              |
+| `adapter`         | Optional runtime adapter; runtime detection is used when omitted |
+| `config`          | Optional already-loaded `VeryfrontConfig`                        |
+| `projectId`       | Authoritative cache and module isolation identity                |
+| `projectSlug`     | Human-readable logging and HTTP fallback identity                |
+| `contentSourceId` | Branch, snapshot, or release identity                            |
+| `isLocalProject`  | Whether browser-facing local filesystem module URLs are trusted  |
+| `port`            | Dashboard/module-service port used by generated runtime URLs     |
+| `moduleServerUrl` | Explicit development module-service base URL                     |
+| `directories`     | Compatibility override merged onto `config.directories`          |
 
-- `#veryfront/types` - TypeScript types
-- `#veryfront/utils` - Utilities (logging, caching)
-- `#veryfront/html` - HTML generation
-- `#veryfront/modules` - Module loading
-- `#veryfront/platform` - Runtime adapters
+An internal consumer owns the complete lifecycle:
 
-### External
-
-- `react` - React library (17/18/19 supported)
-- `react-dom/server` - React SSR
-- `react-server-dom-webpack` - RSC (optional)
-
-## Usage Examples
-
-### Basic SSR
-
-```typescript
+```ts
 import { createRenderer } from "#veryfront/rendering";
 
 const renderer = await createRenderer({
-  projectDir: "./my-app",
-  mode: "development",
-  platform: "deno",
-});
-
-// Render a page
-const result = await renderer.renderPage("/about", {
-  request: new Request("https://example.com/about"),
-});
-
-console.log(result.html);
-```
-
-### React Server Components
-
-```typescript
-// app/page.tsx (Server Component)
-import { db } from "./db";
-
-export default async function Page() {
-  // This runs on the server only
-  const users = await db.users.findMany();
-
-  return (
-    <div>
-      <h1>Users</h1>
-      {users.map((user) => <UserCard key={user.id} user={user} />)}
-    </div>
-  );
-}
-
-// app/UserCard.tsx (Client Component)
-"use client";
-
-import { useState } from "react";
-
-export function UserCard({ user }) {
-  const [liked, setLiked] = useState(false);
-
-  return (
-    <div onClick={() => setLiked(!liked)}>
-      {user.name} {liked && "❤️"}
-    </div>
-  );
-}
-```
-
-### Streaming with Suspense
-
-```typescript
-import { Suspense } from "react";
-
-async function SlowData() {
-  const data = await fetchSlowData();
-  return <div>{data}</div>;
-}
-
-export default function Page() {
-  return (
-    <div>
-      <h1>Dashboard</h1>
-      <Suspense fallback={<div>Loading...</div>}>
-        <SlowData />
-      </Suspense>
-    </div>
-  );
-}
-```
-
-### Nested Layouts
-
-```typescript
-// app/layout.tsx (Root layout)
-export default function RootLayout({ children }) {
-  return (
-    <html>
-      <body>
-        <header>My App</header>
-        {children}
-        <footer>© 2025</footer>
-      </body>
-    </html>
-  );
-}
-
-// app/blog/layout.tsx (Blog layout)
-export default function BlogLayout({ children }) {
-  return (
-    <div>
-      <nav>Blog Navigation</nav>
-      {children}
-    </div>
-  );
-}
-
-// app/blog/page.tsx
-export default function BlogIndex() {
-  return <h1>Blog Home</h1>;
-}
-```
-
-### Render Caching
-
-```typescript
-import { createRenderer } from "#veryfront/rendering";
-
-const renderer = await createRenderer({
-  projectDir: "./my-app",
-  cache: {
-    enabled: true,
-    strategy: "lru",
-    maxSize: 1000,
-    ttl: 3600_000, // 1 hour
-  },
-});
-
-// First render - cached
-await renderer.renderPage("/products");
-
-// Second render - served from cache (fast!)
-await renderer.renderPage("/products");
-```
-
-### Custom Renderer Options
-
-```typescript
-import { createRenderer } from "#veryfront/rendering";
-
-const renderer = await createRenderer({
-  projectDir: "./my-app",
+  projectDir: "/workspace/project",
   mode: "production",
-  platform: "node",
-
-  // SSR options
-  ssr: {
-    react Version: "18",
-    streaming: true,
-  },
-
-  // RSC options
-  rsc: {
-    enabled: true,
-    bundler: "esbuild",
-  },
-
-  // Cache options
-  cache: {
-    enabled: true,
-    strategy: "lru",
-  },
-
-  // Layout options
-  layouts: {
-    rootLayout: "./app/layout.tsx",
-    errorBoundary: "./app/error.tsx",
-  },
+  projectId: "project-uuid",
+  projectSlug: "docs",
+  contentSourceId: "release-42",
 });
-```
 
-## Rendering Modes
-
-### SSR (Server-Side Rendering)
-
-Traditional server rendering with client-side hydration:
-
-```typescript
-// pages/about.tsx
-export default function About() {
-  return <h1>About Us</h1>;
-}
-
-// Rendered on server → HTML sent to client → Hydrated
-```
-
-### RSC (React Server Components)
-
-Server components that never ship to client:
-
-```typescript
-// app/page.tsx (Server Component)
-export default async function Page() {
-  const data = await db.query(); // Runs on server only
-  return <ClientComponent data={data} />;
+try {
+  const result = await renderer.renderPage("/about", {
+    delivery: "string",
+    url: new URL("https://example.com/about"),
+  });
+  console.log(result.html);
+} finally {
+  await renderer.destroy();
 }
 ```
 
-### Streaming
+`VeryfrontRenderer` also exposes `resolvePageData`, `getAllPages`,
+`initializeComponents`, `compileMDX`, `clearCache`, `clearAllState`, and
+`getVirtualModuleSystem`. These are framework-internal APIs and must preserve
+the same project/content-source identity as the renderer instance.
 
-Progressive rendering with Suspense:
+## Failure semantics
 
-```typescript
-export default function Page() {
-  return (
-    <>
-      <Header /> {/* Sent immediately */}
-      <Suspense fallback={<Spinner />}>
-        <SlowContent /> {/* Streamed when ready */}
-      </Suspense>
-    </>
-  );
-}
+Absence is tolerated only where the contract declares a file optional, such as
+an unconfigured global stylesheet or a missing App Router error component.
+Operational adapter errors, invalid component exports, malformed cache
+payloads, exhausted safety budgets, and failed invalidation propagate to the
+owning server or build boundary.
+
+Streaming has separate idle and hard deadlines. A stream may retain already
+produced bytes on its documented timeout path, but unrelated render,
+compilation, or filesystem failures are not converted into partial success.
+
+## Verification
+
+For a focused change, run the directly affected tests first. The complete
+module inventory uses the repository test environment:
+
+```sh
+DENO_TESTING=1 \
+VF_DISABLE_LRU_INTERVAL=1 \
+SSR_TRANSFORM_PER_PROJECT_LIMIT=0 \
+REVALIDATION_PER_PROJECT_LIMIT=0 \
+NODE_ENV=production \
+LOG_FORMAT=text \
+deno test \
+  --preload=src/schemas/_test-setup.ts \
+  --no-check \
+  --parallel \
+  --allow-all \
+  --v8-flags=--max-old-space-size=8192 \
+  --unstable-worker-options \
+  --unstable-net \
+  src/rendering
 ```
 
-## Performance
+Also run `deno task typecheck`, affected integration/browser scenarios, and the
+static consumer checks when an export, hydration payload, release asset, or
+server boundary changes.
 
-### Render Times (Typical Page)
+## Related documentation
 
-- SSR (no cache): ~50-200ms
-- SSR (cached): ~1-5ms
-- RSC (streaming): First byte in ~10-30ms
-- Streaming chunks: ~50-100ms per chunk
-
-### Optimization Strategies
-
-1. **Enable caching**: Cache rendered pages
-2. **Use streaming**: Stream expensive components
-3. **Minimize layouts**: Fewer nested layouts = faster
-4. **Code splitting**: Lazy load client components
-
-## Testing
-
-```bash
-# Run rendering tests
-deno task test src/rendering/
-
-# Test SSR
-deno task test src/rendering/ssr/
-
-# Test RSC
-deno task test src/rendering/rsc/
-
-# Test layouts
-deno task test src/rendering/layouts/
-```
-
-## Maintainer
-
-**Team:** Rendering Team
-**Code Owners:** See CODEOWNERS file
-
-## Related Modules
-
-- [`html/`](../html/README.md) - HTML document generation
-- [`build/`](../build/README.md) - Build and bundling
-- [`server/`](../server/README.md) - HTTP server
-- [`routing/`](../routing/README.md) - Route matching
-
-## Troubleshooting
-
-### Hydration Mismatches
-
-```typescript
-// Problem: Server and client render differently
-export default function Page() {
-  const timestamp = Date.now(); // Different on server/client!
-  return <div>{timestamp}</div>;
-}
-
-// Solution: Use useEffect for client-only values
-export default function Page() {
-  const [timestamp, setTimestamp] = useState(null);
-
-  useEffect(() => {
-    setTimestamp(Date.now());
-  }, []);
-
-  return <div>{timestamp || "Loading..."}</div>;
-}
-```
-
-### React Version Conflicts
-
-```bash
-# Check React version
-deno eval "import React from 'react'; console.log(React.version)"
-
-# Veryfront supports React 17, 18, and 19
-```
-
-### Streaming Errors
-
-```typescript
-// Problem: Streaming fails silently
-const result = await renderer.renderPage("/page");
-
-// Solution: Check for stream errors
-if (result.streamError) {
-  console.error("Stream error:", result.streamError);
-}
-```
-
-### Layout Not Found
-
-```bash
-# Check layout discovery
-deno run --allow-read check-layouts.ts
-
-# Layouts must be named:
-# - layout.tsx, layout.jsx
-# - template.tsx, template.jsx
-# - error.tsx, error.jsx
-```
-
-## References
-
-- [React Server Components](https://react.dev/reference/rsc/server-components)
-- [React Suspense](https://react.dev/reference/react/Suspense)
-- [SSR with React](https://react.dev/reference/react-dom/server)
-- [Veryfront Rendering Guide](https://veryfront.com/docs/rendering)
+- [`docs/architecture/03-rendering-runtime.md`](../../docs/architecture/03-rendering-runtime.md)
+- [`docs/architecture/02-request-pipeline.md`](../../docs/architecture/02-request-pipeline.md)
+- [`docs/guides/pages-and-routing.md`](../../docs/guides/pages-and-routing.md)
+- [`src/html/README.md`](../html/README.md)

@@ -1,4 +1,4 @@
-import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
+import { computeHash, DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -16,6 +16,28 @@ import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } f
 // Re-export types for backward compatibility
 export type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 
+export async function deriveDefaultRendererProjectId(
+  projectDir: string,
+): Promise<string> {
+  return `proj_${await computeHash(projectDir)}`;
+}
+
+export function mergeRendererConfig(
+  config: VeryfrontConfig | undefined,
+  directories: RendererOptions["directories"],
+): VeryfrontConfig | undefined {
+  if (!directories) return config;
+
+  return {
+    ...(config ?? {}),
+    directories: {
+      ...config?.directories,
+      ...directories,
+      ...(directories.components ? { components: [...directories.components] } : {}),
+    },
+  };
+}
+
 export class VeryfrontRenderer {
   private configManager!: ConfigurationManager;
   private lifecycle!: RendererLifecycle;
@@ -27,8 +49,10 @@ export class VeryfrontRenderer {
   private mode: "development" | "production";
   private isLocalProject: boolean;
   private preloadedConfig?: VeryfrontConfig;
-  private projectId: string;
-  private projectSlug: string;
+  private readonly configuredProjectId?: string;
+  private readonly configuredProjectSlug?: string;
+  private projectId!: string;
+  private projectSlug!: string;
   private contentSourceId: string;
   private mdxCompiler!: MDXCompiler;
   private layoutOrchestrator!: LayoutOrchestrator;
@@ -43,27 +67,14 @@ export class VeryfrontRenderer {
     this.adapter = options.adapter;
     this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
-    this.preloadedConfig = options.config;
+    this.preloadedConfig = mergeRendererConfig(
+      options.config,
+      options.directories,
+    );
 
-    // Generate a short projectId if not provided - use hash of projectDir to avoid
-    // issues with long paths being URL-encoded in cache directories
-    this.projectId = options.projectId ?? this.hashProjectDir(options.projectDir);
-    this.projectSlug = options.projectSlug ?? options.projectId ??
-      this.hashProjectDir(options.projectDir);
+    this.configuredProjectId = options.projectId;
+    this.configuredProjectSlug = options.projectSlug;
     this.contentSourceId = options.contentSourceId ?? "build-static";
-  }
-
-  /** Generate a short hash-based identifier from a path */
-  private hashProjectDir(path: string): string {
-    // Simple hash function to create a short, URL-safe identifier
-    let hash = 0;
-    for (let i = 0; i < path.length; i++) {
-      const char = path.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash &= hash; // Convert to 32-bit integer
-    }
-    // Convert to base36 and make positive
-    return `proj_${Math.abs(hash).toString(36)}`;
   }
 
   initialize(): Promise<void> {
@@ -71,6 +82,12 @@ export class VeryfrontRenderer {
       "renderer.initialize",
       async () => {
         logger.debug("Initializing VeryfrontRenderer");
+
+        this.projectId = this.configuredProjectId ??
+          await deriveDefaultRendererProjectId(this.projectDir);
+        this.projectSlug = this.configuredProjectSlug ??
+          this.configuredProjectId ??
+          this.projectId;
 
         if (!this.adapter) {
           const { runtime } = await import("#veryfront/platform/adapters/detect.ts");

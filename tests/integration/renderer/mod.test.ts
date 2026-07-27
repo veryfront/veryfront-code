@@ -237,7 +237,7 @@ This content should be wrapped by the layout.
         });
       });
 
-      it.skip("should honor nested metadata object in MDX frontmatter", async () => {
+      it("should honor metadata exported by an MDX page", async () => {
         await withTestContext("renderer-mdx-metadata", async (context) => {
           await removeAppDir(context.projectDir);
 
@@ -254,6 +254,7 @@ This content should be wrapped by the layout.
           const result = await renderer.renderPage("mdxmeta");
 
           assertStringIncludes(result.html, "<title>Meta Title</title>");
+          assertStringIncludes(result.html, 'name="description" content="Meta Desc"');
         });
       });
     });

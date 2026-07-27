@@ -52,17 +52,13 @@ export async function mergeImportedCSS({
       continue;
     }
 
-    try {
-      const content = await fs.readFile(cssPath);
-      if (!content) continue;
+    const content = await fs.readFile(cssPath);
+    if (!content) continue;
 
-      if (normalizedCssPath.endsWith(".module.css")) {
-        moduleCssSegments.push(rewriteCssModuleContent(content, normalizedCssPath));
-      } else {
-        regularCssSegments.push(content);
-      }
-    } catch (_) {
-      logger.debug("Could not load imported CSS file", { cssPath });
+    if (normalizedCssPath.endsWith(".module.css")) {
+      moduleCssSegments.push(rewriteCssModuleContent(content, normalizedCssPath));
+    } else {
+      regularCssSegments.push(content);
     }
   }
 

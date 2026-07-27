@@ -1,4 +1,5 @@
-import { dirname, join } from "#veryfront/compat/path";
+import { dirname, isAbsolute, join } from "#veryfront/compat/path";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
@@ -346,22 +347,14 @@ export class HTMLGenerator {
   }
 
   private async detectUseClientDirective(pagePath: string): Promise<boolean> {
-    try {
-      const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      const isClientPage = hasUseClientDirective(pageContent, pagePath);
+    const pageContent = await this.config.adapter.fs.readFile(pagePath);
+    const isClientPage = hasUseClientDirective(pageContent, pagePath);
 
-      if (isClientPage) {
-        logger.debug(`Detected 'use client' page: ${pagePath}`);
-      }
-
-      return isClientPage;
-    } catch (_) {
-      /* expected: file may not exist for directive detection */
-      logger.debug(
-        `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
-      );
-      return false;
+    if (isClientPage) {
+      logger.debug(`Detected 'use client' page: ${pagePath}`);
     }
+
+    return isClientPage;
   }
 
   private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
@@ -463,79 +456,70 @@ export class HTMLGenerator {
     const loaded = await this.resolveErrorComponentPath(context);
     if (!loaded) return null;
 
-    try {
-      const reactVersion = await resolveProjectReactVersion({
-        projectDir: this.config.projectDir,
-        config: this.config.config,
-      });
-      const { getProjectReact } = await import(
-        "#veryfront/react/compat/ssr-adapter/index.ts"
-      );
-      const React = await getProjectReact(reactVersion);
-      const createElement = React.createElement as (
-        component: unknown,
-        props: unknown,
-      ) => unknown;
-      const element = createElement(loaded.component, { error, reset: () => {} });
-      return { element, path: loaded.path };
-    } catch (_) {
-      return null;
-    }
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+    });
+    const { getProjectReact } = await import(
+      "#veryfront/react/compat/ssr-adapter/index.ts"
+    );
+    const React = await getProjectReact(reactVersion);
+    const createElement = React.createElement as (
+      component: unknown,
+      props: unknown,
+    ) => unknown;
+    const element = createElement(loaded.component, { error, reset: () => {} });
+    return { element, path: loaded.path };
   }
 
   async resolveErrorComponentPath(
     context: HTMLGenerationContext,
   ): Promise<{ component: unknown; path: string } | null> {
+    const appRoot = join(
+      this.config.projectDir,
+      this.config.config?.directories?.app ?? "app",
+    );
     try {
-      const appRoot = join(
-        this.config.projectDir,
-        this.config.config?.directories?.app ?? "app",
-      );
-      try {
-        const st = await this.config.adapter.fs.stat(appRoot);
-        if (!st.isDirectory) return null;
-      } catch (_) {
-        return null; // no app directory
-      }
-
-      const { collectAncestorDirs, loadReservedWithPath } = await import(
-        "../app-reserved.ts"
-      );
-      const matchedPath = context.pageInfo?.entity?.path;
-      const absolutePagePath = matchedPath
-        ? matchedPath.startsWith(this.config.projectDir)
-          ? matchedPath
-          : join(this.config.projectDir, matchedPath)
-        : appRoot;
-      const segmentDir = matchedPath ? dirname(absolutePagePath) : appRoot;
-      const dirs = await collectAncestorDirs(segmentDir, appRoot);
-      const reactVersion = await resolveProjectReactVersion({
-        projectDir: this.config.projectDir,
-        config: this.config.config,
-      });
-      const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
-      const contentSourceId = computeContentSourceId(
-        this.config.isLocalProject === true,
-        context.options?.environment ?? "preview",
-        null,
-        context.options?.releaseId,
-      );
-      const loaded = await loadReservedWithPath(
-        dirs,
-        "error",
-        this.config.projectDir,
-        this.config.mode,
-        this.config.adapter,
-        context.options?.projectId,
-        contentSourceId,
-        reactVersion,
-      );
-      if (!loaded) return null;
-
-      return { component: loaded.component, path: loaded.filePath };
-    } catch (_) {
-      return null; // error.tsx resolution is best-effort
+      const st = await this.config.adapter.fs.stat(appRoot);
+      if (!st.isDirectory) return null;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
     }
+
+    const { collectAncestorDirs, loadReservedWithPath } = await import(
+      "../app-reserved.ts"
+    );
+    const matchedPath = context.pageInfo?.entity?.path;
+    const absolutePagePath = matchedPath
+      ? isAbsolute(matchedPath) ? matchedPath : join(this.config.projectDir, matchedPath)
+      : appRoot;
+    const segmentDir = matchedPath ? dirname(absolutePagePath) : appRoot;
+    const dirs = collectAncestorDirs(segmentDir, appRoot);
+    const reactVersion = await resolveProjectReactVersion({
+      projectDir: this.config.projectDir,
+      config: this.config.config,
+    });
+    const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
+    const contentSourceId = computeContentSourceId(
+      this.config.isLocalProject === true,
+      context.options?.environment ?? "preview",
+      null,
+      context.options?.releaseId,
+    );
+    const loaded = await loadReservedWithPath(
+      dirs,
+      "error",
+      this.config.projectDir,
+      this.config.mode,
+      this.config.adapter,
+      context.options?.projectId,
+      contentSourceId,
+      reactVersion,
+    );
+    if (!loaded) return null;
+
+    return { component: loaded.component, path: loaded.filePath };
   }
 
   private async loadProjectFile(filename: string): Promise<string | undefined> {
@@ -549,8 +533,8 @@ export class HTMLGenerator {
         : await fs.readFile(filePath);
       logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
-    } catch (_) {
-      /* expected: project file may not exist */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
       logger.debug(`No ${filename} found, using default`);
       return undefined;
     }

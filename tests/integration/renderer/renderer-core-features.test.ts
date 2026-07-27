@@ -686,11 +686,7 @@ layout: nonexistent
         });
       });
 
-      // SKIPPED: Test expects error but layout isn't discovered without `isLayout: true` frontmatter
-      // Root cause: Layout files require `isLayout: true` in frontmatter to be discovered (by design)
-      // See: src/rendering/entity-resolution.ts
-      // Investigation: RENDERER_CORE_TEST_INVESTIGATION.md (Session 36-37)
-      it.skip("should handle layout with runtime errors", async () => {
+      it("should reject when an explicitly selected layout throws during render", async () => {
         await withTestContext("renderer-core-layout-runtime", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
@@ -698,9 +694,7 @@ layout: nonexistent
           await writeTextFile(
             join(context.projectDir, "layouts", "runtime-error.tsx"),
             `export default function RuntimeErrorLayout({ children }) {
-              const obj = null;
-              obj.method(); // Will throw
-              return <div>{children}</div>;
+              throw new Error("layout-runtime-failure");
             }`,
           );
 
@@ -719,7 +713,11 @@ layout: runtime-error
             mode: "development",
           });
 
-          await assertRejects(async () => await renderer.renderPage("test"), Error);
+          await assertRejects(
+            async () => await renderer.renderPage("test"),
+            Error,
+            "layout-runtime-failure",
+          );
         });
       });
     });

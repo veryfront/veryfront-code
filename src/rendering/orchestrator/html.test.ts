@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
@@ -305,6 +310,89 @@ describe("HTMLGenerator helpers", () => {
     });
   });
 
+  describe("resolveErrorComponentPath", () => {
+    it("returns null when the app root is absent", async () => {
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            stat: () =>
+              Promise.reject(
+                Object.assign(new Error("app root not found"), { code: "ENOENT" }),
+              ),
+          },
+        } as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      assertEquals(
+        await generator.resolveErrorComponentPath(createHTMLContext()),
+        null,
+      );
+    });
+
+    it("propagates operational app-root stat failures", async () => {
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            stat: () =>
+              Promise.reject(
+                Object.assign(new Error("app storage unavailable"), { code: "EIO" }),
+              ),
+          },
+        } as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      await assertRejects(
+        () => generator.resolveErrorComponentPath(createHTMLContext()),
+        Error,
+        "app storage unavailable",
+      );
+    });
+
+    it("does not reinterpret an absolute page path outside the app root", async () => {
+      let componentReads = 0;
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            stat: async () => ({
+              isFile: false,
+              isDirectory: true,
+              isSymlink: false,
+              size: 0,
+              mtime: null,
+            }),
+            readFile: () => {
+              componentReads++;
+              return Promise.reject(
+                Object.assign(new Error("candidate not found"), { code: "ENOENT" }),
+              );
+            },
+          },
+        } as any,
+        config: { react: { version: "19.2.4" } } as any,
+        mode: "production",
+      });
+
+      const context = createHTMLContext({
+        pageInfo: {
+          entity: {
+            path: "/app/external/page.tsx",
+            frontmatter: {},
+          },
+        } as any,
+      });
+
+      assertEquals(await generator.resolveErrorComponentPath(context), null);
+      assertEquals(componentReads, 0);
+    });
+  });
+
   describe("generateFullHTML", () => {
     it("fully initializes Studio for authored HTML documents", async () => {
       const html = await createHTMLGenerator().generateFullHTML(
@@ -458,6 +546,24 @@ describe("HTMLGenerator helpers", () => {
         assertEquals(html.includes('id="veryfront-hydration-data"'), false);
         assertEquals(html.includes("/_veryfront/hydration-runtime.js"), false);
       }
+    });
+
+    it("propagates operational page reads during client-directive detection", async () => {
+      const failure = Object.assign(new Error("page source unavailable"), {
+        code: "EIO",
+      });
+      const generator = createHTMLGenerator({
+        readFile: async (path: string) => {
+          if (path.endsWith("/app/page.tsx")) throw failure;
+          return "";
+        },
+      });
+
+      await assertRejects(
+        () => generator.generateFullHTML(createHTMLContext()),
+        Error,
+        "page source unavailable",
+      );
     });
 
     it("selects client modules from project trust instead of render mode", async () => {
@@ -677,6 +783,39 @@ describe("HTMLGenerator helpers", () => {
         true,
       );
       assertEquals(calls.includes("underlyingReadFile:/project/globals.css"), false);
+    });
+
+    it("propagates operational global stylesheet read failures", async () => {
+      const failure = Object.assign(new Error("stylesheet backend unavailable"), {
+        code: "EIO",
+      });
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: {
+          fs: {
+            readFile: async (path: string) =>
+              path.endsWith("/app/page.tsx") ? "" : Promise.reject(failure),
+            readOptionalTextFile: () => Promise.reject(failure),
+            exists: async () => false,
+            stat: async () => ({
+              isFile: false,
+              isDirectory: false,
+              isSymlink: false,
+              size: 0,
+              mtime: null,
+            }),
+            readDir: async function* () {},
+          },
+        } as any,
+        config: {} as any,
+        mode: "production",
+      });
+
+      await assertRejects(
+        () => generator.generateFullHTML(createHTMLContext()),
+        Error,
+        "stylesheet backend unavailable",
+      );
     });
 
     it("preserves full-document layout head/body output for explicit dark-mode requests", async () => {
@@ -1135,6 +1274,26 @@ describe("HTMLGenerator helpers", () => {
       );
       assertEquals(merged?.includes(".a_root__"), true);
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
+    });
+
+    it("propagates imported stylesheet read failures", async () => {
+      const failure = Object.assign(new Error("imported stylesheet unavailable"), {
+        code: "EIO",
+      });
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: { readFile: () => Promise.reject(failure) },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: "/* global */",
+            cssImports: ["/project/components/card.css"],
+            stylesheetPath: "globals.css",
+          }),
+        Error,
+        "imported stylesheet unavailable",
+      );
     });
   });
 });

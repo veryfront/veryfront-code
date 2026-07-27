@@ -1,7 +1,6 @@
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { delay } from "#std/async";
-import { assert } from "#veryfront/testing/assert";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { scaleMs } from "#veryfront/testing";
 import { withTestContext } from "../../_helpers/context.ts";
@@ -15,10 +14,7 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // TODO: This test is flaky due to timing issues with streaming SSR and error boundaries
-    // The streaming behavior doesn't always produce the expected loading/error content in time
-    // Skipping until streaming behavior is more reliable
-    it.skip("nested loading+error streaming", async () => {
+    it("nested loading+error streaming", async () => {
       await withTestContext("app-router-nested-streaming", async (context) => {
         await remove(join(context.projectDir, "app"), { recursive: true });
         await remove(join(context.projectDir, "pages"), { recursive: true });
@@ -61,29 +57,20 @@ describe(
               enableHMR: false,
             }),
           async () => {
-            await delay(500);
-
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), scaleMs(5000));
-
-            const res = await fetch(`http://127.0.0.1:${port}/a/b`, {
-              signal: ctrl.signal,
-            }).catch(() => new Response("", { status: 599 }));
-
-            clearTimeout(timer);
+            let res: Response;
+            try {
+              res = await fetch(`http://127.0.0.1:${port}/a/b`, {
+                signal: ctrl.signal,
+              });
+            } finally {
+              clearTimeout(timer);
+            }
 
             const html = await res.text();
-
-            assert([200, 404, 500, 599].includes(res.status));
-
-            if (res.status !== 200 && res.status !== 500) return;
-
-            const hasExpected = html.includes("Loading A...") || html.includes("ErrA:");
-            if (!hasExpected) {
-              console.error("[DEBUG] Status:", res.status);
-              console.error("[DEBUG] HTML received:\n", html.slice(0, 500));
-            }
-            assert(hasExpected);
+            assertEquals(res.status, 200);
+            assertStringIncludes(html, "Loading A...");
           },
         );
       });

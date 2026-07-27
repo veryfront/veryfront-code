@@ -10,7 +10,6 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
-import { delay } from "#std/async";
 
 async function clearAllStateIfSupported(
   renderer: unknown,
@@ -21,7 +20,7 @@ async function clearAllStateIfSupported(
     "clearAllState" in renderer &&
     typeof (renderer as { clearAllState?: unknown }).clearAllState === "function"
   ) {
-    await (renderer as { clearAllState: () => Promise<void> }).clearAllState();
+    await (renderer as { clearAllState: () => void | Promise<void> }).clearAllState();
   }
 }
 
@@ -41,12 +40,7 @@ describe(
     });
 
     describe("MDX Module Cache", () => {
-      // TODO: This test is flaky due to React SSR global state corruption in parallel tests
-      // The cache isolation itself works correctly - the issue is that renderToReadableStream
-      // sometimes fails and falls back to legacy renderToString, which has global state issues.
-      // React's getCurrentStack is undefined when parallel tests corrupt the shared state.
-      // See: https://github.com/facebook/react/issues/24669
-      it.skip("should isolate MDX layouts between different projects", async () => {
+      it("should isolate MDX layouts between different projects", async () => {
         await withTestContext("cache-isolation-mdx-1", async (context1) => {
           await mkdir(join(context1.projectDir, "app", "test"), {
             recursive: true,
@@ -112,10 +106,7 @@ describe(
     });
 
     describe("TSX Layout Cache", () => {
-      // TODO: This test is flaky due to Deno's module caching behavior
-      // The renderer.clearCache() doesn't clear Deno's native module cache
-      // Need to investigate a more reliable approach to module cache invalidation
-      it.skip("should clear TSX layout module cache properly", async () => {
+      it("should clear TSX layout module cache properly", async () => {
         await withTestContext("cache-isolation-tsx", async (context) => {
           await mkdir(join(context.projectDir, "app", "test"), {
             recursive: true,
@@ -148,13 +139,7 @@ describe(
 }`,
           );
 
-          // Ensure filesystem mtime changes across platforms
-          // Use longer delay for CI environments where filesystem can be slower
-          await delay(2000);
-
           renderer.clearCache();
-
-          await delay(100);
 
           const result2 = await renderer.renderPage("test");
           assertStringIncludes(result2.html, "test-layout-v2");

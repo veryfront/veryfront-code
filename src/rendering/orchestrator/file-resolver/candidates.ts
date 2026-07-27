@@ -1,3 +1,5 @@
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+
 export function buildCandidatePaths(
   baseDir: string,
   fileName: string,
@@ -17,8 +19,8 @@ export async function findFirstExisting(
     try {
       await statFn(fullPath);
       return fullPath;
-    } catch (_) {
-      /* expected: file may not exist at this candidate path */
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
   }
   return null;
