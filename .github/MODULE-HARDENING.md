@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    37 |      63.8% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     3 |       5.2% | Reviewed remediation or design work remains open    |
+| Closed                         |    38 |      65.5% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    18 |      31.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -49,6 +49,7 @@ stricter closure count.
 - `eval`
 - `extensions`
 - `fs`
+- `html`
 - `index.ts`
 - `integrations`
 - `issues`
@@ -78,7 +79,6 @@ stricter closure count.
 
 ### Deep reviewed, fixes pending
 
-- `html`
 - `resource`
 - `utils`
 
@@ -123,7 +123,7 @@ every affected unit.
 
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
-`integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
+`html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `middleware`, `platform`, `provider`, `prompt`, `registry`, `release-assets`,
 `repositories`, `runs`, `runtime`, `sandbox`, `schedule`, `schemas`, `studio`,
 `task`, `trigger`, `types`, `webhook`, `index.ts`, and `version.ts`.
@@ -186,6 +186,10 @@ reference, and direct consumers were remediated and revalidated.
 teardown, logging, CORS, timeout, security, rate-limit, Redis lifecycle, public
 surface, compatibility documentation, and direct consumers were remediated and
 revalidated.
+`html` is closed after its document assembly, full-document adaptation,
+metadata, escaping, hydration and navigation runtime, release identity, module
+and CSS caching, import maps, internal reference, and direct consumers were
+remediated and revalidated.
 The root entrypoint unit is closed after its exact public and client-safe export
 contracts, runtime dependency ownership, browser graph, rewrite target, Deno and
 npm package surfaces, documentation, and built consumer declarations were
@@ -197,12 +201,6 @@ malformed-import-map, and default-memoization compatibility decisions are
 unresolved. Each closure requires a complete consumer map, deep module-level
 review, adversarial boundary tests, public-contract documentation, and
 repository-wide static verification.
-`html` has completed its current implementation review and remediation. Its
-focused, complete-module, browser, release-asset, and static gates pass. Formal
-closure is pending only replacement of the materially stale module README with
-an accurate reference document; the documentation workflow requires explicit
-confirmation of that reference-only classification before authored content is
-restructured.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
@@ -4285,7 +4283,7 @@ test pins this exact allowance so it cannot grow implicitly.
 No known unresolved critical or high-confidence root-entrypoint production
 risk remains. The root entrypoint unit is closed at 35 of 58 formal units.
 
-### HTML deep-review checkpoint (reference update pending)
+### HTML closure checkpoint
 
 The `html` audit unit owns server-generated document shells, metadata and tag
 serialization, inline hydration data, the shared production hydration runtime,
@@ -4349,30 +4347,36 @@ The current implementation review remediated these findings:
   Its internal export, source, and tests were removed after repository-wide
   consumer search established that the generated router/loader/renderer path
   is the sole production implementation.
+- **Symptom -> Source -> Consequence -> Remedy:** the module README described
+  removed files, nonexistent option shapes and injection signatures, an
+  unpublished package path, unsupported performance numbers, and blanket
+  security guarantees. It is replaced by an internal reference that covers
+  every barrel declaration, schema-owned options, current shell and template
+  contracts, release/build identity, cache ownership, and the exact escaping
+  boundary without duplicating the rendering explanation.
 
 Current reproducible evidence:
 
-- all 40 HTML suites pass 753 nested steps with zero failures, including
+- all 40 HTML suites pass 754 nested steps with zero failures, including
   executable generated-runtime tests for latest-owner races, multi-pod build
   identity, timeout classification, abortable backoff, exact module identity,
   true LRU eviction, invalidation generations, schema parity, and hydration
   failure behavior;
-- the complete Release Assets portfolio passes 10 suites with 121 nested steps,
+- the complete Release Assets portfolio passes 11 suites with 130 nested steps,
   preserving that previously closed unit after the scoped browser-map change;
 - eight affected Modules, Rendering, Release Assets, and Server suites pass 177
   nested steps; the legacy-router browser regression passes both real Chromium
   scenarios, including partial App Router release coverage;
 - all 91 affected TypeScript files pass lint, the HTML and changed
   cross-module entrypoints pass typechecking, formatting and diff hygiene pass,
-  and API reference regeneration succeeds for all 40 published module groups.
+  API reference regeneration succeeds for all 40 published module groups, and
+  documentation validation passes all 745 current links.
 
 No known unresolved critical or high-confidence HTML implementation risk
-remains. The authored `src/html/README.md` still describes removed signatures,
-configuration objects, and injection behavior. Under the selected Diátaxis
-workflow it is classified as **Reference** with high confidence, but authored
-restructuring awaits explicit confirmation. Until that reference is replaced
-and documentation validation passes, `html` remains `Deep reviewed, fixes
-pending`; this checkpoint does not increment formal closure.
+remains. The authored `src/html/README.md` is now an accurate
+reference-oriented document for the internal `#veryfront/html` boundary, its
+example typechecks, and every barrel declaration is represented. `html` is
+closed at 38 of 58 formal units; 20 units remain to be closed or revalidated.
 
 ### Middleware closure checkpoint
 
@@ -4504,13 +4508,13 @@ Current reproducible integration evidence:
   boundaries, policy ratchets, fresh manifests, documentation validation, and
   every configured production and browser entrypoint typecheck.
 
-The complete current implementations of `agent` and `release-assets` were
-revalidated after the merge and remain closed. `html` remains deeply reviewed
-with only its reference replacement pending. The narrow `tool`, `rendering`,
-and `utils` changes add evidence to, but do not replace, those units' remaining
-top-level reviews, so their classifications do not change. Formal counts remain
-35 closed, 4 deeply reviewed with fixes pending, and 19 requiring revalidation
-at that upstream-integration checkpoint.
+At that upstream-integration checkpoint, the complete implementations of
+`agent` and `release-assets` were revalidated and remained closed, while `html`
+remained deeply reviewed with its reference replacement pending. The narrow
+`tool`, `rendering`, and `utils` changes added evidence to, but did not replace,
+those units' remaining top-level reviews. Formal counts at that checkpoint
+remained 35 closed, 4 deeply reviewed with fixes pending, and 19 requiring
+revalidation.
 
 ### Integrations closure checkpoint
 

@@ -1,380 +1,271 @@
-# HTML Module
+# HTML internal reference
 
-## Purpose
+The HTML module assembles server-rendered document shells, metadata, import
+maps, styles, hydration data, and client runtime scripts. It also adapts
+authored full-document HTML templates.
 
-The HTML module provides comprehensive HTML document generation and manipulation utilities for server-side rendering (SSR). It handles HTML shell generation, meta tag injection, hydration script generation, and content manipulation with proper escaping and security.
+This is an internal framework module. First-party code imports
+`#veryfront/html`; there is no published `veryfront/html` package subpath.
+Rendering ownership and request flow are described in
+[Rendering runtime](../../docs/architecture/03-rendering-runtime.md).
 
-## Scope
+## Module import
 
-### What this module does:
-
-- Generate complete HTML documents from React components
-- Build and inject meta tags (Open Graph, Twitter Cards, etc.)
-- Generate hydration scripts for client-side React mounting
-- Create development scripts (HMR, error overlay)
-- Generate production scripts (optimized hydration)
-- HTML content injection and manipulation
-- HTML escaping and sanitization
-- Detect full HTML documents vs fragments
-
-### What this module does NOT do:
-
-- React rendering (see `rendering/`)
-- Build-time bundling (see `build/`)
-- Request routing (see `routing/`)
-
-## Architecture
-
-```
-html/
-├── index.ts                    # Public API exports
-├── html-shell-generator.ts     # Main HTML document generator
-├── metadata-builder.ts         # Meta tag processing
-├── metadata-extraction.ts      # Extract metadata from components
-├── tag-generators.ts           # Generate <meta>, <link>, <script> tags
-├── html-injection.ts           # Inject content into HTML
-├── html-detection.ts           # Detect HTML vs fragments
-├── html-escape.ts              # HTML escaping utilities
-├── dev-scripts.ts              # Development-only scripts
-├── hydration-script-builder/   # Hydration script generation
-│   ├── index.ts
-│   ├── dev-scripts.ts          # Dev hydration + HMR
-│   ├── prod-scripts.ts         # Production hydration
-│   ├── hydration-data-generator.ts
-│   ├── dev-client-renderer.ts
-│   └── types.ts
-└── styles-builder/             # CSS generation
-    ├── index.ts
-    ├── dev-styles.ts           # Dev mode styles
-    ├── production-styles.ts    # Prod mode styles
-    ├── tailwind-config.ts      # Tailwind integration
-    └── theme-variables.ts      # CSS custom properties
+```ts
+import {
+  generateHTMLShellParts,
+  injectHTMLContent,
+  processMetadata,
+  wrapInHTMLShell,
+} from "#veryfront/html";
 ```
 
-## Key Exports
+Import through `src/html/index.ts` or the configured alias. Files below that
+barrel are implementation details unless another module has an explicit
+first-party dependency on them.
 
-### HTML Generation
+## Export surface
 
-- `wrapInHTMLShell(content, options)` - Generate complete HTML document
-- `injectHTMLContent(html, content, position)` - Inject content at position
-- `isFullHTMLDocument(html)` - Check if HTML vs fragment
+### Document assembly
 
-### Metadata
+| Export                   | Contract                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `wrapInHTMLShell`        | Wrap rendered content in a complete document and return `Promise<string>`.                       |
+| `generateHTMLShellParts` | Return `{ start, end }` shell fragments for callers that stream or insert content independently. |
+| `injectHTMLContent`      | Fill supported placeholders in an authored full-document template.                               |
+| `isFullHTMLDocument`     | Detect whether a string represents a complete HTML document rather than a fragment.              |
 
-- `processMetadata(metadata)` - Process and validate metadata
-- `extractHTMLMetadata(html)` - Extract metadata from HTML
-- `generateMetaTags(metadata)` - Generate meta tags array
-- `generateLinkTags(links)` - Generate link tags
+### Metadata and tags
 
-### Hydration Scripts
+| Export                | Contract                                                                   |
+| --------------------- | -------------------------------------------------------------------------- |
+| `processMetadata`     | Merge render metadata and frontmatter into escaped tag strings.            |
+| `extractHTMLMetadata` | Build bounded independent metadata from page and layout frontmatter.       |
+| `generateMetaTags`    | Generate charset, viewport, description, theme-color, and custom metadata. |
+| `generateLinkTags`    | Generate link and icon tags.                                               |
+| `generateScriptTags`  | Generate external or inline script tags, optionally with a nonce.          |
+| `generateStyleTags`   | Generate stylesheet links or inline style tags, optionally with a nonce.   |
 
-- `generateHydrationData(data)` - Create hydration payload
-- `getDevScripts(port, hmrPort)` - Development scripts
-- `getProdScripts(manifestPath)` - Production scripts
+### Hydration and development output
 
-### Tag Generators
+| Export                  | Contract                                                                         |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `generateHydrationData` | Serialize the bounded route, layout, props, release, and build-identity payload. |
+| `getDevScripts`         | Generate development renderer, manifest, error logger, and optional HMR scripts. |
+| `getProdScripts`        | Generate the versioned production hydration-runtime script tag.                  |
+| `getDevStyles`          | Generate development overlay styles, optionally with a nonce.                    |
 
-- `generateScriptTags(scripts)` - Generate script tags
-- `generateStyleTags(styles)` - Generate style tags
+### Escaping and shell helpers
 
-### Utilities
+| Export                | Contract                                                               |
+| --------------------- | ---------------------------------------------------------------------- |
+| `escapeHTML`          | Escape `&`, `<`, `>`, double quotes, and single quotes.                |
+| `escapeHtml`          | Compatibility alias for `escapeHTML`.                                  |
+| `buildAttributes`     | Validate, bound, escape, and join a plain attribute record.            |
+| `buildImportMapJson`  | Resolve the configured client import map and return inline-safe JSON.  |
+| `buildRootAttributes` | Build the root element's framework data attributes.                    |
+| `shouldDisableLayout` | Return true for frontmatter with `layout: false` or `layout: "false"`. |
 
-- `escapeHTML(text)` - Escape HTML special characters
-- `buildAttributes(attrs)` - Build HTML attribute string
+The barrel also exports `HTMLGenerationOptions`, `HTMLMetadata`,
+`HTMLRenderMetadata`, `HydrationData`, `ImportMapConfig`,
+`InjectHTMLContentOptions`, `MDXFrontmatter`, and `ProcessedMetadata`.
 
-## Dependencies
+## Document shells
 
-### Internal
+`wrapInHTMLShell` has this call shape:
 
-- `core/types` - Type definitions
-- `core/utils` - Logging and utilities
-
-### External
-
-- None (pure TypeScript/JavaScript)
-
-## Usage Examples
-
-### Generate Complete HTML Document
-
-```typescript
-import { wrapInHTMLShell } from "#veryfront/html";
-
-const html = await wrapInHTMLShell(reactHTML, {
-  title: "My Page",
-  description: "Page description",
-  meta: {
-    "og:title": "My Page",
-    "og:description": "Page description",
-    "og:image": "/og-image.png",
-    "twitter:card": "summary_large_image",
-  },
-  scripts: [
-    { src: "/client.js", type: "module" },
-  ],
-  styles: [
-    { href: "/styles.css" },
-  ],
-  lang: "en",
-  mode: "production",
-});
-
-// Result:
-// <!DOCTYPE html>
-// <html lang="en">
-//   <head>
-//     <meta charset="utf-8">
-//     <title>My Page</title>
-//     <meta name="description" content="Page description">
-//     <meta property="og:title" content="My Page">
-//     ...
-//   </head>
-//   <body>
-//     <div id="root">...rendered React...</div>
-//     <script type="module" src="/client.js"></script>
-//   </body>
-// </html>
+```ts
+wrapInHTMLShell(
+  content,
+  metadata,
+  options,
+  params?,
+  props?,
+  projectCSSPromise?,
+): Promise<string>
 ```
 
-### Development Mode with HMR
+`generateHTMLShellParts` accepts the same metadata and options, followed by
+optional params, props, Tailwind candidate content, and a prefetched project-CSS
+promise:
 
-```typescript
-import { wrapInHTMLShell } from "#veryfront/html";
-
-const html = await wrapInHTMLShell(reactHTML, {
-  title: "Dev Mode",
-  mode: "development",
-  devServer: {
-    port: 3000,
-    hmrPort: 3001,
-  },
-  hydrationData: {
-    pageProps: { data },
-    componentManifest: manifestData,
-  },
-});
-
-// Includes:
-// - HMR WebSocket client
-// - Error overlay
-// - Dev-mode React hydration
-// - Component manifest for hot reload
+```ts
+generateHTMLShellParts(
+  metadata,
+  options,
+  params?,
+  props?,
+  contentForTailwind?,
+  projectCSSPromise?,
+): Promise<{ start: string; end: string }>
 ```
 
-### Process Metadata
+A minimal assembly call uses the current framework configuration:
 
-```typescript
-import { processMetadata } from "#veryfront/html";
+```ts
+import {
+  type HTMLGenerationOptions,
+  type HTMLRenderMetadata,
+  wrapInHTMLShell,
+} from "#veryfront/html";
 
-const processed = processMetadata({
-  title: "My Page",
-  description: "Description",
-  openGraph: {
-    title: "OG Title",
-    type: "website",
-    url: "https://example.com",
-    images: [
-      { url: "/og-image.png", width: 1200, height: 630 },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    site: "@mysite",
-  },
-});
-
-// Result: { title, description, meta: {...}, links: [...] }
-```
-
-### Generate Hydration Scripts
-
-```typescript
-import { getDevScripts, getProdScripts } from "#veryfront/html";
-
-// Development
-const devScripts = getDevScripts(3000, 3001);
-// Returns inline scripts for:
-// - HMR WebSocket connection
-// - Error overlay
-// - Dev client renderer
-// - Component hot reload
-
-// Production
-const prodScripts = getProdScripts("/manifest.json");
-// Returns optimized scripts for:
-// - React hydration
-// - Component registry
-// - Minimal error handling
-```
-
-### HTML Injection
-
-```typescript
-import { injectHTMLContent } from "#veryfront/html";
-
-const html = '<html><head></head><body><div id="app"></div></body></html>';
-
-// Inject into <head>
-const withMeta = injectHTMLContent(html, '<meta name="description" content="...">', "head-end");
-
-// Inject before </body>
-const withScript = injectHTMLContent(html, '<script src="/analytics.js"></script>', "body-end");
-```
-
-### HTML Escaping
-
-```typescript
-import { buildAttributes, escapeHTML } from "#veryfront/html";
-
-// Escape user content
-const safe = escapeHTML('<script>alert("xss")</script>');
-// Result: '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
-
-// Build attributes safely
-const attrs = buildAttributes({
-  id: "my-div",
-  class: "container",
-  "data-value": "<script>",
-});
-// Result: 'id="my-div" class="container" data-value="&lt;script&gt;"'
-```
-
-## HTML Generation Options
-
-```typescript
-interface HTMLGenerationOptions {
-  // Basic metadata
-  title?: string;
-  description?: string;
-  lang?: string;
-
-  // Meta tags
-  meta?: Record<string, string>;
-
-  // Assets
-  scripts?: Array<{ src: string; type?: string; async?: boolean }>;
-  styles?: Array<{ href: string; media?: string }>;
-
-  // Mode
-  mode: "development" | "production";
-
-  // Development
-  devServer?: {
-    port: number;
-    hmrPort: number;
+export async function renderDocument(
+  config: HTMLGenerationOptions["config"],
+): Promise<string> {
+  const metadata: HTMLRenderMetadata = {
+    slug: "home",
+    title: "Home",
   };
 
-  // Hydration
-  hydrationData?: {
-    pageProps: unknown;
-    componentManifest?: unknown;
-  };
-
-  // Layout
-  layoutData?: {
-    frontmatter: Record<string, unknown>;
-    nestedLayouts: Array<unknown>;
-  };
+  return await wrapInHTMLShell(
+    "<main>Hello</main>",
+    metadata,
+    {
+      config,
+      mode: "production",
+      environment: "production",
+      isLocalProject: false,
+    },
+  );
 }
 ```
 
-## Performance
+The shell owns:
 
-### HTML Generation
+- `<html>`, `<head>`, root, portal, and hydration-data elements;
+- metadata, import maps, module preloads, styles, and CSP nonce propagation;
+- route-scoped release assets and release-versioned fallback module URLs;
+- development, preview, Studio, Markdown, and production runtime selection;
+- production CSS asset selection or project-CSS generation; and
+- stable build identity used by browser navigation to reject stale deployment
+  payloads.
 
-- Shell generation: ~1-2ms per page
-- Meta tag processing: ~0.5ms per page
-- Script injection: ~0.3ms per script
+The top-level metadata and options inputs must be ordinary data objects.
+Accessors, enumerable symbol keys, non-plain prototypes, failed reflective
+inspection, and objects beyond the field limit are rejected before assembly.
 
-### Memory Usage
+## HTML generation options
 
-- Minimal overhead (mostly string operations)
-- No caching (stateless transformations)
-- Streaming-friendly design
+`HTMLGenerationOptions` is inferred from
+`src/html/schemas/html.schema.ts`. `mode` and `config` are required. The schema
+also admits:
 
-## Security
+- route identity: `pagePath`, `pageType`, `appPath`, `errorPath`,
+  `appRouterRoot`, and `nestedLayouts`;
+- rendering state: `frontmatter`, `layoutProps`, `headings`,
+  `isolatedClientPage`, and `projectClasses`;
+- project and release identity: `projectDir`, `projectId`, `projectSlug`,
+  `releaseId`, `pageId`, and `sourceHash`;
+- client setup: `importMap`, `globalCSS`, `nonce`, `environment`,
+  `isLocalProject`, `noHmr`, and `forceProductionScripts`; and
+- display and Studio state: `colorScheme`, its source flags, and
+  `studioEmbed`.
 
-### XSS Prevention
+Use the schema as the authoritative field and enum contract. Do not add
+renderer-only properties through casts; extend the schema and its tests first.
 
-- All user content escaped by default
-- Attribute values properly quoted
-- Script content sanitized
-- Meta tag values validated
+## Metadata
 
-### CSP Compatibility
+`processMetadata(metadata, nonce?)` returns a `ProcessedMetadata` object with the
+effective title, language, body class, normalized metadata, and generated tag
+strings.
 
-- Inline scripts use nonces in production
-- External scripts properly attributed
-- Style-src policies supported
+Metadata precedence is:
 
-## Testing
+1. page frontmatter over layout frontmatter;
+2. nested frontmatter `metadata` over the merged outer frontmatter;
+3. frontmatter title over the top-level render title;
+4. the normalized metadata title; then
+5. `"Veryfront App"`.
 
-```bash
-# Run HTML tests
-deno task test src/html/
+Top-level description, language, and body class fill values absent from
+frontmatter. Metadata extraction copies own data properties, ignores unsafe
+prototype keys, and enforces entry, attribute, text, inline-content, and
+aggregate byte limits. Accessors and malformed structured arrays fail closed.
 
-# Test shell generation
-deno task test src/html/html-shell-generator.test.ts
+Tag generation accepts only plain metadata records. Attribute values are
+escaped, event-handler attributes are removed, inline `</script>` and
+`</style>` sequences are neutralized, and a supplied nonce is added to script
+and style output. The helpers do not sanitize arbitrary rendered HTML content.
 
-# Test metadata processing
-deno task test src/html/metadata-builder.test.ts
+## Hydration
 
-# Test utilities
-deno task test src/html/utils.test.ts
+`generateHydrationData` serializes:
+
+- route params and component props;
+- project-relative page, layout, app, and error module paths;
+- the selected filesystem or RSC client-module strategy;
+- route-scoped release asset mappings and release identity;
+- framework/server/project build identity;
+- frontmatter, layout props, headings, and Studio state; and
+- the development renderer flag.
+
+The serializer uses inline-script-safe JSON. The hydration schema bounds route
+text, layouts, module mappings, headings, build metadata, and release
+identifiers, and rejects non-canonical paths.
+
+Production shells load a content-addressed hydration runtime whose URL and
+strong ETag use the full SHA-256 digest. Development shells generate the
+component manifest and client renderer and include HMR only when configuration
+and mode permit it.
+
+## Authored full-document templates
+
+`injectHTMLContent` has this signature:
+
+```ts
+injectHTMLContent(
+  template: string,
+  content: string,
+  metadata: HTMLMetadata,
+  options: InjectHTMLContentOptions,
+): string
 ```
 
-## Related Modules
+Supported template placeholders are:
 
-- [`rendering/`](../rendering/README.md) - React rendering engine
-- [`react/`](../react/README.md) - React components & SSR adapter
-- [`server/`](../server/README.md) - HTTP server using HTML output
+- `{{ content }}`
+- `{{ title }}`
+- `{{ description }}`
+- `{{ meta }}`
+- `{{ links }}`
+- `{{ scripts }}`
+- `{{ styles }}`
 
-## Troubleshooting
+The adapter can also insert an import map, project or preview stylesheet,
+client-page hydration payload, development or production scripts, and Studio
+bridge data at the appropriate document boundaries. `mode` and `slug` are
+required options. Client-page hydration additionally requires `pagePath` and
+`isClientPage`.
 
-### Missing Hydration Data
+`content` is treated as already-rendered HTML and is inserted verbatim. Titles,
+descriptions, generated attributes, inline JSON, and Studio configuration are
+escaped for their actual HTML contexts.
 
-```typescript
-// Ensure hydration data is provided
-const html = await wrapInHTMLShell(reactHTML, {
-  mode: "production",
-  hydrationData: {
-    pageProps: props, // Required for hydration
-  },
-});
-```
+## Import maps
 
-### Incorrect Meta Tags
+`buildImportMapJson` selects CDN, bundled, or self-hosted client resolution from
+the framework configuration. It keeps core React-context modules on compatible
+local runtime paths, resolves project dependency versions, applies configured
+custom imports, and can map ready release dependencies to immutable assets.
 
-```typescript
-// Use processMetadata for validation
-import { processMetadata } from "#veryfront/html";
+Import-map results use a bounded LRU cache keyed by project, resolution mode,
+provider, versions, custom imports, and release dependencies. The structured
+`{ imports, json }` builder remains private; the barrel intentionally exposes
+only the JSON helper.
 
-const validated = processMetadata({
-  title: "My Page",
-  openGraph: {
-    title: "OG Title", // Will inherit from title if missing
-    type: "website", // Required for OG
-  },
-});
-```
+## Security boundary
 
-### HMR Not Working
+This module provides context-specific escaping and bounded structural
+validation. It does not make arbitrary HTML safe. Callers remain responsible
+for ensuring that rendered `content` and authored full-document templates come
+from trusted rendering or sanitization paths.
 
-```typescript
-// Ensure HMR port is provided in dev mode
-const html = await wrapInHTMLShell(reactHTML, {
-  mode: "development",
-  devServer: {
-    port: 3000,
-    hmrPort: 3001, // Required for HMR
-  },
-});
-```
+When adding output:
 
-## Maintainer Notes
-
-**Team:** Rendering Team
-**Stability:** Stable (v0.1.0+)
-**Performance Critical:** Yes (runs on every SSR request)
-
-This module is performance-critical - optimize for speed and memory efficiency.
+- use `escapeHTML` for text and attribute values;
+- use the shared inline JSON sanitizer for script data;
+- use nonce-aware generators for inline scripts and styles;
+- preserve release/build identity in hydration payloads; and
+- add adversarial tests for malformed records, accessors, closing-tag
+  sequences, oversized inputs, and stale release data.
