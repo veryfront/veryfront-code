@@ -18,15 +18,14 @@ veryfront init test-app
 cd test-app
 ```
 
-The wizard asks which template to use.
+The wizard preselects the `ai-agent` template. Choose another template when you
+want a different starting point. In non-interactive environments, `ai-agent` is
+used automatically.
 
 Choose a starting point directly when you already know what you want to build,
 or when running the command from a non-interactive script:
 
 ```bash
-# Agent app with a chat UI, tool, and AG-UI route
-veryfront init support-agent --template ai-agent
-
 # Blank full-stack app with pages and routing
 veryfront init web-app --template minimal
 
@@ -62,7 +61,7 @@ Use these commands when you do not have the Veryfront CLI installed globally.
 <CodeGroup>
 
 ```bash npm
-npm create veryfront
+npm create veryfront@latest my-agent
 ```
 
 ```bash pnpm

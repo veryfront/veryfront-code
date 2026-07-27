@@ -14,13 +14,12 @@ globally, run them with `npx veryfront ...`.
 ## Create the app
 
 ```bash
-npm create veryfront@latest support-agent -- --template ai-agent
+npm create veryfront@latest support-agent
 cd support-agent
 ```
 
-The quickstart uses `--template ai-agent` so the command creates the exact app
-shown below. Omit `--template` when you want the interactive template picker
-instead.
+The `ai-agent` starter is the default. Pass `-- --template <template>` when you
+want a different starting point.
 
 The `ai-agent` template creates a runnable chat app:
 
