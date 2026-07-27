@@ -103,5 +103,96 @@ describe("rendering/element-validator/element-inspector", () => {
       const mixed = ["text", React.createElement("br", { key: "br" }), 42, null];
       deepInspectElement(mixed, "root", 0, defaultOptions);
     });
+
+    it("does not invoke accessor-backed React props", () => {
+      let reads = 0;
+      const props = Object.defineProperty({}, "children", {
+        enumerable: true,
+        get() {
+          reads++;
+          throw new Error("must not execute");
+        },
+      });
+      const element = {
+        $$typeof: Symbol.for("react.element"),
+        type: "div",
+        key: null,
+        props,
+      };
+
+      assertThrows(
+        () => deepInspectElement(element, "root", 0, defaultOptions),
+        TypeError,
+        "data properties",
+      );
+      if (reads !== 0) throw new Error(`Expected zero accessor reads, received ${reads}`);
+    });
+
+    it("does not invoke invalid-child diagnostic accessors", () => {
+      let reads = 0;
+      const value = Object.defineProperties({}, {
+        type: {
+          enumerable: true,
+          get() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+        constructor: {
+          enumerable: false,
+          get() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+        toJSON: {
+          enumerable: true,
+          value() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+      });
+
+      assertThrows(
+        () => deepInspectElement(value, "root", 0, defaultOptions),
+        Error,
+        "Invalid React child",
+      );
+      if (reads !== 0) throw new Error(`Expected zero diagnostic-hook calls, received ${reads}`);
+    });
+
+    it("rejects trees that exceed the fixed inspection work budget", () => {
+      assertThrows(
+        () => deepInspectElement(new Array(10_001).fill(null), "root", 0, defaultOptions),
+        RangeError,
+        "node limit",
+      );
+    });
+
+    it("rejects unsafe configured depth limits", () => {
+      assertThrows(
+        () =>
+          deepInspectElement(
+            null,
+            "root",
+            0,
+            { maxDepth: 65, debugMode: false },
+          ),
+        RangeError,
+        "at most 64",
+      );
+    });
+
+    it("rejects cyclic React child structures", () => {
+      const children: unknown[] = [];
+      children.push(children);
+
+      assertThrows(
+        () => deepInspectElement(children, "root", 0, defaultOptions),
+        TypeError,
+        "cyclic",
+      );
+    });
   });
 });

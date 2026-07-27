@@ -1,30 +1,42 @@
-import * as React from "react";
+import type * as React from "react";
 import type { MDXComponents } from "#veryfront/types";
+import {
+  getOwnStringKeys,
+  isReactElement,
+  snapshotOwnProperty,
+} from "../element-validator/primitive-checks.ts";
 
-export const normalizeChild = (() => {
-  const cache = new WeakMap<object, React.ReactNode>();
+export function normalizeChild(child: React.ReactNode): React.ReactNode {
+  if (
+    !child ||
+    typeof child !== "object" ||
+    Array.isArray(child) ||
+    isReactElement(child)
+  ) {
+    return child;
+  }
 
-  return (child: React.ReactNode): React.ReactNode => {
+  const keys = getOwnStringKeys(child);
+  if (keys === null) return child;
+
+  let onlyEnumerableKey: string | undefined;
+  for (const key of keys) {
+    const property = snapshotOwnProperty(child, key);
     if (
-      !child || React.isValidElement(child) || typeof child !== "object" || Array.isArray(child)
+      property.kind === "missing" ||
+      property.kind === "unreadable"
     ) {
       return child;
     }
+    if (!property.enumerable) continue;
+    if (onlyEnumerableKey !== undefined) return child;
+    onlyEnumerableKey = key;
+  }
+  if (onlyEnumerableKey !== "children") return child;
 
-    const cached = cache.get(child);
-    if (cached !== undefined) {
-      return cached;
-    }
-
-    const keys = Object.keys(child);
-    const result = keys.length === 1 && keys[0] === "children"
-      ? (child as unknown as { children: React.ReactNode }).children
-      : child;
-
-    cache.set(child, result);
-    return result;
-  };
-})();
+  const children = snapshotOwnProperty(child, "children");
+  return children.kind === "data" ? children.value as React.ReactNode : child;
+}
 
 export function createDefaultMDXComponents(): MDXComponents {
   return {};

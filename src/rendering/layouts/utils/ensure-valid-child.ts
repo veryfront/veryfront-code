@@ -3,6 +3,7 @@ import * as BundledReact from "react";
 import {
   getElementDebugInfo,
   getElementTypeName,
+  getObjectKeys,
   isReactElement,
 } from "../../element-validator/primitive-checks.ts";
 
@@ -41,7 +42,7 @@ export function ensureValidChild(
 
   const debugInfo = getElementDebugInfo(child);
   logger.error("Invalid child: object is not a React element", {
-    keys: Object.keys(child).slice(0, 10),
+    keys: getObjectKeys(child).slice(0, 10),
     hasSymbol: debugInfo.hasSymbol,
     symbolValue: debugInfo.symbolValue,
     type: debugInfo.type,

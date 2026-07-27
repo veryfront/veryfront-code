@@ -3,11 +3,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import * as React from "react";
 import {
+  getElementDebugInfo,
   getElementTypeName,
   getObjectKeys,
   getObjectSample,
   hasReactSymbol,
   isValidPrimitive,
+  looksLikeReactElement,
 } from "./primitive-checks.ts";
 
 describe("primitive-checks", () => {
@@ -89,6 +91,32 @@ describe("primitive-checks", () => {
       >;
       expect(hasReactSymbol(element)).toBe(true);
     });
+
+    it("does not invoke a $$typeof accessor", () => {
+      let reads = 0;
+      const value = Object.defineProperty({}, "$$typeof", {
+        enumerable: true,
+        get() {
+          reads++;
+          throw new Error("must not execute");
+        },
+      });
+
+      expect(hasReactSymbol(value)).toBe(false);
+      expect(looksLikeReactElement(value)).toBe(false);
+      expect(reads).toBe(0);
+    });
+
+    it("rejects structural impostors with unknown React markers", () => {
+      expect(
+        looksLikeReactElement({
+          $$typeof: Symbol("project.element"),
+          type: "div",
+          props: {},
+          key: null,
+        }),
+      ).toBe(false);
+    });
   });
 
   describe("getElementTypeName", () => {
@@ -127,6 +155,19 @@ describe("primitive-checks", () => {
       }
       const element = React.createElement(ClassComponent, null);
       expect(getElementTypeName(element)).toBe("ClassComponent");
+    });
+
+    it("does not invoke an element type accessor", () => {
+      let reads = 0;
+      const value = Object.defineProperty({}, "type", {
+        get() {
+          reads++;
+          throw new Error("must not execute");
+        },
+      });
+
+      expect(getElementTypeName(value as React.ReactElement)).toBe("<Unknown>");
+      expect(reads).toBe(0);
     });
   });
 
@@ -205,16 +246,34 @@ describe("primitive-checks", () => {
     it("should handle circular references", () => {
       const obj: Record<string, unknown> = { foo: "bar" };
       obj.self = obj;
-      expect(getObjectSample(obj)).toBe("[Unable to stringify]");
+      expect(getObjectSample(obj)).toContain("[Circular]");
     });
 
-    it("should handle objects that throw on stringify", () => {
-      const obj = {
-        get foo() {
-          throw new Error("Cannot access");
+    it("does not invoke accessors or serialization hooks", () => {
+      let calls = 0;
+      const obj = Object.assign(Object.create(null), {
+        safe: "value",
+        toJSON() {
+          calls++;
+          throw new Error("must not execute");
         },
-      };
-      expect(getObjectSample(obj)).toBe("[Unable to stringify]");
+        [Symbol.toPrimitive]() {
+          calls++;
+          throw new Error("must not execute");
+        },
+      });
+      Object.defineProperty(obj, "dangerous", {
+        enumerable: true,
+        get() {
+          calls++;
+          throw new Error("must not execute");
+        },
+      });
+
+      const sample = getObjectSample(obj);
+      expect(sample).toContain('"safe"');
+      expect(sample).toContain("[Accessor]");
+      expect(calls).toBe(0);
     });
 
     it("should format JSON with proper indentation", () => {
@@ -225,6 +284,42 @@ describe("primitive-checks", () => {
 
     it("should handle undefined", () => {
       expect(getObjectSample(undefined)).toBe("[Unable to stringify]");
+    });
+  });
+
+  describe("getElementDebugInfo", () => {
+    it("reads the actual $$typeof own data property without invoking accessors", () => {
+      const marker = Symbol.for("react.element");
+      const element = { $$typeof: marker, type: "div" };
+      expect(getElementDebugInfo(element)).toEqual({
+        type: "div",
+        hasSymbol: true,
+        symbolValue: marker,
+        typeValue: "div",
+      });
+
+      let reads = 0;
+      const hostile = Object.defineProperties({}, {
+        $$typeof: {
+          get() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+        type: {
+          get() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+      });
+      expect(getElementDebugInfo(hostile)).toEqual({
+        type: "<Unknown>",
+        hasSymbol: true,
+        symbolValue: undefined,
+        typeValue: undefined,
+      });
+      expect(reads).toBe(0);
     });
   });
 });

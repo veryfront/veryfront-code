@@ -16,6 +16,19 @@ describe("rendering/element-validator/validator-core", () => {
       assertEquals(validator instanceof ElementValidator, true);
     });
 
+    it("rejects invalid inspection limits during construction", () => {
+      assertThrows(
+        () => new ElementValidator({ maxDepth: 65 }),
+        RangeError,
+        "at most 64",
+      );
+      assertThrows(
+        () => new ElementValidator({ maxDepth: Number.NaN }),
+        RangeError,
+        "non-negative safe integer",
+      );
+    });
+
     describe("deepInspectElement", () => {
       it("should accept valid React elements", () => {
         const validator = new ElementValidator();

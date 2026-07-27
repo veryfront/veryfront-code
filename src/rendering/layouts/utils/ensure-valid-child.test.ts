@@ -97,5 +97,38 @@ describe("rendering/layouts/utils/ensure-valid-child", () => {
       const nested = [["a"], ["b"]];
       assertEquals(ensureValidChild(nested), nested);
     });
+
+    it("does not execute invalid-child diagnostic accessors", () => {
+      let reads = 0;
+      const value = Object.defineProperties({}, {
+        $$typeof: {
+          enumerable: true,
+          get() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+        type: {
+          enumerable: true,
+          get() {
+            reads++;
+            throw new Error("must not execute");
+          },
+        },
+      });
+
+      assertEquals(ensureValidChild(value as never), null);
+      assertEquals(reads, 0);
+    });
+
+    it("rejects structural impostors with unknown element markers", () => {
+      const impostor = {
+        $$typeof: Symbol("project.element"),
+        type: "div",
+        props: {},
+        key: null,
+      };
+      assertEquals(ensureValidChild(impostor as never), null);
+    });
   });
 });

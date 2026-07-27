@@ -38,7 +38,7 @@ describe("normalizeChild", () => {
     assertEquals(result, obj);
   });
 
-  it("memoizes object normalization", () => {
+  it("normalizes the same wrapper consistently", () => {
     const child = React.createElement("span", null, "Content");
     const wrapped = { children: child } as React.ReactNode;
 
@@ -47,6 +47,36 @@ describe("normalizeChild", () => {
 
     assertEquals(result1, result2);
     assertEquals(result1, child);
+  });
+
+  it("does not retain stale children from mutable wrapper objects", () => {
+    const wrapped = { children: "first" } as React.ReactNode;
+    assertEquals(normalizeChild(wrapped), "first");
+
+    (wrapped as unknown as { children: React.ReactNode }).children = "second";
+    assertEquals(normalizeChild(wrapped), "second");
+  });
+
+  it("does not invoke accessor-backed wrappers or React markers", () => {
+    let reads = 0;
+    const wrapped = Object.defineProperties({}, {
+      children: {
+        enumerable: true,
+        get() {
+          reads++;
+          throw new Error("must not execute");
+        },
+      },
+      $$typeof: {
+        get() {
+          reads++;
+          throw new Error("must not execute");
+        },
+      },
+    }) as React.ReactNode;
+
+    assertEquals(normalizeChild(wrapped), wrapped);
+    assertEquals(reads, 0);
   });
 
   it("handles arrays", () => {

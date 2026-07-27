@@ -1,6 +1,10 @@
 import type * as React from "react";
 import type { ValidationOptions } from "./types.ts";
-import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
+import {
+  assertInspectionOptions,
+  deepInspectElement,
+  type InspectionOptions,
+} from "./element-inspector.ts";
 import { ensureValidReactElement, type NormalizationOptions } from "./element-normalizer.ts";
 
 /**
@@ -12,8 +16,13 @@ export class ElementValidator {
   private readonly debugMode: boolean;
 
   constructor(options: ValidationOptions = {}) {
-    this.maxDepth = options.maxDepth ?? 15;
-    this.debugMode = options.debugMode ?? false;
+    const inspectionOptions: InspectionOptions = {
+      maxDepth: options.maxDepth ?? 15,
+      debugMode: options.debugMode ?? false,
+    };
+    assertInspectionOptions(inspectionOptions);
+    this.maxDepth = inspectionOptions.maxDepth;
+    this.debugMode = inspectionOptions.debugMode;
   }
 
   private getInspectionOptions(): InspectionOptions {
