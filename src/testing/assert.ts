@@ -95,20 +95,6 @@ function createNodeAssertImpl(): AssertImpl {
     assertErrorMessageIncludes(error, msgIncludesOrMsg, assertionMessage);
   }
 
-  function assertObjectMatch(
-    actual: Record<string, unknown>,
-    expected: Record<string, unknown>,
-    msg?: string,
-  ): void {
-    if (matchesObjectSubset(actual, expected)) return;
-    throw new Error(
-      msg ||
-        `Expected ${safeStringify(actual)} to contain matching properties ${
-          safeStringify(expected)
-        }`,
-    );
-  }
-
   return {
     assertEquals<T>(actual: T, expected: T, msg?: string): void {
       if (deepEquals(actual, expected)) return;
@@ -217,7 +203,7 @@ function createNodeAssertImpl(): AssertImpl {
       throw new Error(msg || "Expected values to not be strictly equal");
     },
 
-    assertObjectMatch,
+    assertObjectMatch: assertObjectMatchPortable,
 
     assertGreater(actual: number, expected: number, msg?: string): void {
       if (actual > expected) return;
@@ -244,6 +230,24 @@ function createNodeAssertImpl(): AssertImpl {
 type ObjectSubsetState = {
   comparedPairs: WeakMap<object, WeakSet<object>>;
 };
+
+function assertObjectMatchPortable(
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>,
+  msg?: string,
+): void {
+  if (matchesObjectSubset(actual, expected)) return;
+  throw new Error(getObjectMatchMessage(actual, expected, msg));
+}
+
+function getObjectMatchMessage(
+  actual: Record<string, unknown>,
+  expected: Record<string, unknown>,
+  msg?: string,
+): string {
+  return msg ||
+    `Expected ${safeStringify(actual)} to contain matching properties ${safeStringify(expected)}`;
+}
 
 function matchesObjectSubset(
   actual: unknown,
@@ -355,7 +359,10 @@ if (isDeno) {
     assertInstanceOf: denoAssert.assertInstanceOf,
     fail: denoAssert.fail,
     assertNotStrictEquals: denoAssert.assertNotStrictEquals,
-    assertObjectMatch: denoAssert.assertObjectMatch,
+    assertObjectMatch(actual, expected, msg): void {
+      if (matchesObjectSubset(actual, expected)) return;
+      denoAssert.fail(getObjectMatchMessage(actual, expected, msg));
+    },
     assertGreater: denoAssert.assertGreater,
     assertGreaterOrEqual: denoAssert.assertGreaterOrEqual,
     assertLess: denoAssert.assertLess,

@@ -1,10 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 type FetchMock = typeof globalThis.fetch | undefined;
-type FetchMockOwner = { active: boolean };
+type FetchMockScope = {
+  acceptingChildren: boolean;
+  childTail: Promise<void>;
+};
 
 const FETCH_MOCK_QUEUE_KEY = "__vfTestFetchMockQueue";
-const fetchMockOwnerStorage = new AsyncLocalStorage<FetchMockOwner>();
+const fetchMockScopeStorage = new AsyncLocalStorage<FetchMockScope>();
 
 function getFetchMockQueue(): Promise<void> {
   const globalAny = globalThis as Record<string, unknown>;
@@ -16,13 +19,20 @@ function setFetchMockQueue(queue: Promise<void>): void {
   (globalThis as Record<string, unknown>)[FETCH_MOCK_QUEUE_KEY] = queue;
 }
 
+/**
+ * Run a callback while temporarily replacing the process-global fetch.
+ *
+ * Independent calls and sibling nested calls are serialized. Deeper nesting
+ * remains re-entrant, but serialized siblings must not depend on a later
+ * sibling to release an earlier one. Always await the returned promise.
+ */
 export async function withMockFetch<T>(
   mockFetch: FetchMock,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  const inheritedOwner = fetchMockOwnerStorage.getStore();
-  if (inheritedOwner?.active) {
-    return await runWithInstalledFetch(mockFetch, fn);
+  const parentScope = fetchMockScopeStorage.getStore();
+  if (parentScope?.acceptingChildren) {
+    return await enqueueNestedFetchScope(parentScope, mockFetch, fn);
   }
 
   const prior = getFetchMockQueue().catch(() => undefined);
@@ -34,15 +44,50 @@ export async function withMockFetch<T>(
   setFetchMockQueue(prior.finally(() => next));
   await prior;
 
-  const owner: FetchMockOwner = { active: true };
   try {
-    return await fetchMockOwnerStorage.run(
-      owner,
-      () => runWithInstalledFetch(mockFetch, fn),
+    return await runInFetchScope(mockFetch, fn);
+  } finally {
+    release?.();
+  }
+}
+
+function enqueueNestedFetchScope<T>(
+  parentScope: FetchMockScope,
+  mockFetch: FetchMock,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const operation = parentScope.childTail.then(() => runInFetchScope(mockFetch, fn));
+  parentScope.childTail = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+}
+
+async function runInFetchScope<T>(
+  mockFetch: FetchMock,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const scope: FetchMockScope = {
+    acceptingChildren: true,
+    childTail: Promise.resolve(),
+  };
+
+  try {
+    return await fetchMockScopeStorage.run(
+      scope,
+      () =>
+        runWithInstalledFetch(mockFetch, async () => {
+          try {
+            return await fn();
+          } finally {
+            scope.acceptingChildren = false;
+            await scope.childTail;
+          }
+        }),
     );
   } finally {
-    owner.active = false;
-    release?.();
+    scope.acceptingChildren = false;
   }
 }
 

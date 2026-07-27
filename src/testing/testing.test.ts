@@ -70,6 +70,22 @@ describe("testing/assert", () => {
     );
   });
 
+  it("rejects mismatched Map values consistently across runtimes", () => {
+    assertThrows(
+      () =>
+        assertObjectMatch(
+          { values: new Map([["created", new Date(0)]]) },
+          { values: new Map([["created", new Date(1)]]) },
+        ),
+      Error,
+    );
+
+    assertObjectMatch(
+      { values: new Map([["created", new Date(0)]]) },
+      { values: new Map([["created", new Date(0)]]) },
+    );
+  });
+
   it("assertExists detects defined values", () => {
     assertExists("hello");
     assertExists(0);
@@ -259,5 +275,22 @@ describe("testing/deno-compat", () => {
       elapsedMs < 750,
       `Expected the polling deadline near 20ms, but it took ${Math.round(elapsedMs)}ms`,
     );
+  });
+
+  it("does not invoke the predicate again after the polling deadline", async () => {
+    let calls = 0;
+
+    await assertRejects(
+      () =>
+        waitFor(() => ++calls === 2, {
+          timeout: 20,
+          interval: 1500,
+          message: "post-deadline predicate regression",
+        }),
+      Error,
+      "post-deadline predicate regression",
+    );
+
+    assertEquals(calls, 1);
   });
 });

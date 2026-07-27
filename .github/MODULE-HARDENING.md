@@ -3953,26 +3953,31 @@ The current findings are remediated:
   regressions.
 - **Symptom -> Source -> Consequence -> Remedy:** Node and Bun
   `assertObjectMatch` recursively revisited matching cyclic objects until the
-  stack overflowed and treated shared object identity as structure. The source
-  was naive recursion with no compared-pair state. The consequence was a
-  portable assertion crashing on valid cyclic subsets and producing
-  runtime-specific outcomes. The matcher now tracks compared object pairs,
-  handles arrays and keyed collections deliberately, compares Date and RegExp
-  values, accepts repeated references by structure, and emits bounded safe
-  diagnostics.
-- **Symptom -> Source -> Consequence -> Remedy:** nesting `withMockFetch`
-  waited for the outer scope to release a queue that the nested callback itself
-  blocked, while independent callers still needed exclusive ownership of the
-  process-global fetch descriptor. The consequence was deterministic nested
-  deadlock or cross-test fetch corruption. An active async owner now permits
-  re-entrant scopes, rejects stale inherited ownership after the outer scope
-  settles, keeps independent calls serialized, and restores the exact original
-  property descriptor even when callback and restoration failures combine.
+  stack overflowed and treated shared object identity as structure, while
+  Deno's delegated matcher accepted unequal Date or RegExp values inside Maps.
+  The source was naive local recursion plus two runtime-specific matcher
+  implementations. The consequence was a portable assertion crashing on valid
+  cyclic subsets or producing different outcomes by host. One portable matcher
+  now owns every runtime, tracks compared object pairs, handles arrays and
+  keyed collections deliberately, compares Date and RegExp values, accepts
+  repeated references by structure, and emits bounded safe diagnostics.
+- **Symptom -> Source -> Consequence -> Remedy:** a single `withMockFetch`
+  queue deadlocked sequential nesting, while bypassing that queue for every
+  active async owner let concurrently started nested siblings overwrite the
+  process-global fetch and restore descriptors out of order. The consequence
+  was deterministic deadlock, cross-test corruption, or the wrong mock
+  surviving after settlement. Hierarchical async scopes now serialize
+  independent callers and sibling children, allow deeper re-entrant nesting,
+  drain accepted children before parent restoration, reject stale inherited
+  scope ownership, and restore the exact original descriptor even when
+  callback and restoration failures combine.
 - **Symptom -> Source -> Consequence -> Remedy:** `waitFor` slept for the full
-  polling interval even when only a few milliseconds remained. A 20 ms timeout
-  with a 1,500 ms interval therefore took about 1.5 seconds. The helper now
-  uses a monotonic deadline and caps every sleep to the remaining budget, so
-  timeout behavior is bounded without a busy loop.
+  polling interval even when only a few milliseconds remained, then invoked
+  the predicate once more after its deadline. A 20 ms timeout with a 1,500 ms
+  interval therefore took about 1.5 seconds or accepted state that became true
+  out of budget. The helper now performs one immediate attempt, uses a
+  monotonic deadline, caps every sleep to the remaining budget, and does not
+  schedule a post-deadline attempt.
 - **Symptom -> Source -> Consequence -> Remedy:** the Bun adapter read a
   nonexistent default `bun:test` export and passed timeout options in the Node
   position instead of Bun's third positional argument. Skip/only capabilities
@@ -3996,18 +4001,21 @@ The current findings are remediated:
 Current Testing verification evidence:
 
 - The complete unit passes across all supported hosts, including the exact
-  CI-pinned Bun 1.3.14 runtime and Bun's four-way runner setting. The final Bun
-  pass covers 46 tests with one intentional Node-only resolver skip; Deno and
-  Node cover the same portable contracts, including nested suites, raw tests,
-  cyclic assertions, fetch re-entrancy, environment restoration, deadlines,
-  and adapter registration.
+  CI-pinned Bun 1.3.14 runtime and Bun's four-way runner setting. The final
+  passes cover 17 Deno tests with 48 nested steps, 51 Node tests, and 50 Bun
+  tests with one intentional Node-only resolver skip. The portable contracts
+  include nested suites, raw tests, cyclic and keyed-collection assertions,
+  sequential and concurrent nested fetch scopes, child-scope draining,
+  environment restoration, strict polling deadlines, and adapter
+  registration.
 - All 19 Testing source and test files pass Deno typecheck, lint, and format
   checks. The focused-test and skipped-test ratchets remain at zero new focused
   tests and the existing 20-test skipped baseline.
-- Twenty direct high-impact consumer files pass 30 Deno tests with 521 nested
-  steps across agent, embedding, integrations, observability, platform,
-  server, tool, and transforms. Representative Node and Bun consumer runs each
-  pass 42 cases for expectation, object-subset, and remote-fetch behavior.
+- Twenty-nine direct high-impact consumer files pass 39 Deno tests with 786
+  nested steps across agent, client, config, embedding, HTML, integrations,
+  observability, platform, React, rendering, server, tool, and transforms.
+  Representative Node and Bun consumer runs each pass 42 cases for
+  expectation, object-subset, and remote-fetch behavior.
 - The npm package rebuild and documented consumer `tsc --noEmit` gate pass
   against the emitted declarations. The regenerated Testing API reference
   describes the cross-runtime contract and passes validation with all 40
@@ -4026,6 +4034,13 @@ Tests that mutate environment state in hooks must place those hooks inside a
 `describe` suite to receive the verified snapshot boundary. Raw test bodies
 remain isolated. This is an explicit low residual and documented usage
 constraint; no hidden fallback is used.
+
+`withMockFetch` necessarily serializes independent and sibling scopes because
+`globalThis.fetch` can represent only one process-wide value. A later sibling
+must not be responsible for releasing an earlier sibling, and callers must
+await every scope. Deeper nesting remains supported, accepted child work is
+drained before parent restoration, and this ordering constraint is stated at
+the helper boundary.
 
 No known unresolved critical or high-confidence Testing production risk
 remains. The `testing` audit unit is closed at 34 of 58 formal units.

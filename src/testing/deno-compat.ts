@@ -124,7 +124,7 @@ function validateTempAffix(value: string): void {
   }
 }
 
-/** Wait until a condition succeeds. */
+/** Poll a condition immediately and at intervals until it succeeds or the monotonic deadline expires. */
 export async function waitFor(
   condition: () => boolean | Promise<boolean>,
   options?: {
@@ -138,13 +138,17 @@ export async function waitFor(
   const message = options?.message ?? "Condition not met within timeout";
   const deadline = performance.now() + timeout;
 
+  if (await condition()) return;
+
   while (true) {
-    if (await condition()) return;
     const remaining = deadline - performance.now();
     if (remaining <= 0) break;
 
+    const sleepDuration = Math.min(interval, remaining);
     // no cleanup needed: one-shot
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(interval, remaining)));
+    await new Promise<void>((resolve) => setTimeout(resolve, sleepDuration));
+    if (sleepDuration === remaining || performance.now() >= deadline) break;
+    if (await condition()) return;
   }
 
   throw TIMEOUT_ERROR.create({ detail: `${message} (timeout: ${timeout}ms)` });
