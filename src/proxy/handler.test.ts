@@ -1377,6 +1377,7 @@ describe("Proxy Handler", () => {
     });
 
     it("falls back to the request URL host when the Host header is absent", async () => {
+      const localPath = Deno.cwd();
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
@@ -1385,7 +1386,7 @@ describe("Proxy Handler", () => {
           previewApiClientId: "",
           previewApiClientSecret: "",
           localProjects: {
-            "my-project": ".",
+            "my-project": localPath,
           },
         },
       });
@@ -1396,7 +1397,7 @@ describe("Proxy Handler", () => {
 
       assertEquals(ctx.projectSlug, "my-project");
       assertEquals(ctx.environment, "preview");
-      assertEquals(ctx.localPath, ".");
+      assertEquals(ctx.localPath, localPath);
       assertEquals(ctx.error, undefined);
 
       await handler.close();

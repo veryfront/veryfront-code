@@ -737,7 +737,7 @@ async function router(req: Request): Promise<Response> {
     } else if (url.pathname.startsWith("/_vf/api/")) {
       response = await handleApiProxy(req, url);
     } else if (isReleaseAssetPath(url.pathname)) {
-      response = await handleReleaseAssetRequest(url, { apiBaseUrl: config.apiBaseUrl }) ??
+      response = await handleReleaseAssetRequest(req, url, { apiBaseUrl: config.apiBaseUrl }) ??
         await forwardToServer(req, url);
     } else {
       response = await forwardToServer(req, url);

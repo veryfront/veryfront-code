@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { TokenManager } from "./token-manager.ts";
+import { TokenFetchSupersededError, TokenManager } from "./token-manager.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 
 /** In-memory cache that counts operations */
@@ -9,9 +9,13 @@ class SpyCache implements TokenCache {
   private store = new Map<string, TokenCacheEntry>();
   getCount = 0;
   setCount = 0;
+  getGate?: Promise<void>;
+  onGet?: () => void;
 
   async get(key: string): Promise<TokenCacheEntry | null> {
     this.getCount++;
+    this.onGet?.();
+    if (this.getGate) await this.getGate;
     return this.store.get(key) ?? null;
   }
 
@@ -37,6 +41,10 @@ class SpyCache implements TokenCache {
   }
 
   async close(): Promise<void> {}
+
+  seed(key: string, entry: TokenCacheEntry): void {
+    this.store.set(key, entry);
+  }
 }
 
 describe("TokenManager", () => {
@@ -56,6 +64,7 @@ describe("TokenManager", () => {
             new Response(
               JSON.stringify({
                 access_token: "test-token-" + fetchCount,
+                token_type: "Bearer",
                 expires_in: 3600,
               }),
               { headers: { "Content-Type": "application/json" } },
@@ -159,6 +168,156 @@ describe("TokenManager", () => {
 
     assertEquals(fetchCount, 1);
 
+    await manager.close();
+  });
+
+  it("keeps global, project, and custom-domain cache identities distinct", async () => {
+    const cache = new SpyCache();
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache },
+    );
+
+    await manager.getToken("production");
+    await manager.getToken("production", "global");
+    await manager.getToken("production", undefined, "global");
+
+    assertEquals(fetchCount, 3);
+    assertEquals(cache.setCount, 3);
+    await manager.close();
+  });
+
+  it("does not invoke accessors from a malformed cache entry", async () => {
+    const cache = new SpyCache();
+    let tokenGetterReads = 0;
+    const forgedEntry = Object.create(null);
+    Object.defineProperties(forgedEntry, {
+      token: {
+        enumerable: true,
+        get() {
+          tokenGetterReads++;
+          return "forged-token";
+        },
+      },
+      expiresAt: {
+        enumerable: true,
+        value: Date.now() + 60_000,
+      },
+      scope: {
+        enumerable: true,
+        value: "production",
+      },
+    });
+    cache.seed(
+      JSON.stringify(["production", "project", "project"]),
+      forgedEntry as TokenCacheEntry,
+    );
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache },
+    );
+
+    assertEquals(await manager.getToken("production", "project"), "test-token-1");
+    assertEquals(tokenGetterReads, 0);
+    assertEquals(fetchCount, 1);
+    await manager.close();
+  });
+
+  it("supersedes a cache read that overlaps a full cache clear", async () => {
+    let releaseGet!: () => void;
+    let markGetStarted!: () => void;
+    const getGate = new Promise<void>((resolve) => {
+      releaseGet = resolve;
+    });
+    const getStarted = new Promise<void>((resolve) => {
+      markGetStarted = resolve;
+    });
+    const cache = new SpyCache();
+    cache.getGate = getGate;
+    cache.onGet = markGetStarted;
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache },
+    );
+
+    const stale = manager.getToken("production", "project");
+    await getStarted;
+    const clear = manager.clearCache();
+    cache.getGate = undefined;
+    cache.onGet = undefined;
+    releaseGet();
+
+    await assertRejects(() => stale, TokenFetchSupersededError);
+    await clear;
+    assertEquals(fetchCount, 0);
+    assertEquals(await manager.getToken("production", "project"), "test-token-1");
+    await manager.close();
+  });
+
+  it("does not let an invalidated in-flight fetch publish stale cache state", async () => {
+    await mockServer?.shutdown();
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    mockServer = Deno.serve({ port: 0, onListen() {} }, async () => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        markFirstStarted();
+        await firstGate;
+      }
+      return Response.json({
+        access_token: `test-token-${fetchCount}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+    });
+    serverPort = (mockServer.addr as Deno.NetAddr).port;
+
+    const cache = new SpyCache();
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache },
+    );
+
+    const stale = manager.getToken("production", "project");
+    await firstStarted;
+    const invalidation = manager.invalidateToken("production", "project");
+    releaseFirst();
+
+    await assertRejects(() => stale, TokenFetchSupersededError);
+    await invalidation;
+    assertEquals(cache.setCount, 0);
+    assertEquals(await manager.getToken("production", "project"), "test-token-2");
+    assertEquals(cache.setCount, 1);
     await manager.close();
   });
 });

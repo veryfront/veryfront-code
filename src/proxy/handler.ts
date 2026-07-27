@@ -417,8 +417,12 @@ function parseStatusFromError(error: unknown): number | null {
 
 export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
-  const localProjects = config.localProjects ?? {};
-  const localProjectResolver = createLocalProjectResolver({ localProjects, logger });
+  const localProjectResolver = createLocalProjectResolver({
+    localProjects: config.localProjects,
+    logger,
+    allowDiscovery: getEnv("NODE_ENV") !== "production",
+  });
+  const localProjects = localProjectResolver.localProjects;
 
   const tokenManager = new TokenManager(
     {
@@ -931,7 +935,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
         if (!isProxyLookupAuthError(error)) throw error;
 
-        const projectKey = tokenIdentity.projectSlug ?? tokenIdentity.customDomain;
         logger?.warn("Proxy API token rejected during metadata lookup; refreshing token", {
           lookupKey,
           host,
@@ -943,7 +946,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         });
 
         routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
-        await tokenManager.invalidateToken(scope, projectKey);
+        await tokenManager.invalidateToken(
+          scope,
+          tokenIdentity.projectSlug,
+          tokenIdentity.customDomain,
+        );
 
         try {
           metadataToken = await tokenManager.getToken(
@@ -1266,6 +1273,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   }
 
   async function close() {
+    localProjectResolver.clear();
     await tokenManager.close();
   }
 
