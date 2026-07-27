@@ -191,15 +191,14 @@ export class RendererLifecycle {
         contentSourceId: this.contentSourceId,
         config,
       });
-      componentRegistry = new ComponentRegistry(
+      componentRegistry = new ComponentRegistry({
+        adapter: this.adapter,
+        projectDir,
         virtualModules,
-        this.port,
-        this.adapter,
-        this.moduleServerUrl,
-        undefined,
-        this.projectId,
-        this.contentSourceId,
-      );
+        moduleServerUrl: this.moduleServerUrl,
+        projectId: this.projectId,
+        contentSourceId: this.contentSourceId,
+      });
 
       const renderCacheConfig = config.cache?.render ?? {};
       const cacheBaseDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;

@@ -229,5 +229,43 @@ describe(
       assertEquals(response?.headers.get("access-control-allow-origin"), null);
       assertEquals(response?.headers.get("access-control-allow-methods"), null);
     });
+
+    it("registers module batches atomically", async () => {
+      const modules = new VirtualModuleSystem(
+        "/_veryfront/modules",
+        createMockAdapter(),
+        { importMap: { imports: {}, scopes: {} } },
+      );
+      await modules.registerModule(
+        "component:existing",
+        "export const original = true;",
+        "/project",
+        "ts",
+      );
+
+      await assertRejects(
+        () =>
+          modules.registerModules(
+            [
+              {
+                id: "component:existing",
+                source: "export const replacement = true;",
+                fileType: "ts",
+              },
+              {
+                id: "component:new",
+                source: "export const broken = ;",
+                fileType: "ts",
+              },
+            ],
+            "/project",
+          ),
+      );
+
+      assert(
+        modules.getModule("component:existing")?.source.includes("original"),
+      );
+      assertEquals(modules.getModule("component:new"), undefined);
+    });
   },
 );

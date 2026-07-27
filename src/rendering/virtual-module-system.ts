@@ -30,12 +30,19 @@ export interface VirtualModuleSystemContext {
   importMap?: ImportMapConfig;
 }
 
+export interface VirtualModuleRegistration {
+  id: string;
+  source: string;
+  fileType?: "tsx" | "jsx" | "ts" | "js";
+}
+
 const MAX_BASE_URL_LENGTH = 2_048;
 const MAX_MODULE_ID_LENGTH = 1_024;
 const MAX_MODULE_SOURCE_BYTES = 5 * 1024 * 1024;
 const MAX_RETAINED_MODULE_BYTES = 64 * 1024 * 1024;
 const MAX_VIRTUAL_MODULES = 10_000;
 const MAX_PENDING_REGISTRATIONS = 32;
+const MAX_PENDING_MODULES = 10_000;
 const MAX_PENDING_SOURCE_BYTES = 32 * 1024 * 1024;
 const ALLOWED_LOADERS = new Set(["tsx", "jsx", "ts", "js"]);
 
@@ -62,6 +69,7 @@ export class VirtualModuleSystem {
   private readonly context?: VirtualModuleSystemContext;
   private retainedModuleBytes = 0;
   private pendingRegistrations = 0;
+  private pendingModules = 0;
   private pendingSourceBytes = 0;
   private registrationSequence = 0;
   private lifecycleGeneration = 0;
@@ -128,81 +136,110 @@ export class VirtualModuleSystem {
     projectDir: string,
     fileType?: "tsx" | "jsx" | "ts" | "js",
   ): Promise<string> {
-    validateModuleId(id);
-    validateProjectDirectory(projectDir);
-    if (typeof source !== "string") {
-      throw new TypeError("Virtual module source must be a string");
-    }
-    const sourceBytes = boundedUtf8Length(
-      source,
-      MAX_MODULE_SOURCE_BYTES,
-      "Virtual module source",
-    );
-    if (fileType !== undefined && !ALLOWED_LOADERS.has(fileType)) {
-      throw new TypeError("Virtual module loader must be tsx, jsx, ts, or js");
-    }
-    const moduleUrl = createModuleUrl(this.baseUrl, id);
+    const urls = await this.registerModules([{ id, source, fileType }], projectDir);
+    return urls[0]!;
+  }
 
-    // Prefer the explicit file type supplied by the caller (it knows the extension).
-    // Fall back to heuristic detection only when no type is provided.
-    const loader: "tsx" | "jsx" | "ts" | "js" = fileType ?? inferLoaderFromSource(source);
-    this.admitPendingRegistration(sourceBytes);
+  /**
+   * Transform and retain a set of modules as one transaction.
+   *
+   * No module in the batch becomes visible unless every source transforms and
+   * the complete batch fits the configured retention budgets.
+   */
+  async registerModules(
+    registrations: readonly VirtualModuleRegistration[],
+    projectDir: string,
+  ): Promise<string[]> {
+    validateProjectDirectory(projectDir);
+    if (!Array.isArray(registrations)) {
+      throw new TypeError("Virtual module registrations must be an array");
+    }
+    if (registrations.length > MAX_VIRTUAL_MODULES) {
+      throw new RangeError(
+        `Virtual module count limit of ${MAX_VIRTUAL_MODULES} was exceeded`,
+      );
+    }
+
+    const ids = new Set<string>();
+    const inputs: Array<
+      VirtualModuleRegistration & {
+        loader: "tsx" | "jsx" | "ts" | "js";
+        sourceBytes: number;
+      }
+    > = [];
+    let batchSourceBytes = 0;
+
+    for (const registration of registrations) {
+      if (typeof registration !== "object" || registration === null) {
+        throw new TypeError("Virtual module registration must be an object");
+      }
+      const { id, source, fileType } = registration;
+      validateModuleId(id);
+      if (ids.has(id)) {
+        throw new TypeError(`Virtual module batch contains duplicate ID "${id}"`);
+      }
+      ids.add(id);
+
+      if (typeof source !== "string") {
+        throw new TypeError("Virtual module source must be a string");
+      }
+      const sourceBytes = boundedUtf8Length(
+        source,
+        MAX_MODULE_SOURCE_BYTES,
+        "Virtual module source",
+      );
+      if (fileType !== undefined && !ALLOWED_LOADERS.has(fileType)) {
+        throw new TypeError("Virtual module loader must be tsx, jsx, ts, or js");
+      }
+      if (sourceBytes > MAX_PENDING_SOURCE_BYTES - batchSourceBytes) {
+        throw new RangeError(
+          `Virtual module pending source byte limit of ${MAX_PENDING_SOURCE_BYTES} was exceeded`,
+        );
+      }
+      batchSourceBytes += sourceBytes;
+      inputs.push({
+        id,
+        source,
+        fileType,
+        loader: fileType ?? inferLoaderFromSource(source),
+        sourceBytes,
+      });
+    }
+
+    if (inputs.length === 0) return [];
+
+    this.admitPendingRegistration(batchSourceBytes, inputs.length);
     const sequence = ++this.registrationSequence;
     const generation = this.lifecycleGeneration;
-    this.latestRegistrationById.set(id, sequence);
+    for (const { id } of inputs) this.latestRegistrationById.set(id, sequence);
 
     try {
       const importMap = await this.resolveImportMap(projectDir);
       this.assertRegistrationGeneration(generation);
 
-      const result = await transformJsx(source, { loader });
-      this.assertRegistrationGeneration(generation);
-
-      let transformedCode = transformImportsWithMap(result.code, importMap, undefined, {
-        resolveBare: true,
-      });
-
-      transformedCode = transformedCode
-        // Handle both single- and double-quoted react runtime imports
-        .replace(
-          /from\s+["']https?:\/\/[^"']+react@[^"']+\/jsx-runtime["']/g,
-          'from "react/jsx-runtime"',
-        )
-        .replace(
-          /from\s+["']https?:\/\/[^"']+react@[^"']+\/jsx-dev-runtime["']/g,
-          'from "react/jsx-dev-runtime"',
-        )
-        // Rewrite single-segment relative imports (including kebab-case names like ./my-button)
-        .replace(
-          /from\s+["']\.\/([\w-]+)(?:\.(?:t|j)sx?)?["']/g,
-          (_match, componentName: string) => `from "${this.baseUrl}/component:${componentName}"`,
-        )
-        .replace(
-          /import\(["']\.\/([\w-]+)(?:\.(?:t|j)sx?)?["']\)/g,
-          (_match, componentName: string) => `import("${this.baseUrl}/component:${componentName}")`,
+      const prepared: StoredVirtualModule[] = [];
+      for (const input of inputs) {
+        prepared.push(
+          await this.transformModule(input, importMap, generation),
         );
-
-      const transformedBytes = boundedUtf8Length(
-        transformedCode,
-        MAX_MODULE_SOURCE_BYTES,
-        "Transformed virtual module",
-      );
-      if (this.latestRegistrationById.get(id) === sequence) {
-        this.retainModule({
-          id,
-          source,
-          transformed: transformedCode,
-          contentType: "application/javascript",
-          retainedBytes: sourceBytes + transformedBytes,
-        });
       }
 
-      return moduleUrl;
+      this.assertRegistrationGeneration(generation);
+      for (const { id } of inputs) {
+        if (this.latestRegistrationById.get(id) !== sequence) {
+          throw new Error("Virtual module registration was superseded");
+        }
+      }
+      this.retainModules(prepared);
+      return inputs.map(({ id }) => createModuleUrl(this.baseUrl, id));
     } finally {
       this.pendingRegistrations -= 1;
-      this.pendingSourceBytes -= sourceBytes;
-      if (this.latestRegistrationById.get(id) === sequence) {
-        this.latestRegistrationById.delete(id);
+      this.pendingModules -= inputs.length;
+      this.pendingSourceBytes -= batchSourceBytes;
+      for (const { id } of inputs) {
+        if (this.latestRegistrationById.get(id) === sequence) {
+          this.latestRegistrationById.delete(id);
+        }
       }
     }
   }
@@ -274,7 +311,10 @@ export class VirtualModuleSystem {
     this.latestRegistrationById.clear();
   }
 
-  private admitPendingRegistration(sourceBytes: number): void {
+  private admitPendingRegistration(
+    sourceBytes: number,
+    moduleCount: number,
+  ): void {
     if (this.pendingRegistrations >= MAX_PENDING_REGISTRATIONS) {
       throw new RangeError(
         `Virtual module pending registration limit of ${MAX_PENDING_REGISTRATIONS} was exceeded`,
@@ -285,7 +325,13 @@ export class VirtualModuleSystem {
         `Virtual module pending source byte limit of ${MAX_PENDING_SOURCE_BYTES} was exceeded`,
       );
     }
+    if (moduleCount > MAX_PENDING_MODULES - this.pendingModules) {
+      throw new RangeError(
+        `Virtual module pending module limit of ${MAX_PENDING_MODULES} was exceeded`,
+      );
+    }
     this.pendingRegistrations += 1;
+    this.pendingModules += moduleCount;
     this.pendingSourceBytes += sourceBytes;
   }
 
@@ -295,24 +341,78 @@ export class VirtualModuleSystem {
     }
   }
 
-  private retainModule(module: StoredVirtualModule): void {
-    const existing = this.modules.get(module.id);
-    if (!existing && this.modules.size >= MAX_VIRTUAL_MODULES) {
+  private async transformModule(
+    input: VirtualModuleRegistration & {
+      loader: "tsx" | "jsx" | "ts" | "js";
+      sourceBytes: number;
+    },
+    importMap: ImportMapConfig,
+    generation: number,
+  ): Promise<StoredVirtualModule> {
+    const result = await transformJsx(input.source, { loader: input.loader });
+    this.assertRegistrationGeneration(generation);
+
+    let transformedCode = transformImportsWithMap(result.code, importMap, undefined, {
+      resolveBare: true,
+    });
+
+    transformedCode = transformedCode
+      .replace(
+        /from\s+["']https?:\/\/[^"']+react@[^"']+\/jsx-runtime["']/g,
+        'from "react/jsx-runtime"',
+      )
+      .replace(
+        /from\s+["']https?:\/\/[^"']+react@[^"']+\/jsx-dev-runtime["']/g,
+        'from "react/jsx-dev-runtime"',
+      )
+      .replace(
+        /from\s+["']\.\/([\w-]+)(?:\.(?:t|j)sx?)?["']/g,
+        (_match, componentName: string) => `from "${this.baseUrl}/component:${componentName}"`,
+      )
+      .replace(
+        /import\(["']\.\/([\w-]+)(?:\.(?:t|j)sx?)?["']\)/g,
+        (_match, componentName: string) => `import("${this.baseUrl}/component:${componentName}")`,
+      );
+
+    const transformedBytes = boundedUtf8Length(
+      transformedCode,
+      MAX_MODULE_SOURCE_BYTES,
+      "Transformed virtual module",
+    );
+    return {
+      id: input.id,
+      source: input.source,
+      transformed: transformedCode,
+      contentType: "application/javascript",
+      retainedBytes: input.sourceBytes + transformedBytes,
+    };
+  }
+
+  private retainModules(modules: readonly StoredVirtualModule[]): void {
+    let newModuleCount = this.modules.size;
+    let retainedBytes = this.retainedModuleBytes;
+    for (const module of modules) {
+      const existing = this.modules.get(module.id);
+      if (!existing) newModuleCount += 1;
+      retainedBytes = retainedBytes -
+        (existing?.retainedBytes ?? 0) +
+        module.retainedBytes;
+    }
+
+    if (newModuleCount > MAX_VIRTUAL_MODULES) {
       throw new RangeError(
         `Virtual module count limit of ${MAX_VIRTUAL_MODULES} was exceeded`,
       );
     }
-
-    const retainedBytes = this.retainedModuleBytes -
-      (existing?.retainedBytes ?? 0) +
-      module.retainedBytes;
     if (retainedBytes > MAX_RETAINED_MODULE_BYTES) {
       throw new RangeError(
         `Virtual module retained byte limit of ${MAX_RETAINED_MODULE_BYTES} was exceeded`,
       );
     }
 
-    this.modules.set(module.id, Object.freeze(module));
+    for (const module of modules) {
+      this.modules.set(module.id, Object.freeze(module));
+    }
     this.retainedModuleBytes = retainedBytes;
   }
 }

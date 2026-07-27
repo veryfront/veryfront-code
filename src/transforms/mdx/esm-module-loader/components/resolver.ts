@@ -1,7 +1,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils/constants/server.ts";
 import type { MDXComponentProps } from "../../module-loader/types.ts";
 import * as React from "react";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 
 export function extractComponentImports(moduleCode: string): Map<string, string> {
   const importRegex = /import\s+(\w+)\s+from\s+["']([^"']+)["'];?\s*/gm;
@@ -37,38 +37,41 @@ export function extractComponentImports(moduleCode: string): Map<string, string>
 export async function resolveComponents(
   componentImports: Map<string, string>,
   projectDir?: string,
+  contentSourceId?: string,
 ): Promise<Record<string, React.ComponentType<MDXComponentProps>>> {
   const importedComponents: Record<string, React.ComponentType<MDXComponentProps>> = {};
 
   if (!projectDir || componentImports.size === 0) return importedComponents;
+  if (!contentSourceId) {
+    throw new TypeError("Component resolution requires a contentSourceId");
+  }
 
-  try {
-    const [{ ComponentRegistry }, { VirtualModuleSystem }] = await Promise.all([
-      import("#veryfront/rendering/ssr/component-registry.ts"),
-      import("#veryfront/rendering/virtual-module-system.ts"),
-    ]);
+  const [{ ComponentRegistry }, { VirtualModuleSystem }, adapter] = await Promise.all([
+    import("#veryfront/rendering/ssr/component-registry.ts"),
+    import("#veryfront/rendering/virtual-module-system.ts"),
+    runtime.get(),
+  ]);
 
-    const virtualModules = new VirtualModuleSystem();
-    const registry = new ComponentRegistry(virtualModules, DEFAULT_DASHBOARD_PORT);
-    await registry.loadFromDirectory(`${projectDir}/components`);
+  const virtualModules = new VirtualModuleSystem("/_veryfront/modules", adapter);
+  const registry = new ComponentRegistry({
+    adapter,
+    contentSourceId,
+    projectDir,
+    virtualModules,
+  });
+  await registry.loadFromDirectory(`${projectDir}/components`);
 
-    const allComponents = registry.getAll();
-
-    for (const [importedName, componentName] of componentImports) {
-      const component = allComponents[componentName];
-
-      if (!component) {
-        logger.warn(
-          `Component ${componentName} not found in registry for import ${importedName}`,
-        );
-        continue;
-      }
-
-      importedComponents[importedName] = component;
-      logger.debug(`Mapped component ${importedName} to ${componentName}`);
+  const allComponents = registry.getAll();
+  for (const [importedName, componentName] of componentImports) {
+    const component = allComponents[componentName];
+    if (!component) {
+      throw new Error(
+        `Component ${componentName} was not found for import ${importedName}`,
+      );
     }
-  } catch (error) {
-    logger.error("Failed to load component registry:", error);
+
+    importedComponents[importedName] = component;
+    logger.debug(`Mapped component ${importedName} to ${componentName}`);
   }
 
   return importedComponents;

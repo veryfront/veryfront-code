@@ -48,15 +48,14 @@ export function createComponentRegistry(
   ctx: RenderContext,
   virtualModules: VirtualModuleSystem,
 ): ComponentRegistry {
-  return new ComponentRegistry(
+  return new ComponentRegistry({
+    adapter: ctx.adapter,
+    projectDir: ctx.projectDir,
     virtualModules,
-    ctx.port ?? 3001,
-    ctx.adapter,
-    ctx.moduleServerUrl,
-    undefined, // vendorBundleHash
-    ctx.projectId, // Project ID for cache isolation
-    ctx.contentSourceId,
-  );
+    moduleServerUrl: ctx.moduleServerUrl,
+    projectId: ctx.projectId,
+    contentSourceId: ctx.contentSourceId,
+  });
 }
 
 export function createVirtualModuleSystem(ctx: RenderContext): VirtualModuleSystem {

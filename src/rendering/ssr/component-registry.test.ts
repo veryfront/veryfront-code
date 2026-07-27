@@ -1,310 +1,242 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { VirtualModuleSystem } from "../virtual-module-system.ts";
+import { ComponentRegistry } from "./component-registry.ts";
 
-// ComponentRegistry imports VirtualModuleSystem which spawns esbuild (child process),
-// causing resource leak detection failures. Instead, we test the pure logic helpers
-// by inlining them here.
-
-type SkipEntryResult = { skip: boolean; reason?: string };
-
-function createErrorFallbackComponent(
-  componentName: string,
-  error: string,
-): { displayName: string; componentName: string; error: string } {
-  return {
-    displayName: `ErrorFallback(${componentName})`,
-    componentName,
-    error,
-  };
+function createRegistry(projectDir = "/project") {
+  const adapter = createMockAdapter();
+  const virtualModules = new VirtualModuleSystem(
+    "/_veryfront/modules",
+    adapter,
+    { importMap: { imports: {}, scopes: {} } },
+  );
+  const registry = new ComponentRegistry({
+    adapter,
+    contentSourceId: "test-source",
+    projectDir,
+    virtualModules,
+  });
+  return { adapter, registry, virtualModules };
 }
 
-function extractComponentName(fileName: string): string {
-  return fileName.replace(/\.(tsx|jsx|ts|js)$/, "");
-}
-
-function shouldSkipEntry(
-  entryName: string,
-  isDirectory: boolean,
-  parentDir: string,
-): SkipEntryResult {
-  if (entryName === "node_modules") return { skip: true, reason: "node_modules" };
-
-  if (entryName.startsWith(".") && entryName !== ".veryfront") {
-    return { skip: true, reason: "hidden directory" };
-  }
-
-  if (!isDirectory) return { skip: false };
-
-  const vfSystemDirs = new Set([
-    "cache",
-    "compiled",
-    "tmp",
-    "temp",
-    "output",
-    "optimized-images",
-    "css",
-  ]);
-
-  if (parentDir.includes(".veryfront") && vfSystemDirs.has(entryName)) {
-    return { skip: true, reason: ".veryfront system dir" };
-  }
-
-  return { skip: false };
-}
-
-function isComponentFile(fileName: string): boolean {
-  return /\.(tsx|jsx|ts|js)$/.test(fileName);
-}
-
-function isIndexFile(fileName: string): boolean {
-  return extractComponentName(fileName) === "index";
-}
-
-function resolveProjectRoot(dir: string): string {
-  if (!dir.endsWith("/components") && !dir.endsWith("\\components")) return dir;
-  return dir.replace(/[/\\]components$/, "");
-}
-
-function getLoaderOptions(
-  projectRoot: string,
-  projectId?: string,
-  moduleServerUrl?: string,
-  vendorBundleHash?: string,
-  contentSourceId?: string,
-): {
-  projectId: string;
-  dev: true;
-  moduleServerUrl?: string;
-  vendorBundleHash?: string;
-  contentSourceId?: string;
-} {
-  return {
-    projectId: projectId ?? projectRoot,
-    dev: true,
-    moduleServerUrl,
-    vendorBundleHash,
-    contentSourceId,
-  };
-}
-
-describe("ComponentRegistry logic", () => {
-  describe("createErrorFallbackComponent", () => {
-    it("should create a fallback with component name and error", () => {
-      const fallback = createErrorFallbackComponent("Button", "Module not found");
-      assertEquals(fallback.displayName, "ErrorFallback(Button)");
-      assertEquals(fallback.componentName, "Button");
-      assertEquals(fallback.error, "Module not found");
-    });
-
-    it("should handle special characters in component names", () => {
-      const fallback = createErrorFallbackComponent("My.Component", "Error");
-      assertEquals(fallback.displayName, "ErrorFallback(My.Component)");
-    });
+describe("rendering/ssr/component-registry", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
   });
 
-  describe("extractComponentName", () => {
-    it("should strip .tsx extension", () => {
-      assertEquals(extractComponentName("Button.tsx"), "Button");
-    });
+  it("requires a valid project root and rejects discovery outside it", async () => {
+    const adapter = createMockAdapter();
+    assertThrows(
+      () =>
+        new ComponentRegistry({
+          adapter,
+          contentSourceId: "test-source",
+          projectDir: "",
+        }),
+      TypeError,
+      "project directory",
+    );
 
-    it("should strip .jsx extension", () => {
-      assertEquals(extractComponentName("Card.jsx"), "Card");
-    });
-
-    it("should strip .ts extension", () => {
-      assertEquals(extractComponentName("utils.ts"), "utils");
-    });
-
-    it("should strip .js extension", () => {
-      assertEquals(extractComponentName("helper.js"), "helper");
-    });
-
-    it("should leave other extensions untouched", () => {
-      assertEquals(extractComponentName("style.css"), "style.css");
-    });
-
-    it("should handle dotted names", () => {
-      assertEquals(extractComponentName("Button.stories.tsx"), "Button.stories");
-    });
+    const { registry } = createRegistry();
+    await assertRejects(
+      () => registry.loadFromDirectory("/outside/components", true),
+      TypeError,
+      "outside",
+    );
   });
 
-  describe("shouldSkipEntry", () => {
-    it("should skip node_modules", () => {
-      const result = shouldSkipEntry("node_modules", true, "/project/components");
-      assertEquals(result.skip, true);
-      assertEquals(result.reason, "node_modules");
+  it("treats only a missing root directory as an empty registry", async () => {
+    const { registry } = createRegistry();
+    await registry.loadFromDirectory("/project/components", true);
+    assertEquals(registry.getAll(), {});
+
+    const adapter = createMockAdapter();
+    adapter.fs.readDir = async function* () {
+      yield* [];
+      throw new Error("upstream unavailable");
+    };
+    const virtualModules = new VirtualModuleSystem(
+      "/_veryfront/modules",
+      adapter,
+      { importMap: { imports: {}, scopes: {} } },
+    );
+    const failingRegistry = new ComponentRegistry({
+      adapter,
+      contentSourceId: "test-source",
+      projectDir: "/project",
+      virtualModules,
     });
+    await assertRejects(
+      () => failingRegistry.loadFromDirectory("/project/components", true),
+      Error,
+      "upstream unavailable",
+    );
+  });
 
-    it("should skip hidden directories", () => {
-      assertEquals(shouldSkipEntry(".git", true, "/project").skip, true);
-      assertEquals(shouldSkipEntry(".hidden", true, "/project").skip, true);
-    });
+  it("discovers nested components deterministically and skips non-runtime files", async () => {
+    const { adapter, registry, virtualModules } = createRegistry();
+    adapter.fs.files.set(
+      "/project/components/Button.tsx",
+      "export default function Button() { return null; }",
+    );
+    adapter.fs.files.set(
+      "/project/components/nested/Card.tsx",
+      "export default function Card() { return null; }",
+    );
+    adapter.fs.files.set(
+      "/project/components/nested/index.ts",
+      "export { default } from './Card.tsx';",
+    );
+    adapter.fs.files.set(
+      "/project/components/Button.test.tsx",
+      "throw new Error('test files must not load');",
+    );
+    adapter.fs.files.set(
+      "/project/components/.hidden/Secret.tsx",
+      "throw new Error('hidden files must not load');",
+    );
 
-    it("should not skip .veryfront", () => {
-      assertEquals(shouldSkipEntry(".veryfront", true, "/project").skip, false);
-    });
+    await registry.loadFromDirectory("/project/components", true);
 
-    it("should skip .veryfront system subdirs", () => {
-      const systemDirs = [
-        "cache",
-        "compiled",
-        "tmp",
-        "temp",
-        "output",
-        "optimized-images",
-        "css",
-      ];
+    assertEquals(virtualModules.getModule("component:Button"), undefined);
+    assertEquals(virtualModules.getModule("component:Card"), undefined);
+    assertEquals(virtualModules.getModule("component:index"), undefined);
+    assertEquals(virtualModules.getModule("component:Button.test"), undefined);
+    assertEquals(virtualModules.getModule("component:Secret"), undefined);
+    assertEquals(registry.get("Button"), null);
 
-      for (const dir of systemDirs) {
-        assertEquals(shouldSkipEntry(dir, true, "/project/.veryfront").skip, true);
+    await registry.initializeComponents();
+    assertEquals(typeof registry.get("Button"), "function");
+    assertEquals(typeof registry.get("Card"), "function");
+    assert(virtualModules.getModule("component:Button"));
+    assert(virtualModules.getModule("component:Card"));
+  });
+
+  it("rejects duplicate basenames without retaining a partial virtual registry", async () => {
+    const { adapter, registry, virtualModules } = createRegistry();
+    adapter.fs.files.set(
+      "/project/components/a/Button.tsx",
+      "export default function ButtonA() { return null; }",
+    );
+    adapter.fs.files.set(
+      "/project/components/b/Button.tsx",
+      "export default function ButtonB() { return null; }",
+    );
+
+    await assertRejects(
+      () => registry.loadFromDirectory("/project/components", true),
+      Error,
+      "Duplicate component name",
+    );
+    assertEquals(virtualModules.getModule("component:Button"), undefined);
+  });
+
+  it("propagates listed-source failures instead of publishing a partial scan", async () => {
+    const { adapter, registry, virtualModules } = createRegistry();
+    adapter.fs.readDir = async function* (path: string) {
+      if (path === "/project/components") {
+        yield {
+          name: "Gone.tsx",
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+        };
       }
-    });
-
-    it("should not skip regular directories inside .veryfront", () => {
-      assertEquals(shouldSkipEntry("components", true, "/project/.veryfront").skip, false);
-    });
-
-    it("should not skip regular files in normal directories", () => {
-      assertEquals(shouldSkipEntry("Button.tsx", false, "/project/components").skip, false);
-    });
-  });
-
-  describe("isComponentFile", () => {
-    it("should accept .tsx files", () => {
-      assertEquals(isComponentFile("Button.tsx"), true);
-    });
-
-    it("should accept .jsx files", () => {
-      assertEquals(isComponentFile("Card.jsx"), true);
-    });
-
-    it("should accept .ts files", () => {
-      assertEquals(isComponentFile("utils.ts"), true);
-    });
-
-    it("should accept .js files", () => {
-      assertEquals(isComponentFile("helper.js"), true);
-    });
-
-    it("should reject non-component files", () => {
-      const nonComponentFiles = ["style.css", "readme.md", "data.json", "image.png"];
-      for (const file of nonComponentFiles) {
-        assertEquals(isComponentFile(file), false);
-      }
-    });
-  });
-
-  describe("isIndexFile", () => {
-    it("should detect index.tsx", () => {
-      assertEquals(isIndexFile("index.tsx"), true);
-    });
-
-    it("should detect index.jsx", () => {
-      assertEquals(isIndexFile("index.jsx"), true);
-    });
-
-    it("should detect index.ts", () => {
-      assertEquals(isIndexFile("index.ts"), true);
-    });
-
-    it("should not flag non-index files", () => {
-      assertEquals(isIndexFile("Button.tsx"), false);
-      assertEquals(isIndexFile("indexer.tsx"), false);
-    });
-  });
-
-  describe("resolveProjectRoot", () => {
-    it("should strip /components suffix", () => {
-      assertEquals(resolveProjectRoot("/project/components"), "/project");
-    });
-
-    it("should strip \\components suffix (Windows)", () => {
-      assertEquals(resolveProjectRoot("C:\\project\\components"), "C:\\project");
-    });
-
-    it("should return dir as-is for non-components paths", () => {
-      assertEquals(resolveProjectRoot("/project/pages"), "/project/pages");
-    });
-
-    it("should handle nested components directories", () => {
-      assertEquals(resolveProjectRoot("/project/src/components"), "/project/src");
-    });
-  });
-
-  describe("getLoaderOptions", () => {
-    it("should use projectId when provided", () => {
-      const opts = getLoaderOptions("/project", "proj-uuid-123");
-      assertEquals(opts.projectId, "proj-uuid-123");
-      assertEquals(opts.dev, true);
-    });
-
-    it("should fall back to projectRoot when no projectId", () => {
-      const opts = getLoaderOptions("/project");
-      assertEquals(opts.projectId, "/project");
-    });
-
-    it("should include optional fields when provided", () => {
-      const opts = getLoaderOptions(
-        "/project",
-        "proj-123",
-        "http://localhost:3000",
-        "abc123",
-        "branch:main",
-      );
-      assertEquals(opts.moduleServerUrl, "http://localhost:3000");
-      assertEquals(opts.vendorBundleHash, "abc123");
-      assertEquals(opts.contentSourceId, "branch:main");
-    });
-
-    it("should leave optional fields undefined when not provided", () => {
-      const opts = getLoaderOptions("/project");
-      assertEquals(opts.moduleServerUrl, undefined);
-      assertEquals(opts.vendorBundleHash, undefined);
-      assertEquals(opts.contentSourceId, undefined);
-    });
-  });
-
-  describe("component registry Map operations (simulated)", () => {
-    it("should store and retrieve components", () => {
-      const components = new Map<string, unknown>();
-      const mockComponent = () => null;
-
-      components.set("Button", mockComponent);
-
-      assertEquals(components.has("Button"), true);
-      assertEquals(components.get("Button"), mockComponent);
-    });
-
-    it("should track failed components separately", () => {
-      const failed = new Map<string, { name: string; error: string; timestamp: number }>();
-
-      failed.set("BrokenComponent", {
-        name: "BrokenComponent",
-        error: "Syntax error",
-        timestamp: Date.now(),
+    };
+    adapter.fs.stat = () =>
+      Promise.resolve({
+        size: 10,
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        mtime: null,
       });
+    adapter.fs.readFile = () => Promise.reject(new Error("source disappeared"));
 
-      assertEquals(failed.has("BrokenComponent"), true);
-      assertEquals(failed.get("BrokenComponent")?.error, "Syntax error");
-    });
+    await assertRejects(
+      () => registry.loadFromDirectory("/project/components", true),
+      Error,
+      "source disappeared",
+    );
+    assertEquals(virtualModules.getModule("component:Gone"), undefined);
+  });
 
-    it("should clear all state", () => {
-      const components = new Map<string, unknown>();
-      const sources = new Map<string, unknown>();
-      const failed = new Map<string, unknown>();
+  it("rejects oversized sources before transforming them", async () => {
+    const { adapter, registry, virtualModules } = createRegistry();
+    adapter.fs.files.set(
+      "/project/components/Huge.tsx",
+      "x".repeat(DEFAULT_MAX_FILE_SIZE_BYTES + 1),
+    );
 
-      components.set("A", () => null);
-      sources.set("B", { source: "" });
-      failed.set("C", { error: "fail" });
+    await assertRejects(
+      () => registry.loadFromDirectory("/project/components", true),
+      RangeError,
+      "source byte limit",
+    );
+    assertEquals(virtualModules.getModule("component:Huge"), undefined);
+  });
 
-      components.clear();
-      sources.clear();
-      failed.clear();
+  it("does not retain earlier modules when a later transform fails", async () => {
+    const { adapter, registry, virtualModules } = createRegistry();
+    adapter.fs.files.set(
+      "/project/components/Good.ts",
+      "export const good = true;",
+    );
+    adapter.fs.files.set(
+      "/project/components/Broken.ts",
+      "export const broken = ;",
+    );
 
-      assertEquals(components.size, 0);
-      assertEquals(sources.size, 0);
-      assertEquals(failed.size, 0);
-    });
+    await assertRejects(
+      () => registry.loadFromDirectory("/project/components", false),
+    );
+    assertEquals(virtualModules.getModule("component:Good"), undefined);
+    assertEquals(virtualModules.getModule("component:Broken"), undefined);
+  });
+
+  it("fails deferred initialization without installing an error fallback", async () => {
+    const { adapter, registry } = createRegistry();
+    adapter.fs.files.set(
+      "/project/components/NotAComponent.ts",
+      "export const value = 1;",
+    );
+
+    await registry.loadFromDirectory("/project/components", true);
+    await assertRejects(
+      () => registry.initializeComponents(),
+      Error,
+      "NotAComponent",
+    );
+
+    assertEquals(registry.get("NotAComponent"), null);
+    assertEquals(registry.hasFailed("NotAComponent"), true);
+    assertEquals(
+      registry.getVirtualModuleSystem().getModule("component:NotAComponent"),
+      undefined,
+    );
+  });
+
+  it("bounds entries returned by one directory", async () => {
+    const { adapter, registry } = createRegistry();
+    adapter.fs.readDir = async function* () {
+      for (let index = 0; index < 10_001; index += 1) {
+        yield {
+          name: `asset-${index}.txt`,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+        };
+      }
+    };
+
+    await assertRejects(
+      () => registry.loadFromDirectory("/project/components", true),
+      RangeError,
+      "directory entry limit",
+    );
   });
 });
