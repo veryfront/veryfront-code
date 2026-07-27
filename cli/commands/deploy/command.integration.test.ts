@@ -40,6 +40,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     await runGit("config", "user.email", "test@veryfront.com");
     await runGit("config", "user.name", "Veryfront Test");
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
     await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
     await runGit("add", ".");
     await runGit("commit", "--quiet", "-m", "initial");
@@ -140,6 +141,37 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       }
       if (
         request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)
+      ) {
+        return Response.json({
+          state: "ready",
+          manifest_version: 1,
+          manifest: {
+            schemaVersion: 1,
+            projectId: PROJECT_ID,
+            releaseId: RELEASE_ID,
+            releaseVersion: 41,
+            manifestVersion: 1,
+            builderVersion: "test",
+            sourceContentHash: sourceDigest,
+            createdAt: "2026-07-10T09:20:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {
+              "app.ts": {
+                contentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                size: 10,
+                contentType: "text/javascript",
+              },
+            },
+            css: [],
+            routes: {},
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        });
+      }
+      if (
+        request.method === "GET" &&
         url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
       ) {
         releaseSourceReads++;
@@ -169,6 +201,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         dryRun: false,
         force: true,
         quiet: true,
+        skipSourcePush: true,
       });
 
     for (const jsonMode of [false, true]) {
@@ -183,12 +216,14 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       assertEquals(environmentReads, 2);
       assertEquals(releaseSourceReads, 2);
       assertEquals(requests, [
+        ...(jsonMode ? [] : ["GET /api/projects/my-project"]),
         "GET /api/projects/my-project",
         `GET /api/projects/${PROJECT_ID}/environments`,
         `POST /api/projects/${PROJECT_ID}/releases`,
         `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}`,
         `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
         `GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`,
+        `GET /api/projects/my-project/releases/${RELEASE_ID}/asset-manifest`,
         `POST /api/projects/${PROJECT_ID}/deployments`,
         `GET /api/projects/${PROJECT_ID}/deployments/${DEPLOYMENT_ID}`,
         `GET /api/projects/${PROJECT_ID}/environments`,
@@ -248,7 +283,8 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     releaseSourceReadGate = null;
     assertEquals(environmentReads, 1);
     assertEquals(releaseSourceReads, 20);
-    assertEquals(requests.slice(0, 4), [
+    assertEquals(requests.slice(0, 5), [
+      "GET /api/projects/my-project",
       "GET /api/projects/my-project",
       `GET /api/projects/${PROJECT_ID}/environments`,
       `POST /api/projects/${PROJECT_ID}/releases`,

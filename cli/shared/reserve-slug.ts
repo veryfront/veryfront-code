@@ -33,7 +33,13 @@ export class ProjectSlugConflictError extends Error {
 }
 
 interface ApiError {
+  error?: string;
   message?: string;
+  detail?: string;
+  title?: string;
+  suggestion?: string;
+  code?: string;
+  slug?: string;
 }
 
 interface CreateProjectResult {
@@ -107,7 +113,12 @@ async function tryCreateProject(
     }
 
     const error = (await response.json().catch(() => ({}))) as ApiError;
-    return { success: false, error: error.message ?? `HTTP ${response.status}` };
+    const message = error.message ?? error.detail ?? error.error ?? error.title ??
+      `HTTP ${response.status}`;
+    return {
+      success: false,
+      error: error.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${error.suggestion}` : message,
+    };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }

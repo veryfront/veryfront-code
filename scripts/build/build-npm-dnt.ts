@@ -327,6 +327,8 @@ await build({
 	},
 });
 
+await createCreateVeryfrontPackage(version, license);
+
 await buildExtensionPackages({
 	rootDir: Deno.cwd(),
 	outDir: `${Deno.cwd()}/npm/extensions`,
@@ -400,6 +402,49 @@ function addTypesExportEntries(
 
 		exportValue.types = exportValue.import.replace(/\.js$/, ".d.ts");
 	}
+}
+
+async function createCreateVeryfrontPackage(version: string, license: string): Promise<void> {
+	await Deno.mkdir("./npm/create/bin", { recursive: true });
+	await Deno.copyFile(
+		"./scripts/build/create-bin-wrapper.js",
+		"./npm/create/bin/create-veryfront.js",
+	);
+	await Deno.chmod("./npm/create/bin/create-veryfront.js", 0o755);
+	await Deno.copyFile("./LICENSE", "./npm/create/LICENSE");
+
+	const packageJson = {
+		name: "create-veryfront",
+		version,
+		description: "Create a new Veryfront project",
+		license,
+		type: "module",
+		bin: {
+			"create-veryfront": "bin/create-veryfront.js",
+		},
+		files: ["bin", "LICENSE", "README.md"],
+		dependencies: {
+			veryfront: version,
+		},
+	};
+
+	await Deno.writeTextFile(
+		"./npm/create/package.json",
+		JSON.stringify(packageJson, null, 2) + "\n",
+	);
+	await Deno.writeTextFile(
+		"./npm/create/README.md",
+		[
+			"# create-veryfront",
+			"",
+			"Scaffold a new Veryfront project.",
+			"",
+			"```bash",
+			"npm create veryfront@latest my-app",
+			"```",
+			"",
+		].join("\n"),
+	);
 }
 
 /**

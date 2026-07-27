@@ -9,11 +9,23 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { cwd } from "veryfront/platform";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import { createFileSystem, cwd } from "veryfront/platform";
+import { join } from "veryfront/platform/path";
+import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import {
+  type ApiClient,
+  createApiClient,
+  readConfigFile,
+  resolveConfigWithAuth,
+  type ResolvedConfig,
+  writeProjectSlug,
+} from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
+import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { normalizeProjectSlug } from "#cli/shared/slug";
+import { pushCommand } from "../push/index.ts";
 import { isAutoConfirmEnabled } from "../../shared/interactive.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
@@ -24,6 +36,8 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import type { ReleaseAssetManifestResponse } from "#veryfront/release-assets/manifest-schema.ts";
+import { routeForPage } from "#veryfront/release-assets/route-path.ts";
 
 /**
  * Schema factory for deploy command arguments
@@ -38,6 +52,8 @@ export const getDeployArgsSchema = defineSchema((v) =>
     force: v.boolean().default(false),
     /** Quiet mode - suppress spinner/progress output */
     quiet: v.boolean().default(false),
+    /** Internal option used by commands that already pushed source. */
+    skipSourcePush: v.boolean().default(false),
   })
 );
 
@@ -46,7 +62,12 @@ export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 /**
  * Deploy command options (inferred from schema)
  */
-export type DeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
+type ParsedDeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
+export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
+  skipSourcePush?: boolean;
+  assetManifestPollIntervalMs?: number;
+  assetManifestTimeoutMs?: number;
+};
 
 /**
  * Parse CLI arguments into validated DeployOptions
@@ -84,6 +105,7 @@ interface Environment {
   project?: string | { id: string };
   projectId?: string;
   deployment?: EnvironmentDeployment | null;
+  domains?: string[];
 }
 
 /**
@@ -579,11 +601,207 @@ export async function resolvePushedSource(input: {
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
 
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function buildEnvironmentUrl(projectSlug: string, environment: Environment): string {
+  const domain = environment.domains?.[0];
+  if (domain) {
+    return domain.startsWith("http://") || domain.startsWith("https://")
+      ? domain
+      : `https://${domain}`;
+  }
+  return `https://${projectSlug}.${environment.name}.veryfront.com`;
+}
+
+async function inferDeployProjectSlug(projectDir: string): Promise<string> {
+  const fs = createFileSystem();
+  const packagePath = join(projectDir, "package.json");
+
+  try {
+    if (await fs.exists(packagePath)) {
+      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
+      if (pkg.name) return normalizeProjectSlug(pkg.name);
+    }
+  } catch {
+    // Fall back to the directory name below.
+  }
+
+  const dirName = projectDir.split(/[/\\]/).filter(Boolean).pop() ?? "my-app";
+  return normalizeProjectSlug(dirName);
+}
+
+async function ensureProjectLinkedForDeploy(
+  projectDir: string,
+  env: EnvironmentConfig,
+  dryRun: boolean,
+  quiet: boolean,
+): Promise<ResolvedConfig> {
+  const initial = await resolveConfigWithAuth(projectDir, env);
+  const configFile = await readConfigFile(projectDir);
+  const hasPersistedSlug = Boolean(configFile?.projectSlug);
+  const suggestedSlug = normalizeProjectSlug(
+    initial.projectSlug || await inferDeployProjectSlug(projectDir),
+  );
+  const client = createApiClient({ ...initial, projectSlug: suggestedSlug });
+
+  try {
+    await getProject(client, suggestedSlug);
+    if (!hasPersistedSlug && !dryRun) {
+      await writeProjectSlug(projectDir, suggestedSlug);
+      if (!quiet) logInfo(`Linked project ${suggestedSlug}`);
+    }
+    return { ...initial, projectSlug: suggestedSlug };
+  } catch (error) {
+    if (getErrorStatus(error) !== 404) {
+      throw new Error(
+        `Could not check project "${suggestedSlug}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  if (dryRun) {
+    if (!quiet) logInfo(`Would create project ${suggestedSlug}`);
+    return { ...initial, projectSlug: suggestedSlug };
+  }
+
+  const created = await reserveProjectSlug(
+    suggestedSlug,
+    initial.apiToken,
+    env,
+    initial.apiUrl,
+    { allowAlternativeSlug: false },
+  );
+  await writeProjectSlug(projectDir, created.slug);
+  if (!quiet) logInfo(`Created project ${created.slug}`);
+  return { ...initial, projectSlug: created.slug };
+}
+
+async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
+  const fs = createFileSystem();
+  const routes = new Set<string>();
+
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      if (!(await fs.exists(dir))) return;
+      entries = await fs.readDir(dir);
+    } catch {
+      return;
+    }
+
+    for await (const entry of entries) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory) {
+        await walk(path);
+        continue;
+      }
+      if (!/\.(tsx|ts|jsx|mdx|js)$/.test(entry.name)) continue;
+
+      const relativePath = path.slice(projectDir.length + 1).replace(/\\/g, "/");
+      const route = routeForPage(relativePath);
+      if (route) routes.add(route);
+    }
+  }
+
+  await Promise.all([
+    walk(join(projectDir, "app")),
+    walk(join(projectDir, "pages")),
+  ]);
+
+  return [...routes].sort();
+}
+
+function assertReadyManifestCoversPageRoutes(
+  releaseId: string,
+  result: ReleaseAssetManifestResponse,
+  expectedRoutes: string[],
+): void {
+  const manifest = result.manifest;
+  if (!manifest) {
+    throw new Error(
+      `Release assets for ${releaseId} are ready but no manifest body was returned. Check the release asset build and run deploy again.`,
+    );
+  }
+
+  const moduleCount = Object.keys(manifest.modules).length;
+  const missingRoutes = expectedRoutes.filter((route) => !manifest.routes[route]);
+  if (moduleCount === 0 || missingRoutes.length > 0) {
+    throw new Error(
+      `Release assets for ${releaseId} are ready but do not include browser modules for this app. ${
+        missingRoutes.length > 0 ? `Missing routes: ${missingRoutes.join(", ")}. ` : ""
+      }The deployed page would not hydrate; check the release asset build and run deploy again.`,
+    );
+  }
+}
+
+export async function waitForReleaseAssetManifest(
+  client: ApiClient,
+  projectSlug: string,
+  releaseId: string,
+  options: {
+    expectedRoutes?: string[];
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  } = {},
+): Promise<ReleaseAssetManifestResponse> {
+  const pollIntervalMs = Math.max(100, options.pollIntervalMs ?? 2_000);
+  const timeoutMs = Math.max(pollIntervalMs, options.timeoutMs ?? 120_000);
+  const expectedRoutes = options.expectedRoutes ?? [];
+  const deadline = Date.now() + timeoutMs;
+  let lastState = "missing";
+
+  for (;;) {
+    try {
+      const result = await client.get<ReleaseAssetManifestResponse>(
+        `/projects/${projectSlug}/releases/${releaseId}/asset-manifest`,
+      );
+      lastState = result.state;
+
+      if (result.state === "ready") {
+        assertReadyManifestCoversPageRoutes(releaseId, result, expectedRoutes);
+        return result;
+      }
+      if (result.state === "failed") {
+        throw new Error(`Release asset build failed for release ${releaseId}`);
+      }
+    } catch (error) {
+      if (getErrorStatus(error) !== 404) throw error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      const timeoutSeconds = Math.ceil(timeoutMs / 1000);
+      throw new Error(
+        `Release assets were not ready within ${timeoutSeconds}s (last state: ${lastState}). Check the release asset build and run deploy again.`,
+      );
+    }
+
+    await wait(Math.min(pollIntervalMs, remainingMs));
+  }
+}
+
 /**
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<void> {
-  const { projectDir = cwd(), branch, env, releaseName, dryRun, force, quiet } = options;
+  const {
+    projectDir = cwd(),
+    branch,
+    env,
+    releaseName,
+    dryRun,
+    force,
+    quiet,
+    skipSourcePush,
+    assetManifestPollIntervalMs,
+    assetManifestTimeoutMs,
+  } = options;
 
   if (isJsonMode()) {
     return deployCommandJson(options);
@@ -591,7 +809,24 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
 
-  const config = await resolveConfigWithAuth(projectDir);
+  const environmentConfig = getEnvironmentConfig();
+  let config = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet);
+  const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
+
+  if (!skipSourcePush) {
+    spinner.update(`Pushing source to "${branch}"...`);
+    spinner.stop();
+    await pushCommand({
+      projectDir,
+      branch,
+      force: true,
+      dryRun,
+      quiet: true,
+    });
+    spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
+    config = await resolveConfigWithAuth(projectDir, environmentConfig);
+  }
+
   const client = createApiClient(config);
 
   spinner.update("Resolving project...");
@@ -662,6 +897,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       sourceDigest: source.sourceDigest,
     });
 
+    spinner.update(`Waiting for release assets for ${release.version}...`);
+    await waitForReleaseAssetManifest(client, project.slug, release.id, {
+      expectedRoutes: expectedPageRoutes,
+      pollIntervalMs: assetManifestPollIntervalMs,
+      timeoutMs: assetManifestTimeoutMs,
+    });
+
     spinner.update(`Deploying ${release.version} to ${env}...`);
     deployment = await createDeployment(client, project.id, release.id, environment.id);
 
@@ -699,6 +941,8 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
   const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
   if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
+  logInfo(`  URL: ${buildEnvironmentUrl(verification.projectSlug, environment)}`);
+  logInfo(`  Protected: ${environment.protected ? "yes" : "no"}`);
   logInfo(`  Commit: ${verification.commitSha}`);
   logInfo(`  Source digest: ${verification.sourceDigest}`);
   logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
@@ -708,7 +952,16 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<void> {
-  const { projectDir = cwd(), branch, env, releaseName, dryRun, force } = options;
+  const {
+    projectDir = cwd(),
+    branch,
+    env,
+    releaseName,
+    dryRun,
+    force,
+    assetManifestPollIntervalMs,
+    assetManifestTimeoutMs,
+  } = options;
 
   try {
     // JSON mode requires --force or --yes to prevent accidental deploys
@@ -727,6 +980,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const config = await resolveConfigWithAuth(projectDir);
     const client = createApiClient(config);
+    const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
     streamJsonLine({ type: "step", name: "resolve-target", status: "started" });
@@ -791,6 +1045,14 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     });
     streamJsonLine({ type: "step", name: "verify-release-source", status: "completed" });
 
+    streamJsonLine({ type: "step", name: "wait-release-assets", status: "started" });
+    await waitForReleaseAssetManifest(client, project.slug, release.id, {
+      expectedRoutes: expectedPageRoutes,
+      pollIntervalMs: assetManifestPollIntervalMs,
+      timeoutMs: assetManifestTimeoutMs,
+    });
+    streamJsonLine({ type: "step", name: "wait-release-assets", status: "completed" });
+
     streamJsonLine({ type: "step", name: "deploy", status: "started" });
     const deployment = await createDeployment(
       client,
@@ -837,6 +1099,8 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
         environment: env,
         environmentId: verification.environmentId,
         deploymentId: verification.deploymentId,
+        url: buildEnvironmentUrl(verification.projectSlug, environment),
+        protected: environment.protected,
         routingConvergence: deployment.routing_convergence ?? null,
         commitSha: verification.commitSha,
         sourceDigest: verification.sourceDigest,

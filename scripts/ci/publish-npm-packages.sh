@@ -46,6 +46,7 @@ package_dirs() {
     fi
     printf '%s\n' "${PACKAGE_DIR}"
   done
+  printf '%s\n' npm/create
   printf '%s\n' npm
 }
 
@@ -53,6 +54,7 @@ package_dirs() {
 # the build, so the npm output does not exist yet).
 package_names_from_workspace() {
   printf '%s\n' veryfront
+  printf '%s\n' create-veryfront
   jq -r '.workspace[] | select(startswith("./extensions/")) | .[2:] + "/deno.json"' deno.json \
     | while read -r MANIFEST_PATH; do
       if [ "$(jq -r '.veryfront.npm.publish == false' "${MANIFEST_PATH}")" = "true" ]; then

@@ -213,6 +213,28 @@ describe("release asset build executor", () => {
     assert(rec.uploads.every((u) => u.contentType === "text/javascript"));
   });
 
+  it("assembles App Router page routes from app/page modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/page.tsx", content: "export default () => null;" },
+      { path: "app/about/page.tsx", content: "export default () => null;" },
+      { path: "app/layout.tsx", content: "export default ({ children }) => children;" },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (source: string) => Promise.resolve(source);
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["app/page.tsx"]);
+    assertExists(manifest.modules["app/about/page.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/page.tsx"]);
+    assertEquals(manifest.routes["/about"]?.modules, ["app/about/page.tsx"]);
+    assertEquals(routeForPage("app/layout.tsx"), null);
+  });
+
   it("rejects release file paths outside the materialization directory", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const tempDir = await tmp();
@@ -366,6 +388,10 @@ describe("release asset build executor", () => {
     assertExists(manifest.dependencies["react/jsx-dev-runtime"]);
     assertExists(manifest.dependencies["veryfront/chat"]);
     assertExists(manifest.dependencies["veryfront/workflow"]);
+    assertEquals(
+      manifest.fallback.gaps.some((gap) => gap.includes("_deno-config")),
+      false,
+    );
     assertEquals(
       manifest.dependencies["veryfront/head"]?.contentHash,
       manifest.dependencies["veryfront/react/head"]?.contentHash,

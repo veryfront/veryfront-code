@@ -75,7 +75,7 @@ const logger = serverLogger.component("release-asset-build");
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 /** Directories used as browser graph entry seeds. Imports may reach any project directory. */
-const BROWSER_MODULE_DIRS = ["pages/", "components/", "layouts/", "lib/", "src/"];
+const BROWSER_MODULE_DIRS = ["app/", "pages/", "components/", "layouts/", "lib/", "src/"];
 const FRAMEWORK_MODULE_URL_PREFIX = "/_vf_modules/_veryfront/";
 const REACT_IMPORT_MAP_DEPENDENCIES = [
   "react",
@@ -245,6 +245,14 @@ function frameworkModuleUrlToSourceKey(moduleUrl: string): string | null {
 
 function frameworkSourceKeyToModuleUrl(sourceKey: string): string {
   return `${FRAMEWORK_MODULE_URL_PREFIX}${sourceKey}.js`;
+}
+
+function embeddedFrameworkModuleCode(sourceKey: string): string | null {
+  if (sourceKey === "_deno-config") {
+    return `export default ${JSON.stringify({ version: VERSION })};\n`;
+  }
+
+  return null;
 }
 
 function frameworkSourcePathToSourceKey(sourcePath: string, lookupDirs: string[]): string | null {
@@ -1223,7 +1231,8 @@ async function buildFrameworkDependencies(
     const frameworkSource = await resolveFrameworkSourcePath(sourceKey, {
       extraLookupDirs: [join(tempDir, "src")],
     });
-    if (!frameworkSource) {
+    const embeddedCode = frameworkSource ? null : embeddedFrameworkModuleCode(sourceKey);
+    if (!frameworkSource && embeddedCode === null) {
       gaps.push(`dependency-missing:${publicSpecifier}:${sourceKey}`);
       return null;
     }
@@ -1231,8 +1240,9 @@ async function buildFrameworkDependencies(
     visiting.add(sourceKey);
     let code: string;
     try {
-      const source = await fs.readTextFile(frameworkSource.path);
-      code = await transform(source, frameworkSource.path, tempDir, input.adapter, {
+      const sourcePath = frameworkSource?.path ?? join(tempDir, `${sourceKey}.js`);
+      const source = embeddedCode ?? await fs.readTextFile(sourcePath);
+      code = await transform(source, sourcePath, tempDir, input.adapter, {
         projectId: input.projectId,
         dev: false,
         ssr: false,
@@ -1244,7 +1254,7 @@ async function buildFrameworkDependencies(
       for (const imp of await parseImports(code)) {
         if (!imp.n) continue;
 
-        const importedSourceKey = await resolveFrameworkImport(imp.n, frameworkSource.path);
+        const importedSourceKey = await resolveFrameworkImport(imp.n, sourcePath);
         if (!importedSourceKey) continue;
 
         const importedAsset = await processFrameworkModule(importedSourceKey, publicSpecifier);
@@ -1764,7 +1774,7 @@ async function runBuildInner(
   // B2. Routes: walk the transformed browser import closure from each page entrypoint.
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
-  const pageModules = Object.keys(modules).filter((p) => p.startsWith("pages/"));
+  const pageModules = Object.keys(modules).filter((p) => routeForPage(p) !== null);
 
   for (const logicalPath of pageModules) {
     const route = routeForPage(logicalPath);

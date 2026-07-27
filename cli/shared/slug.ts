@@ -10,3 +10,14 @@ export function randomSuffix(len = 6): string {
     "",
   );
 }
+
+export function normalizeProjectSlug(value: string): string {
+  const withoutScope = value.replace(/^@[^/]+\//, "");
+  const slug = withoutScope
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+  return slug || "my-app";
+}

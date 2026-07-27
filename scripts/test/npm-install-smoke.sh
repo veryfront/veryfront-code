@@ -29,8 +29,10 @@ fail() {
 [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
 [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
+[ -d "$ROOT_DIR/npm/create" ] || fail "create-veryfront package output missing"
 
 (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+(cd "$ROOT_DIR/npm/create" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
 (cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
@@ -76,6 +78,14 @@ const ast = await codeParser.parse({
 if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await resolved.extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
+
+echo "== 1b. create package: scaffolds through veryfront init"
+npm install --no-fund --no-audit --silent --ignore-scripts ./create-veryfront-*.tgz
+node node_modules/create-veryfront/bin/create-veryfront.js smoke-create --template minimal --skip-install --skip-env-prompt >/dev/null ||
+  fail "create-veryfront wrapper failed to scaffold"
+[ -f smoke-create/package.json ] || fail "create-veryfront did not write package.json"
+[ -f smoke-create/app/page.tsx ] || fail "create-veryfront did not write app/page.tsx"
+[ -f smoke-create/public/favicon.svg ] || fail "create-veryfront did not write favicon.svg"
 
 echo "== 2. root install: transformers optional peer declared"
 node -e "

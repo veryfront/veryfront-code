@@ -173,6 +173,7 @@ Deno.test("npm publish orders extensions before the root package", async () => {
       [
         "npm/extensions/ext-alpha",
         "npm/extensions/ext-zeta",
+        "npm/create",
         "npm",
       ],
     );
@@ -254,8 +255,10 @@ Deno.test("npm publish skips extension packages marked publish false", async () 
       new TextDecoder().decode(output.stdout).trim().split("\n"),
       [
         "veryfront",
+        "create-veryfront",
         "@veryfront/ext-alpha",
         "npm/extensions/ext-alpha",
+        "npm/create",
         "npm",
       ],
     );

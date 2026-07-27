@@ -19,6 +19,7 @@ export {
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
+  waitForReleaseAssetManifest,
 } from "./command.ts";
 export type {
   Deployment,

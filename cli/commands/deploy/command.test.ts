@@ -26,6 +26,7 @@ import {
   requiresExplicitDeployConfirmation,
   verifyDeployment,
   verifyReleaseSource,
+  waitForReleaseAssetManifest,
 } from "./index.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -1082,5 +1083,69 @@ describe("deployment verification", () => {
 
     assertEquals(result.sourceDigest, sourceDigest);
     assertEquals(sourceReads, 2);
+  });
+});
+
+describe("waitForReleaseAssetManifest", () => {
+  function readyManifest(routes: Record<string, { modules: string[]; css: string[] }> = {
+    "/": { modules: ["app/page.tsx"], css: [] },
+  }) {
+    return {
+      state: "ready",
+      manifest_version: 1,
+      manifest: {
+        schemaVersion: 1,
+        projectId: "proj-1",
+        releaseId: "rel-1",
+        releaseVersion: 1,
+        manifestVersion: 1,
+        builderVersion: "test",
+        sourceContentHash: "sha256:abc",
+        createdAt: "2026-07-27T00:00:00.000Z",
+        assetBasePath: "/_vf/assets",
+        modules: {
+          "app/page.tsx": {
+            contentHash: "a".repeat(64),
+            size: 1,
+            contentType: "text/javascript",
+          },
+        },
+        css: [],
+        routes,
+        dependencies: {},
+        fallback: { mode: "jit", gaps: [] },
+      },
+    };
+  }
+
+  it("returns a ready manifest that covers expected routes", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.resolve(readyManifest()),
+    });
+
+    const result = await waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+      expectedRoutes: ["/"],
+      pollIntervalMs: 100,
+      timeoutMs: 100,
+    });
+
+    assertEquals(result.state, "ready");
+  });
+
+  it("rejects ready empty manifests before deployment", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.resolve(readyManifest({})),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(mockClient, "my-project", "rel-1", {
+          expectedRoutes: ["/", "/about"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "Missing routes: /, /about",
+    );
   });
 });
