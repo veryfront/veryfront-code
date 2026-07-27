@@ -24,6 +24,7 @@ Deno.test("proxy startup configuration", async (t) => {
     assertEquals(config.binding, { hostname: "0.0.0.0", port: 8_080 });
     assertEquals(config.productionServerUrl, "http://localhost:3001");
     assertEquals(config.apiInternalUrl, "https://api.veryfront.com");
+    assertEquals(config.apiRequestTimeoutMs, 30_000);
     assertEquals(config.serverRequestTimeoutMs, 90_000);
     assertEquals(config.serverRetryCount, 1);
     assertEquals(config.serverRetryDelayMs, 100);
@@ -48,6 +49,7 @@ Deno.test("proxy startup configuration", async (t) => {
         VERYFRONT_API_INTERNAL_URL: "http://api.internal/v1/",
         VERYFRONT_API_INTERNAL_USER: "internal-user",
         VERYFRONT_API_INTERNAL_PASS: "internal-password",
+        VERYFRONT_API_REQUEST_TIMEOUT_MS: "45000",
         VERYFRONT_PROXY_URL: "http://127.0.0.1:9090",
         VERYFRONT_SERVER_REQUEST_TIMEOUT_MS: "120000",
         VERYFRONT_SERVER_RETRY_COUNT: "3",
@@ -69,6 +71,7 @@ Deno.test("proxy startup configuration", async (t) => {
     assertEquals(config.apiInternalUrl, "http://api.internal/v1");
     assertEquals(config.apiInternalUser, "internal-user");
     assertEquals(config.apiInternalPass, "internal-password");
+    assertEquals(config.apiRequestTimeoutMs, 45_000);
     assertEquals(config.serverRequestTimeoutMs, 120_000);
     assertEquals(config.serverRetryCount, 3);
     assertEquals(config.serverRetryDelayMs, 250);
@@ -255,6 +258,15 @@ Deno.test("proxy startup configuration", async (t) => {
   });
 
   await t.step("rejects malformed timeout, retry, and replica policy", () => {
+    assertThrows(
+      () =>
+        readProxyStartupConfig(
+          environment({ VERYFRONT_API_REQUEST_TIMEOUT_MS: "0" }),
+          false,
+        ),
+      RangeError,
+      "between 1 and 300000",
+    );
     assertThrows(
       () =>
         readProxyStartupConfig(

@@ -1,15 +1,11 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
-import { OAuthTokenRequestError } from "./oauth-client.ts";
 import { type ParsedDomain, parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { checkProtectedProxyAccess } from "./proxy-access-control.ts";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
-import {
-  isMissingCustomDomainProjectError,
-  resolveProxyRequestToken,
-} from "./proxy-token-resolution.ts";
+import { isMissingProxyProjectError, resolveProxyRequestToken } from "./proxy-token-resolution.ts";
 import {
   createProjectNotFoundProxyContext,
   createProxyErrorContext,
@@ -27,8 +23,8 @@ import {
   ProxyLookupAuthError,
   ProxyLookupFailure,
 } from "./project-metadata-client.ts";
-
-export { __resetCachedAuthProviderForTests } from "./proxy-access-control.ts";
+import { resolveProxyRequestHost } from "./request-host.ts";
+import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -128,7 +124,7 @@ export interface ProxyLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
   info: (msg: string, extra?: Record<string, unknown>) => void;
   warn: (msg: string, extra?: Record<string, unknown>) => void;
-  error: (msg: string, error?: Error, extra?: Record<string, unknown>) => void;
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) => void;
 }
 
 export interface ProxyHandlerOptions {
@@ -161,16 +157,8 @@ export interface ConfirmedProxyRoutingInvalidation extends ProxyRoutingInvalidat
   releaseId: string;
 }
 
-function getRequestHost(req: Request, url: URL): string {
-  return req.headers.get("host") ?? url.host;
-}
-
 function getScope(environment: string | null): TokenScope {
   return environment === "preview" ? "preview" : "production";
-}
-
-function getOAuthErrorStatus(error: unknown): number | null {
-  return error instanceof OAuthTokenRequestError ? error.status : null;
 }
 
 function requestAbortReason(signal: AbortSignal): Error {
@@ -550,7 +538,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     if (!matchingEnv) return { projectId: undefined, releaseId: undefined };
 
     const protectionError = await checkProtectedProxyAccess({
-      req,
       url,
       matchingEnv,
       userToken,
@@ -649,7 +636,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
 
         const protectionError = await checkProtectedProxyAccess({
-          req,
           url,
           matchingEnv: accessEnv,
           userToken,
@@ -676,8 +662,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     options: ProxyRequestOptions = {},
   ): Promise<ProxyContext> {
     const url = options.url ?? new URL(req.url);
-    const rawHost = getRequestHost(req, url);
-    const host = rawHost.replace(/:\d+$/, "");
+    const host = resolveProxyRequestHost(req, url);
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const base = { scope, host, parsedDomain };
@@ -804,7 +789,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         } catch (refreshError) {
           logger?.error(
             "Failed to refresh proxy API token after metadata auth rejection",
-            refreshError as Error,
+            refreshError,
             {
               lookupKey,
               host,
@@ -880,8 +865,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           metadataToken = await tokenManager.getToken(scope, projectSlug, customDomain);
         } catch (error) {
           tokenFetchError = error;
-          if (!isMissingCustomDomainProjectError(error)) {
-            logger?.error("Metadata service token fetch failed", error as Error, {
+          if (!isMissingProxyProjectError(error)) {
+            logger?.error("Metadata service token fetch failed", error, {
               projectSlug,
               customDomain,
             });
@@ -890,8 +875,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
 
       if (projectSlug && !token) {
-        const status = getOAuthErrorStatus(tokenFetchError);
-        if (status === 404 || isMissingCustomDomainProjectError(tokenFetchError)) {
+        if (isMissingProxyProjectError(tokenFetchError)) {
           if (scope === "preview") {
             logger?.info("Preview project not found", { projectSlug, host });
             return createProjectNotFoundProxyContext(base, "Preview project not found");
@@ -916,8 +900,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
 
       if (projectSlug && tokenSource === "user" && !metadataToken) {
-        const status = getOAuthErrorStatus(tokenFetchError);
-        if (status === 404 || isMissingCustomDomainProjectError(tokenFetchError)) {
+        if (isMissingProxyProjectError(tokenFetchError)) {
           if (scope === "preview") {
             logger?.info("Preview project not found", { projectSlug, host });
             return createProjectNotFoundProxyContext(base, "Preview project not found", token);
@@ -930,7 +913,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
       if (isCustomDomain && !projectSlug) {
         if (!token) {
-          if (isMissingCustomDomainProjectError(tokenFetchError)) {
+          if (isMissingProxyProjectError(tokenFetchError)) {
             logger?.info("Custom domain project not found during token fetch", {
               domain: host,
             });
@@ -948,7 +931,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           });
         }
 
-        const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
+        const normalizedHost = host;
         const resolved = await resolveProjectMetadataWithTokenRetry(
           host,
           (env) => env.domains?.some((d) => d.toLowerCase() === normalizedHost) ?? false,
@@ -1103,8 +1086,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     options: ProxyRequestOptions = {},
   ): Promise<string | undefined> {
     const url = options.url ?? new URL(req.url);
-    const rawHost = getRequestHost(req, url);
-    const host = rawHost.replace(/:\d+$/, "");
+    const host = resolveProxyRequestHost(req, url);
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug ?? undefined;
@@ -1146,8 +1128,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
 export type ProxyHandler = ReturnType<typeof createProxyHandler>;
 
-export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
-  const headers = new Headers(req.headers);
+export function createProxyContextHeaders(
+  sourceHeaders: Headers,
+  ctx: ProxyContext,
+): Headers {
+  const headers = createProxyEndToEndHeaders(sourceHeaders);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
 
   // The `x-veryfront-*-jws` signature headers are deliberately NOT stripped:
@@ -1171,10 +1156,16 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
   if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);
 
+  headers.delete("host");
+  return headers;
+}
+
+export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   return new Request(req.url, {
     method: req.method,
-    headers,
+    headers: createProxyContextHeaders(req.headers, ctx),
     body: req.body,
     redirect: "manual",
+    signal: req.signal,
   });
 }

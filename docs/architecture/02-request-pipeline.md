@@ -96,12 +96,21 @@ configuration.
 | `VERYFRONT_PROXY_URL`                 | unset                    | HTTP(S) bind origin; mutually exclusive with `HOST` and `PORT` |
 | `HOST`                                | `0.0.0.0`                | Canonical hostname or IP address                               |
 | `PORT`                                | `8080`                   | `1..65535`                                                     |
+| `VERYFRONT_API_REQUEST_TIMEOUT_MS`    | `30000`                  | `1..300000`                                                    |
 | `VERYFRONT_SERVER_REQUEST_TIMEOUT_MS` | `90000`                  | `1..900000`                                                    |
 | `VERYFRONT_SERVER_RETRY_COUNT`        | `1`                      | `0..5`                                                         |
 | `VERYFRONT_SERVER_RETRY_DELAY_MS`     | `100`                    | `0..60000`                                                     |
 | `SHUTDOWN_DRAIN_TIMEOUT_MS`           | `25000`                  | `0..600000`                                                    |
 | `SHUTDOWN_CLEANUP_TIMEOUT_MS`         | `4000`                   | `0..2147483647`                                                |
 | `VERYFRONT_PROXY_EXPECTED_REPLICAS`   | unset                    | `1..10000`; required in production                             |
+
+The request boundary validates and canonicalizes the `Host` authority before
+using it for project routing or token identity. Ports and DNS trailing dots are
+removed, international names use their ASCII form, and credentials, paths,
+queries, fragments, control characters, and malformed authorities produce a
+non-cacheable `400`. Client-supplied internal routing headers are replaced with
+proxy-owned values. Standard hop-by-hop headers and every extension header
+named by `Connection` are removed in both directions.
 
 Upstream retry counts are validated as integers in the documented range before
 attempt streams are allocated. GET, HEAD, and OPTIONS requests may use the
@@ -111,8 +120,26 @@ is present, bounded to 1 MiB, and the dedicated server refused the connection.
 Missing, contradictory, chunked, malformed, or oversized body metadata disables
 replay without discarding the original stream.
 
+Renderer URLs are assembled by assigning a canonical origin-form path to a
+validated origin, so a leading `//` cannot change the upstream authority.
+Renderer fetches, dedicated-server selection waits, and retry delays all observe
+incoming request cancellation. Each renderer attempt has the configured
+deadline, and a fetch implementation that ignores cancellation cannot retain
+request ownership; any late response body is canceled. Trace URL attributes
+exclude all query strings.
+
+The `/_vf/api` BFF uses the same cancellation boundary with its independent
+30-second default deadline. It preserves an API base-path prefix, sends bearer
+credentials only to the validated API origin, uses manual redirect handling,
+and rejects every upstream redirect instead of forwarding credentials or an
+untrusted location. BFF responses are always `no-store` and `nosniff`.
+
 On `SIGINT` or `SIGTERM`, new requests receive a retryable `503` while the
 proxy waits for tracked response bodies, including event streams, to finish.
+The health endpoint changes from `200 ok` to `503 draining` as soon as shutdown
+starts. Proxy-generated JSON, HTML, redirect, timeout, and draining responses
+are non-cacheable; content-bearing errors also use `nosniff`, and sign-in
+redirects use `Referrer-Policy: no-referrer`.
 After the drain deadline, cleanup has one shared four-second budget by default.
 Every cleanup action is started even if an earlier action rejects or stalls:
 the routing bus, HTTP listener, renderer router, dedicated-server resolver,
@@ -152,6 +179,15 @@ proxy does not silently replace invalid Redis configuration with memory.
 `REDIS_PREFIX`, when present, is limited to 256 visible ASCII characters and
 cannot contain Redis glob metacharacters because the extension uses that prefix
 to scope bulk deletion.
+
+Preview user authentication accepts exactly one bounded, visible-ASCII
+`authToken` cookie. Duplicate cookies, malformed percent encoding, controls,
+empty values, and oversized headers fail closed as unauthenticated input. JWT
+verification resolves the current registered authentication provider for each
+operation, validates algorithm and user identifiers through own data
+properties, and contains extension exceptions without invoking accessors.
+Unknown project identities are classified only from the token client's typed
+HTTP 400/404 contract; response prose is never used as routing authority.
 
 An operational Redis outage is different from invalid configuration. The
 Redis-backed store is wrapped in a process-local memory fallback and a circuit

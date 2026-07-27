@@ -1,3 +1,5 @@
+import { normalizeProxyOriginFormPath } from "./request-path.ts";
+
 /**
  * Build the renderer WebSocket target without permitting protocol-relative
  * paths or authority changes from the incoming request.
@@ -37,8 +39,7 @@ export function createProxyWebSocketTargetUrl(
   base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
 
   const target = new URL(base);
-  const canonicalPathname = requestUrl.pathname.replace(/^\/+/, "/");
-  target.pathname = canonicalPathname;
+  target.pathname = normalizeProxyOriginFormPath(requestUrl.pathname);
   target.search = requestUrl.search;
   target.searchParams.set("x-project-slug", projectSlug);
   target.searchParams.set("x-environment", environment);

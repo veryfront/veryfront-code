@@ -143,6 +143,8 @@ describe("proxy request drain", () => {
     assertEquals(response.status, 503);
     assertEquals(response.headers.get("connection"), "close");
     assertEquals(response.headers.get("retry-after"), "1");
+    assertEquals(response.headers.get("cache-control"), "no-store");
+    assertEquals(response.headers.get("x-content-type-options"), "nosniff");
   });
 
   it("bounds server close when an adapter keeps waiting on open connections", async () => {

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Context, Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { runProxyRequestLifecycle } from "./request-lifecycle.ts";
@@ -92,5 +92,40 @@ describe("proxy request lifecycle", () => {
     }
 
     assertEquals(ended, ["500:boom"]);
+  });
+
+  it("contains hostile non-Error throws while preserving the original rejection", async () => {
+    const req = new Request("https://example.com/fail");
+    const hostile = new Proxy(Object.create(null), {
+      get() {
+        throw new Error("accessor must not run");
+      },
+      getPrototypeOf() {
+        throw new Error("prototype must not run");
+      },
+    });
+    const ended: string[] = [];
+
+    let caught: unknown;
+    try {
+      await runProxyRequestLifecycle({
+        req,
+        url: new URL(req.url),
+        extractContext: () => undefined,
+        startServerSpan: () => null,
+        withContext: (_context, fn) => fn(),
+        endSpan(_span, statusCode, error) {
+          ended.push(`${statusCode}:${error?.message ?? ""}`);
+        },
+        handle: () => {
+          throw hostile;
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertStrictEquals(caught, hostile);
+    assertEquals(ended, ["500:Unknown error"]);
   });
 });

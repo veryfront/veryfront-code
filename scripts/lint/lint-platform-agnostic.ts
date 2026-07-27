@@ -78,7 +78,6 @@ const ALLOWED_FILES = new Set([
   // Sandbox worker script — needs direct Deno API access (env, fs)
   "src/security/sandbox/worker-script.ts",
   // Proxy modules — Deno-native network proxy layer
-  "src/proxy/env.ts",
   "src/proxy/logger.ts",
   "src/proxy/renderer-router.ts",
   // Runtime detection guards — must inspect global.Deno / global.process

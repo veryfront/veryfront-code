@@ -10,7 +10,7 @@ import {
   readProxyResponseJson,
   readProxyResponseText,
 } from "./response-body.ts";
-import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 30_000;
@@ -162,7 +162,7 @@ export async function fetchOAuthToken(
             }),
           {
             "http.method": "POST",
-            "http.url": url,
+            "http.url": sanitizeUrlForSpan(url),
             "http.host": urlObj.host,
             "oauth.grant_type": "client_credentials",
           },

@@ -2,12 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
-import {
-  __resetCachedAuthProviderForTests,
-  createProxyHandler,
-  injectContextHeaders,
-  type ProxyContext,
-} from "./handler.ts";
+import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
 
@@ -222,7 +217,7 @@ function createRecordingLogger() {
       warn(message: string, extra?: Record<string, unknown>) {
         entries.push({ level: "warn", message, extra });
       },
-      error(message: string, _error?: Error, extra?: Record<string, unknown>) {
+      error(message: string, _error?: unknown, extra?: Record<string, unknown>) {
         entries.push({ level: "error", message, extra });
       },
     },
@@ -256,14 +251,12 @@ function forgeRs256Token(kid: string, userId: string): string {
 
 beforeEach(() => {
   reset();
-  __resetCachedAuthProviderForTests();
   jwksVerifiers.clear();
   register<AuthProvider>("AuthProvider", createMockAuthProvider({ jwksVerifiers }));
 });
 
 afterEach(() => {
   reset();
-  __resetCachedAuthProviderForTests();
 });
 
 describe("Proxy Handler", () => {

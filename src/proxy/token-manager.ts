@@ -390,9 +390,9 @@ export class TokenManager {
         signal,
       });
     } catch (error) {
-      const status = error instanceof OAuthTokenRequestError ? error.status : null;
       if (
-        (status === 400 || status === 404) &&
+        error instanceof OAuthTokenRequestError &&
+        (error.status === 400 || error.status === 404) &&
         this.isGenerationCurrent(cacheKey, globalGeneration, generation) &&
         !signal.aborted
       ) {
@@ -401,12 +401,8 @@ export class TokenManager {
           if (oldest !== undefined) this.negativeCache.delete(oldest);
         }
         this.negativeCache.set(cacheKey, {
-          status,
-          responseText: error instanceof OAuthTokenRequestError
-            ? error.responseText
-            : error instanceof Error
-            ? error.message
-            : String(error),
+          status: error.status,
+          responseText: error.responseText,
           cachedAt: Date.now(),
         });
       }

@@ -2,11 +2,27 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  isMissingCustomDomainProjectError,
+  extractUserToken,
+  isMissingProxyProjectError,
   resolveProxyRequestToken,
 } from "./proxy-token-resolution.ts";
+import { OAuthTokenRequestError } from "./oauth-client.ts";
 
 describe("proxy/proxy-token-resolution", () => {
+  it("extracts one bounded visible auth cookie and rejects ambiguous or malformed values", () => {
+    assertEquals(extractUserToken("other=x; authToken=user%2Dtoken"), "user-token");
+    assertEquals(
+      extractUserToken("authToken=first; authToken=second"),
+      undefined,
+    );
+    assertEquals(extractUserToken("authToken=%E0%A4%A"), undefined);
+    assertEquals(extractUserToken("authToken=token%0Avalue"), undefined);
+    assertEquals(
+      extractUserToken(`authToken=${"x".repeat(64 * 1024 + 1)}`),
+      undefined,
+    );
+  });
+
   it("prefers signed internal control-plane tokens over preview user cookies", async () => {
     const tokenManagerCalls: unknown[] = [];
     const result = await resolveProxyRequestToken({
@@ -72,8 +88,9 @@ describe("proxy/proxy-token-resolution", () => {
 
   it("returns custom-domain token fetch errors without logging expected misses as errors", async () => {
     const loggedErrors: string[] = [];
-    const notFoundError = new Error(
-      "OAuth token request failed: 400 - Project not found for domain",
+    const notFoundError = new OAuthTokenRequestError(
+      400,
+      '{"error":"legacy custom-domain miss"}',
     );
 
     const result = await resolveProxyRequestToken({
@@ -103,7 +120,7 @@ describe("proxy/proxy-token-resolution", () => {
 
     assertEquals(result.token, undefined);
     assertEquals(result.tokenFetchError, notFoundError);
-    assertEquals(isMissingCustomDomainProjectError(result.tokenFetchError), true);
+    assertEquals(isMissingProxyProjectError(result.tokenFetchError), true);
     assertEquals(loggedErrors, []);
   });
 });

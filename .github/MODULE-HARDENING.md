@@ -162,6 +162,45 @@ unit. No unit now lacks a current authoritative-branch review delta; the next
 dependency-ordered work closes the remaining reviewed unit and revalidates the
 touched units.
 
+### Proxy active checkpoint
+
+The `proxy` audit unit has completed its implementation-level review and
+non-policy remediation. It remains in revalidation rather than closed because
+production behavior for missing OAuth client credentials is a breaking
+deployment-policy decision: the current process warns and continues, while the
+recommended policy is to reject missing credentials in production and retain
+credential-free operation only in explicit development.
+
+The current proxy findings are otherwise remediated:
+
+- split and combined mode share one context-header implementation, including
+  content-source identity, request cancellation, internal-header replacement,
+  and bidirectional removal of standard and `Connection`-owned hop-by-hop
+  headers;
+- request Host authorities, upstream origins, API base paths, and origin-form
+  paths are canonicalized without protocol-relative URL interpretation;
+- renderer retries and BFF API calls use bounded, request-linked cancellation;
+  retry timers are cleaned up, late fetch responses are canceled, API redirects
+  are rejected, and trace URLs exclude query strings;
+- user cookies, OAuth project-miss classification, JWT provider lookup,
+  decoded claims, cache-control directives, unknown thrown values, and error
+  responses now have bounded fail-closed boundaries without prose scraping,
+  stale extension caching, accessor execution, or unsafe coercion;
+- shutdown health changes to `503 draining`; generated errors, redirects, API
+  responses, health, statistics, and draining responses carry explicit
+  non-cacheable/security headers; and obsolete duplicate environment access
+  code was removed.
+
+Reproducible checkpoint evidence:
+
+- all 50 proxy suites pass 442 nested steps with zero failures;
+- `deno task verify:quick` passes formatting, lint, dependency and module
+  boundaries (zero cyclic edges), extension audits, all 740 documentation links,
+  and repository-wide typechecking;
+- `docs/architecture/02-request-pipeline.md` records the Host/header boundary,
+  outbound deadline and cancellation model, BFF redirect and caching policy,
+  authentication parsing, and shutdown health behavior.
+
 ### Issues closure checkpoint
 
 The `issues` audit unit owns the internal file-backed project issue contract:

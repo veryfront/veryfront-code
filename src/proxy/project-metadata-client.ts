@@ -2,6 +2,7 @@ import {
   isCanonicalOpaqueProjectIdentifier,
   isCanonicalProjectSlug,
 } from "#veryfront/utils/project-identity.ts";
+import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { cancelProxyResponseBody, readProxyResponseJson } from "./response-body.ts";
 
@@ -488,7 +489,7 @@ export function createProjectMetadataClient(
         () => fetchImpl(url, { headers, signal: controller.signal }),
         {
           "http.method": "GET",
-          "http.url": url.toString(),
+          "http.url": sanitizeUrlForSpan(url.toString()),
           "http.host": url.host,
           "proxy.lookup_type": lookupType,
         },

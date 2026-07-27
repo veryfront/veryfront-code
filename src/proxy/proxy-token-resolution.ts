@@ -1,4 +1,8 @@
 import type { TokenScope } from "./token-manager.ts";
+import { OAuthTokenRequestError } from "./oauth-client.ts";
+
+const MAX_AUTH_COOKIE_HEADER_CODE_UNITS = 64 * 1024;
+const MAX_USER_TOKEN_CODE_UNITS = 64 * 1024;
 
 export interface ProxyTokenResolutionConfig {
   apiClientId: string;
@@ -18,7 +22,7 @@ export interface ProxyTokenResolutionLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
   info: (msg: string, extra?: Record<string, unknown>) => void;
   warn: (msg: string, extra?: Record<string, unknown>) => void;
-  error: (msg: string, error?: Error, extra?: Record<string, unknown>) => void;
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) => void;
 }
 
 export interface ResolveProxyRequestTokenOptions {
@@ -44,15 +48,51 @@ export interface ResolvedProxyRequestToken {
 }
 
 export function extractUserToken(cookieHeader: string): string | undefined {
-  const match = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  if (
+    cookieHeader === "" ||
+    cookieHeader.length > MAX_AUTH_COOKIE_HEADER_CODE_UNITS
+  ) {
+    return undefined;
+  }
+  let token: string | undefined;
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex < 1) continue;
+    if (trimmed.slice(0, separatorIndex).trim() !== "authToken") continue;
+    if (token !== undefined) return undefined;
+
+    const encoded = trimmed.slice(separatorIndex + 1);
+    if (encoded === "") return undefined;
+    try {
+      const decoded = decodeURIComponent(encoded);
+      if (
+        decoded.length === 0 ||
+        decoded.length > MAX_USER_TOKEN_CODE_UNITS ||
+        /[^\u0021-\u007e]/u.test(decoded)
+      ) {
+        return undefined;
+      }
+      token = decoded;
+    } catch {
+      return undefined;
+    }
+  }
+  return token;
 }
 
-// Brittle on purpose: the API currently returns this text when token minting
-// cannot map a custom domain. Tracked in #2217 until a typed error code exists.
-export function isMissingCustomDomainProjectError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /project not found for domain/i.test(message);
+/**
+ * Token service deployments report an unknown project identity with either
+ * HTTP 400 (legacy) or HTTP 404. Classify that contract at the typed HTTP
+ * boundary without coupling the proxy to response prose.
+ */
+export function isMissingProxyProjectError(error: unknown): boolean {
+  try {
+    return error instanceof OAuthTokenRequestError &&
+      (error.status === 400 || error.status === 404);
+  } catch {
+    return false;
+  }
 }
 
 export async function resolveProxyRequestToken(
@@ -100,8 +140,8 @@ export async function resolveProxyRequestToken(
         tokenSource = "service";
       } catch (error) {
         tokenFetchError = error;
-        if (!isMissingCustomDomainProjectError(error)) {
-          logger?.error(tokenFetchErrorMessage, error as Error, {
+        if (!isMissingProxyProjectError(error)) {
+          logger?.error(tokenFetchErrorMessage, error, {
             projectSlug,
             customDomain,
           });

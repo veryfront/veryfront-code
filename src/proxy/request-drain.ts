@@ -106,8 +106,10 @@ export function createProxyDrainingResponse(): Response {
   return new Response("Service Unavailable", {
     status: 503,
     headers: {
+      "Cache-Control": "no-store",
       Connection: "close",
       "Retry-After": "1",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

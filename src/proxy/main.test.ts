@@ -16,6 +16,29 @@ describe("proxy main request URL parsing", () => {
     assertStringIncludes(source, "body: upstreamBodies[attempt] ?? null");
   });
 
+  it("bounds and cancels outbound work without exposing query strings to spans", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "createRendererTargetUrl(baseUrl, url)");
+    assertStringIncludes(source, "createApiTargetUrl(config.apiBaseUrl, url)");
+    assertStringIncludes(source, "waitForProxyDelay(VERYFRONT_SERVER_RETRY_DELAY_MS, req.signal)");
+    assertStringIncludes(source, "fetchWithProxyDeadline(serverUrl");
+    assertStringIncludes(source, "fetchWithProxyDeadline(apiUrl");
+    assertStringIncludes(source, 'redirect: "manual"');
+    assertStringIncludes(source, "sanitizeUrlForSpan(serverUrl.toString())");
+    assertStringIncludes(source, "sanitizeUrlForSpan(apiUrl.toString())");
+    assertEquals(source.includes('url.pathname.replace(/^\\/\\/+/, "/")'), false);
+  });
+
+  it("reports draining health and prevents API response caching", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "jsonErrorResponse(shuttingDown ? 503 : 200");
+    assertStringIncludes(source, 'status: shuttingDown ? "draining" : "ok"');
+    assertStringIncludes(source, '"Cache-Control": "no-store"');
+    assertStringIncludes(source, '"X-Content-Type-Options": "nosniff"');
+  });
+
   it("drains tracked responses before closing the proxy server", async () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 
@@ -40,6 +63,10 @@ describe("proxy main request URL parsing", () => {
     assertStringIncludes(
       source,
       "proxyWebSocketBridgeRegistry.track(bridge)",
+    );
+    assertStringIncludes(
+      source,
+      "createProxyContextHeaders(req.headers, ctx)",
     );
   });
 

@@ -32,6 +32,7 @@ import {
   importFirstPartyExtensionModule,
   isMissingFirstPartyExtensionModule,
 } from "#veryfront/extensions/first-party-import.ts";
+import { ensureError, getErrorMessage } from "#veryfront/errors";
 import { __registerProxyTraceContextGetter, proxyLogger } from "./logger.ts";
 
 const TRACING_EXTENSION_SOURCE_DIRECTORY = "ext-observability-opentelemetry";
@@ -246,7 +247,7 @@ export function shutdownOTLP(): Promise<void> {
         await active.shutdown();
       } catch (error) {
         proxyLogger.warn("[otel] Exporter shutdown failed", {
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -371,11 +372,12 @@ export async function withSpan<T>(
     span.setStatus({ code: SpanStatusCode.OK });
     return result;
   } catch (error) {
+    const spanError = ensureError(error);
     span.setStatus({
       code: SpanStatusCode.ERROR,
-      message: error instanceof Error ? error.message : String(error),
+      message: getErrorMessage(spanError),
     });
-    if (error instanceof Error) span.recordException(error);
+    span.recordException(spanError);
     throw error;
   } finally {
     span.end();

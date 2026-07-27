@@ -1,5 +1,6 @@
 import { getRedisModule } from "#veryfront/platform/adapters/redis/modules.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getErrorMessage } from "#veryfront/errors";
 import { base64urlEncodeBytes } from "#veryfront/utils";
 import {
   hasProjectIdentityControlCharacters,
@@ -50,7 +51,7 @@ export interface RoutingInvalidationRedisClient {
 interface RoutingInvalidationLogger {
   info(message: string, extra?: Record<string, unknown>): void;
   warn(message: string, extra?: Record<string, unknown>): void;
-  error(message: string, error?: Error, extra?: Record<string, unknown>): void;
+  error(message: string, error?: unknown, extra?: Record<string, unknown>): void;
 }
 
 export interface ProxyRoutingInvalidationBus extends ProxyRoutingInvalidationPublisher {
@@ -583,11 +584,7 @@ function logError(
   extra?: Record<string, unknown>,
 ): void {
   try {
-    logger?.error(
-      message,
-      error instanceof Error ? error : new Error(String(error)),
-      extra,
-    );
+    logger?.error(message, error, extra);
   } catch {
     // Diagnostic callbacks cannot own the routing lifecycle.
   }
@@ -606,7 +603,7 @@ async function closeClient(
       // The process-level cleanup deadline remains authoritative.
     }
     logWarn(logger, "Failed to close routing invalidation Redis client cleanly", {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 }

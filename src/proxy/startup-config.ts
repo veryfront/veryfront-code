@@ -15,6 +15,7 @@ const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 const DEFAULT_DEVELOPMENT_SERVER_URL = "http://localhost:3001";
 const DEFAULT_BIND_HOST = "0.0.0.0";
 const DEFAULT_BIND_PORT = 8_080;
+const DEFAULT_API_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_SERVER_RETRY_COUNT = 1;
 const DEFAULT_SERVER_RETRY_DELAY_MS = 100;
@@ -23,6 +24,7 @@ const DEFAULT_SHUTDOWN_CLEANUP_TIMEOUT_MS = 4_000;
 const MAX_URL_CODE_UNITS = 4_096;
 const MAX_ENVIRONMENT_VALUE_CODE_UNITS = 1024 * 1_024;
 const MAX_LOCAL_PROJECTS = 1_000;
+const MAX_API_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000;
 const MAX_SERVER_REQUEST_TIMEOUT_MS = 15 * 60 * 1_000;
 const MAX_SERVER_RETRY_COUNT = 5;
 const MAX_SERVER_RETRY_DELAY_MS = 60_000;
@@ -44,6 +46,7 @@ export interface ProxyStartupConfig {
   readonly apiInternalUrl: string;
   readonly apiInternalUser: string;
   readonly apiInternalPass: string;
+  readonly apiRequestTimeoutMs: number;
   readonly serverRequestTimeoutMs: number;
   readonly serverRetryCount: number;
   readonly serverRetryDelayMs: number;
@@ -362,6 +365,13 @@ export function readProxyStartupConfig(
     apiInternalUrl,
     apiInternalUser,
     apiInternalPass,
+    apiRequestTimeoutMs: parseInteger(
+      read("VERYFRONT_API_REQUEST_TIMEOUT_MS"),
+      DEFAULT_API_REQUEST_TIMEOUT_MS,
+      "VERYFRONT_API_REQUEST_TIMEOUT_MS",
+      1,
+      MAX_API_REQUEST_TIMEOUT_MS,
+    ),
     serverRequestTimeoutMs: parseInteger(
       read("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS"),
       DEFAULT_SERVER_REQUEST_TIMEOUT_MS,
