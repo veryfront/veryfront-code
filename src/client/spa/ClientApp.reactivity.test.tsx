@@ -95,7 +95,7 @@ describe("client/spa/ClientApp (reactive)", () => {
       // the router. Its bare imports resolve through the app's import map.
       await writeModule(
         tempDir,
-        "pages/dash.js",
+        "pages/dash.tsx",
         `import React from "react";
          import { useRouter } from "veryfront/router";
          export default function Page() {
@@ -148,20 +148,20 @@ describe("client/spa/ClientApp (reactive)", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/initial.js",
+        "pages/initial.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "initial"); }`,
       );
       await writeModule(
         tempDir,
-        "pages/slow.js",
+        "pages/slow.tsx",
         `import React from "react";
          await new Promise((resolve) => setTimeout(resolve, 40));
          export default function Page() { return React.createElement("span", null, "slow"); }`,
       );
       await writeModule(
         tempDir,
-        "pages/fast.js",
+        "pages/fast.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "fast"); }`,
       );
@@ -213,18 +213,91 @@ describe("client/spa/ClientApp (reactive)", () => {
     }, { prefix: "vf-client-app-race-" });
   });
 
+  it("commits one immutable navigation snapshot across asynchronous module loading", async () => {
+    await withTempDir(async (tempDir) => {
+      await writeModule(
+        tempDir,
+        "pages/initial.tsx",
+        `import React from "react";
+         export default function Page() { return React.createElement("span", null, "initial"); }`,
+      );
+      await writeModule(
+        tempDir,
+        "pages/snapshot.tsx",
+        `import React from "react";
+         await new Promise((resolve) => setTimeout(resolve, 30));
+         export default function Page(props) {
+           return React.createElement("span", null, "snapshot:" + props.label);
+         }`,
+      );
+
+      const restore = installDom("https://example.com/initial");
+      testGlobal.MODULE_SERVER_URL = `file://${tempDir}`;
+      clearComponentCache();
+      try {
+        const initialData: PageDataResponse = {
+          slug: "/initial",
+          pagePath: "pages/initial.tsx",
+          pageType: "tsx",
+          layouts: [],
+          providers: [],
+          frontmatter: { title: "Initial" },
+          props: {},
+          params: {},
+          layoutProps: {},
+        };
+        await loadComponent(initialData.pagePath);
+
+        const rootElement = document.getElementById("root")!;
+        const root = createRoot(rootElement);
+        flushSync(() => root.render(<ClientApp initialData={initialData} />));
+        await tick();
+
+        const navigationData: PageDataResponse = {
+          ...initialData,
+          slug: "/snapshot",
+          pagePath: "pages/snapshot.tsx",
+          frontmatter: { title: "Snapshot" },
+          props: { label: "original" },
+        };
+        const navigation = testGlobal.__VERYFRONT_SPA_NAVIGATE__!(navigationData);
+
+        navigationData.slug = "/mutated";
+        navigationData.pagePath = "pages/mutated.tsx";
+        navigationData.frontmatter.title = "Mutated";
+        navigationData.props.label = "mutated";
+        navigationData.layouts.push({
+          kind: "tsx",
+          path: "layouts/mutated.tsx",
+        });
+
+        await navigation;
+        await tick();
+
+        assertStringIncludes(rootElement.textContent ?? "", "snapshot:original");
+        assertEquals((rootElement.textContent ?? "").includes("Something went wrong"), false);
+        assertEquals(document.title, "Snapshot");
+        root.unmount();
+      } finally {
+        clearComponentCache();
+        delete testGlobal.MODULE_SERVER_URL;
+        restore();
+      }
+    }, { prefix: "vf-client-app-navigation-snapshot-" });
+  });
+
   it("does not let the initial component load overwrite a completed navigation", async () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/initial.js",
+        "pages/initial.tsx",
         `import React from "react";
          await new Promise((resolve) => setTimeout(resolve, 40));
          export default function Page() { return React.createElement("span", null, "initial"); }`,
       );
       await writeModule(
         tempDir,
-        "pages/fast.js",
+        "pages/fast.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "fast"); }`,
       );
@@ -338,11 +411,91 @@ describe("client/spa/ClientApp (reactive)", () => {
     }
   });
 
+  it("contains malformed initial page data in the application error state", async () => {
+    const restore = installDom("https://example.com/invalid");
+    try {
+      const invalidData = {
+        slug: "/invalid",
+        pagePath: "pages/invalid.tsx",
+        pageType: "tsx",
+        layouts: "not-an-array",
+        providers: [],
+        frontmatter: {},
+        props: {},
+        params: {},
+        layoutProps: {},
+      } as unknown as PageDataResponse;
+
+      const rootElement = document.getElementById("root")!;
+      const root = createRoot(rootElement);
+      flushSync(() => root.render(<ClientApp initialData={invalidData} />));
+
+      assertStringIncludes(rootElement.textContent ?? "", "Invalid SPA page data");
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects navigation data beyond the bounded layout budget before loading modules", async () => {
+    await withTempDir(async (tempDir) => {
+      await writeModule(
+        tempDir,
+        "pages/home.tsx",
+        `import React from "react";
+         export default function Page() { return React.createElement("span", null, "home"); }`,
+      );
+
+      const restore = installDom("https://example.com/home");
+      testGlobal.MODULE_SERVER_URL = `file://${tempDir}`;
+      clearComponentCache();
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        const initialData: PageDataResponse = {
+          slug: "/home",
+          pagePath: "pages/home.tsx",
+          pageType: "tsx",
+          layouts: [],
+          providers: [],
+          frontmatter: {},
+          props: {},
+          params: {},
+          layoutProps: {},
+        };
+        await loadComponent(initialData.pagePath);
+
+        const rootElement = document.getElementById("root")!;
+        const root = createRoot(rootElement);
+        flushSync(() => root.render(<ClientApp initialData={initialData} />));
+        await tick();
+
+        await testGlobal.__VERYFRONT_SPA_NAVIGATE__!({
+          ...initialData,
+          layouts: Array.from(
+            { length: 257 },
+            (_, index) => ({ kind: "tsx" as const, path: `layouts/${index}.tsx` }),
+          ),
+        });
+        await tick();
+
+        assertStringIncludes(rootElement.textContent ?? "", "at most 256 entries");
+        assertEquals((rootElement.textContent ?? "").includes("Loading"), false);
+        root.unmount();
+      } finally {
+        console.error = originalError;
+        clearComponentCache();
+        delete testGlobal.MODULE_SERVER_URL;
+        restore();
+      }
+    }, { prefix: "vf-client-app-navigation-bounds-" });
+  });
+
   it("surfaces an initial layout import failure instead of loading forever", async () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.js",
+        "pages/home.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "home"); }`,
       );
@@ -387,7 +540,7 @@ describe("client/spa/ClientApp (reactive)", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.js",
+        "pages/home.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "home"); }`,
       );
@@ -420,7 +573,7 @@ describe("client/spa/ClientApp (reactive)", () => {
 
         await writeModule(
           tempDir,
-          "layouts/retry.js",
+          "layouts/retry.tsx",
           `import React from "react";
            export default function Layout(props) {
              return React.createElement("section", null, "layout recovered ", props.children);
@@ -445,7 +598,7 @@ describe("client/spa/ClientApp (reactive)", () => {
       for (const page of ["home", "next"]) {
         await writeModule(
           tempDir,
-          `pages/${page}.js`,
+          `pages/${page}.tsx`,
           `import React from "react";
            export default function Page() { return React.createElement("span", null, "${page}"); }`,
         );
@@ -499,7 +652,7 @@ describe("client/spa/ClientApp (reactive)", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/broken.js",
+        "pages/broken.tsx",
         `export default function Page() { throw new Error("private render detail"); }`,
       );
 
@@ -546,7 +699,7 @@ describe("client/spa/ClientApp (reactive)", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/conditional.js",
+        "pages/conditional.tsx",
         `import React from "react";
          export default function Page(props) {
            if (props.fail) throw new Error("render failed");
@@ -599,13 +752,13 @@ describe("client/spa/ClientApp (reactive)", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/initial.js",
+        "pages/initial.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "initial"); }`,
       );
       await writeModule(
         tempDir,
-        "pages/untitled.js",
+        "pages/untitled.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "untitled"); }`,
       );
@@ -654,7 +807,7 @@ describe("client/spa/ClientApp (reactive)", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.js",
+        "pages/home.tsx",
         `import React from "react";
          export default function Page() { return React.createElement("span", null, "home"); }`,
       );
@@ -698,7 +851,7 @@ describe("client/spa/ClientApp (reactive)", () => {
       for (const page of ["first", "second", "updated"]) {
         await writeModule(
           tempDir,
-          `pages/${page}.js`,
+          `pages/${page}.tsx`,
           `import React from "react";
            export default function Page() { return React.createElement("span", null, "${page}"); }`,
         );
@@ -783,7 +936,7 @@ describe("client/spa/ClientApp (reactive)", () => {
       for (const page of ["first", "second", "updated"]) {
         await writeModule(
           tempDir,
-          `pages/${page}.js`,
+          `pages/${page}.tsx`,
           `import React from "react";
            export default function Page() { return React.createElement("span", null, "${page}"); }`,
         );

@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    40 |      69.0% | Current formal closure evidence remains valid       |
+| Closed                         |    41 |      70.7% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    16 |      27.6% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    15 |      25.9% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -42,6 +42,7 @@ stricter closure count.
 - `cache`
 - `channels`
 - `chat`
+- `client`
 - `config`
 - `discovery`
 - `embedding`
@@ -87,7 +88,6 @@ stricter closure count.
 ### Touched, revalidation required
 
 - `build`
-- `client`
 - `data`
 - `modules`
 - `oauth`
@@ -122,7 +122,7 @@ every affected unit.
 ## Active review chain
 
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
-`config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
+`client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
@@ -200,6 +200,10 @@ The root entrypoint unit is closed after its exact public and client-safe export
 contracts, runtime dependency ownership, browser graph, rewrite target, Deno and
 npm package surfaces, documentation, and built consumer declarations were
 remediated and revalidated.
+`client` is closed after its SPA page-data admission and snapshot semantics,
+component cache and import lifecycle, exact source-module identity, generated
+browser-helper parity, navigation ownership, redirect consumption, diagnostics,
+production bundle, and direct consumers were remediated and revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -4820,6 +4824,100 @@ Intentional compatibility and capability boundaries remain explicit:
 
 No known unresolved critical or high-confidence MCP production risk remains.
 `mcp` is closed at 40 of 58 formal units; 18 units remain to be closed or
+revalidated.
+
+### Client closure checkpoint
+
+The `client` audit unit owns the legacy browser SPA application shell,
+page/layout module resolution and loading, component retention and retry
+lifecycle, page-data admission and state transitions, global navigation-handler
+registration, and the generated path helper consumed by hydration scripts. Its
+direct dependencies are React, the router and page-context providers, canonical
+routing page-data types, structured browser errors, and release-asset identity
+and string-validation contracts. Direct consumers include initial SPA
+hydration, the rendering router, development module delivery, release-asset
+delivery, the generated production router bundle, and the browser-delivery
+integration paths. This compatibility surface is not a separately published
+Deno or npm entrypoint.
+
+The current Client findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** an explicitly authored
+  `app/page.tsx` could resolve to a sibling release asset such as
+  `app/page.ts`, and authored `.js` or `.mjs` files shared the legacy
+  extensionless endpoint identity. The resolver stripped authored extensions
+  and probed sibling variants. A request could therefore execute a different
+  source module than the caller named. Authored extensions now preserve exact
+  identity, only extensionless requests probe variants, JavaScript source
+  identity remains distinct from the compatibility endpoint, query/hash
+  suffixes are preserved, and the TypeScript and generated browser helpers
+  share adversarial parity tests.
+- **Symptom -> Source -> Consequence -> Remedy:** successful component imports
+  and per-path failed-import counters accumulated without limit, and any number
+  of imports could be in flight. Long-lived browsers could retain
+  attacker- or application-selected paths and exhaust memory or import work.
+  The loader now has a 500-entry true LRU, a 512-load admission limit, one
+  bounded monotonic retry revision instead of per-path failure state, and
+  generation fencing that prevents cleared in-flight work from repopulating
+  the cache.
+- **Symptom -> Source -> Consequence -> Remedy:** navigation began asynchronous
+  imports from caller-owned page data and later committed that same mutable
+  object. Malformed or accessor-backed data could also start partial work or
+  execute caller code during admission. A page could load one component and
+  commit another page's layouts, props, title, or identity. One synchronous
+  snapshot now captures enumerable data descriptors without invoking getters,
+  rebuilds immediate records and dense arrays, bounds paths, text, providers,
+  layouts, layout props, and route parameters, and enters a recoverable
+  validation error before imports when admission fails.
+- **Symptom -> Source -> Consequence -> Remedy:** the page-data endpoint's
+  redirect-only response reached the SPA render handler and the outer router
+  could publish false completion. The legacy rendering router did not consume
+  this real wire shape. It now follows only root-relative or absolute HTTP(S)
+  destinations, rejects executable, protocol-relative, and origin-smuggled
+  values, transfers ownership to a document navigation, and invalidates the
+  superseded SPA transaction.
+- **Symptom -> Source -> Consequence -> Remedy:** module paths, base URLs,
+  release-asset values, and failed-load diagnostics lacked consistent
+  character and size boundaries. Hostile values could create ambiguous
+  requests or inject and amplify browser logs. Paths and URLs now fail closed
+  on traversal, backslashes, controls, and excessive length; release-map
+  values are bounded; and failure diagnostics JSON-escape and truncate the
+  path while disclosing only the error class.
+
+Current reproducible evidence:
+
+- all five Client suites pass 69 nested steps with zero failures, covering
+  asynchronous navigation races, mutation and accessor isolation, malformed
+  admission, retry and cache invalidation, true-LRU eviction, in-flight
+  admission, exact module identity, traversal, generated-helper parity, and
+  bounded diagnostics;
+- the affected rendering router, routing page loader, and production template
+  suites pass three top-level tests and 57 nested steps; the HTML loader and
+  module-server portfolio passes four tests and 89 steps; and the development
+  browser-delivery integration passes 37 steps;
+- the generated production router bundle passes the dedicated legacy release
+  hydration regression in both full-map and partial-map modes;
+- direct Client typecheck and lint pass, generated artifacts are deterministic,
+  `deno task verify:quick` passes repository-wide formatting, lint,
+  architecture and policy ratchets, documentation validation, and every
+  configured source/browser entrypoint; and the rebuilt npm package passes its
+  documented consumer `tsc --noEmit` lifecycle.
+
+The broader RSC browser suite still has a known pre-existing Rendering/Data
+failure: three scenarios return 500 because a pipeline borrowing a
+`dataFetcher` tries to override its cache-scope project ID. A detached worktree
+at untouched pre-Client HEAD `efc2abf3e` reproduces the same three failures,
+while its remote-production scenario and both legacy-router scenarios pass.
+That blocker remains assigned to the open `rendering` and `data` units and is
+not Client closure evidence.
+
+Correcting the routing page loader's public return type to model the
+redirect-only wire variant remains part of the open `routing` review; the
+Client render handler never receives that variant. No public documentation
+change is required for this internal compatibility module because its
+package-facing contract is unchanged. No known unresolved critical or
+high-confidence production risk remains within the Client-owned boundary.
+`client` is closed at 41 of 58 formal units; 17 units remain to be closed or
 revalidated.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

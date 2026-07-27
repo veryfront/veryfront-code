@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { boot, VeryfrontRouter } from "./router.ts";
 import { getNavigationStore } from "./navigation-store.ts";
-import type { RouteData } from "#veryfront/routing";
+import type { RouteData, SpaPageData } from "#veryfront/routing";
 
 const NAVIGATION_STORE_KEY = Symbol.for("veryfront.navigation.store.v1");
 
@@ -353,6 +353,102 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
       releaseFirst();
       // deno-lint-ignore no-explicit-any
       assertEquals((router as any).spaNavigationHandler, null);
+      router.destroy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("follows redirect-only SPA page data without invoking the render handler", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const assigned: string[] = [];
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          assign(href: string) {
+            assigned.push(href);
+          },
+          hash: "",
+          hostname: "example.com",
+          origin: "https://example.com",
+          pathname: "/",
+          search: "",
+        },
+        writable: true,
+      });
+
+      let completed = 0;
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        onComplete: () => completed++,
+      });
+      let rendered = 0;
+      router.registerNavigationHandler(async () => {
+        rendered++;
+      });
+      // The page-data endpoint intentionally returns this redirect-only shape.
+      // Keep the public compatibility type unchanged while covering its real
+      // wire contract.
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.loadSpaPageData = () =>
+        Promise.resolve({
+          redirect: { destination: "/target", permanent: false },
+        } as unknown as SpaPageData);
+
+      await router.navigate("/redirecting");
+
+      assertEquals(assigned, ["https://example.com/target"]);
+      assertEquals(rendered, 0);
+      assertEquals(completed, 0);
+      router.destroy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not follow executable, protocol-relative, or origin-smuggled SPA redirects", async () => {
+    const restore = installDom("https://example.com/");
+    try {
+      const assigned: string[] = [];
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          assign(href: string) {
+            assigned.push(href);
+          },
+          hash: "",
+          hostname: "example.com",
+          origin: "https://example.com",
+          pathname: "/",
+          search: "",
+        },
+        writable: true,
+      });
+
+      const router = new VeryfrontRouter({ baseUrl: "https://example.com" });
+      let rendered = 0;
+      router.registerNavigationHandler(async () => {
+        rendered++;
+      });
+
+      const destinations = [
+        "javascript:alert(1)",
+        "data:text/html,unsafe",
+        "//evil.example/path",
+        "/\\evil.example/path",
+      ];
+      for (const [index, destination] of destinations.entries()) {
+        // deno-lint-ignore no-explicit-any
+        (router as any).pageLoader.loadSpaPageData = () =>
+          Promise.resolve({
+            redirect: { destination, permanent: false },
+          } as unknown as SpaPageData);
+        await router.navigate(`/invalid-redirect-${index}`);
+      }
+
+      assertEquals(assigned, []);
+      assertEquals(rendered, destinations.length);
       router.destroy();
     } finally {
       restore();

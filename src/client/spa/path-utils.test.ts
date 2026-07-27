@@ -95,18 +95,18 @@ describe("client/spa/path-utils", () => {
 
   describe("pathToModuleUrl", () => {
     const cases: Array<[string, string, string]> = [
-      ["pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.js"],
-      ["components/Button.tsx", "/_vf_modules", "/_vf_modules/components/Button.js"],
-      ["app/layout.tsx", "/_vf_modules", "/_vf_modules/app/layout.js"],
-      ["lib/utils.ts", "/_vf_modules", "/_vf_modules/lib/utils.js"],
-      ["layouts/main.tsx", "/_vf_modules", "/_vf_modules/layouts/main.js"],
-      ["components/Card.jsx", "/_vf_modules", "/_vf_modules/components/Card.js"],
-      ["pages/about.mdx", "/_vf_modules", "/_vf_modules/pages/about.js"],
-      ["utils/helper.ts", "/_vf_modules", "/_vf_modules/utils/helper.js"],
+      ["pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.tsx"],
+      ["components/Button.tsx", "/_vf_modules", "/_vf_modules/components/Button.tsx"],
+      ["app/layout.tsx", "/_vf_modules", "/_vf_modules/app/layout.tsx"],
+      ["lib/utils.ts", "/_vf_modules", "/_vf_modules/lib/utils.ts"],
+      ["layouts/main.tsx", "/_vf_modules", "/_vf_modules/layouts/main.tsx"],
+      ["components/Card.jsx", "/_vf_modules", "/_vf_modules/components/Card.jsx"],
+      ["pages/about.mdx", "/_vf_modules", "/_vf_modules/pages/about.mdx"],
+      ["utils/helper.ts", "/_vf_modules", "/_vf_modules/utils/helper.ts"],
       [
         "providers/BreakpointsProvider.tsx",
         "/_vf_modules",
-        "/_vf_modules/providers/BreakpointsProvider.js",
+        "/_vf_modules/providers/BreakpointsProvider.tsx",
       ],
       ["some/module", "/_vf_modules", "/_vf_modules/some/module.js"],
       [
@@ -115,7 +115,7 @@ describe("client/spa/path-utils", () => {
         "/_vf_modules/some/module.js?version=1",
       ],
       ["some/module#named", "/_vf_modules", "/_vf_modules/some/module.js#named"],
-      ["utils/helper.js", "/_vf_modules", "/_vf_modules/utils/helper.js"],
+      ["utils/helper.js", "/_vf_modules", "/_vf_modules/utils/helper.js.js"],
       [
         "/_vf_modules/providers/BreakpointsProvider.js",
         "/_vf_modules",
@@ -126,13 +126,13 @@ describe("client/spa/path-utils", () => {
         "/_vf_modules",
         "/_vf_modules/custom-client/BreakpointsProvider.js?studio_embed=true",
       ],
-      ["/project/pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.js"],
-      ["pages/home.tsx", "/custom", "/custom/pages/home.js"],
-      ["pages/home.tsx", "/custom/", "/custom/pages/home.js"],
+      ["/project/pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.tsx"],
+      ["pages/home.tsx", "/custom", "/custom/pages/home.tsx"],
+      ["pages/home.tsx", "/custom/", "/custom/pages/home.tsx"],
       [
         "pages/home.tsx",
         "https://cdn.example.com/modules/",
-        "https://cdn.example.com/modules/pages/home.js",
+        "https://cdn.example.com/modules/pages/home.tsx",
       ],
     ];
 
@@ -154,28 +154,78 @@ describe("client/spa/path-utils", () => {
       );
     });
 
+    it("never aliases an explicitly requested extension to a sibling source file", () => {
+      const siblingAssetUrl = "/_vf/assets/" + "b".repeat(64) + ".js";
+
+      withReleaseAssetModules({ "app/page.ts": siblingAssetUrl }, () => {
+        assertEquals(pathToModuleUrl("app/page.tsx"), "/_vf_modules/app/page.tsx");
+        assertEquals(
+          runGeneratedPathToModuleUrl("app/page.tsx"),
+          "/_vf_modules/app/page.tsx",
+        );
+      });
+    });
+
+    it("expands release asset variants only for extensionless module paths", () => {
+      const assetUrl = "/_vf/assets/" + "c".repeat(64) + ".js";
+
+      withReleaseAssetModules({ "content/page.md": assetUrl }, () => {
+        assertEquals(pathToModuleUrl("content/page"), assetUrl);
+        assertEquals(runGeneratedPathToModuleUrl("content/page"), assetUrl);
+      });
+    });
+
+    it("keeps authored JavaScript distinct from the legacy extensionless endpoint", () => {
+      for (const resolve of [pathToModuleUrl, runGeneratedPathToModuleUrl]) {
+        assertEquals(resolve("app/page.js"), "/_vf_modules/app/page.js.js");
+        assertEquals(resolve("app/page.mjs"), "/_vf_modules/app/page.mjs.js");
+        assertEquals(resolve("app/page"), "/_vf_modules/app/page.js");
+      }
+    });
+
+    it("preserves exact authored extensions and their query or hash suffix", () => {
+      const cases = [
+        ["content/page.md", "/_vf_modules/content/page.md"],
+        ["app/page.tsx?cache=1", "/_vf_modules/app/page.tsx?cache=1"],
+        ["lib/runtime.mjs#named", "/_vf_modules/lib/runtime.mjs.js#named"],
+      ] as const;
+
+      for (const [path, expected] of cases) {
+        assertEquals(pathToModuleUrl(path), expected);
+        assertEquals(runGeneratedPathToModuleUrl(path), expected);
+      }
+    });
+
     it("ignores inherited release asset entries in both implementations", () => {
       const inherited = Object.create({
         "pages/index.tsx": "/_vf/assets/inherited.js",
       }) as Record<string, string>;
 
       withReleaseAssetModules(inherited, () => {
-        assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.js");
+        assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.tsx");
         assertEquals(
           runGeneratedPathToModuleUrl("pages/index.tsx"),
-          "/_vf_modules/pages/index.js",
+          "/_vf_modules/pages/index.tsx",
         );
       });
     });
 
     it("ignores invalid release asset values in both implementations", () => {
-      withReleaseAssetModules({ "pages/index.tsx": { url: "/_vf/assets/not-a-string.js" } }, () => {
-        assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.js");
-        assertEquals(
-          runGeneratedPathToModuleUrl("pages/index.tsx"),
-          "/_vf_modules/pages/index.js",
-        );
-      });
+      for (
+        const value of [
+          { url: "/_vf/assets/not-a-string.js" },
+          "/_vf/assets/\ninvalid.js",
+          "x".repeat(4_097),
+        ]
+      ) {
+        withReleaseAssetModules({ "pages/index.tsx": value }, () => {
+          assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.tsx");
+          assertEquals(
+            runGeneratedPathToModuleUrl("pages/index.tsx"),
+            "/_vf_modules/pages/index.tsx",
+          );
+        });
+      }
     });
 
     it("keeps the TypeScript and generated helpers in parity", () => {
@@ -210,6 +260,30 @@ describe("client/spa/path-utils", () => {
           () => runGeneratedPathToModuleUrl(path),
           TypeError,
           "path traversal",
+        );
+      }
+    });
+
+    it("rejects empty, oversized, or control-character module paths", () => {
+      for (
+        const path of [
+          "",
+          "pages/\nsecret.tsx",
+          "pages\\ambiguous.tsx",
+          "a".repeat(2_049),
+        ]
+      ) {
+        assertThrows(() => pathToModuleUrl(path), TypeError);
+        assertThrows(() => runGeneratedPathToModuleUrl(path), TypeError);
+      }
+    });
+
+    it("rejects malformed or oversized module server base URLs", () => {
+      for (const baseUrl of ["https://modules.invalid/\nheader", "a".repeat(4_097)]) {
+        assertThrows(() => pathToModuleUrl("pages/index.tsx", baseUrl), TypeError);
+        assertThrows(
+          () => runGeneratedPathToModuleUrl("pages/index.tsx", baseUrl),
+          TypeError,
         );
       }
     });

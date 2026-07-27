@@ -316,12 +316,46 @@ export class VeryfrontRouter {
     return policy({ currentHref: this.currentPath, nextHref: nextUrl, sameRoute });
   }
 
+  private followSpaRedirect(data: SpaPageData): boolean {
+    const destination = data?.redirect?.destination;
+    if (typeof destination !== "string") return false;
+
+    const isRootRelative = destination.startsWith("/") && !destination.startsWith("//");
+    const isAbsoluteHttp = /^https?:\/\//i.test(destination);
+    if (!isRootRelative && !isAbsoluteHttp) return false;
+
+    let baseUrl: URL;
+    let redirectTarget: URL;
+    try {
+      baseUrl = new URL(this.baseUrl, globalThis.location.origin);
+      redirectTarget = new URL(destination, baseUrl);
+    } catch {
+      return false;
+    }
+
+    if (
+      (redirectTarget.protocol !== "http:" && redirectTarget.protocol !== "https:") ||
+      (isRootRelative && redirectTarget.origin !== baseUrl.origin)
+    ) {
+      return false;
+    }
+
+    globalThis.location.assign(redirectTarget.href);
+    return true;
+  }
+
   private async loadSpaPage(path: string, navigationId: number): Promise<void> {
     logger.debug(`Loading SPA page: ${path}`);
 
     try {
       const spaData = await this.pageLoader.loadSpaPageData(path);
       if (!this.isCurrentNavigation(navigationId)) return;
+      if (this.followSpaRedirect(spaData)) {
+        // A document navigation now owns the transition. Invalidate this SPA
+        // navigation so the outer navigate() call does not publish completion.
+        this.navigationSequence++;
+        return;
+      }
       await this.getSpaNavigationHandler()?.(spaData);
       if (!this.isCurrentNavigation(navigationId)) return;
 

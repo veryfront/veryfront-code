@@ -59,7 +59,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.js",
+        "pages/home.tsx",
         'export default function Page() { return "home"; }',
       );
 
@@ -77,7 +77,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "components/Card.js",
+        "components/Card.jsx",
         'export default function Card() { return "card"; }',
       );
 
@@ -106,7 +106,7 @@ describe("client/spa/component-loader", () => {
 
           await writeModule(
             tempDir,
-            "layouts/missing.js",
+            "layouts/missing.tsx",
             'export default function Layout() { return "layout"; }',
           );
           const recovered = await loadComponent("layouts/missing.tsx");
@@ -128,7 +128,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/slow.js",
+        "pages/slow.tsx",
         `await new Promise((resolve) => setTimeout(resolve, 30));
          export default function Page() { return "slow"; }`,
       );
@@ -160,7 +160,7 @@ describe("client/spa/component-loader", () => {
 
           await writeModule(
             tempDir,
-            "pages/created-later.js",
+            "pages/created-later.tsx",
             'export default function Page() { return "created"; }',
           );
 
@@ -176,22 +176,98 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.js",
+        "pages/home.tsx",
         'export default function Page() { return "home"; }',
       );
 
       await withModuleServerUrl(tempDir, async () => {
         const component = await loadComponent("pages/home.tsx");
 
-        assertStrictEquals(getCachedComponent("/_vf_modules/pages/home.js"), component);
-        assertStrictEquals(await loadComponent("/_vf_modules/pages/home.js"), component);
+        assertStrictEquals(getCachedComponent("/_vf_modules/pages/home.tsx"), component);
+        assertStrictEquals(await loadComponent("/_vf_modules/pages/home.tsx"), component);
       });
     }, { prefix: "vf-client-loader-alias-" });
   });
 
+  it("bounds retained components with true least-recently-used eviction", async () => {
+    const globalRecord = globalThis as unknown as {
+      __veryfrontReleaseAssetModules?: unknown;
+    };
+    const previousModules = globalRecord.__veryfrontReleaseAssetModules;
+    const modulePaths = Array.from(
+      { length: 501 },
+      (_, index) => `pages/cache-${index}.tsx`,
+    );
+    globalRecord.__veryfrontReleaseAssetModules = Object.fromEntries(
+      modulePaths.map((path, index) => [
+        path,
+        `data:text/javascript,export default function Component${index}(){}`,
+      ]),
+    );
+    clearComponentCache();
+
+    try {
+      for (const path of modulePaths.slice(0, 500)) {
+        assertEquals(await loadComponent(path) !== null, true);
+      }
+
+      // Refresh the oldest component before crossing the capacity boundary.
+      assertEquals(getCachedComponent(modulePaths[0]!) !== null, true);
+      assertEquals(await loadComponent(modulePaths[500]!) !== null, true);
+
+      assertEquals(getCachedComponent(modulePaths[0]!) !== null, true);
+      assertStrictEquals(getCachedComponent(modulePaths[1]!), null);
+      assertEquals(getCachedComponent(modulePaths[500]!) !== null, true);
+    } finally {
+      clearComponentCache();
+      if (previousModules === undefined) {
+        delete globalRecord.__veryfrontReleaseAssetModules;
+      } else {
+        globalRecord.__veryfrontReleaseAssetModules = previousModules;
+      }
+    }
+  });
+
+  it("rejects component-load admission beyond the bounded in-flight budget", async () => {
+    const globalRecord = globalThis as unknown as {
+      __veryfrontReleaseAssetModules?: unknown;
+    };
+    const previousModules = globalRecord.__veryfrontReleaseAssetModules;
+    const originalError = console.error;
+    const errors: string[] = [];
+    const modulePaths = Array.from(
+      { length: 513 },
+      (_, index) => `pages/pending-${index}.tsx`,
+    );
+    globalRecord.__veryfrontReleaseAssetModules = Object.fromEntries(
+      modulePaths.map((path, index) => [
+        path,
+        `data:text/javascript,await new Promise((resolve)=>setTimeout(resolve,20));export default function Pending${index}(){}`,
+      ]),
+    );
+    console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+    clearComponentCache();
+
+    try {
+      const loaded = await Promise.all(modulePaths.map((path) => loadComponent(path)));
+
+      assertEquals(loaded.filter((component) => component === null).length, 1);
+      assertEquals(errors.length, 1);
+      assertEquals(errors[0]?.includes("RangeError"), true);
+    } finally {
+      console.error = originalError;
+      clearComponentCache();
+      if (previousModules === undefined) {
+        delete globalRecord.__veryfrontReleaseAssetModules;
+      } else {
+        globalRecord.__veryfrontReleaseAssetModules = previousModules;
+      }
+    }
+  });
+
   it("rejects modules that do not export a React component", async () => {
     await withTempDir(async (tempDir) => {
-      await writeModule(tempDir, "pages/data.js", "export const answer = 42;");
+      await writeModule(tempDir, "pages/data.tsx", "export const answer = 42;");
 
       const errors: string[] = [];
       const originalError = console.error;
@@ -216,7 +292,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "components/Memo.js",
+        "components/Memo.tsx",
         `import React from "react";
          function Component() { return React.createElement("span", null, "memo"); }
          export default React.memo(Component);`,
@@ -256,6 +332,25 @@ describe("client/spa/component-loader", () => {
       else globalRecord.MODULE_SERVER_URL = previousModuleServerUrl;
       if (previousWindow === undefined) delete globalRecord.window;
       else globalRecord.window = previousWindow;
+    }
+  });
+
+  it("escapes and bounds invalid module paths before logging them", async () => {
+    const originalError = console.error;
+    const errors: string[] = [];
+    console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+
+    try {
+      const path = `pages/\n${"x".repeat(3_000)}.tsx`;
+      assertStrictEquals(await loadComponent(path), null);
+
+      assertEquals(errors.length, 1);
+      assertEquals(errors[0]?.includes("\n"), false);
+      assertEquals(errors[0]?.includes("\\n"), true);
+      assertEquals((errors[0]?.length ?? 0) < 512, true);
+    } finally {
+      console.error = originalError;
+      clearComponentCache();
     }
   });
 });

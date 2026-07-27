@@ -14,23 +14,15 @@ import { RouterProvider, type RouterValue } from "veryfront/router";
 import { PageContextProvider, type PageContextValue } from "veryfront/context";
 import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
+import { type PageDataResponse, snapshotPageData } from "./page-data.ts";
 import {
+  INPUT_VALIDATION_FAILED,
   LAYOUT_NOT_FOUND,
   PAGE_NOT_FOUND,
   RENDER_ERROR,
 } from "#veryfront/errors/error-registry.ts";
 
-export interface PageDataResponse {
-  slug: string;
-  pagePath: string;
-  pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
-  layouts: LayoutInfo[];
-  providers: string[];
-  frontmatter: Record<string, unknown>;
-  props: Record<string, unknown>;
-  params: Record<string, string | string[]>;
-  layoutProps: Record<string, Record<string, unknown>>;
-}
+export type { PageDataResponse } from "./page-data.ts";
 
 type PageComponentProps = { params?: Record<string, string | string[]>; [key: string]: unknown };
 type PageComponentType = ComponentType<PageComponentProps>;
@@ -77,6 +69,32 @@ interface GlobalNavigationRegistry {
 const GLOBAL_NAVIGATION_REGISTRY_KEY = Symbol.for(
   "veryfront.spa-navigation.registrations.v1",
 );
+
+interface InitialPageDataCapture {
+  data: PageDataResponse;
+  error: Error | null;
+}
+
+function captureInitialPageData(data: PageDataResponse): InitialPageDataCapture {
+  try {
+    return { data: snapshotPageData(data), error: null };
+  } catch {
+    return {
+      data: {
+        slug: "/",
+        pagePath: "",
+        pageType: "tsx",
+        layouts: [],
+        providers: [],
+        frontmatter: {},
+        props: {},
+        params: {},
+        layoutProps: {},
+      },
+      error: INPUT_VALIDATION_FAILED.create({ detail: "Invalid SPA page data" }),
+    };
+  }
+}
 
 function getGlobalNavigationRegistry(): GlobalNavigationRegistry {
   const holder = globalThis as Record<symbol, unknown>;
@@ -222,19 +240,28 @@ function toError(error: unknown): Error {
 }
 
 export function ClientApp({ initialData }: ClientAppProps): ReactElement {
-  const [state, setState] = useState<ClientAppState>(() =>
-    createClientAppState(
-      initialData,
-      getCachedComponent(initialData.pagePath),
-    )
-  );
+  const initialCaptureRef = useRef<InitialPageDataCapture | null>(null);
+  if (initialCaptureRef.current === null) {
+    initialCaptureRef.current = captureInitialPageData(initialData);
+  }
+  const initialCapture = initialCaptureRef.current;
+  const capturedInitialData = initialCapture.data;
+
+  const [state, setState] = useState<ClientAppState>(() => {
+    const initialState = createClientAppState(
+      capturedInitialData,
+      getCachedComponent(capturedInitialData.pagePath),
+    );
+    return initialCapture.error ? { ...initialState, error: initialCapture.error } : initialState;
+  });
 
   const [isMounted, setIsMounted] = useState(false);
   const navigationSequence = useRef(0);
 
   useEffect(() => {
+    if (initialCapture.error) return;
     if (state.pageComponent) return;
-    if (!initialData.pagePath) {
+    if (!capturedInitialData.pagePath) {
       setState((prev) => ({
         ...prev,
         error: PAGE_NOT_FOUND.create({ detail: "Page component path is missing" }),
@@ -245,13 +272,13 @@ export function ClientApp({ initialData }: ClientAppProps): ReactElement {
     let cancelled = false;
 
     void (async () => {
-      const Component = await loadComponent(initialData.pagePath);
+      const Component = await loadComponent(capturedInitialData.pagePath);
       if (cancelled || initialLoadNavigationId !== navigationSequence.current) return;
       if (!Component) {
         setState((prev) => ({
           ...prev,
           error: PAGE_NOT_FOUND.create({
-            detail: `Failed to load page component: ${initialData.pagePath}`,
+            detail: `Failed to load page component: ${capturedInitialData.pagePath}`,
           }),
         }));
         return;
@@ -262,11 +289,12 @@ export function ClientApp({ initialData }: ClientAppProps): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [initialData.pagePath, state.pageComponent]);
+  }, [capturedInitialData.pagePath, initialCapture.error, state.pageComponent]);
 
   useEffect(() => {
-    for (const layout of initialData.layouts || []) void preloadComponent(layout.path);
-  }, [initialData.layouts]);
+    if (initialCapture.error) return;
+    for (const layout of capturedInitialData.layouts) void preloadComponent(layout.path);
+  }, [capturedInitialData.layouts, initialCapture.error]);
 
   useEffect(() => {
     setIsMounted(true);
@@ -277,28 +305,31 @@ export function ClientApp({ initialData }: ClientAppProps): ReactElement {
     setState((prev) => ({ ...prev, isNavigating: true, error: null }));
 
     try {
+      const snapshot = snapshotPageData(data);
       const [PageComponent, ...LayoutComponents] = await Promise.all([
-        loadComponent(data.pagePath),
-        ...(data.layouts || []).map((layout) => loadComponent(layout.path)),
+        loadComponent(snapshot.pagePath),
+        ...snapshot.layouts.map((layout) => loadComponent(layout.path)),
       ]);
       if (navigationId !== navigationSequence.current) return;
 
       if (!PageComponent) {
-        throw PAGE_NOT_FOUND.create({ detail: `Failed to load page component: ${data.pagePath}` });
+        throw PAGE_NOT_FOUND.create({
+          detail: `Failed to load page component: ${snapshot.pagePath}`,
+        });
       }
 
       const failedLayoutIndex = LayoutComponents.findIndex((Component) => Component === null);
       if (failedLayoutIndex !== -1) {
-        const failedLayout = data.layouts[failedLayoutIndex];
+        const failedLayout = snapshot.layouts[failedLayoutIndex];
         throw LAYOUT_NOT_FOUND.create({
           detail: `Failed to load layout component: ${failedLayout?.path ?? "unknown"}`,
         });
       }
 
-      document.title = String(data.frontmatter?.title ?? "Veryfront App");
+      document.title = String(snapshot.frontmatter.title ?? "Veryfront App");
 
       setState((previous) => ({
-        ...createClientAppState(data, PageComponent),
+        ...createClientAppState(snapshot, PageComponent),
         renderVersion: previous.renderVersion + 1,
       }));
     } catch (error) {
