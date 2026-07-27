@@ -29,7 +29,7 @@
  *
  * export function getServerData(ctx: DataContext) {
  *   if (!ctx.params.id) throw notFound();
- *   return { title: "Page" };
+ *   return { props: { title: "Page" } };
  * }
  * ```
  */

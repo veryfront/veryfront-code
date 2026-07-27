@@ -48,6 +48,14 @@ export interface CircuitBreakerOptions {
   now?: () => number;
 }
 
+export interface CircuitBreakerExecutionOptions {
+  /**
+   * Classify a caller-owned cancellation or other neutral settlement that
+   * must release admission without changing dependency health.
+   */
+  isNeutralError?: (error: unknown) => boolean;
+}
+
 function requireIntegerOption(value: number, option: string, minimum: number): number {
   if (!Number.isSafeInteger(value) || value < minimum) {
     const requirement = minimum === 0 ? "a non-negative integer" : "a positive integer";
@@ -157,7 +165,10 @@ export class CircuitBreaker {
   }
 
   /** Execute operation through circuit breaker. Throws CircuitBreakerOpen if open. */
-  async execute<T>(operation: () => Promise<T>): Promise<T> {
+  async execute<T>(
+    operation: () => Promise<T>,
+    options: CircuitBreakerExecutionOptions = {},
+  ): Promise<T> {
     const now = this.currentTime();
     this.expireClosedFailureHistory(now);
 
@@ -190,7 +201,17 @@ export class CircuitBreaker {
       this.recordSuccess();
       return result;
     } catch (error) {
-      this.recordFailure();
+      let neutral = false;
+      try {
+        neutral = options.isNeutralError?.(error) === true;
+      } catch (classifierError) {
+        logger.error(`${this.breakerName}: neutral-error classifier failed`, {
+          error: classifierError instanceof Error
+            ? classifierError.message
+            : String(classifierError),
+        });
+      }
+      if (!neutral) this.recordFailure();
       throw error;
     } finally {
       if (halfOpenProbe && this.state === "HALF_OPEN") {

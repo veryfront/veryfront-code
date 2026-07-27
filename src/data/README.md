@@ -1,382 +1,306 @@
-# Data Module
+# Data module
 
-The Data module provides data fetching utilities for server-side and static data loading, similar to Next.js's `getServerSideProps` and `getStaticPaths` APIs.
+The Data module defines page-loader contracts for request-time data, static
+data, static path generation, redirects, and not-found results. The rendering
+pipeline owns normal application use. `DataFetcher` is available only to
+framework-internal integrations and tests.
 
-## Import Map Alias
+For task-oriented application examples, see the
+[data fetching guide](../../docs/guides/data-fetching.md).
 
-```typescript
-// Using import map alias (recommended)
-import { DataFetcher, notFound, redirect } from "#data";
+## Application surface
 
-// Using barrel file
-import { DataFetcher, notFound, redirect } from "./data/index.ts";
+Application code imports page helpers and contracts from the root package:
+
+```ts
+import { notFound, redirect } from "veryfront";
+import type {
+  DataContext,
+  InferGetServerDataProps,
+  PageWithData,
+  StaticPathsResult,
+} from "veryfront";
 ```
 
-## Public API Overview
+`DataFetcher`, `FetchDataOptions`, `DataResult`, and the cache types are
+framework internals. They are intentionally absent from the published package
+exports. Repository source that implements or tests the rendering pipeline
+uses `#veryfront/data`.
 
-The Data module exports:
+| Export                    | Contract                                                  |
+| ------------------------- | --------------------------------------------------------- |
+| `notFound()`              | Produces a not-found control result                       |
+| `redirect(destination)`   | Produces a temporary or permanent redirect control result |
+| `DataContext`             | Request, URL, route parameter, and query context          |
+| `PageWithData<T>`         | Page module shape with optional data hooks                |
+| `StaticPathsResult`       | Static route parameters and fallback policy               |
+| `InferGetServerDataProps` | Extracts the props type from a `PageWithData` declaration |
 
-- **`DataFetcher`** - Main class for data fetching with caching support
-- **`notFound()`** - Helper to return 404 responses
-- **`redirect()`** - Helper to return redirect responses
-- **Types** - `DataContext`, `DataResult`, `PageWithData`, `StaticPathsResult`, `InferGetServerDataProps`, `CacheEntry`
+## Loader selection
 
-## File Structure
+`DataFetcher.fetchData()` accepts `"development"` or `"production"`.
+Unsupported runtime strings reject with `TypeError`.
 
-```
-data/
-├── index.ts                    # Public API (barrel file) ← USE THIS
-├── README.md                   # This file
-├── fetching.ts                 # Re-exports from fetching/ subdirectory
-└── fetching/                   # Data fetching implementation
-    ├── index.ts               # Fetching barrel file
-    ├── data-fetcher.ts        # Main DataFetcher class
-    ├── data-fetching-cache.ts # Cache management
-    ├── helpers.ts             # Utility helpers (notFound, redirect)
-    ├── server-data-fetcher.ts # Server-side data fetching
-    ├── static-data-fetcher.ts # Static data fetching
-    ├── static-paths-fetcher.ts # Static path generation
-    └── types.ts               # Type definitions
-```
+| Mode          | First choice    | Fallback        |
+| ------------- | --------------- | --------------- |
+| `development` | `getServerData` | `getStaticData` |
+| `production`  | `getStaticData` | `getServerData` |
 
-## Quick Start
+A loader export counts only when it is callable. If neither matching loader is
+a function, the result is `{ props: {} }`.
 
-### Server-Side Data Fetching
+## Loader contracts
 
-Fetch data on each request (SSR):
+`getServerData` receives the complete context:
 
-```typescript
-import type { DataContext, DataResult } from "#data";
-
-interface Post {
-  id: string;
-  title: string;
-  content: string;
-}
-
-interface Props {
-  post: Post;
-}
-
-export async function getServerData(
-  context: DataContext,
-): Promise<DataResult<Props>> {
-  const { params } = context;
-
-  // Fetch data from API
-  const response = await fetch(`https://api.example.com/posts/${params.id}`);
-
-  if (!response.ok) {
-    return notFound();
-  }
-
-  const post = await response.json();
-
-  return {
-    props: { post },
-  };
-}
-
-export default function PostPage({ post }: Props) {
-  return (
-    <article>
-      <h1>{post.title}</h1>
-      <p>{post.content}</p>
-    </article>
-  );
-}
-```
-
-### Static Site Generation
-
-Pre-render pages at build time:
-
-```typescript
-import type { DataContext, DataResult, StaticPathsResult } from "#data";
-
-// Generate static paths at build time
-export async function getStaticPaths(): Promise<StaticPathsResult> {
-  const response = await fetch("https://api.example.com/posts");
-  const posts = await response.json();
-
-  const paths = posts.map((post: { id: string }) => ({
-    params: { id: post.id },
-  }));
-
-  return {
-    paths,
-    fallback: false, // or 'blocking' or true
-  };
-}
-
-// Fetch data for each path at build time
-export async function getStaticProps(
-  context: DataContext,
-): Promise<DataResult<Props>> {
-  const { params } = context;
-
-  const response = await fetch(`https://api.example.com/posts/${params.id}`);
-  const post = await response.json();
-
-  return {
-    props: { post },
-    revalidate: 60, // Revalidate every 60 seconds (ISR)
-  };
-}
-```
-
-### Using DataFetcher Programmatically
-
-```typescript
-import { DataFetcher } from "#data";
-import { runtime } from "veryfront/platform";
-
-const adapter = await runtime.get();
-const fetcher = new DataFetcher({
-  projectDir: "./my-app",
-  adapter,
-});
-
-// Fetch server data
-const result = await fetcher.fetchServerData({
-  slug: "about",
-  params: {},
-  query: new URLSearchParams(),
-  req: request,
-});
-
-// Fetch static data
-const staticResult = await fetcher.fetchStaticData({
-  slug: "blog/post-1",
-  params: { id: "post-1" },
-});
-
-// Generate static paths
-const paths = await fetcher.fetchStaticPaths("blog/[id]");
-```
-
-## Key Concepts
-
-### 1. Data Context
-
-Every data fetching function receives a context object:
-
-```typescript
+```ts
 interface DataContext {
-  params: Record<string, string>; // Route parameters
-  query: URLSearchParams; // Query parameters
-  req?: Request; // Original request (SSR only)
-  slug: string; // Page slug
+  params: Record<string, string | string[]>;
+  query: URLSearchParams;
+  request: Request;
+  url: URL;
 }
 ```
 
-### 2. Data Result
+`getStaticData` receives only `params` and `url`. Request-specific state is not
+available to a static loader.
 
-Data fetching functions return a result object:
+```ts
+interface PageWithData<Props = unknown> {
+  default: unknown;
+  getServerData?: (
+    context: DataContext,
+  ) => DataResult<Props> | Promise<DataResult<Props>>;
+  getStaticData?: (
+    context: Pick<DataContext, "params" | "url">,
+  ) => DataResult<Props> | Promise<DataResult<Props>>;
+  getStaticPaths?: () => StaticPathsResult | Promise<StaticPathsResult>;
+}
+```
 
-```typescript
-interface DataResult<T = any> {
-  props?: T; // Props to pass to component
-  redirect?: { // Redirect response
+A data result can contain page props or a routing control result:
+
+```ts
+interface DataResult<Props = unknown> {
+  props?: Props;
+  redirect?: {
     destination: string;
     permanent?: boolean;
   };
-  notFound?: boolean; // Return 404
-  revalidate?: number; // ISR revalidation (seconds)
+  notFound?: boolean;
+  revalidate?: number | false;
 }
 ```
 
-### 3. Response Helpers
+Return one active outcome per invocation: defined `props`, defined `redirect`,
+or `notFound: true`. Returning more than one rejects with `TypeError`.
+`notFound: false` is inactive and may accompany props. The boundary snapshots
+the supported top-level fields once and drops unknown fields. Use `notFound()`
+and `redirect()` instead of assembling control objects manually. The helpers
+can be returned or thrown. Every other thrown value remains an error.
 
-Convenience functions for common responses:
+Use finite, non-negative seconds for `revalidate`. `false` and an omitted value
+disable background revalidation. Legacy numeric edge cases remain accepted for
+compatibility, but they are not a stable application contract.
 
-```typescript
-import { notFound, redirect } from "#data";
+`getStaticPaths` returns route parameters and an explicit fallback mode:
 
-// Return 404
-export async function getServerData(context: DataContext) {
-  const data = await fetchData(context.params.id);
-  if (!data) {
-    return notFound();
-  }
-  return { props: { data } };
-}
-
-// Redirect
-export async function getServerData(context: DataContext) {
-  if (!isAuthenticated(context.req)) {
-    return redirect("/login", { permanent: false });
-  }
-  return { props: { user } };
-}
+```ts
+const paths: StaticPathsResult = {
+  paths: [
+    { params: { slug: "hello" } },
+    { params: { slug: ["docs", "install"] } },
+  ],
+  fallback: false,
+};
 ```
 
-### 4. Caching
+`fallback` accepts `false`, `true`, or `"blocking"`. The framework validates
+every path and parameter, snapshots arrays and parameter records, and rejects
+malformed results. A nullish legacy result normalizes to
+`{ paths: [], fallback: false }`.
 
-DataFetcher includes built-in caching:
+## Internal programmatic execution
 
-```typescript
-const fetcher = new DataFetcher({
-  projectDir: "./app",
-  adapter,
-  cache: {
-    enabled: true,
-    ttl: 300, // 5 minutes
-    maxSize: 100,
-  },
-});
-```
+Framework code can use the internal class with page modules and explicit
+contexts. The optional legacy constructor argument is accepted for source
+compatibility and is ignored.
 
-## Advanced Usage
+```ts
+import { DataFetcher } from "#veryfront/data";
+import type { DataContext, PageWithData } from "#veryfront/data";
 
-### Incremental Static Regeneration (ISR)
+const pageModule: PageWithData<{ title: string }> = {
+  default: null,
+  getServerData: () => ({ props: { title: "Example" } }),
+};
 
-Revalidate static pages on demand:
+const url = new URL("https://example.com/posts/hello");
+const context: DataContext = {
+  params: { slug: "hello" },
+  query: url.searchParams,
+  request: new Request(url),
+  url,
+};
 
-```typescript
-export async function getStaticProps(context: DataContext) {
-  const data = await fetchData();
-
-  return {
-    props: { data },
-    revalidate: 60, // Revalidate every 60 seconds
-  };
-}
-```
-
-### Fallback Modes
-
-Control how missing pages are handled:
-
-```typescript
-export async function getStaticPaths() {
-  return {
-    paths: [{ params: { id: "1" } }],
-    fallback: "blocking", // Options: false, true, 'blocking'
-  };
+const fetcher = new DataFetcher();
+try {
+  const result = await fetcher.fetchData(pageModule, context, "development");
+  // Use result.
+} finally {
+  fetcher.destroy();
 }
 ```
 
-- `false`: Return 404 for non-pre-rendered paths
-- `true`: Show fallback, then fetch data client-side
-- `'blocking'`: Wait for data before showing page
+The optional second constructor argument configures internal execution policy.
+For example, `{ staticPathsTimeoutMs: 30_000 }` applies an explicit local
+deadline to `getStaticPaths`; omitted or zero preserves the historical
+unbounded behavior.
 
-### Type Inference
+The framework passes `FetchDataOptions` to establish execution identity and
+caller authority. Worker paths are required only when isolation is enabled:
 
-Infer prop types from data fetching functions:
+| Option               | Meaning                                                         |
+| -------------------- | --------------------------------------------------------------- |
+| `modulePath`         | Absolute path of the loaded page or layout module               |
+| `projectDir`         | Project root used to scope an isolated worker                   |
+| `projectId`          | Trusted identity used for breaker and fairness isolation        |
+| `cacheScope`         | Exact project, mode, and content version; `null` disables cache |
+| `signal`             | Caller cancellation; shared work may continue for other callers |
+| `workerScopeId`      | Host-owned worker lifetime scope                                |
+| `workerGenerationId` | Immutable source identity within `workerScopeId`                |
 
-```typescript
-import type { InferGetServerDataProps } from "#data";
+Do not derive `projectId` from an untrusted request header in custom
+integrations. Explicit scopes are validated, read once, and frozen before they
+are used for admission or cache publication. Project IDs must be non-empty
+strings of at most 1,024 characters; runtime values are never coerced.
 
-export async function getServerData(context: DataContext) {
-  return { props: { message: "Hello", count: 42 } };
-}
+`workerScopeId` and `workerGenerationId` are internal, paired options. Supplying
+only one rejects. When both are present, an isolated worker may be reused only
+for that exact scope and immutable source generation. Changing the generation
+selects a different worker and import graph. Reusing a generation ID for
+different source bytes violates the contract.
 
-// Automatically infer { message: string; count: number }
-type Props = InferGetServerDataProps<typeof getServerData>;
+Omitting both options selects a unique single-use worker, so an unversioned
+request cannot observe an import graph retained by an earlier request. The
+renderer owns one scope per project/content context. Module invalidation and
+context disposal retire every worker in that scope; active requests finish
+before retirement. Scope and generation IDs are validated as non-empty strings
+of at most 1,024 characters and are snapshotted before asynchronous work.
 
-export default function Page({ message, count }: Props) {
-  return <div>{message}: {count}</div>;
-}
-```
+`getStaticPaths(pageModule, { projectId, signal })` accepts the same trusted
+project identity and caller cancellation. `destroy()` is idempotent and
+prevents later use, but it cannot forcibly terminate project code that has
+already started.
 
-### Error Handling
+## Cache and revalidation behavior
 
-Handle errors gracefully:
+Static data caching requires an active production cache context established by
+the framework. Preview requests and standalone calls without that context skip
+the static cache.
 
-```typescript
-export async function getServerData(context: DataContext) {
-  try {
-    const data = await fetchData(context.params.id);
-    return { props: { data } };
-  } catch (error) {
-    console.error("Failed to fetch data:", error);
-    return notFound();
-  }
-}
-```
+Production cache identity includes:
 
-## Testing
+- project, mode, and content version;
+- page or layout module path;
+- the complete `url.href` (scheme, host, port, path, query, and fragment);
+- route parameters with canonical key ordering.
 
-Tests are located in `tests/integration/data/`:
+Each identity segment is independently framed, so delimiter-bearing module
+paths, routes, queries, and parameters cannot alias another entry. Raw cache
+identities are not attached to logs or tracing spans.
 
-```bash
-deno test tests/integration/data/
-```
+Concurrent cold misses for the same identity share one loader execution.
+Stale entries are served immediately while one background revalidation runs.
+If a background loader fails, times out, redirects, or returns not-found, the
+live cached page remains available. The same cache key waits at least 30
+seconds before another request may retry, preventing a failing dependency from
+being called once per incoming request. A refresh replaces or defers only the
+exact cache generation that started it; eviction, expiry, or a newer cold load
+cannot be overwritten by older background work.
 
-## Performance Tips
+Cached results expire from the in-memory cache after ten minutes and are
+returned by reference while present. Treat returned props as immutable.
+Mutating a cached result can affect later callers that share the same
+`DataFetcher`.
 
-1. **Use Static Generation** - Pre-render pages when possible
-2. **Enable Caching** - Cache data fetching results
-3. **Use ISR** - Revalidate static pages on demand
-4. **Minimize Data** - Only fetch what you need
-5. **Parallel Fetching** - Use `Promise.all()` for multiple requests
+The cache defaults to 500 entries and 50 MiB process-wide, with a ceiling of
+100 entries and 10 MiB for one project. All releases and content versions for
+the same project share that project quota. A project that reaches its ceiling
+evicts its own least-recently-used entries before it can displace a peer.
+Entry and retained-byte limits can be configured with:
 
-## Module Boundaries
+- `DATA_FETCHING_MAX_ENTRIES`
+- `DATA_FETCHING_MAX_ENTRIES_PER_PROJECT`
+- `DATA_FETCHING_MAX_SIZE_MB`
+- `DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT`
 
-The `data/` module has established boundaries to ensure clean architecture and maintainability.
+The per-project values must not exceed their global values. Malformed or
+out-of-range data-safety overrides fail during startup instead of silently
+using a default. If value sizing or cache publication fails, the valid fresh
+loader result is still returned uncached and a later request may retry.
 
-### Public API (via Barrel File)
+`clearCache()` clears the instance cache. `clearCache(pattern)` clears entries
+whose decoded project-scoped key contains the pattern. A full clear invalidates
+all older in-flight writes; a pattern clear invalidates only matching writes.
+Post-clear requests do not join invalidated single-flight work, and unrelated
+pattern writes remain eligible to populate their entries.
 
-**Always import from the barrel file** (`index.ts`):
+## Timeouts and isolation limits
 
-```typescript
-// CORRECT - Using import map alias
-import { DataFetcher, notFound, redirect } from "#data";
+`getServerData` and `getStaticData` have a 10-second local deadline. Request
+body preparation and isolated or direct `getServerData` execution share that
+single budget. Dependency timeouts count toward the project circuit breaker.
+Direct `getServerData` receives a request signal that combines caller
+cancellation with the framework deadline, so cooperative downstream work can
+stop. `getStaticData` has no signal in its public contract. Non-cooperative
+project code cannot be forcibly stopped after the caller rejects.
 
-// ALSO CORRECT - Using barrel file directly
-import { DataFetcher, notFound, redirect } from "./data/index.ts";
+`getStaticPaths` has no default local deadline for backward compatibility.
+Internal integrations can opt in with
+`DataFetcherOptions.staticPathsTimeoutMs`. The deadline covers both the hook
+and result validation. A timeout or caller abort stops waiting, but the
+framework retains the execution lease until late project code and validation
+settle.
 
-// WRONG - Deep import bypassing barrel file
-import { DataFetcher } from "./data/data-fetcher.ts";
-```
+All three hooks share a fail-closed process execution budget. Defaults are 512
+active hooks globally and 128 for one project. Configure them with
+`DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS` and
+`DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT`; malformed values fail
+startup, and the per-project value cannot exceed the global value. Capacity
+remains occupied for the raw producer lifetime, not merely until the HTTP
+caller disconnects or a timeout is reported. Capacity exhaustion returns the
+registered `service-overloaded` error.
 
-### Internal Files (Do Not Import Directly)
+When data worker isolation is enabled:
 
-These are implementation details and should not be imported from outside the module:
+- both `modulePath` and `projectDir` are mandatory; missing values reject before
+  project code runs;
+- an exact source integration policy is required;
+- request bodies are streamed into a bounded buffer;
+- malformed `Content-Length` values are rejected;
+- declared and actual body sizes are limited to 10 MiB;
+- one worker accepts at most 20 active requests by default, configured through
+  the strictly validated `WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER`;
+- rejected request bodies do not count as dependency failures in the project
+  circuit breaker;
+- host-side worker-pool shedding does not open a project's dependency circuit.
 
-- `fetching/data-fetcher.ts` - Internal DataFetcher implementation
-- `fetching/data-fetching-cache.ts` - Internal cache management
-- `fetching/helpers.ts` - Internal helper implementations
-- `fetching/server-data-fetcher.ts` - Internal server data fetching
-- `fetching/static-data-fetcher.ts` - Internal static data fetching
-- `fetching/static-paths-fetcher.ts` - Internal static path generation
-- `fetching/types.ts` - Internal type definitions
+## Internal files
 
-### Enforcing Boundaries
+| File                      | Responsibility                                      |
+| ------------------------- | --------------------------------------------------- |
+| `index.ts`                | Internal module barrel                              |
+| `data-fetcher.ts`         | Loader selection and orchestration                  |
+| `data-fetching-cache.ts`  | Project-scoped in-memory static-data cache          |
+| `server-data-fetcher.ts`  | Request-time execution and worker boundary          |
+| `static-data-fetcher.ts`  | Static cache, single-flight loads, and revalidation |
+| `static-paths-fetcher.ts` | Static path validation, admission, and deadline     |
+| `execution-admission.ts`  | Global and per-project hook capacity                |
+| `abort-utils.ts`          | Exact caller-abort composition and detached waiting |
+| `helpers.ts`              | Branded redirect and not-found results              |
+| `schemas/data.schema.ts`  | Data contract schemas and inferred types            |
+| `types.ts`                | Page loader interfaces and type utilities           |
 
-Run the deep import linter to check for violations:
-
-```bash
-deno task lint:ban-deep-imports
-```
-
-This will detect any imports that bypass the barrel file and suggest corrections.
-
-### Why Module Boundaries Matter
-
-1. **Encapsulation**: Internal implementation can be refactored without breaking external code
-2. **Clear API**: Public API is explicitly defined in one place
-3. **Maintainability**: Changes to internal files don't affect consumers
-4. **Discoverability**: Developers know exactly what's public by reading `index.ts`
-5. **Type Safety**: Export types are properly managed and versioned
-
-## Related Domains
-
-- **server/**: Server implementations that use data fetching
-- **rendering/**: Rendering system that integrates with data fetching
-- **build/**: Build system that generates static pages
-
-## Migration from Next.js
-
-Veryfront's data fetching API is compatible with Next.js:
-
-| Next.js              | Veryfront               |
-| -------------------- | ----------------------- |
-| `getServerSideProps` | `getServerData`         |
-| `getStaticProps`     | `getStaticProps` (same) |
-| `getStaticPaths`     | `getStaticPaths` (same) |
-| `notFound()`         | `notFound()` (same)     |
-| `redirect()`         | `redirect()` (same)     |
-
-Simply rename `getServerSideProps` to `getServerData` and use Veryfront's import aliases.
+Application code must use the root `"veryfront"` exports shown above. Do not
+publish or depend on source deep imports.

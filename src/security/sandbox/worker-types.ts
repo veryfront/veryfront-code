@@ -262,6 +262,14 @@ export interface WorkerPreparedModuleCapacityResponse {
 export interface WorkerPoolConfig {
   /** Maximum number of concurrent workers (default: 20) */
   maxPoolSize: number;
+  /**
+   * Maximum worker-protocol requests admitted concurrently to one worker
+   * (default: 20).
+   *
+   * Optional for compatibility with callers that construct the complete
+   * legacy config shape. The pool always resolves this to the default.
+   */
+  maxActiveRequestsPerWorker?: number;
   /** Idle timeout before evicting a worker (default: 300_000 = 5 minutes) */
   idleTimeoutMs: number;
   /** Per-request timeout inside the worker (default: 30_000) */
@@ -294,8 +302,12 @@ export const MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES = 16 * 1024 * 1024;
 /** Maximum number of distinct logical-route/source module identities per worker. */
 export const MAX_WORKER_RETAINED_MODULES = 128;
 
-export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
+/** Default concurrent worker-protocol request ceiling for one project worker. */
+export const DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER = 20;
+
+export const DEFAULT_WORKER_POOL_CONFIG: Required<WorkerPoolConfig> = {
   maxPoolSize: 20,
+  maxActiveRequestsPerWorker: DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER,
   idleTimeoutMs: 300_000,
   requestTimeoutMs: 30_000,
   healthCheckIntervalMs: 30_000,

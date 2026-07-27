@@ -13,5 +13,7 @@ export type {
   PageWithData,
   StaticPathsResult,
 } from "./types.ts";
-export { DataFetcher, type FetchDataOptions } from "./data-fetcher.ts";
+export { type DataCacheScope, snapshotDataCacheScope } from "./data-fetching-cache.ts";
+export { DataFetcher, type DataFetcherOptions, type FetchDataOptions } from "./data-fetcher.ts";
 export { notFound, redirect } from "./helpers.ts";
+export type { StaticPathsFetchOptions } from "./static-paths-fetcher.ts";

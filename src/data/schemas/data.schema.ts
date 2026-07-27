@@ -24,7 +24,7 @@ export const getDataResultSchema = defineSchema((v) =>
     props: v.unknown().optional(),
     redirect: getRedirectSchema().optional(),
     notFound: v.boolean().optional(),
-    revalidate: v.union([v.number(), v.literal(false)]).optional(),
+    revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
   })
 );
 
@@ -45,7 +45,7 @@ export const getCacheEntrySchema = defineSchema((v) =>
   v.object({
     data: getDataResultSchema(),
     timestamp: v.number(),
-    revalidate: v.union([v.number(), v.literal(false)]).optional(),
+    revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
   })
 );
 

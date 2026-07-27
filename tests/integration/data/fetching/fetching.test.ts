@@ -1204,7 +1204,7 @@ describe("DataFetcher - Comprehensive Tests", () => {
       });
     });
 
-    it("should handle URLs with different protocols (same cache key)", async () => {
+    it("should isolate URLs with different protocols", async () => {
       await withProductionContext(async () => {
         let callCount = 0;
 
@@ -1222,13 +1222,13 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(callCount, 1);
+        assertEquals(callCount, 2);
         assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+        assertEquals(getProp<number>(result2.props, "count"), 2);
       });
     });
 
-    it("should handle URLs with different hosts (same cache key)", async () => {
+    it("should isolate URLs with different hosts", async () => {
       await withProductionContext(async () => {
         let callCount = 0;
 
@@ -1246,9 +1246,9 @@ describe("DataFetcher - Comprehensive Tests", () => {
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(callCount, 1);
+        assertEquals(callCount, 2);
         assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+        assertEquals(getProp<number>(result2.props, "count"), 2);
       });
     });
 

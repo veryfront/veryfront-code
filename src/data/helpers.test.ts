@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isDataControlResult, notFound, redirect } from "./helpers.ts";
+import { isDataControlResult, notFound, redirect, validateDataResult } from "./helpers.ts";
 
 describe("helpers.ts", () => {
   describe("redirect", () => {
@@ -159,6 +159,72 @@ describe("helpers.ts", () => {
     it("keeps the brand off enumerable keys", () => {
       assertEquals(Object.keys(notFound()), ["notFound"]);
       assertEquals(Object.keys(redirect("/login")), ["redirect"]);
+    });
+
+    it("rejects multiple active outcomes", () => {
+      for (
+        const value of [
+          {
+            props: { id: 1 },
+            redirect: { destination: "/other" },
+          },
+          { props: { id: 1 }, notFound: true },
+          {
+            redirect: { destination: "/other" },
+            notFound: true,
+          },
+        ]
+      ) {
+        assertThrows(
+          () => validateDataResult(value, "getStaticData"),
+          TypeError,
+          "valid data result object",
+        );
+      }
+    });
+
+    it("rejects negative revalidation intervals", () => {
+      assertThrows(
+        () =>
+          validateDataResult(
+            { props: {}, revalidate: -1 },
+            "getStaticData",
+          ),
+        TypeError,
+        "valid data result object",
+      );
+    });
+
+    it("preserves compatible empty and inactive-control results", () => {
+      const empty = {};
+      const props = { props: { ok: true }, notFound: false };
+
+      assertEquals(validateDataResult(empty, "getServerData"), empty);
+      assertEquals(validateDataResult(props, "getServerData"), props);
+    });
+
+    it("snapshots accessor-backed outcomes exactly once", () => {
+      let notFoundReads = 0;
+      const unstable = {
+        redirect: { destination: "/stable" },
+        get notFound(): boolean {
+          notFoundReads++;
+          return notFoundReads > 1;
+        },
+      };
+
+      const normalized = validateDataResult(
+        unstable,
+        "getStaticData",
+      );
+
+      assertEquals(notFoundReads, 1);
+      assertEquals(normalized, {
+        redirect: { destination: "/stable" },
+        notFound: false,
+      });
+      assertEquals(unstable.notFound, true);
+      assertEquals(normalized.notFound, false);
     });
   });
 });

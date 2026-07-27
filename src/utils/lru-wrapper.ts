@@ -8,12 +8,15 @@ import { normalizeTimerDurationMs } from "./timer.ts";
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
 
-interface LRUOptions {
+interface LRUOptions<K, V> {
   maxEntries?: number;
   /** Byte cap for stored values. Defaults to the adapter's 50 MiB limit. */
   maxSizeBytes?: number;
   ttlMs?: number;
   cleanupIntervalMs?: number;
+  onEvict?: (key: K, value: V) => void;
+  estimateSizeOf?: (value: V) => number;
+  now?: () => number;
 }
 
 function requirePositiveFinite(value: number, option: string): number {
@@ -40,7 +43,7 @@ export class LRUCache<K, V> {
   private cleanupIntervalMs: number;
   private ttlMs?: number;
 
-  constructor(options: LRUOptions = {}) {
+  constructor(options: LRUOptions<K, V> = {}) {
     const ttlMs = options.ttlMs === undefined
       ? undefined
       : requirePositiveFinite(options.ttlMs, "ttlMs");
@@ -52,7 +55,19 @@ export class LRUCache<K, V> {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
       maxSizeBytes: options.maxSizeBytes,
       ttlMs,
-      onEvict: (internalKey) => this.releaseInternalKey(internalKey),
+      estimateSizeOf: options.estimateSizeOf as
+        | ((value: unknown) => number)
+        | undefined,
+      now: options.now,
+      onEvict: (internalKey, value) => {
+        const hasOriginalKey = this.originalKeys.has(internalKey);
+        const originalKey = hasOriginalKey ? this.originalKeys.get(internalKey) as K : undefined;
+        // Release the wrapper identity before notifying observers so a thrown
+        // callback cannot strand it and observers always see an evicted key
+        // as absent.
+        this.releaseInternalKey(internalKey);
+        if (hasOriginalKey) options.onEvict?.(originalKey as K, value as V);
+      },
     };
 
     this.adapter = new LRUCacheAdapter(adapterOptions);
@@ -113,10 +128,44 @@ export class LRUCache<K, V> {
     return internalKey === undefined ? undefined : this.adapter.get<V>(internalKey);
   }
 
-  set(key: K, value: V): void {
+  estimateSize(value: V): number {
+    return this.adapter.estimateSize(value);
+  }
+
+  set(key: K, value: V, precomputedSize?: number): void {
     const { internalKey, created } = this.getOrCreateInternalKey(key);
     try {
-      this.adapter.set(internalKey, value);
+      this.adapter.set(internalKey, value, undefined, undefined, precomputedSize);
+    } catch (error) {
+      if (created) this.releaseInternalKey(internalKey);
+      throw error;
+    }
+  }
+
+  /**
+   * Set one value after atomically preparing it, evicting the selected keys
+   * only after sizing and validation have succeeded.
+   */
+  setWithEvictions(
+    key: K,
+    value: V,
+    keysToEvict: readonly K[],
+    precomputedSize: number,
+  ): void {
+    const { internalKey, created } = this.getOrCreateInternalKey(key);
+    const internalKeysToEvict: string[] = [];
+    for (const keyToEvict of keysToEvict) {
+      const candidate = this.internalKeys.get(keyToEvict);
+      if (candidate !== undefined) internalKeysToEvict.push(candidate);
+    }
+
+    try {
+      this.adapter.setWithEvictions(
+        internalKey,
+        value,
+        internalKeysToEvict,
+        precomputedSize,
+      );
     } catch (error) {
       if (created) this.releaseInternalKey(internalKey);
       throw error;

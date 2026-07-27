@@ -1,10 +1,21 @@
-import type { CacheManager } from "./data-fetching-cache.ts";
-import { isDataControlResult, toDataControlResult } from "./helpers.ts";
-import type { DataContext, DataResult, PageWithData } from "./types.ts";
+import {
+  type CacheManager,
+  dataCacheKeyMatches,
+  type DataCacheMatchOptions,
+  type DataCacheScope,
+  snapshotDataCacheScope,
+} from "./data-fetching-cache.ts";
+import {
+  cloneStaticDataContext,
+  isDataControlResult,
+  toDataControlResult,
+  validateDataResult,
+} from "./helpers.ts";
+import type { CacheEntry, DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
-import { getSemaphore } from "#veryfront/utils/semaphore.ts";
+import { getSemaphore, type Semaphore } from "#veryfront/utils/semaphore.ts";
 import {
   MAX_CONCURRENT_REVALIDATIONS,
   REVALIDATION_PER_PROJECT_LIMIT,
@@ -13,6 +24,14 @@ import {
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import {
+  type DataExecutionAdmission,
+  defaultDataExecutionAdmission,
+} from "./execution-admission.ts";
+import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
+import { requireDataProjectId } from "./project-identity.ts";
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
@@ -29,14 +48,24 @@ const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALI
  * projects revalidating concurrently, not the total number of projects seen.
  */
 const projectRevalidationCounts = new Map<string, number>();
+const DEFAULT_REVALIDATION_FAILURE_RETRY_MS = 30_000;
+
+function getStaticDataCircuitBreaker(projectId: string) {
+  return getCircuitBreaker(`static-data-fetch:${hashString(projectId)}`, {
+    failureThreshold: 5,
+    resetTimeoutMs: 30_000,
+    successThreshold: 2,
+  });
+}
 
 /** Acquire a revalidation slot for a project (returns false if at per-project limit) */
-function acquireRevalidationSlot(projectId: string): boolean {
-  if (REVALIDATION_PER_PROJECT_LIMIT <= 0) return true;
-
+function acquireRevalidationSlot(projectId: string, limit: number): boolean {
   const current = projectRevalidationCounts.get(projectId) ?? 0;
-  if (current >= REVALIDATION_PER_PROJECT_LIMIT) return false;
+  if (limit > 0 && current >= limit) return false;
 
+  // A zero limit disables admission rejection, not accounting. Every
+  // successful acquisition must have a matching release even when fetcher
+  // instances with different limits share the process-level project map.
   projectRevalidationCounts.set(projectId, current + 1);
   return true;
 }
@@ -53,51 +82,186 @@ function releaseRevalidationSlot(projectId: string): void {
   projectRevalidationCounts.set(projectId, current - 1);
 }
 
-function resolveProjectId(context: DataContext, fallback: string): string {
-  return context.request?.headers?.get("x-project-id") ?? context.url?.hostname ?? fallback;
+type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
+
+interface CacheWriteToken {
+  readonly cacheKey: string;
+  valid: boolean;
+  expectedEntry: CacheEntry | null;
 }
 
-type StaticDataHandler = NonNullable<PageWithData["getStaticData"]>;
+interface PendingCacheWrite<T> {
+  readonly token: CacheWriteToken;
+  readonly promise: Promise<T>;
+}
+
+interface ProducerSettlement {
+  readonly settled: Promise<void>;
+  settle(): void;
+}
+
+function createProducerSettlement(): ProducerSettlement {
+  let resolveSettled!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    resolveSettled = resolve;
+  });
+  let complete = false;
+
+  return {
+    settled,
+    settle(): void {
+      if (complete) return;
+      complete = true;
+      resolveSettled();
+    },
+  };
+}
 
 export interface StaticDataFetchOptions {
   modulePath?: string;
+  /** Trusted project identity for circuit-breaker and fairness isolation */
+  projectId?: string;
+  /** Explicit immutable cache scope; null deliberately disables caching. */
+  cacheScope?: DataCacheScope | null;
+}
+
+export interface StaticDataFetcherOptions {
+  /** Override the process default. Used by embedded runtimes and deterministic tests. */
+  revalidationPerProjectLimit?: number;
+  /** Minimum delay after a failed background refresh. */
+  revalidationFailureRetryMs?: number;
+  /** @internal Process execution budget shared with server data hooks. */
+  executionAdmission?: DataExecutionAdmission;
+  /** @internal Deterministic seam for the process-wide revalidation budget. */
+  revalidationSemaphore?: Semaphore;
 }
 
 export class StaticDataFetcher {
-  private pendingRevalidations = new Map<string, Promise<void>>();
+  private pendingRevalidations = new Map<string, PendingCacheWrite<void>>();
+  private pendingFetches = new Map<string, PendingCacheWrite<DataResult>>();
+  private activeCacheWrites = new Set<CacheWriteToken>();
+  private readonly revalidationPerProjectLimit: number;
+  private readonly revalidationFailureRetryMs: number;
+  private readonly executionAdmission: DataExecutionAdmission;
+  private readonly revalidationSemaphore: Semaphore;
 
-  constructor(private cacheManager: CacheManager) {}
+  constructor(
+    private cacheManager: CacheManager,
+    options: StaticDataFetcherOptions = {},
+  ) {
+    const limit = options.revalidationPerProjectLimit ?? REVALIDATION_PER_PROJECT_LIMIT;
+    if (!Number.isSafeInteger(limit) || limit < 0) {
+      throw new RangeError("revalidationPerProjectLimit must be a non-negative safe integer");
+    }
+    this.revalidationPerProjectLimit = limit;
+
+    const retryMs = options.revalidationFailureRetryMs ??
+      DEFAULT_REVALIDATION_FAILURE_RETRY_MS;
+    if (!Number.isSafeInteger(retryMs) || retryMs < 0) {
+      throw new RangeError("revalidationFailureRetryMs must be a non-negative safe integer");
+    }
+    this.revalidationFailureRetryMs = retryMs;
+    this.executionAdmission = options.executionAdmission ??
+      defaultDataExecutionAdmission;
+    this.revalidationSemaphore = options.revalidationSemaphore ??
+      revalidationSemaphore;
+  }
 
   async fetch(
     pageModule: PageWithData,
     context: DataContext,
     options: StaticDataFetchOptions = {},
   ): Promise<DataResult> {
+    const rawProjectId = options.projectId;
+    const suppliedProjectId = rawProjectId === undefined
+      ? undefined
+      : requireDataProjectId(rawProjectId);
     const getStaticData = pageModule.getStaticData;
     if (typeof getStaticData !== "function") return { props: {} };
+    const suppliedScope = options.cacheScope;
+    const modulePath = options.modulePath;
+    const rawAmbientScope = tryGetCacheKeyContext();
+    const ambientScope = rawAmbientScope === null ? null : snapshotDataCacheScope(rawAmbientScope);
+    const rawScope = suppliedScope === undefined ? ambientScope : suppliedScope;
+    const authoritativeScope = rawScope === null ? null : snapshotDataCacheScope(rawScope);
+    if (
+      authoritativeScope &&
+      suppliedProjectId !== undefined &&
+      suppliedProjectId !== authoritativeScope.projectId
+    ) {
+      throw new TypeError(
+        "Static data projectId must match the authoritative cache scope projectId",
+      );
+    }
+    const trustedProjectId = suppliedProjectId ??
+      authoritativeScope?.projectId ??
+      ambientScope?.projectId;
 
-    const pathname = context.url?.pathname ?? "unknown";
-    const cacheKey = this.cacheManager.createCacheKey(context, options.modulePath);
+    // Snapshot every mutable identity field before the first await. The
+    // caller retains its context object and may reuse or mutate it as soon as
+    // fetch() returns; deriving a key now but cloning only inside the deferred
+    // loader could publish data computed for a different request under that
+    // original key.
+    const requestContext: DataContext = {
+      ...context,
+      ...cloneStaticDataContext(context),
+    };
+
+    const pathname = requestContext.url.pathname;
+    // Fairness and circuit identity must come from a trusted option or cache
+    // scope. Request headers, hostnames, and URLs are caller-controlled and
+    // could otherwise be rotated to bypass per-project limits.
+    const projectId = trustedProjectId ?? "default";
+    const cacheKey = this.cacheManager.createCacheKey(
+      requestContext,
+      modulePath,
+      authoritativeScope,
+    );
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
-      return withSpan("data.fetch_static", () => this.fetchFreshNoCache(getStaticData, context), {
-        "data.fetch_method": "getStaticData",
-        "data.pathname": pathname,
-        "data.cache": "disabled",
-      });
+      return withSpan(
+        "data.fetch_static",
+        () =>
+          this.fetchFreshNoCache(
+            getStaticData,
+            requestContext,
+            projectId,
+          ),
+        {
+          "data.fetch_method": "getStaticData",
+          "data.pathname": pathname,
+          "data.cache": "disabled",
+        },
+      );
     }
 
-    const cached = await withSpan(
-      SpanNames.DATA_CACHE_GET,
-      () => Promise.resolve(this.cacheManager.get(cacheKey)),
-      { "data.cache_key": cacheKey, "data.pathname": pathname },
-    );
+    // Register before the first await so clearCache() is a true barrier even
+    // when it runs before the cache lookup or loader microtask resumes.
+    const token = this.beginCacheWrite(cacheKey);
+    let cached: CacheEntry | null;
+    try {
+      cached = await withSpan(
+        SpanNames.DATA_CACHE_GET,
+        () => Promise.resolve(this.cacheManager.get(cacheKey)),
+        { "data.pathname": pathname },
+      );
+    } catch (error) {
+      this.releaseCacheWrite(token);
+      throw error;
+    }
+    token.expectedEntry = cached;
 
     if (!cached) {
       return withSpan(
         "data.fetch_static",
-        () => this.fetchFresh(getStaticData, context, cacheKey),
+        () =>
+          this.fetchFreshSingleFlight(
+            getStaticData,
+            requestContext,
+            projectId,
+            token,
+          ),
         {
           "data.fetch_method": "getStaticData",
           "data.pathname": pathname,
@@ -106,11 +270,15 @@ export class StaticDataFetcher {
       );
     }
 
-    if (this.cacheManager.shouldRevalidate(cached) && !this.pendingRevalidations.has(cacheKey)) {
-      this.pendingRevalidations.set(
-        cacheKey,
-        this.revalidateInBackground(getStaticData, context, cacheKey),
+    if (this.cacheManager.shouldRevalidate(cached)) {
+      this.startBackgroundRevalidation(
+        getStaticData,
+        requestContext,
+        projectId,
+        token,
       );
+    } else {
+      this.releaseCacheWrite(token);
     }
 
     return cached.data;
@@ -119,117 +287,243 @@ export class StaticDataFetcher {
   private createStaticDataContext(
     context: DataContext,
   ): Omit<DataContext, "request" | "query"> {
-    return { params: context.params, url: context.url };
+    return cloneStaticDataContext(context);
   }
 
-  private async executeStaticData(
+  private beginCacheWrite(cacheKey: string): CacheWriteToken {
+    const token: CacheWriteToken = {
+      cacheKey,
+      valid: true,
+      expectedEntry: null,
+    };
+    this.activeCacheWrites.add(token);
+    return token;
+  }
+
+  private releaseCacheWrite(token: CacheWriteToken): void {
+    token.valid = false;
+    this.activeCacheWrites.delete(token);
+  }
+
+  private isCacheWriteActive(token: CacheWriteToken): boolean {
+    return token.valid && this.activeCacheWrites.has(token);
+  }
+
+  private executeStaticData(
     getStaticData: StaticDataHandler,
     context: DataContext,
     timeoutMs: number,
     label: string,
+    onProducerSettled?: () => void,
   ): Promise<DataResult> {
-    try {
-      return await withTimeoutThrow(
-        Promise.resolve(getStaticData(this.createStaticDataContext(context))),
-        timeoutMs,
-        label,
-      );
-    } catch (error) {
-      // `throw notFound()` / `throw redirect(...)`: treat a thrown control
-      // result exactly like a returned one. Normalising at the one place every
-      // path runs the handler covers the cached path as well as the preview
-      // one, and keeps a 404 from counting against the caller's circuit
-      // breaker.
-      if (isDataControlResult(error)) return toDataControlResult(error);
-      throw error;
+    const startedAt = performance.now();
+    const producer = Promise.resolve()
+      .then(() => getStaticData(this.createStaticDataContext(context)))
+      .then((result) => {
+        if (performance.now() - startedAt >= timeoutMs) {
+          throw new TimeoutError(label, timeoutMs);
+        }
+        const validated = validateDataResult(result, "getStaticData");
+        if (performance.now() - startedAt >= timeoutMs) {
+          throw new TimeoutError(label, timeoutMs);
+        }
+        return validated;
+      }, (error) => {
+        if (
+          !(error instanceof TimeoutError) &&
+          performance.now() - startedAt >= timeoutMs
+        ) {
+          throw new TimeoutError(label, timeoutMs);
+        }
+        // `throw notFound()` / `throw redirect(...)`: treat a thrown control
+        // result exactly like a returned one. Normalising here keeps a routing
+        // decision outside dependency failure accounting.
+        if (isDataControlResult(error)) {
+          const control = validateDataResult(error, "getStaticData");
+          if (performance.now() - startedAt >= timeoutMs) {
+            throw new TimeoutError(label, timeoutMs);
+          }
+          return toDataControlResult(control);
+        }
+        throw error;
+      });
+
+    if (onProducerSettled) {
+      void producer.then(onProducerSettled, onProducerSettled);
     }
+
+    return withTimeoutThrow(
+      producer,
+      timeoutMs,
+      label,
+    ).catch((error) => {
+      if (
+        !(error instanceof TimeoutError) &&
+        performance.now() - startedAt >= timeoutMs
+      ) {
+        throw new TimeoutError(label, timeoutMs);
+      }
+      throw error;
+    });
   }
 
-  private storeCacheEntry(cacheKey: string, result: DataResult): void {
-    this.cacheManager.set(cacheKey, {
+  private storeCacheEntry(
+    result: DataResult,
+    token: CacheWriteToken,
+  ): void {
+    if (!this.isCacheWriteActive(token)) return;
+    this.cacheManager.replaceIfCurrent(token.cacheKey, token.expectedEntry, {
       data: result,
       timestamp: Date.now(),
       revalidate: result.revalidate,
     });
   }
 
+  private deferRevalidation(
+    token: CacheWriteToken,
+  ): void {
+    if (!this.isCacheWriteActive(token) || token.expectedEntry === null) return;
+    this.cacheManager.deferRevalidationIfCurrent(
+      token.cacheKey,
+      token.expectedEntry,
+      this.revalidationFailureRetryMs,
+    );
+  }
+
   private async fetchFreshNoCache(
     getStaticData: StaticDataHandler,
     context: DataContext,
+    projectId: string,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
     const start = performance.now();
 
+    let releaseAdmission: (() => void) | undefined;
+    let producerOwnsAdmission = false;
     try {
-      return await this.executeStaticData(
-        getStaticData,
-        context,
-        DATA_FETCH_TIMEOUT_MS,
-        `getStaticData for ${pathname}`,
-      );
+      releaseAdmission = this.executionAdmission.acquire(projectId);
+      return await getStaticDataCircuitBreaker(projectId).execute(() => {
+        const execution = this.executeStaticData(
+          getStaticData,
+          context,
+          DATA_FETCH_TIMEOUT_MS,
+          `getStaticData for ${pathname}`,
+          releaseAdmission,
+        );
+        producerOwnsAdmission = true;
+        return execution;
+      });
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
+
+      if (
+        !producerOwnsAdmission &&
+        error instanceof VeryfrontError &&
+        error.slug === SERVICE_OVERLOADED.slug
+      ) {
+        serverLogger.warn("DATA_FETCH_REJECTED execution capacity exhausted", {
+          pathname,
+        });
+        throw error;
+      }
 
       if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
           pathname,
           durationMs,
           timeoutMs: DATA_FETCH_TIMEOUT_MS,
+        });
+        throw error;
+      }
+
+      if (error instanceof CircuitBreakerOpen) {
+        serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
+          pathname,
+          projectKey: hashString(projectId),
+          retryAfterMs: error.nextAttemptMs,
         });
         throw error;
       }
 
       this.logError("DATA_FETCH_ERROR getStaticData failed", error, { pathname, durationMs });
       throw error;
+    } finally {
+      if (!producerOwnsAdmission) releaseAdmission?.();
     }
   }
 
   private async fetchFresh(
     getStaticData: StaticDataHandler,
     context: DataContext,
-    cacheKey: string,
+    projectId: string,
+    token: CacheWriteToken,
+    producerSettlement: ProducerSettlement,
   ): Promise<DataResult> {
     const pathname = context.url?.pathname ?? "unknown";
-    // Extract projectId from request headers (set by proxy) for proper circuit breaker isolation
-    const projectId = resolveProjectId(context, "default");
     const start = performance.now();
-
-    // Circuit breaker per project to prevent cascade failures
-    const circuitBreaker = getCircuitBreaker(`static-data-fetch:${projectId}`, {
-      failureThreshold: 5,
-      resetTimeoutMs: 30_000,
-      successThreshold: 2,
-    });
+    const projectKey = hashString(projectId);
+    let releaseAdmission: (() => void) | undefined;
+    let producerOwnsAdmission = false;
+    let producerHasSettled = false;
 
     try {
-      const result = await circuitBreaker.execute(() =>
-        this.executeStaticData(
+      releaseAdmission = this.executionAdmission.acquire(projectId);
+
+      const result = await getStaticDataCircuitBreaker(projectId).execute(() => {
+        const settleProducer = (): void => {
+          producerHasSettled = true;
+          producerSettlement.settle();
+        };
+        const execution = this.executeStaticData(
           getStaticData,
           context,
           DATA_FETCH_TIMEOUT_MS,
           `getStaticData for ${pathname}`,
-        )
-      );
+          settleProducer,
+        );
+        producerOwnsAdmission = true;
+        return execution;
+      });
 
-      await withSpan(
-        SpanNames.DATA_CACHE_SET,
-        () => {
-          this.storeCacheEntry(cacheKey, result);
-          return Promise.resolve();
-        },
-        { "data.cache_key": cacheKey, "data.revalidate": result.revalidate ?? 0 },
-      );
+      try {
+        await withSpan(
+          SpanNames.DATA_CACHE_SET,
+          () => {
+            this.storeCacheEntry(result, token);
+            return Promise.resolve();
+          },
+          { "data.revalidate": result.revalidate ?? 0 },
+        );
+      } catch (error) {
+        // Cache capacity or value-estimation limits must not turn valid
+        // project data into an application outage. The caller receives the
+        // fresh result and a later request may retry uncached.
+        this.logError("DATA_CACHE_SET_ERROR static data was not cached", error, {
+          pathname,
+        });
+      }
 
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
 
+      if (
+        !producerOwnsAdmission &&
+        error instanceof VeryfrontError &&
+        error.slug === SERVICE_OVERLOADED.slug
+      ) {
+        serverLogger.warn("DATA_FETCH_REJECTED execution capacity exhausted", {
+          pathname,
+          projectKey,
+        });
+        throw error;
+      }
+
       if (error instanceof CircuitBreakerOpen) {
         serverLogger.warn("DATA_FETCH_CIRCUIT_OPEN circuit breaker open, failing fast", {
           pathname,
-          projectId,
+          projectKey,
           retryAfterMs: error.nextAttemptMs,
-          cacheKey,
         });
         throw error;
       }
@@ -239,7 +533,6 @@ export class StaticDataFetcher {
           pathname,
           durationMs,
           timeoutMs: DATA_FETCH_TIMEOUT_MS,
-          cacheKey,
         });
         throw error;
       }
@@ -247,43 +540,186 @@ export class StaticDataFetcher {
       this.logError("DATA_FETCH_ERROR getStaticData failed", error, {
         pathname,
         durationMs,
-        cacheKey,
       });
       throw error;
+    } finally {
+      if (!producerOwnsAdmission) {
+        releaseAdmission?.();
+        producerSettlement.settle();
+      } else if (producerHasSettled) {
+        // Successful work retains its lease through cache publication and any
+        // project-controlled property traversal performed by size estimation.
+        releaseAdmission?.();
+      } else {
+        // A timeout-facing caller may leave non-cooperative project code
+        // running. Release only when that raw producer and validation settle.
+        void producerSettlement.settled.then(() => releaseAdmission?.());
+      }
     }
+  }
+
+  private fetchFreshSingleFlight(
+    getStaticData: StaticDataHandler,
+    context: DataContext,
+    projectId: string,
+    token: CacheWriteToken,
+  ): Promise<DataResult> {
+    const cacheKey = token.cacheKey;
+    const existing = this.pendingFetches.get(cacheKey);
+    if (existing && this.isCacheWriteActive(existing.token)) {
+      this.releaseCacheWrite(token);
+      return existing.promise;
+    }
+    if (existing && this.pendingFetches.get(cacheKey) === existing) {
+      this.pendingFetches.delete(cacheKey);
+    }
+
+    const producerSettlement = createProducerSettlement();
+
+    // Defer user code until the marker is installed. Synchronous handlers
+    // would otherwise finish before a concurrent request can observe it.
+    const pending = Promise.resolve().then(() =>
+      this.fetchFresh(
+        getStaticData,
+        context,
+        projectId,
+        token,
+        producerSettlement,
+      )
+    );
+
+    // A pre-clear lookup may resume after invalidation. Its original caller
+    // still receives the loader result, but publishing its invalid marker
+    // would make a post-clear request join obsolete work.
+    if (!this.isCacheWriteActive(token)) {
+      const cleanupDetached = (): void => this.releaseCacheWrite(token);
+      void pending.then(cleanupDetached, cleanupDetached);
+      return pending;
+    }
+
+    const record: PendingCacheWrite<DataResult> = { token, promise: pending };
+    this.pendingFetches.set(cacheKey, record);
+
+    const cleanup = (): void => {
+      if (this.pendingFetches.get(cacheKey) === record) {
+        this.pendingFetches.delete(cacheKey);
+      }
+      this.releaseCacheWrite(token);
+    };
+    void Promise.allSettled([
+      pending,
+      producerSettlement.settled,
+    ]).then(cleanup);
+
+    return pending;
+  }
+
+  private startBackgroundRevalidation(
+    getStaticData: StaticDataHandler,
+    context: DataContext,
+    projectId: string,
+    token: CacheWriteToken,
+  ): void {
+    const cacheKey = token.cacheKey;
+    const existing = this.pendingRevalidations.get(cacheKey);
+    if (existing && this.isCacheWriteActive(existing.token)) {
+      this.releaseCacheWrite(token);
+      return;
+    }
+    if (existing && this.pendingRevalidations.get(cacheKey) === existing) {
+      this.pendingRevalidations.delete(cacheKey);
+    }
+    if (!this.isCacheWriteActive(token) || token.expectedEntry === null) {
+      this.releaseCacheWrite(token);
+      return;
+    }
+
+    const producerSettlement = createProducerSettlement();
+
+    // Install the marker before the async work starts. In particular, a
+    // per-project-limit rejection may complete synchronously.
+    const pending = Promise.resolve()
+      .then(() =>
+        this.revalidateInBackground(
+          getStaticData,
+          context,
+          projectId,
+          token,
+          producerSettlement,
+        )
+      )
+      .catch((error) => {
+        this.logError(
+          "DATA_REVALIDATION_ERROR unexpected background revalidation failure",
+          error,
+          { pathname: context.url?.pathname ?? "unknown" },
+        );
+      });
+    const record: PendingCacheWrite<void> = { token, promise: pending };
+    this.pendingRevalidations.set(cacheKey, record);
+
+    const cleanup = (): void => {
+      if (this.pendingRevalidations.get(cacheKey) === record) {
+        this.pendingRevalidations.delete(cacheKey);
+      }
+      this.releaseCacheWrite(token);
+    };
+    void Promise.allSettled([
+      pending,
+      producerSettlement.settled,
+    ]).then(cleanup);
   }
 
   private async revalidateInBackground(
     getStaticData: StaticDataHandler,
     context: DataContext,
-    cacheKey: string,
+    projectId: string,
+    token: CacheWriteToken,
+    producerSettlement: ProducerSettlement,
   ): Promise<void> {
     const pathname = context.url?.pathname ?? "unknown";
-    // Use projectId from request headers for proper per-project fairness
-    const projectId = resolveProjectId(context, "unknown");
+    const projectKey = hashString(projectId);
 
     // Check per-project limit before acquiring global semaphore
-    if (!acquireRevalidationSlot(projectId)) {
+    if (!acquireRevalidationSlot(projectId, this.revalidationPerProjectLimit)) {
       serverLogger.debug("DATA_REVALIDATION_SKIPPED per-project limit reached", {
         pathname,
-        projectId,
-        cacheKey,
-        limit: REVALIDATION_PER_PROJECT_LIMIT,
+        projectKey,
+        limit: this.revalidationPerProjectLimit,
       });
-      this.pendingRevalidations.delete(cacheKey);
+      producerSettlement.settle();
       return;
     }
 
+    let releaseExecution: (() => void) | undefined;
+    let producerOwnsAdmission = false;
     try {
-      await revalidationSemaphore.acquire(async () => {
+      await this.revalidationSemaphore.acquire(async () => {
         const start = performance.now();
 
+        // Waiting for the lower-priority revalidation semaphore must not
+        // consume execution capacity needed by foreground data hooks.
+        // Acquire the shared execution lease only when this refresh can
+        // dispatch its producer immediately. Keep admission rejection outside
+        // the dependency-error handler so expected capacity pressure is
+        // classified by the outer catch.
+        releaseExecution = this.executionAdmission.acquire(projectId);
         try {
-          const result = await this.executeStaticData(
-            getStaticData,
-            context,
-            REVALIDATION_TIMEOUT_MS,
-            `getStaticData revalidation for ${pathname}`,
+          const result = await getStaticDataCircuitBreaker(projectId).execute(
+            () => {
+              const settleProducer = (): void => {
+                producerSettlement.settle();
+              };
+              const execution = this.executeStaticData(
+                getStaticData,
+                context,
+                REVALIDATION_TIMEOUT_MS,
+                `getStaticData revalidation for ${pathname}`,
+                settleProducer,
+              );
+              producerOwnsAdmission = true;
+              return execution;
+            },
           );
 
           // A background revalidation refreshes a page that is already being
@@ -293,50 +729,87 @@ export class StaticDataFetcher {
           // a control result carries no revalidate interval, so the entry
           // would never revalidate again either.
           if (result.notFound || result.redirect) {
+            this.deferRevalidation(token);
             serverLogger.warn(
               "DATA_REVALIDATION_CONTROL_RESULT background revalidation returned a control result, keeping the cached entry",
               {
                 pathname,
                 durationMs: Math.round(performance.now() - start),
-                cacheKey,
                 control: result.notFound ? "notFound" : "redirect",
               },
             );
             return;
           }
 
-          this.storeCacheEntry(cacheKey, result);
+          this.storeCacheEntry(result, token);
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
 
           if (error instanceof TimeoutError) {
+            this.deferRevalidation(token);
             serverLogger.error("DATA_REVALIDATION_TIMEOUT background revalidation timed out", {
               pathname,
               durationMs,
               timeoutMs: REVALIDATION_TIMEOUT_MS,
-              cacheKey,
             });
             return;
           }
 
+          if (error instanceof CircuitBreakerOpen) {
+            this.deferRevalidation(token);
+            serverLogger.warn(
+              "DATA_REVALIDATION_CIRCUIT_OPEN circuit breaker open, keeping the cached entry",
+              {
+                pathname,
+                projectKey,
+                retryAfterMs: error.nextAttemptMs,
+              },
+            );
+            return;
+          }
+
+          this.deferRevalidation(token);
           this.logError("DATA_REVALIDATION_ERROR background revalidation failed", error, {
             pathname,
             durationMs,
-            cacheKey,
           });
+        } finally {
+          // The timeout-facing revalidation has finished reporting, but
+          // non-cooperative project code may still be running. Keep the
+          // process-wide permit aligned with the same raw-producer lifetime as
+          // the execution and per-project admissions.
+          if (producerOwnsAdmission) {
+            await producerSettlement.settled;
+          }
         }
       });
-    } catch (_) {
-      // expected: semaphore timeout when too many concurrent revalidations
-      serverLogger.warn("DATA_REVALIDATION_SKIPPED semaphore timeout", {
-        pathname,
-        cacheKey,
-        activeRevalidations: revalidationSemaphore.active,
-        waitingRevalidations: revalidationSemaphore.waitingCount,
-      });
+    } catch (error) {
+      this.deferRevalidation(token);
+      if (
+        error instanceof VeryfrontError &&
+        error.slug === SERVICE_OVERLOADED.slug
+      ) {
+        serverLogger.warn("DATA_REVALIDATION_SKIPPED execution capacity exhausted", {
+          pathname,
+          projectKey,
+        });
+      } else {
+        // Expected when too many concurrent revalidations exhaust the bounded
+        // semaphore wait budget.
+        serverLogger.warn("DATA_REVALIDATION_SKIPPED semaphore timeout", {
+          pathname,
+          activeRevalidations: this.revalidationSemaphore.active,
+          waitingRevalidations: this.revalidationSemaphore.waitingCount,
+        });
+      }
     } finally {
+      // If a producer started, the semaphore callback above did not return
+      // until its raw lifetime ended; successful cache publication also
+      // completed before this point. Admission and per-project accounting
+      // therefore cover the complete background operation.
+      releaseExecution?.();
       releaseRevalidationSlot(projectId);
-      this.pendingRevalidations.delete(cacheKey);
+      producerSettlement.settle();
     }
   }
 
@@ -349,5 +822,25 @@ export class StaticDataFetcher {
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
     // Always log errors - silent failures hide production bugs
     serverLogger.error(message, context ?? {}, error);
+  }
+
+  /**
+   * Prevent cache work that began before an explicit invalidation from
+   * restoring stale values after the cache has been cleared.
+   */
+  invalidatePendingCacheWrites(
+    options: DataCacheMatchOptions = {},
+  ): void {
+    const matches = (cacheKey: string): boolean => dataCacheKeyMatches(cacheKey, options);
+
+    for (const token of this.activeCacheWrites) {
+      if (matches(token.cacheKey)) token.valid = false;
+    }
+    for (const cacheKey of this.pendingFetches.keys()) {
+      if (matches(cacheKey)) this.pendingFetches.delete(cacheKey);
+    }
+    for (const cacheKey of this.pendingRevalidations.keys()) {
+      if (matches(cacheKey)) this.pendingRevalidations.delete(cacheKey);
+    }
   }
 }

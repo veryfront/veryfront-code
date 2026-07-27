@@ -1,4 +1,4 @@
-import type { DataResult } from "./types.ts";
+import type { DataContext, DataResult } from "./types.ts";
 
 /**
  * Brand marking an object as produced by {@link notFound} or {@link redirect}.
@@ -80,4 +80,125 @@ export function isDataControlResult(value: unknown): value is DataResult {
 export function toDataControlResult(result: DataResult): DataResult {
   if (result.redirect) return { redirect: result.redirect };
   return { notFound: true };
+}
+
+/** Validate a project hook result before dependency health records success. */
+export function validateDataResult(
+  value: unknown,
+  hookName: "getServerData" | "getStaticData",
+): DataResult {
+  const fail = (): never => {
+    throw new TypeError(`${hookName} must return a valid data result object`);
+  };
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return fail();
+  }
+  const result = value as Record<string, unknown>;
+  // Read every application-controlled property once. Returning this original
+  // container would leave accessors or proxies able to change the selected
+  // outcome after validation and make server/static paths disagree.
+  const props = result.props;
+  const redirect = result.redirect;
+  const notFound = result.notFound;
+  const revalidate = result.revalidate;
+  let redirectDestination: string | undefined;
+  let redirectPermanent: boolean | undefined;
+
+  if (
+    redirect !== undefined &&
+    (redirect === null ||
+      typeof redirect !== "object" ||
+      Array.isArray(redirect))
+  ) {
+    return fail();
+  }
+  if (redirect !== undefined) {
+    const redirectRecord = redirect as Record<string, unknown>;
+    const destination = redirectRecord.destination;
+    const permanent = redirectRecord.permanent;
+    if (
+      typeof destination !== "string" ||
+      (permanent !== undefined && typeof permanent !== "boolean")
+    ) {
+      return fail();
+    }
+    redirectDestination = destination;
+    redirectPermanent = permanent as boolean | undefined;
+  }
+  if (notFound !== undefined && typeof notFound !== "boolean") {
+    return fail();
+  }
+  if (
+    revalidate !== undefined &&
+    revalidate !== false &&
+    (typeof revalidate !== "number" ||
+      !Number.isFinite(revalidate) ||
+      revalidate < 0)
+  ) {
+    return fail();
+  }
+
+  const activeOutcomes = Number(props !== undefined) +
+    Number(redirect !== undefined) +
+    Number(notFound === true);
+  if (activeOutcomes > 1) return fail();
+
+  const normalized: DataResult = {};
+  if (props !== undefined) normalized.props = props;
+  if (redirectDestination !== undefined) {
+    normalized.redirect = {
+      destination: redirectDestination,
+      ...(redirectPermanent !== undefined ? { permanent: redirectPermanent } : {}),
+    };
+  }
+  if (notFound !== undefined) normalized.notFound = notFound as boolean;
+  if (revalidate !== undefined) {
+    normalized.revalidate = revalidate as number | false;
+  }
+  return normalized;
+}
+
+function cloneDataParams(
+  params: DataContext["params"],
+): DataContext["params"] {
+  return Object.fromEntries(
+    Object.entries(params).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? [...value] : value,
+    ]),
+  );
+}
+
+/** Give each static hook mutable request-local values, never sibling aliases. */
+export function cloneStaticDataContext(
+  context: DataContext,
+): Omit<DataContext, "request" | "query"> {
+  return {
+    params: cloneDataParams(context.params),
+    url: new URL(context.url),
+  };
+}
+
+/**
+ * Clone mutable context fields for one server hook invocation.
+ *
+ * Direct hooks receive a Request clone so concurrent page/layout loaders have
+ * independent headers and body readers. Isolated execution deliberately
+ * retains the original Request because its bounded body preparation is shared
+ * once before dispatching either worker job.
+ */
+export function cloneServerDataContext(
+  context: DataContext,
+  options: { cloneRequest?: boolean } = {},
+): DataContext {
+  return {
+    params: cloneDataParams(context.params),
+    query: new URLSearchParams(context.query),
+    request: options.cloneRequest ? context.request.clone() : context.request,
+    url: new URL(context.url),
+  };
 }

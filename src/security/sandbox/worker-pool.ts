@@ -23,6 +23,7 @@ import { sanitizeDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
 import { basename, dirname, resolve as resolvePath } from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { ProjectWorker, type ProjectWorkerOptions } from "./project-worker.ts";
+import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerEnvAllowlist, buildWorkerPermissions } from "./worker-permissions.ts";
 import type {
   RenderSSRRequest,
@@ -65,6 +66,8 @@ interface PoolEntry {
   resolveRetired: () => void;
   retirementSettled: boolean;
 }
+
+type ResolvedWorkerPoolConfig = Required<WorkerPoolConfig>;
 
 /** @internal Construction seam for deterministic lifecycle tests. */
 export interface WorkerPoolDependencies {
@@ -155,6 +158,27 @@ function getHostEnvInteger(
   return numberIsSafeInteger(parsed) && parsed >= 1 && parsed <= maximum ? parsed : fallback;
 }
 
+function getStrictHostEnvInteger(
+  key: string,
+  fallback: number,
+  maximum = MAX_SAFE_INTEGER,
+): number {
+  const value = getHostEnv(key);
+  if (value === undefined) return fallback;
+
+  const parsed = numberFromString(value);
+  if (
+    !numberIsSafeInteger(parsed) ||
+    parsed < 1 ||
+    parsed > maximum
+  ) {
+    throw new RangeError(
+      `${key} must be a positive safe integer no greater than ${maximum}`,
+    );
+  }
+  return parsed;
+}
+
 function normalizeReadPaths(paths: Iterable<string | undefined>): string[] {
   const unique = new Set<string>();
   for (const path of paths) {
@@ -191,7 +215,7 @@ function isPreparedApiRequest(request: WorkerRequest): boolean {
 
 export class WorkerPool {
   private pool = new Map<string, PoolEntry>();
-  private readonly config: WorkerPoolConfig;
+  private readonly config: ResolvedWorkerPoolConfig;
   private readonly createWorker: (options: ProjectWorkerOptions) => ProjectWorker;
   private shuttingDown = false;
 
@@ -202,7 +226,22 @@ export class WorkerPool {
     config: Partial<WorkerPoolConfig> = {},
     dependencies: WorkerPoolDependencies = {},
   ) {
-    this.config = { ...DEFAULT_WORKER_POOL_CONFIG, ...config };
+    const maxActiveRequestsPerWorker = config.maxActiveRequestsPerWorker === undefined
+      ? DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker
+      : config.maxActiveRequestsPerWorker;
+    if (
+      !numberIsSafeInteger(maxActiveRequestsPerWorker) ||
+      maxActiveRequestsPerWorker < 1
+    ) {
+      throw new TypeError(
+        "Worker pool maxActiveRequestsPerWorker must be a positive safe integer",
+      );
+    }
+    this.config = {
+      ...DEFAULT_WORKER_POOL_CONFIG,
+      ...config,
+      maxActiveRequestsPerWorker,
+    };
     this.createWorker = dependencies.createWorker ?? ((options) => new ProjectWorker(options));
     this.startCleanup();
     this.startHealthChecks();
@@ -515,16 +554,20 @@ export class WorkerPool {
   /**
    * Retire every worker belonging to one logical execution scope.
    *
-   * Generation keys are deliberately constrained to the exact protocol shape
-   * `${scopeId}:generation:<digest>` so similarly prefixed scopes are not
-   * affected. Busy generations finish their current requests before eviction.
+   * Generation ownership is matched using the complete framed identity (or
+   * the exact parsed legacy API identity), never a raw scope prefix. Busy
+   * generations finish their current requests before eviction.
    */
   evictWorkerScope(scopeId: string): void {
     if (!scopeId) return;
 
-    const generationPrefix = `${scopeId}:generation:`;
     for (const [projectId, entry] of [...this.pool.entries()]) {
-      if (projectId !== scopeId && !projectId.startsWith(generationPrefix)) continue;
+      if (
+        projectId !== scopeId &&
+        !isWorkerGenerationInScope(projectId, scopeId)
+      ) {
+        continue;
+      }
       if (this.pool.get(projectId) !== entry) continue;
       this.requestRetirement(projectId, entry, "scope_eviction");
     }
@@ -540,12 +583,14 @@ export class WorkerPool {
   getStats(): {
     poolSize: number;
     maxPoolSize: number;
+    maxActiveRequestsPerWorker: number;
     memoryBudgetMb: number;
     memoryBudgetEnforced: false;
     workers: Record<string, {
       status: string;
       requestCount: number;
       hasPending: boolean;
+      activeRequests: number;
       retiring: boolean;
       idleMs: number;
       ageMs: number;
@@ -555,6 +600,7 @@ export class WorkerPool {
       status: string;
       requestCount: number;
       hasPending: boolean;
+      activeRequests: number;
       retiring: boolean;
       idleMs: number;
       ageMs: number;
@@ -566,6 +612,7 @@ export class WorkerPool {
         status: entry.worker.status,
         requestCount: entry.worker.requestCount,
         hasPending: entry.worker.hasPendingRequests,
+        activeRequests: entry.activeRequests,
         retiring: entry.retirementRequested,
         idleMs: now - entry.lastAccessedAt,
         ageMs: now - entry.createdAt,
@@ -575,6 +622,7 @@ export class WorkerPool {
     return {
       poolSize: this.pool.size,
       maxPoolSize: this.config.maxPoolSize,
+      maxActiveRequestsPerWorker: this.config.maxActiveRequestsPerWorker,
       memoryBudgetMb: this.config.memoryBudgetMb,
       memoryBudgetEnforced: false,
       workers,
@@ -767,6 +815,11 @@ export class WorkerPool {
     if (!entry || entry.worker !== worker || entry.retirementRequested) {
       throw this.createOverloadError(
         "Worker changed while the request was being admitted",
+      );
+    }
+    if (entry.activeRequests >= this.config.maxActiveRequestsPerWorker) {
+      throw this.createOverloadError(
+        `Worker active request capacity reached (${entry.activeRequests}/${this.config.maxActiveRequestsPerWorker})`,
       );
     }
 
@@ -1044,6 +1097,10 @@ export function getWorkerPool(): WorkerPool {
         "WORKER_MAX_POOL_SIZE",
         DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
       ),
+      maxActiveRequestsPerWorker: getStrictHostEnvInteger(
+        "WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER",
+        DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
+      ),
       idleTimeoutMs: getHostEnvInteger(
         "WORKER_IDLE_TIMEOUT_MS",
         DEFAULT_WORKER_POOL_CONFIG.idleTimeoutMs,
@@ -1072,6 +1129,16 @@ export function getWorkerPool(): WorkerPool {
     });
   }
   return _pool;
+}
+
+/**
+ * Retire an existing worker scope without constructing the lazy singleton.
+ *
+ * Rendering/data owners call this when their source-generation cache is
+ * invalidated or disposed. Active requests finish before retirement.
+ */
+export function evictWorkerScopeIfPresent(scopeId: string): void {
+  _pool?.evictWorkerScope(scopeId);
 }
 
 /** Reset the singleton and cached flags — for testing only */

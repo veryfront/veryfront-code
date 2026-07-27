@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getDistributedCacheTTL,
@@ -122,6 +122,74 @@ describe("constants/cache", () => {
       });
 
       assertEquals(constants.DEFAULT_LRU_MAX_ENTRIES, 42);
+    });
+
+    it("accepts internally consistent data fairness limits", async () => {
+      const constants = await importCacheConstantsWithEnv({
+        DATA_FETCHING_MAX_ENTRIES: "20",
+        DATA_FETCHING_MAX_ENTRIES_PER_PROJECT: "4",
+        DATA_FETCHING_MAX_SIZE_MB: "8",
+        DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT: "2",
+        DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS: "12",
+        DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT: "3",
+      });
+
+      assertEquals(constants.DATA_FETCHING_MAX_ENTRIES_PER_PROJECT, 4);
+      assertEquals(constants.DATA_FETCHING_MAX_SIZE_BYTES, 8 * 1024 * 1024);
+      assertEquals(
+        constants.DATA_FETCHING_MAX_SIZE_BYTES_PER_PROJECT,
+        2 * 1024 * 1024,
+      );
+      assertEquals(constants.DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS, 12);
+      assertEquals(
+        constants.DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT,
+        3,
+      );
+    });
+
+    it("fails closed for malformed data safety limits", async () => {
+      for (
+        const [key, value] of [
+          ["DATA_FETCHING_MAX_ENTRIES", "10junk"],
+          ["DATA_FETCHING_MAX_ENTRIES_PER_PROJECT", "10junk"],
+          ["DATA_FETCHING_MAX_SIZE_MB", "1.5"],
+          ["DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT", "-1"],
+          ["DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS", "0"],
+          [
+            "DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT",
+            "9007199254740992",
+          ],
+        ] as const
+      ) {
+        await assertRejects(
+          () => importCacheConstantsWithEnv({ [key]: value }),
+          RangeError,
+          key,
+        );
+      }
+    });
+
+    it("fails closed when a per-project data limit exceeds its global limit", async () => {
+      const cases: Array<Record<string, string>> = [
+        {
+          DATA_FETCHING_MAX_ENTRIES: "2",
+          DATA_FETCHING_MAX_ENTRIES_PER_PROJECT: "3",
+        },
+        {
+          DATA_FETCHING_MAX_SIZE_MB: "2",
+          DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT: "3",
+        },
+        {
+          DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS: "2",
+          DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT: "3",
+        },
+      ];
+      for (const overrides of cases) {
+        await assertRejects(
+          () => importCacheConstantsWithEnv(overrides),
+          RangeError,
+        );
+      }
     });
   });
 });

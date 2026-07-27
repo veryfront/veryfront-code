@@ -1,8 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { DataFetcher } from "./data-fetcher.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
+import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { DataExecutionAdmission } from "./execution-admission.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function createContext(overrides: Partial<DataContext> = {}): DataContext {
   return {
@@ -29,6 +38,51 @@ describe("DataFetcher", () => {
       const mockAdapter = { env: { get: () => undefined } };
       assertExists(new DataFetcher(mockAdapter));
     });
+
+    it("should forward an explicitly configured static-path deadline", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = new DataFetcher(undefined, {
+        staticPathsTimeoutMs: 5,
+        executionAdmission: admission,
+      });
+      let resolveRaw!: (result: {
+        paths: Array<{ params: Record<string, string> }>;
+        fallback: false;
+      }) => void;
+      const raw = new Promise<{
+        paths: Array<{ params: Record<string, string> }>;
+        fallback: false;
+      }>((resolve) => {
+        resolveRaw = resolve;
+      });
+      const pageModule: PageWithData = {
+        default: () => null,
+        getStaticPaths: () => raw,
+      };
+      const projectId = `paths-deadline-${crypto.randomUUID()}`;
+
+      try {
+        await assertRejects(
+          () => fetcher.getStaticPaths(pageModule, { projectId }),
+          TimeoutError,
+          "timed out after 5ms",
+        );
+        assertEquals(admission.snapshot(projectId), {
+          active: 1,
+          activeForProject: 1,
+        });
+      } finally {
+        resolveRaw({ paths: [], fallback: false });
+        for (let flush = 0; flush < 4; flush++) await Promise.resolve();
+      }
+      assertEquals(admission.snapshot(projectId), {
+        active: 0,
+        activeForProject: 0,
+      });
+    });
   });
 
   describe("fetchData", () => {
@@ -39,6 +93,58 @@ describe("DataFetcher", () => {
       const result = await fetcher.fetchData(pageModule, createContext());
 
       assertEquals(result.props, {});
+    });
+
+    it("rejects an invalid runtime project identity before selecting a hook", async () => {
+      const fetcher = new DataFetcher();
+
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            { default: () => null },
+            createContext(),
+            "production",
+            { projectId: 1 as unknown as string },
+          ),
+        TypeError,
+        "must be a non-empty string",
+      );
+    });
+
+    it("snapshots mutable loader exports before selection and dispatch", async () => {
+      const fetcher = new DataFetcher();
+      let serverReads = 0;
+      const serverModule = {
+        default: () => null,
+        get getServerData() {
+          const generation = ++serverReads;
+          return () => ({ props: { generation } });
+        },
+      } satisfies PageWithData<{ generation: number }>;
+      const serverResult = await fetcher.fetchData(
+        serverModule,
+        createContext(),
+        "development",
+      );
+      assertEquals(serverResult.props, { generation: 1 });
+      assertEquals(serverReads, 1);
+
+      let staticReads = 0;
+      const staticModule = {
+        default: () => null,
+        get getStaticData() {
+          const generation = ++staticReads;
+          return () => ({ props: { generation } });
+        },
+      } satisfies PageWithData<{ generation: number }>;
+      const staticResult = await fetcher.fetchData(
+        staticModule,
+        createContext(),
+        "production",
+        { cacheScope: null },
+      );
+      assertEquals(staticResult.props, { generation: 1 });
+      assertEquals(staticReads, 1);
     });
 
     describe("development mode", () => {
@@ -63,6 +169,25 @@ describe("DataFetcher", () => {
         const fetcher = new DataFetcher();
         const pageModule: PageWithData<{ source: string }> = {
           default: () => null,
+          getStaticData: () => ({ props: { source: "static" } }),
+        };
+
+        const result = await fetcher.fetchData(
+          pageModule,
+          createContext(),
+          "development",
+        );
+
+        assertEquals(getProps<{ source: string }>(result).source, "static");
+      });
+
+      it("should fallback to getStaticData when getServerData is not callable", async () => {
+        const fetcher = new DataFetcher();
+        const pageModule: PageWithData<{ source: string }> = {
+          default: () => null,
+          getServerData: "invalid" as unknown as PageWithData<
+            { source: string }
+          >["getServerData"],
           getStaticData: () => ({ props: { source: "static" } }),
         };
 
@@ -138,6 +263,25 @@ describe("DataFetcher", () => {
 
         assertEquals(getProps<{ source: string }>(result).source, "server");
       });
+
+      it("should use getServerData when getStaticData is not callable", async () => {
+        const fetcher = new DataFetcher();
+        const pageModule: PageWithData<{ source: string }> = {
+          default: () => null,
+          getServerData: () => ({ props: { source: "server" } }),
+          getStaticData: "invalid" as unknown as PageWithData<
+            { source: string }
+          >["getStaticData"],
+        };
+
+        const result = await fetcher.fetchData(
+          pageModule,
+          createContext(),
+          "production",
+        );
+
+        assertEquals(getProps<{ source: string }>(result).source, "server");
+      });
     });
 
     it("should default to development mode", async () => {
@@ -151,6 +295,424 @@ describe("DataFetcher", () => {
       const result = await fetcher.fetchData(pageModule, createContext());
 
       assertEquals(getProps<{ source: string }>(result).source, "server");
+    });
+
+    it("should reject an unsupported runtime mode", async () => {
+      const fetcher = new DataFetcher();
+      const pageModule: PageWithData = { default: () => null };
+
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            pageModule,
+            createContext(),
+            "staging" as "development",
+          ),
+        TypeError,
+        "Unsupported data fetching mode",
+      );
+    });
+
+    it("caches under an explicit production scope without ambient context", async () => {
+      const fetcher = new DataFetcher();
+      let calls = 0;
+      const pageModule: PageWithData<{ version: number }> = {
+        default: () => null,
+        getStaticData: () => ({
+          props: { version: ++calls },
+          revalidate: 3600,
+        }),
+      };
+      const context = createContext({
+        url: new URL("https://example.test/explicit-scope"),
+      });
+      const options = {
+        projectId: "explicit-project",
+        cacheScope: {
+          projectId: "explicit-project",
+          mode: "production" as const,
+          versionId: "rel-1",
+        },
+      };
+
+      const first = await fetcher.fetchData(
+        pageModule,
+        context,
+        "production",
+        options,
+      );
+      const second = await fetcher.fetchData(
+        pageModule,
+        context,
+        "production",
+        options,
+      );
+
+      assertEquals(getProps<{ version: number }>(first).version, 1);
+      assertEquals(getProps<{ version: number }>(second).version, 1);
+      assertEquals(calls, 1);
+    });
+
+    it("snapshots a mutable cache scope before admission and publication", async () => {
+      const fetcher = new DataFetcher();
+      const context = createContext({
+        url: new URL("https://example.test/scope-snapshot"),
+      });
+      let projectReads = 0;
+      const mutableScope = new Proxy(
+        {
+          projectId: "project-a",
+          mode: "production" as const,
+          versionId: "rel-1",
+        },
+        {
+          get(target, property, receiver) {
+            if (property === "projectId") {
+              projectReads++;
+              return projectReads === 1 ? "project-a" : "project-b";
+            }
+            return Reflect.get(target, property, receiver);
+          },
+        },
+      );
+      let projectACalls = 0;
+      let projectBCalls = 0;
+
+      const projectAResult = await fetcher.fetchData(
+        {
+          default: () => null,
+          getStaticData: () => ({
+            props: { source: `a-${++projectACalls}` },
+            revalidate: 3600,
+          }),
+        },
+        context,
+        "production",
+        { cacheScope: mutableScope },
+      );
+      const projectBResult = await fetcher.fetchData(
+        {
+          default: () => null,
+          getStaticData: () => ({
+            props: { source: `b-${++projectBCalls}` },
+            revalidate: 3600,
+          }),
+        },
+        context,
+        "production",
+        {
+          cacheScope: {
+            projectId: "project-b",
+            mode: "production",
+            versionId: "rel-1",
+          },
+        },
+      );
+
+      assertEquals(projectAResult.props, { source: "a-1" });
+      assertEquals(projectBResult.props, { source: "b-1" });
+      assertEquals(projectACalls, 1);
+      assertEquals(projectBCalls, 1);
+      assertEquals(projectReads, 1);
+    });
+
+    it("keeps ambient admission identity when an explicit null disables caching", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 2,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = new DataFetcher(undefined, {
+        executionAdmission: admission,
+      });
+      const projectA = {
+        projectId: `null-cache-a-${crypto.randomUUID()}`,
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      const projectB = {
+        projectId: `null-cache-b-${crypto.randomUUID()}`,
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let resolveA!: (result: DataResult) => void;
+      const rawA = new Promise<DataResult>((resolve) => {
+        resolveA = resolve;
+      });
+      const first = runWithCacheKeyContext(
+        projectA,
+        () =>
+          fetcher.fetchData(
+            {
+              default: () => null,
+              getStaticData: () => {
+                markStarted();
+                return rawA;
+              },
+            },
+            createContext(),
+            "production",
+            { cacheScope: null },
+          ),
+      );
+
+      try {
+        await started;
+        const peer = await runWithCacheKeyContext(
+          projectB,
+          () =>
+            fetcher.fetchData(
+              {
+                default: () => null,
+                getStaticData: () => ({ props: { project: "b" } }),
+              },
+              createContext(),
+              "production",
+              { cacheScope: null },
+            ),
+        );
+        assertEquals(peer.props, { project: "b" });
+        assertEquals(admission.snapshot(projectA.projectId), {
+          active: 1,
+          activeForProject: 1,
+        });
+        assertEquals(admission.snapshot(projectB.projectId), {
+          active: 1,
+          activeForProject: 0,
+        });
+        assertEquals(admission.snapshot("default").activeForProject, 0);
+
+        resolveA({ props: { project: "a" } });
+        assertEquals((await first).props, { project: "a" });
+      } finally {
+        resolveA({ props: { project: "a" } });
+        await first.catch(() => undefined);
+      }
+    });
+
+    it("rejects conflicting trusted and cache-scope project identities", async () => {
+      const fetcher = new DataFetcher();
+      let called = false;
+      const pageModule: PageWithData = {
+        default: () => null,
+        getStaticData: () => {
+          called = true;
+          return { props: {} };
+        },
+      };
+
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            pageModule,
+            createContext(),
+            "production",
+            {
+              projectId: "project-a",
+              cacheScope: {
+                projectId: "project-b",
+                mode: "production",
+                versionId: "rel-1",
+              },
+            },
+          ),
+        TypeError,
+        "must match",
+      );
+      assertEquals(called, false);
+    });
+
+    it("does not start work for a pre-aborted caller", async () => {
+      const fetcher = new DataFetcher();
+      const controller = new AbortController();
+      const reason = new Error("caller already disconnected");
+      controller.abort(reason);
+      let called = false;
+
+      const error = await assertRejects(() =>
+        fetcher.fetchData(
+          {
+            default: () => null,
+            getStaticData: () => {
+              called = true;
+              return { props: {} };
+            },
+          },
+          createContext(),
+          "production",
+          { signal: controller.signal },
+        )
+      );
+
+      assertStrictEquals(error, reason);
+      assertEquals(called, false);
+    });
+
+    it("lets one static caller abort without cancelling shared cold work", async () => {
+      const fetcher = new DataFetcher();
+      const scope = {
+        projectId: "shared-cold-project",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      let calls = 0;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let resolveLoad!: (
+        result: DataResult<{ version: number }>,
+      ) => void;
+      const load = new Promise<DataResult<{ version: number }>>((resolve) => {
+        resolveLoad = resolve;
+      });
+      const pageModule: PageWithData<{ version: number }> = {
+        default: () => null,
+        getStaticData: () => {
+          calls++;
+          markStarted();
+          return load;
+        },
+      };
+      const context = createContext({
+        url: new URL("https://example.test/shared-cold"),
+      });
+      const controller = new AbortController();
+      const reason = new Error("first caller disconnected");
+
+      const first = fetcher.fetchData(pageModule, context, "production", {
+        projectId: scope.projectId,
+        cacheScope: scope,
+        signal: controller.signal,
+      });
+      const second = fetcher.fetchData(pageModule, context, "production", {
+        projectId: scope.projectId,
+        cacheScope: scope,
+      });
+      await started;
+      controller.abort(reason);
+
+      const firstError = await assertRejects(() => first);
+      assertStrictEquals(firstError, reason);
+      resolveLoad({ props: { version: 1 }, revalidate: 3600 });
+      assertEquals(getProps<{ version: number }>(await second).version, 1);
+
+      const cached = await fetcher.fetchData(
+        pageModule,
+        context,
+        "production",
+        { projectId: scope.projectId, cacheScope: scope },
+      );
+      assertEquals(getProps<{ version: number }>(cached).version, 1);
+      assertEquals(calls, 1);
+    });
+
+    it("holds per-project admission until detached static work really settles", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 2,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = new DataFetcher(undefined, {
+        executionAdmission: admission,
+      });
+      const scope = {
+        projectId: "detached-static-project",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      let calls = 0;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const pageModule: PageWithData<{ call: number }> = {
+        default: () => null,
+        getStaticData: async () => {
+          calls++;
+          if (calls === 1) {
+            markStarted();
+            await firstGate;
+          }
+          return { props: { call: calls }, revalidate: 3600 };
+        },
+      };
+      const controller = new AbortController();
+      const reason = new Error("static caller left");
+      const first = fetcher.fetchData(
+        pageModule,
+        createContext({
+          url: new URL("https://example.test/detached-one"),
+        }),
+        "production",
+        {
+          projectId: scope.projectId,
+          cacheScope: scope,
+          signal: controller.signal,
+        },
+      );
+
+      try {
+        await started;
+        controller.abort(reason);
+        const callerError = await assertRejects(() => first);
+        assertStrictEquals(callerError, reason);
+
+        const overload = await assertRejects(() =>
+          fetcher.fetchData(
+            pageModule,
+            createContext({
+              url: new URL("https://example.test/detached-two"),
+            }),
+            "production",
+            {
+              projectId: scope.projectId,
+              cacheScope: scope,
+            },
+          )
+        );
+        assertEquals(overload instanceof VeryfrontError, true);
+        assertEquals((overload as VeryfrontError).slug, "service-overloaded");
+        assertEquals(calls, 1);
+
+        releaseFirst();
+        for (
+          let flush = 0;
+          admission.snapshot(scope.projectId).active !== 0 &&
+          flush < 100;
+          flush++
+        ) {
+          await Promise.resolve();
+        }
+        assertEquals(admission.snapshot(scope.projectId), {
+          active: 0,
+          activeForProject: 0,
+        });
+
+        const next = await fetcher.fetchData(
+          pageModule,
+          createContext({
+            url: new URL("https://example.test/detached-two"),
+          }),
+          "production",
+          {
+            projectId: scope.projectId,
+            cacheScope: scope,
+          },
+        );
+        assertEquals(next.props, { call: 2 });
+        assertEquals(calls, 2);
+      } finally {
+        releaseFirst();
+        await Promise.allSettled([first]);
+        fetcher.destroy();
+      }
     });
 
     it("should handle redirect from data function", async () => {
@@ -246,6 +808,305 @@ describe("DataFetcher", () => {
     it("should not throw with empty pattern", () => {
       const fetcher = new DataFetcher();
       fetcher.clearCache("");
+    });
+
+    it("should not let an in-flight load repopulate a cleared cache", async () => {
+      await runWithCacheKeyContext(
+        { projectId: "clear-race", mode: "production", versionId: "rel_test" },
+        async () => {
+          const fetcher = new DataFetcher();
+          let callCount = 0;
+          let resolveFirst!: (result: DataResult<{ version: number }>) => void;
+          const firstLoad = new Promise<DataResult<{ version: number }>>((resolve) => {
+            resolveFirst = resolve;
+          });
+          const pageModule: PageWithData<{ version: number }> = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return callCount === 1
+                ? firstLoad
+                : { props: { version: callCount }, revalidate: 3600 };
+            },
+          };
+          const context = createContext({
+            url: new URL("http://localhost/clear-race"),
+          });
+
+          const pending = fetcher.fetchData(pageModule, context, "production");
+          for (let i = 0; i < 20 && callCount === 0; i++) {
+            await Promise.resolve();
+          }
+          assertEquals(callCount, 1);
+
+          fetcher.clearCache();
+          resolveFirst({ props: { version: 1 }, revalidate: 3600 });
+          await pending;
+
+          const next = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(next).version, 2);
+          assertEquals(callCount, 2);
+        },
+      );
+    });
+
+    it("should let a post-clear load bypass the invalidated old singleflight", async () => {
+      await runWithCacheKeyContext(
+        {
+          projectId: "clear-singleflight-generation",
+          mode: "production",
+          versionId: "rel_test",
+        },
+        async () => {
+          const fetcher = new DataFetcher();
+          let callCount = 0;
+          let resolveOld!: (result: DataResult<{ version: number }>) => void;
+          const oldLoad = new Promise<DataResult<{ version: number }>>((resolve) => {
+            resolveOld = resolve;
+          });
+          const pageModule: PageWithData<{ version: number }> = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return callCount === 1 ? oldLoad : { props: { version: 2 }, revalidate: 3600 };
+            },
+          };
+          const context = createContext({
+            url: new URL("http://localhost/clear-singleflight-generation"),
+          });
+
+          const pendingOld = fetcher.fetchData(pageModule, context, "production");
+          for (let i = 0; i < 20 && callCount === 0; i++) await Promise.resolve();
+          assertEquals(callCount, 1);
+
+          fetcher.clearCache();
+          const fresh = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(fresh).version, 2);
+          assertEquals(callCount, 2);
+
+          resolveOld({ props: { version: 1 }, revalidate: 3600 });
+          assertEquals(
+            getProps<{ version: number }>(await pendingOld).version,
+            1,
+          );
+
+          const cached = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(cached).version, 2);
+          assertEquals(callCount, 2);
+        },
+      );
+    });
+
+    it("treats trailing-slash route invalidation as an in-flight write barrier", async () => {
+      const fetcher = new DataFetcher();
+      const scope = {
+        projectId: "route-clear-barrier",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      let calls = 0;
+      let markStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const pageModule: PageWithData<{ version: number }> = {
+        default: () => null,
+        getStaticData: async () => {
+          calls++;
+          if (calls === 1) {
+            markStarted();
+            await firstGate;
+          }
+          return { props: { version: calls }, revalidate: 3600 };
+        },
+      };
+      const context = createContext({
+        url: new URL("https://example.test/foo/"),
+      });
+      const options = { projectId: scope.projectId, cacheScope: scope };
+      const pending = fetcher.fetchData(
+        pageModule,
+        context,
+        "production",
+        options,
+      );
+
+      try {
+        await started;
+        fetcher.clearCacheForRoute(scope, "/foo");
+        releaseFirst();
+        assertEquals(
+          getProps<{ version: number }>(await pending).version,
+          1,
+        );
+
+        const fresh = await fetcher.fetchData(
+          pageModule,
+          context,
+          "production",
+          options,
+        );
+        assertEquals(getProps<{ version: number }>(fresh).version, 2);
+        assertEquals(calls, 2);
+      } finally {
+        releaseFirst();
+        await Promise.allSettled([pending]);
+        fetcher.destroy();
+      }
+    });
+
+    it("should invalidate a load even when clear runs before its loader starts", async () => {
+      await runWithCacheKeyContext(
+        {
+          projectId: "clear-before-loader",
+          mode: "production",
+          versionId: "rel_test",
+        },
+        async () => {
+          const fetcher = new DataFetcher();
+          let callCount = 0;
+          const pageModule: PageWithData<{ version: number }> = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { version: callCount }, revalidate: 3600 };
+            },
+          };
+          const context = createContext({
+            url: new URL("http://localhost/clear-before-loader"),
+          });
+
+          const pending = fetcher.fetchData(pageModule, context, "production");
+          fetcher.clearCache();
+          await pending;
+
+          const next = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(next).version, 2);
+          assertEquals(callCount, 2);
+        },
+      );
+    });
+
+    it("should not let an older revalidation overwrite data loaded after a clear", async () => {
+      await runWithCacheKeyContext(
+        {
+          projectId: "clear-revalidation-race",
+          mode: "production",
+          versionId: "rel_test",
+        },
+        async () => {
+          const fetcher = new DataFetcher();
+          let callCount = 0;
+          let resolveRevalidation!: (result: DataResult<{ version: number }>) => void;
+          const revalidation = new Promise<DataResult<{ version: number }>>((resolve) => {
+            resolveRevalidation = resolve;
+          });
+          const pageModule: PageWithData<{ version: number }> = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              if (callCount === 2) return revalidation;
+              return {
+                props: { version: callCount },
+                revalidate: callCount === 1 ? 0 : 3600,
+              };
+            },
+          };
+          const context = createContext({
+            url: new URL("http://localhost/clear-revalidation-race"),
+          });
+
+          await fetcher.fetchData(pageModule, context, "production");
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          await fetcher.fetchData(pageModule, context, "production");
+          for (let i = 0; i < 20 && callCount < 2; i++) {
+            await Promise.resolve();
+          }
+          assertEquals(callCount, 2);
+
+          fetcher.clearCache();
+          const fresh = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(fresh).version, 3);
+
+          resolveRevalidation({ props: { version: 2 }, revalidate: 3600 });
+          for (let i = 0; i < 20; i++) await Promise.resolve();
+
+          const cached = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(cached).version, 3);
+          assertEquals(callCount, 3);
+        },
+      );
+    });
+
+    it("should preserve unrelated in-flight cache writes during a pattern clear", async () => {
+      await runWithCacheKeyContext(
+        {
+          projectId: "pattern-clear-isolation",
+          mode: "production",
+          versionId: "rel_test",
+        },
+        async () => {
+          const fetcher = new DataFetcher();
+          let callCount = 0;
+          let resolveLoad!: (result: DataResult<{ version: number }>) => void;
+          const load = new Promise<DataResult<{ version: number }>>((resolve) => {
+            resolveLoad = resolve;
+          });
+          const pageModule: PageWithData<{ version: number }> = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return load;
+            },
+          };
+          const context = createContext({
+            url: new URL("http://localhost/products/one"),
+          });
+
+          const pending = fetcher.fetchData(pageModule, context, "production");
+          for (let i = 0; i < 20 && callCount === 0; i++) {
+            await Promise.resolve();
+          }
+          assertEquals(callCount, 1);
+
+          fetcher.clearCache("/blog");
+          resolveLoad({ props: { version: 1 }, revalidate: 3600 });
+          await pending;
+
+          const cached = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProps<{ version: number }>(cached).version, 1);
+          assertEquals(callCount, 1);
+        },
+      );
+    });
+  });
+
+  describe("lifecycle", () => {
+    it("destroys idempotently and rejects future work", async () => {
+      const fetcher = new DataFetcher();
+      fetcher.destroy();
+      fetcher.destroy();
+      fetcher.clearCache();
+      fetcher.clearCacheForProject("project");
+
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            { default: () => null },
+            createContext(),
+          ),
+        Error,
+        "destroyed",
+      );
+      await assertRejects(
+        () => fetcher.getStaticPaths({ default: () => null }),
+        Error,
+        "destroyed",
+      );
     });
   });
 

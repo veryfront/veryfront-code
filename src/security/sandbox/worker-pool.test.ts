@@ -25,7 +25,12 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from "./worker-types.ts";
-import { DEFAULT_WORKER_POOL_CONFIG, MAX_WORKER_BODY_BYTES } from "./worker-types.ts";
+import {
+  DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER,
+  DEFAULT_WORKER_POOL_CONFIG,
+  MAX_WORKER_BODY_BYTES,
+} from "./worker-types.ts";
+import { resolveWorkerGeneration, snapshotWorkerGenerationIdentity } from "./worker-generation.ts";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
 const testSuite = isDeno ? describe : describe.skip;
@@ -178,6 +183,14 @@ class ControlledWorker {
         body: null,
       },
     });
+  }
+
+  reject(id: string, error: Error): void {
+    const pending = this.pending.get(id);
+    assertExists(pending, `request "${id}" must be pending`);
+    this.pending.delete(id);
+    this.updateIdle();
+    pending.reject(error);
   }
 
   reachPreparedModuleCapacity(id: string): void {
@@ -496,6 +509,126 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
 
   afterEach(() => {
     pool?.shutdown();
+  });
+
+  it("rejects same-worker requests at the active ceiling and admits after settlement", async () => {
+    const controlled = createControlledPool({
+      maxActiveRequestsPerWorker: 2,
+    });
+    pool = controlled.pool;
+
+    const first = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
+    const second = pool.execute("scope-a", ["/tmp"], makeRequest("a-2"));
+    const workerA = latestWorker(controlled.workers, "scope-a");
+
+    const overload = await assertRejects(
+      () => pool.execute("scope-a", ["/tmp"], makeRequest("a-3")),
+      VeryfrontError,
+      "active request capacity reached",
+    );
+    assert(overload instanceof VeryfrontError);
+    assertEquals(overload.slug, "service-overloaded");
+    assertEquals(workerA.requestCount, 2);
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 2);
+
+    workerA.complete("a-1");
+    await first;
+
+    const third = pool.execute("scope-a", ["/tmp"], makeRequest("a-3"));
+    assertEquals(workerA.requestCount, 3);
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 2);
+
+    workerA.complete("a-2");
+    workerA.complete("a-3");
+    await Promise.all([second, third]);
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 0);
+  });
+
+  it("releases same-worker capacity after the worker request rejects", async () => {
+    const controlled = createControlledPool({
+      maxActiveRequestsPerWorker: 1,
+    });
+    pool = controlled.pool;
+
+    const failed = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
+    const workerA = latestWorker(controlled.workers, "scope-a");
+    await assertRejects(
+      () => pool.execute("scope-a", ["/tmp"], makeRequest("a-2")),
+      VeryfrontError,
+      "active request capacity reached",
+    );
+
+    workerA.reject("a-1", new Error("worker request failed"));
+    await assertRejects(() => failed, Error, "worker request failed");
+
+    const retry = pool.execute("scope-a", ["/tmp"], makeRequest("a-2"));
+    workerA.complete("a-2");
+    assertEquals((await retry).type, "result");
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 0);
+  });
+
+  it("shares the active ceiling with streams until worker protocol settlement", async () => {
+    const controlled = createControlledPool({
+      maxActiveRequestsPerWorker: 1,
+    });
+    pool = controlled.pool;
+
+    const stream = pool.executeStream("scope-a", ["/tmp"], makeSSRRequest("stream-a"));
+    const workerA = latestWorker(controlled.workers, "scope-a");
+
+    await assertRejects(
+      () => pool.execute("scope-a", ["/tmp"], makeRequest("a-1")),
+      VeryfrontError,
+      "active request capacity reached",
+    );
+    assertThrows(
+      () => pool.executeStream("scope-a", ["/tmp"], makeSSRRequest("stream-b")),
+      VeryfrontError,
+      "active request capacity reached",
+    );
+
+    workerA.completeStream("stream-a", [new Uint8Array([4, 2])]);
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 0);
+
+    const admitted = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
+    workerA.complete("a-1");
+    await admitted;
+    assertEquals(
+      new Uint8Array(await new Response(stream).arrayBuffer()),
+      new Uint8Array([4, 2]),
+    );
+  });
+
+  it("validates an explicitly configured active request ceiling", () => {
+    for (
+      const invalid of [
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        null as unknown as number,
+      ]
+    ) {
+      assertThrows(
+        () => new WorkerPool({ maxActiveRequestsPerWorker: invalid }),
+        TypeError,
+        "positive safe integer",
+      );
+    }
+
+    const compatible = new WorkerPool({
+      ...DEFAULT_WORKER_POOL_CONFIG,
+      maxActiveRequestsPerWorker: undefined,
+    });
+    try {
+      assertEquals(
+        compatible.getStats().maxActiveRequestsPerWorker,
+        DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER,
+      );
+    } finally {
+      compatible.shutdown();
+    }
   });
 
   it("rejects a new scope at capacity without interrupting the active scope", async () => {
@@ -1005,17 +1138,32 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
   });
 
   it("evicts an exact scope and only its controlled generation keys", async () => {
-    const controlled = createControlledPool({ maxPoolSize: 6 });
+    const controlled = createControlledPool({ maxPoolSize: 8 });
     pool = controlled.pool;
     const scope = "scope-a";
-    const busyGeneration = `${scope}:generation:digest-busy`;
-    const idleGeneration = `${scope}:generation:digest-idle`;
-    const unrelatedPrefix = "scope-a-other:generation:digest";
-    const malformedGeneration = `${scope}:generationish:digest`;
+    const nestedScope = `${scope}:generation:nested`;
+    const busyGeneration = (await resolveWorkerGeneration(
+      "data",
+      snapshotWorkerGenerationIdentity(scope, "release-busy"),
+    )).workerId;
+    const idleGeneration = (await resolveWorkerGeneration(
+      "ssr",
+      snapshotWorkerGenerationIdentity(scope, "release-idle"),
+    )).workerId;
+    const nestedGeneration = (await resolveWorkerGeneration(
+      "data",
+      snapshotWorkerGenerationIdentity(nestedScope, "release-nested"),
+    )).workerId;
+    const unrelatedGeneration = (await resolveWorkerGeneration(
+      "data",
+      snapshotWorkerGenerationIdentity("scope-a-other", "release-other"),
+    )).workerId;
+    const malformedGeneration = `${scope}:generation:${"z".repeat(64)}`;
 
     pool.getOrCreateWorker(scope, []);
     pool.getOrCreateWorker(idleGeneration, []);
-    pool.getOrCreateWorker(unrelatedPrefix, []);
+    pool.getOrCreateWorker(nestedGeneration, []);
+    pool.getOrCreateWorker(unrelatedGeneration, []);
     pool.getOrCreateWorker(malformedGeneration, []);
     const active = pool.execute(
       busyGeneration,
@@ -1030,7 +1178,8 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(duringRetirement.workers[scope], undefined);
     assertEquals(duringRetirement.workers[idleGeneration], undefined);
     assertEquals(duringRetirement.workers[busyGeneration]?.retiring, true);
-    assertExists(duringRetirement.workers[unrelatedPrefix]);
+    assertExists(duringRetirement.workers[nestedGeneration]);
+    assertExists(duringRetirement.workers[unrelatedGeneration]);
     assertExists(duringRetirement.workers[malformedGeneration]);
     assertEquals(busyWorker.terminateCalls, 0);
 
@@ -1038,6 +1187,23 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     await active;
     assertEquals(busyWorker.terminateCalls, 1);
     assertEquals(pool.getStats().workers[busyGeneration], undefined);
+  });
+
+  it("evicts legacy API generations by exact parsed scope", () => {
+    const controlled = createControlledPool({ maxPoolSize: 4 });
+    pool = controlled.pool;
+    const scope = "api:scope";
+    const nestedScope = `${scope}:generation:nested`;
+    const generation = `${scope}:generation:${"a".repeat(64)}`;
+    const nestedGeneration = `${nestedScope}:generation:${"b".repeat(64)}`;
+
+    pool.getOrCreateWorker(generation, []);
+    pool.getOrCreateWorker(nestedGeneration, []);
+
+    pool.evictWorkerScope(scope);
+
+    assertEquals(pool.getStats().workers[generation], undefined);
+    assertExists(pool.getStats().workers[nestedGeneration]);
   });
 
   it("replaces crashed and timed-out terminal generations without stale cleanup", () => {
@@ -1091,6 +1257,9 @@ describe("Feature flag caching", () => {
     } catch { /* ok */ }
     try {
       Deno.env.delete("WORKER_MAX_POOL_SIZE");
+    } catch { /* ok */ }
+    try {
+      Deno.env.delete("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER");
     } catch { /* ok */ }
     try {
       Deno.env.delete("WORKER_REQUEST_TIMEOUT_MS");
@@ -1175,32 +1344,51 @@ describe("Feature flag caching", () => {
     );
   });
 
-  it("ignores project overlays and invalid host values for pool limits", () => {
+  it("ignores project overlays and applies host pool limits", () => {
     __resetPoolForTests();
     Deno.env.set("WORKER_MAX_POOL_SIZE", "2");
+    Deno.env.set("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "3");
     Deno.env.set("WORKER_REQUEST_TIMEOUT_MS", "1234");
 
     runWithProjectEnv(
       {
         WORKER_MAX_POOL_SIZE: "999",
+        WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER: "999",
         WORKER_REQUEST_TIMEOUT_MS: "1",
       },
       () => {
         const singleton = getWorkerPool();
         const config = (singleton as unknown as { config: WorkerPoolConfig }).config;
         assertEquals(singleton.getStats().maxPoolSize, 2);
+        assertEquals(singleton.getStats().maxActiveRequestsPerWorker, 3);
         assertEquals(config.requestTimeoutMs, 1234);
       },
     );
 
     __resetPoolForTests();
     Deno.env.set("WORKER_MAX_POOL_SIZE", "0");
+    Deno.env.delete("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER");
     Deno.env.set("WORKER_REQUEST_TIMEOUT_MS", "Infinity");
 
     const singleton = getWorkerPool();
     const config = (singleton as unknown as { config: WorkerPoolConfig }).config;
     assertEquals(singleton.getStats().maxPoolSize, DEFAULT_WORKER_POOL_CONFIG.maxPoolSize);
+    assertEquals(
+      singleton.getStats().maxActiveRequestsPerWorker,
+      DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
+    );
     assertEquals(config.requestTimeoutMs, DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs);
+  });
+
+  it("fails closed for an invalid per-worker active-request limit", () => {
+    __resetPoolForTests();
+    Deno.env.set("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "0");
+
+    assertThrows(
+      () => getWorkerPool(),
+      RangeError,
+      "WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER must be a positive safe integer",
+    );
   });
 
   it("__resetPoolForTests clears cached flags", () => {

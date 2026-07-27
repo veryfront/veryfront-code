@@ -20,6 +20,9 @@ describe("LRUCache", () => {
       maxSizeBytes?: number;
       ttlMs?: number;
       cleanupIntervalMs?: number;
+      onEvict?: (key: K, value: V) => void;
+      estimateSizeOf?: (value: V) => number;
+      now?: () => number;
     },
   ): LRUCache<K, V> {
     const cache = new LRUCache<K, V>(options);
@@ -195,6 +198,61 @@ describe("LRUCache", () => {
       assertEquals(cache.has("exp2"), false);
       assertEquals(cache.get("new1"), 10);
       assertEquals(cache.get("new2"), 20);
+    });
+
+    it("validates prepared writes before selected eviction and releases key identity", () => {
+      const evicted: Array<[object, number]> = [];
+      const first = {};
+      const second = {};
+      const third = {};
+      const cache = createCache<object, number>({
+        maxEntries: 3,
+        maxSizeBytes: 20,
+        estimateSizeOf: (value) => value,
+        onEvict: (key, value) => evicted.push([key, value]),
+      });
+      cache.set(first, 3);
+      cache.set(second, 4);
+
+      assertThrows(
+        () => cache.setWithEvictions(third, 5, [first], Number.NaN),
+        RangeError,
+      );
+      assertEquals(cache.get(first), 3);
+      assertEquals(cache.get(second), 4);
+      assertEquals(cache.get(third), undefined);
+      assertEquals(evicted, []);
+
+      cache.setWithEvictions(third, 5, [first], 5);
+      assertEquals(cache.get(first), undefined);
+      assertEquals(cache.get(second), 4);
+      assertEquals(cache.get(third), 5);
+      assertEquals(evicted, [[first, 3]]);
+
+      cache.set(first, 6);
+      assertEquals(cache.get(first), 6);
+      assertEquals([...cache.keys()], [second, third, first]);
+    });
+
+    it("releases original-key bookkeeping even when an eviction observer throws", () => {
+      const first = {};
+      const second = {};
+      const cache = createCache<object, number>({
+        maxEntries: 1,
+        onEvict: () => {
+          throw new Error("observer failed");
+        },
+      });
+
+      cache.set(first, 1);
+      cache.set(second, 2);
+      assertEquals(cache.get(first), undefined);
+      assertEquals(cache.get(second), 2);
+
+      cache.set(first, 3);
+      assertEquals(cache.get(second), undefined);
+      assertEquals(cache.get(first), 3);
+      assertEquals(cache.size, 1);
     });
   });
 

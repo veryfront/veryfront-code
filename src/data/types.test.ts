@@ -9,6 +9,7 @@ import type {
   PageWithData,
   StaticPathsResult,
 } from "./types.ts";
+import { DataResultSchema } from "./schemas/index.ts";
 
 describe("types.ts", () => {
   describe("DataContext", () => {
@@ -80,6 +81,17 @@ describe("types.ts", () => {
       const result: DataResult = { props: {}, revalidate: false };
 
       assertEquals(result.revalidate, false);
+    });
+
+    it("rejects negative revalidation intervals at the schema boundary", () => {
+      assertEquals(
+        DataResultSchema.safeParse({ props: {}, revalidate: -1 }).success,
+        false,
+      );
+      assertEquals(
+        DataResultSchema.safeParse({ props: {}, revalidate: 0 }).success,
+        true,
+      );
     });
   });
 

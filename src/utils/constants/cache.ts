@@ -60,6 +60,28 @@ function getEnvInteger(
   return parsed;
 }
 
+function getStrictEnvInteger(
+  key: string,
+  fallback: number,
+  { min = 1, max }: EnvIntegerOptions,
+): number {
+  const value = getEnvString(key);
+  if (value == null) return fallback;
+
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new RangeError(
+      `${key} must be a base-10 integer between ${min} and ${max}`,
+    );
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new RangeError(`${key} must be between ${min} and ${max}`);
+  }
+  return parsed;
+}
+
 function getEnvCacheEntries(key: string, fallback: number): number {
   return getEnvInteger(key, fallback, { max: MAX_CONFIGURED_CACHE_ENTRIES });
 }
@@ -109,8 +131,47 @@ export const TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES = getEnvCacheEntries(
   Math.ceil(TSX_LAYOUT_MAX_ENTRIES / 10),
 );
 
-export const DATA_FETCHING_MAX_ENTRIES = getEnvCacheEntries("DATA_FETCHING_MAX_ENTRIES", 500);
+export const DATA_FETCHING_MAX_ENTRIES = getStrictEnvInteger(
+  "DATA_FETCHING_MAX_ENTRIES",
+  500,
+  { max: MAX_CONFIGURED_CACHE_ENTRIES },
+);
+export const DATA_FETCHING_MAX_ENTRIES_PER_PROJECT = getStrictEnvInteger(
+  "DATA_FETCHING_MAX_ENTRIES_PER_PROJECT",
+  Math.max(1, Math.ceil(DATA_FETCHING_MAX_ENTRIES / 5)),
+  { max: DATA_FETCHING_MAX_ENTRIES },
+);
+
+const dataFetchingMaxSizeMb = getStrictEnvInteger(
+  "DATA_FETCHING_MAX_SIZE_MB",
+  50,
+  { max: MAX_CONFIGURED_CACHE_SIZE_MB },
+);
+export const DATA_FETCHING_MAX_SIZE_BYTES = dataFetchingMaxSizeMb * BYTES_PER_MB;
+export const DATA_FETCHING_MAX_SIZE_BYTES_PER_PROJECT = getStrictEnvInteger(
+  "DATA_FETCHING_MAX_SIZE_MB_PER_PROJECT",
+  Math.max(1, Math.ceil(dataFetchingMaxSizeMb / 5)),
+  { max: dataFetchingMaxSizeMb },
+) * BYTES_PER_MB;
 export const DATA_FETCHING_TTL_MS = 10 * MS_PER_MINUTE;
+
+/**
+ * Process-wide data-hook execution budget.
+ *
+ * Render admission alone is insufficient because a disconnected caller may
+ * settle before its non-cooperative project hook. These limits stay occupied
+ * until the underlying hook actually settles.
+ */
+export const DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS = getStrictEnvInteger(
+  "DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS",
+  512,
+  { max: MAX_CONFIGURED_CONCURRENCY },
+);
+export const DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT = getStrictEnvInteger(
+  "DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS_PER_PROJECT",
+  Math.min(128, DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS),
+  { max: DATA_FETCHING_MAX_CONCURRENT_EXECUTIONS },
+);
 
 export const MDX_CACHE_TTL_PRODUCTION_MS = ONE_DAY_MS;
 export const MDX_CACHE_TTL_DEVELOPMENT_MS = 5 * MS_PER_MINUTE;

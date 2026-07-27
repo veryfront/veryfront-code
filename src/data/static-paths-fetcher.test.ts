@@ -1,11 +1,26 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
+import { StaticPathsFetcher, type StaticPathsFetcherOptions } from "./static-paths-fetcher.ts";
 import type { PageWithData, StaticPathsResult } from "./types.ts";
+import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { FakeTime } from "#std/testing/time";
+import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { DataExecutionAdmission } from "./execution-admission.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 
-function createFetcher(): StaticPathsFetcher {
-  return new StaticPathsFetcher();
+function createFetcher(options: StaticPathsFetcherOptions = {}): StaticPathsFetcher {
+  return new StaticPathsFetcher(options);
 }
 
 function createPageModule(
@@ -14,9 +29,58 @@ function createPageModule(
   return { default: () => null, ...(getStaticPaths ? { getStaticPaths } : {}) };
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 4; index++) {
+    await Promise.resolve();
+  }
+}
+
+async function assertOverloaded(
+  run: () => Promise<unknown>,
+): Promise<VeryfrontError> {
+  const error = await assertRejects(run);
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "service-overloaded");
+  return error;
+}
+
 describe("StaticPathsFetcher", () => {
   it("should create a new instance", () => {
     assertExists(createFetcher());
+  });
+
+  describe("constructor", () => {
+    it("should preserve the unbounded default and accept an explicit zero sentinel", () => {
+      assertExists(createFetcher());
+      assertExists(createFetcher({ timeoutMs: 0 }));
+    });
+
+    it("should reject invalid explicit timeout values", () => {
+      for (const timeoutMs of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => createFetcher({ timeoutMs }),
+          RangeError,
+          "Static paths timeout",
+        );
+      }
+
+      assertThrows(
+        () => createFetcher({ timeoutMs: MAX_TIMER_DELAY_MS + 1 }),
+        RangeError,
+        "Static paths timeout",
+      );
+    });
   });
 
   describe("fetch", () => {
@@ -27,6 +91,25 @@ describe("StaticPathsFetcher", () => {
       const result = await fetcher.fetch(pageModule);
 
       assertEquals(result, null);
+    });
+
+    it("rejects an invalid runtime project identity before hook dispatch", async () => {
+      const fetcher = createFetcher();
+      let calls = 0;
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            createPageModule(() => {
+              calls++;
+              return { paths: [], fallback: false };
+            }),
+            { projectId: 1 as unknown as string },
+          ),
+        TypeError,
+        "must be a non-empty string",
+      );
+      assertEquals(calls, 0);
     });
 
     it("should return paths from getStaticPaths", async () => {
@@ -145,6 +228,50 @@ describe("StaticPathsFetcher", () => {
       assertEquals(result.fallback, false);
     });
 
+    it("should return a fresh empty result for each nullish response", async () => {
+      const fetcher = createFetcher();
+      const pageModule = createPageModule(
+        () => undefined as unknown as StaticPathsResult,
+      );
+
+      const first = await fetcher.fetch(pageModule);
+      assertExists(first);
+      first.paths.push({ params: { polluted: "true" } });
+
+      const second = await fetcher.fetch(pageModule);
+      assertExists(second);
+      assertEquals(second.paths, []);
+      assertEquals(second.fallback, false);
+    });
+
+    it("rejects malformed static path result shapes at the hook boundary", async () => {
+      const malformed = [
+        { paths: "not-an-array", fallback: false },
+        { paths: [], fallback: "sometimes" },
+        { paths: [null], fallback: false },
+        { paths: [{}], fallback: false },
+        { paths: [{ params: null }], fallback: false },
+        {
+          paths: [{ params: { slug: ["docs", 42] } }],
+          fallback: false,
+        },
+      ];
+
+      for (const result of malformed) {
+        const fetcher = createFetcher();
+        await assertRejects(
+          () =>
+            fetcher.fetch(
+              createPageModule(
+                () => result as unknown as StaticPathsResult,
+              ),
+            ),
+          TypeError,
+          "valid static paths result object",
+        );
+      }
+    });
+
     it("should throw when getStaticPaths throws", async () => {
       const fetcher = createFetcher();
       const pageModule = createPageModule(() => {
@@ -156,6 +283,365 @@ describe("StaticPathsFetcher", () => {
         Error,
         "Failed to fetch paths from API",
       );
+    });
+
+    it("rejects a pre-aborted caller without admitting or invoking project code", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({ executionAdmission: admission });
+      const controller = new AbortController();
+      const reason = new DOMException("already gone", "AbortError");
+      let calls = 0;
+      controller.abort(reason);
+
+      const observed = await fetcher.fetch(
+        createPageModule(() => {
+          calls++;
+          return { paths: [], fallback: false };
+        }),
+        {
+          projectId: "pre-aborted-project",
+          signal: controller.signal,
+        },
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+      assertStrictEquals(observed, reason);
+      assertEquals(calls, 0);
+      assertEquals(admission.snapshot("pre-aborted-project"), {
+        active: 0,
+        activeForProject: 0,
+      });
+    });
+
+    it("should time out a getStaticPaths call that does not settle in time", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({
+        timeoutMs: 5,
+        executionAdmission: admission,
+      });
+      const gate = createDeferred<StaticPathsResult>();
+      const pageModule = createPageModule(() => gate.promise);
+
+      try {
+        await assertRejects(
+          () => fetcher.fetch(pageModule),
+          TimeoutError,
+          "timed out after 5ms",
+        );
+      } finally {
+        gate.resolve({ paths: [], fallback: false });
+        await flushMicrotasks();
+      }
+    });
+
+    it("uses explicit, ambient, and safe default project admission identities", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 2,
+        maxConcurrentPerProject: 2,
+      });
+      const fetcher = createFetcher({ executionAdmission: admission });
+
+      for (
+        const identity of [
+          { expected: "explicit-project", options: { projectId: "explicit-project" } },
+          { expected: "default", options: undefined },
+        ]
+      ) {
+        const gate = createDeferred<StaticPathsResult>();
+        const pending = fetcher.fetch(
+          createPageModule(() => gate.promise),
+          identity.options,
+        );
+        await flushMicrotasks();
+        assertEquals(admission.snapshot(identity.expected), {
+          active: 1,
+          activeForProject: 1,
+        });
+        gate.resolve({ paths: [], fallback: false });
+        await pending;
+      }
+
+      const ambientProject = "ambient-project";
+      const ambientGate = createDeferred<StaticPathsResult>();
+      const ambientPending = runWithCacheKeyContext(
+        {
+          projectId: ambientProject,
+          mode: "production",
+          versionId: "release-1",
+        },
+        () =>
+          fetcher.fetch(
+            createPageModule(() => ambientGate.promise),
+          ),
+      );
+      await flushMicrotasks();
+      assertEquals(admission.snapshot(ambientProject), {
+        active: 1,
+        activeForProject: 1,
+      });
+      ambientGate.resolve({ paths: [], fallback: false });
+      await ambientPending;
+      assertEquals(admission.snapshot(ambientProject), {
+        active: 0,
+        activeForProject: 0,
+      });
+    });
+
+    it("contains an exhausted project while an available peer project progresses", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 2,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({ executionAdmission: admission });
+      const gateA = createDeferred<StaticPathsResult>();
+      const gateB = createDeferred<StaticPathsResult>();
+      let callsA = 0;
+      let callsB = 0;
+      const pageA = createPageModule(() => {
+        callsA++;
+        return gateA.promise;
+      });
+      const pageB = createPageModule(() => {
+        callsB++;
+        return gateB.promise;
+      });
+
+      try {
+        const pendingA = fetcher.fetch(pageA, { projectId: "project-a" });
+        await flushMicrotasks();
+        assertEquals(callsA, 1);
+
+        await assertOverloaded(
+          () => fetcher.fetch(pageA, { projectId: "project-a" }),
+        );
+        assertEquals(callsA, 1);
+
+        const pendingB = fetcher.fetch(pageB, { projectId: "project-b" });
+        await flushMicrotasks();
+        assertEquals(callsB, 1);
+        assertEquals(admission.snapshot("project-a"), {
+          active: 2,
+          activeForProject: 1,
+        });
+        assertEquals(admission.snapshot("project-b"), {
+          active: 2,
+          activeForProject: 1,
+        });
+
+        gateA.resolve({ paths: [], fallback: false });
+        gateB.resolve({ paths: [], fallback: false });
+        await Promise.all([pendingA, pendingB]);
+        assertEquals(admission.snapshot("project-a"), {
+          active: 0,
+          activeForProject: 0,
+        });
+      } finally {
+        gateA.resolve({ paths: [], fallback: false });
+        gateB.resolve({ paths: [], fallback: false });
+        await flushMicrotasks();
+      }
+    });
+
+    it("retains timed-out capacity until the raw hook and validation settle", async () => {
+      const time = new FakeTime();
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({
+        timeoutMs: 5,
+        executionAdmission: admission,
+      });
+      const gate = createDeferred<StaticPathsResult>();
+      let validationSnapshot: ReturnType<DataExecutionAdmission["snapshot"]> | undefined;
+      const pending = fetcher.fetch(
+        createPageModule(() => gate.promise),
+        { projectId: "timed-out-project" },
+      );
+
+      try {
+        await time.tickAsync(5);
+        await assertRejects(
+          () => pending,
+          TimeoutError,
+          "timed out after 5ms",
+        );
+        assertEquals(admission.snapshot("timed-out-project"), {
+          active: 1,
+          activeForProject: 1,
+        });
+        await assertOverloaded(() =>
+          fetcher.fetch(
+            createPageModule(() => ({ paths: [], fallback: false })),
+            { projectId: "peer-project" },
+          )
+        );
+
+        gate.resolve({
+          get paths(): StaticPathsResult["paths"] {
+            validationSnapshot = admission.snapshot("timed-out-project");
+            return [];
+          },
+          fallback: false,
+        });
+        await time.tickAsync(0);
+        assertEquals(validationSnapshot, {
+          active: 1,
+          activeForProject: 1,
+        });
+        assertEquals(admission.snapshot("timed-out-project"), {
+          active: 0,
+          activeForProject: 0,
+        });
+
+        assertEquals(
+          await fetcher.fetch(
+            createPageModule(() => ({ paths: [], fallback: false })),
+            { projectId: "peer-project" },
+          ),
+          { paths: [], fallback: false },
+        );
+      } finally {
+        gate.resolve({ paths: [], fallback: false });
+        await time.tickAsync(0);
+        time.restore();
+      }
+    });
+
+    it("detaches an aborted caller while retaining raw execution capacity", async () => {
+      const time = new FakeTime();
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({
+        timeoutMs: 50,
+        executionAdmission: admission,
+      });
+      const gate = createDeferred<StaticPathsResult>();
+      const controller = new AbortController();
+      const reason = new DOMException("caller left", "AbortError");
+      const pending = fetcher.fetch(
+        createPageModule(() => gate.promise),
+        {
+          projectId: "aborted-project",
+          signal: controller.signal,
+        },
+      );
+      const observed = pending.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+      try {
+        await time.tickAsync(0);
+        controller.abort(reason);
+        await time.tickAsync(0);
+        assertStrictEquals(await observed, reason);
+        assertEquals(admission.snapshot("aborted-project"), {
+          active: 1,
+          activeForProject: 1,
+        });
+
+        await time.tickAsync(50);
+        assertEquals(admission.snapshot("aborted-project"), {
+          active: 1,
+          activeForProject: 1,
+        });
+        await assertOverloaded(() =>
+          fetcher.fetch(
+            createPageModule(() => ({ paths: [], fallback: false })),
+            { projectId: "peer-project" },
+          )
+        );
+
+        gate.resolve({ paths: [], fallback: false });
+        await time.tickAsync(0);
+        assertEquals(admission.snapshot("aborted-project"), {
+          active: 0,
+          activeForProject: 0,
+        });
+      } finally {
+        gate.resolve({ paths: [], fallback: false });
+        await time.tickAsync(0);
+        time.restore();
+      }
+    });
+
+    it("releases execution capacity after validation rejects", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({ executionAdmission: admission });
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            createPageModule(
+              () =>
+                ({
+                  paths: "invalid",
+                  fallback: false,
+                }) as unknown as StaticPathsResult,
+            ),
+            { projectId: "invalid-project" },
+          ),
+        TypeError,
+        "valid static paths result object",
+      );
+      assertEquals(admission.snapshot("invalid-project"), {
+        active: 0,
+        activeForProject: 0,
+      });
+    });
+
+    it("should replace an error thrown after the deadline with TimeoutError", async () => {
+      const fetcher = createFetcher({ timeoutMs: 1 });
+      const pageModule = createPageModule(() => {
+        const startedAt = performance.now();
+        while (performance.now() - startedAt < 10) {
+          // Deliberately block the event loop past the timer deadline.
+        }
+        throw new Error("late-original");
+      });
+
+      await assertRejects(
+        () => fetcher.fetch(pageModule),
+        TimeoutError,
+        "timed out after 1ms",
+      );
+    });
+
+    it("should not impose the data-hook timeout unless explicitly configured", async () => {
+      const time = new FakeTime();
+      try {
+        const fetcher = createFetcher();
+        const pageModule = createPageModule(
+          () =>
+            new Promise<StaticPathsResult>((resolve) => {
+              setTimeout(
+                () => resolve({ paths: [], fallback: false }),
+                DATA_FETCH_TIMEOUT_MS + 1,
+              );
+            }),
+        );
+
+        const pending = fetcher.fetch(pageModule);
+        await time.tickAsync(DATA_FETCH_TIMEOUT_MS + 1);
+
+        assertEquals(await pending, { paths: [], fallback: false });
+      } finally {
+        time.restore();
+      }
     });
 
     it("should handle multiple params per path", async () => {
@@ -173,6 +659,77 @@ describe("StaticPathsFetcher", () => {
       assertExists(result);
       assertEquals(result.paths[0]?.params.category, "tech");
       assertEquals(result.paths[0]?.params.slug, "post-1");
+    });
+
+    it("returns one hundred thousand paths as an isolated validated snapshot", async () => {
+      const fetcher = createFetcher();
+      const paths = Array.from({ length: 100_000 }, (_, index) => ({
+        params: { id: String(index) },
+      }));
+      const expected: StaticPathsResult = {
+        paths,
+        fallback: "blocking",
+      };
+      const pageModule = createPageModule(() => expected);
+
+      const result = await fetcher.fetch(pageModule);
+
+      assertNotStrictEquals(result, expected);
+      assertNotStrictEquals(result?.paths, paths);
+      assertEquals(result?.paths.length, 100_000);
+      assertEquals(result?.paths[99_999]?.params.id, "99999");
+    });
+
+    it("snapshots accessor-backed results once", async () => {
+      const paths = [{ params: { slug: ["docs", "intro"] } }];
+      let pathsReads = 0;
+      let fallbackReads = 0;
+      const unstable = {
+        get paths(): typeof paths | string {
+          pathsReads++;
+          return pathsReads === 1 ? paths : "invalid";
+        },
+        get fallback(): false | string {
+          fallbackReads++;
+          return fallbackReads === 1 ? false : "invalid";
+        },
+      };
+      const pageModule = createPageModule(
+        () => unstable as unknown as StaticPathsResult,
+      );
+
+      const result = await createFetcher().fetch(pageModule);
+
+      assertEquals(pathsReads, 1);
+      assertEquals(fallbackReads, 1);
+      assertEquals(result, {
+        paths: [{ params: { slug: ["docs", "intro"] } }],
+        fallback: false,
+      });
+      paths[0]!.params.slug.push("mutated");
+      assertEquals(result?.paths[0]?.params.slug, ["docs", "intro"]);
+    });
+
+    it("includes synchronous result validation in the explicit deadline", async () => {
+      const pageModule = createPageModule(
+        () =>
+          ({
+            get paths(): StaticPathsResult["paths"] {
+              const startedAt = performance.now();
+              while (performance.now() - startedAt < 10) {
+                // Deliberately block inside structural validation.
+              }
+              return [];
+            },
+            fallback: false,
+          }) as StaticPathsResult,
+      );
+
+      await assertRejects(
+        () => createFetcher({ timeoutMs: 1 }).fetch(pageModule),
+        TimeoutError,
+        "timed out after 1ms",
+      );
     });
   });
 });

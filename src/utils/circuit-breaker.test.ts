@@ -251,6 +251,60 @@ describe("CircuitBreaker", () => {
 
     assertEquals(cb.getState(), "CLOSED");
   });
+
+  it("does not reset or increment dependency health for a neutral error", async () => {
+    const cb = new CircuitBreaker({
+      failureThreshold: 3,
+      name: "neutral-closed",
+    });
+    const neutral = new Error("caller cancelled");
+
+    await ignoreRejection(
+      cb.execute(() => Promise.reject(new Error("failure one"))),
+    );
+    await ignoreRejection(
+      cb.execute(() => Promise.reject(new Error("failure two"))),
+    );
+    await assertRejects(
+      () =>
+        cb.execute(
+          () => Promise.reject(neutral),
+          { isNeutralError: (error) => error === neutral },
+        ),
+      Error,
+      "caller cancelled",
+    );
+    assertEquals(cb.getState(), "CLOSED");
+
+    await ignoreRejection(
+      cb.execute(() => Promise.reject(new Error("failure three"))),
+    );
+    assertEquals(cb.getState(), "OPEN");
+  });
+
+  it("leaves a half-open circuit undecided after a neutral probe", async () => {
+    const cb = new CircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 0,
+      successThreshold: 1,
+      name: "neutral-half-open",
+    });
+    await ignoreRejection(
+      cb.execute(() => Promise.reject(new Error("open"))),
+    );
+
+    const neutral = new DOMException("caller cancelled", "AbortError");
+    await assertRejects(() =>
+      cb.execute(
+        () => Promise.reject(neutral),
+        { isNeutralError: (error) => error === neutral },
+      )
+    );
+    assertEquals(cb.getState(), "HALF_OPEN");
+
+    assertEquals(await cb.execute(() => Promise.resolve("healthy")), "healthy");
+    assertEquals(cb.getState(), "CLOSED");
+  });
 });
 
 describe("CircuitBreakerOpen", () => {

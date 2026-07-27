@@ -8,11 +8,14 @@ import { encodeCacheKeyPercentSegment } from "./keys/segment-codec.ts";
 const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
 const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
 const IntrinsicWeakMap = WeakMap;
+const NumberParseInt = Number.parseInt;
 const NumberPrototypeToString = Number.prototype.toString;
 const ObjectFreeze = Object.freeze;
 const ReflectApply = Reflect.apply;
+const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypePadStart = String.prototype.padStart;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -356,6 +359,20 @@ export function releaseRegistryScopeOwner(requestContext: object): void {
 
 const PROJECT_SCOPED_CACHE_KEY_PREFIX = "project-scoped:v2";
 
+/** Parsed fields from an authenticated project-scoped cache-key envelope. */
+export interface ParsedProjectScopedKey {
+  prefix: string;
+  projectId: string;
+  mode: "production" | "preview";
+  versionId: string;
+  resourceKey: string;
+}
+
+interface ProjectScopedKeyFrame {
+  value: string;
+  end: number;
+}
+
 /**
  * Escape code units that UTF-8 transports cannot preserve injectively.
  *
@@ -394,6 +411,159 @@ function escapeProjectScopedKeyTransportText(value: string): string {
   return escaped + (ReflectApply(StringPrototypeSlice, value, [chunkStart]) as string);
 }
 
+function isCanonicalUpperHex(value: string): boolean {
+  if (value.length !== 4) return false;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = getStringCodeUnit(value, index);
+    const isDigit = codeUnit >= 0x30 && codeUnit <= 0x39;
+    const isUpperHex = codeUnit >= 0x41 && codeUnit <= 0x46;
+    if (!isDigit && !isUpperHex) return false;
+  }
+  return true;
+}
+
+/**
+ * Decode only the transport representation emitted by
+ * {@link escapeProjectScopedKeyTransportText}.
+ *
+ * The final round trip is intentional: accepting additional spellings would
+ * let malformed framed keys claim a valid project or source identity.
+ */
+function decodeProjectScopedKeyTransportText(value: string): string | null {
+  let decoded = "";
+  let chunkStart = 0;
+
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] !== "%") continue;
+
+    decoded += ReflectApply(
+      StringPrototypeSlice,
+      value,
+      [chunkStart, index],
+    ) as string;
+
+    if (
+      ReflectApply(
+        StringPrototypeSlice,
+        value,
+        [index, index + 3],
+      ) === "%25"
+    ) {
+      decoded += "%";
+      index += 2;
+      chunkStart = index + 1;
+      continue;
+    }
+
+    const escaped = ReflectApply(
+      StringPrototypeSlice,
+      value,
+      [index + 2, index + 6],
+    ) as string;
+    if (
+      value[index + 1] !== "u" ||
+      !isCanonicalUpperHex(escaped)
+    ) {
+      return null;
+    }
+    const codeUnit = NumberParseInt(escaped, 16);
+    if (codeUnit < 0xd800 || codeUnit > 0xdfff) return null;
+
+    decoded += ReflectApply(StringFromCharCode, String, [codeUnit]) as string;
+    index += 5;
+    chunkStart = index + 1;
+  }
+
+  decoded += ReflectApply(
+    StringPrototypeSlice,
+    value,
+    [chunkStart],
+  ) as string;
+  return escapeProjectScopedKeyTransportText(decoded) === value ? decoded : null;
+}
+
+function readProjectScopedKeyFrame(
+  value: string,
+  offset: number,
+): ProjectScopedKeyFrame | null {
+  const separator = ReflectApply(
+    StringPrototypeIndexOf,
+    value,
+    [":", offset],
+  ) as number;
+  if (separator < 0) return null;
+
+  const lengthText = ReflectApply(
+    StringPrototypeSlice,
+    value,
+    [offset, separator],
+  ) as string;
+  if (!/^\d+$/.test(lengthText)) return null;
+  const length = Number(lengthText);
+  if (
+    !Number.isSafeInteger(length) ||
+    String(length) !== lengthText
+  ) {
+    return null;
+  }
+
+  const start = separator + 1;
+  const end = start + length;
+  if (end > value.length) return null;
+  const encoded = ReflectApply(
+    StringPrototypeSlice,
+    value,
+    [start, end],
+  ) as string;
+  const decoded = decodeProjectScopedKeyTransportText(encoded);
+  return decoded === null ? null : { value: decoded, end };
+}
+
+/** True when a key claims the framed project-scoped transport format. */
+export function isProjectScopedKeyCandidate(key: string): boolean {
+  return ReflectApply(
+    StringPrototypeStartsWith,
+    key,
+    [`${PROJECT_SCOPED_CACHE_KEY_PREFIX}:`],
+  ) as boolean;
+}
+
+/**
+ * Parse one canonical project-scoped key.
+ *
+ * Returns `null` for both legacy keys and malformed v2 candidates. Call
+ * {@link isProjectScopedKeyCandidate} when the distinction matters.
+ */
+export function parseProjectScopedKey(
+  key: string,
+): ParsedProjectScopedKey | null {
+  if (!isProjectScopedKeyCandidate(key)) return null;
+
+  const fields: string[] = [];
+  let offset = PROJECT_SCOPED_CACHE_KEY_PREFIX.length + 1;
+  for (let index = 0; index < 5; index++) {
+    const frame = readProjectScopedKeyFrame(key, offset);
+    if (!frame) return null;
+    fields.push(frame.value);
+    offset = frame.end;
+    if (index < 4) {
+      if (key[offset] !== "|") return null;
+      offset++;
+    }
+  }
+  if (offset !== key.length) return null;
+
+  const mode = fields[2];
+  if (mode !== "production" && mode !== "preview") return null;
+  return {
+    prefix: fields[0]!,
+    projectId: fields[1]!,
+    mode,
+    versionId: fields[3]!,
+    resourceKey: fields[4]!,
+  };
+}
+
 /**
  * Frame one transport-safe string without relying on delimiter escaping.
  *
@@ -415,11 +585,7 @@ export function projectScopedKeyIncludesSearchText(
   key: string,
   searchText: string,
 ): boolean {
-  const isV2Key = ReflectApply(
-    StringPrototypeStartsWith,
-    key,
-    [`${PROJECT_SCOPED_CACHE_KEY_PREFIX}:`],
-  ) as boolean;
+  const isV2Key = isProjectScopedKeyCandidate(key);
   const representedSearchText = isV2Key
     ? escapeProjectScopedKeyTransportText(searchText)
     : searchText;

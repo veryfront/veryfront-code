@@ -19,6 +19,14 @@ const ARRAY_OVERHEAD_BYTES = 24;
 const MAP_OVERHEAD_BYTES = 48;
 const SET_OVERHEAD_BYTES = 40;
 const STRING_OVERHEAD_BYTES = 16;
+const DateNow = Date.now;
+
+interface PreparedSet {
+  readonly accessedAt: number;
+  readonly expiry: number | undefined;
+  readonly normalizedTags: string[] | undefined;
+  readonly valueSize: number;
+}
 
 function requirePositiveSafeInteger(value: number, option: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -177,6 +185,7 @@ export class LRUCacheAdapter implements CacheAdapter {
   private readonly maxSizeBytes: number;
   private readonly defaultTtlMs?: number;
   private readonly onEvict?: (key: string, value: unknown) => void;
+  private readonly now: () => number;
 
   constructor(options: LRUCacheOptions = {}) {
     this.maxEntries = requirePositiveSafeInteger(options.maxEntries ?? 1000, "maxEntries");
@@ -188,6 +197,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       ? undefined
       : requireCacheTtl(options.ttlMs, "ttlMs");
     this.onEvict = options.onEvict;
+    this.now = options.now ?? DateNow;
 
     const estimateSizeOf = options.estimateSizeOf ?? defaultSizeEstimator;
 
@@ -198,63 +208,92 @@ export class LRUCacheAdapter implements CacheAdapter {
     this.entryManager = new EntryManager(estimateSizeOf);
   }
 
-  private isExpired(entry: LRUEntry<unknown>, now = Date.now()): boolean {
+  private readNow(): number {
+    const now = this.now();
+    if (!Number.isSafeInteger(now)) {
+      throw new RangeError("Cache clock must return a safe integer timestamp");
+    }
+    return now;
+  }
+
+  private calculateExpiry(
+    ttlMs: number | undefined,
+    accessedAt: number,
+  ): number | undefined {
+    const effectiveTtlMs = ttlMs ?? this.defaultTtlMs;
+    if (effectiveTtlMs === undefined) return undefined;
+    const expiry = accessedAt + effectiveTtlMs;
+    if (!Number.isSafeInteger(expiry)) {
+      throw new RangeError("Cache expiry exceeds the safe integer range");
+    }
+    return expiry;
+  }
+
+  private isExpired(entry: LRUEntry<unknown>, now: number): boolean {
     return typeof entry.expiry === "number" && now >= entry.expiry;
   }
 
-  get<T>(key: string): T | undefined {
-    const node = this.store.get(key);
-    if (!node) return undefined;
-
-    if (this.isExpired(node.entry)) {
-      this.delete(key);
-      return undefined;
-    }
-
-    this.listManager.moveToFront(node);
-    return node.entry.value as T;
-  }
-
-  set<T>(key: string, value: T, ttlMs?: number, tags?: string[]): void {
+  private prepareSet<T>(
+    key: string,
+    value: T,
+    ttlMs: number | undefined,
+    tags: string[] | undefined,
+    precomputedSize: number | undefined,
+  ): PreparedSet {
     validateKey(key);
     if (ttlMs !== undefined) requireCacheTtl(ttlMs, "ttlMs");
     const normalizedTags = normalizeTags(tags);
-    const existingNode = this.store.get(key);
-    const valueSize = this.entryManager.estimateSize(value);
+    const valueSize = precomputedSize === undefined
+      ? this.entryManager.estimateSize(value)
+      : this.entryManager.requireValidSize(precomputedSize);
     if (valueSize > this.maxSizeBytes) {
       throw new RangeError(
         `Cache entry size ${valueSize} exceeds maxSizeBytes ${this.maxSizeBytes}`,
       );
     }
+    const accessedAt = this.readNow();
+    const expiry = this.calculateExpiry(ttlMs, accessedAt);
+    return { accessedAt, expiry, normalizedTags, valueSize };
+  }
+
+  private commitPreparedSet<T>(
+    key: string,
+    value: T,
+    ttlMs: number | undefined,
+    prepared: PreparedSet,
+  ): void {
+    const existingNode = this.store.get(key);
 
     if (existingNode) {
       this.currentSize += this.entryManager.updateExistingEntry(
         existingNode,
         value,
         ttlMs,
-        normalizedTags,
+        prepared.normalizedTags,
         this.defaultTtlMs,
         this.listManager,
         this.tagIndex,
         key,
-        valueSize,
+        prepared.valueSize,
+        prepared,
       );
     } else {
       const [, size] = this.entryManager.createNewEntry(
         key,
         value,
         ttlMs,
-        normalizedTags,
+        prepared.normalizedTags,
         this.defaultTtlMs,
         this.listManager,
         this.store,
-        valueSize,
+        prepared.valueSize,
+        prepared,
       );
       this.currentSize += size;
     }
 
-    if (normalizedTags?.length) {
-      this.entryManager.updateTagIndex(normalizedTags, key, this.tagIndex);
+    if (prepared.normalizedTags?.length) {
+      this.entryManager.updateTagIndex(prepared.normalizedTags, key, this.tagIndex);
     }
 
     this.currentSize = this.evictionManager.enforceMemoryLimits(
@@ -265,6 +304,58 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.maxEntries,
       this.maxSizeBytes,
     );
+  }
+
+  estimateSize(value: unknown): number {
+    return this.entryManager.estimateSize(value);
+  }
+
+  get<T>(key: string): T | undefined {
+    const node = this.store.get(key);
+    if (!node) return undefined;
+
+    const now = this.readNow();
+    if (this.isExpired(node.entry, now)) {
+      this.delete(key);
+      return undefined;
+    }
+
+    this.listManager.moveToFront(node, now);
+    return node.entry.value as T;
+  }
+
+  set<T>(
+    key: string,
+    value: T,
+    ttlMs?: number,
+    tags?: string[],
+    precomputedSize?: number,
+  ): void {
+    const prepared = this.prepareSet(key, value, ttlMs, tags, precomputedSize);
+    this.commitPreparedSet(key, value, ttlMs, prepared);
+  }
+
+  /**
+   * Validate the complete write before evicting any caller-selected entries.
+   *
+   * Once preparation succeeds, the remaining operations are synchronous
+   * in-memory mutations whose observer callbacks are already isolated by
+   * delete(). This lets quota coordinators make room without sacrificing
+   * healthy entries when sizing or input validation rejects a write.
+   */
+  setWithEvictions<T>(
+    key: string,
+    value: T,
+    keysToEvict: readonly string[],
+    precomputedSize: number,
+    ttlMs?: number,
+    tags?: string[],
+  ): void {
+    const prepared = this.prepareSet(key, value, ttlMs, tags, precomputedSize);
+    const uniqueKeys = new Set(keysToEvict);
+    uniqueKeys.delete(key);
+    for (const keyToEvict of uniqueKeys) this.delete(keyToEvict);
+    this.commitPreparedSet(key, value, ttlMs, prepared);
   }
 
   delete(key: string): void {
@@ -332,7 +423,7 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   cleanupExpired(): number {
-    const now = Date.now();
+    const now = this.readNow();
     let cleaned = 0;
 
     for (const [key, node] of this.store) {
@@ -345,14 +436,16 @@ export class LRUCacheAdapter implements CacheAdapter {
   }
 
   *keys(): IterableIterator<string> {
+    const now = this.readNow();
     for (const [key, node] of this.store) {
-      if (!this.isExpired(node.entry)) yield key;
+      if (!this.isExpired(node.entry, now)) yield key;
     }
   }
 
   *entries<T>(): IterableIterator<[string, T]> {
+    const now = this.readNow();
     for (const [key, node] of this.store) {
-      if (this.isExpired(node.entry)) continue;
+      if (this.isExpired(node.entry, now)) continue;
       yield [key, node.entry.value as T];
     }
   }
@@ -361,12 +454,13 @@ export class LRUCacheAdapter implements CacheAdapter {
     const node = this.store.get(key);
     if (!node) return false;
 
-    if (this.isExpired(node.entry)) {
+    const now = this.readNow();
+    if (this.isExpired(node.entry, now)) {
       this.delete(key);
       return false;
     }
 
-    this.listManager.moveToFront(node);
+    this.listManager.moveToFront(node, now);
     return true;
   }
 }

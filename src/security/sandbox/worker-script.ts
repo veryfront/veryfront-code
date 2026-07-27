@@ -1716,6 +1716,11 @@ function preparedModuleFailureCause(error: unknown): {
     : { failed: true, cause: record.cause };
 }
 
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await digestBytes("SHA-256", bytes as BufferSource);
+  return apply(bytesToHex, new NativeUint8Array(digest), []) as string;
+}
+
 export async function loadModule(modulePath: string): Promise<Record<string, unknown>> {
   const cached = apply(mapGet, moduleCache, [modulePath]) as
     | Record<string, unknown>
@@ -1725,11 +1730,6 @@ export async function loadModule(modulePath: string): Promise<Record<string, unk
   const mod = await import(`file://${modulePath}`) as Record<string, unknown>;
   apply(mapSet, moduleCache, [modulePath, mod]);
   return mod;
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await digestBytes("SHA-256", bytes as BufferSource);
-  return apply(bytesToHex, new NativeUint8Array(digest), []) as string;
 }
 
 function compareStrings(left: string, right: string): number {

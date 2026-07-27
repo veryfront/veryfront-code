@@ -122,18 +122,17 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("does not expose expired entries through key iteration", () => {
-      const originalDateNow = Date.now;
-      let now = originalDateNow();
-      Date.now = () => now;
-      try {
-        cache.set("expired", "value", 10);
-        cache.set("fresh", "value", 100);
-        now += 10;
+      let now = Date.now();
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+      });
+      cacheWithClock.set("expired", "value", 10);
+      cacheWithClock.set("fresh", "value", 100);
+      now += 10;
 
-        expect([...cache.keys()]).toEqual(["fresh"]);
-      } finally {
-        Date.now = originalDateNow;
-      }
+      expect([...cacheWithClock.keys()]).toEqual(["fresh"]);
     });
   });
 
@@ -198,16 +197,15 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("expires entries exactly at their expiry timestamp", () => {
-      const originalDateNow = Date.now;
-      let now = originalDateNow();
-      Date.now = () => now;
-      try {
-        cache.set("boundary", "value", 10);
-        now += 10;
-        expect(cache.has("boundary")).toBe(false);
-      } finally {
-        Date.now = originalDateNow;
-      }
+      let now = Date.now();
+      const cacheWithClock = new LRUCacheAdapter({
+        maxEntries: 5,
+        maxSizeBytes: 1024,
+        now: () => now,
+      });
+      cacheWithClock.set("boundary", "value", 10);
+      now += 10;
+      expect(cacheWithClock.has("boundary")).toBe(false);
     });
   });
 
@@ -341,6 +339,63 @@ describe("LRUCacheAdapter", () => {
       expect(evicted).toEqual([]);
       expect(bounded.invalidateTag("replacement-tag")).toBe(0);
       expect(bounded.invalidateTag("original-tag")).toBe(1);
+    });
+
+    it("prepares selected-eviction writes before changing retained entries", () => {
+      const evicted: string[] = [];
+      const bounded = new LRUCacheAdapter({
+        maxEntries: 3,
+        maxSizeBytes: 10,
+        estimateSizeOf: (value) => value as number,
+        onEvict: (key) => evicted.push(key),
+      });
+      bounded.set("a", 3);
+      bounded.set("b", 3);
+
+      assertThrows(
+        () => bounded.setWithEvictions("c", 20, ["a"], 20),
+        RangeError,
+        "exceeds maxSizeBytes",
+      );
+      assertThrows(
+        () => bounded.setWithEvictions("c", 3, ["a"], Number.NaN),
+        RangeError,
+        "finite non-negative integer",
+      );
+      assertThrows(
+        () => bounded.setWithEvictions("x".repeat(16_385), 3, ["a"], 3),
+        RangeError,
+        "at most 16384 characters",
+      );
+
+      expect(bounded.get("a")).toBe(3);
+      expect(bounded.get("b")).toBe(3);
+      expect(bounded.has("c")).toBe(false);
+      expect(evicted).toEqual([]);
+    });
+
+    it("does not consult a mutable global clock after selected eviction begins", () => {
+      const bounded = new LRUCacheAdapter({
+        maxEntries: 2,
+        maxSizeBytes: 10,
+        estimateSizeOf: (value) => value as number,
+      });
+      bounded.set("a", 3);
+      bounded.set("b", 3);
+      const originalDateNow = Date.now;
+      Date.now = () => {
+        throw new Error("poisoned global clock");
+      };
+
+      try {
+        bounded.setWithEvictions("c", 3, ["a"], 3);
+      } finally {
+        Date.now = originalDateNow;
+      }
+
+      expect(bounded.get("a")).toBeUndefined();
+      expect(bounded.get("b")).toBe(3);
+      expect(bounded.get("c")).toBe(3);
     });
 
     it("accounts for Map, Set, and SharedArrayBuffer contents", () => {

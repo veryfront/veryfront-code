@@ -12,18 +12,18 @@ export class LRUListManager<T> {
     return this.tail;
   }
 
-  moveToFront(node: LRUNode<T>): void {
-    node.entry.lastAccessed = Date.now();
+  moveToFront(node: LRUNode<T>, accessedAt: number = Date.now()): void {
+    node.entry.lastAccessed = accessedAt;
 
     if (node === this.head) {
       return;
     }
 
     this.removeNode(node);
-    this.addToFront(node);
+    this.addToFront(node, accessedAt);
   }
 
-  addToFront(node: LRUNode<T>): void {
+  addToFront(node: LRUNode<T>, accessedAt: number = Date.now()): void {
     node.next = this.head;
     node.prev = null;
 
@@ -34,7 +34,7 @@ export class LRUListManager<T> {
     }
 
     this.head = node;
-    node.entry.lastAccessed = Date.now();
+    node.entry.lastAccessed = accessedAt;
   }
 
   removeNode(node: LRUNode<T>): void {

@@ -1,9 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import { CacheManager } from "./data-fetching-cache.ts";
+import {
+  CacheManager,
+  dataCacheKeyMatches,
+  snapshotDataCacheScope,
+} from "./data-fetching-cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
+import { DATA_FETCHING_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 
 function withProductionContext<T>(fn: () => T): T {
   return runWithCacheKeyContext(
@@ -40,10 +50,170 @@ function getEntryProps<T>(entry: CacheEntry): T {
   return entry.data.props as T;
 }
 
+function createScopedKey(
+  cache: CacheManager,
+  projectId: string,
+  route: string,
+  versionId = "rel-1",
+): string {
+  const key = cache.createCacheKey(
+    createContext(`https://example.test/${route}`),
+    "page",
+    { projectId, mode: "production", versionId },
+  );
+  assertExists(key);
+  return key;
+}
+
+function estimateWeightedEntry(entry: CacheEntry): number {
+  const props = getEntryProps<{ bytes: number }>(entry);
+  return props.bytes;
+}
+
 describe("CacheManager", () => {
+  describe("scope snapshots", () => {
+    it("reads every scope field once and returns a validated frozen value", () => {
+      const reads = { projectId: 0, mode: 0, versionId: 0 };
+      const mutableScope = {
+        get projectId() {
+          reads.projectId++;
+          return "project-a";
+        },
+        get mode() {
+          reads.mode++;
+          return "production" as const;
+        },
+        get versionId() {
+          reads.versionId++;
+          return "rel-1";
+        },
+      };
+
+      const snapshot = snapshotDataCacheScope(mutableScope);
+
+      assertEquals(snapshot, {
+        projectId: "project-a",
+        mode: "production",
+        versionId: "rel-1",
+      });
+      assertEquals(reads, { projectId: 1, mode: 1, versionId: 1 });
+      assertEquals(Object.isFrozen(snapshot), true);
+      assertEquals(Reflect.set(snapshot, "projectId", "project-b"), false);
+    });
+
+    it("rejects malformed scopes", () => {
+      assertThrows(
+        () =>
+          snapshotDataCacheScope({
+            projectId: "",
+            mode: "production",
+            versionId: "rel-1",
+          }),
+        TypeError,
+        "projectId",
+      );
+      assertThrows(
+        () =>
+          snapshotDataCacheScope({
+            projectId: "project",
+            mode: "invalid",
+            versionId: "rel-1",
+          } as unknown as {
+            projectId: string;
+            mode: "production";
+            versionId: string;
+          }),
+        TypeError,
+        "mode",
+      );
+    });
+
+    it("uses one scope identity for key creation and exact invalidation", () => {
+      const cache = new CacheManager();
+      const context = createContext("https://example.test/scope-snapshot");
+      let createProjectReads = 0;
+      const changingCreateScope = {
+        get projectId() {
+          createProjectReads++;
+          return createProjectReads === 1 ? "project-a" : "project-b";
+        },
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      const projectA = cache.createCacheKey(
+        context,
+        "page",
+        changingCreateScope,
+      );
+      const projectASecondRoute = cache.createCacheKey(
+        createContext("https://example.test/scope-snapshot-two"),
+        "page",
+        {
+          projectId: "project-a",
+          mode: "production",
+          versionId: "rel-1",
+        },
+      );
+      const projectB = cache.createCacheKey(context, "page", {
+        projectId: "project-b",
+        mode: "production",
+        versionId: "rel-1",
+      });
+      assertExists(projectA);
+      assertExists(projectASecondRoute);
+      assertExists(projectB);
+      assertEquals(createProjectReads, 1);
+      cache.set(projectA, createEntry({ project: "a-one" }));
+      cache.set(projectASecondRoute, createEntry({ project: "a-two" }));
+      cache.set(projectB, createEntry({ project: "b" }));
+
+      const clearReads = { projectId: 0, mode: 0, versionId: 0 };
+      cache.clearScope({
+        get projectId() {
+          clearReads.projectId++;
+          return clearReads.projectId === 1 ? "project-a" : "project-b";
+        },
+        get mode() {
+          clearReads.mode++;
+          return "production" as const;
+        },
+        get versionId() {
+          clearReads.versionId++;
+          return "rel-1";
+        },
+      });
+
+      assertEquals(clearReads, { projectId: 1, mode: 1, versionId: 1 });
+      assertEquals(cache.get(projectA), null);
+      assertEquals(cache.get(projectASecondRoute), null);
+      assertExists(cache.get(projectB));
+    });
+  });
+
   describe("constructor", () => {
     it("should create a new instance", () => {
       assertExists(new CacheManager());
+    });
+
+    it("requires project quotas to be positive and bounded by global limits", () => {
+      assertThrows(
+        () =>
+          new CacheManager({
+            maxEntries: 2,
+            maxEntriesPerProject: 3,
+          }),
+        RangeError,
+        "must not exceed",
+      );
+      assertThrows(
+        () =>
+          new CacheManager({
+            maxSizeBytes: 10,
+            maxSizeBytesPerProject: 0,
+          }),
+        RangeError,
+        "positive safe integer",
+      );
     });
   });
 
@@ -78,6 +248,320 @@ describe("CacheManager", () => {
       assertExists(result);
       assertEquals(getEntryProps<{ value: number }>(result).value, 2);
       assertEquals(result.revalidate, 120);
+    });
+
+    it("should replace only the exact cache generation", () => {
+      const cache = new CacheManager();
+      const first = createEntry({ version: 1 });
+      const second = createEntry({ version: 2 });
+      const third = createEntry({ version: 3 });
+
+      cache.set("key", first);
+      assertEquals(cache.replaceIfCurrent("key", first, second), true);
+      assertStrictEquals(cache.get("key"), second);
+
+      assertEquals(cache.replaceIfCurrent("key", first, third), false);
+      assertStrictEquals(cache.get("key"), second);
+
+      cache.delete("key");
+      assertEquals(cache.replaceIfCurrent("key", second, third), false);
+      assertEquals(cache.replaceIfCurrent("key", null, third), true);
+      assertStrictEquals(cache.get("key"), third);
+    });
+
+    it("should expire entries lazily even when periodic cleanup is disabled", () => {
+      let now = 1_000_000;
+      const cache = new CacheManager({ now: () => now });
+      cache.set("key", createEntry({ version: 1 }));
+      assertExists(cache.get("key"));
+
+      now += DATA_FETCHING_TTL_MS;
+      assertEquals(cache.get("key"), null);
+    });
+  });
+
+  describe("per-project fairness", () => {
+    it("evicts one project's oldest entry before a noisy release can evict peers", () => {
+      const cache = new CacheManager({
+        maxEntries: 4,
+        maxSizeBytes: 10_000,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 10_000,
+      });
+      const peerOne = createScopedKey(cache, "peer", "one");
+      const peerTwo = createScopedKey(cache, "peer", "two");
+      const projectReleaseOne = createScopedKey(
+        cache,
+        "noisy",
+        "release-one",
+        "rel-1",
+      );
+      const projectReleaseTwo = createScopedKey(
+        cache,
+        "noisy",
+        "release-two",
+        "rel-2",
+      );
+      const projectReleaseThree = createScopedKey(
+        cache,
+        "noisy",
+        "release-three",
+        "rel-3",
+      );
+
+      cache.set(peerOne, createEntry({ value: "peer-one" }));
+      cache.set(peerTwo, createEntry({ value: "peer-two" }));
+      cache.set(projectReleaseOne, createEntry({ value: "release-one" }));
+      cache.set(projectReleaseTwo, createEntry({ value: "release-two" }));
+      assertExists(cache.get(projectReleaseOne));
+
+      cache.set(projectReleaseThree, createEntry({ value: "release-three" }));
+
+      assertExists(cache.get(peerOne));
+      assertExists(cache.get(peerTwo));
+      assertExists(cache.get(projectReleaseOne));
+      assertEquals(cache.get(projectReleaseTwo), null);
+      assertExists(cache.get(projectReleaseThree));
+    });
+
+    it("enforces a project byte ceiling before the global byte ceiling", () => {
+      const cache = new CacheManager({
+        maxEntries: 10,
+        maxSizeBytes: 21,
+        maxEntriesPerProject: 10,
+        maxSizeBytesPerProject: 12,
+        estimateSizeOf: estimateWeightedEntry,
+      });
+      const peer = createScopedKey(cache, "peer", "peer");
+      const noisyOne = createScopedKey(cache, "noisy", "one");
+      const noisyTwo = createScopedKey(cache, "noisy", "two");
+      const noisyThree = createScopedKey(cache, "noisy", "three");
+
+      cache.set(peer, createEntry({ bytes: 10 }));
+      cache.set(noisyOne, createEntry({ bytes: 6 }));
+      cache.set(noisyTwo, createEntry({ bytes: 4 }));
+      cache.set(noisyThree, createEntry({ bytes: 7 }));
+
+      assertExists(cache.get(peer));
+      assertEquals(cache.get(noisyOne), null);
+      assertExists(cache.get(noisyTwo));
+      assertExists(cache.get(noisyThree));
+    });
+
+    it("keeps project accounting exact when a replacement triggers global eviction", () => {
+      const cache = new CacheManager({
+        maxEntries: 10,
+        maxSizeBytes: 20,
+        maxEntriesPerProject: 3,
+        maxSizeBytesPerProject: 15,
+        estimateSizeOf: estimateWeightedEntry,
+      });
+      const first = createScopedKey(cache, "project", "first");
+      const replacement = createScopedKey(cache, "project", "replacement");
+      const peer = createScopedKey(cache, "peer", "peer");
+      const third = createScopedKey(cache, "project", "third");
+
+      cache.set(first, createEntry({ bytes: 5 }));
+      cache.set(replacement, createEntry({ bytes: 5, version: 1 }));
+      cache.set(peer, createEntry({ bytes: 10 }));
+      cache.set(replacement, createEntry({ bytes: 10, version: 2 }));
+
+      assertEquals(cache.get(first), null);
+      assertExists(cache.get(peer));
+      assertEquals(
+        getEntryProps<{ version: number }>(cache.get(replacement)!).version,
+        2,
+      );
+
+      cache.set(third, createEntry({ bytes: 5 }));
+
+      assertEquals(cache.get(peer), null);
+      assertExists(cache.get(replacement));
+      assertExists(cache.get(third));
+    });
+
+    it("accounts for replacement growth and shrinkage exactly", () => {
+      const cache = new CacheManager({
+        maxEntries: 10,
+        maxSizeBytes: 50,
+        maxEntriesPerProject: 10,
+        maxSizeBytesPerProject: 10,
+        estimateSizeOf: estimateWeightedEntry,
+      });
+      const first = createScopedKey(cache, "project", "first");
+      const replacement = createScopedKey(cache, "project", "replacement");
+      const third = createScopedKey(cache, "project", "third");
+
+      cache.set(first, createEntry({ bytes: 4, version: 1 }));
+      cache.set(replacement, createEntry({ bytes: 5, version: 1 }));
+      cache.set(replacement, createEntry({ bytes: 7, version: 2 }));
+
+      assertEquals(cache.get(first), null);
+      assertEquals(
+        getEntryProps<{ version: number }>(cache.get(replacement)!).version,
+        2,
+      );
+
+      cache.set(replacement, createEntry({ bytes: 2, version: 3 }));
+      cache.set(third, createEntry({ bytes: 8, version: 1 }));
+
+      assertExists(cache.get(replacement));
+      assertExists(cache.get(third));
+    });
+
+    it("keeps quota accounting exact across expiry, delete, and clear", () => {
+      let now = 1_000_000;
+      const cache = new CacheManager({
+        maxEntries: 4,
+        maxSizeBytes: 20,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 10,
+        ttlMs: 10,
+        estimateSizeOf: estimateWeightedEntry,
+        now: () => now,
+      });
+      const first = createScopedKey(cache, "project", "first");
+      const second = createScopedKey(cache, "project", "second");
+      const third = createScopedKey(cache, "project", "third");
+      const fourth = createScopedKey(cache, "project", "fourth");
+      const fifth = createScopedKey(cache, "project", "fifth");
+      const sixth = createScopedKey(cache, "project", "sixth");
+      const seventh = createScopedKey(cache, "project", "seventh");
+
+      cache.set(first, createEntry({ bytes: 5 }));
+      cache.set(second, createEntry({ bytes: 5 }));
+      now += 10;
+
+      cache.set(third, createEntry({ bytes: 5 }));
+      cache.set(fourth, createEntry({ bytes: 5 }));
+      assertExists(cache.get(third));
+      assertExists(cache.get(fourth));
+
+      cache.delete(third);
+      cache.set(fifth, createEntry({ bytes: 5 }));
+      assertExists(cache.get(fourth));
+      assertExists(cache.get(fifth));
+
+      cache.clear();
+      cache.set(sixth, createEntry({ bytes: 5 }));
+      cache.set(seventh, createEntry({ bytes: 5 }));
+      assertExists(cache.get(sixth));
+      assertExists(cache.get(seventh));
+    });
+
+    it("does not evict healthy entries when estimation or quota validation fails", () => {
+      const cache = new CacheManager({
+        maxEntries: 3,
+        maxSizeBytes: 100,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 50,
+        estimateSizeOf: (entry) => {
+          const props = getEntryProps<{ bytes: number; fail?: boolean }>(entry);
+          if (props.fail) throw new Error("size estimation failed");
+          return props.bytes;
+        },
+      });
+      const peer = createScopedKey(cache, "peer", "peer");
+      const first = createScopedKey(cache, "project", "first");
+      const second = createScopedKey(cache, "project", "second");
+      const rejected = createScopedKey(cache, "project", "rejected");
+
+      cache.set(peer, createEntry({ bytes: 10 }));
+      cache.set(first, createEntry({ bytes: 10 }));
+      cache.set(second, createEntry({ bytes: 10 }));
+
+      assertThrows(
+        () => cache.set(rejected, createEntry({ bytes: 10, fail: true })),
+        Error,
+        "size estimation failed",
+      );
+      assertThrows(
+        () => cache.set(rejected, createEntry({ bytes: 51 })),
+        RangeError,
+        "exceeds per-project byte limit",
+      );
+      const malformedKey = rejected.replace(
+        /\|(\d+):4:page\|/,
+        (_match, resourceLength: string) => `|${Number(resourceLength) + 1}:04:page|`,
+      );
+      assertThrows(
+        () => cache.set(malformedKey, createEntry({ bytes: 10 })),
+        TypeError,
+        "Malformed or non-data project-scoped cache key",
+      );
+
+      assertExists(cache.get(peer));
+      assertExists(cache.get(first));
+      assertExists(cache.get(second));
+      assertEquals(cache.get(rejected), null);
+    });
+
+    it("charges original cache-key memory to the project byte quota", () => {
+      const cache = new CacheManager({
+        maxEntries: 3,
+        maxSizeBytes: 20_000,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 5_000,
+      });
+      const peer = createScopedKey(cache, "peer", "peer");
+      const first = createScopedKey(cache, "project", "first");
+      const second = createScopedKey(cache, "project", "second");
+      const oversizedKey = createScopedKey(
+        cache,
+        "project",
+        "x".repeat(3_000),
+      );
+
+      cache.set(peer, createEntry({ value: "peer" }));
+      cache.set(first, createEntry({ value: "first" }));
+      cache.set(second, createEntry({ value: "second" }));
+
+      assertThrows(
+        () => cache.set(oversizedKey, createEntry({ value: "oversized-key" })),
+        RangeError,
+        "exceeds per-project byte limit",
+      );
+      assertExists(cache.get(peer));
+      assertExists(cache.get(first));
+      assertExists(cache.get(second));
+      assertEquals(cache.get(oversizedKey), null);
+    });
+
+    it("does not evict quota victims when clock preparation rejects a write", () => {
+      let clockCalls = 0;
+      let throwOnCall = Number.POSITIVE_INFINITY;
+      const cache = new CacheManager({
+        maxEntries: 3,
+        maxSizeBytes: 30,
+        maxEntriesPerProject: 2,
+        maxSizeBytesPerProject: 20,
+        estimateSizeOf: estimateWeightedEntry,
+        now: () => {
+          clockCalls++;
+          if (clockCalls === throwOnCall) {
+            throw new Error("clock preparation failed");
+          }
+          return 1_000_000 + clockCalls;
+        },
+      });
+      const first = createScopedKey(cache, "project", "first");
+      const second = createScopedKey(cache, "project", "second");
+      const rejected = createScopedKey(cache, "project", "rejected");
+
+      cache.set(first, createEntry({ bytes: 10 }));
+      cache.set(second, createEntry({ bytes: 10 }));
+      // The first read cleans expired entries; the second prepares the write.
+      // No clock-dependent work may remain after selected eviction begins.
+      throwOnCall = clockCalls + 2;
+
+      assertThrows(
+        () => cache.set(rejected, createEntry({ bytes: 10 })),
+        Error,
+        "clock preparation failed",
+      );
+      assertExists(cache.get(first));
+      assertExists(cache.get(second));
+      assertEquals(cache.get(rejected), null);
     });
   });
 
@@ -174,6 +658,175 @@ describe("CacheManager", () => {
 
       assertEquals(cache.get(key), null);
     });
+
+    it("does not match serialization length or delimiter metadata", () => {
+      const cache = new CacheManager();
+      const alphaKey = withProductionContext(() =>
+        cache.createCacheKey(createContext("http://localhost/alpha"))
+      );
+      const betaKey = withProductionContext(() =>
+        cache.createCacheKey(createContext("http://localhost/beta"))
+      );
+      assertExists(alphaKey);
+      assertExists(betaKey);
+      cache.set(alphaKey, createEntry({ page: "alpha" }));
+      cache.set(betaKey, createEntry({ page: "beta" }));
+
+      for (const pattern of ["17", "4:page", "|"]) {
+        cache.clearPattern(pattern);
+        assertExists(cache.get(alphaKey));
+        assertExists(cache.get(betaKey));
+      }
+    });
+
+    it("clears only the exact project and release scope", () => {
+      const cache = new CacheManager();
+      const context = createContext("http://localhost/shared");
+      const projectA = runWithCacheKeyContext(
+        { projectId: "project-a", mode: "production", versionId: "rel-1" },
+        () => cache.createCacheKey(context),
+      );
+      const projectB = runWithCacheKeyContext(
+        { projectId: "project-b", mode: "production", versionId: "rel-1" },
+        () => cache.createCacheKey(context),
+      );
+      const releaseA2 = runWithCacheKeyContext(
+        { projectId: "project-a", mode: "production", versionId: "rel-2" },
+        () => cache.createCacheKey(context),
+      );
+      assertExists(projectA);
+      assertExists(projectB);
+      assertExists(releaseA2);
+      cache.set(projectA, createEntry({ scope: "a1" }));
+      cache.set(projectB, createEntry({ scope: "b1" }));
+      cache.set(releaseA2, createEntry({ scope: "a2" }));
+
+      cache.clearScope({
+        projectId: "project-a",
+        mode: "production",
+        versionId: "rel-1",
+      });
+
+      assertEquals(cache.get(projectA), null);
+      assertExists(cache.get(projectB));
+      assertExists(cache.get(releaseA2));
+    });
+
+    it("clears one exact route without matching a path prefix or query", () => {
+      const cache = new CacheManager();
+      const scope = {
+        projectId: "route-project",
+        mode: "production" as const,
+        versionId: "rel-1",
+      };
+      const routeA = cache.createCacheKey(
+        createContext("https://alpha.test/a?variant=1"),
+        "page",
+        scope,
+      );
+      const routeAOtherOrigin = cache.createCacheKey(
+        createContext("https://beta.test/a?variant=2"),
+        "layout",
+        scope,
+      );
+      const routeATrailingSlash = cache.createCacheKey(
+        createContext("https://gamma.test/a/"),
+        "page",
+        scope,
+      );
+      const routeAbout = cache.createCacheKey(
+        createContext("https://alpha.test/about"),
+        "page",
+        scope,
+      );
+      assertExists(routeA);
+      assertExists(routeAOtherOrigin);
+      assertExists(routeATrailingSlash);
+      assertExists(routeAbout);
+      cache.set(routeA, createEntry({ route: "a-1" }));
+      cache.set(routeAOtherOrigin, createEntry({ route: "a-2" }));
+      cache.set(routeATrailingSlash, createEntry({ route: "a-3" }));
+      cache.set(routeAbout, createEntry({ route: "about" }));
+
+      cache.clearRoute(scope, "/a");
+
+      assertEquals(cache.get(routeA), null);
+      assertEquals(cache.get(routeAOtherOrigin), null);
+      assertEquals(cache.get(routeATrailingSlash), null);
+      assertExists(cache.get(routeAbout));
+    });
+
+    it("fails closed for non-canonical project-scope transport spellings", () => {
+      const cache = new CacheManager();
+      const key = cache.createCacheKey(
+        createContext("https://example.test/path"),
+        "page",
+        {
+          projectId: "A",
+          mode: "production",
+          versionId: "rel",
+        },
+      );
+      assertExists(key);
+
+      const nonSurrogateEscape = key.replace(
+        "|1:A|10:production|",
+        "|6:%u0041|10:production|",
+      );
+      const nonCanonicalLength = key.replace(
+        "|1:A|10:production|",
+        "|01:A|10:production|",
+      );
+      const nonCanonicalResourceLength = key.replace(
+        /\|(\d+):4:page\|/,
+        (_match, resourceLength: string) => `|${Number(resourceLength) + 1}:04:page|`,
+      );
+
+      assertEquals(
+        dataCacheKeyMatches(nonSurrogateEscape, { projectId: "A" }),
+        false,
+      );
+      assertEquals(
+        dataCacheKeyMatches(nonCanonicalLength, { projectId: "A" }),
+        false,
+      );
+      assertEquals(
+        dataCacheKeyMatches(nonCanonicalResourceLength, { projectId: "A" }),
+        false,
+      );
+    });
+
+    it("clears an exact project across releases without prefix collisions", () => {
+      const cache = new CacheManager();
+      const context = createContext("https://example.test/shared");
+      const projectA1 = cache.createCacheKey(context, "page", {
+        projectId: "a",
+        mode: "production",
+        versionId: "rel-1",
+      });
+      const projectA2 = cache.createCacheKey(context, "page", {
+        projectId: "a",
+        mode: "production",
+        versionId: "rel-2",
+      });
+      const projectAColonB = cache.createCacheKey(context, "page", {
+        projectId: "a:b",
+        mode: "production",
+        versionId: "rel-1",
+      });
+      assertExists(projectA1);
+      assertExists(projectA2);
+      assertExists(projectAColonB);
+      cache.set(projectA1, createEntry({ release: 1 }));
+      cache.set(projectA2, createEntry({ release: 2 }));
+      cache.set(projectAColonB, createEntry({ release: 3 }));
+
+      cache.clearProject("a");
+
+      assertEquals(cache.get(projectA1), null);
+      assertEquals(cache.get(projectA2), null);
+      assertExists(cache.get(projectAColonB));
+    });
   });
 
   describe("shouldRevalidate", () => {
@@ -221,6 +874,75 @@ describe("CacheManager", () => {
 
       assertEquals(cache.shouldRevalidate(entry), true);
     });
+
+    it("should defer a stale entry without replacing its cached data", () => {
+      const cache = new CacheManager();
+      const key = "stale-key";
+      const staleAt = 100_000;
+      cache.set(
+        key,
+        createEntry(
+          { version: 1 },
+          { timestamp: staleAt - 60_001, revalidate: 60 },
+        ),
+      );
+      const stale = cache.get(key);
+      assertExists(stale);
+      assertEquals(cache.shouldRevalidate(stale, staleAt), true);
+
+      cache.deferRevalidation(key, 30_000, staleAt);
+
+      const deferred = cache.get(key);
+      assertExists(deferred);
+      assertStrictEquals(deferred, stale);
+      assertEquals(getEntryProps<{ version: number }>(deferred).version, 1);
+      assertEquals(cache.shouldRevalidate(deferred, staleAt + 30_000), false);
+      assertEquals(cache.shouldRevalidate(deferred, staleAt + 30_001), true);
+    });
+
+    it("does not extend the absolute LRU lifetime when deferring a retry", () => {
+      const insertedAt = 1_000_000;
+      let now = insertedAt;
+      const cache = new CacheManager({ now: () => now });
+      const entry = createEntry(
+        { version: 1 },
+        { timestamp: insertedAt - 1, revalidate: 0 },
+      );
+      cache.set("stale-key", entry);
+
+      now = insertedAt + DATA_FETCHING_TTL_MS - 1;
+      assertEquals(
+        cache.deferRevalidationIfCurrent("stale-key", entry, 30_000, now),
+        true,
+      );
+      assertEquals(cache.shouldRevalidate(entry, now), false);
+
+      now = insertedAt + DATA_FETCHING_TTL_MS;
+      assertEquals(cache.get("stale-key"), null);
+    });
+
+    it("should not defer a replacement that superseded the expected entry", () => {
+      const cache = new CacheManager();
+      const key = "replacement-key";
+      const staleAt = 100_000;
+      const original = createEntry(
+        { version: 1 },
+        { timestamp: staleAt - 60_001, revalidate: 60 },
+      );
+      const replacement = createEntry(
+        { version: 2 },
+        { timestamp: staleAt - 60_001, revalidate: 60 },
+      );
+      cache.set(key, original);
+      cache.set(key, replacement);
+
+      assertEquals(
+        cache.deferRevalidationIfCurrent(key, original, 30_000, staleAt),
+        false,
+      );
+      assertStrictEquals(cache.get(key), replacement);
+      assertEquals(cache.shouldRevalidate(replacement, staleAt), true);
+    });
   });
 
   describe("createCacheKey", () => {
@@ -245,6 +967,36 @@ describe("CacheManager", () => {
       assertEquals(key, null);
     });
 
+    it("uses an explicit production scope without ambient request context", () => {
+      const cache = new CacheManager();
+      const key = cache.createCacheKey(
+        createContext("https://example.test/scoped"),
+        "page",
+        {
+          projectId: "explicit-project",
+          mode: "production",
+          versionId: "rel-explicit",
+        },
+      );
+
+      assertExists(key);
+      assertEquals(key.includes("explicit-project"), true);
+      assertEquals(key.includes("rel-explicit"), true);
+    });
+
+    it("lets an explicit null scope disable an inherited production context", () => {
+      const cache = new CacheManager();
+      const key = withProductionContext(() =>
+        cache.createCacheKey(
+          createContext("https://example.test/uncached"),
+          "page",
+          null,
+        )
+      );
+
+      assertEquals(key, null);
+    });
+
     it("should create key from pathname and params in production mode", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/posts/123", { id: "123" });
@@ -253,7 +1005,7 @@ describe("CacheManager", () => {
 
       assertEquals(
         key,
-        'project-scoped:v2:14:veryfront:data|12:test-project|10:production|7:rel_123|30:page::/posts/123::{"id":"123"}',
+        'project-scoped:v2:17:veryfront:data:v3|12:test-project|10:production|7:rel_123|52:4:page|26:http://localhost/posts/123|12:{"id":"123"}',
       );
     });
 
@@ -265,7 +1017,7 @@ describe("CacheManager", () => {
 
       assertEquals(
         key,
-        "project-scoped:v2:14:veryfront:data|12:test-project|10:production|7:rel_123|16:page::/about::{}",
+        "project-scoped:v2:17:veryfront:data:v3|12:test-project|10:production|7:rel_123|37:4:page|22:http://localhost/about|2:{}",
       );
     });
 
@@ -280,6 +1032,48 @@ describe("CacheManager", () => {
       assertExists(key1);
       assertExists(key2);
       assertEquals(key1 !== key2, true);
+    });
+
+    it("should not alias delimiter-bearing module paths and routes", () => {
+      const cache = new CacheManager();
+      const first = createContext("http://localhost/b::/c");
+      const second = createContext("http://localhost/c");
+
+      const firstKey = withProductionContext(() => cache.createCacheKey(first, "a"));
+      const secondKey = withProductionContext(() => cache.createCacheKey(second, "a::/b"));
+
+      assertExists(firstKey);
+      assertExists(secondKey);
+      assertEquals(firstKey === secondKey, false);
+    });
+
+    it("should preserve meaningful whitespace in module paths", () => {
+      const cache = new CacheManager();
+      const context = createContext("http://localhost/space");
+
+      const plain = withProductionContext(() => cache.createCacheKey(context, "/app/page.ts"));
+      const spaced = withProductionContext(() => cache.createCacheKey(context, "/app/page.ts "));
+
+      assertExists(plain);
+      assertExists(spaced);
+      assertEquals(plain === spaced, false);
+    });
+
+    it("should canonicalize equivalent params with different insertion order", () => {
+      const cache = new CacheManager();
+      const first = createContext("http://localhost/posts/one", {
+        category: "tech",
+        slug: ["posts", "one"],
+      });
+      const second = createContext("http://localhost/posts/one", {
+        slug: ["posts", "one"],
+        category: "tech",
+      });
+
+      const firstKey = withProductionContext(() => cache.createCacheKey(first));
+      const secondKey = withProductionContext(() => cache.createCacheKey(second));
+
+      assertEquals(firstKey, secondKey);
     });
 
     it("should create unique keys for reordered query params", () => {
@@ -321,6 +1115,23 @@ describe("CacheManager", () => {
       assertEquals(key1 !== key2, true);
     });
 
+    it("should create unique keys for distinct URL origins", () => {
+      const cache = new CacheManager();
+      const http = createContext("http://alpha.example.test/page");
+      const https = createContext("https://alpha.example.test/page");
+      const otherHost = createContext("http://beta.example.test/page");
+
+      const httpKey = withProductionContext(() => cache.createCacheKey(http));
+      const httpsKey = withProductionContext(() => cache.createCacheKey(https));
+      const otherHostKey = withProductionContext(() => cache.createCacheKey(otherHost));
+
+      assertExists(httpKey);
+      assertExists(httpsKey);
+      assertExists(otherHostKey);
+      assertEquals(httpKey === httpsKey, false);
+      assertEquals(httpKey === otherHostKey, false);
+    });
+
     it("should include the URL search string in production cache keys", () => {
       const cache = new CacheManager();
       const context = createContext("http://localhost/search?b=2&a=1&a=3");
@@ -328,7 +1139,7 @@ describe("CacheManager", () => {
       const key = withProductionContext(() => cache.createCacheKey(context));
 
       assertExists(key);
-      assertEquals(key.includes("/search?b=2&a=1&a=3::{}"), true);
+      assertEquals(key.includes("/search?b=2&a=1&a=3|2:{}"), true);
     });
 
     it("should handle array params (catch-all routes)", () => {
