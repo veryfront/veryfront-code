@@ -6,10 +6,7 @@
     "extension": true,
     "capabilities": [
       { "type": "net:outbound", "hosts": ["*"] }
-    ],
-    "npm": {
-      "publish": false
-    }
+    ]
   },
   "imports": {
     "@sentry/deno": "npm:@sentry/deno@10.68.0",
