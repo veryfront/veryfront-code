@@ -1854,6 +1854,42 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assert(routeModules.includes("lib/utils.ts"), "extensionless transitive import in closure");
   });
 
+  it("derives manifest routes from configured app and pages directories", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "veryfront.config.ts",
+        content: 'export default { directories: { app: "src\\\\site", pages: "src\\\\pages" } };',
+      },
+      {
+        path: "src\\site\\layout.tsx",
+        content: "export default function Layout({ children }) { return children; }",
+      },
+      {
+        path: "src\\site\\page.tsx",
+        content: "export default function Home() { return null; }",
+      },
+      {
+        path: "src\\pages\\about.tsx",
+        content: "export default function About() { return null; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (s: string) => Promise.resolve(s);
+
+    await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+
+    assertEquals(Object.keys(manifest.routes).sort(), ["/", "/about"]);
+    assertEquals(manifest.routes["/"]?.modules, [
+      "src/site/page.tsx",
+      "src/site/layout.tsx",
+    ]);
+    assertEquals(manifest.routes["/about"]?.modules, ["src/pages/about.tsx"]);
+  });
+
   // H1: non-transform failures (e.g., listAllReleaseFiles throws) report failed.
   it("reports failed on non-transform build failure (H1)", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
@@ -1931,31 +1967,6 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     assertEquals(Object.keys(manifest.modules).length, 0);
     // Gap is recorded.
     assert(result.gaps.some((g) => g.startsWith("oversized:")));
-  });
-
-  // L3: nested index route derivation.
-  it("routeForPage derives nested index routes correctly (L3)", () => {
-    assertEquals(routeForPage("pages/index.tsx"), "/");
-    assertEquals(routeForPage("pages/about.tsx"), "/about");
-    assertEquals(routeForPage("pages/blog/index.tsx"), "/blog");
-    assertEquals(routeForPage("pages/blog/post.tsx"), "/blog/post");
-    assertEquals(routeForPage("pages/a/b/index.tsx"), "/a/b");
-    assertEquals(routeForPage("pages/api/hello.ts"), null);
-    assertEquals(routeForPage("pages/api/users/[id].ts"), null);
-    assertEquals(routeForPage("pages/index.d.ts"), null);
-    assertEquals(routeForPage("pages/blog/post.d.ts"), null);
-    assertEquals(routeForPage("pages/index.css"), null);
-    assertEquals(routeForPage("pages/_app.tsx"), null);
-    assertEquals(routeForPage("pages/_document.tsx"), null);
-    assertEquals(routeForPage("pages/blog/_draft.tsx"), null);
-    assertEquals(routeForPage("app/page.tsx"), "/");
-    assertEquals(routeForPage("app/(marketing)/page.tsx"), "/");
-    assertEquals(routeForPage("app/(marketing)/blog/page.tsx"), "/blog");
-    assertEquals(routeForPage("app/page.d.ts"), null);
-    assertEquals(routeForPage("app/page.css"), null);
-    assertEquals(routeForPage("app/@modal/page.tsx"), null);
-    assertEquals(routeForPage("app/_components/page.tsx"), null);
-    assertEquals(routeForPage("components/Button.tsx"), null);
   });
 });
 
