@@ -101,6 +101,14 @@ type RuntimeMessage = AgUiRuntimeMessage;
 type InternalAgentCompatibilityMessage = InferSchema<
   ReturnType<typeof getInternalAgentCompatibilityMessageSchema>
 >;
+type RuntimeAttachment = {
+  type: "image" | "file";
+  url: string;
+  mediaType: string;
+  uploadId?: string;
+  uploadPath?: string;
+  filename?: string;
+};
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -225,7 +233,7 @@ function stringifyToolResult(result: unknown): string {
 
 function getRuntimeAttachment(
   part: Record<string, unknown>,
-): { type: "image" | "file"; url: string; mediaType: string } | null {
+): RuntimeAttachment | null {
   const type = getPartString(part, "type");
   if (type !== "image" && type !== "file") {
     return null;
@@ -237,7 +245,18 @@ function getRuntimeAttachment(
     return null;
   }
 
-  return { type, url, mediaType };
+  const uploadId = getPartString(part, "uploadId", "upload_id");
+  const uploadPath = getPartString(part, "uploadPath", "upload_path");
+  const filename = getPartString(part, "filename");
+
+  return {
+    type,
+    url,
+    mediaType,
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+    ...(filename ? { filename } : {}),
+  };
 }
 
 function toRuntimeMessage(

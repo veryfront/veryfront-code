@@ -779,6 +779,7 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves persisted uploade
       type: "image",
       url: "https://signed.example.com/web-app-screenshot.jpg",
       mediaType: "image/jpeg",
+      uploadId: "upload-image-1",
     },
     {
       type: "text",

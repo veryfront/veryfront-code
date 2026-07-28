@@ -251,10 +251,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       data: { branchId: null },
     }];
     invocation.messages[0].parts.push({
-      type: "image",
-      upload_id: "20000000-2000-4000-8000-200000000001",
-      media_type: "image/png",
+      type: "file",
+      uploadId: "20000000-2000-4000-8000-200000000001",
+      uploadPath: "_chat/user/screenshot.png",
+      mediaType: "image/png",
       url: "https://uploads.example.com/screenshot.png",
+      filename: "screenshot.png",
     });
     const body = JSON.stringify(invocation);
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
@@ -278,19 +280,23 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
     assertEquals(typeof runtimeSystem, "function");
     assertEquals(
-      runtimeMessages?.[0]?.parts,
+      runtimeMessages?.[0]?.parts as unknown,
       [
         { type: "text", text: "Hello" },
         {
-          type: "image",
+          type: "file",
           mediaType: "image/png",
           url: "https://uploads.example.com/screenshot.png",
+          filename: "screenshot.png",
+          uploadId: "20000000-2000-4000-8000-200000000001",
+          uploadPath: "_chat/user/screenshot.png",
         },
         {
           type: "text",
           text: "Attached files from earlier conversation context:\n\n" +
             "<uploaded_files>\n" +
-            '<file name="image" url="https://uploads.example.com/screenshot.png" ' +
+            '<file name="screenshot.png" upload_id="20000000-2000-4000-8000-200000000001" ' +
+            'path="_chat/user/screenshot.png" url="https://uploads.example.com/screenshot.png" ' +
             'type="image/png" />\n' +
             "</uploaded_files>",
         },
