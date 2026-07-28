@@ -3,10 +3,9 @@
  * @module
  *******************************/
 
-import { cliLogger as logger } from "#cli/utils";
-import { brand, dim, green, red } from "#cli/ui";
+import { cliLogger as logger, isVerbose } from "#cli/utils";
+import { brand, dim, red } from "#cli/ui";
 import { createSpinner } from "../../ui/progress.ts";
-import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
@@ -17,6 +16,7 @@ import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import {
   detectPackageManager,
+  getDlxCommand,
   getInstallCommand,
   getRunCommand,
   installDependencies,
@@ -529,17 +529,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
   validateOrThrow("features", features, validateFeatures);
   validateOrThrow("integrations", integrations, validateIntegrations);
 
-  const featuresStr = features.length ? ` with features: ${features.join(", ")}` : "";
-  const integrationsStr = integrations.length
-    ? ` with integrations: ${integrations.join(", ")}`
-    : "";
-
-  log(
-    `Creating new Veryfront project${
-      projectName ? ` in ${projectName}` : ""
-    } with template: ${template}${featuresStr}${integrationsStr}`,
-  );
-
   if (projectName && (await fs.exists(projectDir)) && !options.force) {
     throw toError(
       createError({
@@ -787,12 +776,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Deploy to cloud if --deploy flag is set
   let deployedSlug: string | undefined;
+  const manualDeployCommand = `${getDlxCommand(pmPreference)} veryfront deploy`;
   if (options.deploy) {
     const { chdir } = await import("veryfront/platform");
     const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
     const { readConfigFile } = await import("#cli/shared/config");
     const { deployCommand } = await import("../deploy/index.ts");
-    const manualDeployHint = `Run ${brand("veryfront deploy")} to deploy later.`;
+    const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
     const authResult = await ensureAuthenticated();
     if (!authResult) {
@@ -818,13 +808,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
           const configFile = await readConfigFile(projectDir);
           deployedSlug = configFile?.projectSlug;
-          if (deployedSlug) {
-            log(
-              `  ${green("✓")} Deployed to ${
-                brand(`https://${deployedSlug}.production.veryfront.com`)
-              }`,
-            );
-          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
@@ -850,44 +833,36 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const displayName = projectName ?? "Project";
   const structureRoot = projectName ?? ".";
   const structureLines = renderProjectStructure(structureRoot, createdPaths);
-  const successContent = [
-    `${green("✓")} ${displayName} ready!`,
-    "",
-    `${brand("Project structure")}`,
-    ...structureLines,
-    "",
-    `${brand("Next steps")}`,
-    ...localSteps,
-  ];
-
-  if (deployedSlug) {
-    successContent.push(
-      "",
-      `${green("Live:")} https://${deployedSlug}.production.veryfront.com`,
-    );
-  }
-
-  if (!deployedSlug) {
-    successContent.push(
-      "",
-      `${brand("veryfront deploy")} ${dim("→ upload source, create a release, and go live")}`,
-    );
-  }
+  const deployCommandHint = `${getDlxCommand(pm)} veryfront deploy`;
 
   if (!quiet) {
     console.log("");
-    console.log(
-      box(successContent.join("\n"), { style: "rounded", padding: 1 }),
-    );
+    console.log(`  ✓ ${displayName} ready`);
 
-    const tips: string[] = [];
-    if (template !== "minimal") {
-      tips.push(
-        `${dim("Add OPENAI_API_KEY to .env")}`,
-        `${dim("Add tools in tools/, agents in agents/ (auto-discovered)")}`,
-      );
+    if (isVerbose()) {
+      console.log("");
+      console.log("  Project structure");
+      for (const line of structureLines) {
+        console.log(`  ${line}`);
+      }
     }
 
+    console.log("");
+    for (const step of localSteps) {
+      console.log(`  ${step}`);
+    }
+
+    if (deployedSlug) {
+      console.log("");
+      console.log(
+        `  ${dim("Live:")} ${brand(`https://${deployedSlug}.production.veryfront.com`)}`,
+      );
+    } else {
+      console.log("");
+      console.log(`  ${dim("Deploy:")} ${brand(deployCommandHint)}`);
+    }
+
+    const tips: string[] = [];
     const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
     if (displayFeatureTips?.length) {
       for (const tip of displayFeatureTips) {

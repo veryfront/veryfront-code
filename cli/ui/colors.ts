@@ -44,7 +44,7 @@ export function getColorLevel(): ColorLevel {
 }
 
 export function shouldUseColor(): boolean {
-  return getColorLevel() !== "none";
+  return getCachedColorLevel() !== "none";
 }
 
 let cachedColorLevel: ColorLevel | null = null;
@@ -196,10 +196,15 @@ export const green = success;
 export const yellow = warning;
 export const red = error;
 
-export const bold = (text: string) => `${ESC}[1m${text}${RESET}`;
-export const dim = (text: string) => `${ESC}[2m${text}${RESET}`;
-export const italic = (text: string) => `${ESC}[3m${text}${RESET}`;
-export const underline = (text: string) => `${ESC}[4m${text}${RESET}`;
+function applyStyle(text: string, code: number): string {
+  if (!shouldUseColor()) return text;
+  return `${ESC}[${code}m${text}${RESET}`;
+}
+
+export const bold = (text: string) => applyStyle(text, 1);
+export const dim = (text: string) => applyStyle(text, 2);
+export const italic = (text: string) => applyStyle(text, 3);
+export const underline = (text: string) => applyStyle(text, 4);
 
 export const brandBold = (text: string) => bold(brand(text));
 export const successBold = (text: string) => bold(success(text));

@@ -9,6 +9,7 @@ import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import type { EnvVarConfig } from "../templates/index.ts";
 import { promptPassword, promptUser } from "./index.ts";
+import { isInteractive as isCliInteractive } from "../shared/interactive.ts";
 
 export interface EnvPromptOptions {
   /** Whether to run in interactive mode (prompt for values) */
@@ -56,7 +57,8 @@ export async function promptForEnvVars(
   const hasPrefilledValues = Object.keys(prefilledValues).length > 0;
 
   const disablePrompt = options.skipPrompt || isCiEnv() || isDenoTestingEnv();
-  const interactive = options.interactive ?? (!disablePrompt && checkIsInteractive());
+  const interactive = isCliInteractive() &&
+    (options.interactive ?? (!disablePrompt && checkIsInteractive()));
 
   if (envVars.length > 0) {
     logger.info("");

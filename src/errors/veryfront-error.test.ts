@@ -386,7 +386,7 @@ describe("veryfront-error", () => {
 
       try {
         Reflect.apply = blocked as typeof Reflect.apply;
-        Array.isArray = blocked as typeof Array.isArray;
+        Array.isArray = blocked as unknown as typeof Array.isArray;
         Object.defineProperty = blocked as typeof Object.defineProperty;
         Object.entries = blocked as typeof Object.entries;
         Object.getOwnPropertyDescriptor = blocked as typeof Object.getOwnPropertyDescriptor;

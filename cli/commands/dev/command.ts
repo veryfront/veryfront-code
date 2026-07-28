@@ -12,7 +12,7 @@ import { startDevServer } from "veryfront/server";
 import { validateProviderConfig } from "veryfront/discovery";
 import { yellow } from "#cli/ui";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
-import { banner, brand, dim, error as errorColor, success } from "#cli/ui";
+import { brand, dim, error as errorColor, success } from "#cli/ui";
 import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
@@ -100,7 +100,6 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         projectDir,
         projectSlug: config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       });
-      const projectSlug = runtimeAuth.projectSlug;
       const shutdownController = new AbortController();
       let mdxWatcher: Promise<void> | null = null;
 
@@ -197,7 +196,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       async function runSyncAction(action: () => Promise<void>, successMsg: string): Promise<void> {
         try {
           await action();
-          console.log(`  ${success("✓")} ${successMsg}`);
+          console.log(`  ✓ ${successMsg}`);
         } catch (err) {
           console.log(`  ${errorColor("✗")} ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -245,22 +244,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const serverUrl = `http://veryfront.me:${finalPort}`;
 
       console.log();
-      console.log(
-        banner({
-          title: "Veryfront",
-          subtitle: "is running",
-          info: {
-            url: serverUrl,
-            ...(projectSlug ? { project: projectSlug } : {}),
-            ...(mcpServer ? { mcp: `http://veryfront.me:${mcpPort}/mcp` } : {}),
-          },
-        }),
-      );
-      console.log();
-      console.log(`  ${success("✓")} Server ready at ${brand(serverUrl)}`);
+      console.log(`  ✓ Server ready at ${brand(serverUrl)}`);
       if (mcpServer) {
         console.log(
-          `  ${success("✓")} MCP ready at ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`,
+          `  ✓ MCP ready at ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`,
         );
       }
       console.log();
@@ -269,7 +256,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       if (!identity) {
         console.log(`  ${dim("To sync with Veryfront: press")} ${brand("a")} ${dim("to login")}`);
       } else if (projects.length > 0) {
-        console.log(`  ${success("✓")} ${authStatus(identity)}`);
+        console.log(`  ✓ ${authStatus(identity)}`);
         console.log(
           `  ${dim("Press")} ${brand("s")} ${dim("to select a project, then")} ${brand("p")} ${
             dim(
@@ -278,7 +265,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           }`,
         );
       } else {
-        console.log(`  ${success("✓")} ${authStatus(identity)}`);
+        console.log(`  ✓ ${authStatus(identity)}`);
         console.log(`  ${dim("Press")} ${brand("s")} ${dim("to see your projects")}`);
       }
       console.log();
@@ -312,7 +299,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             const projectResult = await fetchRemoteProjects();
             projects = projectResult.projects;
             console.log(
-              `  ${success("✓")} ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,
+              `  ✓ ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,
             );
           },
           onSync: () => {

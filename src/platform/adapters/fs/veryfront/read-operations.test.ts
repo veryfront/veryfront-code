@@ -182,6 +182,9 @@ describe("ReadOperations", () => {
         Error,
         "404 Not Found: app/globals.css",
       );
+      if (!(error instanceof Error)) {
+        throw new TypeError("Expected an Error");
+      }
 
       assertEquals((error as Error & { code?: string }).code, "ENOENT");
       assertEquals(error.cause === upstream, true);
@@ -205,6 +208,9 @@ describe("ReadOperations", () => {
         Error,
         "404 Not Found: app/globals.css",
       );
+      if (!(error instanceof Error)) {
+        throw new TypeError("Expected an Error");
+      }
 
       assertEquals((error as Error & { code?: string }).code, "ENOENT");
       assertEquals(error.cause === upstream, true);
@@ -1036,6 +1042,9 @@ describe("ReadOperations", () => {
         Error,
         "404 Not Found: app/globals.css",
       );
+      if (!(error instanceof Error)) {
+        throw new TypeError("Expected an Error");
+      }
 
       assertEquals((error as Error & { code?: string }).code, "ENOENT");
       assertEquals(error.cause === upstream, true);

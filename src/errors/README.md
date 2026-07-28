@@ -113,8 +113,11 @@ Use `httpErrorBoundary()` or `wrapHandlerWithErrorBoundary()` for server
 handlers. They normalize unknown throws, record stable metrics and trace
 metadata, and return RFC 9457 responses.
 
-Use `cliErrorBoundary()` for CLI entry points. CLI output may include local
-diagnostic details and development stack frames.
+Use `cliErrorBoundary()` for CLI entry points. CLI output is concise by default;
+pass `verbose: true` to `formatCLIError()` when an explicitly verbose CLI mode
+should include the stable error code, documentation URL, and bounded stack
+frames. Terminal fields are credential-redacted and control-character-safe in
+both modes.
 
 `wrapUnknownError()` retains an existing `VeryfrontError` or creates the
 canonical `unknown-error`. `wrapWithContext()` creates a new error and preserves

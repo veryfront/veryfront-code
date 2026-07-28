@@ -68,7 +68,7 @@ export async function installTargets(
     }
 
     await writeTextFile(dest, content);
-    console.log(`  ${success("✓")} ${tool.file}`);
+    console.log(`  ✓ ${tool.file}`);
   }
 
   console.log();

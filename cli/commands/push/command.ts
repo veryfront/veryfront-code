@@ -22,8 +22,8 @@ import {
   writeProjectSlug,
 } from "#cli/shared/config";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
-import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
-import { createNoopSpinner, createSpinner } from "#cli/ui";
+import { isVerbose, logInfo, logSuccess } from "#cli/utils";
+import { brand, createNoopSpinner, createSpinner, dim } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
@@ -39,6 +39,12 @@ import {
   resolveGitSource,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { buildStudioUrl } from "../studio/command.ts";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+
+const PREVIEW_BRANCH_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const PREVIEW_BRANCH_ERROR =
+  "Preview branches must use 1-63 lowercase letters, numbers, or hyphens.";
 
 /**
  * Schema factory for push command arguments
@@ -47,7 +53,8 @@ export const getPushArgsSchema = defineSchema((v) =>
   v.object({
     projectSlug: v.string().optional(),
     projectDir: v.string().optional(),
-    branch: v.string().optional(),
+    branch: v.string().regex(PREVIEW_BRANCH_PATTERN, PREVIEW_BRANCH_ERROR).default("main"),
+    /** Deprecated compatibility flag; invoking push already authorizes the operation. */
     force: v.boolean().default(false),
     dryRun: v.boolean().default(false),
     quiet: v.boolean().default(false),
@@ -78,9 +85,9 @@ export interface PushOptions {
   projectSlug?: string;
   /** Project directory (defaults to cwd) */
   projectDir?: string;
-  /** Branch name to create (auto-generated if not provided) */
+  /** Branch name to update (defaults to main) */
   branch?: string;
-  /** Skip confirmation without changing push semantics */
+  /** Deprecated compatibility flag; invoking push already authorizes the operation. */
   force?: boolean;
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
@@ -259,9 +266,106 @@ export async function capturePushSourceSnapshot(
   };
 }
 
-export function generateBranchName(): string {
-  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
-  return `push-${timestamp}`;
+function suggestPreviewBranchName(branchName: string): string {
+  return branchName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/g, "") || "preview";
+}
+
+function assertPreviewBranchName(branchName: string): void {
+  if (PREVIEW_BRANCH_PATTERN.test(branchName)) return;
+
+  throw new Error(
+    `Preview branch "${branchName}" is not DNS-safe. Use "${
+      suggestPreviewBranchName(branchName)
+    }" instead.`,
+  );
+}
+
+export function buildPushUrls(
+  projectSlug: string,
+  branchName: string,
+): { studio: string; preview: string } {
+  assertPreviewBranchName(branchName);
+  const previewLabel = branchName === "main" ? projectSlug : `${projectSlug}--${branchName}`;
+  if (previewLabel.length > 63) {
+    throw new Error("Preview hostname is too long. Shorten the project slug or branch name.");
+  }
+  const preview = `https://${previewLabel}.preview.veryfront.com`;
+
+  return {
+    studio: buildStudioUrl(projectSlug, { branch: branchName }),
+    preview,
+  };
+}
+
+function outputPushResult(
+  projectSlug: string,
+  branchName: string,
+  uploaded: number,
+  deleted: number,
+): void {
+  const urls = buildPushUrls(projectSlug, branchName);
+
+  if (isJsonMode()) {
+    streamJsonLine({
+      type: "result",
+      success: true,
+      data: {
+        projectSlug,
+        branch: branchName,
+        dryRun: false,
+        uploaded,
+        deleted,
+        studioUrl: urls.studio,
+        previewUrl: urls.preview,
+      },
+    });
+    return;
+  }
+
+  const changes = [
+    ...(uploaded > 0 ? [`${uploaded} uploaded`] : []),
+    ...(deleted > 0 ? [`${deleted} deleted`] : []),
+  ];
+  const target = branchName === "main" ? "main" : `branch "${branchName}"`;
+  logSuccess(
+    changes.length > 0
+      ? `Pushed to ${target}: ${changes.join(", ")}.`
+      : `${target === "main" ? "Main" : `Branch "${branchName}"`} is up to date.`,
+  );
+  console.log();
+  console.log(`  ${dim("Studio:")}  ${brand(urls.studio)}`);
+  console.log(`  ${dim("Preview:")} ${brand(urls.preview)}`);
+  console.log();
+}
+
+function outputPushDryRunResult(
+  projectSlug: string,
+  branchName: string,
+  projectExists: boolean,
+  wouldUpload: number,
+  wouldDelete: number,
+): void {
+  const urls = buildPushUrls(projectSlug, branchName);
+  streamJsonLine({
+    type: "result",
+    success: true,
+    data: {
+      projectSlug,
+      branch: branchName,
+      dryRun: true,
+      projectExists,
+      wouldUpload,
+      wouldDelete,
+      studioUrl: projectExists ? urls.studio : null,
+      previewUrl: projectExists ? urls.preview : null,
+    },
+  });
 }
 
 export function createBranch(
@@ -360,7 +464,7 @@ export async function uploadFiles(
 
   for (const op of ops) {
     if (dryRun) {
-      cliLogger.info(`  Would upload: ${op.path}`);
+      if (!isJsonMode()) cliLogger.info(`  Would upload: ${op.path}`);
       uploaded++;
       continue;
     }
@@ -389,7 +493,7 @@ export async function deleteFiles(
 
   for (const path of paths) {
     if (dryRun) {
-      cliLogger.info(`  Would delete: ${path}`);
+      if (!isJsonMode()) cliLogger.info(`  Would delete: ${path}`);
       deleted++;
       continue;
     }
@@ -472,13 +576,16 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const {
         projectSlug: slugOverride,
         projectDir = cwd(),
-        branch,
-        force = false,
+        branch = "main",
         dryRun = false,
         quiet = false,
       } = options;
+      assertPreviewBranchName(branch);
+      const jsonOutput = isJsonMode();
 
-      let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
+      let spinner = quiet || jsonOutput
+        ? createNoopSpinner()
+        : createSpinner("Resolving configuration...");
 
       let config: ResolvedConfig;
       let projectReferenceSource: ProjectReferenceSource;
@@ -503,7 +610,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.update("Fetching remote files...");
       const client = createApiClient(config);
-      const branchName = branch || generateBranchName();
+      const branchName = branch;
       const isMainBranch = branchName === "main";
 
       // First-push: If project doesn't exist on server yet, create it unless this is a dry run.
@@ -516,7 +623,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         if (getErrorStatus(error) === 404) {
           if (dryRun) {
             projectExists = false;
-            if (!quiet) {
+            if (!quiet && !jsonOutput) {
               logInfo(
                 `Project "${config.projectSlug}" does not exist. Dry run will not create it.`,
               );
@@ -541,7 +648,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             }
             if (reserveResult.slug !== config.projectSlug) {
               await writeProjectSlug(projectDir, reserveResult.slug);
-              logInfo(`Project slug: ${reserveResult.slug}`);
+              if (!quiet && !jsonOutput) logInfo(`Project slug: ${reserveResult.slug}`);
             }
             config = { ...config, projectSlug: reserveResult.slug };
             // Now try to get files again (should be empty for new project)
@@ -613,32 +720,31 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         } finally {
           spinner.stop();
         }
-        if (!quiet) logInfo("No changes to push.");
+        if (!quiet) {
+          if (dryRun && jsonOutput) {
+            outputPushDryRunResult(
+              config.projectSlug,
+              branchName,
+              projectExists,
+              0,
+              0,
+            );
+          } else if (dryRun) {
+            logInfo("Dry run complete. No files would change.");
+          } else {
+            outputPushResult(config.projectSlug, branchName, 0, 0);
+          }
+        }
         return;
       }
 
       spinner.stop();
 
-      if (!quiet) {
+      if (!quiet && !jsonOutput && (dryRun || isVerbose())) {
         const parts = buildSummaryParts(ops, toDelete);
         cliLogger.info(
           `\nFound ${formatParts(parts)} for ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
         );
-      }
-
-      if (!force && !dryRun) {
-        const parts = buildConfirmParts(ops, toDelete);
-        const confirmMessage = isMainBranch
-          ? `Push to main (${parts.join(", ")} files)?`
-          : target.branchId
-          ? `Push to branch "${branchName}" and ${parts.join(", ")} files?`
-          : `Create branch "${branchName}" and ${parts.join(", ")} files?`;
-
-        const confirmed = await confirmPrompt(confirmMessage, true);
-        if (!confirmed) {
-          cliLogger.info("Push cancelled.");
-          return;
-        }
       }
 
       if (dryRun) {
@@ -649,7 +755,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           await deleteFiles(client, config.projectSlug, target.branchId, toDelete, true);
         }
 
-        if (!quiet) {
+        if (jsonOutput && !quiet) {
+          outputPushDryRunResult(
+            config.projectSlug,
+            branchName,
+            projectExists,
+            ops.length,
+            toDelete.length,
+          );
+        } else if (!quiet) {
           const parts = buildConfirmParts(ops, toDelete);
           logInfo(`Dry run complete. Would ${parts.join(" and ")} files.`);
         }
@@ -664,7 +778,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         : branchId
         ? `Pushing to branch "${branchName}"...`
         : `Creating branch "${branchName}"...`;
-      spinner = quiet ? createNoopSpinner() : createSpinner(uploadMsg);
+      spinner = quiet || jsonOutput ? createNoopSpinner() : createSpinner(uploadMsg);
 
       if (!isMainBranch && !branchId) {
         try {
@@ -725,20 +839,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (quiet) return;
 
-      const successParts: string[] = [];
-      if (uploadResult.uploaded > 0) successParts.push(`${uploadResult.uploaded} uploaded`);
-      if (deleteResult.deleted > 0) successParts.push(`${deleteResult.deleted} deleted`);
-
-      if (successParts.length > 0) {
-        if (isMainBranch) {
-          logSuccess(`Pushed to main: ${successParts.join(", ")}.`);
-        } else {
-          logSuccess(`Pushed to branch "${branchName}": ${successParts.join(", ")}.`);
-          cliLogger.info("");
-          logInfo(`Preview: https://${config.projectSlug}--${branchName}.preview.veryfront.com`);
-          logInfo(`Merge:   https://veryfront.com/projects/${config.projectSlug}/branches`);
-        }
-      }
+      outputPushResult(
+        config.projectSlug,
+        branchName,
+        uploadResult.uploaded,
+        deleteResult.deleted,
+      );
     },
     { "cli.dryRun": options.dryRun ?? false },
   );

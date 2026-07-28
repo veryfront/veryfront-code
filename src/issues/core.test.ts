@@ -87,7 +87,7 @@ Deno.test("parseYaml - keeps special keys as inert own data", () => {
   assertEquals(Object.getPrototypeOf(result), null);
   assertEquals(Object.prototype.hasOwnProperty.call(result, "__proto__"), true);
   assertEquals(result.__proto__, "inert");
-  assertEquals(result.constructor, "value");
+  assertEquals(Reflect.get(result, "constructor"), "value");
   assertEquals(({} as Record<string, unknown>).inert, undefined);
 });
 
@@ -1190,6 +1190,9 @@ Deno.test("IssuesManager preserves operation and lock cleanup failures", async (
       AggregateError,
       "mutation failed and lock cleanup also failed",
     );
+    if (!(error instanceof AggregateError)) {
+      throw new TypeError("Expected an AggregateError");
+    }
     assertEquals(error.errors, [operationError, cleanupError]);
     assertEquals((await manager.get(created.metadata.id))?.metadata.title, "Operation failure");
     assertEquals(await base.exists(lockPath), true);

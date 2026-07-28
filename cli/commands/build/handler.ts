@@ -1,8 +1,8 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { bold, cyan, dim, green, yellow } from "#cli/ui";
+import { dim } from "#cli/ui";
 import { join } from "veryfront/platform/path";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, isVerbose, logSuccess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
@@ -90,13 +90,11 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
 
   const finalOutput = outputDir ?? join(projectDir, "dist");
 
-  cliLogger.info(bold(cyan("\n🔗 Veryfront Embedded Preset Build\n")));
-  cliLogger.info("Starting embedded preset build");
-  cliLogger.info(yellow("\nBuild Configuration:"));
-  cliLogger.info(`  ${dim("Project:")}    ${projectDir}`);
-  cliLogger.info(`  ${dim("Output:")}     ${finalOutput}`);
-  cliLogger.info(`  ${dim("Preset:")}     embedded`);
-  cliLogger.info("\n");
+  cliLogger.info("Building embedded preset...");
+  if (isVerbose()) {
+    cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
+    cliLogger.info(`  ${dim("Output:")} ${finalOutput}`);
+  }
 
   await buildEmbeddedPreset({
     projectDir,
@@ -104,8 +102,6 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     runtime: "deno",
   });
 
-  cliLogger.info(`\n${green("✓")}${bold(green(" Embedded bundle created!\n"))}`);
-
-  const { getPostBuildTips } = await import("../../help/tips.ts");
-  console.log(getPostBuildTips());
+  logSuccess("Built embedded preset");
+  cliLogger.info(`  ${finalOutput}\n`);
 }

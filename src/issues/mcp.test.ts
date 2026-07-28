@@ -124,9 +124,12 @@ describe("issues MCP tools", () => {
         }),
       );
       assertEquals(listed.total, 1);
-      assertEquals(listed.issues.map((issue) => issue.metadata.id), [
-        first.metadata.id,
-      ]);
+      assertEquals(
+        listed.issues.map((issue: { metadata: { id: string } }) => issue.metadata.id),
+        [
+          first.metadata.id,
+        ],
+      );
 
       const update = requireTool("issues_update");
       const updated = await update.execute(

@@ -18,6 +18,11 @@ import { runCommand } from "#veryfront/compat/process.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
+const EXPECTED_FAVICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#fff"/>
+  <circle cx="32" cy="32" r="20" fill="#000"/>
+</svg>
+`;
 
 function randomSuffix(): string {
   return Math.random().toString(36).substring(2, 8);
@@ -108,16 +113,50 @@ describe("init command integration", () => {
     });
 
     it("should use ai-agent template when specified", async () => {
-      const result = await runInitCommand([projectName, "-t", "ai-agent", "--skip-install"]);
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "ai-agent",
+        "--skip-install",
+        "--color",
+      ]);
 
       assertEquals(result.code, 0);
-      assertEquals(result.stdout?.includes("Project structure"), true);
-      assertEquals(result.stdout?.includes("app/"), true);
-      assertEquals(result.stdout?.includes("agents/"), true);
-      assertEquals(result.stdout?.includes("tools/"), true);
+      assertEquals(result.stdout?.includes("\x1b[38;2;252;143;93m✓"), false);
+      assertEquals(result.stdout?.includes("✓"), true);
+      assertEquals(result.stdout?.includes("Creating new Veryfront project"), false);
+      assertEquals(result.stdout?.includes("ready!"), false);
+      assertEquals(result.stdout?.includes("Deploy:"), true);
+      assertEquals(result.stdout?.includes("Project structure"), false);
+      assertEquals(result.stdout?.includes("npx veryfront deploy"), true);
+      assertEquals(result.stdout?.includes("OPENAI_API_KEY"), false);
+      assertEquals(result.stdout?.includes("auto-discovered"), false);
 
       const statResult = await stat(join(projectDir, "agents"));
       assertEquals(statResult.isDirectory, true);
+    });
+
+    it("shows the generated project structure in verbose mode", async () => {
+      const verboseName = `verbose-${randomSuffix()}`;
+      const verboseDir = join(TEST_DIR, verboseName);
+
+      try {
+        const result = await runInitCommand([
+          verboseName,
+          "-t",
+          "ai-agent",
+          "--skip-install",
+          "--verbose",
+        ]);
+
+        assertEquals(result.code, 0);
+        assertEquals(result.stdout?.includes("Project structure"), true);
+        assertEquals(result.stdout?.includes("app/"), true);
+        assertEquals(result.stdout?.includes("agents/"), true);
+        assertEquals(result.stdout?.includes("tools/"), true);
+      } finally {
+        await remove(verboseDir, { recursive: true }).catch(() => {});
+      }
     });
 
     it("should use docs-agent template when specified", async () => {
@@ -208,7 +247,7 @@ describe("init command integration", () => {
       assertEquals(await exists(join(projectDir, "public", "favicon.ico")), false);
     });
 
-    it("creates coding-agent instructions for every starter template", async () => {
+    it("creates coding-agent instructions and the minimal favicon for every starter", async () => {
       for (const template of STARTER_TEMPLATE_NAMES) {
         const name = `agents-${template}-${randomSuffix()}`;
         const dir = join(TEST_DIR, name);
@@ -230,6 +269,10 @@ describe("init command integration", () => {
           assertEquals(content.includes("veryfront schema --json"), true);
           assertEquals(content.includes("veryfront routes"), true);
           assertEquals(content.includes("src/pages"), false);
+          assertEquals(
+            await readTextFile(join(dir, "public", "favicon.svg")),
+            EXPECTED_FAVICON,
+          );
         } finally {
           await remove(dir, { recursive: true }).catch(() => {});
         }
@@ -531,6 +574,20 @@ describe("init command integration", () => {
           output.includes("Created") ||
           output.includes("✓"),
       );
+    });
+
+    it("does not emit ANSI when color is disabled", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--skip-install",
+        "--no-color",
+      ]);
+
+      assertEquals(result.code, 0);
+      assertEquals(result.stdout?.includes("\x1b["), false);
+      assertEquals(result.stderr?.includes("\x1b["), false);
     });
   });
 });

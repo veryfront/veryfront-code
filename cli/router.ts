@@ -5,9 +5,9 @@
  */
 
 import { cliErrorBoundary } from "veryfront/errors";
-import { cliLogger, VERSION } from "#cli/utils";
+import { cliLogger, isVerbose, VERSION } from "#cli/utils";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
-import { setColorOverride } from "./ui/colors.ts";
+import { setColorOverride, shouldUseColor } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
 import { ensureCliSchemaValidator } from "./shared/default-contracts.ts";
 import {
@@ -162,7 +162,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   else if (typeof args.o === "string") setOutputPath(args.o as string);
 
   const autoConfirm = args.yes === true || args.y === true;
-  setNonInteractive(autoConfirm || detectCI());
+  setNonInteractive(args["no-input"] === true || autoConfirm || detectCI());
   setAutoConfirm(autoConfirm);
 
   if (args["no-animation"]) {
@@ -261,7 +261,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   }, {
     onError: async (error) => {
       if (!isJsonMode()) {
-        console.log((await import("veryfront/errors")).formatCLIError(error));
+        console.error((await import("veryfront/errors")).formatCLIError(error, {
+          color: shouldUseColor(),
+          verbose: isVerbose(),
+        }));
         return;
       }
 

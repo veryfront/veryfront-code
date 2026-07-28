@@ -19,6 +19,7 @@ export interface ParsedArgs {
   verbose?: boolean;
   color?: boolean;
   "no-color"?: boolean;
+  "no-input"?: boolean;
   force?: boolean;
   f?: boolean;
   strict?: boolean;
