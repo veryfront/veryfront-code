@@ -171,6 +171,14 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   summariesRef.current = summaries;
   const activeRef = React.useRef(active);
   activeRef.current = active;
+  // Invalidates async load-then-save mutations when a newer edit or deletion
+  // takes ownership of the same conversation.
+  const mutationGenerationsRef = React.useRef(new Map<string, number>());
+  const beginMutation = React.useCallback((id: string): number => {
+    const generation = (mutationGenerationsRef.current.get(id) ?? 0) + 1;
+    mutationGenerationsRef.current.set(id, generation);
+    return generation;
+  }, []);
 
   const select = React.useCallback((id?: string | null) => {
     const next = id ?? null;
@@ -266,6 +274,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   const didInit = React.useRef(false);
   React.useEffect(() => {
     didInit.current = false;
+    mutationGenerationsRef.current.clear();
     let cancelled = false;
     setIsLoading(true);
     void store.list().then((list) => {
@@ -313,6 +322,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   }, [activeId, store]);
 
   const update = React.useCallback((id: string, patch: ConversationPatch) => {
+    const mutationGeneration = beginMutation(id);
     const now = Date.now();
     setSummaries((prev) => {
       const existing = prev.find((s) => s.id === id);
@@ -333,10 +343,15 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
     } else {
       // Non-active edit (e.g. rename from the sidebar) — load, patch, save now.
       void store.load(id).then((conversation) => {
-        if (conversation) void store.save({ ...conversation, ...patch, updatedAt: now });
+        if (
+          conversation &&
+          mutationGenerationsRef.current.get(id) === mutationGeneration
+        ) {
+          void store.save({ ...conversation, ...patch, updatedAt: now });
+        }
       });
     }
-  }, [store, scheduleSave]);
+  }, [store, scheduleSave, beginMutation]);
 
   const save = React.useCallback((conversation: Conversation) => {
     const summary = conversationSummary(conversation);
@@ -383,6 +398,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
   }, [update]);
 
   const remove = React.useCallback((id: string) => {
+    beginMutation(id);
     discardPendingSave(id);
     void store.delete(id);
     const next = nextActiveAfterRemove(summariesRef.current, id);
@@ -393,7 +409,7 @@ export function useConversations(options: UseConversationsOptions = {}): UseConv
       // summariesRef before React commits the filtered state.
       else createConversation(undefined, id);
     }
-  }, [store, activeId, select, createConversation, discardPendingSave]);
+  }, [store, activeId, select, createConversation, discardPendingSave, beginMutation]);
 
   // Memoized so `ConversationsProvider` can pass this straight through as a
   // context value: consumers re-render only when the state above changes, not

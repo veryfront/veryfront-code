@@ -243,4 +243,53 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       restoreDom();
     }
   });
+
+  it("does not save a stale non-active edit after the conversation is removed", async () => {
+    const restoreDom = installDom();
+    const base = memoryConversationStore([
+      conversation({ id: "active", title: "Active", updatedAt: 20 }),
+      conversation({ id: "target", title: "Target", updatedAt: 10 }),
+    ]);
+    let resolveTargetLoad: ((value: Conversation | null) => void) | undefined;
+    const savedIds: string[] = [];
+    const deletedIds: string[] = [];
+    const store: ConversationStore = {
+      list: () => base.list(),
+      load: (id) => {
+        if (id !== "target") return base.load(id);
+        return new Promise((resolve) => {
+          resolveTargetLoad = resolve;
+        });
+      },
+      save: async (value) => {
+        savedIds.push(value.id);
+        await base.save(value);
+      },
+      delete: async (id) => {
+        deletedIds.push(id);
+        await base.delete(id);
+      },
+    };
+
+    try {
+      const view = mount(store);
+      await settle();
+      assertEquals(view.get().activeConversationId, "active");
+
+      view.get().rename("target", "Late rename");
+      assert(resolveTargetLoad);
+      view.get().remove("target");
+      resolveTargetLoad(conversation({ id: "target", title: "Target", updatedAt: 10 }));
+      await settle();
+
+      assertEquals(deletedIds, ["target"]);
+      assertEquals(savedIds.includes("target"), false);
+      assertEquals(view.get().conversations.map((item) => item.id), ["active"]);
+
+      flushSync(() => view.root.unmount());
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
 });
