@@ -39,7 +39,41 @@ function detachedDescendantParentScript(): string {
   `;
 }
 
+function normalizeNewlines(output: string | undefined): string | undefined {
+  return output?.replaceAll("\r\n", "\n");
+}
+
 describe("runCommand", () => {
+  it("runs shell command strings through the native shell", async () => {
+    const result = await runCommand("echo shell-works && echo shell-stderr >&2", {
+      shell: true,
+      capture: true,
+    });
+
+    assertEquals(result.success, true);
+    assertEquals(normalizeNewlines(result.stdout), "shell-works\n");
+    assertEquals(normalizeNewlines(result.stderr), "shell-stderr\n");
+  });
+
+  it("preserves shell command arguments with spaces and metacharacters", async () => {
+    const result = await runCommand("deno", {
+      shell: true,
+      capture: true,
+      args: [
+        "eval",
+        "console.log(JSON.stringify(Deno.args))",
+        "value with spaces",
+        "literal ; & | $ * chars",
+      ],
+    });
+
+    assertEquals(result.success, true);
+    assertEquals(
+      result.stdout?.trim(),
+      JSON.stringify(["value with spaces", "literal ; & | $ * chars"]),
+    );
+  });
+
   it("clears inherited environment variables", async () => {
     const inheritedKey = "VERYFRONT_RUN_COMMAND_INHERITED";
     const explicitKey = "VERYFRONT_RUN_COMMAND_EXPLICIT";

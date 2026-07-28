@@ -477,7 +477,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   let template: InitTemplate;
   let projectName = name;
-  let initGit = false;
+  let initGit = options.initGit ?? false;
 
   // Validate project name before doing anything else
   if (name) {
@@ -733,25 +733,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
     throw err;
   }
 
-  // Initialize git if requested
-  if (initGit) {
-    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
-    try {
-      const { initializeGitRepo } = await import("../../utils/git.ts");
-      const success = await initializeGitRepo(
-        projectDir,
-        projectName ?? "veryfront project",
-      );
-      if (success) {
-        gitSpinner?.success("Git repository initialized");
-      } else {
-        gitSpinner?.error("Git initialization failed");
-      }
-    } catch {
-      gitSpinner?.error("Git initialization failed");
-    }
-  }
-
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   if (!options.skipInstall) {
@@ -771,6 +752,22 @@ export async function initCommand(options: InitOptions): Promise<void> {
           `Run '${getInstallCommand(pm)}' manually to install dependencies.`,
         );
       }
+    }
+  }
+
+  // Initialize git if requested
+  if (initGit) {
+    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
+    try {
+      const { initializeGitRepo } = await import("../../utils/git.ts");
+      const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
+      if (success) {
+        gitSpinner?.success("Git repository initialized");
+      } else {
+        gitSpinner?.error("Git initialization failed");
+      }
+    } catch {
+      gitSpinner?.error("Git initialization failed");
     }
   }
 

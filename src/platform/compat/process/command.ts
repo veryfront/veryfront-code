@@ -411,7 +411,7 @@ function resolveShellCommand(
   args: readonly string[],
 ): { cmd: string; args: string[] } {
   if (isWindowsPlatform()) {
-    return { cmd: "cmd", args: ["/d", "/s", "/c", cmd, ...args] };
+    return { cmd: "cmd.exe", args: ["/d", "/s", "/c", cmd, ...args] };
   }
   if (args.length === 0) {
     return { cmd: "sh", args: ["-c", cmd] };
