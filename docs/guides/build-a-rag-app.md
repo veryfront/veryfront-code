@@ -69,11 +69,12 @@ Set `contentDir: "knowledge"` to index `knowledge/` instead of `content/`.
 Create upload routes that share the same store:
 
 ```ts title="lib/upload-auth.ts"
-export function authorizeUploads(request: Request): boolean {
-  const token = Deno.env.get("UPLOAD_TOKEN");
-  return token !== undefined &&
-    request.headers.get("authorization") === `Bearer ${token}`;
-}
+import { authorizeSession } from "./session.ts";
+
+// Verify your app's signed, same-origin session cookie. The browser sends that
+// cookie for useUploadsRegistry requests without exposing a bearer token to
+// client code.
+export const authorizeUploads = (request: Request) => authorizeSession(request);
 ```
 
 ```ts title="app/api/uploads/route.ts"
@@ -119,10 +120,12 @@ newest first:
 ```
 
 The default and maximum page sizes are controlled by `maxListItems` (100 by
-default, at most 1,000). `DELETE` accepts an `id` route parameter or query
-parameter and refuses to delete documents that did not originate from the
-upload route. In Cloud mode, a `502` means the RAG entry was removed but source
-blob cleanup is incomplete; retry the same deletion safely.
+default, at most 1,000). `useUploadsRegistry()` follows `hasMore` pages and
+publishes the new server snapshot only after every bounded page validates.
+`DELETE` accepts an `id` route parameter or query parameter and refuses to
+delete documents that did not originate from the upload route. In Cloud mode,
+a `502` means the RAG entry was removed but source blob cleanup is incomplete;
+retry the same deletion safely.
 
 ## Understand ingestion
 
@@ -233,29 +236,38 @@ import { AttachmentsPanel, Chat, useUploadsRegistry } from "veryfront/chat";
 
 export default function RagPage() {
   const uploads = useUploadsRegistry({ url: "/api/uploads" });
+  const uploadError = uploads.uploadError ??
+    uploads.refreshError ??
+    uploads.removeError ??
+    uploads.storageError;
 
   return (
     <main className="flex min-h-screen">
       <Chat
         agentId="rag"
         api="/api/ag-ui"
-        uploadApi="/api/uploads"
         placeholder="Ask about your documents..."
       />
 
-      <AttachmentsPanel
-        uploads={uploads.items}
-        loading={uploads.isLoading}
-        onAttach={uploads.upload}
-        onRemoveUpload={uploads.remove}
-      />
+      <aside>
+        {uploadError && <p role="alert">{uploadError.message}</p>}
+        <AttachmentsPanel
+          uploads={uploads.items}
+          loading={uploads.isLoading}
+          onAttach={uploads.upload}
+          onRemoveUpload={uploads.remove}
+        />
+      </aside>
     </main>
   );
 }
 ```
 
 The `docs-agent` template includes a fuller upload panel. Use this smaller
-example when you want the minimum wiring.
+example when you want the minimum wiring. Upload documents through the panel:
+the RAG ingestion route returns document metadata, not the runtime-fetchable
+`url` required by `Chat.uploadApi`. Composer attachments use a separate
+`createChatUploadHandler` route when you want them stored durably.
 
 ## Use Veryfront Cloud mode
 

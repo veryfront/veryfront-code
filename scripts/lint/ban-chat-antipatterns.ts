@@ -94,7 +94,8 @@ async function walk(
 // Per-file LOC ceilings keep large chat components from growing further. Lower
 // a ceiling when its file shrinks so the improvement cannot silently regress.
 const FILE_SIZE_CEILINGS: Record<string, number> = {
-  "src/react/components/chat/chat/index.tsx": 330,
+  // Chat preset implementation extracted to chat/chat-preset.tsx.
+  "src/react/components/chat/chat/index.tsx": 279,
   // Message.Sources extracted to composition/message-sources.tsx.
   "src/react/components/chat/chat/composition/message.tsx": 906,
   // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).

@@ -94,17 +94,20 @@ point `Chat` at that route:
 ```ts
 // app/api/uploads/route.ts
 import { createChatUploadHandler } from "veryfront/chat/uploads";
+import { authorizeSession } from "@/lib/auth";
 
-function authorize(request: Request) {
-  const token = Deno.env.get("UPLOAD_TOKEN");
-  return Boolean(token && request.headers.get("authorization") === `Bearer ${token}`);
-}
-
-export const { POST, GET, DELETE } = createChatUploadHandler({ authorize });
+export const { POST, GET, DELETE } = createChatUploadHandler({
+  // Verify a signed same-origin session cookie. <Chat> does not expose secret
+  // bearer credentials to browser code.
+  authorize: (request) => authorizeSession(request),
+});
 ```
 
 The authorization callback must return literal `true` to permit a request.
 `false` and invalid runtime results such as `undefined` are denied.
+The preset sends same-origin cookies automatically. If your route instead
+requires an explicit bearer header, compose the headless `useUpload()` hook
+with its `headers` option rather than placing a secret token in `Chat` props.
 
 To change the upload limits, bound the complete multipart request separately
 from the file bytes:

@@ -36,6 +36,28 @@ Deno.test("chat upload responses require a URL and retain a returned id", () => 
       url: "https://example.com/api/uploads?id=custom_blob-1",
     },
   );
+  assertEquals(
+    parseChatUploadResponse(
+      '{"id":"custom_blob-1","url":"../files/custom_blob-1"}',
+      "https://example.com/api/uploads",
+    ),
+    {
+      uploadId: "custom_blob-1",
+      url: "https://example.com/files/custom_blob-1",
+    },
+  );
   assertEquals(parseChatUploadResponse('{"id":"custom_blob-1"}'), null);
   assertEquals(parseChatUploadResponse("not json"), null);
+  assertEquals(parseChatUploadResponse('{"id":42,"url":"/uploads/42"}'), null);
+  assertEquals(parseChatUploadResponse('{"id":" spaced ","url":"/uploads/42"}'), null);
+  assertEquals(parseChatUploadResponse('{"id":"../unsafe","url":"/uploads/42"}'), null);
+  assertEquals(
+    parseChatUploadResponse(`{"id":"${"x".repeat(129)}","url":"/uploads/42"}`),
+    null,
+  );
+  assertEquals(parseChatUploadResponse('{"url":"javascript:alert(1)"}'), null);
+  assertEquals(
+    parseChatUploadResponse('{"url":"data:text/html,<script>alert(1)</script>"}'),
+    null,
+  );
 });
