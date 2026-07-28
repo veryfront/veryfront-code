@@ -52,6 +52,7 @@ import { parseEvalArgs } from "./handler.ts";
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+const originalServiceLayer = Deno.env.get("VERYFRONT_SERVICE_LAYER");
 const originalXdgConfigHome = Deno.env.get("XDG_CONFIG_HOME");
 const originalEvalExport = Deno.env.get("VERYFRONT_EVAL_EXPORT");
 const originalEvalExporters = Deno.env.get("VERYFRONT_EVAL_EXPORTERS");
@@ -82,6 +83,12 @@ function restoreEnv(): void {
     Deno.env.delete("VERYFRONT_PROJECT_SLUG");
   } else {
     Deno.env.set("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+  }
+
+  if (originalServiceLayer === undefined) {
+    Deno.env.delete("VERYFRONT_SERVICE_LAYER");
+  } else {
+    Deno.env.set("VERYFRONT_SERVICE_LAYER", originalServiceLayer);
   }
 
   if (originalApiBaseUrl === undefined) {
@@ -1511,6 +1518,7 @@ describe("eval CLI command helpers", () => {
     try {
       Deno.env.delete("VERYFRONT_API_TOKEN");
       Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       await saveToken("stored-token");
 
@@ -1520,6 +1528,7 @@ describe("eval CLI command helpers", () => {
 
       assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
+      assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });

@@ -13,7 +13,7 @@ import { validateProviderConfig } from "veryfront/discovery";
 import { yellow } from "#cli/ui";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { brand, dim, error as errorColor, success } from "#cli/ui";
-import { applyRuntimeAuthContext } from "#cli/shared/runtime-auth";
+import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
@@ -96,9 +96,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       const env = getEnvironmentConfig();
       const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
-      const runtimeAuth = await applyRuntimeAuthContext({
+      const linkedProjectSlug = await resolveLinkedProjectSlug(
         projectDir,
-        projectSlug: config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
+        config?.projectSlug ?? config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
+      );
+      const runtimeAuth = await applyRuntimeAuthContext({
+        linkedProjectSlug,
       });
       const shutdownController = new AbortController();
       let mdxWatcher: Promise<void> | null = null;

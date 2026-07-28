@@ -24,13 +24,29 @@ export interface NodeStdinLike {
   off(event: "error", listener: StdinErrorListener): void;
 }
 
-function getNodeStdin(): NodeStdinLike | undefined {
+function getNodeStdin(): (NodeStdinLike & NodeKeypressStdinLike) | undefined {
   try {
-    const process = Reflect.get(globalThis, "process") as { stdin?: NodeStdinLike } | undefined;
+    const process = Reflect.get(globalThis, "process") as
+      | { stdin?: NodeStdinLike & NodeKeypressStdinLike }
+      | undefined;
     return process?.stdin;
   } catch {
     return undefined;
   }
+}
+
+export interface NodeRawStdinLike {
+  setRawMode?(enabled: boolean): void;
+}
+
+export interface NodeKeypressStdinLike extends NodeRawStdinLike {
+  pause(): void;
+  resume(): void;
+  once(event: string, listener: (data: Uint8Array) => void): void;
+}
+
+export function setNodeRawMode(stdin: NodeRawStdinLike, enabled: boolean): void {
+  stdin.setRawMode?.(enabled);
 }
 
 /**
@@ -46,7 +62,7 @@ export function setRawMode(enabled: boolean): void {
   const stdin = getNodeStdin();
   if (!stdin) return;
 
-  stdin.setRawMode?.(enabled);
+  setNodeRawMode(stdin, enabled);
   if (!enabled) stdin.pause();
 }
 
@@ -192,19 +208,63 @@ export function getStdinReader(): StdinReader {
   return createNodeStdinReader(stdin);
 }
 
+/** Read one line from stdin and release the reader when complete. */
+export async function readStdinLine(
+  reader: StdinReader = getStdinReader(),
+): Promise<string | null> {
+  const decoder = new TextDecoder();
+  let input = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) {
+        input += decoder.decode(value, { stream: !done });
+      } else if (done) {
+        input += decoder.decode();
+      }
+      const lineEnd = input.search(/[\r\n]/);
+      if (lineEnd !== -1) return input.slice(0, lineEnd);
+      if (done) return input || null;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /**
  * Wait for a single keypress from stdin.
  * Works in both Deno and Node.js.
  */
-export async function waitForKeypress(): Promise<void> {
-  setRawMode(true);
-  const reader = getStdinReader();
-  try {
-    await reader.read();
-  } finally {
-    reader.releaseLock();
-    setRawMode(false);
+export function waitForNodeKeypress(stdin: NodeKeypressStdinLike): Promise<void> {
+  return new Promise((resolve) => {
+    stdin.once("data", () => {
+      setNodeRawMode(stdin, false);
+      stdin.pause();
+      resolve();
+    });
+    setNodeRawMode(stdin, true);
+    stdin.resume();
+  });
+}
+
+export function waitForKeypress(): Promise<void> {
+  const deno = isDeno ? getDenoRuntime() : undefined;
+  if (deno) {
+    return (async () => {
+      deno.stdin.setRaw(true);
+      const reader = deno.stdin.readable.getReader();
+      try {
+        await reader.read();
+      } finally {
+        deno.stdin.setRaw(false);
+        reader.releaseLock();
+      }
+    })();
   }
+
+  const stdin = getNodeStdin();
+  return stdin ? waitForNodeKeypress(stdin) : Promise.resolve();
 }
 
 // Key codes for raw mode

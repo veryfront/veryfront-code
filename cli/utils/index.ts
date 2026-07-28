@@ -7,6 +7,7 @@ import {
   onSignal,
   promptSync,
   readStdinByteSync,
+  readStdinLine,
   setRawMode,
   writeStdout,
 } from "veryfront/platform";
@@ -156,8 +157,12 @@ export async function promptUser(message: string): Promise<string> {
     });
   }
 
-  const input = promptSync(message);
-  return input?.trim() ?? "";
+  if (typeof globalThis.prompt === "function") {
+    return promptSync(message)?.trim() ?? "";
+  }
+
+  writeStdout(message);
+  return (await readStdinLine())?.trim() ?? "";
 }
 
 const CTRL_C = 0x03;

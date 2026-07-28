@@ -15,7 +15,6 @@ import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfro
 import {
   type ApiClient,
   createApiClient,
-  readConfigFile,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
@@ -863,8 +862,6 @@ async function ensureProjectLinkedForDeploy(
 }> {
   const details = await resolveConfigWithAuthDetails(projectDir, env);
   const initial = details.config;
-  const configFile = await readConfigFile(projectDir);
-  const hasPersistedSlug = Boolean(configFile?.projectSlug);
   const isInferredReference = details.projectReferenceSource.kind === "inferred";
   const projectReference = isInferredReference
     ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
@@ -872,29 +869,25 @@ async function ensureProjectLinkedForDeploy(
   const config = { ...initial, projectSlug: projectReference };
   const client = createApiClient(config);
 
-  try {
-    const project = await getProject(client, projectReference);
-    if (isInferredReference && !hasPersistedSlug && !dryRun) {
-      await writeProjectSlug(projectDir, project.slug);
-      if (!quiet && isVerbose()) logInfo(`Linked project ${project.slug}`);
-    }
-    return {
-      config: { ...config, projectSlug: project.slug },
-      client,
-      project,
-      plannedProjectSlug: project.slug,
-    };
-  } catch (error) {
-    if (getErrorStatus(error) !== 404) {
-      throw new Error(
-        `Could not check project "${projectReference}": ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
   if (!isInferredReference) {
+    try {
+      const project = await getProject(client, projectReference);
+      return {
+        config: { ...config, projectSlug: project.slug },
+        client,
+        project,
+        plannedProjectSlug: project.slug,
+      };
+    } catch (error) {
+      if (getErrorStatus(error) !== 404) {
+        throw new Error(
+          `Could not check project "${projectReference}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
     throw new Error(
       `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
     );

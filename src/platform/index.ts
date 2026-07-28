@@ -55,6 +55,7 @@ export {
 export {
   createEscapeBuffer,
   getStdinReader,
+  readStdinLine,
   setRawMode,
   type StdinReader,
 } from "./compat/stdin.ts";

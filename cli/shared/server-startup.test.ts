@@ -7,7 +7,7 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCachedReleaseAssetManifests,
   type ReleaseAssetManifest,
@@ -15,6 +15,8 @@ import {
 } from "veryfront/release-assets";
 import {
   buildCliProxyProductionServerOptions,
+  buildDiscoveryConfig,
+  buildProxyRuntimeProjectIdentity,
   CliReleaseAssetManifestError,
   CliServerStartupCleanupError,
   createCliProductionManifestCoordinator,
@@ -58,13 +60,15 @@ describe("buildCliProxyProductionServerOptions()", () => {
       projectDir: "/local/project",
       signal,
       requestInterceptor,
-      defaultProjectSlug: "local-project",
       defaultProjectId: "project-id",
+      linkedProjectSlug: "linked-project",
     });
 
     assertEquals("startupContext" in options, false);
     assertEquals(options.port, 4_321);
     assertEquals(options.projectDir, "/local/project");
+    assertEquals(options.defaultProjectSlug, "project-id");
+    assertEquals(options.defaultProjectId, "project-id");
     assertStrictEquals(options.signal, signal);
     assertStrictEquals(options.requestInterceptor, requestInterceptor);
   });
@@ -341,5 +345,74 @@ describe("createCliServerCleanup()", () => {
     await cleanup();
     assertEquals(stopCalls, 2);
     assertEquals(globalCleanupCalls, 1);
+  });
+});
+
+const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+function restoreEnv(): void {
+  if (originalApiToken === undefined) {
+    Deno.env.delete("VERYFRONT_API_TOKEN");
+  } else {
+    Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+  }
+
+  if (originalProjectSlug === undefined) {
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+  } else {
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
+  }
+}
+
+describe("buildDiscoveryConfig", () => {
+  afterEach(restoreEnv);
+
+  it("does not scope an unlinked local project to its directory slug", () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "stored-token");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+
+    const config = buildDiscoveryConfig({
+      port: 3000,
+      projectDir: "/tmp/my-agent",
+      signal: new AbortController().signal,
+      requestInterceptor: (request: Request) => request,
+      defaultProjectId: "local-my-agent",
+      linkedProjectSlug: undefined,
+    });
+
+    assertEquals(config.projectSlug, undefined);
+    assertEquals(config.apiToken, "stored-token");
+  });
+
+  it("uses a persisted project link for cloud discovery", () => {
+    Deno.env.set("VERYFRONT_API_TOKEN", "stored-token");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+
+    const config = buildDiscoveryConfig({
+      port: 3000,
+      projectDir: "/tmp/my-agent",
+      signal: new AbortController().signal,
+      requestInterceptor: (request: Request) => request,
+      defaultProjectId: "local-my-agent",
+      linkedProjectSlug: "linked-project",
+    });
+
+    assertEquals(config.projectSlug, "linked-project");
+  });
+});
+
+describe("buildProxyRuntimeProjectIdentity", () => {
+  it("keeps the standalone slug paired with its local project id", () => {
+    assertEquals(
+      buildProxyRuntimeProjectIdentity({
+        defaultProjectId: "local-my-agent",
+        linkedProjectSlug: "linked-project",
+      }),
+      {
+        defaultProjectSlug: "local-my-agent",
+        defaultProjectId: "local-my-agent",
+      },
+    );
   });
 });
