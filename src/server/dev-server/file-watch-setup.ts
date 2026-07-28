@@ -16,8 +16,8 @@ const METRICS_LOG_INTERVAL = 10;
 const DEFAULT_PRIMITIVE_DIRS = ["tools", "agents", "workflows", "prompts", "resources"];
 
 /**
- * Patterns for paths that should NOT trigger HMR updates.
- * These are generated/cached files that change during normal operation
+ * Exact directory-name path segments that should NOT trigger HMR updates.
+ * These contain generated or cached files that change during normal operation
  * but don't represent actual source code changes.
  */
 const IGNORED_DIRECTORY_NAMES = new Set([
