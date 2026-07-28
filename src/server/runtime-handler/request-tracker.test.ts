@@ -336,15 +336,21 @@ describe("server/runtime-handler/request-tracker", () => {
     it("keeps slow and very slow timer diagnostics visible", () => {
       const entries = captureLogs();
       const originalSetTimeout = globalThis.setTimeout;
+      const originalClearTimeout = globalThis.clearTimeout;
+      const createInertTimerHandle = () => {
+        const handle = originalSetTimeout(() => {}, 0);
+        originalClearTimeout(handle);
+        return handle;
+      };
 
       globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
         if (delay === 10_000) {
           if (typeof callback === "function") callback(...args);
-          return 1 as unknown as ReturnType<typeof setTimeout>;
+          return createInertTimerHandle();
         }
         if (delay === 15_000) {
           if (typeof callback === "function") callback(...args);
-          return 2 as unknown as ReturnType<typeof setTimeout>;
+          return createInertTimerHandle();
         }
         return originalSetTimeout(callback, delay, ...args);
       }) as typeof setTimeout;
