@@ -54,6 +54,12 @@ backends, malformed modules, invalid React exports, exhausted safety budgets,
 and failed invalidation propagate to the server or build owner instead of
 silently producing partial output.
 
+Browser hydration applies the same rule to import maps. An absent import map is
+valid and uses the documented CDN resolution path; a present but malformed map
+fails before React or router module ownership is selected. It is never treated
+as an empty map, because that would silently change which module instances the
+page hydrates against.
+
 Renderers own caches, component registries, module artifacts, and background
 work. Long-lived consumers clear the appropriate project generation when
 source identity changes and call `destroy()` during shutdown. Streaming has

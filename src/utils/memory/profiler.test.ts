@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  type CacheStats,
   checkMemoryPressure,
   forceGC,
   getCacheStats,
@@ -128,13 +127,12 @@ describe("memory/profiler", () => {
     it("snapshots and validates callback results before aggregation", () => {
       registerCache(
         "test-cache",
-        () =>
-          ({
-            name: "spoofed-name",
-            get entries() {
-              throw new Error("hostile entry getter");
-            },
-          }) as CacheStats,
+        () => ({
+          name: "spoofed-name",
+          get entries(): number {
+            throw new Error("hostile entry getter");
+          },
+        }),
       );
 
       assertEquals(

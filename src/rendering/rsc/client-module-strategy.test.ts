@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildClientModuleUrl,
@@ -148,6 +148,20 @@ describe("rendering/rsc/client-module-strategy", () => {
 
     assertEquals(specifiers.react.includes("react@18.3.1"), true);
     assertEquals(specifiers.reactDomClient.includes("react-dom@18.3.1/client"), true);
+  });
+
+  it("rejects a malformed import map before choosing React module ownership", () => {
+    const doc = {
+      querySelector: () => ({
+        textContent: '{"imports":{"react":}}',
+      }),
+    } as unknown as Document;
+
+    assertThrows(
+      () => getHydrationReactImportSpecifiers(doc),
+      SyntaxError,
+      "invalid JSON",
+    );
   });
 
   it("rejects malformed hydration data instead of trusting its TypeScript cast", () => {

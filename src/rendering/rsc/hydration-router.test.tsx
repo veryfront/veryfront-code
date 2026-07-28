@@ -1,5 +1,5 @@
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -86,5 +86,23 @@ describe("rendering/rsc/wrapWithRouterProvider", () => {
 
     // No specifier to load → hydration still proceeds with the unwrapped child.
     assertEquals(result, child);
+  });
+
+  it("does not disguise a malformed import map as an unavailable router provider", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><script type="importmap">{"imports":{"veryfront/router":}}</script>',
+    );
+    const child = React.createElement("div", null, "bare");
+
+    await assertRejects(
+      () =>
+        wrapWithRouterProvider(
+          child,
+          { params: {}, frontmatter: {} },
+          dom.window.document as unknown as Document,
+        ),
+      SyntaxError,
+      "invalid JSON",
+    );
   });
 });

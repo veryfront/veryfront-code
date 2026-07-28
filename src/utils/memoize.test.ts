@@ -1,8 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
-import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
+import {
+  DEFAULT_MEMO_CACHE_MAX_ENTRIES,
+  MAX_MEMO_CACHE_ENTRIES,
+  MAX_MEMO_KEY_CHARACTERS,
+  MAX_MEMOIZE_INFLIGHT,
+  MemoCache,
+  memoize,
+  memoizeAsync,
+  simpleHash,
+} from "./memoize.ts";
 
 describe("memoize", () => {
   describe("MemoCache", () => {
@@ -21,6 +35,40 @@ describe("memoize", () => {
       cache.clear();
       assertEquals(cache.has("key"), false);
       assertEquals(cache.size(), 0);
+    });
+
+    it("uses a finite default and evicts by least-recently-used order", () => {
+      const cache = new MemoCache<number>();
+      for (let index = 0; index < DEFAULT_MEMO_CACHE_MAX_ENTRIES; index++) {
+        cache.set(`key-${index}`, index);
+      }
+
+      assertEquals(cache.get("key-0"), 0);
+      cache.set("new-key", 999);
+
+      assertEquals(cache.size(), DEFAULT_MEMO_CACHE_MAX_ENTRIES);
+      assertEquals(cache.has("key-0"), true);
+      assertEquals(cache.has("key-1"), false);
+      assertEquals(cache.get("new-key"), 999);
+    });
+
+    it("validates explicit entry budgets", () => {
+      for (
+        const maxEntries of [
+          0,
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          MAX_MEMO_CACHE_ENTRIES + 1,
+        ]
+      ) {
+        assertThrows(
+          () => new MemoCache({ maxEntries }),
+          RangeError,
+          "maxEntries",
+        );
+      }
     });
   });
 
@@ -69,6 +117,36 @@ describe("memoize", () => {
       const result1 = memoized("test");
       const result2 = memoized("test");
       assertEquals(result1, result2);
+    });
+
+    it("honors an explicit LRU result budget", () => {
+      let calls = 0;
+      const memoized = memoize(
+        (key: string) => {
+          calls++;
+          return key.toUpperCase();
+        },
+        (key) => key,
+        { maxEntries: 1 },
+      );
+
+      assertEquals(memoized("a"), "A");
+      assertEquals(memoized("b"), "B");
+      assertEquals(memoized("a"), "A");
+      assertEquals(calls, 3);
+    });
+
+    it("rejects cache keys that exceed the retained-key budget", () => {
+      const memoized = memoize(
+        (key: string) => key,
+        (key) => key,
+      );
+
+      assertThrows(
+        () => memoized("k".repeat(MAX_MEMO_KEY_CHARACTERS + 1)),
+        RangeError,
+        "key",
+      );
     });
   });
 
@@ -137,6 +215,99 @@ describe("memoize", () => {
       const memoized = memoizeAsync(fn, (msg) => msg);
 
       assertEquals(await memoized("hello"), "processed: hello");
+    });
+
+    it("bounds distinct in-flight keys while preserving same-key followers", async () => {
+      const leader = Promise.withResolvers<number>();
+      let calls = 0;
+      const memoized = memoizeAsync(
+        (key: string) => {
+          calls++;
+          return key === "shared" ? leader.promise : Promise.resolve(key.length);
+        },
+        (key) => key,
+        { maxEntries: 2, maxInflight: 1 },
+      );
+
+      const first = memoized("shared");
+      const follower = memoized("shared");
+      assertEquals(first, follower);
+      await assertRejects(
+        () => memoized("other"),
+        RangeError,
+        "capacity",
+      );
+      assertEquals(calls, 1);
+
+      leader.resolve(6);
+      assertEquals(await Promise.all([first, follower]), [6, 6]);
+      assertEquals(await memoized("other"), 5);
+      assertEquals(calls, 2);
+    });
+
+    it("releases in-flight capacity after rejection", async () => {
+      const memoized = memoizeAsync(
+        (key: string) =>
+          key === "failed"
+            ? Promise.reject(new Error("failed operation"))
+            : Promise.resolve(key.length),
+        (key) => key,
+        { maxInflight: 1 },
+      );
+
+      await assertRejects(() => memoized("failed"), Error, "failed operation");
+      assertEquals(await memoized("next"), 4);
+    });
+
+    it("evicts resolved async results by least-recently-used order", async () => {
+      let calls = 0;
+      const memoized = memoizeAsync(
+        (key: string) => {
+          calls++;
+          return Promise.resolve(key.toUpperCase());
+        },
+        (key) => key,
+        { maxEntries: 1 },
+      );
+
+      assertEquals(await memoized("a"), "A");
+      assertEquals(await memoized("b"), "B");
+      assertEquals(await memoized("a"), "A");
+      assertEquals(calls, 3);
+    });
+
+    it("validates async budgets and rejects oversized keys as promises", async () => {
+      for (
+        const maxInflight of [
+          0,
+          -1,
+          1.5,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          MAX_MEMOIZE_INFLIGHT + 1,
+        ]
+      ) {
+        assertThrows(
+          () =>
+            memoizeAsync(
+              () => Promise.resolve(1),
+              () => "key",
+              { maxInflight },
+            ),
+          RangeError,
+          "maxInflight",
+        );
+      }
+
+      const memoized = memoizeAsync(
+        (key: string) => Promise.resolve(key),
+        (key) => key,
+      );
+      await assertRejects(
+        () => memoized("k".repeat(MAX_MEMO_KEY_CHARACTERS + 1)),
+        RangeError,
+        "key",
+      );
     });
   });
 

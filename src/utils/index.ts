@@ -131,7 +131,19 @@ export { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "./timer.ts";
 
 export { createSubscriberSet, type SubscriberSet } from "./subscriber-set.ts";
 
-export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./memoize.ts";
+export {
+  DEFAULT_MEMO_CACHE_MAX_ENTRIES,
+  DEFAULT_MEMOIZE_MAX_INFLIGHT,
+  MAX_MEMO_CACHE_ENTRIES,
+  MAX_MEMO_KEY_CHARACTERS,
+  MAX_MEMOIZE_INFLIGHT,
+  MemoCache,
+  type MemoCacheOptions,
+  memoize,
+  memoizeAsync,
+  type MemoizeAsyncOptions,
+  simpleHash as memoizeHash,
+} from "./memoize.ts";
 
 export { isWithinDirectory, normalizePath } from "./path-utils.ts";
 

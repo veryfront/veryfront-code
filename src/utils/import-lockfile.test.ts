@@ -885,14 +885,55 @@ describe("import-lockfile", () => {
       assertEquals(store.has("/project/veryfront.lock"), false);
     });
 
-    it("should reset to empty lockfile on version mismatch", async () => {
-      const data = { version: 99, imports: { x: { resolved: "x", integrity: "y" } } };
-      const fs = createMockFS({ "/project/veryfront.lock": JSON.stringify(data) });
+    it("rejects unsupported lockfile versions without overwriting them", async () => {
+      const path = "/project/veryfront.lock";
+      const content = JSON.stringify({
+        version: 99,
+        imports: { x: { resolved: "x", integrity: "y" } },
+      });
+      const fs = createMockFS({ [path]: content });
       const mgr = createLockfileManager("/project", fs);
 
-      const result = await mgr.read();
-      assertEquals(result?.version, 1);
-      assertEquals(Object.keys(result!.imports).length, 0);
+      await assertRejects(() => mgr.read(), Error, "unsupported");
+      await assertRejects(
+        () =>
+          mgr.set("https://cdn.com/mod.ts", {
+            resolved: "https://cdn.com/mod.ts",
+            integrity: "sha256-new",
+          }),
+        Error,
+        "unsupported",
+      );
+      await assertRejects(
+        () => mgr.write(createEmptyLockfile()),
+        Error,
+        "unsupported",
+      );
+      await assertRejects(() => mgr.clear(), Error, "unsupported");
+      assertEquals(await fs.readFile(path), content);
+    });
+
+    it("rechecks lockfile compatibility under the mutation lock", async () => {
+      const path = "/project/veryfront.lock";
+      const fs = createMockFS({
+        [path]: JSON.stringify(createEmptyLockfile()),
+      });
+      const mgr = createLockfileManager("/project", fs);
+      assertEquals(await mgr.read(), createEmptyLockfile());
+
+      const futureContent = JSON.stringify({
+        version: 2,
+        imports: { future: { resolved: "future", integrity: "sha256-future" } },
+      });
+      await fs.writeFile(path, futureContent);
+
+      await assertRejects(
+        () => mgr.write(createEmptyLockfile()),
+        Error,
+        "unsupported",
+      );
+      await assertRejects(() => mgr.clear(), Error, "unsupported");
+      assertEquals(await fs.readFile(path), futureContent);
     });
   });
 

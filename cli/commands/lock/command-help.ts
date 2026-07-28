@@ -38,5 +38,6 @@ export const lockHelp: CommandHelp = {
     "The lockfile (veryfront.lock) is created automatically during 'veryfront dev'",
     "Remote imports from esm.sh are locked with URL and integrity hash",
     "Commit veryfront.lock to version control for reproducible builds",
+    "A lockfile from a newer unsupported format is never rewritten; upgrade Veryfront or migrate it explicitly",
   ],
 };

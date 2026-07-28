@@ -42,6 +42,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `DEFAULT_BUILD_CONCURRENCY` | Default value for build concurrency. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/build.ts#L2) |
 | `DEFAULT_DASHBOARD_PORT` | Default port for development dashboard (matches veryfront.config.ts default) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/server.ts#L11) |
 | `DEFAULT_LRU_MAX_ENTRIES` | Default value for lru max entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cache.ts#L107) |
+| `DEFAULT_MEMO_CACHE_MAX_ENTRIES` | Default retained-result budget for memoization helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L5) |
+| `DEFAULT_MEMOIZE_MAX_INFLIGHT` | Default distinct in-flight key budget for asynchronous memoization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L9) |
 | `DEV_SERVER_ENDPOINTS` | Shared dev server endpoints value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/server.ts#L135) |
 | `FORBIDDEN_PATH_PATTERNS` | Shared forbidden path patterns value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/security.ts#L4) |
 | `HASH_SEED_DJB2` | Shared hash seed djb2 value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/hash.ts#L2) |
@@ -75,6 +77,9 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `HTTP_UNAVAILABLE` | Shared HTTP unavailable value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L54) |
 | `IMAGE_OPTIMIZATION` | Shared image optimization value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/build.ts#L5) |
 | `MAX_BATCH_SIZE` | ****** Batch limits ******* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L31) |
+| `MAX_MEMO_CACHE_ENTRIES` | Highest explicit retained-result budget accepted by memoization helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L7) |
+| `MAX_MEMO_KEY_CHARACTERS` | Maximum character length of a retained memoization key. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L13) |
+| `MAX_MEMOIZE_INFLIGHT` | Highest explicit distinct in-flight key budget accepted by asynchronous memoization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L11) |
 | `MAX_PATH_LENGTH` | Maximum value for path length. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/security.ts#L16) |
 | `MAX_PATH_TRAVERSAL_DEPTH` | Maximum value for path traversal depth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/security.ts#L2) |
 | `MAX_TIMER_DELAY_MS` | Largest delay supported consistently by JavaScript timer implementations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L34) |
@@ -104,7 +109,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `computeHash` | Compute the lowercase hex SHA-256 digest of a UTF-8 string. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L33) |
 | `computeHashBytes` | Compute the lowercase hex SHA-256 digest of raw bytes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L49) |
 | `computeIntegrity` | Compute integrity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L213) |
-| `createLockfileManager` | Create lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L292) |
+| `createLockfileManager` | Create a project lockfile manager with serialized, atomic mutations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L300) |
 | `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L891) |
 | `createSubscriberSet` | Create a subscriber set: the canonical subscribe/notify observable used across modules. Notification iterates a snapshot, so a listener that unsubscribes (itself or others) mid-notify is safe, and listener errors are isolated (routed to `onListenerError` when provided, otherwise swallowed). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/subscriber-set.ts#L19) |
 | `encodeBase64` | Encode a string as standard base64. Latin-1 input (all code points &lt;= 0xFF) is encoded with btoa's binary-string semantics; input outside Latin-1 falls back to UTF-8 bytes. Callers that need guaranteed UTF-8 bytes regardless of input (e.g. data: URLs decoded as UTF-8) should use `encodeBase64Bytes(new TextEncoder().encode(value))` instead. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L18) |
@@ -122,9 +127,9 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `isEnabled` | Check whether request performance timing is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L191) |
 | `isRSCEnabled` | Check whether RSC is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/feature-flags.ts#L4) |
 | `isWithinDirectory` | Checks lexical containment after path normalization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L28) |
-| `memoize` | Memoize. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L70) |
-| `memoizeAsync` | Memoize async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L30) |
-| `memoizeHash` | FNV-1a hash algorithm for fast, framed cache key generation. 10-15x faster than JSON.stringify() and uses 70-80% less memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L90) |
+| `memoize` | Memoize synchronous results with bounded LRU retention. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L169) |
+| `memoizeAsync` | Memoize asynchronous results with bounded LRU retention and bounded distinct in-flight work. Rejections are never cached. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L110) |
+| `memoizeHash` | FNV-1a hash algorithm for fast, framed cache key generation. 10-15x faster than JSON.stringify() and uses 70-80% less memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L190) |
 | `normalizePath` | Normalizes path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L11) |
 | `normalizeTimerDurationMs` | Normalize a requested delay to the portable JavaScript timer domain. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/timer.ts#L12) |
 | `parallelMap` | Run parallel map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/parallel.ts#L83) |
@@ -147,7 +152,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MemoCache` | Implement memo cache. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L5) |
+| `MemoCache` | Bounded string-keyed memo cache with deterministic least-recently-used eviction. Reads refresh recency; `has` is observational. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L60) |
 
 ### Types
 
@@ -159,9 +164,11 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `GlobalWithDeno` | Public API contract for global with Deno. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L2) |
 | `GlobalWithProcess` | Public API contract for global with process. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L11) |
 | `HashBundleCode` | Source bundle content used for hash computation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L59) |
-| `LockfileManager` | Public API contract for lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L224) |
+| `LockfileManager` | Reads and mutates one project lockfile. An unsupported on-disk format rejects both reads and writes so an older binary cannot destroy newer data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L227) |
 | `LogEntry` | Structured log entry for JSON output. Fields are designed for easy Grafana/Loki filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L40) |
 | `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L107) |
+| `MemoCacheOptions` | Capacity policy shared by `MemoCache` and synchronous memoization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L16) |
+| `MemoizeAsyncOptions` | Capacity policy for resolved and unresolved asynchronous memoization state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L22) |
 | `RedactedValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L107) |
 | `RequestContext` | Context for request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L14) |
 | `SafeJsonParseResult` | Tagged-union result of `safeJsonParse`; narrow via the `ok` discriminant. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/json.ts#L8) |

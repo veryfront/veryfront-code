@@ -48,10 +48,13 @@ export async function wrapWithRouterProvider<T>(
   hydrationData: ClientRuntimeHydrationData | null,
   doc: Document = document,
 ): Promise<T> {
-  try {
-    const specifier = getHydrationRouterImportSpecifier(doc);
-    if (!specifier) return child;
+  // Parse before the optional-provider fallback boundary. A malformed import
+  // map changes module ownership and must fail hydration rather than masquerade
+  // as an unavailable optional router module.
+  const specifier = getHydrationRouterImportSpecifier(doc);
+  if (!specifier) return child;
 
+  try {
     const mod = await import(specifier);
     const wrap = (mod as { wrapForHydration?: unknown }).wrapForHydration;
     if (typeof wrap !== "function") return child;

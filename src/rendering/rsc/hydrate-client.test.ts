@@ -8,6 +8,7 @@ import {
   selectTopLevelClientBoundaries,
   shouldHydrateClientBoundary,
 } from "./hydrate-client.ts";
+import type { HydrationManifest } from "./hydration-manifest.ts";
 
 describe("rendering/rsc/hydrate-client", () => {
   it("accepts same-origin Veryfront module references emitted by the server renderer", () => {
@@ -127,7 +128,7 @@ describe("rendering/rsc/hydrate-client", () => {
 
   it("resolves logical refs to local and remote hydration module URLs", () => {
     const reference = parseClientRef("/app/Counter.tsx#default")!;
-    const manifest = {
+    const manifest: HydrationManifest = {
       version: 1,
       hash: "abc123",
       modules: [],
@@ -153,7 +154,7 @@ describe("rendering/rsc/hydrate-client", () => {
 
   it("prefers release asset module URLs for remote client boundaries", () => {
     const reference = parseClientRef("/app/Counter.tsx#default")!;
-    const manifest = {
+    const manifest: HydrationManifest = {
       version: 1,
       hash: "abc123",
       modules: [],

@@ -47,68 +47,65 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function parseImportMapImports(json: string): ImportMapImports {
-  try {
-    if (json.length > MAX_IMPORT_MAP_JSON_CHARACTERS) {
-      throw new RangeError(
-        `Import map JSON exceeds ${MAX_IMPORT_MAP_JSON_CHARACTERS} characters`,
-      );
-    }
-
-    const parsed = JSON.parse(json) as unknown;
-    if (!isRecord(parsed)) throw new TypeError("Import map must be an object");
-    if (parsed.imports === undefined) return {};
-    if (!isRecord(parsed.imports)) {
-      throw new TypeError("Import map imports must be an object");
-    }
-
-    const entries = Object.entries(parsed.imports);
-    if (entries.length > MAX_IMPORT_MAP_ENTRIES) {
-      throw new RangeError(
-        `Import map exceeds ${MAX_IMPORT_MAP_ENTRIES} entries`,
-      );
-    }
-
-    const imports: ImportMapImports = {};
-    for (const [specifier, target] of entries) {
-      if (typeof target !== "string") {
-        throw new TypeError("Import map targets must be strings");
-      }
-      if (specifier.length > MAX_IMPORT_MAP_SPECIFIER_CHARACTERS) {
-        throw new RangeError(
-          `Import map specifier exceeds ${MAX_IMPORT_MAP_SPECIFIER_CHARACTERS} characters`,
-        );
-      }
-      if (target.length > MAX_IMPORT_MAP_TARGET_CHARACTERS) {
-        throw new RangeError(
-          `Import map target exceeds ${MAX_IMPORT_MAP_TARGET_CHARACTERS} characters`,
-        );
-      }
-      if (specifier.endsWith("/") && !target.endsWith("/")) {
-        throw new TypeError("Import map prefix targets must end with a slash");
-      }
-      Object.defineProperty(imports, specifier, {
-        configurable: true,
-        enumerable: true,
-        value: target,
-        writable: true,
-      });
-    }
-    return imports;
-  } catch (error) {
-    // A malformed import map silently flips the RSC client-module strategy.
-    // This module is browser-bundled, so the server logger (which pulls in
-    // node:async_hooks) is unavailable; console.warn keeps the failure diagnosable.
-    console.warn("Failed to parse import map JSON; treating as empty", {
-      errorName: error instanceof Error ? error.name : typeof error,
-      inputLength: json.length,
-    });
-    return {};
+  if (json.length > MAX_IMPORT_MAP_JSON_CHARACTERS) {
+    throw new RangeError(
+      `Import map JSON exceeds ${MAX_IMPORT_MAP_JSON_CHARACTERS} characters`,
+    );
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json) as unknown;
+  } catch {
+    // Native JSON parser messages may include source fragments. Keep the
+    // failure actionable without exposing import targets or embedded tokens.
+    throw new SyntaxError("Import map contains invalid JSON");
+  }
+
+  if (!isRecord(parsed)) throw new TypeError("Import map must be an object");
+  if (parsed.imports === undefined) return {};
+  if (!isRecord(parsed.imports)) {
+    throw new TypeError("Import map imports must be an object");
+  }
+
+  const entries = Object.entries(parsed.imports);
+  if (entries.length > MAX_IMPORT_MAP_ENTRIES) {
+    throw new RangeError(
+      `Import map exceeds ${MAX_IMPORT_MAP_ENTRIES} entries`,
+    );
+  }
+
+  const imports: ImportMapImports = {};
+  for (const [specifier, target] of entries) {
+    if (typeof target !== "string") {
+      throw new TypeError("Import map targets must be strings");
+    }
+    if (specifier.length > MAX_IMPORT_MAP_SPECIFIER_CHARACTERS) {
+      throw new RangeError(
+        `Import map specifier exceeds ${MAX_IMPORT_MAP_SPECIFIER_CHARACTERS} characters`,
+      );
+    }
+    if (target.length > MAX_IMPORT_MAP_TARGET_CHARACTERS) {
+      throw new RangeError(
+        `Import map target exceeds ${MAX_IMPORT_MAP_TARGET_CHARACTERS} characters`,
+      );
+    }
+    if (specifier.endsWith("/") && !target.endsWith("/")) {
+      throw new TypeError("Import map prefix targets must end with a slash");
+    }
+    Object.defineProperty(imports, specifier, {
+      configurable: true,
+      enumerable: true,
+      value: target,
+      writable: true,
+    });
+  }
+  return imports;
 }
 
 export function getDocumentImportMapImports(doc: Document = document): ImportMapImports {
   const importMapElement = doc.querySelector('script[type="importmap"]');
-  if (!importMapElement?.textContent) return {};
+  if (!importMapElement) return {};
 
-  return parseImportMapImports(importMapElement.textContent);
+  return parseImportMapImports(importMapElement.textContent ?? "");
 }

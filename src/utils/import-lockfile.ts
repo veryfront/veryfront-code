@@ -1,7 +1,7 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
+import { CACHE_ERROR, NETWORK_ERROR, VERSION_MISMATCH } from "#veryfront/errors/error-registry.ts";
 import { VERSION } from "./version-constant.ts";
 import { resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
@@ -220,7 +220,10 @@ export async function verifyIntegrity(content: string, integrity: string): Promi
   return computed === integrity;
 }
 
-/** Public API contract for lockfile manager. */
+/**
+ * Reads and mutates one project lockfile. An unsupported on-disk format
+ * rejects both reads and writes so an older binary cannot destroy newer data.
+ */
 export interface LockfileManager {
   read(): Promise<LockfileData | null>;
   write(data: LockfileData): Promise<void>;
@@ -288,7 +291,12 @@ function createPlatformFSAdapter(): FSAdapter {
   };
 }
 
-/** Create lockfile manager. */
+/**
+ * Create a project lockfile manager with serialized, atomic mutations.
+ *
+ * Lockfiles from unsupported Veryfront versions fail closed. Upgrade or run an
+ * explicit migration before using this manager to modify such a file.
+ */
 export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter): LockfileManager {
   const fs = fsAdapter ?? createPlatformFSAdapter();
   // Supplying cwd explicitly keeps relative project directories correct in
@@ -372,19 +380,34 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
       });
     }
 
+    let parsed: unknown;
     try {
       if (content.length > MAX_LOCKFILE_DATA_CHARACTERS) {
         throw new RangeError(
           `Lockfile data exceeds ${MAX_LOCKFILE_DATA_CHARACTERS} characters`,
         );
       }
-      const parsed = JSON.parse(content) as unknown;
-      if (isRecord(parsed) && parsed.version !== LOCKFILE_VERSION) {
-        logger.warn(
-          `[lockfile] Version mismatch, expected ${LOCKFILE_VERSION}, got ${parsed.version}`,
-        );
-        return createEmptyLockfile();
-      }
+      parsed = JSON.parse(content) as unknown;
+    } catch (cause) {
+      throw CACHE_ERROR.create({
+        detail: `Invalid lockfile ${lockfilePath}`,
+        cause,
+      });
+    }
+
+    if (
+      isRecord(parsed) &&
+      Object.hasOwn(parsed, "version") &&
+      parsed.version !== LOCKFILE_VERSION
+    ) {
+      throw VERSION_MISMATCH.create({
+        detail: `Lockfile ${lockfilePath} uses an unsupported format version; ` +
+          `this Veryfront build expects version ${LOCKFILE_VERSION}. ` +
+          "Upgrade Veryfront or migrate the lockfile before reading or modifying it.",
+      });
+    }
+
+    try {
       return normalizeLockfileData(parsed);
     } catch (cause) {
       throw CACHE_ERROR.create({
@@ -516,6 +539,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     let persisted = false;
     try {
       await mutateFile(async () => {
+        // Revalidate while holding both mutation locks. Another process may
+        // have installed a future lockfile after this manager populated cache.
+        await readFromDisk();
         await writeAtomically(normalized);
         persisted = true;
       });
@@ -602,6 +628,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     let persisted = false;
     try {
       await mutateFile(async () => {
+        // `clear` is still a mutation: never delete a format this binary does
+        // not understand merely because its in-memory cache is older.
+        await readFromDisk();
         if (fs.remove) {
           await removeIfPresent(lockfilePath);
         } else {

@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    46 |      79.3% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
+| Closed                         |    47 |      81.0% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
 | Touched, revalidation required |    11 |      19.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -82,12 +82,13 @@ stricter closure count.
 - `tool`
 - `trigger`
 - `types`
+- `utils`
 - `webhook`
 - `version.ts`
 
 ### Deep reviewed, fixes pending
 
-- `utils`
+None.
 
 ### Touched, revalidation required
 
@@ -220,17 +221,14 @@ revalidated.
 `resource` is closed after its pattern grammar, construction and registry
 boundaries, read lifecycle, MCP projection and content budgets, public
 metadata, documentation, and direct consumers were remediated and revalidated.
-`utils` has received a deep current-state review and substantial remediation.
-Utils remains open while its future-lockfile,
-malformed-import-map, and default-memoization compatibility decisions are
-unresolved. Each closure requires a complete consumer map, deep module-level
-review, adversarial boundary tests, public-contract documentation, and
-repository-wide static verification.
+`utils` is closed after its shared runtime boundaries, future-lockfile
+compatibility, browser import-map ownership, bounded memoization, public
+contracts, documentation, and direct consumers were remediated and
+revalidated.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
 unit. No unit now lacks a current authoritative-branch review delta; the next
-dependency-ordered work closes the remaining reviewed unit and revalidates the
-touched units.
+dependency-ordered work revalidates the touched units.
 
 ### OAuth closure checkpoint
 
@@ -2853,7 +2851,7 @@ separation, timer and memory domains, error semantics, lifecycle cleanup,
 dependency direction, and the directly affected MDX, rendering, cache, and
 module-loader integrations.
 
-The current non-breaking Utils findings are remediated:
+The earlier non-breaking Utils findings are remediated:
 
 - **Symptom -> Source -> Consequence -> Remedy:** file, environment, import-map,
   lockfile, and remote-module helpers accepted unbounded or partially parsed
@@ -2908,40 +2906,55 @@ The current non-breaking Utils findings are remediated:
   large scans iterate without variadic spread, and telemetry callbacks are
   snapshotted and validated behind a bounded registry.
 
-Three compatibility decisions remain before formal closure:
+The three approved compatibility changes are complete:
 
-- A lockfile written by a future Veryfront version currently warns and is
-  treated as empty. A subsequent old binary can therefore overwrite data it
-  does not understand. The recommended change is to reject reads and mutations
-  until a compatible binary or explicit migration handles the file.
-- A malformed browser import map currently warns and becomes an empty map,
-  silently switching client-module ownership and CDN resolution. The
-  recommended change is to throw before strategy selection.
-- Published `MemoCache`, `memoize`, and `memoizeAsync` retain results without a
-  default eviction budget. The recommended change is a finite LRU default plus
-  bounded distinct in-flight async keys, with explicit options for callers that
-  need a different budget.
+- **Symptom -> Source -> Consequence -> Remedy:** a lockfile written by a
+  future Veryfront version warned and was treated as empty. An older binary
+  could consequently overwrite data it did not understand. Reads and every
+  mutation now fail closed with the existing version-mismatch identity, and
+  mutations revalidate the on-disk version while holding the mutation locks so
+  a newer file cannot be replaced through a stale cache.
+- **Symptom -> Source -> Consequence -> Remedy:** a malformed browser import
+  map warned and became an empty map. That silently changed client-module
+  ownership and CDN strategy. Parsing now rejects malformed or oversized input
+  with a sanitized error before strategy selection; hydration routing, the
+  generated RSC bundle, and direct build consumers preserve that fail-closed
+  boundary.
+- **Symptom -> Source -> Consequence -> Remedy:** published `MemoCache`,
+  `memoize`, and `memoizeAsync` retained unbounded results and distinct
+  in-flight async work. Long-lived or adversarial key streams could therefore
+  grow process memory without a finite admission boundary. All three now use a
+  validated finite LRU budget of 100 entries by default, accept an explicit
+  budget up to 100,000 entries, reject keys beyond 4,096 characters, and bound
+  new distinct async work while preserving same-key promise sharing.
 
 Reproducible checkpoint evidence:
 
-- The complete Utils gate passes 76 suites and 1,105 nested steps with zero
+- The complete typed Utils gate passes 76 suites and 1,122 nested steps with zero
   failures. The Utils, module-loader semaphore, and MDX cache-adapter matrix
-  passes 78 suites and 1,171 nested steps with zero failures.
+  passes 78 suites and 1,190 nested steps with zero failures.
 - The bundle-manifest initializer, store, MDX cache adapter, and renderer
   integration matrix passes 8 suites and 99 nested steps with zero failures.
-- Changed entrypoints pass `deno check`; repository lint and formatting pass
-  across 4,230 and 4,323 files respectively.
+- The affected RSC strategy, boot, hydration, and router matrix passes four
+  suites and 56 nested steps; the development bundler passes three suites and
+  22 steps; the routing API loader passes one suite and 33 steps; and the CLI
+  and public-barrel checks pass two suites and five steps.
+- `deno task verify:quick` passes manifest freshness, formatting across 4,473
+  source files, lint across 4,379 source files, architecture ratchets, docs,
+  and every configured source and browser entrypoint typecheck.
 - Core dependencies and dependency boundaries report zero violations. The
-  module-boundary ratchet passes without growth beyond 75 baselined broad
-  imports and two baselined cycle edges.
-- `deno task docs` regenerates all 39 API-reference groups.
-  `deno task docs:validate` validates 66 guides, all configured guide examples,
-  and all 739 documentation links.
+  module-boundary ratchet passes with 62 baselined broad imports and zero
+  baselined cycle edges.
+- `deno task docs` regenerates all 40 API-reference pages.
+  `deno task docs:validate` validates 67 guides, 112 public documentation
+  files, all configured guide examples, and all 747 documentation links.
+- `deno task typecheck:consumer` rebuilds the root npm package and its
+  extensions, then accepts the generated declarations from an external
+  TypeScript consumer.
 
-No additional unresolved critical or high-confidence Utils risk is known. The
-three listed changes alter observable published behavior and therefore remain
-explicit decisions rather than being hidden inside an otherwise
-backward-compatible hardening checkpoint.
+No unresolved critical or high-confidence Utils production risk remains. The
+`utils` audit unit is closed at 47/58; 11 touched units remain for top-level
+revalidation.
 
 ### Errors closure checkpoint
 
