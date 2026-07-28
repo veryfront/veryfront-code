@@ -1,6 +1,20 @@
+const fallbackAbortReasons = new WeakMap<AbortSignal, DOMException>();
+
 export function getAbortReason(signal: AbortSignal): unknown {
-  return signal.reason ??
-    new DOMException("The operation was aborted", "AbortError");
+  // `AbortController.abort(null)` intentionally exposes `null` as its reason.
+  // Nullish coalescing would replace that exact reason and make the later
+  // identity check in isCallerAbort classify caller cancellation as a
+  // dependency failure. Only runtimes that do not expose a reason at all need
+  // a fallback, and that fallback must remain stable for the signal.
+  const reason = signal.reason;
+  if (reason !== undefined) return reason;
+
+  let fallback = fallbackAbortReasons.get(signal);
+  if (!fallback) {
+    fallback = new DOMException("The operation was aborted", "AbortError");
+    fallbackAbortReasons.set(signal, fallback);
+  }
+  return fallback;
 }
 
 export function combineAbortSignals(

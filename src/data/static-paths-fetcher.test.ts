@@ -285,6 +285,23 @@ describe("StaticPathsFetcher", () => {
       );
     });
 
+    it("turns an export accessor failure into a rejected fetch promise", async () => {
+      const failure = new Error("failed to read getStaticPaths export");
+      const pageModule = {
+        default: null,
+        get getStaticPaths(): PageWithData["getStaticPaths"] {
+          throw failure;
+        },
+      };
+
+      const observed = await createFetcher().fetch(pageModule).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+      assertStrictEquals(observed, failure);
+    });
+
     it("rejects a pre-aborted caller without admitting or invoking project code", async () => {
       const admission = new DataExecutionAdmission({
         maxConcurrent: 1,
@@ -313,6 +330,44 @@ describe("StaticPathsFetcher", () => {
       assertStrictEquals(observed, reason);
       assertEquals(calls, 0);
       assertEquals(admission.snapshot("pre-aborted-project"), {
+        active: 0,
+        activeForProject: 0,
+      });
+    });
+
+    it("preserves an exact null caller-abort reason without dependency classification", async () => {
+      const admission = new DataExecutionAdmission({
+        maxConcurrent: 1,
+        maxConcurrentPerProject: 1,
+      });
+      const fetcher = createFetcher({ executionAdmission: admission });
+      const gate = createDeferred<StaticPathsResult>();
+      const controller = new AbortController();
+      const pending = fetcher.fetch(
+        createPageModule(() => gate.promise),
+        {
+          projectId: "null-abort-project",
+          signal: controller.signal,
+        },
+      );
+      const observed = pending.then(
+        () => "resolved",
+        (error: unknown) => error,
+      );
+
+      try {
+        await flushMicrotasks();
+        controller.abort(null);
+        assertStrictEquals(await observed, null);
+        assertEquals(admission.snapshot("null-abort-project"), {
+          active: 1,
+          activeForProject: 1,
+        });
+      } finally {
+        gate.resolve({ paths: [], fallback: false });
+        await flushMicrotasks();
+      }
+      assertEquals(admission.snapshot("null-abort-project"), {
         active: 0,
         activeForProject: 0,
       });
@@ -708,6 +763,66 @@ describe("StaticPathsFetcher", () => {
       });
       paths[0]!.params.slug.push("mutated");
       assertEquals(result?.paths[0]?.params.slug, ["docs", "intro"]);
+    });
+
+    it("reads each catch-all segment once and rejects sparse arrays", async () => {
+      const segments: string[] = [];
+      let segmentReads = 0;
+      Object.defineProperty(segments, "0", {
+        configurable: true,
+        enumerable: true,
+        get(): string {
+          segmentReads++;
+          return segmentReads === 1 ? "docs" : "changed";
+        },
+      });
+      segments.length = 1;
+
+      const result = await createFetcher().fetch(
+        createPageModule(() => ({
+          paths: [{ params: { slug: segments } }],
+          fallback: false,
+        })),
+      );
+
+      assertEquals(segmentReads, 1);
+      assertEquals(result?.paths[0]?.params.slug, ["docs"]);
+
+      const sparse = new Array<string>(1);
+      await assertRejects(
+        () =>
+          createFetcher().fetch(
+            createPageModule(() => ({
+              paths: [{ params: { slug: sparse } }],
+              fallback: false,
+            })),
+          ),
+        TypeError,
+        "valid static paths result object",
+      );
+    });
+
+    it("preserves __proto__ as an own route parameter without changing prototypes", async () => {
+      const params: Record<string, string | string[]> = {};
+      Object.defineProperty(params, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: ["docs", "prototype"],
+        writable: true,
+      });
+
+      const result = await createFetcher().fetch(
+        createPageModule(() => ({
+          paths: [{ params }],
+          fallback: false,
+        })),
+      );
+      const normalized = result?.paths[0]?.params;
+
+      assertExists(normalized);
+      assertEquals(Object.hasOwn(normalized, "__proto__"), true);
+      assertEquals(normalized["__proto__"], ["docs", "prototype"]);
+      assertStrictEquals(Object.getPrototypeOf(normalized), Object.prototype);
     });
 
     it("includes synchronous result validation in the explicit deadline", async () => {

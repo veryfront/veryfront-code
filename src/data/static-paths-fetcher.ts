@@ -55,14 +55,33 @@ function validateStaticPathsResult(value: unknown): StaticPathsResult {
     const normalizedParams: Record<string, string | string[]> = {};
     for (const key of Object.keys(params)) {
       const param = (params as Record<string, unknown>)[key];
-      if (
-        typeof param !== "string" &&
-        (!Array.isArray(param) ||
-          param.some((segment) => typeof segment !== "string"))
-      ) {
-        return fail();
+      let normalizedParam: string | string[];
+      if (typeof param === "string") {
+        normalizedParam = param;
+      } else {
+        if (!Array.isArray(param)) return fail();
+
+        // Read the length and every segment exactly once. Array accessors and
+        // proxies must not validate one graph and publish another, and sparse
+        // arrays must not turn skipped validation slots into `undefined`.
+        const segmentCount = param.length;
+        normalizedParam = new Array<string>(segmentCount);
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
+          const segment = param[segmentIndex];
+          if (typeof segment !== "string") return fail();
+          normalizedParam[segmentIndex] = segment;
+        }
       }
-      normalizedParams[key] = Array.isArray(param) ? [...param] : param;
+
+      // Assignment to the magic `__proto__` name invokes Object.prototype's
+      // setter instead of creating a route parameter. Define every key as an
+      // ordinary own data property so all valid parameter names survive.
+      Object.defineProperty(normalizedParams, key, {
+        configurable: true,
+        enumerable: true,
+        value: normalizedParam,
+        writable: true,
+      });
     }
     normalizedPaths[pathIndex] = { params: normalizedParams };
   }
@@ -126,7 +145,12 @@ export class StaticPathsFetcher {
       return Promise.reject(error);
     }
 
-    const getStaticPaths = pageModule.getStaticPaths;
+    let getStaticPaths: PageWithData["getStaticPaths"];
+    try {
+      getStaticPaths = pageModule.getStaticPaths;
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (typeof getStaticPaths !== "function") {
       return Promise.resolve(null);
     }
