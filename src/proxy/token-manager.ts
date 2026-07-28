@@ -2,6 +2,8 @@ import { fetchOAuthToken, OAuthTokenRequestError, type TokenResponse } from "./o
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 import { MemoryCache } from "./cache/memory-cache.ts";
 import { ProxySpanNames, withSpan } from "./tracing.ts";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
+import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 
 export type TokenScope = "preview" | "production";
 
@@ -19,6 +21,13 @@ const MAX_REFRESH_BUFFER_MS = 60 * 60 * 1_000;
 const MAX_TOKEN_IDENTITY_LENGTH = 512;
 const MAX_JWT_PAYLOAD_LENGTH = 64 * 1024;
 const MAX_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1_000;
+const DEFAULT_MAX_CONCURRENT_TOKEN_FETCHES = 16;
+const DEFAULT_MAX_QUEUED_TOKEN_FETCHES = 64;
+const TOKEN_FETCH_ADMISSION_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_CONCURRENT_TOKEN_RESOLUTIONS = 1_024;
+const MAX_CONFIGURED_CONCURRENT_TOKEN_FETCHES = 10_000;
+const MAX_CONFIGURED_QUEUED_TOKEN_FETCHES = 100_000;
+const MAX_CONFIGURED_CONCURRENT_TOKEN_RESOLUTIONS = 100_000;
 
 export interface OAuthConfig {
   apiBaseUrl: string;
@@ -31,6 +40,13 @@ export interface OAuthConfig {
 interface TokenManagerOptions {
   cache?: TokenCache;
   refreshBuffer?: number; // ms before expiry to trigger refresh
+  maxConcurrentFetches?: number;
+  maxQueuedFetches?: number;
+  maxConcurrentResolutions?: number;
+}
+
+export interface TokenRequestOptions {
+  signal?: AbortSignal;
 }
 
 interface PendingTokenRequest {
@@ -38,6 +54,13 @@ interface PendingTokenRequest {
   globalGeneration: number;
   generation: number;
   promise: Promise<string>;
+}
+
+export class TokenResolutionCapacityError extends Error {
+  constructor(readonly capacity: "admission" | "resolutions") {
+    super("OAuth token resolution capacity is exhausted");
+    this.name = "TokenResolutionCapacityError";
+  }
 }
 
 export class TokenFetchSupersededError extends Error {
@@ -60,6 +83,9 @@ export class TokenManager {
   private pendingRequests = new Map<string, PendingTokenRequest>();
   private negativeCache = new Map<string, NegativeCacheEntry>();
   private refreshBuffer: number;
+  private fetchAdmission: PermitSemaphore;
+  private maxConcurrentResolutions: number;
+  private activeResolutions = 0;
   private invalidations = new Map<string, Promise<void>>();
   private keyGenerations = new Map<string, number>();
   private globalGeneration = 0;
@@ -71,119 +97,222 @@ export class TokenManager {
     private config: OAuthConfig,
     options: TokenManagerOptions = {},
   ) {
-    this.cache = options.cache ?? new MemoryCache();
-    this.refreshBuffer = options.refreshBuffer ?? DEFAULT_REFRESH_BUFFER_MS;
+    const refreshBuffer = options.refreshBuffer ?? DEFAULT_REFRESH_BUFFER_MS;
     if (
-      !Number.isSafeInteger(this.refreshBuffer) ||
-      this.refreshBuffer < 0 ||
-      this.refreshBuffer > MAX_REFRESH_BUFFER_MS
+      !Number.isSafeInteger(refreshBuffer) ||
+      refreshBuffer < 0 ||
+      refreshBuffer > MAX_REFRESH_BUFFER_MS
     ) {
       throw new RangeError(
         `Token refresh buffer must be an integer between 0 and ${MAX_REFRESH_BUFFER_MS}ms`,
       );
     }
+    const maxConcurrentFetches = options.maxConcurrentFetches ??
+      DEFAULT_MAX_CONCURRENT_TOKEN_FETCHES;
+    if (
+      !Number.isSafeInteger(maxConcurrentFetches) ||
+      maxConcurrentFetches < 1 ||
+      maxConcurrentFetches > MAX_CONFIGURED_CONCURRENT_TOKEN_FETCHES
+    ) {
+      throw new RangeError(
+        `Token fetch concurrency must be an integer between 1 and ${MAX_CONFIGURED_CONCURRENT_TOKEN_FETCHES}`,
+      );
+    }
+    const maxQueuedFetches = options.maxQueuedFetches ??
+      DEFAULT_MAX_QUEUED_TOKEN_FETCHES;
+    if (
+      !Number.isSafeInteger(maxQueuedFetches) ||
+      maxQueuedFetches < 0 ||
+      maxQueuedFetches > MAX_CONFIGURED_QUEUED_TOKEN_FETCHES
+    ) {
+      throw new RangeError(
+        `Token fetch queue capacity must be an integer between 0 and ${MAX_CONFIGURED_QUEUED_TOKEN_FETCHES}`,
+      );
+    }
+    const maxConcurrentResolutions = options.maxConcurrentResolutions ??
+      DEFAULT_MAX_CONCURRENT_TOKEN_RESOLUTIONS;
+    if (
+      !Number.isSafeInteger(maxConcurrentResolutions) ||
+      maxConcurrentResolutions < 1 ||
+      maxConcurrentResolutions > MAX_CONFIGURED_CONCURRENT_TOKEN_RESOLUTIONS
+    ) {
+      throw new RangeError(
+        `Token resolution concurrency must be an integer between 1 and ${MAX_CONFIGURED_CONCURRENT_TOKEN_RESOLUTIONS}`,
+      );
+    }
+    this.cache = options.cache ?? new MemoryCache();
+    this.refreshBuffer = refreshBuffer;
+    this.maxConcurrentResolutions = maxConcurrentResolutions;
+    this.fetchAdmission = new PermitSemaphore(maxConcurrentFetches, {
+      maxQueueSize: maxQueuedFetches,
+    });
   }
 
   async getToken(
     scope: TokenScope,
     projectSlug?: string,
     customDomain?: string,
+    options: TokenRequestOptions = {},
   ): Promise<string> {
     this.assertOpen();
+    const signal = this.validateSignal(options.signal);
+    throwIfAborted(signal);
     const cacheKey = this.getCacheKey(scope, projectSlug, customDomain);
+    this.acquireResolutionSlot();
 
-    return withSpan(
-      ProxySpanNames.PROXY_TOKEN_FETCH,
-      async () => {
-        if (this.maintenancePromise) {
-          await this.maintenancePromise;
-          this.assertOpen();
-        }
-        const invalidation = this.invalidations.get(cacheKey);
-        if (invalidation) {
-          await invalidation;
-          this.assertOpen();
-        }
-        const globalGeneration = this.globalGeneration;
-        const generation = this.getGeneration(cacheKey);
-
-        // Fast path: if a fetch is already in flight, return it immediately
-        const existing = this.pendingRequests.get(cacheKey);
-        if (
-          existing?.globalGeneration === globalGeneration &&
-          existing.generation === generation
-        ) {
-          return existing.promise;
-        }
-
-        const negEntry = this.negativeCache.get(cacheKey);
-        if (negEntry) {
-          if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL_MS) {
-            // Rethrow the structured token error (not a generic cache error) so
-            // callers can classify the cached failure by `.status`/response text
-            // exactly as they would a fresh failure, without scraping messages.
-            throw new OAuthTokenRequestError(negEntry.status, negEntry.responseText);
+    try {
+      return await withSpan(
+        ProxySpanNames.PROXY_TOKEN_FETCH,
+        async () => {
+          if (this.maintenancePromise) {
+            await awaitAbortable(this.maintenancePromise, signal);
+            this.assertOpen();
           }
-          this.negativeCache.delete(cacheKey);
-        }
+          const invalidation = this.invalidations.get(cacheKey);
+          if (invalidation) {
+            await awaitAbortable(invalidation, signal);
+            this.assertOpen();
+          }
+          throwIfAborted(signal);
+          const globalGeneration = this.globalGeneration;
+          const generation = this.getGeneration(cacheKey);
 
-        const cached = await this.cache.get(cacheKey);
-        this.assertOpen();
-        if (!this.isGenerationCurrent(cacheKey, globalGeneration, generation)) {
-          throw new TokenFetchSupersededError();
-        }
-        if (cached) {
-          const cachedToken = this.readValidCachedToken(cached, scope);
-          if (cachedToken !== undefined) return cachedToken;
-          await this.cache.delete(cacheKey);
+          // Fast path: attach to an existing producer without transferring
+          // producer ownership to this caller.
+          const existing = this.pendingRequests.get(cacheKey);
+          if (
+            existing?.globalGeneration === globalGeneration &&
+            existing.generation === generation
+          ) {
+            return await this.waitForPendingRequest(existing, signal);
+          }
+
+          const negEntry = this.negativeCache.get(cacheKey);
+          if (negEntry) {
+            if (Date.now() - negEntry.cachedAt < NEGATIVE_CACHE_TTL_MS) {
+              // Rethrow the structured token error (not a generic cache error) so
+              // callers can classify the cached failure by `.status`/response text
+              // exactly as they would a fresh failure, without scraping messages.
+              throw new OAuthTokenRequestError(negEntry.status, negEntry.responseText);
+            }
+            this.negativeCache.delete(cacheKey);
+          }
+
+          const cached = await awaitAbortable(this.cache.get(cacheKey), signal);
           this.assertOpen();
+          throwIfAborted(signal);
           if (!this.isGenerationCurrent(cacheKey, globalGeneration, generation)) {
             throw new TokenFetchSupersededError();
           }
-        }
-
-        // Re-check after await: another concurrent call may have started a fetch
-        const pending = this.pendingRequests.get(cacheKey);
-        if (
-          pending?.globalGeneration === globalGeneration &&
-          pending.generation === generation
-        ) {
-          return pending.promise;
-        }
-
-        const controller = new AbortController();
-        const tokenPromise = this.fetchAndCacheToken(
-          scope,
-          cacheKey,
-          globalGeneration,
-          generation,
-          controller.signal,
-          projectSlug,
-          customDomain,
-        );
-        const pendingRequest: PendingTokenRequest = {
-          controller,
-          globalGeneration,
-          generation,
-          promise: tokenPromise,
-        };
-        this.pendingRequests.set(cacheKey, pendingRequest);
-
-        try {
-          return await tokenPromise;
-        } finally {
-          if (this.pendingRequests.get(cacheKey) === pendingRequest) {
-            this.pendingRequests.delete(cacheKey);
+          if (cached) {
+            const cachedToken = this.readValidCachedToken(cached, scope);
+            if (cachedToken !== undefined) return cachedToken;
+            await awaitAbortable(this.cache.delete(cacheKey), signal);
+            this.assertOpen();
+            throwIfAborted(signal);
+            if (!this.isGenerationCurrent(cacheKey, globalGeneration, generation)) {
+              throw new TokenFetchSupersededError();
+            }
           }
-        }
-      },
-      {
-        "proxy.token_scope": scope,
-        "proxy.project_slug": projectSlug ?? "",
-        "proxy.custom_domain": customDomain ?? "",
-        "proxy.cache_key": cacheKey,
-      },
+
+          // Re-check after cache I/O: another concurrent call may have started
+          // the shared producer while this caller was awaiting its cache read.
+          const pending = this.pendingRequests.get(cacheKey);
+          if (
+            pending?.globalGeneration === globalGeneration &&
+            pending.generation === generation
+          ) {
+            return await this.waitForPendingRequest(pending, signal);
+          }
+
+          const controller = new AbortController();
+          const tokenPromise = this.fetchAndCacheTokenWithAdmission(
+            scope,
+            cacheKey,
+            globalGeneration,
+            generation,
+            controller.signal,
+            projectSlug,
+            customDomain,
+          );
+          const pendingRequest: PendingTokenRequest = {
+            controller,
+            globalGeneration,
+            generation,
+            promise: tokenPromise,
+          };
+          this.pendingRequests.set(cacheKey, pendingRequest);
+          const removeSettledRequest = (): void => {
+            if (this.pendingRequests.get(cacheKey) === pendingRequest) {
+              this.pendingRequests.delete(cacheKey);
+            }
+          };
+          tokenPromise.then(removeSettledRequest, removeSettledRequest);
+
+          return await this.waitForPendingRequest(pendingRequest, signal);
+        },
+        {
+          "proxy.token_scope": scope,
+          "proxy.project_slug": projectSlug ?? "",
+          "proxy.custom_domain": customDomain ?? "",
+          "proxy.cache_key": cacheKey,
+        },
+      );
+    } finally {
+      this.activeResolutions--;
+    }
+  }
+
+  private validateSignal(signal: AbortSignal | undefined): AbortSignal | undefined {
+    if (signal !== undefined && !(signal instanceof AbortSignal)) {
+      throw new TypeError("Token request signal must be an AbortSignal");
+    }
+    return signal;
+  }
+
+  private async waitForPendingRequest(
+    request: PendingTokenRequest,
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
+    throwIfAborted(signal);
+    return await awaitAbortable(request.promise, signal);
+  }
+
+  /** Reserve capacity before any maintenance, cache, or producer I/O begins. */
+  private acquireResolutionSlot(): void {
+    if (this.activeResolutions >= this.maxConcurrentResolutions) {
+      throw new TokenResolutionCapacityError("resolutions");
+    }
+    this.activeResolutions++;
+  }
+
+  private async fetchAndCacheTokenWithAdmission(
+    scope: TokenScope,
+    cacheKey: string,
+    globalGeneration: number,
+    generation: number,
+    signal: AbortSignal,
+    projectSlug?: string,
+    customDomain?: string,
+  ): Promise<string> {
+    const admitted = await this.fetchAdmission.tryAcquire(
+      TOKEN_FETCH_ADMISSION_TIMEOUT_MS,
+      { signal },
     );
+    if (!admitted) throw new TokenResolutionCapacityError("admission");
+    try {
+      return await this.fetchAndCacheToken(
+        scope,
+        cacheKey,
+        globalGeneration,
+        generation,
+        signal,
+        projectSlug,
+        customDomain,
+      );
+    } finally {
+      this.fetchAdmission.release();
+    }
   }
 
   invalidateToken(

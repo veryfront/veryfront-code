@@ -817,11 +817,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             scope,
             tokenIdentity.projectSlug,
             tokenIdentity.customDomain,
+            { signal: req.signal },
           );
           if (tokenSource !== "user" && tokenSource !== "signed-internal") {
             token = metadataToken;
           }
         } catch (refreshError) {
+          if (req.signal.aborted) throw requestAbortReason(req.signal);
           logger?.error(
             "Failed to refresh proxy API token after metadata auth rejection",
             refreshError,
@@ -897,8 +899,14 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const customDomain = projectSlug ? undefined : host;
         metadataToken = undefined;
         try {
-          metadataToken = await tokenManager.getToken(scope, projectSlug, customDomain);
+          metadataToken = await tokenManager.getToken(
+            scope,
+            projectSlug,
+            customDomain,
+            { signal: req.signal },
+          );
         } catch (error) {
+          if (req.signal.aborted) throw requestAbortReason(req.signal);
           tokenFetchError = error;
           if (!isMissingProxyProjectError(error)) {
             logger?.error("Metadata service token fetch failed", error, {

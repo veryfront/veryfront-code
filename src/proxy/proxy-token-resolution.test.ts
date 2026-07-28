@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   extractUserToken,
@@ -122,5 +122,42 @@ describe("proxy/proxy-token-resolution", () => {
     assertEquals(result.tokenFetchError, notFoundError);
     assertEquals(isMissingProxyProjectError(result.tokenFetchError), true);
     assertEquals(loggedErrors, []);
+  });
+
+  it("passes the request signal to service-token waiters and propagates cancellation", async () => {
+    const controller = new AbortController();
+    const disconnected = new Error("client disconnected");
+    const req = new Request("https://my-project.veryfront.com/page", {
+      signal: controller.signal,
+    });
+    let waiterSignal: AbortSignal | undefined;
+
+    const resolution = resolveProxyRequestToken({
+      req,
+      url: new URL(req.url),
+      scope: "production",
+      host: "my-project.veryfront.com",
+      projectSlug: "my-project",
+      config: {
+        apiClientId: "client",
+        apiClientSecret: "secret",
+        apiToken: "must-not-mask-cancellation",
+      },
+      tokenManager: {
+        getToken(_scope, _projectSlug, _customDomain, options) {
+          waiterSignal = options?.signal;
+          return new Promise((_resolve, reject) => {
+            const onAbort = (): void => reject(waiterSignal?.reason);
+            waiterSignal?.addEventListener("abort", onAbort, { once: true });
+          });
+        },
+      },
+      tokenFetchErrorMessage: "Token fetch failed",
+    });
+
+    controller.abort(disconnected);
+    const error = await assertRejects(() => resolution, Error, disconnected.message);
+    assertEquals(error, disconnected);
+    assertEquals(waiterSignal, req.signal);
   });
 });

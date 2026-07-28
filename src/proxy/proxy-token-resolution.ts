@@ -1,4 +1,5 @@
-import type { TokenScope } from "./token-manager.ts";
+import type { TokenRequestOptions, TokenScope } from "./token-manager.ts";
+import { createAbortError } from "#veryfront/utils/abort.ts";
 import { OAuthTokenRequestError } from "./oauth-client.ts";
 
 const MAX_AUTH_COOKIE_HEADER_CODE_UNITS = 64 * 1024;
@@ -15,6 +16,7 @@ export interface ProxyTokenManager {
     scope: TokenScope,
     projectSlug?: string,
     customDomain?: string,
+    options?: TokenRequestOptions,
   ): Promise<string>;
 }
 
@@ -136,9 +138,15 @@ export async function resolveProxyRequestToken(
     const customDomain = projectSlug ? undefined : host;
     if (projectSlug || customDomain) {
       try {
-        token = await tokenManager.getToken(scope, projectSlug, customDomain);
+        token = await tokenManager.getToken(
+          scope,
+          projectSlug,
+          customDomain,
+          { signal: req.signal },
+        );
         tokenSource = "service";
       } catch (error) {
+        if (req.signal.aborted) throw createAbortError(req.signal.reason);
         tokenFetchError = error;
         if (!isMissingProxyProjectError(error)) {
           logger?.error(tokenFetchErrorMessage, error, {
