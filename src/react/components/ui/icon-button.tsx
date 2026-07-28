@@ -1,7 +1,6 @@
 /**
  * IconButton — ported 1:1 from Veryfront Studio: an icon-only Button with a
- * built-in Tooltip. Uses the basic Tooltip (a11y deferred — see tooltip.tsx).
- * Private to the chat module.
+ * built-in accessible Tooltip. Private to the chat module.
  *
  * @module react/components/ui/icon-button
  */
