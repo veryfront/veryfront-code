@@ -699,7 +699,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
           if (shouldPersistProjectLink(projectReferenceSource)) {
             const project = await getProjectTarget(client, projectApiReference(config));
-            config = await persistProjectLink(projectDir, config, project);
+            config = dryRun
+              ? { ...config, projectId: project.id, projectSlug: project.slug }
+              : await persistProjectLink(projectDir, config, project);
           }
         } catch (error) {
           if (getErrorStatus(error) !== 404) throw error;

@@ -6,7 +6,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { readProjectLink } from "../../shared/project-link.ts";
+import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
 import { deployCommand, type DeploymentRoutingConvergence } from "./command.ts";
 import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
@@ -1154,6 +1154,76 @@ it("models an inferred missing project during dry-run deploy", async () => {
       }));
 
     assertEquals(requests, []);
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+it("does not rewrite an existing local project link during dry-run deploy", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+  try {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    for (const key of envKeys.slice(2)) Deno.env.delete(key);
+    _resetEnvironmentConfig();
+
+    await writeProjectLink(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "stale-slug",
+    });
+    const linkPath = `${projectDir}/.veryfront/project.json`;
+    const originalLink = await Deno.readTextFile(linkPath);
+
+    await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+
+      if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
+        return Promise.resolve(Response.json({ id: PROJECT_ID, slug: "canonical-slug" }));
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname === `/api/projects/${PROJECT_ID}/environments`
+      ) {
+        return Promise.resolve(Response.json({
+          data: [{
+            id: ENVIRONMENT_ID,
+            name: "production",
+            project_id: PROJECT_ID,
+            protected: false,
+            deployment: null,
+          }],
+        }));
+      }
+
+      throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+    }, () =>
+      deployCommand({
+        projectDir,
+        branch: "main",
+        env: "production",
+        dryRun: true,
+        force: false,
+        quiet: true,
+        skipSourcePush: true,
+      }));
+
+    assertEquals(await Deno.readTextFile(linkPath), originalLink);
   } finally {
     envKeys.forEach((key, index) => {
       const value = savedEnv[index];

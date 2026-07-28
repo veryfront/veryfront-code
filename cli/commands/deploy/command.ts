@@ -905,7 +905,9 @@ async function ensureProjectLinkedForDeploy(
     try {
       const project = await getProject(client, projectApiReference(config));
       const resolvedConfig = shouldPersistProjectLink(projectReferenceSource)
-        ? await persistProjectLink(projectDir, config, project)
+        ? dryRun
+          ? { ...config, projectId: project.id, projectSlug: project.slug }
+          : await persistProjectLink(projectDir, config, project)
         : { ...config, projectSlug: project.slug };
       return {
         config: resolvedConfig,

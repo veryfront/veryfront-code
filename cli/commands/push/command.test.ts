@@ -35,7 +35,7 @@ import {
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { readProjectLink } from "../../shared/project-link.ts";
+import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -1124,6 +1124,60 @@ describe("push dry-run project bootstrap", () => {
 
   it("does not create a missing project or branch when targeting a named branch", async () => {
     await assertMissingProjectDryRunDoesNotMutate("feature-x");
+  });
+
+  it("does not rewrite an existing local project link", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        for (const key of envKeys.slice(2)) Deno.env.delete(key);
+        _resetEnvironmentConfig();
+
+        await writeProjectLink(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "stale-slug",
+        });
+        const linkPath = `${projectDir}/.veryfront/project.json`;
+        const originalLink = await Deno.readTextFile(linkPath);
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/project-123") {
+            return Response.json({ id: "project-123", slug: "canonical-slug" });
+          }
+
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({
+          projectDir,
+          dryRun: true,
+          quiet: true,
+        });
+
+        assertEquals(await Deno.readTextFile(linkPath), originalLink);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
   });
 });
 
