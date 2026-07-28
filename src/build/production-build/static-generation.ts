@@ -4,11 +4,13 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
+import { resolveProjectSourcePath } from "#veryfront/build/bundler/project-module-resolver.ts";
 import { renderAppRouteToHTML } from "#veryfront/server/build-app-route-renderer.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import { loadClientStyles } from "./asset-generation.ts";
@@ -23,7 +25,9 @@ import {
 import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
-import { SSG_GENERATION_ERROR } from "#veryfront/errors";
+import { createSecureFs } from "#veryfront/security";
+import { COMPILATION_ERROR, SSG_GENERATION_ERROR } from "#veryfront/errors";
+import { collectTailwindSourceFiles } from "../asset-pipeline/tailwind-processor/source-collector.ts";
 import { getRouteOutputPath } from "./output-paths.ts";
 
 export interface PageRenderResult {
@@ -85,7 +89,20 @@ function createStaticRouteContext(
 }
 
 function hasImportMapScript(html: string): boolean {
-  return /<script\b[^>]*\btype=(["'])importmap\1/i.test(html);
+  return /<script\b[^>]*\btype\s*=\s*(?:(["'])importmap\1|importmap(?=[\s>]))/i.test(html);
+}
+
+function injectBeforeClosingTag(
+  html: string,
+  tag: "head" | "body",
+  content: string,
+): string {
+  const closingTag = tag === "head" ? /<\/head\s*>/i : /<\/body\s*>/i;
+  const match = closingTag.exec(html);
+  if (match?.index === undefined) {
+    throw new TypeError(`Rendered HTML is missing a closing </${tag}> tag`);
+  }
+  return html.slice(0, match.index) + content + html.slice(match.index);
 }
 
 function extractClientNavigationHtml(html: string): string {
@@ -102,88 +119,46 @@ function extractClientNavigationHtml(html: string): string {
   return html.slice(contentStart, rootClose);
 }
 
-const APP_ROUTE_STYLE_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
-const APP_ROUTE_STYLE_SKIP_DIRS = new Set([
-  ".deno_cache",
-  ".git",
-  ".veryfront",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
-
 async function readOptionalFile(
-  adapter: RuntimeAdapter,
+  readFile: (path: string) => Promise<string>,
   path: string,
 ): Promise<string | undefined> {
   try {
-    return await adapter.fs.readFile(path);
-  } catch (_) {
-    return undefined;
+    return await readFile(path);
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
   }
-}
-
-async function collectAppRouteStyleSources(
-  adapter: RuntimeAdapter,
-  dir: string,
-  ignoredDirs: string[] = [],
-): Promise<Array<{ path: string; content?: string }>> {
-  const files: Array<{ path: string; content?: string }> = [];
-  const ignored = ignoredDirs.map((path) => resolve(path));
-  const isIgnored = (path: string): boolean => {
-    const absolutePath = resolve(path);
-    return ignored.some((base) => {
-      const relativePath = relative(base, absolutePath);
-      return relativePath === "" ||
-        (!relativePath.startsWith("..") && !isAbsolute(relativePath));
-    });
-  };
-
-  async function walk(currentDir: string): Promise<void> {
-    if (isIgnored(currentDir)) return;
-
-    let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
-    try {
-      entries = adapter.fs.readDir(currentDir);
-    } catch (_) {
-      return;
-    }
-
-    for await (const entry of entries) {
-      if (entry.isDirectory) {
-        const childDir = join(currentDir, entry.name);
-        if (!APP_ROUTE_STYLE_SKIP_DIRS.has(entry.name) && !isIgnored(childDir)) {
-          await walk(childDir);
-        }
-        continue;
-      }
-
-      if (!entry.isFile) continue;
-      if (!APP_ROUTE_STYLE_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
-
-      const path = join(currentDir, entry.name);
-      const content = await readOptionalFile(adapter, path);
-      if (content !== undefined) files.push({ path, content });
-    }
-  }
-
-  await walk(dir);
-  return files;
 }
 
 async function prepareAppRouteStylesheet(
   options: SSGOptions,
 ): Promise<string | undefined> {
   const stylesheetPath = options.config.tailwind?.stylesheet ?? "globals.css";
-  const stylesheet = await readOptionalFile(
-    options.adapter,
-    join(options.projectDir, stylesheetPath),
-  );
-  const sourceFiles = await collectAppRouteStyleSources(
-    options.adapter,
+  const resolvedStylesheetPath = resolveProjectSourcePath(
+    stylesheetPath,
     options.projectDir,
-    options.ignoredSourceDirs,
+    "Tailwind stylesheet",
   );
+  const secureFs = createSecureFs({
+    baseDir: options.projectDir,
+    adapter: options.adapter,
+    context: "build",
+    throwOnError: true,
+    validationOptions: {
+      followSymlinks: false,
+    },
+  });
+  const stylesheet = await readOptionalFile(
+    (path) => secureFs.readFile(path),
+    resolvedStylesheetPath,
+  );
+  const sourceFiles = await collectTailwindSourceFiles({
+    adapter: options.adapter,
+    projectDir: options.projectDir,
+    patterns: ["**/*"],
+    ignoredDirs: options.ignoredSourceDirs,
+  });
   const candidates = extractCandidatesFromFiles(sourceFiles, {
     projectDir: options.projectDir,
   });
@@ -193,25 +168,31 @@ async function prepareAppRouteStylesheet(
     minify: true,
     environment: "production",
     buildMode: "production",
+    projectSlug: options.projectDir,
   });
 
   if (generated.error) {
-    logger.error("Failed to generate App Router CSS:", generated.error);
-    return undefined;
+    throw COMPILATION_ERROR.create({
+      detail: `App Router Tailwind compilation failed: ${generated.error}`,
+    });
+  }
+  if (candidates.size > 0 && generated.css.trim().length === 0) {
+    throw COMPILATION_ERROR.create({
+      detail: "App Router Tailwind compilation returned empty CSS for non-empty candidates",
+    });
   }
 
   const hash = hashCSS(generated.css);
   if (!hash) return undefined;
 
-  await cacheCSSAsync(generated.css, hash, {
-    candidates,
-    stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
-  });
-
   if (!options.dryRun) {
     const cssPath = join(options.outputDir, "_vf/css", `${hash}.css`);
     await options.adapter.fs.mkdir(dirname(cssPath), { recursive: true });
     await options.adapter.fs.writeFile(cssPath, generated.css);
+    await cacheCSSAsync(generated.css, hash, {
+      candidates,
+      stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+    });
   }
 
   return `/_vf/css/${hash}.css`;
@@ -260,7 +241,7 @@ export async function buildPagesRoutes(
           route.path,
           "/_veryfront/chunks",
         );
-        enhancedHtml = enhancedHtml.replace("</head>", `${preloadLinks}\n</head>`);
+        enhancedHtml = injectBeforeClosingTag(enhancedHtml, "head", `${preloadLinks}\n`);
       }
 
       if (!hasImportMapScript(enhancedHtml)) {
@@ -269,8 +250,9 @@ export async function buildPagesRoutes(
           config: options.config,
           releaseAssetManifest: options.releaseAssetManifest,
         });
-        enhancedHtml = enhancedHtml.replace(
-          "</head>",
+        enhancedHtml = injectBeforeClosingTag(
+          enhancedHtml,
+          "head",
           `
   <!-- Import map for React dependencies -->
   <script type="importmap">
@@ -281,27 +263,28 @@ export async function buildPagesRoutes(
   <style>
 ${clientStyles}
   </style>
-</head>`,
+`,
         );
       } else {
-        enhancedHtml = enhancedHtml.replace(
-          "</head>",
+        enhancedHtml = injectBeforeClosingTag(
+          enhancedHtml,
+          "head",
           `
   <!-- Basic styles -->
   <style>
 ${clientStyles}
   </style>
-</head>`,
+`,
         );
       }
 
-      enhancedHtml = enhancedHtml.replace(
-        "</body>",
+      enhancedHtml = injectBeforeClosingTag(
+        enhancedHtml,
+        "body",
         generateClientRuntime(route, result, baseUrl),
       );
 
       const outputPath = getRouteOutputPath(outputDir, route.path);
-      await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
 
       if (dryRun) {
         stats.pages++;
@@ -311,6 +294,7 @@ ${clientStyles}
         continue;
       }
 
+      await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
       await traceStep(`write:${route.slug}`, () => adapter.fs.writeFile(outputPath, enhancedHtml));
 
       const pageData = {
@@ -370,10 +354,20 @@ export async function buildAppRoutes(
   if (appRoutes.length === 0) return stats;
 
   logger.info("Building App Router static pages...");
-  const stylesheetHref = await traceStep(
-    "app:styles",
-    () => prepareAppRouteStylesheet(options),
-  );
+  let stylesheetHref: string | undefined;
+  try {
+    stylesheetHref = await traceStep(
+      "app:styles",
+      () => prepareAppRouteStylesheet(options),
+    );
+  } catch (error) {
+    logger.error("Failed to prepare App Router styles:", error);
+    throw SSG_GENERATION_ERROR.create({
+      detail: "Failed to prepare App Router styles",
+      cause: error,
+      context: { stage: "app-styles" },
+    });
+  }
 
   for (const route of appRoutes) {
     try {
@@ -446,5 +440,5 @@ function generateClientRuntime(
       boot({ slug: ${jsonForInlineScript(route.slug)} });
     }
   </script>
-</body>`;
+`;
 }
