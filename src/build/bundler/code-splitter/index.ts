@@ -105,7 +105,10 @@ function assertAssetPathList(
   }
 }
 
-function assertOptionalAssetPathList(value: unknown, description: string): void {
+function assertOptionalAssetPathList(
+  value: unknown,
+  description: string,
+): asserts value is string[] | undefined {
   if (value !== undefined) assertAssetPathList(value, description);
 }
 
@@ -135,6 +138,13 @@ export function validateChunkManifest(value: unknown): ChunkManifest {
       throw new TypeError(`Chunk ${JSON.stringify(file)} does not match its file field`);
     }
     assertAssetPathList(rawChunk.imports, `Chunk ${JSON.stringify(file)} imports`);
+    for (const importedChunk of rawChunk.imports) {
+      if (!Object.hasOwn(value.chunks, importedChunk)) {
+        throw new TypeError(
+          `Chunk ${JSON.stringify(file)} imports unknown chunk ${JSON.stringify(importedChunk)}`,
+        );
+      }
+    }
     if (rawChunk.css !== undefined) {
       assertAssetPath(rawChunk.css, `Chunk ${JSON.stringify(file)} CSS`);
     }
@@ -159,6 +169,20 @@ export function validateChunkManifest(value: unknown): ChunkManifest {
     assertOptionalAssetPathList(rawRoute.preload, `Route ${JSON.stringify(routePath)} preload`);
     if (!Object.hasOwn(value.chunks, rawRoute.entry)) {
       throw new TypeError(`Route ${JSON.stringify(routePath)} references an unknown entry chunk`);
+    }
+    for (const chunk of rawRoute.chunks) {
+      if (!Object.hasOwn(value.chunks, chunk)) {
+        throw new TypeError(
+          `Route ${JSON.stringify(routePath)} references unknown chunk ${JSON.stringify(chunk)}`,
+        );
+      }
+    }
+    for (const preload of rawRoute.preload ?? []) {
+      if (!Object.hasOwn(value.chunks, preload)) {
+        throw new TypeError(
+          `Route ${JSON.stringify(routePath)} preloads unknown chunk ${JSON.stringify(preload)}`,
+        );
+      }
     }
   }
 

@@ -36,4 +36,5 @@ export {
   generatePreloadLinks,
   getChunksForRoute,
   loadChunkManifest,
+  validateChunkManifest,
 } from "./code-splitter/index.ts";

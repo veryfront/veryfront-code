@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateManifest, generateRedirects } from "./manifest.ts";
+import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 describe("build/production-build/manifest", () => {
   describe("generateManifest", () => {
@@ -14,7 +16,7 @@ describe("build/production-build/manifest", () => {
       stats: {
         pages: 2,
         components: 0,
-        chunks: 3,
+        chunks: 0,
         assets: 5,
         totalSize: 1048576,
         duration: 0,
@@ -23,6 +25,32 @@ describe("build/production-build/manifest", () => {
       enablePrefetch: false,
       enableCompression: false,
       chunkManifest: null,
+    };
+    const validChunkManifest: ChunkManifest = {
+      version: "1.0",
+      routes: {
+        "/": {
+          entry: "entry.js",
+          chunks: ["chunk-a.js"],
+        },
+      },
+      chunks: {
+        "entry.js": {
+          name: "entry",
+          file: "entry.js",
+          imports: ["chunk-a.js"],
+          size: 24,
+          hash: "1234abcd",
+        },
+        "chunk-a.js": {
+          name: "chunk-a",
+          file: "chunk-a.js",
+          imports: [],
+          size: 12,
+          hash: "5678abcd",
+        },
+      },
+      shared: [],
     };
 
     it("should generate manifest with correct version", () => {
@@ -96,6 +124,10 @@ describe("build/production-build/manifest", () => {
             segmentDirs: ["app", "api", "data"],
           },
         ],
+        stats: {
+          ...baseOptions.stats,
+          pages: 3,
+        },
       });
 
       assertEquals(result.routes.length, 3);
@@ -108,23 +140,20 @@ describe("build/production-build/manifest", () => {
     it("should format stats with MB size", () => {
       const result = generateManifest(baseOptions);
       assertEquals(result.stats.pages, 2);
-      assertEquals(result.stats.chunks, 3);
+      assertEquals(result.stats.chunks, 0);
       assertEquals(result.stats.assets, 5);
       assertEquals(result.stats.totalSize, "1.00 MB");
     });
 
     it("should include chunks when splitting enabled with valid manifest", () => {
-      const chunkManifest = {
-        version: "1.0",
-        routes: { "/": { chunks: ["chunk-a.js"] } },
-        chunks: { "chunk-a.js": { file: "chunk-a.js" } },
-        shared: ["shared.js"],
-      };
-
       const result = generateManifest({
         ...baseOptions,
         enableSplitting: true,
-        chunkManifest,
+        chunkManifest: validChunkManifest,
+        stats: {
+          ...baseOptions.stats,
+          chunks: 2,
+        },
       });
 
       assertEquals(result.chunks !== null, true);
@@ -134,14 +163,61 @@ describe("build/production-build/manifest", () => {
       assertEquals(route.chunks, ["chunk-a.js"]);
     });
 
-    it("should return null chunks for invalid manifest", () => {
-      const result = generateManifest({
-        ...baseOptions,
-        enableSplitting: true,
-        chunkManifest: { invalid: true } as never,
-      });
+    it("fails the build for an invalid chunk manifest", () => {
+      const error = assertThrows(
+        () =>
+          generateManifest({
+            ...baseOptions,
+            enableSplitting: true,
+            chunkManifest: { invalid: true } as never,
+          }),
+        VeryfrontError,
+        "Invalid chunk manifest",
+      );
 
-      assertEquals(result.chunks, null);
+      assertEquals(error.slug, "build-failed");
+    });
+
+    it("fails when the manifest route count disagrees with build stats", () => {
+      const error = assertThrows(
+        () =>
+          generateManifest({
+            ...baseOptions,
+            stats: {
+              ...baseOptions.stats,
+              pages: 1,
+            },
+          }),
+        VeryfrontError,
+        "output manifest contains 2 routes",
+      );
+
+      assertEquals(error.slug, "build-failed");
+    });
+
+    it("fails when chunks reference a route that was not generated", () => {
+      const mismatchedManifest: ChunkManifest = {
+        ...validChunkManifest,
+        routes: {
+          "/missing": validChunkManifest.routes["/"]!,
+        },
+      };
+      const error = assertThrows(
+        () =>
+          generateManifest({
+            ...baseOptions,
+            enableSplitting: true,
+            chunkManifest: mismatchedManifest,
+            stats: {
+              ...baseOptions.stats,
+              chunks: 2,
+            },
+          }),
+        VeryfrontError,
+        "route that was not generated",
+      );
+
+      assertEquals(error.slug, "build-failed");
     });
   });
 

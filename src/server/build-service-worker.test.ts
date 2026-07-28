@@ -1,8 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateServiceWorker } from "./build-service-worker.ts";
-import type { BuildManifest } from "#veryfront/build/production-build/manifest.ts";
+import type {
+  BuildManifest,
+  ManifestChunkInfo,
+} from "#veryfront/build/production-build/manifest.ts";
+
+function createChunkInfo(
+  file: string,
+  overrides: Partial<ManifestChunkInfo> = {},
+): ManifestChunkInfo {
+  return {
+    name: "test-chunk",
+    file,
+    imports: [],
+    size: 1,
+    hash: "1234abcd",
+    ...overrides,
+  };
+}
 
 function createManifest(overrides: Partial<BuildManifest> = {}): BuildManifest {
   return {
@@ -118,12 +135,10 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             chunks: {
-              version: "1.0.0",
+              version: "1.0",
               routes: {},
               chunks: {
-                "entry-main": {
-                  file: "main.js",
-                },
+                "main.js": createChunkInfo("main.js"),
               },
               shared: [],
             },
@@ -136,13 +151,10 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             chunks: {
-              version: "1.0.0",
+              version: "1.0",
               routes: {},
               chunks: {
-                "entry-main": {
-                  file: "main.js",
-                  css: "main.css",
-                },
+                "main.js": createChunkInfo("main.js", { css: "main.css" }),
               },
               shared: [],
             },
@@ -155,13 +167,13 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             chunks: {
-              version: "1.0.0",
+              version: "1.0",
               routes: {},
               chunks: {
-                "entry-main": {
-                  file: "main.js",
+                "main.js": createChunkInfo("main.js", {
                   imports: ["vendor-abc123.js"],
-                },
+                }),
+                "vendor-abc123.js": createChunkInfo("vendor-abc123.js"),
               },
               shared: [],
             },
@@ -174,9 +186,11 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             chunks: {
-              version: "1.0.0",
+              version: "1.0",
               routes: {},
-              chunks: {},
+              chunks: {
+                "shared-utils.js": createChunkInfo("shared-utils.js"),
+              },
               shared: ["shared-utils.js"],
             },
           }),
@@ -237,7 +251,7 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             chunks: {
-              version: "1.0.0",
+              version: "1.0",
               routes: {},
               chunks: {},
               // deno-lint-ignore no-explicit-any
@@ -252,15 +266,17 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(
           createManifest({
             chunks: {
-              version: "1.0.0",
+              version: "1.0",
               routes: {},
               chunks: {
-                "entry-main": {
+                "invalid.js": createChunkInfo(
                   // deno-lint-ignore no-explicit-any
-                  file: null as any,
-                  // deno-lint-ignore no-explicit-any
-                  css: undefined as any,
-                },
+                  null as any,
+                  {
+                    // deno-lint-ignore no-explicit-any
+                    css: undefined as any,
+                  },
+                ),
               },
               shared: [],
             },
@@ -295,19 +311,20 @@ describe("server/build-service-worker", () => {
             version: "3.0.0",
             buildTime: "2025-06-15T12:00:00.000Z",
             chunks: {
-              version: "3.0.0",
+              version: "1.0",
               routes: {
-                "/": { chunks: ["route-index.js"] },
+                "/": { entry: "main.js", chunks: ["route-index.js"] },
               },
               chunks: {
-                "entry-main": {
-                  file: "main.js",
+                "main.js": createChunkInfo("main.js", {
                   css: "main.css",
                   imports: ["vendor.js"],
-                },
-                "page-about": {
-                  file: "about.js",
-                },
+                }),
+                "about.js": createChunkInfo("about.js"),
+                "vendor.js": createChunkInfo("vendor.js"),
+                "route-index.js": createChunkInfo("route-index.js"),
+                "route-about.js": createChunkInfo("route-about.js"),
+                "shared-runtime.js": createChunkInfo("shared-runtime.js"),
               },
               shared: ["shared-runtime.js"],
             },
@@ -342,11 +359,10 @@ describe("server/build-service-worker", () => {
 
         // Sorted output (STATIC_CACHE_URLS is sorted)
         const urlsMatch = output.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
-        if (urlsMatch) {
-          const urls = JSON.parse(urlsMatch[1]) as string[];
-          const sorted = [...urls].sort();
-          assertEquals(urls, sorted);
-        }
+        assertExists(urlsMatch?.[1]);
+        const urls = JSON.parse(urlsMatch[1]) as string[];
+        const sorted = [...urls].sort();
+        assertEquals(urls, sorted);
       });
     });
   });

@@ -203,6 +203,42 @@ describe("build/bundler/code-splitter/index", () => {
       );
     });
 
+    it("rejects chunks that import unknown chunks", () => {
+      assertThrows(
+        () =>
+          validateChunkManifest({
+            ...validManifest,
+            chunks: {
+              "index.js": {
+                ...validManifest.chunks["index.js"],
+                imports: ["missing.js"],
+              },
+            },
+          }),
+        TypeError,
+        "imports unknown chunk",
+      );
+    });
+
+    it("rejects route chunk and preload references that are not in the manifest", () => {
+      for (const field of ["chunks", "preload"] as const) {
+        assertThrows(
+          () =>
+            validateChunkManifest({
+              ...validManifest,
+              routes: {
+                "/": {
+                  ...validManifest.routes["/"],
+                  [field]: ["missing.js"],
+                },
+              },
+            }),
+          TypeError,
+          field === "chunks" ? "references unknown chunk" : "preloads unknown chunk",
+        );
+      }
+    });
+
     it("wraps malformed on-disk manifests as build errors", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-chunk-manifest-" });
       const manifestPath = `${tempDir}/manifest.json`;
