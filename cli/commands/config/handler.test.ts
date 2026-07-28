@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
 import { createSuccessEnvelope } from "../../shared/json-output.ts";
@@ -20,13 +20,17 @@ async function withTempConfigProject(
   }
 }
 
-async function writeRawProjectLink(projectDir: string, projectSlug: string): Promise<void> {
+async function writeRawProjectLink(
+  projectDir: string,
+  projectSlug: string,
+  controlPlane = "https://api.veryfront.com",
+): Promise<void> {
   await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
   await Deno.writeTextFile(
     join(projectDir, ".veryfront", "project.json"),
     JSON.stringify({
       version: 1,
-      controlPlane: "https://api.veryfront.com",
+      controlPlane,
       projectId: "linked-project-id",
       projectSlug,
     }),
@@ -123,6 +127,32 @@ describe("Config Command", () => {
 
         assertEquals(data.projectSlug, "linked-project");
         assertEquals(data.configSource, ".veryfront/project.json");
+      });
+    });
+
+    it("rejects a local project link for a different control plane", async () => {
+      await withTempConfigProject({}, async (projectDir) => {
+        await writeRawProjectLink(
+          projectDir,
+          "linked-project",
+          "https://api.other.veryfront.com",
+        );
+
+        await assertRejects(
+          () => getConfigCommandData(projectDir),
+          Error,
+          ".veryfront/project.json",
+        );
+        await assertRejects(
+          () => getConfigCommandData(projectDir),
+          Error,
+          "https://api.other.veryfront.com",
+        );
+        await assertRejects(
+          () => getConfigCommandData(projectDir),
+          Error,
+          "https://api.veryfront.com",
+        );
       });
     });
   });

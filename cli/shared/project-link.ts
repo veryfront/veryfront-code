@@ -4,6 +4,7 @@ import { join, relative } from "veryfront/platform/path";
 const PROJECT_LINK_VERSION = 1 as const;
 const PROJECT_LINK_DIRECTORY = ".veryfront";
 const PROJECT_LINK_FILENAME = "project.json";
+export const PROJECT_LINK_RELATIVE_PATH = `${PROJECT_LINK_DIRECTORY}/${PROJECT_LINK_FILENAME}`;
 
 export interface ProjectLink {
   version: typeof PROJECT_LINK_VERSION;
@@ -18,7 +19,7 @@ function projectLinkPath(projectDir: string): string {
 
 function projectLinkPathError(): Error {
   return new Error(
-    `Veryfront cannot use ${PROJECT_LINK_DIRECTORY}/${PROJECT_LINK_FILENAME} through a symbolic link. Remove the link and run the command again.`,
+    `Veryfront cannot use ${PROJECT_LINK_RELATIVE_PATH} through a symbolic link. Remove the link and run the command again.`,
   );
 }
 
@@ -54,7 +55,7 @@ async function inspectProjectLinkPath(
   if (!linkInfo) return { directoryExists: true, linkExists: false };
   if (linkInfo.isSymlink) throw projectLinkPathError();
   if (!linkInfo.isFile) {
-    throw new Error(`${PROJECT_LINK_DIRECTORY}/${PROJECT_LINK_FILENAME} must be a file.`);
+    throw new Error(`${PROJECT_LINK_RELATIVE_PATH} must be a file.`);
   }
   return { directoryExists: true, linkExists: true };
 }
@@ -63,6 +64,14 @@ function normalizeControlPlane(controlPlane: string): string {
   const url = new URL(controlPlane);
   const pathname = url.pathname.replace(/\/+$/, "");
   return `${url.origin}${pathname}`;
+}
+
+function controlPlanesMatch(left: string, right: string): boolean {
+  try {
+    return normalizeControlPlane(left) === normalizeControlPlane(right);
+  } catch {
+    return false;
+  }
 }
 
 function isProjectLink(value: unknown): value is ProjectLink {
@@ -83,6 +92,21 @@ export async function readProjectLink(projectDir: string): Promise<ProjectLink |
     if (error instanceof SyntaxError || isNotFoundError(error)) return null;
     throw error;
   }
+}
+
+export async function readProjectLinkForControlPlane(
+  projectDir: string,
+  resolvedApiUrl: string,
+): Promise<ProjectLink | null> {
+  const link = await readProjectLink(projectDir);
+  if (!link) return null;
+  if (controlPlanesMatch(link.controlPlane, resolvedApiUrl)) return link;
+
+  throw new Error(
+    `Veryfront project link ${
+      projectLinkPath(projectDir)
+    } targets control plane "${link.controlPlane}", but the resolved API URL is "${resolvedApiUrl}". Relink this project or select a matching API URL.`,
+  );
 }
 
 export async function writeProjectLink(
