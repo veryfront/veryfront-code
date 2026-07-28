@@ -10,6 +10,7 @@ import { unrefTimer } from "#veryfront/compat/process.ts";
 import { isLightweightPath, isWebSocketPath } from "./request-utils.ts";
 import type { RequestProfileRecord } from "#veryfront/observability";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 
 const logger = serverLogger.component("request-tracker");
 
@@ -72,6 +73,24 @@ function buildRequestProfileLogContext(record: RequestProfileRecord): Record<str
     phases: record.phases,
     slowestPhases,
   };
+}
+
+function logRequestCompletion(
+  message: string,
+  statusCode: number,
+  context: Record<string, unknown>,
+): void {
+  if (!isProduction() || statusCode < 400) {
+    logger.debug(message, context);
+    return;
+  }
+
+  try {
+    if (statusCode >= 500) logger.error(message, context);
+    else logger.warn(message, context);
+  } catch {
+    // Completion observability must not change an already-produced response.
+  }
 }
 
 class RequestTracker {
@@ -222,7 +241,7 @@ class RequestTracker {
       logContext.request_profile = buildRequestProfileLogContext(profile);
     }
 
-    logger.debug(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
+    logRequestCompletion(`${tracked.method} ${tracked.path} ${statusCode}`, statusCode, logContext);
   }
 
   markLongLived(requestId: string): void {

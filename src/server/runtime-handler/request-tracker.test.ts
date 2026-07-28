@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
@@ -10,6 +10,7 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 
 const originalLogLevel = Deno.env.get("LOG_LEVEL");
+const originalVeryfrontEnv = Deno.env.get("VERYFRONT_ENV");
 
 function captureLogs(): LogEntry[] {
   const entries: LogEntry[] = [];
@@ -20,6 +21,10 @@ function captureLogs(): LogEntry[] {
 }
 
 describe("server/runtime-handler/request-tracker", () => {
+  beforeEach(() => {
+    Deno.env.set("VERYFRONT_ENV", "development");
+  });
+
   afterEach(() => {
     // Clean up any tracked requests
     for (const tracked of requestTracker.getInFlightRequests()) {
@@ -29,6 +34,8 @@ describe("server/runtime-handler/request-tracker", () => {
     Deno.env.delete("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
     if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
     else Deno.env.set("LOG_LEVEL", originalLogLevel);
+    if (originalVeryfrontEnv === undefined) Deno.env.delete("VERYFRONT_ENV");
+    else Deno.env.set("VERYFRONT_ENV", originalVeryfrontEnv);
     __resetLoggerConfigForTests();
     __resetLogRecordEmitterForTests();
   });
@@ -252,6 +259,42 @@ describe("server/runtime-handler/request-tracker", () => {
       const entry = entries.find((candidate) => candidate.message === "GET /broken 500");
       assertEquals(entry?.level, "debug");
       assertEquals(entry?.context?.statusCode, 500);
+    });
+
+    it("elevates hosted client and server error completions", () => {
+      Deno.env.set("VERYFRONT_ENV", "production");
+      const entries = captureLogs();
+
+      requestTracker.start("hosted-not-found", "proj", "/missing", "GET");
+      requestTracker.complete("hosted-not-found", 404);
+      requestTracker.start("hosted-error", "proj", "/broken", "POST");
+      requestTracker.complete("hosted-error", 500);
+
+      const notFound = entries.find((candidate) => candidate.message === "GET /missing 404");
+      const serverError = entries.find((candidate) => candidate.message === "POST /broken 500");
+      assertEquals(notFound?.level, "warn");
+      assertEquals(serverError?.level, "error");
+    });
+
+    it("does not let a hosted logging sink failure alter request completion", () => {
+      Deno.env.set("VERYFRONT_ENV", "production");
+      const entries = captureLogs();
+      const originalError = console.error;
+
+      try {
+        console.error = () => {
+          throw new Error("error sink unavailable");
+        };
+
+        requestTracker.start("hosted-sink-error", "proj", "/broken", "GET");
+        requestTracker.complete("hosted-sink-error", 500);
+      } finally {
+        console.error = originalError;
+      }
+
+      const entry = entries.find((candidate) => candidate.message === "GET /broken 500");
+      assertEquals(entry?.level, "error");
+      assertEquals(requestTracker.getInFlightCount(), 0);
     });
 
     it("keeps slow and very slow timer diagnostics visible", () => {
