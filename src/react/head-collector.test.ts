@@ -246,5 +246,95 @@ describe("head-collector", () => {
 
       assertEquals(globalCollector, collectHead);
     });
+
+    it("keeps the first evaluated copy connected after a second copy loads", async () => {
+      const contextOwner = await import(
+        "./head-collector.ts?duplicate=context-owner-first"
+      );
+      const laterCopy = await import(
+        "./head-collector.ts?duplicate=dispatcher-owner-second"
+      );
+      const globalCollector = (globalThis as typeof globalThis & {
+        [HEAD_COLLECTOR_SYMBOL]?: typeof collectHead;
+      })[HEAD_COLLECTOR_SYMBOL];
+
+      assertEquals(contextOwner.collectHead, laterCopy.collectHead);
+      assertEquals(globalCollector, contextOwner.collectHead);
+
+      const { head } = await contextOwner.runWithHeadCollector(() => {
+        globalCollector?.({ title: "first-copy-context" });
+        laterCopy.collectHead({
+          metas: [{ name: "author", content: "later-copy-dispatcher" }],
+        });
+      });
+
+      assertEquals(head.title, "first-copy-context");
+      assertEquals(head.metas, [
+        { name: "author", content: "later-copy-dispatcher" },
+      ]);
+    });
+
+    it("lets a later evaluated copy collect through the first copy", async () => {
+      const dispatcherOwner = await import(
+        "./head-collector.ts?duplicate=dispatcher-owner-first"
+      );
+      const laterContextOwner = await import(
+        "./head-collector.ts?duplicate=context-owner-second"
+      );
+
+      assertEquals(dispatcherOwner.collectHead, laterContextOwner.collectHead);
+
+      const { head } = await laterContextOwner.runWithHeadCollector(() => {
+        dispatcherOwner.collectHead({
+          title: "later-copy-context",
+          links: [{ rel: "canonical", href: "https://example.com/shared" }],
+        });
+      });
+
+      assertEquals(head.title, "later-copy-context");
+      assertEquals(head.links, [
+        { rel: "canonical", href: "https://example.com/shared" },
+      ]);
+    });
+
+    it("isolates concurrent requests across evaluated copies", async () => {
+      const firstCopy = await import(
+        "./head-collector.ts?duplicate=concurrent-first"
+      );
+      const secondCopy = await import(
+        "./head-collector.ts?duplicate=concurrent-second"
+      );
+      const firstStarted = Promise.withResolvers<void>();
+      const secondCollected = Promise.withResolvers<void>();
+
+      const firstRequest = firstCopy.runWithHeadCollector(async () => {
+        secondCopy.collectHead({ title: "request-a" });
+        firstStarted.resolve();
+        await secondCollected.promise;
+        firstCopy.collectHead({ styles: [".request-a {}"] });
+        return "result-a";
+      });
+
+      const secondRequest = secondCopy.runWithHeadCollector(async () => {
+        await firstStarted.promise;
+        firstCopy.collectHead({ title: "request-b" });
+        secondCollected.resolve();
+        await Promise.resolve();
+        secondCopy.collectHead({ styles: [".request-b {}"] });
+        return "result-b";
+      });
+
+      const [first, second] = await Promise.all([
+        firstRequest,
+        secondRequest,
+      ]);
+
+      assertEquals(first.result, "result-a");
+      assertEquals(first.head.title, "request-a");
+      assertEquals(first.head.styles, [".request-a {}"]);
+      assertEquals(second.result, "result-b");
+      assertEquals(second.head.title, "request-b");
+      assertEquals(second.head.styles, [".request-b {}"]);
+    });
   });
 });
