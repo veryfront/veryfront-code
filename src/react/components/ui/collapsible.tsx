@@ -23,6 +23,8 @@ export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Collapsible root — owns open state. */
@@ -32,12 +34,13 @@ export function Collapsible({
   onOpenChange,
   disabled,
   children,
+  ref,
   ...props
 }: CollapsibleProps): React.ReactElement {
   const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
   const toggle = React.useCallback(() => setOpen(!isOpen), [isOpen, setOpen]);
   return (
-    <div data-state={isOpen ? "open" : "closed"} {...props}>
+    <div ref={ref} data-state={isOpen ? "open" : "closed"} {...props}>
       <CollapsibleContext.Provider value={{ open: isOpen, toggle, disabled }}>
         {children}
       </CollapsibleContext.Provider>

@@ -20,6 +20,7 @@ import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
+import { useClipboardFeedback } from "../clipboard.ts";
 import { CheckIcon, ChevronDownIcon, CopyIcon } from "./icons/index.ts";
 import { useColorModeOptional } from "./color-mode.tsx";
 import { createRetryableModuleLoader, createSerialAsyncExecutor } from "./code-block-runtime.ts";
@@ -118,10 +119,11 @@ async function ensureLanguage(lang: string): Promise<void> {
       loadedLangs.add(lang);
     })
     .catch(() => {
-      // Remove from the pending map so the next call can retry. Do NOT add
-      // to loadedLangs — that would permanently mark a transiently-failed
-      // load as succeeded and suppress all future retries for this language.
-      langLoadPromises.delete(lang);
+      // Do NOT add to loadedLangs — that would permanently mark a
+      // transiently-failed load as succeeded and suppress future retries.
+    })
+    .finally(() => {
+      if (langLoadPromises.get(lang) === load) langLoadPromises.delete(lang);
     });
   langLoadPromises.set(lang, load);
   await load;
@@ -303,7 +305,12 @@ export interface CodeBlockProps {
    */
   renderHeader?: (opts: {
     language?: string;
-    copy: () => void;
+    /**
+     * Copy the code. Pass the click event (for example, with
+     * `onClick={copy}`) when an `onCopy` interceptor is configured. Eventless
+     * calls fail closed in that case because React events cannot be fabricated.
+     */
+    copy: (event?: React.MouseEvent) => void;
     collapsed: boolean;
     toggle: () => void;
   }) => React.ReactNode;
@@ -311,42 +318,27 @@ export interface CodeBlockProps {
 
 /** Result of {@link useClipboard}: the copied flag + a `copy` trigger. */
 export interface UseClipboardResult {
-  /** `true` for ~2s after a successful (or fallback) copy. */
+  /** `true` for ~2s after a successful copy. */
   copied: boolean;
+  /** `true` for ~2s after both available copy mechanisms fail. */
+  failed: boolean;
   /** Copy `text` to the clipboard (with a `execCommand` fallback). */
-  copy: () => void;
+  copy: (ownerDocument?: Document) => void;
 }
 
 /** Clipboard copy hook: copies `text`, flips `copied` for ~2s. */
 export function useClipboard(text: string): UseClipboardResult {
-  const [copied, setCopied] = React.useState(false);
-  const timerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const { outcome, copy: copyWithFeedback } = useClipboardFeedback();
 
-  React.useEffect(() => {
-    return () => {
-      clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  const copy = React.useCallback(() => {
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch (_) {
-        /* expected: clipboard API unavailable, using fallback */
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
-      setCopied(true);
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setCopied(false), 2000);
-    })();
-  }, [text]);
-  return { copied, copy };
+  const copy = React.useCallback((ownerDocument?: Document): void => {
+    void copyWithFeedback(text, ownerDocument);
+  }, [copyWithFeedback, text]);
+  const isCurrentText = outcome?.text === text;
+  return {
+    copied: isCurrentText && outcome?.status === "copied",
+    failed: isCurrentText && outcome?.status === "failed",
+    copy,
+  };
 }
 
 /** Props accepted by {@link CopyButton}. */
@@ -370,25 +362,35 @@ export interface CopyButtonProps {
 export function CopyButton(
   { code, copyIcon, onCopy }: CopyButtonProps,
 ): React.ReactElement {
-  const { copied, copy } = useClipboard(code);
+  const { copied, failed, copy } = useClipboard(code);
+  const label = copied ? "Copied" : failed ? "Unable to copy code" : "Copy code";
   const handleClick = (e: React.MouseEvent): void => {
-    if (onCopy) onCopy(e, copy);
-    else copy();
+    const ownerDocument = e.currentTarget.ownerDocument;
+    const next = (): void => copy(ownerDocument);
+    if (onCopy) onCopy(e, next);
+    else next();
   };
   return (
-    <IconButton
-      variant="icon-ghost"
-      size="icon-sm"
-      onClick={handleClick}
-      tooltip={copied ? "Copied" : "Copy code"}
-      aria-label="Copy code"
-      className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
-    >
-      {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-      {copied
-        ? <CheckIcon className="size-3.5" />
-        : (copyIcon ?? <CopyIcon className="size-3.5" />)}
-    </IconButton>
+    <>
+      <IconButton
+        variant="icon-ghost"
+        size="icon-sm"
+        onClick={handleClick}
+        tooltip={label}
+        aria-label={label}
+        className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
+      >
+        {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
+        <span aria-hidden="true">
+          {copied
+            ? <CheckIcon className="size-3.5" />
+            : (copyIcon ?? <CopyIcon className="size-3.5" />)}
+        </span>
+      </IconButton>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {copied ? "Code copied" : failed ? "Unable to copy code" : ""}
+      </span>
+    </>
   );
 }
 
@@ -507,15 +509,25 @@ export function CodeBlock({
   // default). Hook is called unconditionally.
   const [open, setOpen] = React.useState(!defaultCollapsed);
   const toggle = React.useCallback(() => setOpen((v) => !v), []);
-  // A `copy` trigger for `renderHeader` that honours `onCopy`.
-  const clipboard = useClipboard(code);
-  const copy = React.useCallback(() => {
+  // `renderHeader` can pass a real click event to the interceptor. Imperative
+  // calls without an event copy directly only when no interceptor is present;
+  // an interceptor fails closed rather than receiving a fabricated event.
+  const { copy: copyCode } = useClipboard(code);
+  const hostDocumentRef = React.useRef<Document | undefined>(undefined);
+  const captureHostDocument = React.useCallback((node: HTMLDivElement | null): void => {
+    hostDocumentRef.current = node?.ownerDocument;
+  }, []);
+  const copy = React.useCallback((event?: React.MouseEvent): void => {
+    const ownerDocument = event?.currentTarget.ownerDocument ?? hostDocumentRef.current;
+    if (!ownerDocument) return;
     if (onCopy) {
-      onCopy({} as React.MouseEvent, clipboard.copy);
-    } else {
-      clipboard.copy();
+      if (!event) return;
+      const next = (): void => copyCode(ownerDocument);
+      onCopy(event, next);
+      return;
     }
-  }, [onCopy, clipboard]);
+    copyCode(ownerDocument);
+  }, [copyCode, onCopy]);
 
   // Mermaid fences render as an SVG diagram, no chrome.
   if (language === "mermaid" && code.trim()) {
@@ -540,6 +552,7 @@ export function CodeBlock({
   if (collapsible) {
     return (
       <Collapsible
+        ref={captureHostDocument}
         open={open}
         onOpenChange={setOpen}
         className={cn(
@@ -572,6 +585,7 @@ export function CodeBlock({
 
   return (
     <div
+      ref={captureHostDocument}
       className={cn(
         "not-prose my-4 overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)]",
         className,

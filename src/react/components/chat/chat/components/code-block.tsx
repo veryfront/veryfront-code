@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useClipboardFeedback } from "../../../clipboard.ts";
 import { cn } from "../../theme.ts";
 import { CheckIcon, CopyIcon } from "../../../ui/icons/index.ts";
 
@@ -8,7 +9,7 @@ export interface CodeBlockProps {
   code: string;
   inline?: boolean;
   className?: string;
-  /** React 19: ref is a regular prop. */
+  /** React 19: ref is a regular prop. Applied to the block wrapper only. */
   ref?: React.Ref<HTMLDivElement>;
 }
 
@@ -24,23 +25,17 @@ export interface CodeBlockProps {
 export function RichCodeBlock(
   { language, code, inline, className, ref }: CodeBlockProps,
 ): React.ReactElement {
-  const [copied, setCopied] = React.useState(false);
+  const { outcome, copy } = useClipboardFeedback();
+  const copyStatus = outcome?.text === code ? outcome.status : undefined;
+  const copied = copyStatus === "copied";
+  const copyLabel = copied ? "Copied" : copyStatus === "failed" ? "Copy failed" : "Copy";
 
-  const handleCopy = React.useCallback(async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(code);
-    } catch (_) {
-      /* expected: clipboard API unavailable, using fallback */
-      const textarea = document.createElement("textarea");
-      textarea.value = code;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [code]);
+  const handleCopy = React.useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>): void => {
+      void copy(code, event.currentTarget.ownerDocument);
+    },
+    [code, copy],
+  );
 
   if (inline) {
     return (
@@ -68,22 +63,30 @@ export function RichCodeBlock(
         <button
           type="button"
           onClick={handleCopy}
+          aria-label={copyLabel}
           className="inline-flex items-center gap-1.5 text-[var(--faint)] transition-colors hover:text-[var(--foreground)]"
         >
           {copied
             ? (
               <>
-                <CheckIcon className="size-3.5" />
+                <span aria-hidden="true">
+                  <CheckIcon className="size-3.5" />
+                </span>
                 <span>Copied</span>
               </>
             )
             : (
               <>
-                <CopyIcon className="size-3.5" />
-                <span>Copy</span>
+                <span aria-hidden="true">
+                  <CopyIcon className="size-3.5" />
+                </span>
+                <span>{copyLabel}</span>
               </>
             )}
         </button>
+        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {copied ? "Code copied" : copyStatus === "failed" ? "Unable to copy code" : ""}
+        </span>
       </div>
       <pre className="overflow-auto bg-[var(--secondary)] p-4 text-sm text-[var(--foreground)] [&_.hljs]:bg-transparent [&_.hljs]:p-0">
           <code className={language ? `language-${language}` : undefined}>{code}</code>
