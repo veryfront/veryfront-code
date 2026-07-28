@@ -1,10 +1,11 @@
 /**
  * Floating — shared Portal + fixed-positioning helper for the overlay
  * primitives (DropdownMenu, Popover, Select). Renders `children` into
- * `document.body`, positioned relative to `anchorRef`, so the surface escapes
- * any `overflow`/iframe clipping — the reason Radix uses a Portal. Anchors below
- * the trigger (flips above when it would overflow), clamps to the viewport,
- * follows scroll/resize, and dismisses on outside-click / `Escape`.
+ * the nearest Veryfront UI scope (or `document.body` when no scope exists),
+ * positioned relative to `anchorRef`, so the surface escapes a primitive's
+ * clipping container while retaining scoped design tokens. Anchors below the
+ * trigger (flips above when it would overflow), clamps to the viewport, follows
+ * scroll/resize, and dismisses on outside-click / `Escape`.
  *
  * TODO(a11y): focus management, RTL, richer collision handling. Private to the
  * chat module.
@@ -40,6 +41,11 @@ export function Floating({
   ...rest
 }: FloatingProps): React.ReactElement | null {
   const ref = React.useRef<HTMLDivElement>(null);
+  // Portals have no server representation. Keep the server and the first
+  // hydration render identical, then enable the portal after the component has
+  // mounted in a browser. This also avoids touching `document` during SSR when
+  // a surface starts open via `defaultOpen`.
+  const [portalReady, setPortalReady] = React.useState(false);
   const [pos, setPos] = React.useState<React.CSSProperties>({
     position: "fixed",
     top: 0,
@@ -54,8 +60,12 @@ export function Floating({
   const onDismissRef = React.useRef(onDismiss);
   onDismissRef.current = onDismiss;
 
+  React.useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
   React.useLayoutEffect(() => {
-    if (!open) return;
+    if (!open || !portalReady) return;
     const update = () => {
       const a = anchorRef.current?.getBoundingClientRect();
       const c = ref.current;
@@ -104,9 +114,9 @@ export function Floating({
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open, align, matchTriggerWidth, anchorRef]);
+  }, [open, portalReady, align, matchTriggerWidth, anchorRef]);
 
-  if (!open) return null;
+  if (!open || !portalReady) return null;
   // Portal into the nearest scope root rather than <body>: the design tokens are
   // scoped to `[data-vf-ui]` / `[data-vf-chat]`, so a surface under <body> would
   // resolve every `var(--…)` to nothing (transparent background, wrong text
