@@ -7,171 +7,94 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertMatch } from "#veryfront/testing/assert";
 import { formatCLIError } from "./cli-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
-import { CONFIG_NOT_FOUND, UNKNOWN_ERROR } from "../error-registry.ts";
+import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 
 describe("cli-error-boundary", () => {
   describe("formatCLIError", () => {
-    it("should format VeryfrontError with slug and title", () => {
+    it("shows an actionable default without diagnostic metadata", () => {
       const error = CONFIG_NOT_FOUND.create({
         detail: "Missing veryfront.config.ts in project root",
       });
 
-      const output = formatCLIError(error);
+      const output = formatCLIError(error, { color: false });
 
-      // Should include slug in brackets
-      assertMatch(output, /\[config-not-found\]/);
-      // Should include title
-      assertMatch(output, /Configuration file not found/);
-    });
-
-    it("should include detail when present", () => {
-      const error = CONFIG_NOT_FOUND.create({
-        detail: "Missing veryfront.config.ts in project root",
-      });
-
-      const output = formatCLIError(error);
-
+      assertMatch(output, /✗ Missing veryfront\.config\.ts in project root/);
       assertMatch(output, /Missing veryfront.config.ts/);
-      assertMatch(output, /Detail:/);
-    });
-
-    it("should include suggestion when present", () => {
-      const error = CONFIG_NOT_FOUND.create();
-
-      const output = formatCLIError(error);
-
-      // CONFIG_NOT_FOUND has a suggestion
-      assertMatch(output, /Suggestion:/);
       assertMatch(output, /vf init/);
+      assertEquals(output.includes("[config-not-found]"), false);
+      assertEquals(output.includes("Docs:"), false);
+      assertEquals(output.includes("Stack trace:"), false);
+      assertEquals(output.includes("💡"), false);
+      assertEquals(output.includes("📚"), false);
     });
 
-    it("should include docs URL", () => {
-      const error = CONFIG_NOT_FOUND.create();
-
-      const output = formatCLIError(error);
-
-      assertMatch(output, /Docs:/);
-      assertMatch(output, /https:\/\/veryfront\.com\/docs\/errors\/config-not-found/);
-    });
-
-    it("should wrap plain Error as unknown-error", () => {
+    it("uses the original message for plain errors", () => {
       const error = new Error("Something went wrong");
 
-      const output = formatCLIError(error);
+      const output = formatCLIError(error, { color: false });
 
-      assertMatch(output, /\[unknown-error\]/);
-      assertMatch(output, /Something went wrong/);
+      assertEquals(output, "\n✗ Something went wrong\n");
+      assertEquals(output.includes("Check logs for more details"), false);
     });
 
-    it("should handle Error with no message", () => {
-      const error = new Error();
-
-      const output = formatCLIError(error);
-
-      assertMatch(output, /\[unknown-error\]/);
-    });
-
-    it("should handle non-Error throws", () => {
-      const output = formatCLIError("string error");
-
-      assertMatch(output, /\[unknown-error\]/);
-      assertMatch(output, /string error/);
-    });
-
-    it("should format output with proper structure", () => {
-      const error = new VeryfrontError("Test error", {
-        slug: "test-error",
-        category: "GENERAL",
-        status: 500,
-        title: "Test Error Title",
-        detail: "This is a detailed description",
-        suggestion: "Try this fix",
+    it("includes diagnostics only in verbose output", () => {
+      const error = CONFIG_NOT_FOUND.create({
+        detail: "Missing veryfront.config.ts in project root",
+        cause: new Error("Original failure"),
       });
 
-      const output = formatCLIError(error);
+      const output = formatCLIError(error, { color: false, verbose: true });
 
-      const lines = output.split("\n");
-
-      // Should start with empty line
-      assertEquals(lines[0], "");
-
-      // Should have slug and title on second line (with ANSI codes stripped for testing)
-      // deno-lint-ignore no-control-regex
-      const headerLine = lines[1].replace(/\x1b\[\d+m/g, ""); // Strip ANSI codes
-      assertMatch(headerLine, /\[test-error\]/);
-      assertMatch(headerLine, /Test Error Title/);
-
-      // Should have detail
-      const detailLine = lines.find((line) => line.includes("Detail:"));
-      assertEquals(detailLine !== undefined, true);
-
-      // Should have suggestion
-      const suggestionLine = lines.find((line) => line.includes("Suggestion:"));
-      assertEquals(suggestionLine !== undefined, true);
-
-      // Should have docs link
-      const docsLine = lines.find((line) => line.includes("Docs:"));
-      assertEquals(docsLine !== undefined, true);
-
-      // Should end with empty line
-      assertEquals(lines[lines.length - 1], "");
+      assertMatch(output, /Code: config-not-found/);
+      assertMatch(output, /Docs: https:\/\/veryfront\.com\/docs\/errors\/config-not-found/);
+      assertMatch(output, /Stack trace:/);
     });
 
-    it("should not include detail if not provided", () => {
+    it("falls back to the error title when detail is absent", () => {
       const error = new VeryfrontError("Test", {
         slug: "test",
         category: "GENERAL",
         status: 500,
-        title: "Test",
-        // No detail provided
+        title: "Test title",
       });
 
-      const output = formatCLIError(error);
-
-      // Should not have "Detail:" line
-      assertEquals(output.includes("Detail:"), false);
+      assertEquals(formatCLIError(error, { color: false }), "\n✗ Test title\n");
     });
 
-    it("should not include suggestion if not provided", () => {
-      const error = new VeryfrontError("Test", {
-        slug: "test",
-        category: "GENERAL",
-        status: 500,
-        title: "Test",
-        // No suggestion provided
-      });
+    it("honors explicit color control", () => {
+      const plain = formatCLIError(new Error("Failure"), { color: false });
+      const colored = formatCLIError(new Error("Failure"), { color: true });
 
-      const output = formatCLIError(error);
-
-      // Should not have "Suggestion:" line
-      assertEquals(output.includes("Suggestion:"), false);
+      assertEquals(plain.includes("\x1b["), false);
+      assertEquals(colored.includes("\x1b["), true);
     });
 
-    it("should handle errors with cause", () => {
-      const originalError = new Error("Original cause");
-      const error = UNKNOWN_ERROR.create({
-        detail: "Wrapped error",
-        cause: originalError,
-      });
+    it("honors NO_COLOR when color control is implicit", () => {
+      const originalNoColor = Deno.env.get("NO_COLOR");
+      const originalForceColor = Deno.env.get("FORCE_COLOR");
+      const originalIsTerminal = Deno.stdout.isTerminal;
 
-      const output = formatCLIError(error);
+      try {
+        Deno.env.set("NO_COLOR", "1");
+        Deno.env.delete("FORCE_COLOR");
+        Object.defineProperty(Deno.stdout, "isTerminal", {
+          configurable: true,
+          value: () => true,
+        });
 
-      assertMatch(output, /Wrapped error/);
-      assertMatch(output, /\[unknown-error\]/);
-    });
+        const output = formatCLIError(new Error("Failure"));
 
-    it("should format multiple errors consistently", () => {
-      const error1 = CONFIG_NOT_FOUND.create();
-      const error2 = new Error("Test");
-
-      const output1 = formatCLIError(error1);
-      const output2 = formatCLIError(error2);
-
-      // Both should start and end with empty lines
-      assertEquals(output1.startsWith("\n"), true);
-      assertEquals(output1.endsWith("\n"), true);
-      assertEquals(output2.startsWith("\n"), true);
-      assertEquals(output2.endsWith("\n"), true);
+        assertEquals(output.includes("\x1b["), false);
+      } finally {
+        if (originalNoColor === undefined) Deno.env.delete("NO_COLOR");
+        else Deno.env.set("NO_COLOR", originalNoColor);
+        if (originalForceColor === undefined) Deno.env.delete("FORCE_COLOR");
+        else Deno.env.set("FORCE_COLOR", originalForceColor);
+        Object.defineProperty(Deno.stdout, "isTerminal", {
+          configurable: true,
+          value: originalIsTerminal,
+        });
+      }
     });
   });
 });

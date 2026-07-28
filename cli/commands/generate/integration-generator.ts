@@ -12,6 +12,7 @@ import { createFileSystem, type FileSystem } from "veryfront/platform";
 import { ensureDir } from "../../utils/fs.ts";
 import { isInteractive as checkIsInteractive, promptSync } from "veryfront/platform";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
+import { isInteractive as isCliInteractive } from "../../shared/interactive.ts";
 import {
   getNonInteractiveConfig,
   getToolExecuteBody,
@@ -54,7 +55,7 @@ export interface IntegrationGeneratorOptions {
 }
 
 function canRunPrompts(): boolean {
-  return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
+  return isCliInteractive() && !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
 function promptText(question: string, defaultValue?: string): Promise<string> {

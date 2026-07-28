@@ -21,6 +21,7 @@ import {
   logWarning,
   promptUser,
   showLogo,
+  VERSION,
 } from "./index.ts";
 
 function stripAnsi(str: string): string {
@@ -72,9 +73,9 @@ async function withMockPrompt<T>(
 }
 
 describe("showLogo", () => {
-  it("outputs Veryfront in cyan", () => {
+  it("renders a compact one-line command header", () => {
     const { stdout } = captureOutput(showLogo);
-    assertStringIncludes(stdout, "Veryfront");
+    assertEquals(stripAnsi(stdout).trim(), `Veryfront ${VERSION}`);
   });
 
   it("does not write human output in JSON mode", () => {
@@ -186,6 +187,19 @@ describe("promptUser", () => {
       () => promptUser("Enter something:"),
     );
     assertEquals(result, "test with spaces");
+  });
+
+  it("fails before prompting when interactive input is disabled", async () => {
+    setNonInteractive(true);
+    try {
+      await assertRejects(
+        () => promptUser("Enter something:"),
+        VeryfrontError,
+        "Interactive input is disabled",
+      );
+    } finally {
+      resetInteractiveMode();
+    }
   });
 });
 

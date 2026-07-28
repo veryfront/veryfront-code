@@ -6,9 +6,13 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { shouldRunWizard, validateProjectName } from "./interactive-wizard.ts";
+import { formatWizardIntro, shouldRunWizard, validateProjectName } from "./interactive-wizard.ts";
 
 describe("interactive-wizard", () => {
+  it("starts directly with the setup task", () => {
+    assertEquals(formatWizardIntro(), "\nLet's set up your project.");
+  });
+
   describe("validateProjectName", () => {
     it("should accept a simple name", () => {
       assertEquals(validateProjectName("my-app"), null);

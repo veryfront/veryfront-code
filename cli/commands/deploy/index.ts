@@ -15,7 +15,6 @@ export {
   getRelease,
   getReleaseSourceDigest,
   parseDeployArgs,
-  requiresExplicitDeployConfirmation,
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,

@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleDeployCommand } from "./handler.ts";
 import { parseDeployArgs } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
@@ -51,7 +52,19 @@ describe("Deploy Handler", () => {
     });
 
     it("should parse --env flag", () => {
-      const result = parseDeployArgs(createArgs({ env: "staging" }));
+      const result = parseDeployArgs(parseCliArgs(["deploy", "--env", "staging"]));
+      assertSuccess(result);
+      assertEquals(result.data.env, "staging");
+    });
+
+    it("should parse --environment flag", () => {
+      const result = parseDeployArgs(parseCliArgs(["deploy", "--environment", "staging"]));
+      assertSuccess(result);
+      assertEquals(result.data.env, "staging");
+    });
+
+    it("should parse -e short flag as environment", () => {
+      const result = parseDeployArgs(parseCliArgs(["deploy", "-e", "staging"]));
       assertSuccess(result);
       assertEquals(result.data.env, "staging");
     });

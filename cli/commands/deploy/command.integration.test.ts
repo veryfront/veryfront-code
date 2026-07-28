@@ -8,6 +8,8 @@ import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-p
 import { setJsonMode } from "../../shared/json-output.ts";
 import { deployCommand, type DeploymentRoutingConvergence } from "./command.ts";
 import { FakeTime } from "#std/testing/time";
+import { stripAnsi } from "../../ui/ansi.ts";
+import { setVerboseMode } from "../../utils/index.ts";
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
@@ -211,22 +213,29 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       return Response.json({ message: "not found" }, { status: 404 });
     };
 
-    const runDeploy = () =>
+    const runDeploy = (quiet = true) =>
       deployCommand({
         projectDir,
         branch: "main",
         env: "production",
         releaseName: `github-main-${actualSha}`,
         dryRun: false,
-        force: true,
-        quiet: true,
+        force: false,
+        quiet,
         skipSourcePush: true,
         environmentPollIntervalMs: 1,
         environmentTimeoutMs: 1_000,
       });
 
-    for (const jsonMode of [false, true]) {
+    const outputModes = [
+      { json: false, verbose: false },
+      { json: false, verbose: true },
+      { json: true, verbose: false },
+    ];
+    for (const outputMode of outputModes) {
+      const { json: jsonMode, verbose } = outputMode;
       setJsonMode(jsonMode);
+      setVerboseMode(verbose);
       requests.length = 0;
       environmentReads = 0;
       environmentUrlReads = 0;
@@ -239,7 +248,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
       };
 
       try {
-        await withMockFetch(handleRequest, runDeploy);
+        await withMockFetch(handleRequest, () => runDeploy(jsonMode));
       } finally {
         console.log = originalLog;
       }
@@ -285,10 +294,43 @@ it("uses canonical production read-back in human and JSON modes", async () => {
           events.at(-1)?.data?.url,
           "https://my-project.production.veryfront.com/dashboard",
         );
+      } else if (!verbose) {
+        const humanOutput = stripAnsi(output.join("\n"));
+        const humanLines = humanOutput.split("\n").map((line) => line.trim()).filter(Boolean);
+        assertEquals(humanOutput.includes("✓ Deployed my-project to production"), true);
+        assertEquals(
+          humanLines[1],
+          "https://my-project.production.veryfront.com/dashboard",
+        );
+        assertEquals(humanOutput.includes("Protected"), true);
+        assertEquals(humanOutput.includes("Release 0.0.41"), true);
+        assertEquals(humanOutput.includes("Project:"), false);
+        assertEquals(humanOutput.includes("Environment:"), false);
+        assertEquals(humanOutput.includes("Deployment:"), false);
+        assertEquals(humanOutput.includes("Source digest:"), false);
+        assertEquals(humanOutput.includes("Control plane:"), false);
+        assertEquals(humanOutput.includes("Using local filesystem"), false);
+        assertEquals(humanOutput.includes("Next steps:"), false);
+      } else {
+        const verboseOutput = stripAnsi(output.join("\n"));
+        assertEquals(verboseOutput.includes(`Project: my-project (${PROJECT_ID})`), true);
+        assertEquals(
+          verboseOutput.includes(`Environment: production (${ENVIRONMENT_ID})`),
+          true,
+        );
+        assertEquals(verboseOutput.includes(`Deployment: ${DEPLOYMENT_ID}`), true);
+        assertEquals(verboseOutput.includes(`Source digest: ${sourceDigest}`), true);
+        assertEquals(
+          verboseOutput.includes("Control plane: https://control.example.test/api"),
+          true,
+        );
+        assertEquals(verboseOutput.includes("veryfront open"), true);
+        assertEquals(verboseOutput.includes("npx"), false);
       }
     }
 
     setJsonMode(false);
+    setVerboseMode(false);
     routingConvergence = { status: "pending" };
     requests.length = 0;
     environmentReads = 0;
@@ -367,6 +409,7 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     });
     _resetEnvironmentConfig();
     setJsonMode(false);
+    setVerboseMode(false);
     await Deno.remove(projectDir, { recursive: true });
   }
 });

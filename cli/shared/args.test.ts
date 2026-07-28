@@ -245,6 +245,13 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs(["--help"]).help, true);
     });
 
+    it("should parse --no-input without consuming the command", () => {
+      const args = parseCliArgs(["--no-input", "init", "my-project"]);
+
+      assertEquals(args["no-input"], true);
+      assertEquals(args._, ["init", "my-project"]);
+    });
+
     it("should not consume commands or positionals after documented boolean flags", () => {
       const globalFlag = parseCliArgs(["--json", "config"]);
       assertEquals(globalFlag.json, true);

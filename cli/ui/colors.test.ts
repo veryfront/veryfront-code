@@ -13,8 +13,11 @@ import {
   muted,
   reset,
   resetColorCache,
+  setColorOverride,
   setTestColorLevel,
+  shouldUseColor,
   success,
+  underline,
   warning,
 } from "./colors.ts";
 
@@ -75,6 +78,19 @@ describe("colors", () => {
 
     it("dim wraps with dim codes", () => {
       assertEquals(dim("faint"), "\x1b[2mfaint\x1b[0m");
+    });
+
+    it("does not emit ANSI when color is disabled", () => {
+      setTestColorLevel(null);
+      setColorOverride(false);
+
+      assertEquals(shouldUseColor(), false);
+      assertEquals(bold("strong"), "strong");
+      assertEquals(dim("faint"), "faint");
+      assertEquals(underline("link"), "link");
+
+      setColorOverride(undefined);
+      setTestColorLevel("truecolor");
     });
   });
 

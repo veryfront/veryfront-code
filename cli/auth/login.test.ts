@@ -20,6 +20,7 @@ import {
   type EnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import type { UserInfo } from "./login.ts";
+import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 
 describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () => {
   let tempDir = "";
@@ -263,6 +264,18 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(credential, { authenticated: true, type: "apiKey" });
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not prompt for an auth method or token in non-interactive mode", async () => {
+      const { login } = await import("./login.ts");
+
+      try {
+        setNonInteractive(true);
+        assertEquals(await login(undefined, testEnv), null);
+        assertEquals(await login("token", testEnv), null);
+      } finally {
+        resetInteractiveMode();
       }
     });
   });

@@ -1,14 +1,15 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, exitProcess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
-import { cyan, dim, green, red, yellow } from "#cli/ui";
+import { brand, createNoopSpinner, dim } from "#cli/ui";
 import { ensureAuthenticated, readToken } from "../../auth/index.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import { createSpinner, shouldUseColor } from "#cli/ui";
+import { createSpinner } from "#cli/ui";
 import { isTTY, promptUser } from "#cli/utils";
+import { logSuccess, logWarning } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { readConfigFile, type VeryfrontConfig } from "#cli/shared/config";
 import { resolveCliApiUrl } from "#cli/shared/constants";
@@ -16,6 +17,9 @@ import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
+import { buildPushUrls } from "../push/command.ts";
+import { isInteractive } from "../../shared/interactive.ts";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 export const getUpArgsSchema = defineSchema((v) =>
   v.object({
@@ -92,24 +96,40 @@ export async function upCommand(
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
   const { projectDir = cwd(), force = false, dryRun = false } = options;
-
-  const useColor = shouldUseColor();
-  const c = (fn: (s: string) => string, s: string): string => (useColor ? fn(s) : s);
+  const jsonOutput = isJsonMode();
 
   const userInfo = await ensureAuthenticated(env);
-  if (!userInfo) return;
+  if (!userInfo) {
+    if (jsonOutput) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+      });
+    }
+    exitProcess(1);
+    return;
+  }
 
-  const spinner = createSpinner("Analyzing project...");
+  const spinner = jsonOutput ? createNoopSpinner() : createSpinner("Analyzing project...");
   const context = await analyzeDirectory(projectDir);
   spinner.stop();
 
   if (context.type === "empty") {
-    cliLogger.info("");
-    cliLogger.info(c(yellow, "This folder is empty."));
-    cliLogger.info("");
-    cliLogger.info("To get started, create your app files or run:");
-    cliLogger.info(c(dim, "  veryfront init"));
-    cliLogger.info("");
+    if (jsonOutput) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error: "This folder is empty. Add project files or run veryfront init.",
+      });
+    } else {
+      logWarning("This folder is empty.");
+      cliLogger.info("");
+      cliLogger.info("To get started, create your app files or run:");
+      cliLogger.info(`  ${brand("veryfront init")}`);
+      cliLogger.info("");
+    }
+    exitProcess(1);
     return;
   }
 
@@ -117,24 +137,26 @@ export async function upCommand(
 
   if (context.type === "has-project") {
     projectSlug = context.config.projectSlug!;
-    cliLogger.info("");
-    cliLogger.info(`Deploying ${c(cyan, projectSlug)}...`);
   } else {
-    cliLogger.info("");
-    cliLogger.info(c(cyan, "Creating new project..."));
+    if (!jsonOutput) {
+      cliLogger.info("");
+      cliLogger.info("Creating project...");
+    }
 
     let slug = context.suggestedSlug;
 
-    if (isTTY() && !force) {
+    if (!jsonOutput && isInteractive() && isTTY() && !force) {
       const response = await promptUser(`Project name [${slug}]:`);
       const trimmed = response.trim();
       if (trimmed) slug = normalizeProjectSlug(trimmed);
     }
 
     if (dryRun) {
-      cliLogger.info(c(dim, `Would create project: ${slug}`));
+      if (!jsonOutput) cliLogger.info(dim(`Would create project: ${slug}`));
     } else {
-      const projectSpinner = createSpinner(`Creating project "${slug}"...`);
+      const projectSpinner = jsonOutput
+        ? createNoopSpinner()
+        : createSpinner(`Creating project "${slug}"...`);
 
       try {
         const apiUrl = resolveCliApiUrl(env);
@@ -142,8 +164,7 @@ export async function upCommand(
 
         if (!resolvedToken) {
           projectSpinner.stop();
-          cliLogger.error("Not authenticated");
-          return;
+          throw new Error("Not authenticated");
         }
 
         const reserved = await reserveProjectSlug(slug, resolvedToken, env, apiUrl, {
@@ -154,19 +175,18 @@ export async function upCommand(
 
         await saveConfig(projectDir, { projectSlug: slug });
 
-        cliLogger.info(`${c(green, "✓")} Created project ${c(cyan, slug)}`);
+        if (!jsonOutput) logSuccess(`Created project ${slug}`);
       } catch (error) {
         projectSpinner.stop();
         const message = error instanceof Error ? error.message : String(error);
-        cliLogger.info(`${c(red, "✗")} ${message}`);
-        return;
+        throw new Error(`Project creation failed: ${message}`, { cause: error });
       }
     }
 
     projectSlug = slug;
   }
 
-  cliLogger.info("");
+  if (!jsonOutput) cliLogger.info("");
 
   try {
     await pushCommand({
@@ -174,34 +194,71 @@ export async function upCommand(
       branch: "main",
       force: true,
       dryRun,
+      quiet: true,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    cliLogger.info(`${c(red, "✗")} Push failed: ${message}`);
+    throw new Error(`Push failed: ${message}`, { cause: error });
+  }
+
+  if (dryRun) {
+    if (jsonOutput) {
+      streamJsonLine({
+        type: "result",
+        success: true,
+        data: {
+          projectSlug,
+          dryRun: true,
+          plannedActions: [
+            ...(context.type === "has-project" ? [] : ["create-project"]),
+            "push-source",
+            "deploy-preview",
+          ],
+        },
+      });
+    } else {
+      logSuccess("Dry run complete");
+    }
     return;
   }
 
-  if (!dryRun) {
-    cliLogger.info("");
-
-    try {
-      await deployCommand({
-        projectDir,
-        branch: "main",
-        env: "preview",
-        force: true,
-        dryRun,
-        quiet: false,
-        skipSourcePush: true,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      cliLogger.info(`${c(red, "✗")} Deploy failed: ${message}`);
-      return;
-    }
+  try {
+    await deployCommand({
+      projectDir,
+      branch: "main",
+      env: "preview",
+      force: true,
+      dryRun,
+      quiet: true,
+      skipSourcePush: true,
+      suppressJsonOutput: true,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Preview deployment failed: ${message}`, { cause: error });
   }
 
-  cliLogger.info("");
-  cliLogger.info(`  ${c(green, "✓")} ${c(cyan, `${projectSlug}.preview.veryfront.com`)}`);
-  cliLogger.info("");
+  const urls = buildPushUrls(projectSlug, "main");
+  if (jsonOutput) {
+    streamJsonLine({
+      type: "result",
+      success: true,
+      data: {
+        projectSlug,
+        dryRun: false,
+        studioUrl: urls.studio,
+        previewUrl: urls.preview,
+        nextCommand: "veryfront deploy",
+      },
+    });
+    return;
+  }
+
+  logSuccess(`${projectSlug} is ready`);
+  console.log();
+  console.log(`  ${dim("Studio:")}  ${brand(urls.studio)}`);
+  console.log(`  ${dim("Preview:")} ${brand(urls.preview)}`);
+  console.log();
+  console.log(`  ${dim("Deploy:")}  ${brand("veryfront deploy")}`);
+  console.log();
 }

@@ -1,46 +1,9 @@
 import { VERSION } from "#cli/utils";
 import type { CommandHelp, CommandOption } from "./types.ts";
-import { bold, brand, dim, muted, shouldUseColor } from "../ui/colors.ts";
-import { AGENT_FACE } from "../ui/dot-matrix.ts";
-
-const RESET = "\x1b[0m";
-const LOGO_FALLBACK = "             "; // Logo width ~13 chars
-
-function renderMiniLogo(): string[] {
-  const useColor = shouldUseColor();
-  const litColor = useColor ? "\x1b[38;2;252;143;93m" : "";
-  const offColor = useColor ? "\x1b[38;5;240m" : "";
-
-  return AGENT_FACE.map((row) =>
-    row
-      .map((dot) => {
-        const lit = dot === 1;
-        return `${lit ? litColor : offColor}${lit ? "●" : "○"}${RESET}`;
-      })
-      .join(" ")
-  );
-}
+import { bold, brand, dim, muted } from "../ui/colors.ts";
 
 export function formatHeader(): string {
-  const logoLines = renderMiniLogo();
-  const textLines = [
-    "",
-    `${bold(brand("veryfront"))} ${dim(`v${VERSION}`)}`,
-    dim("A Deno-first React framework"),
-    "",
-    "",
-    "",
-    "",
-  ];
-
-  const maxHeight = Math.max(logoLines.length, textLines.length);
-  const output: string[] = [""];
-
-  for (let i = 0; i < maxHeight; i++) {
-    output.push(`  ${logoLines[i] ?? LOGO_FALLBACK}   ${textLines[i] ?? ""}`);
-  }
-
-  return output.join("\n");
+  return `${bold(brand("Veryfront"))} ${dim(VERSION)}`;
 }
 
 export function formatCommandName(name: string, paddingLength: number): string {
@@ -76,14 +39,6 @@ export function formatSectionHeader(title: string): string {
 
 export function formatCommandHeader(commandName: string): string {
   return `\n  ${bold(brand(`veryfront ${commandName}`))}`;
-}
-
-export function formatAsciiLogo(): string {
-  return `
-${dim("────────────────────────────────────────")}
-  ${bold(brand("veryfront"))}  ${dim("React meta-framework")}
-${dim("────────────────────────────────────────")}
-`;
 }
 
 export function calculateMaxLength(items: Array<{ length: number }>): number {

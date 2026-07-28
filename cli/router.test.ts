@@ -405,6 +405,22 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("--no-input disables prompts without auto-confirming", async () => {
+      stubExit();
+      stubLogger();
+      try {
+        const code = await runAndCaptureExit({
+          version: true,
+          "no-input": true,
+          _: [],
+        } as ParsedArgs);
+        assertEquals(code, 0);
+        assertEquals(isInteractive(), false);
+      } finally {
+        restoreAll();
+      }
+    });
+
     it("--version --verbose prints runtime and OS details", async () => {
       stubExit();
       stubLogger();
@@ -487,6 +503,25 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.error.code, "USAGE_ERROR");
         assertEquals(parsed.error.slug, "invalid-arguments");
       } finally {
+        restoreAll();
+      }
+    });
+
+    it("writes human command failures to stderr", async () => {
+      stubExit();
+      stubLogger();
+      stubConsole();
+      const previousUpdateCheck = Deno.env.get("VERYFRONT_NO_UPDATE_CHECK");
+      Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", "1");
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["serve"], mode: "invalid" } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(consoleErrorOutput.some((line) => line.includes("✗")), true);
+      } finally {
+        if (previousUpdateCheck === undefined) Deno.env.delete("VERYFRONT_NO_UPDATE_CHECK");
+        else Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", previousUpdateCheck);
         restoreAll();
       }
     });

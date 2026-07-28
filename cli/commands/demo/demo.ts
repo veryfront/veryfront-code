@@ -178,7 +178,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
 
     await saveToken(tokenInput);
     console.log();
-    console.log(`  ${success("✓")} Logged in as ${brand(userInfo.email)}`);
+    console.log(`  ✓ Logged in as ${brand(userInfo.email)}`);
     return true;
   }
 
@@ -232,7 +232,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
     await saveToken(result.token);
 
     console.log();
-    console.log(`  ${success("✓")} Logged in as ${brand(userInfo.email)}`);
+    console.log(`  ✓ Logged in as ${brand(userInfo.email)}`);
     return true;
   } catch (e) {
     console.log();
@@ -320,7 +320,7 @@ async function executeStepAction(
         const userInfo = await validateToken(existingToken);
         if (userInfo) {
           console.log();
-          console.log(`  ${success("✓")} Already logged in as ${brand(userInfo.email)}`);
+          console.log(`  ✓ Already logged in as ${brand(userInfo.email)}`);
           return;
         }
       }
@@ -356,7 +356,7 @@ async function executeStepAction(
           await writeProjectSlug(projectDir, reserveResult.slug);
           actualProjectSlug = reserveResult.slug;
         }
-        console.log(`  ${success("✓")} Project registered`);
+        console.log("  ✓ Project registered");
 
         console.log(`  ${dim("Pushing code...")}`);
         chdir(projectDir);
@@ -367,7 +367,7 @@ async function executeStepAction(
           dryRun: false,
           quiet: true,
         });
-        console.log(`  ${success("✓")} Code pushed`);
+        console.log("  ✓ Code pushed");
       } catch (e) {
         console.log(`  ${error("✗")} ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -381,7 +381,7 @@ async function executeStepAction(
         console.log();
         console.log(`  ${dim("Skipping dev server in auto mode...")}`);
         console.log();
-        console.log(`  ${success("✓")} Dev server skipped`);
+        console.log("  ✓ Dev server skipped");
         return;
       }
 
@@ -423,7 +423,7 @@ async function executeStepAction(
 
       await delay(500);
       console.log();
-      console.log(`  ${success("✓")} Dev server stopped`);
+      console.log("  ✓ Dev server stopped");
       return;
     }
 
@@ -441,7 +441,7 @@ async function executeStepAction(
         });
 
         const deployedUrl = `https://${actualProjectSlug ?? projectName}.production.veryfront.com`;
-        console.log(`  ${success("✓")} Deployed to ${brand(deployedUrl)}`);
+        console.log(`  ✓ Deployed to ${brand(deployedUrl)}`);
       } catch (e) {
         console.log(
           `  ${error("✗")} Deploy failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -500,7 +500,7 @@ function renderProgress(currentStepIndex: number, steps: DemoStep[]): string {
 
     if (i < currentStepIndex) {
       const durationText = duration ? dim(` (${formatDuration(duration)})`) : "";
-      lines.push(`  ${success("✓")} ${dim(step.title) + durationText}`);
+      lines.push(`  ✓ ${dim(step.title) + durationText}`);
       continue;
     }
 

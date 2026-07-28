@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createSpinner,
   formatDuration,
   formatStep,
   progressBar,
@@ -12,6 +13,7 @@ import {
 } from "./progress.ts";
 import { stripAnsi } from "./ansi.ts";
 import { setAnimationDisabled } from "../shared/animation.ts";
+import { setTestColorLevel } from "./colors.ts";
 
 describe("cli/ui/progress", () => {
   describe("formatDuration", () => {
@@ -46,9 +48,12 @@ describe("cli/ui/progress", () => {
 
   describe("formatStep", () => {
     it("should format completed step with checkmark", () => {
+      setTestColorLevel("truecolor");
       const step: Step = { label: "Build", status: "completed" };
-      const result = stripAnsi(formatStep(step));
-      assertEquals(result.includes("Build"), true);
+      const result = formatStep(step);
+      assertEquals(result.startsWith("✓ "), true);
+      assertEquals(stripAnsi(result).includes("Build"), true);
+      setTestColorLevel(null);
     });
 
     it("should format completed step with duration", () => {
@@ -176,6 +181,30 @@ describe("cli/ui/progress", () => {
       assertEquals(frames[0]!.includes("Task"), true);
       list.stopAnimation();
       setAnimationDisabled(false);
+    });
+  });
+
+  describe("Spinner with animation disabled", () => {
+    it("writes progress to stderr so stdout stays composable", () => {
+      setAnimationDisabled(true);
+      const originalLog = console.log;
+      const originalError = console.error;
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      console.log = (...args: unknown[]) => stdout.push(args.join(" "));
+      console.error = (...args: unknown[]) => stderr.push(args.join(" "));
+      try {
+        const spinner = createSpinner("Building...");
+        spinner.success("Built");
+      } finally {
+        console.log = originalLog;
+        console.error = originalError;
+        setAnimationDisabled(false);
+      }
+
+      assertEquals(stdout, []);
+      assertEquals(stderr.some((line) => stripAnsi(line).includes("Building...")), true);
+      assertEquals(stderr.some((line) => line.includes("Built")), true);
     });
   });
 

@@ -37,5 +37,22 @@ describe("build/error-handler", () => {
       assertEquals(threw, true);
       assertEquals(thrownValue, "string error");
     });
+
+    it("prints one actionable recovery hint", () => {
+      const originalError = console.error;
+      const output: string[] = [];
+
+      try {
+        console.error = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        assertThrows(() => handleBuildError(new Error("Build failed")));
+      } finally {
+        console.error = originalError;
+      }
+
+      assertEquals(
+        output.some((line) => line.includes("veryfront build --help")),
+        true,
+      );
+    });
   });
 });
