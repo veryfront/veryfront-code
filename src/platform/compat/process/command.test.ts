@@ -3,6 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, runCommand, setEnv } from "../process.ts";
 
+function normalizeNewlines(output: string | undefined): string | undefined {
+  return output?.replaceAll("\r\n", "\n");
+}
+
 describe("runCommand", () => {
   it("runs shell command strings through the native shell", async () => {
     const result = await runCommand("echo shell-works && echo shell-stderr >&2", {
@@ -11,8 +15,8 @@ describe("runCommand", () => {
     });
 
     assertEquals(result.success, true);
-    assertEquals(result.stdout, "shell-works\n");
-    assertEquals(result.stderr, "shell-stderr\n");
+    assertEquals(normalizeNewlines(result.stdout), "shell-works\n");
+    assertEquals(normalizeNewlines(result.stderr), "shell-stderr\n");
   });
 
   it("preserves shell command arguments with spaces and metacharacters", async () => {
