@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    47 |      81.0% | Current formal closure evidence remains valid       |
+| Closed                         |    48 |      82.8% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |    11 |      19.0% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    10 |      17.2% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -39,6 +39,7 @@ stricter closure count.
 ### Closed
 
 - `agent`
+- `build`
 - `cache`
 - `channels`
 - `chat`
@@ -92,7 +93,6 @@ None.
 
 ### Touched, revalidation required
 
-- `build`
 - `data`
 - `modules`
 - `proxy`
@@ -122,7 +122,7 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
+The current closed review chain covers `agent`, `build`, `cache`, `channels`, `chat`,
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `observability`, `oauth`, `platform`, `provider`,
@@ -5449,5 +5449,71 @@ Intentional compatibility boundaries remain explicit:
 No known unresolved critical or high-confidence Routing production risk remains.
 `routing` is closed at 45 of 58 formal units; 13 units remain open or awaiting
 top-level revalidation.
+
+### Build closure checkpoint
+
+The `build` audit unit owns source compilation, bundling, code splitting,
+manifest construction, production output publication, client-runtime and local
+release-asset generation, cleanup, and the application-facing build contracts.
+Its consumers include the CLI and Server startup paths, production static
+generation, Release Assets, Rendering, MDX/Transforms, and generated browser
+runtimes.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** public `BuildOptions`
+  shorthands were declared but ignored by the production initializer, and
+  several public compile/result types were stranded behind deep imports.
+  Callers could provide supported options that had no effect or could not
+  express valid contracts through the barrel. Canonical and shorthand fields
+  now resolve explicitly with canonical fields taking precedence, and
+  `CompileOptions`, `CompileResult`, and `MDXFrontmatter` are exported from the
+  owning module surface.
+- **Symptom -> Source -> Consequence -> Remedy:** production publication could
+  discard or mask backup-cleanup failures, race concurrent publishers, and
+  release a lock after a cleanup probe failed. A successful new build could
+  therefore hide retained state or let overlapping publication corrupt the
+  output lifecycle. Backup cleanup is retained, retried, and surfaced;
+  concurrent publication coalesces; lock release survives probe failures; and
+  setup/cleanup failures preserve all causes.
+- **Symptom -> Source -> Consequence -> Remedy:** code-split manifests admitted
+  mutable, ambiguous, or dangling output identity and derived source metadata
+  from unstable or oversized inputs. Generated clients could reference missing
+  chunks or publish a manifest whose bytes did not describe the emitted graph.
+  Route and project-module inputs are canonically validated before output
+  creation, physical containment and regular-file limits are enforced,
+  manifest construction is deterministic and bounded, and every generated
+  reference is validated before return or publication.
+- **Symptom -> Source -> Consequence -> Remedy:** local release assets and
+  generated client runtimes had incomplete ownership, cleanup, and
+  determinism contracts. Repeated generation could retain stale files or
+  silently diverge from source templates. Generation now uses explicit
+  lifecycle ownership, atomic output replacement, deterministic content, and
+  checked generated-source parity.
+- **Symptom -> Source -> Consequence -> Remedy:** Build documentation described
+  stale imports, options, statistics, and incremental APIs that the source and
+  package did not provide. Maintainers could integrate against nonexistent
+  behavior. The module and production-build references now separate public and
+  internal surfaces, describe actual failure/publication semantics, and align
+  the architecture guide with the implemented pipeline.
+
+Current reproducible evidence:
+
+- all 70 Build suites pass 972 nested steps with zero failures, including real
+  esbuild splitting, manifest referential integrity, publication races,
+  cleanup aggregation, route/input admission, generated runtime parity, local
+  release assets, and production initialization;
+- all 162 Build files lint, the public Build and production-build barrels
+  typecheck, generated manifests remain current, and the rebuilt npm package
+  passes the documented consumer `tsc --noEmit` contract;
+- dependency-boundary checks report no core or CLI violations, the React
+  boundary remains isolated, and module-boundary checks report zero cyclic
+  edges; and
+- documentation validation passes all 753 links and configured documentation
+  tests, while regeneration leaves no unexpected source diff.
+
+No known unresolved critical or high-confidence Build production risk remains.
+The `build` unit is closed at 48 of 58 formal units; 10 units remain open or
+awaiting top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
