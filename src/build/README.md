@@ -1,272 +1,169 @@
-# Build Module
+# Build module
 
-## Purpose
+This is the module overview and public API reference for `src/build/`.
+For the user-facing build and deployment procedure, see
+[Build and deploy](../../docs/guides/deploying.md). For the cross-module design,
+see [Build pipeline](../../docs/architecture/14-build-pipeline.md).
 
-The build module is Veryfront's comprehensive build system, responsible for transforming source code into optimized production bundles. It handles MDX compilation, asset optimization, code splitting, and SSG (Static Site Generation).
+## Responsibility
 
-## Scope
+The Build module owns:
 
-### What this module does:
+- production static-page generation for Pages and App Router routes;
+- client runtime generation and route-based JavaScript code splitting;
+- public-asset copying, output manifests, redirects, service workers, and
+  optional compression;
+- MDX compilation and directory watching;
+- standalone CSS, image, and Tailwind build utilities;
+- embedded-runtime bundle generation.
 
-- MDX compilation to React components
-- JavaScript/TypeScript bundling and code splitting
-- CSS optimization with Lightning CSS
-- Image optimization with Sharp
-- Tailwind CSS processing
-- Static site generation (SSG)
-- Asset pipeline orchestration
-- Production build optimization
+It does not own development serving, runtime request dispatch, deployment, or
+runtime adapter selection.
 
-### What this module does NOT do:
+## Public package surface
 
-- Development server (see `server/dev-server/`)
-- Runtime code transformation (see `transforms/`)
-- Request handling (see `server/`)
+Applications import the supported package API from `veryfront/build`.
 
-## Architecture
+| Export                                              | Contract                                                   |
+| --------------------------------------------------- | ---------------------------------------------------------- |
+| `buildProduction(options)`                          | Generate and atomically publish a production static build. |
+| `compileMDXToJS(source, options)`                   | Compile one MDX program to JavaScript.                     |
+| `compileAllMDX(options)`                            | Compile an MDX source tree.                                |
+| `watchMDX(options)`                                 | Watch and recompile an MDX source tree.                    |
+| `buildEmbeddedPreset(options)`                      | Build a Deno, Node.js, or Bun embedded preset.             |
+| `LOCAL_RELEASE_ASSET_MANIFEST_PATH`                 | Path of the optional local dependency manifest.            |
+| `CompileOptions`, `CompileResult`, `MDXFrontmatter` | Types for directory compilation and watching.              |
+| `BuildEmbeddedOptions`                              | Options for embedded preset generation.                    |
 
-```
-build/
-├── asset-pipeline/          # Image/CSS optimization
-│   ├── image-optimizer/    # Sharp integration
-│   ├── css-optimizer/      # Lightning CSS
-│   └── tailwind-processor/ # Tailwind processing
-├── compiler/               # MDX → React compilation
-│   ├── mdx-compiler/      # MDX processor
-│   └── mdx-to-js.ts       # JavaScript output
-├── bundler/               # JavaScript bundling
-│   ├── code-splitter/     # Route-based splitting
-│   └── esbuild-wrapper.ts # esbuild integration
-├── renderer-bundler/      # Component bundling
-│   ├── services/          # MDX/Script bundlers
-│   └── types/             # Bundler types
-├── config/                # Build configuration
-└── embedded/              # Embedded resources
-```
+`BuildOptions` and `BuildStats` are exported from `veryfront/server`.
+Files below `src/build/production-build/` and `src/build/bundler/` are
+maintainer internals; they are not additional package entry points.
 
-## Key Exports
+## Production build API
 
-### Main Build Functions
+```ts
+import { buildProduction } from "veryfront/build";
+import type { BuildOptions, BuildStats } from "veryfront/server";
 
-- `buildProduction(config)` - Full production build
-- `buildStatic(routes, config)` - Static site generation
-- `compileMDX(source, options)` - MDX compilation
-
-### Asset Pipeline
-
-- `runAssetPipeline(options)` - Execute optimization
-- `ImageOptimizer` - Image processing
-- `CSSOptimizer` - CSS minification
-
-### Types
-
-- `BuildConfig` - Build configuration
-- `BundleResult` - Build output
-- `AssetPipelineResult` - Optimization stats
-
-## Dependencies
-
-### Internal
-
-- `rendering/` - SSR for SSG
-- `transforms/` - Code transformations
-- `config/` - Configuration loading
-
-### External
-
-- `esbuild` - JavaScript bundling
-- `sharp` - Required when image optimization is enabled
-- `lightningcss` and `browserslist` - Required when CSS optimization is enabled
-- `purgecss` - Required when CSS purging or critical-CSS extraction is enabled
-- `@mdx-js/mdx` - MDX compilation
-
-## Usage Examples
-
-### Production Build
-
-```typescript
-import { buildProduction } from "./build";
-
-const result = await buildProduction({
-  projectDir: "./my-app",
-  outputDir: ".veryfront/build",
-  minify: true,
-  sourcemap: true,
-});
-
-console.log(`Built ${result.pages.length} pages`);
-```
-
-### Static Site Generation
-
-```typescript
-import { buildStatic } from './build'
-
-const routes = ['/
-
-', '/about', '/blog/post-1']
-
-const result = await buildStatic(routes, {
-  projectDir: './my-app',
-  outputDir: './dist',
-})
-
-console.log(`Generated ${result.staticPages.length} static pages`)
-```
-
-### Asset Optimization
-
-```typescript
-import { runAssetPipeline } from "./build/asset-pipeline";
-
-const projectDir = Deno.cwd();
-const result = await runAssetPipeline({
-  images: {
-    projectDir,
-    inputDir: "public",
-    outputDir: ".veryfront/images",
-    formats: ["webp", "avif"],
-    sizes: [640, 1280, 1920],
-  },
-  tailwind: {
-    projectDir,
-    sourceDir: "styles",
-    outputDir: "generated-css",
-  },
-  css: {
-    projectDir,
-    inputDir: "generated-css",
-    outputDir: ".veryfront/css",
-    minify: true,
-    autoprefixer: true,
-  },
-});
-
-console.log(`Optimized ${result.images.optimized} images`);
-console.log(`CSS savings: ${result.css.savings}%`);
-```
-
-Asset stages are opt-in: an omitted stage does not run. Enabled stages run in
-Tailwind, CSS, then image order so Tailwind output can be a CSS input. Their
-output trees must not overlap. A requested stage failure rejects the pipeline;
-it is not converted into a successful result with zero statistics. Each stage
-publishes its own output transactionally.
-
-### MDX Compilation
-
-```typescript
-import { compileMDX } from "./build/compiler";
-
-const mdxSource = `
-# Hello World
-
-This is **MDX** with components!
-
-<CustomComponent prop="value" />
-`;
-
-const result = await compileMDX(mdxSource, {
-  remarkPlugins: [remarkGfm],
-  rehypePlugins: [rehypePrism],
-});
-
-console.log(result.code); // Compiled React component
-```
-
-## Build Configuration
-
-### veryfront.config.ts
-
-```typescript
-export default {
-  build: {
-    outDir: ".veryfront/build",
-    assets: {
-      images: {
-        formats: ["webp", "avif"],
-        quality: 80,
-      },
-      css: {
-        minify: true,
-        autoprefixer: true,
-      },
-    },
-    splitting: {
-      strategy: "route", // 'route' | 'manual'
-      chunkSize: 500_000, // 500KB
-    },
-    sourcemap: true,
-    minify: true,
-  },
+const options: BuildOptions = {
+  projectDir: "./site",
+  outputDir: "./dist",
+  enableSplitting: true,
+  enableCompression: true,
+  enablePrefetch: true,
 };
+
+const stats: BuildStats = await buildProduction(options);
+console.log(`${stats.pages} pages in ${stats.duration} ms`);
 ```
 
-## Performance
+The direct API defaults `outputDir` to
+`<projectDir>/.veryfront/output`. The `veryfront build` CLI deliberately
+defaults to `<projectDir>/dist`.
 
-### Build Times (Typical Project)
+### Options
 
-- Small (10 pages): ~2-5 seconds
-- Medium (100 pages): ~10-20 seconds
-- Large (1000 pages): ~1-2 minutes
+| Option                           | Behavior                                                       |
+| -------------------------------- | -------------------------------------------------------------- |
+| `projectDir`                     | Required project directory. It must exist and be a directory.  |
+| `outputDir`                      | Final output directory.                                        |
+| `enableSplitting` / `splitting`  | Enable code splitting; defaults to `true`.                     |
+| `enableCompression` / `compress` | Emit supported compressed sidecars; defaults to `true`.        |
+| `enablePrefetch` / `prefetch`    | Enable generated prefetch behavior; defaults to `true`.        |
+| `ssg`                            | Explicit value, then `build.ssg`, then `true`.                 |
+| `include`, `exclude`             | Route collection filters.                                      |
+| `dryRun`                         | Validate and execute build planning without publishing output. |
 
-### Optimization Strategies
+When a verbose `enable*` option and its shorthand are both present, the
+verbose option wins. A non-dry production build that emits zero pages is
+rejected rather than publishing an empty artifact.
 
-1. **Incremental builds**: Only rebuild changed files
-2. **Parallel processing**: Build routes concurrently
-3. **Caching**: Cache compilation results
-4. **Code splitting**: Route-based chunks
+### Result
 
-## Testing
+`buildProduction()` returns:
+
+```ts
+interface BuildStats {
+  pages: number;
+  components: number;
+  chunks: number;
+  assets: number;
+  totalSize: number;
+  duration: number;
+  ssgPaths?: string[];
+}
+```
+
+Counts and sizes are non-negative. `totalSize` is measured in bytes and
+`duration` in milliseconds.
+
+## Publication and failure contract
+
+A production build:
+
+1. validates the project and output boundaries;
+2. discovers routes and public assets, then preflights output collisions;
+3. writes into a unique sibling staging directory while holding an
+   output-specific lock;
+4. promotes the completed staging directory with filesystem renames;
+5. restores the previous output if promotion fails; and
+6. removes staging, backup, lock, renderer, and cache resources.
+
+The previous output remains intact until a complete replacement is ready.
+Operational, rollback, and cleanup failures are surfaced. When a primary
+operation and cleanup both fail, the primary failure remains first in the
+reported aggregate.
+
+Source files, generated manifests, and build paths are bounded and validated.
+Symbolic-link escapes, non-canonical route paths, invalid UTF-8 source modules,
+portable output collisions, and mismatched manifest references fail closed.
+
+## Source structure
+
+```text
+src/build/
+├── asset-pipeline/       Standalone CSS, image, and Tailwind processors
+├── bundler/              Project-module resolution and code splitting
+├── compiler/             MDX compilation and watching
+├── embedded/             Embedded-runtime preset generation
+├── production-build/     Static build orchestration and output generation
+├── renderer/             Build-time MDX and script bundling services
+├── utils/                Build-local utilities
+├── index.ts              Public `veryfront/build` package surface
+├── binary-plugin-includes.ts
+└── vendor-cache.ts
+```
+
+The detailed production pipeline is documented in
+[production-build/README.md](./production-build/README.md).
+
+## Dependency boundaries
+
+- Rendering owns SSR behavior; Build invokes it to produce static output.
+- Config owns configuration loading and schema validation.
+- Platform adapters provide host capabilities; Build owns build semantics.
+- Transforms own reusable source transformations.
+- Release Assets owns dependency-manifest parsing and validation.
+- Server owns `BuildOptions` and `BuildStats` because the CLI and server share
+  those contracts.
+
+Use package or declared internal aliases. Do not add cross-module relative
+imports or expose a new package API by exporting an internal helper
+incidentally.
+
+## Maintainer verification
+
+Run the focused module gate after changing Build:
 
 ```bash
-# Run build tests
-deno task test src/build/
-
-# Test asset pipeline
-deno task test src/build/asset-pipeline/
-
-# Test MDX compilation
-deno task test src/build/compiler/
+deno test --frozen --allow-all src/build
+deno lint src/build
+deno check --frozen \
+  src/build/index.ts \
+  src/build/bundler/index.ts \
+  src/build/production-build/index.ts
+deno task docs:validate
 ```
 
-## Maintainer
-
-**Team:** Build & Infrastructure Team
-**Code Owners:** See CODEOWNERS file
-
-## Related Modules
-
-- [`server/`](../server/README.md) - Development server
-- [`rendering/`](../rendering/README.md) - SSR/RSC rendering
-- [`transforms/`](../transforms/README.md) - Code transforms
-- [`cli/`](../../cli/README.md) - CLI commands
-
-## Troubleshooting
-
-### Out of Memory Errors
-
-```bash
-# Increase Node.js memory
-NODE_OPTIONS="--max-old-space-size=4096" deno task build
-```
-
-### Slow Builds
-
-- Enable incremental builds
-- Reduce concurrent routes
-- Disable sourcemaps in development
-
-### Asset Optimization Failures
-
-- Call `getAssetPipelineStatus()` to inspect the pinned Sharp, Lightning CSS,
-  and PurgeCSS dependencies.
-- Verify that each enabled stage has an existing input directory inside its
-  project boundary.
-- Use distinct output directories for image, Tailwind, and CSS stages.
-- Disable a stage explicitly, or omit it, only when that output is not required.
-
-## References
-
-- [esbuild Documentation](https://esbuild.github.io/)
-- [MDX Documentation](https://mdxjs.com/)
-- [Veryfront Build Guide](https://veryfront.com/docs/build)
+Changes to generated client sources also require the manifest-generation and
+consumer type-check gates used by repository verification.

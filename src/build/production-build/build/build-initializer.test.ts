@@ -69,6 +69,33 @@ describe("build/production-build/build/build-initializer", () => {
       assertEquals(result.dryRun, true);
     });
 
+    it("honors the public shorthand optimization options", () => {
+      const result = normalizeBuildOptions({
+        projectDir: "/project",
+        splitting: false,
+        compress: false,
+        prefetch: false,
+      });
+      assertEquals(result.enableSplitting, false);
+      assertEquals(result.enableCompression, false);
+      assertEquals(result.enablePrefetch, false);
+    });
+
+    it("gives explicit enable options precedence over shorthands", () => {
+      const result = normalizeBuildOptions({
+        projectDir: "/project",
+        splitting: false,
+        compress: false,
+        prefetch: false,
+        enableSplitting: true,
+        enableCompression: true,
+        enablePrefetch: true,
+      });
+      assertEquals(result.enableSplitting, true);
+      assertEquals(result.enableCompression, true);
+      assertEquals(result.enablePrefetch, true);
+    });
+
     it("should pass through include and exclude arrays", () => {
       const result = normalizeBuildOptions({
         projectDir: "/project",

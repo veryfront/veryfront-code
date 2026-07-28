@@ -1,24 +1,25 @@
 /**
- * Build Orchestration Module
+ * Internal production-build orchestration.
  *
- * Core build system orchestration, execution, and cleanup.
- * Provides the main build workflow coordination and production build entry points.
+ * Application code should import {@link buildProduction} from
+ * `"veryfront/build"`. This barrel exists for production-build internals and
+ * repository tests.
  *
  * @example
  * ```typescript
- * import { buildProduction, type BuildOptions } from "#veryfront/server/build/build'
+ * import { buildProduction } from "veryfront/build";
+ * import type { BuildOptions } from "veryfront/server";
  *
- * // Run production build
- * const stats = await buildProduction({
- *   projectDir: '/path/to/project',
- *   outDir: 'dist',
- *   adapter: denoAdapter
- * })
+ * const options: BuildOptions = {
+ *   projectDir: "/path/to/project",
+ *   outputDir: "/path/to/project/dist",
+ * };
  *
- * console.log(`Built ${stats.totalPages} pages`)
+ * const stats = await buildProduction(options);
+ * console.log(`Built ${stats.pages} pages`);
  * ```
  *
- * @module server/build/build
+ * @module build/production-build/build
  */
 
 export {
