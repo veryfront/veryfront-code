@@ -4,7 +4,7 @@
  * @module utils/constants
  */
 
-export { DEFAULT_BUILD_CONCURRENCY, IMAGE_OPTIMIZATION } from "./build.ts";
+export { CSS_OPTIMIZATION, DEFAULT_BUILD_CONCURRENCY, IMAGE_OPTIMIZATION } from "./build.ts";
 export {
   BUFFER_SIZE_16_KB,
   BUFFER_SIZE_1_KB,

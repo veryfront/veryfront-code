@@ -5,7 +5,7 @@ import { join } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
-import type { CSSOptimizationOptions } from "#veryfront/types";
+import type { CSSOptimizationOptions } from "./types/index.ts";
 
 const TEST_DIR = "./.veryfront/test-strategies";
 
@@ -155,8 +155,8 @@ describe("PurgeStrategy", () => {
   });
 });
 
-describe("Strategy priority ordering", () => {
-  it("strategies have correct priority order", () => {
+describe("Legacy strategy metadata", () => {
+  it("keeps priority values stable for direct strategy consumers", () => {
     const lightning = new LightningCSSStrategy();
     const minification = new MinificationStrategy();
     const purge = new PurgeStrategy();

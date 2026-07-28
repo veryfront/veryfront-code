@@ -20,6 +20,8 @@ export interface FileSystem {
   readFile(path: string): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
+  /** Atomically replace a path when same-filesystem rename is supported. */
+  rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
   lstat?(path: string): Promise<FileInfo>;
@@ -42,6 +44,7 @@ interface NodeFsPromises {
     data: string | Uint8Array,
     options?: { encoding?: string; flag?: string } | string,
   ): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
   access(path: string, mode?: number): Promise<void>;
   stat(path: string): Promise<{
     isFile(): boolean;
@@ -134,6 +137,11 @@ class NodeFileSystem implements FileSystem {
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().writeFile(path, data);
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.getFs().rename(from, to);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -239,6 +247,10 @@ class DenoFileSystem implements FileSystem {
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await denoGlobal().writeFile(path, data);
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    await denoGlobal().rename(from, to);
   }
 
   async exists(path: string): Promise<boolean> {

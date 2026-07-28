@@ -24,6 +24,7 @@ export interface LightningCSSModule {
 }
 
 export interface BrowserTargets {
+  [browser: string]: number | undefined;
   chrome?: number;
   firefox?: number;
   safari?: number;
@@ -32,20 +33,30 @@ export interface BrowserTargets {
 
 export interface CSSOptimizationOptions {
   enabled?: boolean;
+  /** Absolute project boundary for CSS inputs, content scans, and outputs. */
+  projectDir?: string;
   minify?: boolean;
   autoprefixer?: boolean;
   purge?: boolean;
+  /**
+   * @deprecated Batch optimization has no HTML document from which to derive
+   * critical rules. Use `CSSOptimizer.extractCriticalCSS()` explicitly.
+   */
   criticalCSS?: boolean;
   inputFiles?: string[];
   inputDir?: string;
   outputDir?: string;
   browsers?: string[];
   purgeContent?: string[];
+  /** Literal selectors or tokens that PurgeCSS must retain. */
+  purgeSafelist?: string[];
   sourceMap?: boolean;
 }
 
 export interface CSSBundle {
   file: string;
+  /** Project-relative generated CSS path when known. */
+  outputFile?: string;
   content: string;
   sourceMap?: string;
   size: number;

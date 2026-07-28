@@ -16,6 +16,7 @@ export {
   getStandardPseudoSelectors,
   getVariantPath,
   globFiles,
+  isContainedAssetPath,
   isImageFile,
   isPseudoSelector,
 } from "./asset-utils.ts";

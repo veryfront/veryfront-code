@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PurgeStrategy } from "./purge-strategy.ts";
 
@@ -86,6 +86,64 @@ describe("build/asset-pipeline/css-optimizer/strategies/purge-strategy", () => {
         assertEquals(result.code.includes("body"), true);
         assertEquals(result.code.includes(".keep"), true);
         assertEquals(result.code.includes(".remove"), false);
+      });
+
+      it("should preserve nested at-rules while removing unused rules", async () => {
+        const strategy = new PurgeStrategy();
+        strategy.getUsedSelectors().add(".keep");
+        const result = await strategy.process(
+          "@media (min-width: 40rem) { .keep { display: block; } .remove { display: none; } }",
+          "test.css",
+          {},
+        );
+        assertEquals(result.code.includes("@media"), true);
+        assertEquals(result.code.includes(".keep"), true);
+        assertEquals(result.code.includes(".remove"), false);
+      });
+
+      it("normalizes selector-form safelist entries", async () => {
+        const strategy = new PurgeStrategy();
+        strategy.getUsedSelectors().add(".used");
+        const result = await strategy.process(
+          ".used { color: green; } .dynamic { color: blue; } .remove { color: red; }",
+          "test.css",
+          { purgeSafelist: [".dynamic"] },
+        );
+        assertEquals(result.code.includes(".dynamic"), true);
+        assertEquals(result.code.includes(".remove"), false);
+      });
+
+      it("should reject missing purge evidence", async () => {
+        const strategy = new PurgeStrategy();
+        await assertRejects(
+          () => strategy.process(".x {}", "test.css", {}),
+          TypeError,
+          "requires non-empty",
+        );
+      });
+
+      it("validates injected content and mutable selector evidence", async () => {
+        const malformedContent = new PurgeStrategy({
+          collectContent: () =>
+            Promise.resolve([{
+              path: "page.tsx",
+              raw: "<div />",
+              extension: "../tsx",
+            }]),
+        });
+        await assertRejects(
+          () => malformedContent.analyzeContent(["app/**/*.tsx"]),
+          TypeError,
+          "source is malformed",
+        );
+
+        const mutatedSelectors = new PurgeStrategy();
+        mutatedSelectors.getUsedSelectors().add("bad\nselector");
+        await assertRejects(
+          () => mutatedSelectors.process(".bad {}", "test.css", {}),
+          TypeError,
+          "unsafe token",
+        );
       });
     });
   });
