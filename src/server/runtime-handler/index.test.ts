@@ -6,6 +6,7 @@ import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts"
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
+import { requestTracker } from "./request-tracker.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -42,10 +43,27 @@ function createProxyModeHandler() {
   });
 }
 
+function captureConsoleOutput(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  const capture = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  console.log = capture;
+  console.warn = capture;
+  return {
+    lines,
+    restore: () => {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    },
+  };
+}
+
 describe("server/runtime-handler/index", () => {
   afterEach(() => {
     injectIsolationDepsForTests(null);
     HMRHandler.shutdown();
+    requestTracker.shutdown();
   });
 
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
@@ -63,6 +81,35 @@ describe("server/runtime-handler/index", () => {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
     });
+  });
+
+  it("emits one security configuration warning for the default development config", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const adapter = new DenoAdapter();
+    const { lines, restore } = captureConsoleOutput();
+
+    try {
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        config: {} as any,
+      });
+      await handler.ready;
+      await handler(new Request("http://localhost/healthz"));
+    } finally {
+      restore();
+      HMRHandler.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+
+    const securityGuidance = lines.filter((line) =>
+      line.includes("CSRF protection is not configured") ||
+      line.includes("Neither CORS nor CSRF protection is configured")
+    );
+    assertEquals(securityGuidance.length, 1);
+    assertEquals(
+      securityGuidance[0]?.includes("Neither CORS nor CSRF protection is configured"),
+      true,
+    );
   });
 
   it("returns 502 when x-token is missing in proxy mode", async () => {
