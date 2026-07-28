@@ -566,6 +566,34 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       finish: { ok: true },
     });
   });
+
+  it("persists prepared output before notifying completion", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("prepared-output"), status: "running" as const };
+    await backend.createRun(run);
+    let callbackRun: WorkflowRun | undefined;
+
+    await execute(
+      backend,
+      run,
+      () => completedResult(),
+      {
+        prepareOutput: (output) => ({ validated: output }),
+        onComplete: (completedRun) => {
+          callbackRun = completedRun;
+        },
+      },
+    );
+
+    const persisted = await backend.getRun(run.id);
+    assertExists(persisted);
+    assertEquals(persisted.status, "completed");
+    assertEquals(persisted.output, {
+      validated: { finish: { ok: true } },
+    });
+    assertEquals(callbackRun?.status, "completed");
+    assertEquals(callbackRun?.output, persisted.output);
+  });
 });
 
 describe("workflow/runtime/workflow-run-control claim", () => {

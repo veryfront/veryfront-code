@@ -43,6 +43,8 @@ export interface WorkflowRunControlExecuteInput {
     signal: AbortSignal;
     ownership?: CheckpointOwnership;
   }): Promise<WorkflowRunControlExecuteResult>;
+  /** Validate or transform output before the durable completed transition. */
+  prepareOutput?(output: unknown): unknown;
   onStart?(run: WorkflowRun): void | Promise<void>;
   onComplete?(run: WorkflowRun): void | Promise<void>;
   onError?(
@@ -736,13 +738,14 @@ async function completeRun(
 
   const publicContext = toPublicContext(result.context);
   const output = determineOutput(publicContext);
+  const preparedOutput = input.prepareOutput ? input.prepareOutput(output) : output;
   const completed = await updateRunIfStatus(
     backend,
     run.id,
     ["running"],
     {
       status: "completed",
-      output,
+      output: preparedOutput,
       context: publicContext,
       nodeStates: result.nodeStates,
       completedAt: new Date(),

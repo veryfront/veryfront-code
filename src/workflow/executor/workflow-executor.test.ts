@@ -702,6 +702,80 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(await backend.isLocked(run.id), false);
   });
 
+  it("fails durably before completion when the output schema rejects", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let completionCalls = 0;
+    executor.register(
+      workflow({
+        id: "invalid-output",
+        outputSchema: defineSchema((v) =>
+          v.object({
+            finish: v.object({ value: v.string() }),
+          })
+        )(),
+        steps: [
+          step("finish", {
+            tool: createTool("finish", () => ({ value: 42 })),
+          }),
+        ],
+        onComplete: () => {
+          completionCalls++;
+        },
+      }).definition,
+    );
+    const run = createRun("invalid-output");
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.executeAsync(run.id),
+      Error,
+    );
+
+    const failedRun = await backend.getRun(run.id);
+    assertExists(failedRun);
+    assertEquals(failedRun.status, "failed");
+    assertEquals(failedRun.output, undefined);
+    assertExists(failedRun.error);
+    assertEquals(completionCalls, 0);
+  });
+
+  it("persists schema-transformed output before notifying completion", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let completionOutput: unknown;
+    executor.register(
+      workflow({
+        id: "transformed-output",
+        outputSchema: defineSchema((v) =>
+          v.object({
+            finish: v.object({ value: v.string() }),
+          }).transform((output) => ({
+            normalized: output.finish.value.toUpperCase(),
+          }))
+        )(),
+        steps: [
+          step("finish", {
+            tool: createTool("finish", () => ({ value: "ready" })),
+          }),
+        ],
+        onComplete: (output) => {
+          completionOutput = output;
+        },
+      }).definition,
+    );
+    const run = createRun("transformed-output");
+    await backend.createRun(run);
+
+    await executor.executeAsync(run.id);
+
+    const completedRun = await backend.getRun(run.id);
+    assertExists(completedRun);
+    assertEquals(completedRun.status, "completed");
+    assertEquals(completedRun.output, { normalized: "READY" });
+    assertEquals(completionOutput, completedRun.output);
+  });
+
   it("does not execute a run when another worker already holds the lock", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, lockDuration: 5_000 });

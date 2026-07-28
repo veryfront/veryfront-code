@@ -417,11 +417,13 @@ export class WorkflowExecutor {
             controller,
           ));
       },
+      prepareOutput: (output) => {
+        return workflow.outputSchema ? workflow.outputSchema.parse(output) : output;
+      },
       onStart: (startedRun) => {
         this.config.onStart?.(startedRun);
       },
       onComplete: async (finalRun) => {
-        workflow.outputSchema?.parse(finalRun.output);
         await workflow.onComplete?.(finalRun.output, finalRun.context);
         this.config.onComplete?.(finalRun);
       },
