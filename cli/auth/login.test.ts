@@ -3,7 +3,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * Login Module Tests
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import {
   afterAll,
   afterEach,
@@ -91,6 +96,25 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("returns null for network failures unless throwing is requested", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new TypeError("network unavailable"))) as typeof fetch;
+        const { validateToken } = await import("./login.ts");
+
+        assertEquals(await validateToken("test-token", testEnv), null);
+        await assertRejects(
+          () => validateToken("test-token", testEnv, { throwOnNetworkError: true }),
+          Error,
+          "Could not reach the Veryfront API",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("Credential validation", () => {
@@ -173,6 +197,20 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           apiUrl: undefined,
         };
         assertEquals(await validateCredential("vf_test_invalid", env), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("returns null when API key validation cannot reach the API", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new TypeError("network unavailable"))) as typeof fetch;
+        const { validateCredential } = await import("./login.ts");
+
+        assertEquals(await validateCredential("vf_test_secret", testEnv), null);
       } finally {
         globalThis.fetch = originalFetch;
       }

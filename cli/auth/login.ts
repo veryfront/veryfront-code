@@ -26,6 +26,10 @@ export interface ApiKeyIdentity {
 
 export type AuthIdentity = UserInfo | ApiKeyIdentity;
 
+export interface CredentialValidationOptions {
+  throwOnNetworkError?: boolean;
+}
+
 const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "google", label: "Google" },
   { id: "github", label: "GitHub" },
@@ -61,6 +65,7 @@ export function createOAuthAuthorizationUrl(
 export async function validateToken(
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  options: CredentialValidationOptions = {},
 ): Promise<UserInfo | null> {
   try {
     const response = await fetch(`${getApiUrl(env).replace(/\/$/, "")}/me`, {
@@ -75,7 +80,9 @@ export async function validateToken(
 
     return (await response.json()) as UserInfo;
   } catch (e) {
-    if (e instanceof TypeError) throw new NetworkError("Could not reach the Veryfront API");
+    if (options.throwOnNetworkError && e instanceof TypeError) {
+      throw new NetworkError("Could not reach the Veryfront API");
+    }
     return null;
   }
 }
@@ -91,6 +98,7 @@ export function isApiKeyIdentity(identity: AuthIdentity): identity is ApiKeyIden
 async function validateApiKey(
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  options: CredentialValidationOptions = {},
 ): Promise<boolean> {
   if (!isApiKeyToken(token)) return false;
 
@@ -103,7 +111,9 @@ async function validateApiKey(
     await response.body?.cancel();
     return response.ok;
   } catch (e) {
-    if (e instanceof TypeError) throw new NetworkError("Could not reach the Veryfront API");
+    if (options.throwOnNetworkError && e instanceof TypeError) {
+      throw new NetworkError("Could not reach the Veryfront API");
+    }
     return false;
   }
 }
@@ -111,14 +121,17 @@ async function validateApiKey(
 export async function validateCredential(
   token: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
+  options: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | null> {
   if (!token) return null;
 
   if (isApiKeyToken(token)) {
-    return (await validateApiKey(token, env)) ? { authenticated: true, type: "apiKey" } : null;
+    return (await validateApiKey(token, env, options))
+      ? { authenticated: true, type: "apiKey" }
+      : null;
   }
 
-  return validateToken(token, env);
+  return validateToken(token, env, options);
 }
 
 async function promptAuthMethod(): Promise<AuthMethod> {
@@ -259,7 +272,7 @@ export async function login(
     spinner.update("Validating token...");
     let identity: AuthIdentity | null;
     try {
-      identity = await validateCredential(token, env);
+      identity = await validateCredential(token, env, { throwOnNetworkError: true });
     } catch (e) {
       if (e instanceof NetworkError) {
         spinner.stop();
@@ -293,7 +306,7 @@ export async function login(
 
   let identity: AuthIdentity | null;
   try {
-    identity = await validateCredential(token, env);
+    identity = await validateCredential(token, env, { throwOnNetworkError: true });
   } catch (e) {
     if (e instanceof NetworkError) {
       console.log();
