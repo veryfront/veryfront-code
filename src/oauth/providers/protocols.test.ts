@@ -108,6 +108,29 @@ describe("built-in OAuth provider wire contracts", () => {
     assertEquals(new URL(authorization.url).searchParams.has("code_challenge"), false);
   });
 
+  it("uses Slack's confidential-client flow without PKCE", async () => {
+    const credentials: Record<string, string> = {
+      [slackConfig.clientIdEnvVar]: "client-id",
+      [slackConfig.clientSecretEnvVar]: "client-secret",
+    };
+    const service = new OAuthService(slackConfig, undefined, (key) => credentials[key]);
+    const authorization = await service.createAuthorizationUrl({
+      redirectUri: "https://app.test/oauth/callback",
+    });
+    const authorizationUrl = new URL(authorization.url);
+
+    assertEquals(authorizationUrl.searchParams.has("code_challenge"), false);
+    assertEquals(authorizationUrl.searchParams.has("code_challenge_method"), false);
+    assertEquals(authorization.state.codeVerifier, undefined);
+
+    const { request } = await captureExchange(slackConfig);
+    assert(request.headers.get("authorization")?.startsWith("Basic "));
+    const body = new URLSearchParams(request.body);
+    assertEquals(body.has("client_id"), false);
+    assertEquals(body.has("client_secret"), false);
+    assertEquals(body.has("code_verifier"), false);
+  });
+
   it("serializes Slack and Linear authorization scopes with commas", async () => {
     for (const config of [slackConfig, linearConfig]) {
       const credentials: Record<string, string> = {

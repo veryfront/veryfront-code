@@ -118,6 +118,7 @@ describe("oauth provider configs", () => {
   it("declares provider-specific OAuth wire protocols", () => {
     assertEquals(slackConfig.scopeSeparator, ",");
     assertEquals(slackConfig.useBasicAuth, true);
+    assertEquals(slackConfig.pkceMode, "unsupported");
     assertEquals(linearConfig.scopeSeparator, ",");
 
     assertEquals(notionConfig.tokenRequestFormat, "json");

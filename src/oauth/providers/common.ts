@@ -26,7 +26,7 @@ export const slackConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "SLACK_CLIENT_SECRET",
   apiBaseUrl: "https://slack.com/api",
   useBasicAuth: true,
-  pkceMode: "supported",
+  pkceMode: "unsupported",
   scopeSeparator: ",",
   defaultScopes: [
     "channels:history",

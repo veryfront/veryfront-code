@@ -153,6 +153,21 @@ Outlook, Teams, OneDrive, and SharePoint all use `MICROSOFT_CLIENT_ID` /
 `MICROSOFT_CLIENT_SECRET`. Register one Azure AD app with the required Microsoft
 Graph permissions.
 
+### Slack confidential web flow
+
+The built-in `slackConfig` targets Slack's conventional server-side web-app
+flow. It authenticates Slack's
+[`oauth.v2.access`](https://docs.slack.dev/reference/methods/oauth.v2.access/)
+token request with `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` through HTTP
+Basic authentication and does not send a PKCE challenge or verifier.
+
+Slack's [PKCE flow](https://docs.slack.dev/authentication/using-pkce/) is a
+different public-client profile: the Slack app must be explicitly enabled for
+PKCE and the token exchange must omit the client secret. Do not use the built-in
+config for that profile. The generic Veryfront OAuth runtime currently requires
+a client secret, so a PKCE-enabled public Slack app needs a dedicated secretless
+provider adapter rather than config overrides.
+
 ### API-key integrations
 
 These integrations use API keys set by the developer in their project

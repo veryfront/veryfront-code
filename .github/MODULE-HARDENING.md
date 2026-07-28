@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    43 |      74.1% | Current formal closure evidence remains valid       |
+| Closed                         |    44 |      75.9% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    13 |      22.4% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    12 |      20.7% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -62,6 +62,7 @@ stricter closure count.
 - `metrics`
 - `middleware`
 - `observability`
+- `oauth`
 - `platform`
 - `provider`
 - `prompt`
@@ -92,7 +93,6 @@ stricter closure count.
 - `build`
 - `data`
 - `modules`
-- `oauth`
 - `proxy`
 - `react`
 - `rendering`
@@ -124,7 +124,7 @@ every affected unit.
 The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`internal-agents`, `mcp`, `middleware`, `observability`, `platform`, `provider`,
+`internal-agents`, `mcp`, `middleware`, `observability`, `oauth`, `platform`, `provider`,
 `prompt`, `registry`, `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `index.ts`, and
 `version.ts`.
@@ -191,6 +191,10 @@ revalidated.
 resource budgets, tracing and reporter lifecycle, environment precedence,
 request profiling, file durability, public surfaces, operator documentation,
 extensions, and direct consumers were remediated and revalidated.
+`oauth` is closed after its configuration snapshots, one-shot state,
+transport deadlines, refresh ownership, storage capabilities, provider
+protocols, Slack client-profile policy, public surface, documentation, and
+direct consumers were remediated and revalidated.
 `html` is closed after its document assembly, full-document adaptation,
 metadata, escaping, hydration and navigation runtime, release identity, module
 and CSS caching, import maps, internal reference, and direct consumers were
@@ -226,7 +230,7 @@ unit. No unit now lacks a current authoritative-branch review delta; the next
 dependency-ordered work closes the remaining reviewed unit and revalidates the
 touched units.
 
-### OAuth active checkpoint
+### OAuth closure checkpoint
 
 The `oauth` audit unit owns public provider and service configuration, init,
 callback, status and disconnect handlers, one-shot authorization state, token
@@ -268,29 +272,29 @@ All non-policy findings from the current deep review are remediated:
 
 Reproducible checkpoint evidence:
 
-- all 14 OAuth test files pass 191 tests and 27 nested steps with zero failures
+- all 14 OAuth test files pass 191 tests and 28 nested steps with zero failures
   under leak tracing, including accessor, mutation, malformed UTF-8, stalled
   transport/body, late response, waiter cancellation, CAS, status, callback,
   provider-protocol, storage, schema, and exact-export regressions;
+- the generated OAuth template and integration-loader consumers pass eight
+  tests and 59 nested steps under leak tracing;
 - focused OAuth formatting, lint, typechecking, and `git diff --check` pass;
 - `deno task docs:validate` passes 67 guides, 112 public documentation files,
   47 executable documentation tests with 90 nested steps, and all 747 links.
 
-One provider-policy decision remains before formal closure. Slack now exposes
-PKCE only for apps explicitly enabled as public clients; its PKCE instructions
-require exchanging the verifier without a client secret, while the conventional
-confidential web flow authenticates with the client secret. The built-in
-`slackConfig` currently combines `pkceMode: "supported"` (the handlers therefore
-always send PKCE) with HTTP Basic client-secret authentication. Slack documents
-`pkce_not_allowed` for apps not enabled for PKCE and instructs enabled public
-clients to omit the secret. The recommended compatibility policy is to make the
-built-in Slack config the conventional confidential web flow
-(`pkceMode: "unsupported"`, retain Basic authentication) and document that
-PKCE-enabled public Slack apps require a dedicated adapter/runtime
-authentication mode that omits secret authentication; the current generic
-runtime still requires a client secret, so a custom config alone is
-insufficient. That wire-behavior change requires approval before it is applied.
-Until then, `oauth` remains in revalidation rather than being counted as closed.
+The approved Slack provider policy is now explicit and regression-pinned. The
+built-in `slackConfig` selects Slack's conventional confidential web flow:
+`pkceMode: "unsupported"` with HTTP Basic client-secret authentication.
+Authorization requests therefore omit the PKCE challenge, and token exchanges
+omit both the verifier and body credentials while authenticating through the
+header. Slack apps explicitly enabled as PKCE public clients must omit the
+client secret and require a dedicated secretless adapter; the operator and
+architecture guides state that the generic runtime cannot safely represent
+that profile through config overrides.
+
+No unresolved critical or high-confidence OAuth production risk remains. The
+`oauth` audit unit is closed at 44 of 58 formal units; 14 units remain open or
+awaiting top-level revalidation.
 
 ### Proxy active checkpoint
 

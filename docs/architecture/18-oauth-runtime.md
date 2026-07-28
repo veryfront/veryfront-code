@@ -43,8 +43,8 @@ sequenceDiagram
 1. Init handlers require a user id and reject anonymous requests.
 2. The init handler creates authorization URLs with generated state and S256
    PKCE values when the provider supports PKCE, then persists a bounded
-   one-shot state row. Providers that explicitly do not support PKCE omit the
-   verifier; callers cannot downgrade PKCE through route options.
+   one-shot state row. Provider configs that select a non-PKCE client profile
+   omit the verifier; callers cannot downgrade PKCE through route options.
 3. Callback handlers consume state before processing either success or provider
    error responses. They validate its age, service id, exact callback URI, and
    PKCE verifier before exchanging a code.
@@ -62,6 +62,12 @@ sequenceDiagram
    authentication callbacks or token-store mutation.
 7. Provider catalogs supply common service configs, scopes, URLs, and client env
    variable names.
+
+The built-in Slack provider selects Slack's confidential web-app profile. It
+uses HTTP Basic client-secret authentication and omits PKCE. Slack public
+clients enabled for PKCE must omit the client secret during token exchange and
+therefore require a dedicated secretless adapter; the generic runtime's
+client-secret contract cannot represent that profile safely.
 
 Provider configuration and handler authorization options are captured from
 plain own data properties at construction. Nested parameter, header, mapping,
