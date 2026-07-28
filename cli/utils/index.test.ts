@@ -82,23 +82,40 @@ async function withMockPrompt<T>(
   }
 }
 
+function withDebugEnv(value: string, fn: () => void): void {
+  const originalDebug = getEnv("VERYFRONT_DEBUG");
+  const originalVerbose = isVerbose();
+  setVerboseMode(false);
+  setEnv("VERYFRONT_DEBUG", value);
+
+  try {
+    fn();
+  } finally {
+    if (originalDebug === undefined) {
+      deleteEnv("VERYFRONT_DEBUG");
+    } else {
+      setEnv("VERYFRONT_DEBUG", originalDebug);
+    }
+    setVerboseMode(originalVerbose);
+  }
+}
+
 describe("cliLogger", () => {
   it("uses the shared truthy semantics for VERYFRONT_DEBUG", () => {
-    const originalDebug = getEnv("VERYFRONT_DEBUG");
-    const originalVerbose = isVerbose();
-    setVerboseMode(false);
-    setEnv("VERYFRONT_DEBUG", " Yes ");
-
-    try {
+    withDebugEnv(" Yes ", () => {
       assertStringIncludes(captureOutput(() => cliLogger.debug("details")).stdout, "details");
-    } finally {
-      if (originalDebug === undefined) {
-        deleteEnv("VERYFRONT_DEBUG");
-      } else {
-        setEnv("VERYFRONT_DEBUG", originalDebug);
+    });
+  });
+
+  it("does not write debug output in JSON mode", () => {
+    withDebugEnv("true", () => {
+      setJsonMode(true);
+      try {
+        assertEquals(captureOutput(() => cliLogger.debug("details")).stdout, "");
+      } finally {
+        setJsonMode(false);
       }
-      setVerboseMode(originalVerbose);
-    }
+    });
   });
 });
 

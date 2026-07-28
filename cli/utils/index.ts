@@ -31,7 +31,7 @@ export const cliLogger: {
   component: (_name: string) => typeof cliLogger;
 } = {
   debug: (...args) => {
-    if (!debugEnabled()) return;
+    if (isJsonMode() || !debugEnabled()) return;
     console.debug(...args);
   },
   info: (...args) => console.log(...args),
