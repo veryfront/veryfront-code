@@ -1,6 +1,10 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { MAX_REQUEST_PROFILE_PHASES } from "./limits.ts";
+import {
+  MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
+  MAX_OBSERVABILITY_NAME_LENGTH,
+  MAX_REQUEST_PROFILE_PHASES,
+} from "./limits.ts";
 import {
   buildServerTimingHeader,
   finalizeRequestProfiling,
@@ -142,6 +146,34 @@ describe("request profiler", () => {
     assertEquals(Object.keys(results[0].phases).length, MAX_REQUEST_PROFILE_PHASES);
     assertEquals(results[1], null);
     assertEquals(snapshotRequestProfiles().records.length, 1);
+  });
+
+  it("bounds retained request identity and fails open for malformed options", async () => {
+    const record = await runWithRequestProfiling(
+      {
+        category: "c".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+        method: "m".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+        pathname: `/${"p".repeat(MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH + 100)}`,
+        projectSlug: "s".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+        requestMode: "r".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+      },
+      async () => finalizeRequestProfiling(200),
+    );
+
+    assertExists(record);
+    assertEquals(record.category.length, MAX_OBSERVABILITY_NAME_LENGTH);
+    assertEquals(record.method.length, MAX_OBSERVABILITY_NAME_LENGTH);
+    assertEquals(record.pathname.length, MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH);
+    assertEquals(record.projectSlug?.length, MAX_OBSERVABILITY_NAME_LENGTH);
+    assertEquals(record.requestMode?.length, MAX_OBSERVABILITY_NAME_LENGTH);
+
+    let calls = 0;
+    const result = await runWithRequestProfiling(
+      { category: "html", method: "GET", pathname: 1 } as never,
+      async () => ++calls,
+    );
+    assertEquals(result, 1);
+    assertEquals(calls, 1);
   });
 
   it("profiles page-data requests when Server-Timing diagnostics are enabled", () => {

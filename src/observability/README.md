@@ -267,7 +267,7 @@ characters and source names to 255 characters.
 | Field      | Type                                                  |
 | ---------- | ----------------------------------------------------- |
 | `enabled`  | `boolean`                                             |
-| `path`     | non-empty `string`                                    |
+| `path`     | non-empty `string`, at most 4,096 characters          |
 | `maxSize`  | positive byte count or a string such as `"10mb"`      |
 | `maxFiles` | integer from 1 through 100, including the active file |
 | `level`    | `"debug" \| "info" \| "warn" \| "error"`              |
@@ -280,7 +280,8 @@ or file closure fails. The pending-write queue retains at most 256 entries. A
 full queue drops the new entry, retains a bounded failure sample, and makes the
 next explicit flush or close reject rather than hiding data loss. At most 16
 individual failures are retained; additional failures are represented by one
-omission summary. The subscriber requires the Deno file API.
+omission summary. Concurrent flush callers share the same durability attempt
+and outcome. The subscriber requires the Deno file API.
 
 ## Data safety and cardinality
 

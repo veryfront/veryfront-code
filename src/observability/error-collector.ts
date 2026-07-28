@@ -131,9 +131,12 @@ export class ErrorCollector {
     }
 
     const fullError: DevError = {
-      ...error,
-      type,
+      id: this.generateId(),
       category: expectedCategory,
+      type,
+      slug: typeof error.slug === "string"
+        ? sanitizeTelemetryText(error.slug, MAX_OBSERVABILITY_NAME_LENGTH)
+        : undefined,
       message: sanitizeTelemetryText(error.message, MAX_STRING_DISPLAY_LENGTH),
       file: typeof error.file === "string"
         ? sanitizeTelemetryText(
@@ -141,15 +144,13 @@ export class ErrorCollector {
           MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
         )
         : undefined,
+      line: error.line,
+      column: error.column,
       stack: typeof error.stack === "string"
         ? sanitizeTelemetryText(error.stack, MAX_STRING_DISPLAY_LENGTH)
         : undefined,
-      context: error.context ? sanitizeStructuredTelemetryData(error.context) : error.context,
-      slug: typeof error.slug === "string"
-        ? sanitizeTelemetryText(error.slug, MAX_OBSERVABILITY_NAME_LENGTH)
-        : undefined,
-      id: this.generateId(),
       timestamp: Date.now(),
+      context: error.context ? sanitizeStructuredTelemetryData(error.context) : error.context,
     };
 
     if (this.maxErrors > 0) {

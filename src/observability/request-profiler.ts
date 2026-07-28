@@ -5,7 +5,11 @@ import {
   saturatingAdd,
   saturatingAddMeasure,
 } from "./metrics/numeric.ts";
-import { MAX_OBSERVABILITY_NAME_LENGTH, MAX_REQUEST_PROFILE_PHASES } from "./limits.ts";
+import {
+  MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
+  MAX_OBSERVABILITY_NAME_LENGTH,
+  MAX_REQUEST_PROFILE_PHASES,
+} from "./limits.ts";
 import { sanitizeTelemetryText } from "./telemetry-error.ts";
 
 export interface RequestProfileRecord {
@@ -80,6 +84,13 @@ function snapshotRecord(record: RequestProfileRecord): RequestProfileRecord {
   };
 }
 
+function normalizeProfileText(
+  value: unknown,
+  maxLength: number,
+): string | null {
+  return typeof value === "string" ? sanitizeTelemetryText(value, maxLength) : null;
+}
+
 function shouldEnableProfiling(): boolean {
   return getEnv("VERYFRONT_ENABLE_PERF_PROFILING") === "1";
 }
@@ -126,12 +137,49 @@ export async function runWithRequestProfiling<T>(
   },
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (!isRequestProfilingEnabled(options.pathname)) {
+  let category: string | null;
+  let method: string | null;
+  let pathname: string | null;
+  let projectSlug: string | undefined;
+  let requestMode: string | undefined;
+  try {
+    category = normalizeProfileText(
+      options.category,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    );
+    method = normalizeProfileText(
+      options.method,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    );
+    pathname = normalizeProfileText(
+      options.pathname,
+      MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
+    );
+    projectSlug = options.projectSlug === undefined ? undefined : normalizeProfileText(
+      options.projectSlug,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    ) ?? undefined;
+    requestMode = options.requestMode === undefined ? undefined : normalizeProfileText(
+      options.requestMode,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    ) ?? undefined;
+  } catch {
+    return await fn();
+  }
+
+  if (
+    category === null || method === null || pathname === null ||
+    !isRequestProfilingEnabled(pathname)
+  ) {
     return await fn();
   }
 
   const session: RequestProfileSession = {
-    ...options,
+    category,
+    method,
+    pathname,
+    projectSlug,
+    requestMode,
     startedAt: performance.now(),
     phases: new Map(),
     finalized: false,

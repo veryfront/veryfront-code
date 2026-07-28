@@ -190,6 +190,20 @@ describe("cli/mc./error-collector", () => {
       assertEquals(ec.get(error.id)?.message.length, MAX_STRING_DISPLAY_LENGTH);
     });
 
+    it("retains only declared error fields", () => {
+      const ec = new ErrorCollector();
+
+      const error = ec.add({
+        type: "runtime",
+        category: "RUNTIME",
+        message: "failure",
+        undeclared: "must not be retained",
+      } as never);
+
+      assertEquals(Object.hasOwn(error, "undeclared"), false);
+      assertEquals(Object.hasOwn(ec.get(error.id) ?? {}, "undeclared"), false);
+    });
+
     it("should not expose retained errors to caller or subscriber mutation", () => {
       const ec = new ErrorCollector();
       ec.subscribe((error) => {

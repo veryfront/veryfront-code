@@ -73,6 +73,20 @@ describe("observability/log-buffer", () => {
       assertEquals(buf.getAll()[0]?.message.length, MAX_STRING_DISPLAY_LENGTH);
     });
 
+    it("retains only declared entry fields", () => {
+      const buf = new LogBuffer();
+
+      const entry = buf.append({
+        level: "info",
+        message: "message",
+        source: "test",
+        undeclared: "must not be retained",
+      } as never);
+
+      assertEquals(Object.hasOwn(entry, "undeclared"), false);
+      assertEquals(Object.hasOwn(buf.getAll()[0] ?? {}, "undeclared"), false);
+    });
+
     it("does not expose retained entries to caller or subscriber mutation", () => {
       const buf = new LogBuffer();
       buf.subscribe((entry) => {

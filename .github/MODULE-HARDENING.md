@@ -5179,8 +5179,10 @@ The current findings are remediated:
   offered no deterministic data-loss signal. Pending writes are capped at 256,
   failure samples at 16, omitted failures are summarized, overflow drops only
   the new entry with a diagnostic, and the next explicit flush/close rejects.
-  Partial writes, durability sync, close retry, and primary-plus-cleanup error
-  behavior remain intact.
+  Direct entries and config are validated, projected to declared fields, and
+  bounded before retention; concurrent flush callers share one durability
+  attempt and outcome. Partial writes, durability sync, close retry, and
+  primary-plus-cleanup error behavior remain intact.
 - **Symptom -> Source -> Consequence -> Remedy:** tracing and metrics config
   accepted truthy malformed values, explicit adapter environment failures
   could leak across environment ownership, and a generic OTLP endpoint
@@ -5204,7 +5206,7 @@ The current findings are remediated:
 
 Reproducible checkpoint evidence:
 
-- all 47 top-level observability tests pass 823 nested steps with zero failures under
+- all 47 top-level observability tests pass 828 nested steps with zero failures under
   leak tracing, including provider misbehavior, lifecycle races, mutation,
   environment failure, endpoint precedence, hostile serialization, resource
   limits, queue overflow, partial I/O, durability, profiling, and exact-export

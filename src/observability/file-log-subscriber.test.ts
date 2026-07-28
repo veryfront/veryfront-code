@@ -1,10 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { FileLogSubscriber, parseMaxSize, writeAll } from "./file-log-subscriber.ts";
-import { MAX_FILE_LOG_PENDING_WRITES, MAX_FILE_LOG_RETAINED_FAILURES } from "./limits.ts";
-import { LogBuffer } from "./log-buffer.ts";
+import {
+  MAX_FILE_LOG_PENDING_WRITES,
+  MAX_FILE_LOG_RETAINED_FAILURES,
+  MAX_OBSERVABILITY_NAME_LENGTH,
+} from "./limits.ts";
+import { LogBuffer, type LogEntry } from "./log-buffer.ts";
 import type { FileLogConfig } from "./file-log-subscriber.ts";
 
 function makeConfig(overrides: Partial<FileLogConfig> & { path: string }): FileLogConfig {
@@ -119,6 +129,15 @@ describe("observability/file-log-subscriber", () => {
         TypeError,
         "path",
       );
+      assertThrows(
+        () =>
+          new FileLogSubscriber({
+            ...makeConfig({ path: "test.log" }),
+            level: "toString" as never,
+          }),
+        TypeError,
+        "level",
+      );
     });
 
     it("should not create or write a file when disabled", async () => {
@@ -172,6 +191,40 @@ describe("observability/file-log-subscriber", () => {
       const content = await Deno.readTextFile(logPath);
       assertEquals(content.includes("secret"), false);
       assertEquals(content.includes("[REDACTED]"), true);
+
+      await sub.close();
+    });
+
+    it("bounds and projects direct entries before queueing them", async () => {
+      const dir = await makeTempDir();
+      const logPath = `${dir}/bounded-direct.log`;
+      const sub = new FileLogSubscriber(makeConfig({ path: logPath }));
+
+      sub.getSubscriber()(
+        {
+          id: "i".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+          level: "info",
+          message: "m".repeat(MAX_STRING_DISPLAY_LENGTH + 100),
+          timestamp: Date.now(),
+          source: "s".repeat(MAX_OBSERVABILITY_NAME_LENGTH + 100),
+          undeclared: "must not be retained",
+        } as LogEntry & { undeclared: string },
+      );
+      await sub.flush();
+
+      const entry = JSON.parse(
+        (await Deno.readTextFile(logPath)).trim(),
+      ) as Record<string, unknown>;
+      assertEquals((entry.id as string).length, MAX_OBSERVABILITY_NAME_LENGTH);
+      assertEquals(
+        (entry.message as string).length,
+        MAX_STRING_DISPLAY_LENGTH,
+      );
+      assertEquals(
+        (entry.source as string).length,
+        MAX_OBSERVABILITY_NAME_LENGTH,
+      );
+      assertEquals(Object.hasOwn(entry, "undeclared"), false);
 
       await sub.close();
     });
@@ -510,6 +563,25 @@ describe("observability/file-log-subscriber", () => {
 
       assertEquals(internals.pendingFailures.length, MAX_FILE_LOG_RETAINED_FAILURES);
       assertEquals(internals.omittedFailureCount, 10);
+    });
+
+    it("shares one recorded failure across concurrent flush callers", async () => {
+      const sub = new FileLogSubscriber(makeConfig({ path: "ignored.log" }));
+      const internals = sub as unknown as {
+        recordFailure(error: unknown): void;
+      };
+      internals.recordFailure(new Error("shared failure"));
+
+      const first = sub.flush();
+      const second = sub.flush();
+
+      assertStrictEquals(second, first);
+      const results = await Promise.allSettled([first, second]);
+      assertEquals(
+        results.map((result) => result.status),
+        ["rejected", "rejected"],
+      );
+      await sub.close();
     });
 
     it("closes and clears the file even when flushing rejects", async () => {

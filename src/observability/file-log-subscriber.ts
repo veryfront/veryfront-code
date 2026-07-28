@@ -1,9 +1,15 @@
 import { dirname } from "@std/path";
+import { MAX_STRING_DISPLAY_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { MAX_FILE_LOG_FILES } from "#veryfront/utils/config-resource-limits.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { LogEntry, LogLevel, LogSubscriber } from "./log-buffer.ts";
-import { MAX_FILE_LOG_PENDING_WRITES, MAX_FILE_LOG_RETAINED_FAILURES } from "./limits.ts";
-import { sanitizeStructuredTelemetryData } from "./telemetry-error.ts";
+import {
+  MAX_FILE_LOG_PENDING_WRITES,
+  MAX_FILE_LOG_RETAINED_FAILURES,
+  MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH,
+  MAX_OBSERVABILITY_NAME_LENGTH,
+} from "./limits.ts";
+import { sanitizeStructuredTelemetryData, sanitizeTelemetryText } from "./telemetry-error.ts";
 
 /** Configuration used by file log. */
 export interface FileLogConfig {
@@ -39,6 +45,14 @@ export function parseMaxSize(value: number | string): number {
     }
     return bytes;
   }
+  if (typeof value !== "string") {
+    throw new TypeError("File log maxSize must be a number or string");
+  }
+  if (value.length > MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH) {
+    throw new RangeError(
+      `File log maxSize text must not exceed ${MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH} characters`,
+    );
+  }
 
   const match = value.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$/);
   if (!match?.[1]) {
@@ -73,11 +87,35 @@ function safeJsonStringify(value: unknown): string {
 }
 
 function sanitizeEntry(entry: LogEntry): LogEntry {
+  if (entry === null || typeof entry !== "object") {
+    throw new TypeError("File log entry must be an object");
+  }
+  if (!Object.hasOwn(LOG_LEVEL_PRIORITY, entry.level)) {
+    throw new TypeError(`Invalid file log entry level: ${String(entry.level)}`);
+  }
+  if (
+    typeof entry.id !== "string" || typeof entry.message !== "string" ||
+    typeof entry.source !== "string"
+  ) {
+    throw new TypeError("File log entry id, message, and source must be strings");
+  }
+  if (
+    typeof entry.timestamp !== "number" ||
+    !Number.isFinite(new Date(entry.timestamp).getTime())
+  ) {
+    throw new RangeError("File log entry timestamp must be a valid date");
+  }
+
   return {
-    ...entry,
-    message: sanitizeUrlCredentials(entry.message),
-    source: sanitizeUrlCredentials(entry.source),
-    data: entry.data ? sanitizeStructuredTelemetryData(entry.data) : entry.data,
+    id: sanitizeTelemetryText(entry.id, MAX_OBSERVABILITY_NAME_LENGTH),
+    level: entry.level,
+    message: sanitizeTelemetryText(entry.message, MAX_STRING_DISPLAY_LENGTH),
+    data: entry.data === undefined ? undefined : sanitizeStructuredTelemetryData(entry.data),
+    timestamp: entry.timestamp,
+    source: sanitizeTelemetryText(
+      entry.source,
+      MAX_OBSERVABILITY_NAME_LENGTH,
+    ),
   };
 }
 
@@ -129,6 +167,7 @@ export class FileLogSubscriber {
   private pendingFailures: unknown[] = [];
   private pendingWrites = 0;
   private omittedFailureCount = 0;
+  private flushPromise: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
   private maxSizeBytes: number;
   private minLevel: number;
@@ -140,8 +179,19 @@ export class FileLogSubscriber {
   private readonly encoder = new TextEncoder();
 
   constructor(config: FileLogConfig) {
-    if (!config.path.trim()) {
-      throw new TypeError("File log path must not be empty");
+    if (config === null || typeof config !== "object") {
+      throw new TypeError("File log config must be an object");
+    }
+    if (
+      typeof config.path !== "string" || !config.path.trim() ||
+      config.path.length > MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH
+    ) {
+      throw new TypeError(
+        `File log path must contain between 1 and ${MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH} characters`,
+      );
+    }
+    if (typeof config.enabled !== "boolean") {
+      throw new TypeError("File log enabled must be a boolean");
     }
     if (
       !Number.isSafeInteger(config.maxFiles) ||
@@ -152,14 +202,21 @@ export class FileLogSubscriber {
         `File log maxFiles must be an integer between 1 and ${MAX_FILE_LOG_FILES}`,
       );
     }
-    if (!(config.level in LOG_LEVEL_PRIORITY)) {
+    if (!Object.hasOwn(LOG_LEVEL_PRIORITY, config.level)) {
       throw new TypeError(`Invalid file log level: ${String(config.level)}`);
     }
     if (config.format !== "json" && config.format !== "text") {
       throw new TypeError(`Invalid file log format: ${String(config.format)}`);
     }
 
-    this.config = { ...config };
+    this.config = {
+      enabled: config.enabled,
+      path: config.path,
+      maxSize: config.maxSize,
+      maxFiles: config.maxFiles,
+      level: config.level,
+      format: config.format,
+    };
     this.maxSizeBytes = parseMaxSize(this.config.maxSize);
     this.minLevel = LOG_LEVEL_PRIORITY[this.config.level];
     this.formatter = this.config.format === "json" ? formatEntryJson : formatEntryText;
@@ -359,7 +416,18 @@ export class FileLogSubscriber {
     this.currentSize = 0;
   }
 
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
+    if (this.flushPromise) return this.flushPromise;
+
+    const attempt = this.performFlush();
+    const tracked = attempt.finally(() => {
+      if (this.flushPromise === tracked) this.flushPromise = null;
+    });
+    this.flushPromise = tracked;
+    return tracked;
+  }
+
+  private async performFlush(): Promise<void> {
     const failures: unknown[] = [];
     try {
       await this.writeQueue;

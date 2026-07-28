@@ -65,14 +65,14 @@ export class LogBuffer {
     }
 
     const fullEntry: LogEntry = {
-      ...entry,
+      id: this.generateId(),
+      level: entry.level,
+      message: sanitizeTelemetryText(entry.message, MAX_STRING_DISPLAY_LENGTH),
       // Redact credential-like keys before the entry is buffered, surfaced to
       // subscribers, or written to disk by the file subscriber (#1989).
       data: entry.data ? sanitizeStructuredTelemetryData(entry.data) : entry.data,
-      message: sanitizeTelemetryText(entry.message, MAX_STRING_DISPLAY_LENGTH),
-      source: sanitizeTelemetryText(entry.source, MAX_OBSERVABILITY_NAME_LENGTH),
-      id: this.generateId(),
       timestamp: Date.now(),
+      source: sanitizeTelemetryText(entry.source, MAX_OBSERVABILITY_NAME_LENGTH),
     };
 
     this.entries.push(fullEntry);
