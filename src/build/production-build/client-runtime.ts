@@ -18,6 +18,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
 import { CLIENT_PREFETCH_BUNDLE, CLIENT_ROUTER_BUNDLE } from "./templates.ts";
+import { PRODUCTION_BUILD_FORMAT_VERSION } from "./constants.ts";
 
 interface ClientScriptGenerationOptions {
   forceSourceBundle?: boolean;
@@ -25,7 +26,6 @@ interface ClientScriptGenerationOptions {
 
 const moduleDir = dirname(fromFileUrl(import.meta.url));
 const packageRoot = resolve(join(moduleDir, "..", "..", ".."));
-const CLIENT_RUNTIME_PROTOCOL_VERSION = "2.0.0";
 const MAX_CLIENT_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_CLIENT_BUNDLE_BYTES = 8 * 1024 * 1024;
 const vfSrcPrefix = "@vf-src/";
@@ -56,7 +56,7 @@ export function generateAppModule(): string {
   // Export for ES modules
   if (typeof window !== 'undefined') {
     window.__veryfront = window.__veryfront || {};
-    window.__veryfront.version = '${CLIENT_RUNTIME_PROTOCOL_VERSION}';
+    window.__veryfront.version = '${PRODUCTION_BUILD_FORMAT_VERSION}';
     window.__veryfront.initialized = true;
   }
 
@@ -72,7 +72,7 @@ export function generateAppModule(): string {
   };
 })();
 
-export const version = '${CLIENT_RUNTIME_PROTOCOL_VERSION}';
+export const version = '${PRODUCTION_BUILD_FORMAT_VERSION}';
 export const hydrate = window.hydrate;
 `;
 }

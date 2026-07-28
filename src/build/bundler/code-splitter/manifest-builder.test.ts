@@ -23,8 +23,12 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
       assertEquals(extractEntryName("a/b/c/d/page.tsx"), "page");
     });
 
-    it("should return unknown for extensionless files", () => {
+    it("should preserve extensionless filenames", () => {
       assertEquals(extractEntryName("src/Makefile"), "Makefile");
+    });
+
+    it("should support Windows separators and case-insensitive extensions", () => {
+      assertEquals(extractEntryName(String.raw`C:\project\pages\index.TSX`), "index");
     });
 
     it("should throw for empty path segment", () => {
@@ -43,6 +47,10 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
 
     it("should keep name if no known extension", () => {
       assertEquals(extractChunkName("dist/data.json"), "data.json");
+    });
+
+    it("should support Windows separators and case-insensitive extensions", () => {
+      assertEquals(extractChunkName(String.raw`C:\dist\chunks\shared.JS`), "shared");
     });
 
     it("should throw for empty path segment", () => {
@@ -136,6 +144,46 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
       const hints = getPreloadHints(output, "/out");
       assertEquals(hints.length, 0);
     });
+
+    it("ignores external imports and returns stable path ordering", () => {
+      const output = {
+        imports: [
+          { path: "/out/router-z.js", kind: "import-statement" as const },
+          {
+            path: "react",
+            kind: "import-statement" as const,
+            external: true,
+          },
+          { path: "/out/react-a.js", kind: "import-statement" as const },
+        ],
+        bytes: 100,
+        inputs: {},
+        exports: [],
+      };
+
+      assertEquals(getPreloadHints(output, "/out"), [
+        "react-a.js",
+        "router-z.js",
+      ]);
+    });
+
+    it("rejects duplicate bundled imports", () => {
+      const output = {
+        imports: [
+          { path: "/out/router.js", kind: "import-statement" as const },
+          { path: "/out/router.js", kind: "dynamic-import" as const },
+        ],
+        bytes: 100,
+        inputs: {},
+        exports: [],
+      };
+
+      assertThrows(
+        () => getPreloadHints(output, "/out"),
+        TypeError,
+        "duplicate import",
+      );
+    });
   });
 
   describe("extractEntryName edge cases", () => {
@@ -216,6 +264,171 @@ describe("build/bundler/code-splitter/manifest-builder", () => {
         );
       } finally {
         await Deno.remove(outDir, { recursive: true });
+      }
+    });
+
+    it("produces deterministic chunks, routes, imports, and shared ordering", async () => {
+      const outDir = await Deno.makeTempDir({ prefix: "vf-manifest-builder-" });
+      const firstFile = `${outDir}/a.js`;
+      const secondFile = `${outDir}/b.js`;
+      const sharedFile = `${outDir}/chunks/router-shared.js`;
+      const firstContent = "export const a = 1;";
+      const secondContent = "export const b = 2;";
+      const sharedContent = "export const shared = 3;";
+      try {
+        await Deno.mkdir(`${outDir}/chunks`);
+        await Promise.all([
+          Deno.writeTextFile(firstFile, firstContent),
+          Deno.writeTextFile(secondFile, secondContent),
+          Deno.writeTextFile(sharedFile, sharedContent),
+        ]);
+
+        const outputFor = (
+          file: string,
+          content: string,
+          entryPoint?: string,
+        ) => ({
+          imports: file === sharedFile ? [] : [
+            {
+              path: "react",
+              kind: "import-statement" as const,
+              external: true,
+            },
+            {
+              path: sharedFile,
+              kind: "import-statement" as const,
+            },
+          ],
+          exports: [],
+          entryPoint,
+          inputs: {},
+          bytes: new TextEncoder().encode(content).byteLength,
+        });
+        const routeMap = new Map([
+          ["a", "/a"],
+          ["b", "/b"],
+        ]);
+        const reverseOrder = {
+          [sharedFile]: outputFor(sharedFile, sharedContent),
+          [secondFile]: outputFor(secondFile, secondContent, "/project/b.ts"),
+          [firstFile]: outputFor(firstFile, firstContent, "/project/a.ts"),
+        };
+        const forwardOrder = {
+          [firstFile]: reverseOrder[firstFile]!,
+          [secondFile]: reverseOrder[secondFile]!,
+          [sharedFile]: reverseOrder[sharedFile]!,
+        };
+
+        const first = await buildManifest(
+          { inputs: {}, outputs: reverseOrder },
+          routeMap,
+          outDir,
+        );
+        const second = await buildManifest(
+          { inputs: {}, outputs: forwardOrder },
+          routeMap,
+          outDir,
+        );
+
+        assertEquals(JSON.stringify(first), JSON.stringify(second));
+        assertEquals(Object.keys(first.routes), ["/a", "/b"]);
+        assertEquals(Object.keys(first.chunks), [
+          "a.js",
+          "b.js",
+          "chunks/router-shared.js",
+        ]);
+        assertEquals(first.routes["/a"]?.chunks, ["chunks/router-shared.js"]);
+        assertEquals(first.routes["/a"]?.preload, ["chunks/router-shared.js"]);
+        assertEquals(first.shared, ["chunks/router-shared.js"]);
+      } finally {
+        await Deno.remove(outDir, { recursive: true });
+      }
+    });
+
+    it("rejects route entries for which the bundler emitted no JavaScript", async () => {
+      const outDir = await Deno.makeTempDir({ prefix: "vf-manifest-builder-" });
+      try {
+        await assertRejects(
+          () =>
+            buildManifest(
+              { inputs: {}, outputs: {} },
+              new Map([["missing", "/missing"]]),
+              outDir,
+            ),
+          TypeError,
+          "No JavaScript output was emitted",
+        );
+      } finally {
+        await Deno.remove(outDir, { recursive: true });
+      }
+    });
+
+    it("rejects chunk files whose size disagrees with bundler metadata", async () => {
+      const outDir = await Deno.makeTempDir({ prefix: "vf-manifest-builder-" });
+      const outputFile = `${outDir}/index.js`;
+      try {
+        await Deno.writeTextFile(outputFile, "export default 1;");
+        await assertRejects(
+          () =>
+            buildManifest(
+              {
+                inputs: {},
+                outputs: {
+                  [outputFile]: {
+                    imports: [],
+                    exports: ["default"],
+                    entryPoint: "/project/index.ts",
+                    inputs: {},
+                    bytes: 999,
+                  },
+                },
+              },
+              new Map([["index", "/"]]),
+              outDir,
+            ),
+          TypeError,
+          "does not match bundler metadata",
+        );
+      } finally {
+        await Deno.remove(outDir, { recursive: true });
+      }
+    });
+
+    it("rejects chunk files reached through a directory symlink escape", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-manifest-builder-" });
+      const outDir = `${root}/out`;
+      const outsideDir = `${root}/outside`;
+      const outputFile = `${outDir}/linked/escaped.js`;
+      const content = "export default 1;";
+      try {
+        await Deno.mkdir(outDir);
+        await Deno.mkdir(outsideDir);
+        await Deno.writeTextFile(`${outsideDir}/escaped.js`, content);
+        await Deno.symlink(outsideDir, `${outDir}/linked`, { type: "dir" });
+
+        await assertRejects(
+          () =>
+            buildManifest(
+              {
+                inputs: {},
+                outputs: {
+                  [outputFile]: {
+                    imports: [],
+                    exports: ["default"],
+                    entryPoint: "/project/index.ts",
+                    inputs: {},
+                    bytes: new TextEncoder().encode(content).byteLength,
+                  },
+                },
+              },
+              new Map([["escaped", "/"]]),
+              outDir,
+            ),
+          TypeError,
+          "resolved outside",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
       }
     });
   });

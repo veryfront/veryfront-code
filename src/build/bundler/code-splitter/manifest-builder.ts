@@ -4,13 +4,29 @@
  */
 
 import type { Metafile } from "veryfront/extensions/bundler";
-import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { basename, isAbsolute, join, relative, resolve } from "#veryfront/compat/path/index.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { computeHashBytes } from "#veryfront/utils";
+import { CHUNK_MANIFEST_VERSION, MAX_CHUNK_MANIFEST_ENTRIES } from "./constants.ts";
+import { validateChunkManifest } from "./manifest-validator.ts";
 
 const fs = createFileSystem();
+const MAX_CHUNK_BYTES = 256 * 1024 * 1024;
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const relativePath = relative(rootPath, candidatePath);
+  return relativePath === "." ||
+    (!isAbsolute(relativePath) &&
+      relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !relativePath.startsWith("..\\"));
+}
 
 function toManifestPath(path: string, outDir: string): string {
   const absolutePath = isAbsolute(path) ? path : resolve(path);
@@ -20,7 +36,7 @@ function toManifestPath(path: string, outDir: string): string {
 
   if (
     !relativePath ||
-    relativePath.startsWith("/") ||
+    isAbsolute(relativePath) ||
     relativePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   ) {
     throw new TypeError(`Chunk output is outside the configured output directory: ${path}`);
@@ -31,8 +47,7 @@ function toManifestPath(path: string, outDir: string): string {
 
 /** Extracts entry name from entry point path */
 export function extractEntryName(entryPoint: string): string {
-  const filename = entryPoint.split("/").pop();
-  if (!filename) {
+  if (!entryPoint || /[\\/]$/.test(entryPoint)) {
     throw toError(
       createError({
         type: "config",
@@ -41,13 +56,12 @@ export function extractEntryName(entryPoint: string): string {
     );
   }
 
-  return filename.replace(/\.(ts|tsx|js|jsx|mdx)$/, "") || "unknown";
+  return basename(entryPoint).replace(/\.(ts|tsx|js|jsx|mdx)$/i, "") || "unknown";
 }
 
 /** Extracts chunk name from file path */
 export function extractChunkName(file: string): string {
-  const base = file.split("/").pop();
-  if (!base) {
+  if (!file || /[\\/]$/.test(file)) {
     throw toError(
       createError({
         type: "config",
@@ -56,12 +70,15 @@ export function extractChunkName(file: string): string {
     );
   }
 
-  return base.replace(/\.(js|css)$/, "");
+  return basename(file).replace(/\.(js|css)$/i, "");
 }
 
 /** Calculates SHA-256 hash of file content (returns first 8 hex chars) */
 export async function calculateFileHash(content: Uint8Array): Promise<string> {
-  return (await computeHashBytes(content.slice())).slice(0, 8);
+  const hashInput = content.buffer instanceof ArrayBuffer
+    ? new Uint8Array(content.buffer, content.byteOffset, content.byteLength)
+    : content.slice();
+  return (await computeHashBytes(hashInput)).slice(0, 8);
 }
 
 /** Determines which imports are critical and should be preloaded */
@@ -69,12 +86,62 @@ export function isCriticalImport(path: string): boolean {
   return path.includes("react") || path.includes("veryfront") || path.includes("router");
 }
 
+function getBundledImportPaths(output: MetafileOutput, outDir: string): string[] {
+  const paths = (output.imports ?? [])
+    .filter((imported) => !imported.external)
+    .map((imported) => toManifestPath(imported.path, outDir))
+    .sort(compareText);
+
+  for (let index = 1; index < paths.length; index++) {
+    if (paths[index] === paths[index - 1]) {
+      throw new TypeError(`Chunk metadata contains a duplicate import: ${paths[index]}`);
+    }
+  }
+  return paths;
+}
+
 /** Gets preload hints for critical imports */
 export function getPreloadHints(output: MetafileOutput, outDir: string): string[] {
-  const imports = output.imports ?? [];
-  return imports.filter((imp) => isCriticalImport(imp.path)).map((imp) =>
-    toManifestPath(imp.path, outDir)
-  );
+  return getBundledImportPaths(output, outDir).filter(isCriticalImport);
+}
+
+async function readVerifiedChunk(
+  file: string,
+  output: MetafileOutput,
+  outDir: string,
+): Promise<Uint8Array> {
+  const info = fs.lstat ? await fs.lstat(file) : await fs.stat(file);
+  if (
+    info.isSymlink ||
+    !info.isFile ||
+    info.isDirectory ||
+    !Number.isSafeInteger(info.size) ||
+    info.size < 0 ||
+    info.size > MAX_CHUNK_BYTES
+  ) {
+    throw new TypeError("Chunk output is not a safe bounded regular file");
+  }
+  if (
+    !Number.isSafeInteger(output.bytes) ||
+    output.bytes < 0 ||
+    output.bytes !== info.size
+  ) {
+    throw new TypeError("Chunk output size does not match bundler metadata");
+  }
+
+  const [physicalOutDir, physicalFile] = await Promise.all([
+    realPath(outDir),
+    realPath(file),
+  ]);
+  if (!isPathWithin(physicalOutDir, physicalFile)) {
+    throw new TypeError("Chunk output resolved outside the configured output directory");
+  }
+
+  const content = await fs.readFile(file);
+  if (content.byteLength !== info.size || content.byteLength > MAX_CHUNK_BYTES) {
+    throw new TypeError("Chunk output changed while it was being read");
+  }
+  return content;
 }
 
 /** Extracts chunk information from metafile output */
@@ -83,13 +150,13 @@ export async function getChunkInfo(
   output: MetafileOutput,
   outDir: string,
 ): Promise<ChunkInfo> {
-  const content = await fs.readFile(file);
+  const content = await readVerifiedChunk(file, output, outDir);
   const hash = await calculateFileHash(content);
 
   return {
     name: extractChunkName(file),
     file: toManifestPath(file, outDir),
-    imports: output.imports.map((imp) => toManifestPath(imp.path, outDir)),
+    imports: getBundledImportPaths(output, outDir),
     css: output.cssBundle ? toManifestPath(output.cssBundle, outDir) : undefined,
     size: content.byteLength,
     hash,
@@ -117,7 +184,7 @@ function addRouteToManifest(
 
   manifest.routes[routePath] = {
     entry: relativePath,
-    chunks: output.imports.map((imp) => toManifestPath(imp.path, outDir)),
+    chunks: getBundledImportPaths(output, outDir),
     css: output.cssBundle ? [toManifestPath(output.cssBundle, outDir)] : [],
     preload: getPreloadHints(output, outDir),
   };
@@ -130,34 +197,53 @@ export async function buildManifest(
   outDir: string,
 ): Promise<ChunkManifest> {
   const manifest: ChunkManifest = {
-    version: "1.0",
-    routes: {},
-    chunks: {},
+    version: CHUNK_MANIFEST_VERSION,
+    routes: Object.create(null),
+    chunks: Object.create(null),
     shared: [],
   };
 
-  for (
-    const [outputFile, output] of Object.entries(metafile.outputs).sort(([left], [right]) =>
-      left.localeCompare(right)
-    )
-  ) {
+  const outputs = Object.entries(metafile.outputs);
+  if (outputs.length > MAX_CHUNK_MANIFEST_ENTRIES) {
+    throw new TypeError(
+      `Code splitter emitted more than ${MAX_CHUNK_MANIFEST_ENTRIES} outputs`,
+    );
+  }
+  outputs.sort(([left], [right]) => compareText(left, right));
+
+  const emittedEntries = new Set<string>();
+  for (const [outputFile, output] of outputs) {
     if (!outputFile.endsWith(".js")) continue;
 
     const relativePath = toManifestPath(outputFile, outDir);
+    if (Object.hasOwn(manifest.chunks, relativePath)) {
+      throw new TypeError(`Duplicate chunk output path: ${relativePath}`);
+    }
     manifest.chunks[relativePath] = await getChunkInfo(outputFile, output, outDir);
 
     if (output.entryPoint) {
       addRouteToManifest(manifest, output, relativePath, routeMap, outDir);
+      emittedEntries.add(extractChunkName(relativePath));
       continue;
     }
 
     manifest.shared.push(relativePath);
   }
 
-  return manifest;
+  for (const entryName of routeMap.keys()) {
+    if (!emittedEntries.has(entryName)) {
+      throw new TypeError(`No JavaScript output was emitted for code-splitter entry ${entryName}`);
+    }
+  }
+
+  return validateChunkManifest(manifest);
 }
 
 /** Writes manifest to disk as JSON */
 export async function writeManifest(manifest: ChunkManifest, outDir: string): Promise<void> {
-  await fs.writeTextFile(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+  const validatedManifest = validateChunkManifest(manifest);
+  await fs.writeTextFile(
+    join(outDir, "manifest.json"),
+    JSON.stringify(validatedManifest, null, 2),
+  );
 }

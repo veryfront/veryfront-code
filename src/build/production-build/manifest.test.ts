@@ -163,6 +163,82 @@ describe("build/production-build/manifest", () => {
       assertEquals(route.chunks, ["chunk-a.js"]);
     });
 
+    it("canonicalizes route and chunk ordering into a detached snapshot", () => {
+      const unorderedManifest: ChunkManifest = {
+        version: "1.0",
+        routes: {
+          "/": {
+            entry: "entry.js",
+            chunks: ["chunk-b.js", "chunk-a.js"],
+            preload: ["chunk-b.js", "chunk-a.js"],
+          },
+        },
+        chunks: {
+          "entry.js": {
+            name: "entry",
+            file: "entry.js",
+            imports: ["chunk-b.js", "chunk-a.js"],
+            size: 24,
+            hash: "1234abcd",
+          },
+          "chunk-b.js": {
+            name: "chunk-b",
+            file: "chunk-b.js",
+            imports: [],
+            size: 12,
+            hash: "5678abcd",
+          },
+          "chunk-a.js": {
+            name: "chunk-a",
+            file: "chunk-a.js",
+            imports: [],
+            size: 12,
+            hash: "90abcdef",
+          },
+        },
+        shared: ["chunk-b.js", "chunk-a.js"],
+      };
+      const result = generateManifest({
+        ...baseOptions,
+        routes: [...baseOptions.routes].reverse(),
+        enableSplitting: true,
+        chunkManifest: unorderedManifest,
+        stats: {
+          ...baseOptions.stats,
+          chunks: 3,
+        },
+      });
+
+      assertEquals(result.routes.map((route) => route.path), ["/", "/about"]);
+      assertEquals(Object.keys(result.chunks!.chunks), [
+        "chunk-a.js",
+        "chunk-b.js",
+        "entry.js",
+      ]);
+      assertEquals(result.chunks!.chunks["entry.js"]?.imports, [
+        "chunk-a.js",
+        "chunk-b.js",
+      ]);
+      assertEquals(result.chunks!.routes["/"]?.chunks, [
+        "chunk-a.js",
+        "chunk-b.js",
+      ]);
+      assertEquals(result.chunks!.shared, ["chunk-a.js", "chunk-b.js"]);
+
+      unorderedManifest.routes["/"]!.chunks.push("entry.js");
+      unorderedManifest.chunks["entry.js"]!.imports.push("entry.js");
+      unorderedManifest.shared.push("entry.js");
+      assertEquals(result.chunks!.routes["/"]?.chunks, [
+        "chunk-a.js",
+        "chunk-b.js",
+      ]);
+      assertEquals(result.chunks!.chunks["entry.js"]?.imports, [
+        "chunk-a.js",
+        "chunk-b.js",
+      ]);
+      assertEquals(result.chunks!.shared, ["chunk-a.js", "chunk-b.js"]);
+    });
+
     it("fails the build for an invalid chunk manifest", () => {
       const error = assertThrows(
         () =>

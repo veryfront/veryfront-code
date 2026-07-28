@@ -10,6 +10,7 @@ import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import type { SplitOptions } from "./types.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { combinePrimaryAndCleanupFailures } from "./lifecycle-errors.ts";
 
 /** Veryfront client modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_CLIENT_MODULES = [
@@ -110,35 +111,57 @@ export async function createBuildContext(
   } catch (error) {
     try {
       await removeShim();
-    } catch {
-      // Preserve the context-creation failure as the primary error.
+    } catch (cleanupError) {
+      throw combinePrimaryAndCleanupFailures(
+        error,
+        cleanupError,
+        "Code-splitter context creation failed and shim cleanup also failed",
+      );
     }
     throw error;
   }
 
-  let disposed = false;
-  return {
-    rebuild: () => delegate.rebuild(),
-    async dispose(): Promise<void> {
-      if (disposed) return;
-      disposed = true;
+  let delegateDisposed = false;
+  let shimRemoved = false;
+  let disposePromise: Promise<void> | undefined;
 
-      let disposeError: unknown;
+  const disposeGeneration = async (): Promise<void> => {
+    const failures: unknown[] = [];
+    if (!delegateDisposed) {
       try {
         await delegate.dispose();
+        delegateDisposed = true;
       } catch (error) {
-        disposeError = error;
+        failures.push(error);
       }
-
-      let cleanupError: unknown;
+    }
+    if (!shimRemoved) {
       try {
         await removeShim();
+        shimRemoved = true;
       } catch (error) {
-        cleanupError = error;
+        failures.push(error);
       }
+    }
 
-      if (disposeError !== undefined) throw disposeError;
-      if (cleanupError !== undefined) throw cleanupError;
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Code-splitter context disposal failed");
+    }
+  };
+
+  return {
+    rebuild: () => delegate.rebuild(),
+    dispose(): Promise<void> {
+      if (delegateDisposed && shimRemoved) return Promise.resolve();
+      if (disposePromise) return disposePromise;
+
+      const current = disposeGeneration();
+      const tracked = current.finally(() => {
+        if (disposePromise === tracked) disposePromise = undefined;
+      });
+      disposePromise = tracked;
+      return tracked;
     },
   };
 }

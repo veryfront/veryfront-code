@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
@@ -116,24 +116,26 @@ describe("build/bundler/code-splitter/splitter", () => {
       assertEquals(disposed, true);
     });
 
-    it("preserves the rebuild error when disposal also fails", async () => {
+    it("preserves both rebuild and disposal failures", async () => {
       const rebuildError = new Error("primary rebuild failure");
+      const disposeError = new Error("secondary disposal failure");
       const buildContext: BuildContext = {
         rebuild() {
           return Promise.reject(rebuildError);
         },
         dispose() {
-          return Promise.reject(new Error("secondary disposal failure"));
+          return Promise.reject(disposeError);
         },
       };
 
       const error = await assertRejects(
         () => rebuildAndDispose(buildContext),
-        Error,
-        "primary rebuild failure",
+        AggregateError,
+        "rebuild failed and context disposal also failed",
       );
 
-      assertEquals(error, rebuildError);
+      assertInstanceOf(error, AggregateError);
+      assertEquals(error.errors, [rebuildError, disposeError]);
     });
 
     it("strips server-only page dependencies before building production browser chunks", async () => {
@@ -178,6 +180,10 @@ describe("build/bundler/code-splitter/splitter", () => {
         const splitResult = await splitter.split();
         assertEquals(tryResolve("CodeParser") !== undefined, true);
         assertEquals(splitResult.manifest.routes["/"]?.entry, "index.js");
+        assertEquals(
+          splitResult.entries.get("index.js") === splitResult.manifest.chunks["index.js"],
+          true,
+        );
         const browserOutputs = await readJsOutputs(outDir);
 
         assertEquals(browserOutputs.includes("browser page"), true);
@@ -195,6 +201,61 @@ describe("build/bundler/code-splitter/splitter", () => {
         await stop();
         if (previousCodeParser) register("CodeParser", previousCodeParser);
         else unregister("CodeParser");
+        await remove(projectDir, { recursive: true });
+        await remove(outDir, { recursive: true });
+      }
+    });
+
+    it("builds shared chunks with external imports excluded from manifest assets", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-splitter-project-" });
+      const outDir = await makeTempDir({ prefix: "vf-splitter-out-" });
+
+      try {
+        const sharedPath = join(projectDir, "shared.ts");
+        const firstPath = join(projectDir, "first.ts");
+        const secondPath = join(projectDir, "second.ts");
+        await writeTextFile(sharedPath, `export const shared = "shared";`);
+        await writeTextFile(
+          firstPath,
+          [
+            `import React from "react";`,
+            `import { shared } from "./shared.ts";`,
+            `console.log(React, shared);`,
+          ].join("\n"),
+        );
+        await writeTextFile(
+          secondPath,
+          [
+            `import React from "react";`,
+            `import { shared } from "./shared.ts";`,
+            `console.log(React, shared);`,
+          ].join("\n"),
+        );
+
+        const result = await new CodeSplitter({
+          projectDir,
+          outDir,
+          mode: "production",
+          routes: [
+            { path: "/first", file: firstPath, name: "first" },
+            { path: "/second", file: secondPath, name: "second" },
+          ],
+          moduleResolution: "bundled",
+        }).split();
+
+        assertEquals(result.entries.size, 2);
+        assertEquals(result.shared.size, 1);
+        const sharedChunk = result.manifest.shared[0];
+        assertEquals(typeof sharedChunk, "string");
+        assertEquals(result.manifest.routes["/first"]?.chunks, [sharedChunk]);
+        assertEquals(result.manifest.routes["/second"]?.chunks, [sharedChunk]);
+        assertEquals(
+          result.shared.get(sharedChunk!) === result.manifest.chunks[sharedChunk!],
+          true,
+        );
+        assertEquals(Object.hasOwn(result.manifest.chunks, "react"), false);
+      } finally {
+        await stop();
         await remove(projectDir, { recursive: true });
         await remove(outDir, { recursive: true });
       }

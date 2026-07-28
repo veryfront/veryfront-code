@@ -13,6 +13,7 @@ export type {
 } from "./types.ts";
 
 export { CodeSplitter } from "./splitter.ts";
+export { validateChunkManifest } from "./manifest-validator.ts";
 
 export { convertPathToName, createEntryPoints } from "./entry-points.ts";
 export {
@@ -33,169 +34,12 @@ import { CodeSplitter } from "./splitter.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
-
-const MAX_CHUNK_MANIFEST_BYTES = 5 * 1024 * 1024;
-const MAX_MANIFEST_RECORD_ENTRIES = 10_000;
-const MAX_MANIFEST_LIST_ENTRIES = 10_000;
-const MAX_MANIFEST_PATH_LENGTH = 2_048;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function assertBoundedRecord(
-  value: unknown,
-  description: string,
-): asserts value is Record<string, unknown> {
-  if (!isRecord(value)) throw new TypeError(`${description} must be an object`);
-  if (Object.keys(value).length > MAX_MANIFEST_RECORD_ENTRIES) {
-    throw new TypeError(`${description} has too many entries`);
-  }
-}
-
-function assertAssetPath(value: unknown, description: string): asserts value is string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_MANIFEST_PATH_LENGTH ||
-    value.startsWith("/") ||
-    value.includes("\\") ||
-    value.includes(":") ||
-    value.includes("?") ||
-    value.includes("#") ||
-    hasControlCharacters(value) ||
-    /["'<>]/.test(value) ||
-    value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-  ) {
-    throw new TypeError(`${description} must be a safe relative asset path`);
-  }
-}
-
-function assertRoutePath(value: string): void {
-  if (
-    value.length === 0 ||
-    value.length > MAX_MANIFEST_PATH_LENGTH ||
-    !value.startsWith("/") ||
-    value.includes("\\") ||
-    value.includes("?") ||
-    value.includes("#") ||
-    hasControlCharacters(value) ||
-    (value !== "/" &&
-      value.split("/").some((segment, index) =>
-        index > 0 && (segment === "" || segment === "." || segment === "..")
-      ))
-  ) {
-    throw new TypeError(`Invalid route path in chunk manifest: ${JSON.stringify(value)}`);
-  }
-}
-
-function assertAssetPathList(
-  value: unknown,
-  description: string,
-): asserts value is string[] {
-  if (!Array.isArray(value) || value.length > MAX_MANIFEST_LIST_ENTRIES) {
-    throw new TypeError(`${description} must be a bounded array`);
-  }
-
-  const unique = new Set<string>();
-  for (const [index, item] of value.entries()) {
-    assertAssetPath(item, `${description}[${index}]`);
-    if (unique.has(item)) throw new TypeError(`${description} contains duplicate paths`);
-    unique.add(item);
-  }
-}
-
-function assertOptionalAssetPathList(
-  value: unknown,
-  description: string,
-): asserts value is string[] | undefined {
-  if (value !== undefined) assertAssetPathList(value, description);
-}
-
-export function validateChunkManifest(value: unknown): ChunkManifest {
-  assertBoundedRecord(value, "Chunk manifest");
-  if (value.version !== "1.0") {
-    throw new TypeError(`Unsupported chunk manifest version: ${String(value.version)}`);
-  }
-
-  assertBoundedRecord(value.routes, "Chunk manifest routes");
-  assertBoundedRecord(value.chunks, "Chunk manifest chunks");
-  assertAssetPathList(value.shared, "Chunk manifest shared chunks");
-
-  for (const [file, rawChunk] of Object.entries(value.chunks)) {
-    assertAssetPath(file, `Chunk manifest key ${JSON.stringify(file)}`);
-    assertBoundedRecord(rawChunk, `Chunk manifest entry ${JSON.stringify(file)}`);
-    if (
-      typeof rawChunk.name !== "string" ||
-      rawChunk.name.length === 0 ||
-      rawChunk.name.length > 256 ||
-      hasControlCharacters(rawChunk.name)
-    ) {
-      throw new TypeError(`Chunk ${JSON.stringify(file)} has an invalid name`);
-    }
-    assertAssetPath(rawChunk.file, `Chunk ${JSON.stringify(file)} file`);
-    if (rawChunk.file !== file) {
-      throw new TypeError(`Chunk ${JSON.stringify(file)} does not match its file field`);
-    }
-    assertAssetPathList(rawChunk.imports, `Chunk ${JSON.stringify(file)} imports`);
-    for (const importedChunk of rawChunk.imports) {
-      if (!Object.hasOwn(value.chunks, importedChunk)) {
-        throw new TypeError(
-          `Chunk ${JSON.stringify(file)} imports unknown chunk ${JSON.stringify(importedChunk)}`,
-        );
-      }
-    }
-    if (rawChunk.css !== undefined) {
-      assertAssetPath(rawChunk.css, `Chunk ${JSON.stringify(file)} CSS`);
-    }
-    if (
-      typeof rawChunk.size !== "number" ||
-      !Number.isSafeInteger(rawChunk.size) ||
-      rawChunk.size < 0
-    ) {
-      throw new TypeError(`Chunk ${JSON.stringify(file)} has an invalid size`);
-    }
-    if (typeof rawChunk.hash !== "string" || !/^[0-9a-f]{8}$/.test(rawChunk.hash)) {
-      throw new TypeError(`Chunk ${JSON.stringify(file)} has an invalid hash`);
-    }
-  }
-
-  for (const [routePath, rawRoute] of Object.entries(value.routes)) {
-    assertRoutePath(routePath);
-    assertBoundedRecord(rawRoute, `Chunk manifest route ${JSON.stringify(routePath)}`);
-    assertAssetPath(rawRoute.entry, `Route ${JSON.stringify(routePath)} entry`);
-    assertAssetPathList(rawRoute.chunks, `Route ${JSON.stringify(routePath)} chunks`);
-    assertOptionalAssetPathList(rawRoute.css, `Route ${JSON.stringify(routePath)} CSS`);
-    assertOptionalAssetPathList(rawRoute.preload, `Route ${JSON.stringify(routePath)} preload`);
-    if (!Object.hasOwn(value.chunks, rawRoute.entry)) {
-      throw new TypeError(`Route ${JSON.stringify(routePath)} references an unknown entry chunk`);
-    }
-    for (const chunk of rawRoute.chunks) {
-      if (!Object.hasOwn(value.chunks, chunk)) {
-        throw new TypeError(
-          `Route ${JSON.stringify(routePath)} references unknown chunk ${JSON.stringify(chunk)}`,
-        );
-      }
-    }
-    for (const preload of rawRoute.preload ?? []) {
-      if (!Object.hasOwn(value.chunks, preload)) {
-        throw new TypeError(
-          `Route ${JSON.stringify(routePath)} preloads unknown chunk ${JSON.stringify(preload)}`,
-        );
-      }
-    }
-  }
-
-  for (const shared of value.shared) {
-    if (!Object.hasOwn(value.chunks, shared)) {
-      throw new TypeError(
-        `Chunk manifest references unknown shared chunk ${JSON.stringify(shared)}`,
-      );
-    }
-  }
-
-  return value as unknown as ChunkManifest;
-}
+import { MAX_CHUNK_MANIFEST_BYTES } from "./constants.ts";
+import {
+  assertAssetPath,
+  MAX_MANIFEST_PATH_LENGTH,
+  validateChunkManifest,
+} from "./manifest-validator.ts";
 
 export function createCodeSplitter(options: SplitOptions): CodeSplitter {
   return new CodeSplitter(options);
@@ -205,14 +49,33 @@ export async function loadChunkManifest(manifestPath: string): Promise<ChunkMani
   const fs = createFileSystem();
 
   try {
-    const stat = await fs.stat(manifestPath);
-    if (stat.size > MAX_CHUNK_MANIFEST_BYTES) {
-      throw new TypeError("Chunk manifest exceeds the maximum supported size");
+    const info = fs.lstat ? await fs.lstat(manifestPath) : await fs.stat(manifestPath);
+    if (
+      info.isSymlink ||
+      !info.isFile ||
+      info.isDirectory ||
+      !Number.isSafeInteger(info.size) ||
+      info.size < 0 ||
+      info.size > MAX_CHUNK_MANIFEST_BYTES
+    ) {
+      throw new TypeError("Chunk manifest must be a safe bounded regular file");
     }
 
-    const content = await fs.readTextFile(manifestPath);
-    if (new TextEncoder().encode(content).byteLength > MAX_CHUNK_MANIFEST_BYTES) {
-      throw new TypeError("Chunk manifest exceeds the maximum supported size");
+    const bytes = await fs.readFile(manifestPath);
+    if (
+      bytes.byteLength !== info.size ||
+      bytes.byteLength > MAX_CHUNK_MANIFEST_BYTES
+    ) {
+      throw new TypeError("Chunk manifest changed while it was being read");
+    }
+
+    let content: string;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (error) {
+      throw new TypeError("Chunk manifest must contain valid UTF-8", {
+        cause: error,
+      });
     }
     return validateChunkManifest(JSON.parse(content));
   } catch (error) {

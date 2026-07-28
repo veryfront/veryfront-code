@@ -5,6 +5,7 @@ import {
   validateChunkManifest,
 } from "#veryfront/build/bundler/index.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
+import { PRODUCTION_BUILD_FORMAT_VERSION } from "./constants.ts";
 
 export type ManifestChunkInfo = ChunkInfo;
 
@@ -42,6 +43,48 @@ export interface ManifestOptions {
   chunkManifest: ChunkManifest | null;
 }
 
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function canonicalizeChunkManifest(manifest: ChunkManifest): ChunkManifest {
+  const chunks = Object.fromEntries(
+    Object.entries(manifest.chunks)
+      .sort(([left], [right]) => compareText(left, right))
+      .map(([path, chunk]) => [
+        path,
+        {
+          name: chunk.name,
+          file: chunk.file,
+          imports: [...chunk.imports].sort(compareText),
+          ...(chunk.css === undefined ? {} : { css: chunk.css }),
+          size: chunk.size,
+          hash: chunk.hash,
+        },
+      ]),
+  );
+  const routes = Object.fromEntries(
+    Object.entries(manifest.routes)
+      .sort(([left], [right]) => compareText(left, right))
+      .map(([path, route]) => [
+        path,
+        {
+          entry: route.entry,
+          chunks: [...route.chunks].sort(compareText),
+          ...(route.css === undefined ? {} : { css: [...route.css].sort(compareText) }),
+          ...(route.preload === undefined ? {} : { preload: [...route.preload].sort(compareText) }),
+        },
+      ]),
+  );
+
+  return {
+    version: manifest.version,
+    routes,
+    chunks,
+    shared: [...manifest.shared].sort(compareText),
+  };
+}
+
 function assertNonNegativeSafeInteger(value: number, description: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw BUILD_FAILED.create({
@@ -73,7 +116,7 @@ function requireValidChunkManifest(
   }
 
   try {
-    return validateChunkManifest(manifest);
+    return canonicalizeChunkManifest(validateChunkManifest(manifest));
   } catch (error) {
     throw BUILD_FAILED.create({
       detail: "Invalid chunk manifest produced by the build",
@@ -148,11 +191,24 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
 
   function getChunksForRoute(path: string): string[] {
     if (!enableSplitting || !validatedManifest) return [];
-    return validatedManifest.routes[path]?.chunks ?? [];
+    return [...(validatedManifest.routes[path]?.chunks ?? [])];
   }
 
+  const manifestRoutes = [
+    ...generatedRoutes.map((route) => ({
+      path: route.path,
+      slug: route.slug,
+      chunks: getChunksForRoute(route.path),
+    })),
+    ...generatedAppRoutes.map((route) => ({
+      path: route.path,
+      slug: route.path === "/" ? "index" : route.path.slice(1),
+      chunks: [],
+    })),
+  ].sort((left, right) => compareText(left.path, right.path));
+
   return {
-    version: "2.0.0",
+    version: PRODUCTION_BUILD_FORMAT_VERSION,
     buildTime: new Date().toISOString(),
     features: {
       streaming: true,
@@ -161,18 +217,7 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
       prefetching: enablePrefetch,
       compression: enableCompression,
     },
-    routes: [
-      ...generatedRoutes.map((r) => ({
-        path: r.path,
-        slug: r.slug,
-        chunks: getChunksForRoute(r.path),
-      })),
-      ...generatedAppRoutes.map((r) => ({
-        path: r.path,
-        slug: r.path === "/" ? "index" : r.path.slice(1),
-        chunks: [],
-      })),
-    ],
+    routes: manifestRoutes,
     chunks: validatedManifest,
     stats: {
       pages: stats.pages,

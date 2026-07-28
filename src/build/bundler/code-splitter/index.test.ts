@@ -191,6 +191,20 @@ describe("build/bundler/code-splitter/index", () => {
       assertEquals(validateChunkManifest(validManifest), validManifest);
     });
 
+    it("rejects non-canonical Unicode paths", () => {
+      assertThrows(
+        () =>
+          validateChunkManifest({
+            ...validManifest,
+            routes: {
+              ["/cafe\u0301"]: validManifest.routes["/"],
+            },
+          }),
+        TypeError,
+        "Invalid route path",
+      );
+    });
+
     it("rejects routes that reference missing entry chunks", () => {
       assertThrows(
         () =>
@@ -244,6 +258,38 @@ describe("build/bundler/code-splitter/index", () => {
       const manifestPath = `${tempDir}/manifest.json`;
       try {
         await Deno.writeTextFile(manifestPath, '{"version":"future"}');
+        await assertRejects(
+          () => loadChunkManifest(manifestPath),
+          Error,
+          "Failed to load chunk manifest",
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects non-UTF-8 on-disk manifests", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-chunk-manifest-" });
+      const manifestPath = `${tempDir}/manifest.json`;
+      try {
+        await Deno.writeFile(manifestPath, new Uint8Array([0xff]));
+        await assertRejects(
+          () => loadChunkManifest(manifestPath),
+          Error,
+          "Failed to load chunk manifest",
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("rejects symbolic-link manifest files", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-chunk-manifest-" });
+      const targetPath = `${tempDir}/target.json`;
+      const manifestPath = `${tempDir}/manifest.json`;
+      try {
+        await Deno.writeTextFile(targetPath, JSON.stringify(validManifest));
+        await Deno.symlink(targetPath, manifestPath);
         await assertRejects(
           () => loadChunkManifest(manifestPath),
           Error,
