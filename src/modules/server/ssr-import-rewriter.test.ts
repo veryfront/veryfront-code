@@ -184,6 +184,57 @@ describe("modules/server/ssr-import-rewriter", () => {
     });
   });
 
+  describe("applySSRImportRewritesAsync - lexer-bounded imports", () => {
+    it("rewrites every literal ESM import form without touching strings or comments", async () => {
+      const code = [
+        `const text = 'import fake from "@/fake";';`,
+        `// export { fake } from "./fake.js";`,
+        `import "@/side-effect";`,
+        `export { value } from "@/exported";`,
+        `const lazy = import("./lazy.js");`,
+        `export * from "../shared.mjs";`,
+      ].join("\n");
+
+      assertEquals(
+        await applySSRImportRewritesAsync(code, { cacheBuster: "revision" }),
+        [
+          `const text = 'import fake from "@/fake";';`,
+          `// export { fake } from "./fake.js";`,
+          `import "/_vf_modules/side-effect.js?ssr=true&v=revision";`,
+          `export { value } from "/_vf_modules/exported.js?ssr=true&v=revision";`,
+          `const lazy = import("./lazy.js?ssr=true&v=revision");`,
+          `export * from "../shared.mjs?ssr=true&v=revision";`,
+        ].join("\n"),
+      );
+    });
+
+    it("rewrites bare side-effect, re-export, and dynamic imports", async () => {
+      const code = [
+        `import "react";`,
+        `export { createRoot } from "react-dom/client";`,
+        `const runtime = import("react/jsx-runtime");`,
+      ].join("\n");
+
+      const result = await applySSRImportRewritesAsync(code, {
+        reactVersion: "19.1.1",
+      });
+
+      assertEquals(result.includes(`import "react"`), false);
+      assertEquals(result.includes(`from "react-dom/client"`), false);
+      assertEquals(result.includes(`import("react/jsx-runtime")`), false);
+      assertEquals(result.match(/https:\/\/esm\.sh\//g)?.length, 3);
+    });
+
+    it("preserves runtime protocols and Node package-import aliases", async () => {
+      const code = [
+        `import value from "data:text/javascript,export default 1";`,
+        `export { internal } from "#internal";`,
+      ].join("\n");
+
+      assertEquals(await applySSRImportRewritesAsync(code), code);
+    });
+  });
+
   describe("applySSRImportRewrites - multiple imports", () => {
     it("should rewrite multiple imports in same code", () => {
       const code = [

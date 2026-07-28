@@ -5,9 +5,12 @@ import {
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
 
 type CacheBuster = number | string;
 const MAX_SSR_QUERY_IDENTITY_CODE_UNITS = 1_024;
+const SSR_RELATIVE_MODULE_SPECIFIER = /^(?:\.\.?\/|\/).+\.(?:mjs|js)$/i;
+const EXPLICIT_SPECIFIER_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export interface SSRImportRewriteTarget {
   specifier: string;
@@ -67,15 +70,14 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
   if (specifier.startsWith("npm:")) return isDeno;
 
-  if (
-    specifier.startsWith("http://") ||
-    specifier.startsWith("https://") ||
-    specifier.startsWith("file://") ||
-    specifier.startsWith("node:")
-  ) {
+  // Runtime protocols (node:, data:, jsr:, bun:, file:, http:, and future
+  // schemes) are already complete identities, not npm package names.
+  if (EXPLICIT_SPECIFIER_SCHEME.test(specifier)) {
     return true;
   }
 
+  // Node package-import maps use `#`-prefixed specifiers.
+  if (specifier.startsWith("#")) return true;
   if (specifier.startsWith("@/")) return true;
   if (specifier.startsWith("veryfront/")) return true;
 
@@ -111,18 +113,21 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   return null;
 }
 
-function rewriteBareImports(code: string, version?: string): string {
+function rewriteBareSpecifier(specifier: string, version?: string): string {
   const v = version ?? DEFAULT_REACT_VERSION;
+  const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
 
+  const reactUrl = resolveReactForRuntime(bareSpecifier, v);
+  if (reactUrl) return reactUrl;
+
+  if (shouldKeepBareSpecifier(specifier)) return specifier;
+
+  return `https://esm.sh/${bareSpecifier}?external=react&target=es2022`;
+}
+
+function rewriteBareImports(code: string, version?: string): string {
   return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
-    const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
-
-    const reactUrl = resolveReactForRuntime(bareSpecifier, v);
-    if (reactUrl) return `from "${reactUrl}"`;
-
-    if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
-
-    return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
+    return `from "${rewriteBareSpecifier(specifier, version)}"`;
   });
 }
 
@@ -260,6 +265,13 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
   });
 }
 
+/**
+ * Legacy synchronous SSR import rewriting.
+ *
+ * @deprecated Use {@link rewriteSSRImportsCompatAsync}. This compatibility
+ * path cannot initialize the module lexer and therefore retains its historical
+ * regex-bounded behavior.
+ */
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
   let result = rewriteBareImports(code, options.reactVersion);
   result = rewritePathAliases(result, options);
@@ -267,61 +279,74 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
   return result;
 }
 
-async function replaceAsync(
-  code: string,
-  pattern: RegExp,
-  replacer: (match: RegExpExecArray) => Promise<string>,
+async function rewriteAliasSpecifierAsync(
+  specifier: string,
+  options: SSRRewriteOptions,
 ): Promise<string> {
-  const chunks: string[] = [];
-  let lastIndex = 0;
-  pattern.lastIndex = 0;
+  const scopedParams = buildScopedParams(options);
+  const { target, prefix } = buildAliasRewrite(specifier.slice(2), options);
+  const cacheBuster = await getCacheBusterAsync(target, options);
+  return `${prefix}${scopedParams}&v=${encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")}`;
+}
 
-  for (let match = pattern.exec(code); match; match = pattern.exec(code)) {
-    chunks.push(code.slice(lastIndex, match.index));
-    chunks.push(await replacer(match));
-    lastIndex = match.index + match[0].length;
+async function rewriteRelativeSpecifierAsync(
+  specifier: string,
+  options: SSRRewriteOptions,
+): Promise<string> {
+  const scopedParams = buildScopedParams(options);
+  const { target, prefix } = buildRelativeRewrite(specifier);
+  const cacheBuster = await getCacheBusterAsync(target, options);
+  return `${prefix}${scopedParams}&v=${encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")}`;
+}
+
+async function rewriteSSRSpecifierAsync(
+  specifier: string,
+  options: SSRRewriteOptions,
+): Promise<string | null> {
+  if (specifier.startsWith("@/")) {
+    return await rewriteAliasSpecifierAsync(specifier, options);
   }
 
-  chunks.push(code.slice(lastIndex));
-  return chunks.join("");
+  if (SSR_RELATIVE_MODULE_SPECIFIER.test(specifier)) {
+    return await rewriteRelativeSpecifierAsync(specifier, options);
+  }
+
+  if (
+    specifier.length === 0 ||
+    specifier.startsWith(".") ||
+    specifier.startsWith("/")
+  ) {
+    return null;
+  }
+
+  const rewritten = rewriteBareSpecifier(specifier, options.reactVersion);
+  return rewritten === specifier ? null : rewritten;
 }
 
-async function rewritePathAliasesAsync(
-  code: string,
-  options: SSRRewriteOptions,
-): Promise<string> {
-  const scopedParams = buildScopedParams(options);
-  return await replaceAsync(code, /from\s+["']@\/([^"']+)["']/g, async (match) => {
-    const path = match[1] ?? "";
-    const { target, prefix } = buildAliasRewrite(path, options);
-    const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${
-      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
-    }"`;
-  });
-}
-
-async function rewriteRelativeImportsAsync(
-  code: string,
-  options: SSRRewriteOptions,
-): Promise<string> {
-  const scopedParams = buildScopedParams(options);
-  return await replaceAsync(code, /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, async (match) => {
-    const path = match[1] ?? "";
-    const { target, prefix } = buildRelativeRewrite(path);
-    const cacheBuster = await getCacheBusterAsync(target, options);
-    return `from "${prefix}${scopedParams}&v=${
-      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
-    }"`;
-  });
-}
-
+/**
+ * Rewrite literal ESM import specifiers for the SSR runtime.
+ *
+ * A single module-lexer parse bounds every edit to a real static import,
+ * re-export, side-effect import, or literal dynamic import. Import-looking
+ * text in comments and strings is never considered.
+ */
 export async function rewriteSSRImportsCompatAsync(
   code: string,
   options: SSRRewriteOptions = {},
 ): Promise<string> {
-  let result = rewriteBareImports(code, options.reactVersion);
-  result = await rewritePathAliasesAsync(result, options);
-  result = await rewriteRelativeImportsAsync(result, options);
-  return result;
+  const parsed = await parseImportEdits(code);
+  const rewrites = new Map<number, { specifier: string }>();
+
+  for (let index = 0; index < parsed.imports.length; index++) {
+    const imported = parsed.imports[index]!;
+    const replacement = await rewriteSSRSpecifierAsync(
+      imported.specifier,
+      options,
+    );
+    if (replacement !== null && replacement !== imported.specifier) {
+      rewrites.set(index, { specifier: replacement });
+    }
+  }
+
+  return rewrites.size === 0 ? code : applyImportEdits(parsed, rewrites);
 }
