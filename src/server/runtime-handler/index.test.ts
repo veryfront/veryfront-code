@@ -87,6 +87,8 @@ describe("server/runtime-handler/index", () => {
     const projectDir = await Deno.makeTempDir();
     const adapter = new DenoAdapter();
     const { lines, restore } = captureConsoleOutput();
+    const originalVeryfrontEnv = Deno.env.get("VERYFRONT_ENV");
+    Deno.env.set("VERYFRONT_ENV", "development");
 
     try {
       const handler = createVeryfrontHandler(projectDir, adapter, {
@@ -97,6 +99,8 @@ describe("server/runtime-handler/index", () => {
       await handler(new Request("http://localhost/healthz"));
     } finally {
       restore();
+      if (originalVeryfrontEnv === undefined) Deno.env.delete("VERYFRONT_ENV");
+      else Deno.env.set("VERYFRONT_ENV", originalVeryfrontEnv);
       HMRHandler.shutdown();
       await Deno.remove(projectDir, { recursive: true });
     }
