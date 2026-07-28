@@ -171,6 +171,84 @@ function getDocumentNonce(): string | undefined {
   return nonce || undefined;
 }
 
+const HEAD_ATTRIBUTE_NAMES: Readonly<Record<string, string>> = {
+  charSet: "charset",
+  className: "class",
+  crossOrigin: "crossorigin",
+  fetchPriority: "fetchpriority",
+  htmlFor: "for",
+  httpEquiv: "http-equiv",
+  imageSizes: "imagesizes",
+  imageSrcSet: "imagesrcset",
+  noModule: "nomodule",
+  referrerPolicy: "referrerpolicy",
+};
+
+function getHeadElementContent(
+  props: Record<string, unknown>,
+): { content?: string; isRawHTML: boolean } {
+  const rawHTML = props.dangerouslySetInnerHTML;
+  if (
+    rawHTML && typeof rawHTML === "object" &&
+    "__html" in rawHTML
+  ) {
+    const value = (rawHTML as { __html?: unknown }).__html;
+    if (value !== undefined && value !== null) {
+      return { content: String(value), isRawHTML: true };
+    }
+  }
+
+  if (typeof props.children === "string" || typeof props.children === "number") {
+    return { content: String(props.children), isRawHTML: false };
+  }
+
+  return { isRawHTML: false };
+}
+
+function hasMatchingHeadScript(
+  id: string | undefined,
+  src: string | undefined,
+  content: string | undefined,
+): boolean {
+  for (const script of document.head.querySelectorAll<HTMLScriptElement>("script")) {
+    if (id && script.id === id) return true;
+    if (src && script.getAttribute("src") === src) return true;
+    if (
+      !id && !src && content !== undefined &&
+      script.hasAttribute("data-vf-head") &&
+      script.textContent === content
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function applyHeadElementAttributes(
+  element: Element,
+  props: Record<string, unknown>,
+): void {
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "children" || key === "dangerouslySetInnerHTML") continue;
+    // React event callbacks cannot be represented as HTML attributes. Turning
+    // a function into source text is both incorrect and unsafe.
+    if (/^on[A-Z]/.test(key) || typeof value === "function" || typeof value === "symbol") {
+      continue;
+    }
+
+    const attrName = HEAD_ATTRIBUTE_NAMES[key] ?? key;
+    if (typeof value === "boolean") {
+      if (value) element.setAttribute(attrName, "");
+      continue;
+    }
+
+    if (value != null && typeof value !== "object") {
+      element.setAttribute(attrName, String(value));
+    }
+  }
+}
+
 function collectHead(data: Parameters<CollectHeadFn>[0]): void {
   const collector = (globalThis as typeof globalThis & {
     [HEAD_COLLECTOR_SYMBOL]?: CollectHeadFn;
@@ -540,52 +618,29 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
         return;
       }
 
+      if (type === "script") {
+        const src = props.src as string | undefined;
+        const id = props.id as string | undefined;
+        const { content } = getHeadElementContent(props);
+        if (hasMatchingHeadScript(id, src, content)) return;
+      }
+
       const element = document.createElement(type);
       if ((type === "style" || type === "script") && !props.nonce && nonce) {
         element.setAttribute("nonce", nonce);
       }
+      applyHeadElementAttributes(element, props);
 
-      if (type === "script") {
-        const src = props.src as string | undefined;
-        const id = props.id as string | undefined;
-
-        if (id && document.querySelector(`script[data-vf-head][id="${id}"]`)) return;
-        if (src && document.querySelector(`script[data-vf-head][src="${src}"]`)) return;
-
-        const content = typeof props.children === "string"
-          ? props.children
-          : (props.dangerouslySetInnerHTML as { __html?: string })?.__html;
-        if (content && !id) {
-          let sum = 0;
-          for (let i = 0; i < Math.min(content.length, 200); i++) {
-            sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
-          }
-          const hash = `vf${Math.abs(sum).toString(36)}`;
-          if (document.querySelector(`script[data-vf-head][data-vf-hash="${hash}"]`)) return;
-          element.setAttribute("data-vf-hash", hash);
+      const { content, isRawHTML } = getHeadElementContent(props);
+      if (content !== undefined) {
+        if (isRawHTML && type !== "script" && type !== "style") {
+          element.innerHTML = content;
+        } else {
+          element.textContent = content;
         }
-        element.setAttribute("data-vf-head", "true");
       }
 
-      for (const [key, value] of Object.entries(props)) {
-        if (key === "children") continue;
-
-        let attrName = key;
-        if (key === "className") attrName = "class";
-        else if (key === "htmlFor") attrName = "for";
-
-        if (typeof value === "boolean") {
-          if (value) element.setAttribute(attrName, "");
-          continue;
-        }
-
-        if (value != null) element.setAttribute(attrName, String(value));
-      }
-
-      if (typeof props.children === "string") {
-        element.textContent = props.children;
-      }
-
+      if (type === "script") element.setAttribute("data-vf-head", "true");
       element.setAttribute("data-veryfront-managed", "1");
       document.head.appendChild(element);
       addedElements.push(element);
