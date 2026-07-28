@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   DEFAULT_OPTIONS,
   MANIFEST_FILENAME,
-  SHARP_CDN_URL,
+  SHARP_MODULE_SPECIFIER,
   SUPPORTED_EXTENSIONS,
 } from "./constants.ts";
 
@@ -52,9 +52,9 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
     });
   });
 
-  describe("SHARP_CDN_URL", () => {
-    it("should be a valid esm.sh URL", () => {
-      assertEquals(SHARP_CDN_URL.startsWith("https://esm.sh/sharp@"), true);
+  describe("SHARP_MODULE_SPECIFIER", () => {
+    it("pins the required npm dependency", () => {
+      assertEquals(SHARP_MODULE_SPECIFIER, "npm:sharp@0.34.5");
     });
   });
 

@@ -4,8 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";
 import {
   calculateAspectRatio,
+  calculateRequiredAspectRatio,
   generateSrcSet,
   getImageDimensions,
+  getRequiredImageDimensions,
   getStandardPseudoSelectors,
   getVariantPath,
   isPseudoSelector,
@@ -16,6 +18,7 @@ function createMetadata(
 ): OptimizedImageMetadata {
   return {
     original: "img.jpg",
+    originalSize: 1_024,
     defaultFormat: "webp",
     aspectRatio: 4 / 3,
     variants: [],
@@ -68,10 +71,14 @@ describe("build/utils/asset-utils", () => {
       assertEquals(calculateAspectRatio(100, 100), 1);
     });
 
-    it("should return 1 for undefined dimensions", () => {
+    it("should preserve the legacy square fallback for missing dimensions", () => {
       assertEquals(calculateAspectRatio(undefined, 100), 1);
       assertEquals(calculateAspectRatio(100, undefined), 1);
-      assertEquals(calculateAspectRatio(undefined, undefined), 1);
+    });
+
+    it("should provide a strict calculation for production build paths", () => {
+      assertEquals(calculateRequiredAspectRatio(1920, 1080), 1920 / 1080);
+      assertThrows(() => calculateRequiredAspectRatio(0, 100), TypeError);
     });
   });
 
@@ -145,6 +152,14 @@ describe("build/utils/asset-utils", () => {
       const metadata = createMetadata({
         variants: [
           {
+            path: "img-400w.webp",
+            format: "webp",
+            width: 400,
+            height: 300,
+            size: 1000,
+            fileSize: 1000,
+          },
+          {
             path: "img-800w.webp",
             format: "webp",
             width: 800,
@@ -168,7 +183,7 @@ describe("build/utils/asset-utils", () => {
       assertEquals(dims.height, 600);
     });
 
-    it("should fallback to first variant", () => {
+    it("should preserve the legacy fallback to an available format", () => {
       const metadata = createMetadata({
         defaultFormat: "png",
         variants: [
@@ -183,9 +198,12 @@ describe("build/utils/asset-utils", () => {
         ],
       });
 
-      const dims = getImageDimensions(metadata);
-      assertEquals(dims.width, 400);
-      assertEquals(dims.height, 300);
+      assertEquals(getImageDimensions(metadata), { width: 400, height: 300 });
+      assertThrows(
+        () => getRequiredImageDimensions(metadata),
+        Error,
+        "No png image variants",
+      );
     });
 
     it("should throw if no variants", () => {

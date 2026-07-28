@@ -6,7 +6,10 @@
 import { basename, dirname, extname, join } from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import { logger } from "#veryfront/utils";
-import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";
+import type {
+  ImageVariant,
+  OptimizedImageMetadata,
+} from "../asset-pipeline/image-optimizer/types.ts";
 import { createError, toError } from "#veryfront/errors";
 import {
   getOptimizedImageFormat,
@@ -109,11 +112,26 @@ export function generateSrcSet(
   format?: ImageFormat,
 ): string {
   const targetFormat = format ?? metadata.defaultFormat;
-  const variants = metadata.variants.filter((v) => v.format === targetFormat);
+  const variants = metadata.variants
+    .filter((variant) => variant.format === targetFormat)
+    .sort((left, right) => left.width - right.width);
+  const outputSegments = outputDir.replaceAll("\\", "/").split("/")
+    .filter((segment) => segment.length > 0 && segment !== ".");
 
-  return variants.map((v) => `/${join(outputDir, v.path)} ${v.width}w`).join(", ");
+  return variants.map((variant) => {
+    const variantSegments = variant.path.replaceAll("\\", "/").split("/")
+      .filter((segment) => segment.length > 0 && segment !== ".");
+    const url = [...outputSegments, ...variantSegments]
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+    return `/${url} ${variant.width}w`;
+  }).join(", ");
 }
 
+/**
+ * @deprecated Missing dimensions return the historical square ratio. Build
+ * code should use `calculateRequiredAspectRatio`.
+ */
 export function calculateAspectRatio(
   width: number | undefined,
   height: number | undefined,
@@ -121,24 +139,78 @@ export function calculateAspectRatio(
   return width && height ? width / height : 1;
 }
 
+/**
+ * Strict aspect-ratio calculation for build paths where dimensions are
+ * required. Unlike the legacy `calculateAspectRatio` helper, this never
+ * substitutes a square ratio for missing metadata.
+ */
+export function calculateRequiredAspectRatio(
+  width: number,
+  height: number,
+): number {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    throw new TypeError("Image dimensions must be positive finite numbers");
+  }
+  return width / height;
+}
+
 export const getOptimizedFormat = getOptimizedImageFormat;
 export const isImageFile = checkIsImage;
 
+/**
+ * @deprecated Falls back to another available format for compatibility. Build
+ * code should use `getRequiredImageDimensions`.
+ */
 export function getImageDimensions(metadata: OptimizedImageMetadata): {
   width: number;
   height: number;
 } {
-  const original = metadata.variants.find((v) => v.format === metadata.defaultFormat) ??
-    metadata.variants[0];
-
-  if (!original) {
-    throw toError(
-      createError({
-        type: "build",
-        message: "No image variants found in metadata",
-      }),
-    );
+  const defaultVariant = findLargestVariant(
+    metadata.variants.filter((variant) => variant.format === metadata.defaultFormat),
+  );
+  const selected = defaultVariant ?? findLargestVariant(metadata.variants);
+  if (!selected) {
+    throwMissingVariantError(metadata.defaultFormat);
   }
+  return { width: selected.width, height: selected.height };
+}
 
-  return { width: original.width, height: original.height };
+/**
+ * Resolve dimensions only from the declared default output format.
+ */
+export function getRequiredImageDimensions(
+  metadata: OptimizedImageMetadata,
+): { width: number; height: number } {
+  const selected = findLargestVariant(
+    metadata.variants
+      .filter((variant) => variant.format === metadata.defaultFormat),
+  );
+
+  if (!selected) {
+    throwMissingVariantError(metadata.defaultFormat);
+  }
+  return { width: selected.width, height: selected.height };
+}
+
+function findLargestVariant(
+  variants: ImageVariant[],
+): ImageVariant | undefined {
+  return variants.reduce<ImageVariant | undefined>(
+    (largest, variant) => !largest || variant.width > largest.width ? variant : largest,
+    undefined,
+  );
+}
+
+function throwMissingVariantError(defaultFormat: string): never {
+  throw toError(
+    createError({
+      type: "build",
+      message: `No ${defaultFormat} image variants found in metadata`,
+    }),
+  );
 }

@@ -59,6 +59,8 @@ export type ImageFormat = "webp" | "avif" | "jpeg" | "png";
 
 export interface ImageOptimizationOptions {
   enabled?: boolean;
+  /** Absolute project boundary for input and output paths. */
+  projectDir?: string;
   formats?: ImageFormat[];
   sizes?: number[];
   quality?: number;
@@ -69,6 +71,8 @@ export interface ImageOptimizationOptions {
 
 export interface OptimizedImageMetadata {
   original: string;
+  /** Source file size in bytes. Optional for manifests produced before this field existed. */
+  originalSize?: number;
   variants: ImageVariant[];
   defaultFormat: string;
   aspectRatio: number;
@@ -87,5 +91,10 @@ export interface ImageOptimizationStats {
   totalImages: number;
   totalVariants: number;
   totalSize: number;
+  averageVariantSize: number;
+  /**
+   * @deprecated This legacy field was historically an alias for average
+   * variant size, despite its name. Use `averageVariantSize`.
+   */
   averageSavings: number;
 }
