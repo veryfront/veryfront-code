@@ -38,10 +38,26 @@ export function mergeRendererConfig(
   };
 }
 
+interface RendererFacadeLifecycleOperation {
+  readonly kind: "initialize" | "destroy";
+  readonly promise: Promise<void>;
+}
+
+interface RendererFacadeOwnedResources {
+  lifecycle?: RendererLifecycle;
+  renderPipeline?: RenderPipeline;
+  lifecycleDisposed: boolean;
+  renderPipelineDisposed: boolean;
+}
+
 export class VeryfrontRenderer {
   private configManager!: ConfigurationManager;
   private lifecycle!: RendererLifecycle;
   private services!: RendererServices;
+  private lifecycleOperation?: RendererFacadeLifecycleOperation;
+  private resourceCleanupPromise?: Promise<void>;
+  private lifecycleGeneration = 0;
+  private ownedResources?: RendererFacadeOwnedResources;
   private adapter?: RuntimeAdapter;
   private port: number;
   private moduleServerUrl?: string;
@@ -78,52 +94,109 @@ export class VeryfrontRenderer {
   }
 
   initialize(): Promise<void> {
-    return withSpan(
+    const precedingOperation = this.lifecycleOperation;
+    if (precedingOperation?.kind === "initialize") {
+      return precedingOperation.promise;
+    }
+
+    const generation = ++this.lifecycleGeneration;
+    const initialization = withSpan(
       "renderer.initialize",
-      async () => {
-        logger.debug("Initializing VeryfrontRenderer");
-
-        this.projectId = this.configuredProjectId ??
-          await deriveDefaultRendererProjectId(this.projectDir);
-        this.projectSlug = this.configuredProjectSlug ??
-          this.configuredProjectId ??
-          this.projectId;
-
-        if (!this.adapter) {
-          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-          this.adapter = await runtime.get();
-        }
-
-        this.configManager = new ConfigurationManager({
-          projectDir: this.projectDir,
-          mode: this.mode,
-          adapter: this.adapter,
-          config: this.preloadedConfig,
-        });
-        await this.configManager.initialize();
-
-        this.lifecycle = new RendererLifecycle({
-          configManager: this.configManager,
-          port: this.port,
-          moduleServerUrl: this.moduleServerUrl,
-          projectId: this.projectId,
-          contentSourceId: this.contentSourceId,
-        });
-        this.services = await this.lifecycle.initialize();
-
-        this.initializeModules();
-        this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
-
-        logger.debug("VeryfrontRenderer initialized successfully");
-      },
+      () => this.initializeGeneration(generation, precedingOperation?.promise),
       { "renderer.projectDir": this.projectDir, "renderer.mode": this.mode },
     );
+    const operation: RendererFacadeLifecycleOperation = {
+      kind: "initialize",
+      promise: initialization,
+    };
+    this.lifecycleOperation = operation;
+    void initialization.finally(() => {
+      if (this.lifecycleOperation === operation) this.lifecycleOperation = undefined;
+    }).catch(() => {});
+    return initialization;
+  }
+
+  private async initializeGeneration(
+    generation: number,
+    precedingOperation?: Promise<void>,
+  ): Promise<void> {
+    if (precedingOperation) await precedingOperation;
+    this.assertCurrentLifecycleGeneration(generation);
+
+    if (this.ownedResources) {
+      await this.cleanupOwnedResources();
+      this.assertCurrentLifecycleGeneration(generation);
+    }
+
+    const ownedResources: RendererFacadeOwnedResources = {
+      lifecycleDisposed: true,
+      renderPipelineDisposed: true,
+    };
+    this.ownedResources = ownedResources;
+
+    try {
+      logger.debug("Initializing VeryfrontRenderer");
+
+      this.projectId = this.configuredProjectId ??
+        await deriveDefaultRendererProjectId(this.projectDir);
+      this.projectSlug = this.configuredProjectSlug ??
+        this.configuredProjectId ??
+        this.projectId;
+      this.assertCurrentLifecycleGeneration(generation);
+
+      if (!this.adapter) {
+        const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+        this.adapter = await runtime.get();
+        this.assertCurrentLifecycleGeneration(generation);
+      }
+
+      this.configManager = new ConfigurationManager({
+        projectDir: this.projectDir,
+        mode: this.mode,
+        adapter: this.adapter,
+        config: this.preloadedConfig,
+      });
+      await this.configManager.initialize();
+      this.assertCurrentLifecycleGeneration(generation);
+
+      this.lifecycle = new RendererLifecycle({
+        configManager: this.configManager,
+        port: this.port,
+        moduleServerUrl: this.moduleServerUrl,
+        projectId: this.projectId,
+        contentSourceId: this.contentSourceId,
+      });
+      ownedResources.lifecycle = this.lifecycle;
+      ownedResources.lifecycleDisposed = false;
+      const services = await this.lifecycle.initialize();
+      this.assertCurrentLifecycleGeneration(generation);
+      this.services = services;
+
+      this.initializeModules();
+      ownedResources.renderPipeline = this.renderPipeline;
+      ownedResources.renderPipelineDisposed = false;
+      this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
+
+      logger.debug("VeryfrontRenderer initialized successfully");
+    } catch (initializationError) {
+      try {
+        await this.cleanupOwnedResources();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [initializationError, cleanupError],
+          "VeryfrontRenderer initialization and cleanup failed",
+        );
+      }
+      throw initializationError;
+    }
+  }
+
+  private assertCurrentLifecycleGeneration(generation: number): void {
+    if (generation === this.lifecycleGeneration) return;
+    throw new Error("VeryfrontRenderer initialization was cancelled during shutdown");
   }
 
   private initializeModules(): void {
-    // Re-initialization replaces the owned pipeline generation.
-    this.renderPipeline?.destroy();
-
     const projectDir = this.configManager.getProjectDir();
     const mode = this.configManager.getMode();
     const adapter = this.configManager.getAdapter();
@@ -278,22 +351,94 @@ export class VeryfrontRenderer {
     return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 
-  async destroy(): Promise<void> {
-    const failures: unknown[] = [];
+  destroy(): Promise<void> {
+    const precedingOperation = this.lifecycleOperation;
+    if (precedingOperation?.kind === "destroy") {
+      return precedingOperation.promise;
+    }
+    if (!this.ownedResources && !precedingOperation) {
+      return Promise.resolve();
+    }
+
+    this.lifecycleGeneration++;
+    const requestedCleanup = this.cleanupOwnedResources();
+    const destruction = this.destroyGeneration(
+      precedingOperation?.promise,
+      requestedCleanup,
+    );
+    const operation: RendererFacadeLifecycleOperation = {
+      kind: "destroy",
+      promise: destruction,
+    };
+    this.lifecycleOperation = operation;
+    void destruction.finally(() => {
+      if (this.lifecycleOperation === operation) this.lifecycleOperation = undefined;
+    }).catch(() => {});
+    return destruction;
+  }
+
+  private async destroyGeneration(
+    precedingOperation: Promise<void> | undefined,
+    requestedCleanup: Promise<void>,
+  ): Promise<void> {
+    let cleanupError: unknown;
     try {
-      this.renderPipeline?.destroy();
+      await requestedCleanup;
     } catch (error) {
-      failures.push(error);
+      cleanupError = error;
     }
-    try {
-      await this.lifecycle?.destroy();
-    } catch (error) {
-      failures.push(error);
-    }
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(failures, "Failed to destroy renderer");
-    }
+
+    await precedingOperation?.catch(() => undefined);
+    if (cleanupError !== undefined) throw cleanupError;
+    await this.cleanupOwnedResources();
+  }
+
+  private cleanupOwnedResources(): Promise<void> {
+    if (this.resourceCleanupPromise) return this.resourceCleanupPromise;
+    const resources = this.ownedResources;
+    if (!resources) return Promise.resolve();
+
+    const cleanup = (async () => {
+      const failures: unknown[] = [];
+      if (!resources.renderPipelineDisposed) {
+        if (!resources.renderPipeline) {
+          resources.renderPipelineDisposed = true;
+        } else {
+          try {
+            resources.renderPipeline.destroy();
+            resources.renderPipelineDisposed = true;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+      }
+      if (!resources.lifecycleDisposed) {
+        if (!resources.lifecycle) {
+          resources.lifecycleDisposed = true;
+        } else {
+          try {
+            await resources.lifecycle.destroy();
+            resources.lifecycleDisposed = true;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+      }
+
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "Failed to destroy renderer");
+      }
+
+      if (this.ownedResources === resources) this.ownedResources = undefined;
+    })();
+    this.resourceCleanupPromise = cleanup;
+    void cleanup.finally(() => {
+      if (this.resourceCleanupPromise === cleanup) {
+        this.resourceCleanupPromise = undefined;
+      }
+    }).catch(() => {});
+    return cleanup;
   }
 }
 
