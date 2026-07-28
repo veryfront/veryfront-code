@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { getCacheBaseDir, getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   findMissingFileDependenciesInCode,
@@ -161,20 +161,26 @@ import bar from "file:///tmp/nonexistent-dup-test.mjs";
 
     it("follows nested vf modules when checking file dependencies", async () => {
       const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
-      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
-      const childPath = join(vfmodDir, "vfmod-child.mjs");
 
       try {
-        await mkdir(vfmodDir, { recursive: true });
-        await writeTextFile(
-          childPath,
-          `import foo from "file:///app/.cache/markdown.tsx"; export default foo;`,
-        );
+        await runWithCacheDir(tempDir, async () => {
+          const vfmodDir = join(
+            getMdxEsmCacheDir(),
+            "project-a",
+            "preview-main",
+          );
+          const childPath = join(vfmodDir, "vfmod-child.mjs");
+          await mkdir(vfmodDir, { recursive: true });
+          await writeTextFile(
+            childPath,
+            `import foo from "file:///app/.cache/markdown.tsx"; export default foo;`,
+          );
 
-        const code = `import child from "file://${childPath}"; export default child;`;
-        const result = await findMissingFileDependenciesInCode(code, noopLog);
+          const code = `import child from "file://${childPath}"; export default child;`;
+          const result = await findMissingFileDependenciesInCode(code, noopLog);
 
-        assertEquals(result.includes("/app/.cache/markdown.tsx"), true);
+          assertEquals(result.includes("/app/.cache/markdown.tsx"), true);
+        });
       } finally {
         await remove(tempDir, { recursive: true });
       }
