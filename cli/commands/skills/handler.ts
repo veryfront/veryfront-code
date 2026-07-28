@@ -1,6 +1,11 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess, logUsageError } from "#cli/utils";
-import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
+import {
+  createErrorEnvelope,
+  createSuccessEnvelope,
+  isJsonMode,
+  outputJson,
+} from "../../shared/json-output.ts";
 import { getSkillInfo, listSkills } from "./command.ts";
 import { bold, dim } from "../../ui/colors.ts";
 
@@ -59,14 +64,31 @@ async function handleSkillList(): Promise<void> {
 async function handleSkillInfo(args: ParsedArgs): Promise<void> {
   const name = args._[2] as string | undefined;
   if (!name) {
-    logUsageError("Usage: veryfront skills info <name>");
+    if (isJsonMode()) {
+      await outputJson(createErrorEnvelope("skills", {
+        code: "INVALID_ARGUMENT",
+        slug: "invalid-argument",
+        message: "Usage: veryfront skills info <name>",
+      }));
+    } else {
+      logUsageError("Usage: veryfront skills info <name>");
+    }
     exitProcess(2);
     return;
   }
 
   const skill = await getSkillInfo(name);
   if (!skill) {
-    logUsageError(`Skill not found: ${name}`, "Try: veryfront skills list");
+    if (isJsonMode()) {
+      await outputJson(createErrorEnvelope("skills", {
+        code: "NOT_FOUND",
+        slug: "skill-not-found",
+        message: `Skill "${name}" not found`,
+        context: { suggestion: "Try: veryfront skills list" },
+      }));
+    } else {
+      logUsageError(`Skill not found: ${name}`, "Try: veryfront skills list");
+    }
     exitProcess(1);
     return;
   }
