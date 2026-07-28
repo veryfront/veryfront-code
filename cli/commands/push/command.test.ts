@@ -1176,6 +1176,56 @@ describe("push receipt source snapshot", () => {
       _resetEnvironmentConfig();
     }
   });
+
+  it("fails closed when an explicit project ID is missing", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("TENANT_PROJECT_SLUG");
+      Deno.env.set("VERYFRONT_PROJECT_ID", "missing-project-id");
+      Deno.env.delete("TENANT_PROJECT_ID");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        requests.push(`${request.method} ${url.pathname}`);
+        return Response.json({ error: "not found" }, { status: 404 });
+      }) as typeof fetch;
+
+      for (const dryRun of [true, false]) {
+        await withGitProject(async ({ projectDir }) => {
+          await assertRejects(
+            () => pushCommand({ projectDir, dryRun, quiet: true }),
+            Error,
+            'Project "missing-project-id" was not found',
+          );
+        });
+      }
+
+      assertEquals(requests, [
+        "GET /projects/missing-project-id/files",
+        "GET /projects/missing-project-id/files",
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });
 
 describe("push dry-run project bootstrap", () => {

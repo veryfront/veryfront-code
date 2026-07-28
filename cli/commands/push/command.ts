@@ -705,6 +705,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
         } catch (error) {
           if (getErrorStatus(error) !== 404) throw error;
+          if (config.projectId) {
+            throw new Error(
+              `Project "${config.projectId}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
+            );
+          }
           if (dryRun) planProjectCreation();
           else await createProject();
         }
