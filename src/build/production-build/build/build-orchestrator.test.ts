@@ -39,6 +39,38 @@ describe("build/production-build/build/build-orchestrator", () => {
     it("should be a function", () => {
       assertEquals(typeof buildProduction, "function");
     });
+
+    it("preserves the previous output when route preflight detects a collision", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-preflight-" });
+      const outputDir = `${projectDir}/dist`;
+      const sentinelPath = `${outputDir}/previous.txt`;
+      try {
+        await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+        await Deno.mkdir(`${projectDir}/app/about`, { recursive: true });
+        await Deno.mkdir(outputDir);
+        await Deno.writeTextFile(
+          `${projectDir}/pages/about.tsx`,
+          "export default function About() { return null; }",
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/app/about/page.tsx`,
+          "export default function About() { return null; }",
+        );
+        await Deno.writeTextFile(sentinelPath, "last known good build");
+
+        await assertRejects(
+          () => buildProduction({ projectDir, outputDir }),
+          Error,
+          "output collision",
+        );
+        assertEquals(
+          await Deno.readTextFile(sentinelPath),
+          "last known good build",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("assertBuildProducedOutput", () => {

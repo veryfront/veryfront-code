@@ -24,6 +24,7 @@ import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cach
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { SSG_GENERATION_ERROR } from "#veryfront/errors";
+import { getRouteOutputPath } from "./output-paths.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -59,16 +60,6 @@ export interface SSGOptions {
   /** React version for import map generation */
   reactVersion?: string;
   releaseAssetManifest?: ReleaseAssetManifest | null;
-}
-
-function getOutputPath(outputDir: string, slug: string): string {
-  if (slug === "index") return join(outputDir, "index.html");
-  return join(outputDir, slug, "index.html");
-}
-
-function getAppRouteOutputPath(outputDir: string, routePath: string): string {
-  if (routePath === "/") return join(outputDir, "index.html");
-  return join(outputDir, routePath.slice(1), "index.html");
 }
 
 function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
@@ -290,7 +281,7 @@ ${clientStyles}
         generateClientRuntime(route, result, baseUrl),
       );
 
-      const outputPath = getOutputPath(outputDir, route.slug);
+      const outputPath = getRouteOutputPath(outputDir, route.path);
       await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
 
       if (dryRun) {
@@ -381,7 +372,7 @@ export async function buildAppRoutes(
           includePreviewStylesheet: false,
         }));
 
-      const outputPath = getAppRouteOutputPath(outputDir, route.path);
+      const outputPath = getRouteOutputPath(outputDir, route.path);
 
       if (!dryRun) {
         await adapter.fs.mkdir(dirname(outputPath), { recursive: true });

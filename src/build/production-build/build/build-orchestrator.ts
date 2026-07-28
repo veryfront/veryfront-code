@@ -16,6 +16,8 @@ import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes, type CollectedRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
+import { discoverStaticAssets } from "../asset-generation.ts";
+import { assertSafeBuildOutputDirectory, validateBuildOutputPlan } from "./output-plan.ts";
 
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
   return withSpan(
@@ -60,6 +62,42 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         const ssg = normalizedOptions.ssg ?? context.config.build?.ssg ?? true;
 
         await withSpan(
+          "build.validateOutputDirectory",
+          () =>
+            assertSafeBuildOutputDirectory(
+              normalizedOptions.projectDir,
+              outputDir,
+              context.config,
+            ),
+          {},
+        );
+
+        const routes = await withSpan(
+          "build.collectRoutes",
+          () =>
+            collectAllRoutes(
+              context.adapter,
+              normalizedOptions.projectDir,
+              ssg,
+              normalizedOptions.include,
+              normalizedOptions.exclude,
+              context.config,
+            ),
+          {},
+        );
+
+        const publicEntries = await withSpan(
+          "build.discoverPublicAssets",
+          () => discoverStaticAssets(normalizedOptions.projectDir),
+          {},
+        );
+        validateBuildOutputPlan({
+          pagesRoutes: routes.pages,
+          appRoutes: routes.app,
+          publicEntries,
+        });
+
+        await withSpan(
           "build.setupDirectories",
           () => setupBuildDirectories(context.adapter, outputDir, dryRun),
           {},
@@ -75,20 +113,6 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               dryRun,
               config: context.config,
             }),
-          {},
-        );
-
-        const routes = await withSpan(
-          "build.collectRoutes",
-          () =>
-            collectAllRoutes(
-              context.adapter,
-              normalizedOptions.projectDir,
-              ssg,
-              normalizedOptions.include,
-              normalizedOptions.exclude,
-              context.config,
-            ),
           {},
         );
 
