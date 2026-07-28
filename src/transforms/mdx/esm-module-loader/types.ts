@@ -73,6 +73,8 @@ export interface ModuleFetcherContext {
    * This prevents infinite recursion when A imports B which imports A.
    */
   inFlightModules?: Map<string, Promise<string | null>>;
+  /** Unique normalized modules admitted to this request-scoped graph. */
+  moduleGraph?: Set<string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */

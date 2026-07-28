@@ -14,6 +14,7 @@ import {
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import type { Logger } from "#veryfront/utils";
+import { assertMdxModuleImportCount, MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./limits.ts";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
@@ -36,6 +37,7 @@ export function findNestedImports(
     const { original, path: rawPath, start, end } of findStaticImportFromSpans(
       moduleCode,
       matchUnresolvedVfModuleSpecifier,
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
     // Strip file:// prefix and leading slashes to get clean _vf_modules/... path
@@ -51,6 +53,7 @@ export function findNestedImports(
     const { original, path, start, end } of findStaticImportFromSpans(
       moduleCode,
       (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
+      MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
     )
   ) {
     relative.push({
@@ -210,8 +213,11 @@ export async function resolveNestedModuleImports(
     ...vfModules.map((module) => ({ ...module, key: "nestedPath" as const })),
     ...relative.map((module) => ({ ...module, key: "relativePath" as const })),
   ];
-  const nestedResults = await Promise.all(
-    allImports.map(async ({ original, path, start, end, key }) => ({
+  assertMdxModuleImportCount(input.normalizedPath, allImports.length);
+
+  const nestedResults: NestedImportResult[] = [];
+  for (const { original, path, start, end, key } of allImports) {
+    nestedResults.push({
       original,
       start,
       end,
@@ -220,8 +226,8 @@ export async function resolveNestedModuleImports(
         input.parentBasePath ?? input.normalizedPath,
       ),
       [key]: path,
-    })),
-  );
+    });
+  }
   input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
     projectSlug: input.projectSlug,
     normalizedPath: input.normalizedPath,

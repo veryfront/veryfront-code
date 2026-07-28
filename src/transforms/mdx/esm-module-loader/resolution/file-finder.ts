@@ -8,6 +8,7 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { DIRECTORY_PREFIXES, LOG_PREFIX_MDX_LOADER, MODULE_EXTENSIONS } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 
 const logger = rendererLogger.component("file-finder");
 
@@ -33,9 +34,9 @@ async function tryReadFile(
   try {
     const content = await readFile(path);
     return { sourceCode: decodeContent(content), actualFilePath: path };
-  } catch (_) {
-    /* expected: file may not exist at this path */
-    return null;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
   }
 }
 
@@ -77,6 +78,7 @@ export async function resolveModuleFile(
         });
         return { sourceCode: decodeContent(content), actualFilePath: resolvedPath };
       } catch (error) {
+        if (!isNotFoundError(error)) throw error;
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to read resolved file`, {
           resolvedPath,
           error: error instanceof Error ? error.message : String(error),

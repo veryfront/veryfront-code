@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests ensure that framework files under _veryfront/ are
  * properly resolved from the framework source directory.
  */
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { resolveModuleFile } from "./file-finder.ts";
@@ -90,6 +90,30 @@ describe("resolveModuleFile", () => {
 
     await resolveModuleFile("_vf_modules/components/Button.js", adapter as any, "/project");
     assertEquals(wasCalled(), true, "Should call adapter.fs.resolveFile for project paths");
+  });
+
+  it("propagates operational read failures instead of treating them as missing", async () => {
+    const permissionError = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const adapter = {
+      ...mockAdapter,
+      fs: {
+        ...mockAdapter.fs,
+        resolveFile: () => Promise.resolve("/virtual/components/Button.tsx"),
+        readFile: () => Promise.reject(permissionError),
+      },
+    };
+
+    const error = await assertRejects(
+      () =>
+        resolveModuleFile(
+          "_vf_modules/components/Button.js",
+          adapter,
+          "/project",
+        ),
+      Error,
+      "permission denied",
+    );
+    assertEquals(error, permissionError);
   });
 
   it("resolves framework react/* files", async () => {

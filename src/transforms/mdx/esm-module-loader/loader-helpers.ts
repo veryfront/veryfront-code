@@ -26,6 +26,12 @@ import {
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
 import { buildMissingModuleError } from "./missing-module.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_IMPORTS_PER_FILE,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./module-fetcher/limits.ts";
 
 /**
  * Check which framework bundles are missing from disk.
@@ -105,6 +111,7 @@ export function findVfModuleImports(
   return findStaticImportFromSpans(
     code,
     (specifier) => specifier.match(/^\/?(_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1],
+    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
   );
 }
 
@@ -138,6 +145,7 @@ export async function processVfModuleImports(
     });
     return code;
   }
+  assertMdxModuleImportCount("compiled MDX entry", imports.length);
 
   if (!context.projectId) {
     throw INVALID_ARGUMENT.create({
@@ -166,8 +174,9 @@ export async function processVfModuleImports(
 
   const fetchStart = performance.now();
 
-  const results = await Promise.all(
-    imports.map(async ({ original, path, start, end }, index) => {
+  const results = await parallelMap(
+    imports,
+    async ({ original, path, start, end }, index) => {
       return await withSpan(
         SpanNames.MDX_FETCH_MODULE,
         async () => {
@@ -192,7 +201,8 @@ export async function processVfModuleImports(
           "mdx.project_slug": projectSlug,
         },
       );
-    }),
+    },
+    { concurrency: MAX_MDX_MODULE_TRANSFORM_CONCURRENCY },
   );
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {
