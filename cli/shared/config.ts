@@ -79,6 +79,15 @@ export interface ResolvedConfigDetails {
   projectReferenceSource: ProjectReferenceSource;
 }
 
+export const ENVIRONMENT_PROJECT_REFERENCE_NAMES = [
+  "VERYFRONT_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
+  "VERYFRONT_PROJECT_ID",
+  "TENANT_PROJECT_ID",
+] as const;
+
+export type EnvironmentProjectReferenceName = typeof ENVIRONMENT_PROJECT_REFERENCE_NAMES[number];
+
 async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
 
@@ -173,15 +182,10 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
   return dirName ? slugify(dirName) : null;
 }
 
-function resolveTenantProjectReference(): { reference: string; name: string } | undefined {
-  for (
-    const name of [
-      "VERYFRONT_PROJECT_SLUG",
-      "TENANT_PROJECT_SLUG",
-      "VERYFRONT_PROJECT_ID",
-      "TENANT_PROJECT_ID",
-    ] as const
-  ) {
+export function resolveEnvironmentProjectReference():
+  | { reference: string; name: EnvironmentProjectReferenceName }
+  | undefined {
+  for (const name of ENVIRONMENT_PROJECT_REFERENCE_NAMES) {
     const reference = getEnv(name);
     if (reference) return { reference, name };
   }
@@ -269,7 +273,7 @@ async function resolveConfigBase(
     projectSlug = configFileResolution.jsonProjectSlug;
     projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
   } else {
-    const tenantReference = resolveTenantProjectReference();
+    const tenantReference = resolveEnvironmentProjectReference();
     if (tenantReference) {
       projectSlug = tenantReference.reference;
       projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
