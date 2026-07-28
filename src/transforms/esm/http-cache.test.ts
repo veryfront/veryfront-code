@@ -32,6 +32,7 @@ import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -183,6 +184,40 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
 
       assert(cachedUrl.startsWith("file://"));
       assertEquals(fetchCount, 2);
+    });
+  });
+
+  it("rejects an oversized module body without retrying", async () => {
+    let fetchCount = 0;
+    let bodyCancelled = false;
+    const mockFetch = (() => {
+      fetchCount += 1;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          {
+            headers: {
+              "content-length": String(MAX_BUNDLE_CHUNK_SIZE_BYTES + 1),
+            },
+          },
+        ),
+      );
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-oversized-response-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/oversized", tempDir),
+        Error,
+        `response exceeds ${MAX_BUNDLE_CHUNK_SIZE_BYTES} bytes`,
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(fetchCount, 1);
+      assertEquals(bodyCancelled, true);
     });
   });
 

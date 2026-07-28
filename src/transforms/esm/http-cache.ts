@@ -29,6 +29,8 @@ import {
   tokenizeCachePaths,
 } from "#veryfront/cache/paths.ts";
 import { looksLikeHtmlContent as looksLikeHtmlNotJs } from "./html-content.ts";
+import { HttpModuleBodyError, readHttpModuleText } from "../shared/http-module-response.ts";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
@@ -151,11 +153,17 @@ async function fetchHttpModuleAttempt(
     }
 
     return {
-      code: await response.text(),
+      code: await readHttpModuleText(
+        response,
+        MAX_BUNDLE_CHUNK_SIZE_BYTES,
+        signal,
+      ),
       contentType: response.headers.get("content-type") ?? "",
     };
   } catch (error) {
-    if (error instanceof HttpModuleResponseError) throw error;
+    if (error instanceof HttpModuleResponseError || error instanceof HttpModuleBodyError) {
+      throw error;
+    }
     if (response) await discardResponseBody(response);
 
     const requestErrorType = error instanceof Error ? error.name : typeof error;
@@ -185,8 +193,10 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
         maxAttempts: HTTP_MODULE_FETCH_MAX_ATTEMPTS,
         timeoutMs: HTTP_FETCH_TIMEOUT_MS,
         shouldRetry: (error) =>
-          !(error instanceof HttpModuleResponseError) ||
-          shouldRetryHttpModuleFetch(error.status),
+          error instanceof HttpModuleBodyError
+            ? false
+            : !(error instanceof HttpModuleResponseError) ||
+              shouldRetryHttpModuleFetch(error.status),
         computeDelay: (attempt) => HTTP_MODULE_FETCH_RETRY_DELAY_MS * (attempt + 1),
         onRetry: ({ error, attempt }) => {
           httpCacheLog.warn("HTTP module fetch failed, retrying", {
@@ -207,6 +217,11 @@ async function fetchHttpModule(url: string): Promise<HttpModuleFetchResult> {
     if (error instanceof HttpModuleRequestError) {
       throw BUILD_FAILED.create({
         detail: `Failed to fetch ${safeUrl}: ${error.requestErrorType}`,
+      });
+    }
+    if (error instanceof HttpModuleBodyError) {
+      throw BUILD_FAILED.create({
+        detail: `Failed to fetch ${safeUrl}: ${error.message}`,
       });
     }
     throw error;
