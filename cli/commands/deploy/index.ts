@@ -26,6 +26,7 @@ export type {
   DeploymentRoutingConvergence,
   DeploymentVerification,
   DeployOptions,
+  DeployResult,
   EnvironmentReadinessOptions,
   EnvironmentReadinessTarget,
   ReleaseSourceVerification,

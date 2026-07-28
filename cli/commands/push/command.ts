@@ -697,14 +697,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       } else {
         try {
           mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
-          if (shouldPersistProjectLink(projectReferenceSource)) {
+          if (shouldPersistProjectLink(projectReferenceSource) || config.projectId) {
             const project = await getProjectTarget(client, projectApiReference(config));
-            config = dryRun
-              ? { ...config, projectId: project.id, projectSlug: project.slug }
-              : await persistProjectLink(projectDir, config, project);
+            config = !dryRun && shouldPersistProjectLink(projectReferenceSource)
+              ? await persistProjectLink(projectDir, config, project)
+              : { ...config, projectId: project.id, projectSlug: project.slug };
           }
         } catch (error) {
           if (getErrorStatus(error) !== 404) throw error;
+          if (config.projectId) {
+            throw new Error(
+              `Project "${config.projectId}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
+            );
+          }
           if (dryRun) planProjectCreation();
           else await createProject();
         }

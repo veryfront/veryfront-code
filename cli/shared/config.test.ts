@@ -496,6 +496,7 @@ describe("resolveConfigWithAuth", () => {
       const config = await resolveConfigWithAuth("/tmp/test-dir", env);
 
       assertEquals(config.projectSlug, "tenant-project-id");
+      assertEquals(config.projectId, "tenant-project-id");
     } finally {
       if (previousTenantProjectSlug === undefined) {
         Deno.env.delete("TENANT_PROJECT_SLUG");

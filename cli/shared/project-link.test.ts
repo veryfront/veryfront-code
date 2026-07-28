@@ -88,6 +88,29 @@ describe("project link persistence", () => {
     });
   });
 
+  it("rejects empty identities and invalid control-plane URLs", async () => {
+    const invalidLinks = [
+      { ...LINK, controlPlane: "" },
+      { ...LINK, controlPlane: "not-a-url" },
+      { ...LINK, projectId: "" },
+      { ...LINK, projectId: "   " },
+      { ...LINK, projectSlug: "" },
+      { ...LINK, projectSlug: "   " },
+    ];
+
+    await withTempProject(async (projectDir) => {
+      for (const link of invalidLinks) {
+        await writeRawProjectLink(projectDir, { version: 1, ...link });
+
+        await assertRejects(
+          () => readProjectLink(projectDir),
+          Error,
+          "remove it and relink",
+        );
+      }
+    });
+  });
+
   it("rejects another control plane without exposing the project directory", async () => {
     await withTempProject(async (projectDir) => {
       await writeProjectLink(projectDir, LINK);

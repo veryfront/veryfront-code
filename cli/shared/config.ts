@@ -287,6 +287,12 @@ async function resolveConfigBase(
     const tenantReference = resolveEnvironmentProjectReference();
     if (tenantReference) {
       projectSlug = tenantReference.reference;
+      if (
+        tenantReference.name === "VERYFRONT_PROJECT_ID" ||
+        tenantReference.name === "TENANT_PROJECT_ID"
+      ) {
+        projectId = tenantReference.reference;
+      }
       projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
     } else {
       const projectLink = await readProjectLinkForControlPlane(dir, apiUrl);

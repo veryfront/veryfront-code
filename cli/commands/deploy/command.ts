@@ -164,6 +164,64 @@ export interface DeploymentVerification {
   sourceDigest: string;
 }
 
+export interface DeployResult {
+  projectId: string;
+  projectSlug: string;
+  release: {
+    id: string;
+    name: string;
+    version: string;
+  };
+  environment: string;
+  environmentId: string;
+  deploymentId: string;
+  url: string;
+  protected: boolean;
+  routingConvergence: DeploymentRoutingConvergence | null;
+  commitSha: string | null;
+  sourceDigest: string;
+  controlPlane: string;
+  branch: string;
+}
+
+function createDeployResult({
+  verification,
+  release,
+  environment,
+  deployment,
+  environmentUrl,
+  config,
+  branch,
+}: {
+  verification: DeploymentVerification;
+  release: Release;
+  environment: Environment;
+  deployment: Deployment;
+  environmentUrl: string;
+  config: ResolvedConfig;
+  branch: string;
+}): DeployResult {
+  return {
+    projectId: verification.projectId,
+    projectSlug: verification.projectSlug,
+    release: {
+      id: verification.releaseId,
+      name: release.name,
+      version: verification.releaseVersion,
+    },
+    environment: verification.environmentName,
+    environmentId: verification.environmentId,
+    deploymentId: verification.deploymentId,
+    url: environmentUrl,
+    protected: environment.protected,
+    routingConvergence: deployment.routing_convergence ?? null,
+    commitSha: verification.commitSha,
+    sourceDigest: verification.sourceDigest,
+    controlPlane: normalizeControlPlane(config.apiUrl),
+    branch,
+  };
+}
+
 export interface ReleaseSourceVerification {
   projectId: string;
   releaseId: string;
@@ -1123,7 +1181,7 @@ export async function waitForReleaseAssetManifest(
 /**
  * Create a release and deploy to an environment
  */
-export async function deployCommand(options: DeployOptions): Promise<void> {
+export async function deployCommand(options: DeployOptions): Promise<DeployResult | null> {
   const {
     projectDir = cwd(),
     branch,
@@ -1177,7 +1235,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
         : `create release and deploy to "${env}"`;
       logInfo(`Would ${actions} for project ${setup.plannedProjectSlug}`);
     }
-    return;
+    return null;
   }
 
   if (bootstrapPush) {
@@ -1235,7 +1293,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
         : `create release and deploy to "${env}"`;
       logInfo(`Would ${actions}`);
     }
-    return;
+    return null;
   }
 
   updateProgress("Building release...", "Verifying pushed source...");
@@ -1322,7 +1380,17 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     throw error;
   }
 
-  if (quiet) return;
+  const result = createDeployResult({
+    verification,
+    release,
+    environment,
+    deployment,
+    environmentUrl,
+    config,
+    branch,
+  });
+
+  if (quiet) return result;
 
   logSuccess(
     `Deployed ${verification.projectSlug} to ${env} in ${formatDuration(Date.now() - startedAt)}`,
@@ -1366,9 +1434,11 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     const { getPostDeployTips } = await import("../../help/tips.ts");
     console.log(getPostDeployTips());
   }
+
+  return result;
 }
 
-async function deployCommandJson(options: DeployOptions): Promise<void> {
+async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
   const {
     projectDir = cwd(),
     branch,
@@ -1417,7 +1487,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
           ],
         },
       });
-      return;
+      return null;
     }
 
     if (bootstrapPush) {
@@ -1445,7 +1515,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
       });
       const { exit } = await import("veryfront/platform");
       exit(1);
-      return;
+      return null;
     }
     assertProjectOwnership("Environment", environment, project.id);
     streamJsonLine({ type: "step", name: "resolve-target", status: "completed" });
@@ -1478,7 +1548,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
           ],
         },
       });
-      return;
+      return null;
     }
 
     streamJsonLine({ type: "step", name: "verify-source", status: "started" });
@@ -1572,29 +1642,22 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
       });
     }
 
+    const result = createDeployResult({
+      verification,
+      release,
+      environment,
+      deployment,
+      environmentUrl,
+      config,
+      branch,
+    });
+
     streamJsonLine({
       type: "result",
       success: true,
-      data: {
-        projectId: verification.projectId,
-        projectSlug: verification.projectSlug,
-        release: {
-          id: verification.releaseId,
-          name: release.name,
-          version: verification.releaseVersion,
-        },
-        environment: env,
-        environmentId: verification.environmentId,
-        deploymentId: verification.deploymentId,
-        url: environmentUrl,
-        protected: environment.protected,
-        routingConvergence: deployment.routing_convergence ?? null,
-        commitSha: verification.commitSha,
-        sourceDigest: verification.sourceDigest,
-        controlPlane: normalizeControlPlane(config.apiUrl),
-        branch,
-      },
+      data: result,
     });
+    return result;
   } catch (error) {
     streamJsonLine({
       type: "result",
@@ -1603,5 +1666,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     });
     const { exit } = await import("veryfront/platform");
     exit(1);
+    return null;
   }
 }

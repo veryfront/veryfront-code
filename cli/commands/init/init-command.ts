@@ -772,12 +772,11 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   // Deploy to cloud if --deploy flag is set
-  let deployedSlug: string | undefined;
+  let deployedUrl: string | undefined;
   const manualDeployCommand = `${getDlxCommand(pmPreference)} veryfront deploy`;
   if (options.deploy) {
     const { chdir } = await import("veryfront/platform");
     const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
-    const { readConfigFile } = await import("#cli/shared/config");
     const { deployCommand } = await import("../deploy/index.ts");
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
@@ -794,7 +793,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
         try {
           chdir(projectDir);
 
-          await deployCommand({
+          const deployment = await deployCommand({
             projectDir,
             branch: "main",
             env: "production",
@@ -803,8 +802,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
             quiet: true,
           });
 
-          const configFile = await readConfigFile(projectDir);
-          deployedSlug = configFile?.projectSlug;
+          if (!deployment) {
+            throw new Error("Deploy completed without a verified result.");
+          }
+          deployedUrl = deployment.url;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
@@ -849,10 +850,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
       console.log(`  ${step}`);
     }
 
-    if (deployedSlug) {
+    if (deployedUrl) {
       console.log("");
       console.log(
-        `  ${dim("Live:")} ${brand(`https://${deployedSlug}.production.veryfront.com`)}`,
+        `  ${dim("Live:")} ${brand(deployedUrl)}`,
       );
     } else {
       console.log("");

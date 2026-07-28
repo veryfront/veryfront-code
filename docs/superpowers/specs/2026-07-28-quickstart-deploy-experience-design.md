@@ -126,7 +126,7 @@ Git commit and cleanliness remain visible provenance metadata. They do not rejec
 - non-Git projects;
 - CI deployments with commit metadata.
 
-Source mutations between push and deploy still fail because the digest or receipt no longer matches.
+Uncommitted source mutations after Push remain local and do not change the production candidate. Deploy promotes the exact remote digest recorded by the last verified Push; users run Push again when they want new local bytes to replace that candidate. A different checked-out Git commit still invalidates the receipt.
 
 ### Default log policy
 
@@ -247,7 +247,8 @@ Normal errors omit stack traces. `--verbose` includes diagnostic context.
 ### Provenance
 
 - dirty and non-Git source can produce a valid release when the source digest matches;
-- changed source, wrong project, wrong branch, wrong control plane, and wrong digest still fail;
+- uncommitted source changes after Push remain local and do not block promotion of the verified digest;
+- a different checked-out commit, wrong project, wrong branch, wrong control plane, and wrong digest still fail;
 - release and deployment verification require the pushed source digest.
 
 ### Logging
