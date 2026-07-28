@@ -82,14 +82,22 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 
 The answer should stream. The curl response should emit `data:` lines.
 
-## Deploy it
+## Preview and deploy it
 
-From the project directory, deploy to Veryfront Cloud:
+From the project directory, push the source to its cloud preview:
 
 ```bash
-npx veryfront deploy
+npx veryfront push
 ```
 
-The command creates or links the cloud project, writes `veryfront.json` when it
-is missing, pushes the current source, creates a release, waits for browser
-assets, deploys to production, and prints the environment URL.
+The command creates or links the cloud project, stores that local identity in
+ignored `.veryfront/project.json`, and prints the preview URL. When the preview
+is ready for production, deploy the exact pushed source digest:
+
+```bash
+npx veryfront deploy --env production
+```
+
+Explicit project configuration still takes precedence. Use `VERYFRONT_PROJECT_SLUG`,
+`VERYFRONT_PROJECT_ID`, `veryfront.config.ts`, or the legacy `veryfront.json`
+when you need a committed project binding.
