@@ -77,6 +77,24 @@ Primary source areas:
   ephemeral address, preserves distinct cookies, applies response backpressure,
   propagates client disconnect through the Fetch signal, and gives concurrent
   close calls one retryable teardown.
+- Node keeps its raw HTTP listener error route after readiness only when
+  `ServeOptions.onRuntimeError` is present. Each post-readiness raw server
+  `error` event reaches that callback once; callback exceptions and rejected
+  promises are contained and logged so they cannot escape the EventEmitter
+  boundary. Omitting the callback preserves Node's fail-fast default, and
+  successful shutdown detaches the route. Startup errors retain their identity
+  when cleanup succeeds; if cleanup also fails, rejection is an
+  `AggregateError` containing both failures. The compatibility `DenoHttpServer`
+  reports listener lifetime failure through its `serve()` rejection only,
+  avoiding duplicate runtime reports.
+- Node 18 can finish a queued native lookup after an earlier `close()` reports
+  completion. Startup cancellation therefore replaces application-bearing
+  callbacks with shared one-shot guards until that attempt emits `listening` or
+  `error`; a late listener is immediately closed and a late bind error is
+  contained. Newer Node releases can cancel the lookup without emitting either
+  outcome. Their closed server may retain the two shared guards, but no active
+  handle or application closure; the unreachable cycle is garbage-collectable
+  because Node exposes no public cancellation acknowledgement.
 - Deno rejects already-aborted starts before binding, reports the native bound
   address for ephemeral ports, and owns an internal abort signal even when a
   caller supplies one. This keeps direct stop, adapter shutdown, and startup

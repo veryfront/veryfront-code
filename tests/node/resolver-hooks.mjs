@@ -403,7 +403,9 @@ export async function load(url, context, nextLoad) {
       sourcefile: filePath,
       jsx: "automatic",
       jsxImportSource: "react",
-      target: "node20",
+      // Transformed source must remain executable on the package's declared
+      // minimum runtime, including focused compatibility tests in CI.
+      target: "node18.18",
     });
 
     return {

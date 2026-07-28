@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * These tests verify the cross-runtime process abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithProjectEnv } from "../../server/project-env/storage.ts";
 import {
@@ -527,30 +527,173 @@ describe("Process Compat", () => {
   });
 
   describe("onSignal", () => {
-    it("should accept SIGINT handler without throwing", {
+    it("returns an idempotent disposer for SIGINT", {
       sanitizeResources: false,
       sanitizeOps: false,
     }, () => {
       const handler = () => {};
-      onSignal("SIGINT", handler);
+      const dispose = onSignal("SIGINT", handler);
 
-      // Clean up to avoid Deno leak detection
-      if (typeof Deno !== "undefined") {
-        Deno.removeSignalListener("SIGINT", handler);
+      dispose();
+      dispose();
+    });
+
+    it("returns an idempotent disposer for SIGTERM", {
+      sanitizeResources: false,
+      sanitizeOps: false,
+    }, () => {
+      const handler = () => {};
+      const dispose = onSignal("SIGTERM", handler);
+
+      dispose();
+      dispose();
+    });
+
+    it("removes the exact Deno registration once", () => {
+      const addDescriptor = Object.getOwnPropertyDescriptor(
+        Deno,
+        "addSignalListener",
+      );
+      const removeDescriptor = Object.getOwnPropertyDescriptor(
+        Deno,
+        "removeSignalListener",
+      );
+      assertExists(addDescriptor);
+      assertExists(removeDescriptor);
+
+      const registrations: Array<readonly [unknown, unknown]> = [];
+      const removals: Array<readonly [unknown, unknown]> = [];
+      const active = new Set<unknown>();
+      Object.defineProperty(Deno, "addSignalListener", {
+        ...addDescriptor,
+        value: (signal: unknown, handler: unknown) => {
+          registrations.push([signal, handler]);
+          active.add(handler);
+        },
+      });
+      Object.defineProperty(Deno, "removeSignalListener", {
+        ...removeDescriptor,
+        value: (signal: unknown, handler: unknown) => {
+          removals.push([signal, handler]);
+          active.delete(handler);
+        },
+      });
+
+      const handler = () => {};
+      try {
+        const dispose = onSignal("SIGINT", handler);
+        assertEquals(registrations.length, 1);
+        assertStrictEquals(registrations[0]?.[0], "SIGINT");
+        assertStrictEquals(registrations[0]?.[1], handler);
+        assertEquals(active.has(handler), true);
+
+        dispose();
+        dispose();
+
+        assertEquals(removals.length, 1);
+        assertStrictEquals(removals[0]?.[0], "SIGINT");
+        assertStrictEquals(removals[0]?.[1], handler);
+        assertEquals(active.has(handler), false);
+      } finally {
+        Object.defineProperty(Deno, "addSignalListener", addDescriptor);
+        Object.defineProperty(Deno, "removeSignalListener", removeDescriptor);
       }
     });
 
-    it("should accept SIGTERM handler without throwing", {
-      sanitizeResources: false,
-      sanitizeOps: false,
-    }, () => {
-      const handler = () => {};
-      onSignal("SIGTERM", handler);
+    it("rolls back a partial Deno registration and preserves its error", () => {
+      const addDescriptor = Object.getOwnPropertyDescriptor(
+        Deno,
+        "addSignalListener",
+      );
+      const removeDescriptor = Object.getOwnPropertyDescriptor(
+        Deno,
+        "removeSignalListener",
+      );
+      assertExists(addDescriptor);
+      assertExists(removeDescriptor);
 
-      // Clean up to avoid Deno leak detection
-      if (typeof Deno !== "undefined") {
-        Deno.removeSignalListener("SIGTERM", handler);
+      const registrationError = new Error("native signal bind failed");
+      const active = new Set<unknown>();
+      const removals: Array<readonly [unknown, unknown]> = [];
+      Object.defineProperty(Deno, "addSignalListener", {
+        ...addDescriptor,
+        value: (_signal: unknown, handler: unknown) => {
+          active.add(handler);
+          throw registrationError;
+        },
+      });
+      Object.defineProperty(Deno, "removeSignalListener", {
+        ...removeDescriptor,
+        value: (signal: unknown, handler: unknown) => {
+          removals.push([signal, handler]);
+          active.delete(handler);
+        },
+      });
+
+      const handler = () => {};
+      let rejection: unknown;
+      try {
+        onSignal("SIGTERM", handler);
+      } catch (error) {
+        rejection = error;
+      } finally {
+        Object.defineProperty(Deno, "addSignalListener", addDescriptor);
+        Object.defineProperty(Deno, "removeSignalListener", removeDescriptor);
       }
+
+      assertStrictEquals(rejection, registrationError);
+      assertEquals(removals.length, 1);
+      assertStrictEquals(removals[0]?.[0], "SIGTERM");
+      assertStrictEquals(removals[0]?.[1], handler);
+      assertEquals(active.has(handler), false);
+    });
+
+    it("preserves Deno registration and rollback failures together", () => {
+      const addDescriptor = Object.getOwnPropertyDescriptor(
+        Deno,
+        "addSignalListener",
+      );
+      const removeDescriptor = Object.getOwnPropertyDescriptor(
+        Deno,
+        "removeSignalListener",
+      );
+      assertExists(addDescriptor);
+      assertExists(removeDescriptor);
+
+      const registrationError = new Error("native signal bind failed");
+      const cleanupError = new Error("native signal rollback failed");
+      const active = new Set<unknown>();
+      Object.defineProperty(Deno, "addSignalListener", {
+        ...addDescriptor,
+        value: (_signal: unknown, handler: unknown) => {
+          active.add(handler);
+          throw registrationError;
+        },
+      });
+      Object.defineProperty(Deno, "removeSignalListener", {
+        ...removeDescriptor,
+        value: () => {
+          throw cleanupError;
+        },
+      });
+
+      const handler = () => {};
+      let rejection: unknown;
+      try {
+        onSignal("SIGTERM", handler);
+      } catch (error) {
+        rejection = error;
+      } finally {
+        Object.defineProperty(Deno, "addSignalListener", addDescriptor);
+        Object.defineProperty(Deno, "removeSignalListener", removeDescriptor);
+      }
+
+      assertEquals(rejection instanceof AggregateError, true);
+      assertEquals((rejection as AggregateError).errors, [
+        registrationError,
+        cleanupError,
+      ]);
+      assertEquals(active.has(handler), true);
     });
   });
 

@@ -96,6 +96,15 @@ Use `HttpServer`'s `onListen` callback as the portable readiness boundary and
 when its signal is already aborted; ephemeral listeners report their actual
 native port.
 
+On Node.js, `ServeOptions.onRuntimeError` receives each raw HTTP listener `error`
+emitted after `onListen` completes. Omitting the callback preserves Node's
+default fail-fast EventEmitter behavior. A callback exception or rejected
+promise is contained and logged on a best-effort basis; callback promises are
+not a listener or shutdown barrier. A successful `close()` detaches the raw
+HTTP listener route. Cancellation also retains ownership of delayed native
+bind outcomes on supported Node releases: a listener that binds late is closed,
+and a late bind error is contained instead of escaping the process boundary.
+
 Local adapters can own more than one server. Each returned `Server.stop()`
 retires only that listener; `adapter.shutdown()` retires every server still
 owned by the adapter. Concurrent shutdown calls share one attempt, and a
@@ -351,6 +360,26 @@ derive an agent-step cap from the runtime profile. See Cloudflare's
 [WebSocket API](https://developers.cloudflare.com/workers/runtime-apis/websockets/).
 
 ## Compatibility contracts
+
+### Process signals
+
+`onSignal(signal, handler)` registers a `SIGINT` or `SIGTERM` callback on Deno,
+Node.js, or Bun. It returns an idempotent disposer for the exact signal and
+handler pair. Repeated calls after successful disposal have no effect.
+
+```typescript
+function onSignal(
+  signal: "SIGINT" | "SIGTERM",
+  handler: () => void,
+): () => void;
+```
+
+If the runtime throws after partially installing a listener, `onSignal()`
+attempts to remove that exact registration. It rethrows the original
+registration error when removal succeeds. If removal also fails, it throws an
+`AggregateError` containing the registration and removal failures in that
+order. When neither Deno nor a detected Node-compatible `process` exists,
+`onSignal()` returns a no-op disposer.
 
 ### Filesystem failures and temporary directories
 

@@ -14,6 +14,13 @@ const pendingWebSocketUpgrades = new Map<
 >();
 const NODE_WEBSOCKET_UPGRADE_TIMEOUT_MS = 30_000;
 
+function isServerNotRunningError(error: Error): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(error, "code");
+  return descriptor !== undefined &&
+    "value" in descriptor &&
+    descriptor.value === "ERR_SERVER_NOT_RUNNING";
+}
+
 /** Private correlation header injected by Node upgrade transports. */
 export const NODE_WEBSOCKET_UPGRADE_ID_HEADER = "x-veryfront-node-upgrade-id";
 
@@ -21,17 +28,32 @@ export class NodeServer implements Server {
   private stopPromise: Promise<void> | undefined;
   private upgradesDisposed = false;
   private httpStopped = false;
+  private transportListenersDetached = false;
+  private transportState: "idle" | "pending" | "bound" | "close-observed" = "idle";
+  private transportCloseObserver: (() => void) | undefined;
 
   constructor(
     private server: NodeHttpServer,
     private hostname: string,
     private port: number,
     private disposeUpgrades: () => void | Promise<void> = () => {},
-  ) {}
+    private detachTransportListeners: () => void = () => {},
+  ) {
+    if (typeof server.once === "function") {
+      this.transportCloseObserver = () => {
+        this.transportState = "close-observed";
+        this.transportCloseObserver = undefined;
+      };
+      server.once("close", this.transportCloseObserver);
+    }
+  }
 
   stop(): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
-    const attempt = this.stopInternal();
+    // Defer cleanup until after the shared promise is published. Upgrade
+    // disposal aborts application-visible requests synchronously, and their
+    // listeners are allowed to re-enter stop().
+    const attempt = Promise.resolve().then(() => this.stopInternal());
     this.stopPromise = attempt;
     void attempt.then(
       () => undefined,
@@ -48,18 +70,79 @@ export class NodeServer implements Server {
       this.upgradesDisposed = true;
     }
     if (!this.httpStopped) {
-      await new Promise<void>((resolve, reject) => {
+      if (this.transportState === "close-observed") {
+        this.httpStopped = true;
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          let observesClose = false;
+          const detachCloseListener = (): void => {
+            if (!observesClose) return;
+            observesClose = false;
+            try {
+              this.server.off?.("close", onClose);
+            } catch {
+              // Node's once-listener removes itself before invocation. A
+              // diagnostic off() failure cannot make a closed server live.
+            }
+          };
+          const settle = (error?: unknown): void => {
+            if (settled) return;
+            settled = true;
+            detachCloseListener();
+            if (error === undefined) resolve();
+            else reject(error);
+          };
+          const onClose = (): void => settle();
+          try {
+            if (typeof this.server.once === "function") {
+              this.server.once("close", onClose);
+              observesClose = true;
+            }
+            this.server.close((error) => {
+              if (!error) {
+                settle();
+                return;
+              }
+              // During a pending bind Node can report NOT_RUNNING before its
+              // close event. Wait for that event to finish this close attempt.
+              // On Node 18 it does not prove that the queued lookup was
+              // cancelled; the startup coordinator retains ownership of any
+              // later listening/error outcome.
+              if (isServerNotRunningError(error)) {
+                if (
+                  this.transportState === "close-observed" ||
+                  this.transportState === "idle"
+                ) {
+                  settle();
+                  return;
+                }
+                if (observesClose && this.transportState === "pending") return;
+              }
+              settle(error);
+            });
+            // `close()` waits for active HTTP requests and can otherwise
+            // deadlock with handlers that are waiting for their Fetch signal to
+            // abort. Node >=18.2 exposes this explicit force-close phase.
+            this.server.closeAllConnections?.();
+          } catch (error) {
+            settle(error);
+          }
+        });
+        this.httpStopped = true;
+        this.transportState = "close-observed";
+      }
+      if (this.transportCloseObserver) {
         try {
-          this.server.close((error) => error ? reject(error) : resolve());
-          // `close()` waits for active HTTP requests and can otherwise
-          // deadlock with handlers that are waiting for their Fetch signal to
-          // abort. Node >=18.2 exposes this explicit force-close phase.
-          this.server.closeAllConnections?.();
-        } catch (error) {
-          reject(error);
+          this.server.off?.("close", this.transportCloseObserver);
+        } finally {
+          this.transportCloseObserver = undefined;
         }
-      });
-      this.httpStopped = true;
+      }
+    }
+    if (!this.transportListenersDetached) {
+      this.detachTransportListeners();
+      this.transportListenersDetached = true;
     }
   }
 
@@ -70,6 +153,12 @@ export class NodeServer implements Server {
   /** @internal Update an ephemeral (`port: 0`) listener with its bound port. */
   setListeningPort(port: number): void {
     this.port = port;
+    if (this.transportState !== "close-observed") this.transportState = "bound";
+  }
+
+  /** @internal Mark the native listen request as pending. */
+  markListenStarted(): void {
+    if (this.transportState === "idle") this.transportState = "pending";
   }
 }
 
@@ -122,6 +211,103 @@ export function rejectWebSocketUpgrade(requestId: string, error: Error): boolean
 
 function clientDisconnectedError(): DOMException {
   return new DOMException("HTTP client disconnected", "AbortError");
+}
+
+function logContainedNodeRuntimeError(message: string, error: unknown): void {
+  void import("#veryfront/utils/logger/logger.ts").then(
+    ({ serverLogger }) => {
+      try {
+        serverLogger.error(message, error);
+      } catch {
+        // A diagnostic failure must not escape Node's EventEmitter boundary.
+      }
+    },
+    () => {
+      // The runtime error is already contained and there is no safe logger.
+    },
+  );
+}
+
+function reportNodeRuntimeError(
+  callback: NonNullable<ServeOptions["onRuntimeError"]>,
+  error: Error,
+): void {
+  try {
+    void Promise.resolve(callback(error)).catch((callbackError) => {
+      logContainedNodeRuntimeError(
+        "Node HTTP runtime error callback failed",
+        callbackError,
+      );
+    });
+  } catch (callbackError) {
+    logContainedNodeRuntimeError(
+      "Node HTTP runtime error callback failed",
+      callbackError,
+    );
+  }
+}
+
+function retireLateNodeListener(
+  server: import("node:http").Server,
+  onSettled: () => void,
+): void {
+  let settled = false;
+  const settle = (error?: unknown): void => {
+    if (settled) return;
+    settled = true;
+    server.off("close", onClose);
+    try {
+      onSettled();
+    } catch (cleanupError) {
+      logContainedNodeRuntimeError(
+        "Node HTTP late-startup listener cleanup failed",
+        cleanupError,
+      );
+    }
+    if (error !== undefined) {
+      logContainedNodeRuntimeError(
+        "Node HTTP listener bound after startup cancellation and failed to close",
+        error,
+      );
+    }
+  };
+  const onClose = (): void => settle();
+
+  server.once("close", onClose);
+  try {
+    // Node 18 can bind after close() has already reported a pending listen as
+    // closed. Begin a fresh native close inside the listening callback, before
+    // the event loop can dispatch connections for that resurrected handle.
+    server.close((error) => {
+      if (!error || isServerNotRunningError(error)) settle();
+      else settle(error);
+    });
+    server.closeAllConnections?.();
+  } catch (error) {
+    settle(error);
+  }
+}
+
+function absorbCanceledNodeListenError(
+  this: import("node:http").Server,
+): void {
+  this.off("listening", retireCanceledNodeListener);
+}
+
+function retireCanceledNodeListener(
+  this: import("node:http").Server,
+): void {
+  this.off("error", absorbCanceledNodeListenError);
+  retireLateNodeListener(this, () => undefined);
+}
+
+function armCanceledNodeListenGuards(server: import("node:http").Server): void {
+  // Node 18 may still bind or emit a bind error after close() reports that a
+  // pending hostname listen is closed. Newer Node releases cancel that work
+  // without exposing a completion acknowledgement. Shared one-shot guards own
+  // either late outcome without retaining application/startup closures.
+  server.once("error", absorbCanceledNodeListenError);
+  server.once("listening", retireCanceledNodeListener);
 }
 
 function waitForResponseDrain(
@@ -236,14 +422,55 @@ export class NodeWebSocketHandshakeController {
   }
 }
 
+type NodeRequestHandler = (
+  request: Request,
+) => Promise<Response | WebSocketUpgradeResponse> | Response | WebSocketUpgradeResponse;
+
 export async function createNodeServer(
-  handler: (
-    request: Request,
-  ) => Promise<Response | WebSocketUpgradeResponse> | Response | WebSocketUpgradeResponse,
+  handler: NodeRequestHandler,
   options: ServeOptions = {},
 ): Promise<Server> {
-  const { port = DEFAULT_PORT, hostname = "localhost", onListen, signal } = options;
+  return await createNodeServerInternal(handler, options);
+}
+
+/** @internal Publish startup cleanup ownership before listener readiness. */
+export function createNodeServerWithStartupOwner(
+  handler: NodeRequestHandler,
+  options: ServeOptions,
+  ownStartupServer: (server: Server) => void,
+): Promise<Server> {
+  if (typeof ownStartupServer !== "function") {
+    return Promise.reject(new TypeError("Node server startup owner must be a function"));
+  }
+  return createNodeServerInternal(handler, options, ownStartupServer);
+}
+
+async function createNodeServerInternal(
+  handler: NodeRequestHandler,
+  options: ServeOptions,
+  ownStartupServer?: (server: Server) => void,
+): Promise<Server> {
+  const {
+    port = DEFAULT_PORT,
+    hostname = "localhost",
+    onListen,
+    onRuntimeError,
+    signal,
+  } = options;
+  if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
+    throw new TypeError("Node server runtime error callback must be a function");
+  }
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Node server startup was aborted", "AbortError");
+  }
   const { createServer } = await import("node:http");
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Node server startup was aborted", "AbortError");
+  }
   let wsServer: WSWebSocketServer | null = null;
   let upgradesDisposed = false;
   const rawUpgradeSockets = new Set<import("node:stream").Duplex>();
@@ -251,6 +478,9 @@ export async function createNodeServer(
   const upgradeAbortControllers = new Map<string, AbortController>();
   const handshakeController = new NodeWebSocketHandshakeController();
   let abortListener: (() => void) | undefined;
+  let transportErrorListener: ((error: Error) => void) | undefined;
+  let startupListeningListener: (() => void) | undefined;
+  let retainTransportErrorListener = false;
 
   const server = createServer(async (_req, _res) => {
     const requestAbort = new AbortController();
@@ -496,22 +726,43 @@ export async function createNodeServer(
     if (wsServer === ownedServer) wsServer = null;
   };
 
+  const detachTransportErrorListener = (): void => {
+    if (retainTransportErrorListener) return;
+    if (!transportErrorListener) return;
+    server.off("error", transportErrorListener);
+    transportErrorListener = undefined;
+  };
+  const detachStartupListeningListener = (): void => {
+    if (!startupListeningListener) return;
+    server.off("listening", startupListeningListener);
+    startupListeningListener = undefined;
+  };
+
   const nodeServer = new NodeServer(
     server as unknown as NodeHttpServer,
     hostname,
     port,
     disposeUpgrades,
+    detachTransportErrorListener,
   );
-
-  if (signal?.aborted) {
-    await disposeUpgrades();
-    throw signal.reason instanceof Error
-      ? signal.reason
-      : new DOMException("Node server startup was aborted", "AbortError");
+  try {
+    ownStartupServer?.(nodeServer);
+  } catch (error) {
+    try {
+      await nodeServer.stop();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Node server startup ownership and cleanup both failed",
+      );
+    }
+    throw error;
   }
 
   return new Promise((resolve, reject) => {
-    let settled = false;
+    let phase: "starting" | "ready" | "startup-cleanup" = "starting";
+    let invokingOnListen = false;
+    let nativeListenOutcomePending = false;
     const abortError = (): Error =>
       signal?.reason instanceof Error
         ? signal.reason
@@ -530,51 +781,113 @@ export async function createNodeServer(
           ),
       );
     };
-    const startupErrorListener = (error: Error): void => {
-      if (settled) return;
-      settled = true;
-      server.off("error", startupErrorListener);
-      rejectAfterCleanup(error, disposeUpgrades());
+    const cleanupStartup = async (cleanup: Promise<void>): Promise<void> => {
+      await cleanup;
+      if (nativeListenOutcomePending) {
+        detachStartupListeningListener();
+        retainTransportErrorListener = false;
+        detachTransportErrorListener();
+        nativeListenOutcomePending = false;
+        armCanceledNodeListenGuards(server);
+        return;
+      }
+      retainTransportErrorListener = false;
+      detachTransportErrorListener();
+      detachStartupListeningListener();
+    };
+    transportErrorListener = (error: Error): void => {
+      if (phase === "ready") {
+        if (onRuntimeError) reportNodeRuntimeError(onRuntimeError, error);
+        return;
+      }
+      if (phase === "startup-cleanup") {
+        if (nativeListenOutcomePending) {
+          nativeListenOutcomePending = false;
+          retainTransportErrorListener = false;
+          detachTransportErrorListener();
+          detachStartupListeningListener();
+        }
+        return;
+      }
+      nativeListenOutcomePending = false;
+      // A transport error raised synchronously by work inside onListen must
+      // interrupt that callback. Otherwise its caller can commit readiness
+      // after this adapter has already started rollback.
+      if (invokingOnListen) {
+        phase = "startup-cleanup";
+        rejectAfterCleanup(error, cleanupStartup(nodeServer.stop()));
+        throw error;
+      }
+      phase = "startup-cleanup";
+      rejectAfterCleanup(
+        error,
+        cleanupStartup(nodeServer.stop()),
+      );
     };
 
     abortListener = () => {
       const error = abortError();
-      if (settled) {
-        void nodeServer.stop().catch(async (cleanupError) => {
-          const { serverLogger } = await import("#veryfront/utils/logger/logger.ts");
-          serverLogger.error("Node server abort cleanup failed:", cleanupError);
+      if (phase === "ready") {
+        void nodeServer.stop().catch((cleanupError) => {
+          logContainedNodeRuntimeError(
+            "Node server abort cleanup failed",
+            cleanupError,
+          );
         });
         return;
       }
-      settled = true;
-      server.off("error", startupErrorListener);
-      rejectAfterCleanup(error, nodeServer.stop());
+      if (phase === "startup-cleanup") return;
+      phase = "startup-cleanup";
+      retainTransportErrorListener = nativeListenOutcomePending;
+      rejectAfterCleanup(error, cleanupStartup(nodeServer.stop()));
     };
     signal?.addEventListener("abort", abortListener, { once: true });
-    server.once("error", startupErrorListener);
+    // `ownStartupServer` can synchronously abort after the pre-import signal
+    // checks but before this listener exists. Registration plus an immediate
+    // state check closes that window without starting the native listener.
+    if (signal?.aborted) {
+      abortListener();
+      return;
+    }
+    server.on("error", transportErrorListener);
 
+    const onListening = (): void => {
+      startupListeningListener = undefined;
+      nativeListenOutcomePending = false;
+      if (phase !== "starting") {
+        retireLateNodeListener(server, () => {
+          retainTransportErrorListener = false;
+          detachTransportErrorListener();
+        });
+        return;
+      }
+      const address = server.address();
+      const listeningPort = typeof address === "object" && address !== null ? address.port : port;
+      nodeServer.setListeningPort(listeningPort);
+      try {
+        invokingOnListen = true;
+        onListen?.({ hostname, port: listeningPort });
+      } catch (error) {
+        if (phase !== "starting") return;
+        phase = "startup-cleanup";
+        rejectAfterCleanup(error, cleanupStartup(nodeServer.stop()));
+        return;
+      } finally {
+        invokingOnListen = false;
+      }
+      if (phase !== "starting") return;
+      phase = "ready";
+      if (!onRuntimeError) detachTransportErrorListener();
+      resolve(nodeServer);
+    };
+    startupListeningListener = onListening;
+    server.once("listening", onListening);
     try {
-      server.listen(port, hostname, () => {
-        if (settled) {
-          void nodeServer.stop();
-          return;
-        }
-        server.off("error", startupErrorListener);
-        const address = server.address();
-        const listeningPort = typeof address === "object" && address !== null ? address.port : port;
-        nodeServer.setListeningPort(listeningPort);
-        try {
-          onListen?.({ hostname, port: listeningPort });
-        } catch (error) {
-          settled = true;
-          rejectAfterCleanup(error, nodeServer.stop());
-          return;
-        }
-        settled = true;
-        resolve(nodeServer);
-      });
+      server.listen(port, hostname);
+      nativeListenOutcomePending = true;
+      nodeServer.markListenStarted();
     } catch (error) {
-      startupErrorListener(error instanceof Error ? error : new Error(String(error)));
+      transportErrorListener(error instanceof Error ? error : new Error(String(error)));
     }
   });
 }

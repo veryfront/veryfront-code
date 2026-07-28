@@ -29,8 +29,6 @@
  */
 
 import { createProxyContextHeaders, createProxyHandler } from "./handler.ts";
-import { createCacheFromEnv } from "./cache/index.ts";
-import { ensureRedisTokenCacheStoreFromEnv } from "./cache/redis-extension.ts";
 import {
   getReplayableRequestBodies,
   getUpstreamRetryCount,
@@ -45,7 +43,7 @@ import {
   PROXY_WEBSOCKET_CONNECTION_TIMEOUT_MS,
   ProxyWebSocketBridgeRegistry,
 } from "./websocket-bridge.ts";
-import { register } from "../extensions/contracts.ts";
+import { register, tryResolve, unregister } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { ensureError, getErrorMessage, INITIALIZATION_ERROR } from "#veryfront/errors";
 import { awaitAbortable } from "#veryfront/utils/abort.ts";
@@ -97,6 +95,21 @@ import { startProxyRoutingInvalidationBus } from "./routing-invalidation-redis.t
 import { readProxyStartupConfig } from "./startup-config.ts";
 import { createProxyAuthProvider } from "./auth-extension.ts";
 import { runProxyShutdownSteps } from "./shutdown.ts";
+import { createProxyStartupRollback } from "./startup-rollback.ts";
+import {
+  acquireProxySignalHandlers,
+  createProxyStartupSignalRouter,
+  type ProxySignalHandlers,
+  ProxyStartupSignalError,
+} from "./startup-signals.ts";
+import { acquireProxyStartupCache } from "./startup-cache.ts";
+import { startProxyListener } from "./listener-startup.ts";
+import {
+  createProxyShutdownCoordinator,
+  type ProxyShutdownCoordinator,
+  type ProxyShutdownRequest,
+  type ProxyShutdownState,
+} from "./shutdown-coordinator.ts";
 import {
   API_PROXY_PATH_PREFIX,
   createApiTargetUrl,
@@ -112,24 +125,11 @@ import {
   captureApplicationError,
   flushApplicationErrors,
 } from "#veryfront/observability/application-errors.ts";
-import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
-
-await initializeSentryFromEnv("veryfront-proxy");
+import { initializeSentryFromEnv, shutdownSentry } from "#veryfront/observability/sentry.ts";
 
 const startupConfig = readProxyStartupConfig();
 const config = startupConfig.proxyConfig;
 const PRODUCTION_SERVER_URL = startupConfig.productionServerUrl;
-
-const rendererRouter = createRendererRouterFromEnvironment(
-  PRODUCTION_SERVER_URL,
-);
-
-// Dedicated server resolver: routes environments to their dedicated server if assigned
-const serverResolver = new ServerResolver(
-  startupConfig.apiInternalUrl,
-  startupConfig.apiInternalUser,
-  startupConfig.apiInternalPass,
-);
 
 const { hostname: HOST, port: PORT } = startupConfig.binding;
 const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
@@ -140,27 +140,165 @@ const VERYFRONT_SERVER_RETRY_DELAY_MS = startupConfig.serverRetryDelayMs;
 const SHUTDOWN_DRAIN_TIMEOUT_MS = startupConfig.shutdownDrainTimeoutMs;
 const SHUTDOWN_CLEANUP_TIMEOUT_MS = startupConfig.shutdownCleanupTimeoutMs;
 const routingInvalidationSecret = startupConfig.routingInvalidationSecret;
+let startupRollbackFailed = false;
+const startupRollback = createProxyStartupRollback({
+  cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+  reportStartupFailure: (error) => {
+    if (error instanceof ProxyStartupSignalError) return;
+    captureApplicationError(error, { boundary: "process.startup" });
+  },
+  reportCleanupFailure: (failure) => {
+    startupRollbackFailed = true;
+    if (failure.status === "timeout") {
+      proxyLogger.error("Proxy startup rollback step timed out", {
+        step: failure.step,
+        cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      });
+      return;
+    }
+    proxyLogger.error(
+      "Proxy startup rollback step failed",
+      { step: failure.step },
+      failure.error,
+    );
+  },
+});
+
+let shutdownCoordinator: ProxyShutdownCoordinator | null = null;
+const startupSignalRouter = createProxyStartupSignalRouter((signal) => {
+  const coordinator = shutdownCoordinator;
+  if (!coordinator) {
+    throw new Error("Proxy runtime signal arrived before shutdown coordination was ready");
+  }
+  void coordinator.request({ source: "signal", signal });
+});
+
+function finishProxyStartupFailure(error: unknown): never {
+  if (error instanceof ProxyStartupSignalError) {
+    proxyLogger.info(`Received ${error.signal}, proxy startup rollback finished`, {
+      source: "signal",
+      failed: startupRollbackFailed,
+    });
+    exit(startupRollbackFailed ? 1 : 0);
+  }
+  throw error;
+}
+
+async function awaitProxyStartupOperation<T>(operation: Promise<T>): Promise<T> {
+  try {
+    return await operation;
+  } catch (error) {
+    return finishProxyStartupFailure(error);
+  }
+}
+
+function runProxyStartupStage<T>(
+  stage: () => T | PromiseLike<T>,
+): Promise<T> {
+  return awaitProxyStartupOperation(
+    startupRollback.run(stage, startupSignalRouter.startupSignal),
+  );
+}
+
+async function acquireProxyStartupResource<T>(
+  name: string,
+  stage: () => T | PromiseLike<T>,
+  cleanup: (resource: T) => void | Promise<void>,
+): Promise<T> {
+  const acquisition = await awaitProxyStartupOperation(
+    startupRollback.acquire(
+      name,
+      stage,
+      cleanup,
+      startupSignalRouter.startupSignal,
+    ),
+  );
+  return acquisition.value;
+}
+
+let signalHandlers: ProxySignalHandlers | null = null;
+signalHandlers = await runProxyStartupStage(() =>
+  acquireProxySignalHandlers({
+    startupRollback,
+    registerSignal: onSignal,
+    handleSignal: startupSignalRouter.handle,
+  })
+);
+
+// Signal handlers are the earliest startup resource and therefore the final
+// rollback cleanup. Flush diagnostics before invalidating an in-flight Sentry
+// initializer so a late extension import cannot publish after cancellation.
+startupRollback.own("sentry", shutdownSentry);
+startupRollback.own("application-errors", async () => {
+  await flushApplicationErrors();
+});
+await runProxyStartupStage(() => initializeSentryFromEnv("veryfront-proxy"));
+
+const rendererRouter = await acquireProxyStartupResource(
+  "renderer-router",
+  () => createRendererRouterFromEnvironment(PRODUCTION_SERVER_URL),
+  (router) => router?.close(),
+);
+
+// Dedicated server resolver: routes environments to their dedicated server if assigned
+const serverResolver = await acquireProxyStartupResource(
+  "server-resolver",
+  () =>
+    new ServerResolver(
+      startupConfig.apiInternalUrl,
+      startupConfig.apiInternalUser,
+      startupConfig.apiInternalPass,
+    ),
+  (resolver) => resolver.close(),
+);
+
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
-const proxyWebSocketBridgeRegistry = new ProxyWebSocketBridgeRegistry(
-  startupConfig.maxActiveWebSocketBridges,
+const proxyWebSocketBridgeRegistry = await acquireProxyStartupResource(
+  "websocket-bridges",
+  () =>
+    new ProxyWebSocketBridgeRegistry(
+      startupConfig.maxActiveWebSocketBridges,
+    ),
+  (registry) => registry.close(),
 );
 let shuttingDown = false;
 
-const authProvider = await importFirstPartyExtensionModule<unknown>(
-  "ext-auth-jwt",
-  "@veryfront/ext-auth-jwt",
-).then(createProxyAuthProvider).catch((error) => {
-  throw INITIALIZATION_ERROR.create({
-    detail: "The Veryfront proxy requires a valid ext-auth-jwt extension. " +
-      "In npm deployments install @veryfront/ext-auth-jwt alongside veryfront.",
-    cause: error,
-  });
-});
-register("AuthProvider", authProvider);
+const previousAuthProvider = tryResolve<unknown>("AuthProvider");
+const authProvider = await runProxyStartupStage(() =>
+  importFirstPartyExtensionModule<unknown>(
+    "ext-auth-jwt",
+    "@veryfront/ext-auth-jwt",
+  ).then(createProxyAuthProvider).catch((error) => {
+    throw INITIALIZATION_ERROR.create({
+      detail: "The Veryfront proxy requires a valid ext-auth-jwt extension. " +
+        "In npm deployments install @veryfront/ext-auth-jwt alongside veryfront.",
+      cause: error,
+    });
+  })
+);
+await acquireProxyStartupResource(
+  "auth-provider-registration",
+  () => {
+    register("AuthProvider", authProvider);
+    return authProvider;
+  },
+  (registeredProvider) => {
+    if (tryResolve<unknown>("AuthProvider") !== registeredProvider) return;
+    if (previousAuthProvider === undefined) unregister("AuthProvider");
+    else register("AuthProvider", previousAuthProvider);
+  },
+);
 
-// Initialize cache and proxy handler
-await ensureRedisTokenCacheStoreFromEnv();
-const cache = await createCacheFromEnv();
+// Initialize cache and proxy handler. Registry restoration intentionally
+// remains owned by startup until listener readiness commits the transaction.
+const startupCache = await awaitProxyStartupOperation(
+  acquireProxyStartupCache(
+    startupRollback,
+    {},
+    startupSignalRouter.startupSignal,
+  ),
+);
+const cache = startupCache.cache;
 const routingInvalidationLogger = {
   debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),
   info: (msg: string, extra?: Record<string, unknown>) => proxyLogger.info(msg, extra),
@@ -168,35 +306,50 @@ const routingInvalidationLogger = {
   error: (msg: string, error?: unknown, extra?: Record<string, unknown>) =>
     proxyLogger.error(msg, extra ?? {}, error),
 };
-const proxyHandler = createProxyHandler({
-  config,
-  cache,
-  logger: routingInvalidationLogger,
-});
-const routingInvalidationBus = await startProxyRoutingInvalidationBus({
-  expectedReplicas: startupConfig.expectedReplicas,
-  integritySecret: routingInvalidationSecret,
-  logger: routingInvalidationLogger,
-  onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup,
-}).catch((error) => {
-  if (startupConfig.production) {
-    throw new Error("Proxy routing invalidation bus failed to start", { cause: error });
-  }
-  proxyLogger.error(
-    "Proxy routing invalidation bus failed; TTL recovery remains active",
-    {},
-    error,
-  );
-  return null;
-});
+const proxyHandler = await acquireProxyStartupResource(
+  "proxy-handler",
+  () =>
+    createProxyHandler({
+      config,
+      cache,
+      logger: routingInvalidationLogger,
+    }),
+  async (handler) => {
+    await handler.close();
+    startupCache.transferToHandler();
+  },
+);
+const routingInvalidationBus = await acquireProxyStartupResource(
+  "routing-invalidation-bus",
+  () =>
+    startProxyRoutingInvalidationBus({
+      expectedReplicas: startupConfig.expectedReplicas,
+      integritySecret: routingInvalidationSecret,
+      logger: routingInvalidationLogger,
+      onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup,
+    }).catch((error) => {
+      if (startupConfig.production) {
+        throw new Error("Proxy routing invalidation bus failed to start", { cause: error });
+      }
+      proxyLogger.error(
+        "Proxy routing invalidation bus failed; TTL recovery remains active",
+        {},
+        error,
+      );
+      return null;
+    }),
+  (bus) => bus?.close(),
+);
 if (startupConfig.production && !routingInvalidationBus) {
-  throw new Error(
-    "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
-  );
+  await runProxyStartupStage(() => {
+    throw new Error(
+      "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
+    );
+  });
 }
 
 // Validate configuration on startup
-const missingCredentials = proxyHandler.validateConfig();
+const missingCredentials = await runProxyStartupStage(() => proxyHandler.validateConfig());
 if (missingCredentials.length > 0) {
   proxyLogger.warn("Missing OAuth credentials", { missingCredentials });
   proxyLogger.warn("Proxy will forward requests without authentication");
@@ -658,16 +811,26 @@ async function router(req: Request): Promise<Response> {
   }
 }
 
-// Create server before signal registration so early SIGTERM/SIGINT can close it safely.
-const server = createHttpServer();
+// Create the facade before binding; startup rollback owns it until readiness.
+const server = await acquireProxyStartupResource(
+  "http-server",
+  () => createHttpServer(),
+  (httpServer) => httpServer.close(),
+);
 
 // Graceful shutdown
-async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
-  if (shuttingDown) return;
+async function performShutdown(
+  request: ProxyShutdownRequest,
+  state: ProxyShutdownState,
+): Promise<void> {
   shuttingDown = true;
-  let shutdownFailed = false;
+  let shutdownFailed = state.hasListenerFailure();
 
-  proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
+  const shutdownMessage = request.source === "signal"
+    ? `Received ${request.signal}, initiating graceful shutdown`
+    : "Proxy HTTP listener failed, initiating graceful shutdown";
+  proxyLogger.info(shutdownMessage, {
+    source: request.source,
     activeWebSocketBridges: proxyWebSocketBridgeRegistry.size,
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
@@ -693,7 +856,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   } catch (error) {
     shutdownFailed = true;
     captureApplicationError(error, { boundary: "process.shutdown" });
-    proxyLogger.error("Proxy request drain failed", { signal }, error);
+    proxyLogger.error("Proxy request drain failed", { source: request.source }, error);
   }
 
   let serverClosed = false;
@@ -728,12 +891,20 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       run: async () => await proxyHandler.close(),
     },
     {
+      name: "token-cache",
+      run: () => cache.close(),
+    },
+    {
       name: "telemetry",
       run: async () => await shutdownOTLP(),
     },
     {
       name: "application-errors",
       run: async () => await flushApplicationErrors(),
+    },
+    {
+      name: "signal-handlers",
+      run: () => signalHandlers?.dispose(),
     },
   ], SHUTDOWN_CLEANUP_TIMEOUT_MS);
 
@@ -752,6 +923,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     }
   }
   if (cleanupFailures.length > 0) shutdownFailed = true;
+  if (state.hasListenerFailure()) shutdownFailed = true;
 
   const serverCloseFailed = cleanupFailures.some(({ step }) => step === "http-server");
   if (!serverCloseFailed && !serverClosed) {
@@ -769,22 +941,53 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   exit(shutdownFailed ? 1 : 0);
 }
 
-const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
-  void shutdown(signal).catch((error) => {
-    captureApplicationError(error, { boundary: "process.shutdown" });
-    proxyLogger.error("Unhandled shutdown error", { signal }, error);
-    void flushApplicationErrors().finally(() => exit(1));
-  });
-};
+shutdownCoordinator = await runProxyStartupStage(() =>
+  createProxyShutdownCoordinator({
+    performShutdown,
+    reportListenerFailure: (error) => {
+      captureApplicationError(error, { boundary: "process.runtime" });
+      proxyLogger.error(
+        "Proxy HTTP listener failed after readiness",
+        {},
+        error,
+      );
+    },
+    handleShutdownFailure: async (error) => {
+      try {
+        captureApplicationError(error, { boundary: "process.shutdown" });
+      } catch {
+        // Terminal shutdown must not depend on diagnostics remaining healthy.
+      }
+      try {
+        proxyLogger.error("Unhandled shutdown error", {}, error);
+      } catch {
+        // Continue to the owned flush/exit boundary.
+      }
+      try {
+        await flushApplicationErrors();
+      } catch (flushError) {
+        try {
+          proxyLogger.error("Failed to flush terminal shutdown diagnostics", {}, flushError);
+        } catch {
+          // Process termination remains authoritative.
+        }
+      }
+      exit(1);
+    },
+  })
+);
+const runtimeShutdownCoordinator = shutdownCoordinator;
 
-onSignal("SIGINT", () => handleSignal("SIGINT"));
-onSignal("SIGTERM", () => handleSignal("SIGTERM"));
+// Wait for sticky-session router to resolve its initial target list. A
+// pre-commit signal rejects this boundary and lets startup rollback own every
+// resource instead of taking the runtime's immediate-exit path.
+await runProxyStartupStage(() => rendererRouter?.ready());
 
-// Wait for sticky-session router to resolve initial target list
-await rendererRouter?.ready();
-
-// Initialize tracing and start server
-await initializeOTLPWithApis();
+// Own telemetry before initialization. shutdownOTLP() waits for an in-flight
+// initializer and invalidates its generation, so startup cancellation cannot
+// publish an exporter after rollback.
+startupRollback.own("telemetry", () => shutdownOTLP());
+await runProxyStartupStage(() => initializeOTLPWithApis());
 
 proxyLogger.debug("Starting proxy server (split mode)", {
   port: PORT,
@@ -792,5 +995,21 @@ proxyLogger.debug("Starting proxy server (split mode)", {
   apiBaseUrl: config.apiBaseUrl,
 });
 
-// Start the HTTP server
-await server.serve(router, { port: PORT, hostname: HOST });
+// `onListen` is the only portable readiness boundary: Node's serve promise
+// resolves at readiness, while Deno's remains pending for the listener lifetime.
+const listener = await runProxyStartupStage(() =>
+  startProxyListener({
+    server,
+    handler: router,
+    port: PORT,
+    hostname: HOST,
+    commitStartup: () => startupSignalRouter.commit(() => startupRollback.commit()),
+    onRuntimeFailure: (error) =>
+      runtimeShutdownCoordinator.request({
+        source: "http-listener",
+        error,
+      }),
+  })
+);
+await runProxyStartupStage(() => listener.ready);
+await listener.finished;

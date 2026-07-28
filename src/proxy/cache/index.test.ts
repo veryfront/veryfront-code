@@ -103,6 +103,23 @@ describe("proxy cache factory", () => {
     assertEquals(backend.closed, true);
   });
 
+  it("closes created Redis stores but leaves borrowed stores open", async () => {
+    Deno.env.set("CACHE_TYPE", "redis");
+    const created = new FakeTokenCache();
+    const ownedCache = await createCacheFromEnv({
+      redisStore: Object.freeze({ kind: "created", store: created }),
+    });
+    await ownedCache.close();
+    assertEquals(created.closed, true);
+
+    const borrowed = new FakeTokenCache();
+    const borrowedCache = await createCacheFromEnv({
+      redisStore: Object.freeze({ kind: "borrowed", store: borrowed }),
+    });
+    await borrowedCache.close();
+    assertEquals(borrowed.closed, false);
+  });
+
   it("rejects unknown cache types and obsolete inline Redis options", async () => {
     await assertRejects(
       () => createCache({ type: "unknown" } as never),

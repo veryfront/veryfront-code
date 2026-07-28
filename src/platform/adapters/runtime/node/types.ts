@@ -32,6 +32,8 @@ export interface NodeServerResponse {
 
 export interface NodeHttpServer {
   listen(port: number, hostname: string, callback: () => void): void;
+  once?(event: "close", listener: () => void): this;
+  off?(event: "close", listener: () => void): this;
   close(callback: (error?: Error) => void): void;
   closeAllConnections?(): void;
 }

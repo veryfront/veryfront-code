@@ -5,7 +5,12 @@ import {
   captureApplicationError,
   flushApplicationErrors,
 } from "./application-errors.ts";
-import { initializeSentry, resetSentryForTests, resolveSentryConfigFromEnv } from "./sentry.ts";
+import {
+  initializeSentry,
+  resetSentryForTests,
+  resolveSentryConfigFromEnv,
+  shutdownSentry,
+} from "./sentry.ts";
 
 function createSentryExtension() {
   const state = {
@@ -227,7 +232,7 @@ Deno.test("Sentry snapshots configuration before asynchronous extension loading"
   });
 });
 
-Deno.test("reset prevents an obsolete Sentry initialization from installing a reporter", async () => {
+Deno.test("shutdown prevents an obsolete Sentry initialization from installing a reporter", async () => {
   resetSentryForTests();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -249,7 +254,7 @@ Deno.test("reset prevents an obsolete Sentry initialization from installing a re
       return extension;
     },
   );
-  resetSentryForTests();
+  shutdownSentry();
   release();
 
   assertEquals(await initializing, false);

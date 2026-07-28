@@ -146,18 +146,78 @@ export function getOsType(): string {
 }
 
 /**
- * Register a signal handler (SIGINT, SIGTERM) for graceful shutdown
+ * Register a SIGINT or SIGTERM handler for graceful shutdown.
+ *
+ * If registration fails after a runtime partially installs the handler, this
+ * function removes that exact registration. When removal also fails, both
+ * failures are exposed in registration-first order through an AggregateError.
+ *
+ * @returns An idempotent disposer for the exact signal and handler pair.
  */
 export function onSignal(
   signal: "SIGINT" | "SIGTERM",
   handler: () => void,
-): void {
+): () => void {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) {
-    deno.addSignalListener(signal, handler);
-    return;
+    try {
+      deno.addSignalListener(signal, handler);
+    } catch (error) {
+      // Older Deno builds can retain the callback before native binding fails.
+      try {
+        deno.removeSignalListener(signal, handler);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to register and roll back ${signal} handler`,
+        );
+      }
+      throw error;
+    }
+    return createIdempotentDisposer(() => {
+      deno.removeSignalListener(signal, handler);
+    });
   }
-  if (runtimeProcess) runtimeProcess.on(signal, handler);
+  if (runtimeProcess) {
+    const process = runtimeProcess;
+    const remove = (): void => {
+      if (typeof process.off === "function") {
+        process.off(signal, handler);
+      } else {
+        process.removeListener(signal, handler);
+      }
+    };
+    try {
+      process.on(signal, handler);
+    } catch (error) {
+      // A runtime hook can throw after installing the listener.
+      try {
+        remove();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to register and roll back ${signal} handler`,
+        );
+      }
+      throw error;
+    }
+    return createIdempotentDisposer(remove);
+  }
+  return () => {};
+}
+
+function createIdempotentDisposer(dispose: () => void): () => void {
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    try {
+      dispose();
+    } catch (error) {
+      active = true;
+      throw error;
+    }
+  };
 }
 
 /**

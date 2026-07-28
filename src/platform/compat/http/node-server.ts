@@ -1,5 +1,5 @@
 import type { Server } from "../../adapters/base.ts";
-import { createNodeServer } from "../../adapters/runtime/node/http-server.ts";
+import { createNodeServerWithStartupOwner } from "../../adapters/runtime/node/http-server.ts";
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
@@ -10,6 +10,7 @@ interface PendingNodeServer {
   readonly startPromise: Promise<Server>;
   readonly externalSignal?: AbortSignal;
   readonly externalAbortListener?: () => void;
+  server?: Server;
   closeRequested: boolean;
   closePromise?: Promise<void>;
 }
@@ -76,58 +77,73 @@ export class NodeHttpServer implements HttpServer {
         "Node HTTP server was closed during startup",
         "AbortError",
       ),
-      startPromise: createNodeServer(handler, {
-        ...options,
-        signal: controller.signal,
-      }),
+      startPromise: Promise.resolve().then(() =>
+        createNodeServerWithStartupOwner(
+          handler,
+          {
+            ...options,
+            signal: controller.signal,
+          },
+          (server) => {
+            pending.server = server;
+          },
+        )
+      ),
       externalSignal: options.signal,
       externalAbortListener,
       closeRequested: false,
     };
     this.pending = pending;
 
+    let server: Server;
     try {
-      const server = await pending.startPromise;
-      if (
-        this.pending !== pending ||
-        pending.closeRequested ||
-        controller.signal.aborted
-      ) {
-        await server.stop();
-        return;
+      server = await pending.startPromise;
+    } catch (startupError) {
+      try {
+        await this.stopPending(pending);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [startupError, cleanupError],
+          "Node HTTP server startup cleanup remains incomplete",
+        );
       }
+      throw startupError;
+    }
 
-      this.pending = undefined;
-      const active: ActiveNodeServer = {
-        controller,
-        server,
-        externalSignal: options.signal,
-        externalAbortListener,
-      };
-      this.active = active;
-      controller.signal.addEventListener(
-        "abort",
-        () => {
-          void this.stop(active).catch((error) => {
-            serverLogger.error("Node HTTP server abort cleanup failed", {
-              error,
-            });
-          });
-        },
-        { once: true },
-      );
-      if (controller.signal.aborted) {
+    if (
+      this.pending !== pending ||
+      pending.closeRequested ||
+      controller.signal.aborted
+    ) {
+      await this.stopPending(pending);
+      return;
+    }
+
+    this.pending = undefined;
+    const active: ActiveNodeServer = {
+      controller,
+      server,
+      externalSignal: options.signal,
+      externalAbortListener,
+    };
+    this.active = active;
+    controller.signal.addEventListener(
+      "abort",
+      () => {
         void this.stop(active).catch((error) => {
           serverLogger.error("Node HTTP server abort cleanup failed", {
             error,
           });
         });
-      }
-    } finally {
-      if (this.pending === pending) {
-        this.pending = undefined;
-        detachExternalSignal(pending);
-      }
+      },
+      { once: true },
+    );
+    if (controller.signal.aborted) {
+      void this.stop(active).catch((error) => {
+        serverLogger.error("Node HTTP server abort cleanup failed", {
+          error,
+        });
+      });
     }
   }
 
@@ -137,23 +153,36 @@ export class NodeHttpServer implements HttpServer {
 
     const pending = this.pending;
     if (!pending) return Promise.resolve();
-    if (pending.closePromise) return pending.closePromise;
-
     pending.closeRequested = true;
     pending.controller.abort(pending.closeReason);
-    const attempt = pending.startPromise.then(
-      (server) => server.stop(),
-      (error) => {
-        if (error !== pending.closeReason) throw error;
-      },
-    ).finally(() => {
+    return this.stopPending(pending);
+  }
+
+  private stopPending(pending: PendingNodeServer): Promise<void> {
+    if (pending.closePromise) return pending.closePromise;
+
+    const attempt = Promise.resolve().then(async () => {
+      let server = pending.server;
+      if (!server) {
+        try {
+          server = await pending.startPromise;
+        } catch {
+          server = pending.server;
+        }
+      }
+      await server?.stop();
       detachExternalSignal(pending);
       if (this.pending === pending) this.pending = undefined;
-      if (pending.closePromise === attempt) {
-        pending.closePromise = undefined;
-      }
     });
     pending.closePromise = attempt;
+    void attempt.then(
+      () => {
+        if (pending.closePromise === attempt) pending.closePromise = undefined;
+      },
+      () => {
+        if (pending.closePromise === attempt) pending.closePromise = undefined;
+      },
+    );
     return attempt;
   }
 

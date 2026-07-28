@@ -21,6 +21,8 @@ import {
 export interface TracingTokenCacheOptions {
   /** Span name prefix, e.g. "cache.redis" produces "cache.redis.get". */
   spanPrefix?: string;
+  /** Whether closing this wrapper also closes the wrapped cache. */
+  closeInner?: boolean;
 }
 
 const DEFAULT_SPAN_PREFIX = "cache.redis";
@@ -45,9 +47,22 @@ function resolveSpanPrefix(options: TracingTokenCacheOptions): string {
   return value;
 }
 
+function resolveCloseInner(options: TracingTokenCacheOptions): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(options, "closeInner");
+  if (descriptor && !("value" in descriptor)) {
+    throw new TypeError("Tracing cache closeInner must be a data property");
+  }
+  const configured = descriptor && "value" in descriptor ? descriptor.value : undefined;
+  if (configured !== undefined && typeof configured !== "boolean") {
+    throw new TypeError("Tracing cache closeInner must be a boolean");
+  }
+  return configured ?? true;
+}
+
 export class TracingTokenCache implements TokenCache {
   private readonly operations: TokenCacheOperations;
   private readonly prefix: string;
+  private readonly closeInner: boolean;
   private closed = false;
   private closePromise: Promise<void> | null = null;
 
@@ -58,9 +73,10 @@ export class TracingTokenCache implements TokenCache {
     assertCacheOptionsObject(
       options,
       "Tracing cache options",
-      ["spanPrefix"],
+      ["spanPrefix", "closeInner"],
     );
     this.prefix = resolveSpanPrefix(options);
+    this.closeInner = resolveCloseInner(options);
     this.operations = snapshotTokenCacheOperations(inner);
   }
 
@@ -123,7 +139,10 @@ export class TracingTokenCache implements TokenCache {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
-    this.closePromise = withSpan(`${this.prefix}.close`, () => this.operations.close());
+    this.closePromise = withSpan(
+      `${this.prefix}.close`,
+      () => this.closeInner ? this.operations.close() : Promise.resolve(),
+    );
     return this.closePromise;
   }
 

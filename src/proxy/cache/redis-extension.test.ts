@@ -1,12 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type {
   TokenCacheEntry,
   TokenCacheStats,
   TokenCacheStore,
 } from "../../extensions/cache/index.ts";
-import { ensureRedisTokenCacheStoreFromEnv } from "./redis-extension.ts";
+import {
+  acquireRedisTokenCacheStoreFromEnv,
+  ensureRedisTokenCacheStoreFromEnv,
+} from "./redis-extension.ts";
 
 class FakeRedisStore implements TokenCacheStore {
   closed = false;
@@ -81,6 +89,80 @@ describe("Redis cache extension bootstrap", () => {
 
     assertEquals(result, existing);
     assertEquals(imports, 0);
+  });
+
+  it("reports disabled, borrowed, and created ownership explicitly", async () => {
+    const disabled = await acquireRedisTokenCacheStoreFromEnv({
+      readEnv: environment({ CACHE_TYPE: "memory" }),
+    });
+    assertEquals(disabled, { kind: "disabled", store: null });
+
+    const existing = new FakeRedisStore();
+    const borrowed = await acquireRedisTokenCacheStoreFromEnv({
+      readEnv: environment({ CACHE_TYPE: "redis" }),
+      resolveStore: () => existing,
+    });
+    assertEquals(borrowed.kind, "borrowed");
+    assertStrictEquals(borrowed.store, existing);
+
+    let registered: TokenCacheStore | undefined;
+    const created = await acquireRedisTokenCacheStoreFromEnv({
+      readEnv: environment({
+        CACHE_TYPE: "redis",
+        REDIS_URL: "redis://redis.example.com",
+      }),
+      resolveStore: () => undefined,
+      registerStore: (store) => {
+        registered = store;
+      },
+      importModule: () =>
+        Promise.resolve({
+          RedisTokenCacheStore: FakeRedisStore,
+        }),
+    });
+    assertEquals(created.kind, "created");
+    assertStrictEquals(created.store, registered);
+  });
+
+  it("singleflights close ownership for a created store", async () => {
+    let releaseClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    let rawCloseCalls = 0;
+    const rawCloseArgumentCounts: number[] = [];
+    class SlowCloseStore extends FakeRedisStore {
+      override async close(): Promise<void> {
+        rawCloseCalls++;
+        rawCloseArgumentCounts.push(arguments.length);
+        await closeGate;
+      }
+    }
+
+    const acquisition = await acquireRedisTokenCacheStoreFromEnv({
+      readEnv: environment({
+        CACHE_TYPE: "redis",
+        REDIS_URL: "redis://redis.example.com",
+      }),
+      resolveStore: () => undefined,
+      registerStore: () => {},
+      importModule: () => Promise.resolve({ RedisTokenCacheStore: SlowCloseStore }),
+    });
+    if (acquisition.kind !== "created") {
+      throw new Error("Expected a created Redis store");
+    }
+
+    const firstClose = acquisition.store.close();
+    const secondClose = acquisition.store.close();
+    assertStrictEquals(secondClose, firstClose);
+    await Promise.resolve();
+    assertEquals(rawCloseCalls, 1);
+
+    releaseClose();
+    await Promise.all([firstClose, secondClose]);
+    assertStrictEquals(acquisition.store.close(), firstClose);
+    assertEquals(rawCloseCalls, 1);
+    assertEquals(rawCloseArgumentCounts, [0]);
   });
 
   it("requires a valid Redis URL and namespace", async () => {
@@ -185,9 +267,21 @@ describe("Redis cache extension bootstrap", () => {
 
   it("rejects malformed stores before registration", async () => {
     let registrations = 0;
+    let malformedStore: MalformedStore | undefined;
     class MalformedStore {
+      closed = false;
+
+      constructor() {
+        malformedStore = this;
+      }
+
       get(): Promise<null> {
         return Promise.resolve(null);
+      }
+
+      close(): Promise<void> {
+        this.closed = true;
+        return Promise.resolve();
       }
     }
 
@@ -208,6 +302,7 @@ describe("Redis cache extension bootstrap", () => {
       "Failed to initialize",
     );
     assertEquals(registrations, 0);
+    assertEquals(malformedStore?.closed, true);
   });
 
   it("closes a new store if contract registration fails", async () => {
@@ -236,6 +331,241 @@ describe("Redis cache extension bootstrap", () => {
       "Failed to register",
     );
     assertEquals(captured.store?.closed, true);
+  });
+
+  it("uses the validated close snapshot when registration mutates the store", async () => {
+    const registrationFailure = new Error("registration conflict");
+    let constructed: MutableCloseStore | undefined;
+    let closeAccessorReads = 0;
+    class MutableCloseStore extends FakeRedisStore {
+      closeCalls = 0;
+
+      constructor() {
+        super();
+        constructed = this;
+      }
+
+      override close(): Promise<void> {
+        this.closeCalls++;
+        return Promise.resolve();
+      }
+    }
+
+    const failure = await assertRejects(
+      () =>
+        ensureRedisTokenCacheStoreFromEnv({
+          readEnv: environment({
+            CACHE_TYPE: "redis",
+            REDIS_URL: "redis://redis.example.com",
+          }),
+          resolveStore: () => undefined,
+          registerStore: () => {
+            Object.defineProperty(constructed!, "close", {
+              configurable: true,
+              get() {
+                closeAccessorReads++;
+                throw new Error("mutable close accessor must not run");
+              },
+            });
+            throw registrationFailure;
+          },
+          importModule: () => Promise.resolve({ RedisTokenCacheStore: MutableCloseStore }),
+        }),
+      Error,
+      "Failed to register",
+    ) as Error;
+
+    assertStrictEquals(failure.cause, registrationFailure);
+    assertEquals(constructed?.closeCalls, 1);
+    assertEquals(closeAccessorReads, 0);
+  });
+
+  it("preserves registration and cleanup failures together", async () => {
+    const registrationFailure = new Error("registration conflict");
+    const cleanupFailure = new Error("Redis close failed");
+    class RejectingCloseStore extends FakeRedisStore {
+      override close(): Promise<void> {
+        return Promise.reject(cleanupFailure);
+      }
+    }
+
+    const failure = await assertRejects(
+      () =>
+        ensureRedisTokenCacheStoreFromEnv({
+          readEnv: environment({
+            CACHE_TYPE: "redis",
+            REDIS_URL: "redis://redis.example.com",
+          }),
+          resolveStore: () => undefined,
+          registerStore: () => {
+            throw registrationFailure;
+          },
+          importModule: () => Promise.resolve({ RedisTokenCacheStore: RejectingCloseStore }),
+        }),
+      Error,
+      "Failed to register",
+    ) as Error;
+
+    assertEquals(failure.cause instanceof AggregateError, true);
+    assertEquals((failure.cause as AggregateError).errors, [
+      registrationFailure,
+      cleanupFailure,
+    ]);
+  });
+
+  it("rolls back a store published by an asynchronous registrar", async () => {
+    const registrationFailure = new Error("registration conflict");
+    let registered: TokenCacheStore | undefined;
+    let constructed: FakeRedisStore | undefined;
+    let unregisterCalls = 0;
+    class CapturedStore extends FakeRedisStore {
+      constructor() {
+        super();
+        constructed = this;
+      }
+    }
+
+    const failure = await assertRejects(
+      () =>
+        ensureRedisTokenCacheStoreFromEnv({
+          readEnv: environment({
+            CACHE_TYPE: "redis",
+            REDIS_URL: "redis://redis.example.com",
+          }),
+          resolveStore: () => registered,
+          registerStore: async (store) => {
+            registered = store;
+            await Promise.resolve();
+            throw registrationFailure;
+          },
+          unregisterStore: () => {
+            unregisterCalls++;
+            registered = undefined;
+          },
+          importModule: () => Promise.resolve({ RedisTokenCacheStore: CapturedStore }),
+        }),
+      Error,
+      "Failed to register",
+    ) as Error;
+
+    assertEquals(failure.cause instanceof TypeError, true);
+    assertStringIncludes(
+      (failure.cause as TypeError).message,
+      "must complete synchronously",
+    );
+    assertEquals(registered, undefined);
+    assertEquals(unregisterCalls, 1);
+    assertEquals(constructed?.closed, true);
+  });
+
+  it("does not wait for a contract-violating registration thenable", async () => {
+    let registered: TokenCacheStore | undefined;
+    let constructed: FakeRedisStore | undefined;
+    class CapturedStore extends FakeRedisStore {
+      constructor() {
+        super();
+        constructed = this;
+      }
+    }
+
+    let failure: unknown;
+    const attempt = ensureRedisTokenCacheStoreFromEnv({
+      readEnv: environment({
+        CACHE_TYPE: "redis",
+        REDIS_URL: "redis://redis.example.com",
+      }),
+      resolveStore: () => registered,
+      registerStore: (store) => {
+        registered = store;
+        return new Promise<void>(() => {});
+      },
+      unregisterStore: () => {
+        registered = undefined;
+      },
+      importModule: () => Promise.resolve({ RedisTokenCacheStore: CapturedStore }),
+    }).catch((error) => {
+      failure = error;
+    });
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assertEquals(failure instanceof Error, true);
+    assertEquals((failure as Error).cause instanceof TypeError, true);
+    assertEquals(registered, undefined);
+    assertEquals(constructed?.closed, true);
+    await attempt;
+  });
+
+  it("preserves registration, registry rollback, and close failures", async () => {
+    const registrationFailure = new Error("registration conflict");
+    const unregisterFailure = new Error("registry rollback failed");
+    const cleanupFailure = new Error("Redis close failed");
+    let registered: TokenCacheStore | undefined;
+    class RejectingCloseStore extends FakeRedisStore {
+      override close(): Promise<void> {
+        return Promise.reject(cleanupFailure);
+      }
+    }
+
+    const failure = await assertRejects(
+      () =>
+        ensureRedisTokenCacheStoreFromEnv({
+          readEnv: environment({
+            CACHE_TYPE: "redis",
+            REDIS_URL: "redis://redis.example.com",
+          }),
+          resolveStore: () => registered,
+          registerStore: (store) => {
+            registered = store;
+            throw registrationFailure;
+          },
+          unregisterStore: () => {
+            throw unregisterFailure;
+          },
+          importModule: () => Promise.resolve({ RedisTokenCacheStore: RejectingCloseStore }),
+        }),
+      Error,
+      "Failed to register",
+    ) as Error;
+
+    assertEquals(failure.cause instanceof AggregateError, true);
+    assertEquals((failure.cause as AggregateError).errors, [
+      registrationFailure,
+      unregisterFailure,
+      cleanupFailure,
+    ]);
+    assertEquals(registered !== undefined, true);
+  });
+
+  it("preserves invalid-contract and cleanup failures together", async () => {
+    const cleanupFailure = new Error("Redis close failed");
+    class InvalidRejectingStore {
+      get(): Promise<null> {
+        return Promise.resolve(null);
+      }
+
+      close(): Promise<void> {
+        return Promise.reject(cleanupFailure);
+      }
+    }
+
+    const failure = await assertRejects(
+      () =>
+        ensureRedisTokenCacheStoreFromEnv({
+          readEnv: environment({
+            CACHE_TYPE: "redis",
+            REDIS_URL: "redis://redis.example.com",
+          }),
+          resolveStore: () => undefined,
+          importModule: () => Promise.resolve({ RedisTokenCacheStore: InvalidRejectingStore }),
+        }),
+      Error,
+      "Failed to initialize",
+    ) as Error;
+
+    assertEquals(failure.cause instanceof AggregateError, true);
+    const [contractFailure, preservedCleanupFailure] = (failure.cause as AggregateError).errors;
+    assertEquals(contractFailure instanceof TypeError, true);
+    assertStrictEquals(preservedCleanupFailure, cleanupFailure);
   });
 
   it("wraps import failures without exposing Redis credentials", async () => {

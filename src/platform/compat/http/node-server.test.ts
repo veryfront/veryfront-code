@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { Server as NativeHttpServer } from "node:http";
 import { NodeHttpServer } from "./node-server.ts";
 
 function listeningPort(
@@ -233,6 +234,68 @@ describe("NodeHttpServer lifecycle", () => {
     }
   });
 
+  it("retains a failed startup cleanup owner for an explicit close retry", async () => {
+    const startupError = new Error("listener startup failed");
+    const cleanupError = new Error("transient startup cleanup failure");
+    const closeDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "close",
+    );
+    const originalClose = NativeHttpServer.prototype.close;
+    let closeCalls = 0;
+    let rawServer: NativeHttpServer | undefined;
+    NativeHttpServer.prototype.close = function (
+      this: NativeHttpServer,
+      callback?: (error?: Error) => void,
+    ): NativeHttpServer {
+      rawServer = this;
+      closeCalls++;
+      if (closeCalls <= 2) {
+        callback?.(cleanupError);
+        return this;
+      }
+      return Reflect.apply(originalClose, this, [callback]);
+    } as typeof originalClose;
+    const server = new NodeHttpServer();
+
+    try {
+      await assertRejects(
+        () =>
+          server.serve(
+            () => new Response("unreachable"),
+            {
+              hostname: "127.0.0.1",
+              port: 0,
+              onListen: () => {
+                throw startupError;
+              },
+            },
+          ),
+        AggregateError,
+        "cleanup remains incomplete",
+      );
+      assertEquals(closeCalls, 2);
+
+      await server.close();
+      await server.close();
+      assertEquals(closeCalls, 3);
+    } finally {
+      if (closeDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "close", closeDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "close");
+      }
+      await server.close();
+      if (rawServer?.listening) {
+        await new Promise<void>((resolve, reject) => {
+          Reflect.apply(originalClose, rawServer, [
+            (error?: Error) => error ? reject(error) : resolve(),
+          ]);
+        });
+      }
+    }
+  });
+
   it("does not hang when onListen closes the starting server", async () => {
     const server = new NodeHttpServer();
     let close: Promise<void> | undefined;
@@ -260,6 +323,7 @@ describe("NodeHttpServer lifecycle", () => {
 
   it("owns post-start abort cleanup without mutating the caller signal", async () => {
     const server = new NodeHttpServer();
+    const state = server as unknown as { active?: unknown };
     const controller = new AbortController();
     const running = listeningPort((onListen) =>
       server.serve(
@@ -273,14 +337,19 @@ describe("NodeHttpServer lifecycle", () => {
       )
     );
     await running.port;
+    await running.serve;
 
     controller.abort(new DOMException("stop serving", "AbortError"));
-    await running.serve;
     await withTimeout(
-      server.close(),
+      (async () => {
+        while (state.active !== undefined) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      })(),
       2_000,
-      "Node HTTP server did not stop after its serving signal aborted",
+      "Node HTTP server did not release its listener after the serving signal aborted",
     );
+    await server.close();
     assertEquals(controller.signal.reason?.message, "stop serving");
   });
 

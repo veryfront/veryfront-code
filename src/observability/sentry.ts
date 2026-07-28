@@ -106,11 +106,19 @@ export function initializeSentry(
   return tracked;
 }
 
-export function resetSentryForTests(): void {
+/**
+ * Invalidate in-flight initialization and remove the active reporter.
+ * Callers that need delivery guarantees must flush application errors first.
+ */
+export function shutdownSentry(): void {
   lifecycleGeneration++;
   initialized = false;
   initializationPromise = null;
   setApplicationErrorReporter(undefined);
+}
+
+export function resetSentryForTests(): void {
+  shutdownSentry();
 }
 
 function normalizeSentryConfig(config: SentryConfig): Required<SentryConfig> | null {

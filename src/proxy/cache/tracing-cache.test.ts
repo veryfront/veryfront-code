@@ -146,6 +146,21 @@ describe("TracingTokenCache", () => {
     assertEquals(fake.calls, [{ method: "close", args: [] }]);
   });
 
+  it("can close its wrapper without closing a borrowed backend", async () => {
+    const fake = new FakeCache();
+    const traced = new TracingTokenCache(fake, { closeInner: false });
+
+    await traced.close();
+    await traced.close();
+
+    assertEquals(fake.calls, []);
+    await assertRejects(
+      () => traced.get("closed"),
+      Error,
+      "closed",
+    );
+  });
+
   it("propagates errors thrown by the inner cache", async () => {
     const fake: TokenCache = {
       get: () => Promise.reject(new Error("boom")),
@@ -223,6 +238,11 @@ describe("TracingTokenCache", () => {
       () => new TracingTokenCache(fake, accessorOptions),
       TypeError,
       "data property",
+    );
+    assertThrows(
+      () => new TracingTokenCache(fake, { closeInner: "yes" } as never),
+      TypeError,
+      "boolean",
     );
   });
 

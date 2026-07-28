@@ -7,11 +7,11 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createServer, request as nodeRequest } from "node:http";
+import { createServer, request as nodeRequest, Server as NativeHttpServer } from "node:http";
 import { createConnection } from "node:net";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { createWebSocketUpgradeResponse } from "../../base.ts";
-import { createNodeServer, NodeServer } from "./http-server.ts";
+import { createNodeServer, createNodeServerWithStartupOwner, NodeServer } from "./http-server.ts";
 import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
 
@@ -24,10 +24,45 @@ function createHttpServer(
   };
 }
 
+function rawHttpTransport(server: object): ReturnType<typeof createServer> {
+  return (server as { server: ReturnType<typeof createServer> }).server;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+  detail: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(detail)), milliseconds);
+    }),
+  ]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("NodeServer lifecycle", () => {
   it("shares shutdown and retries only the failed HTTP close phase", async () => {
     let upgradeDisposeCalls = 0;
     let closeCalls = 0;
+    let transportDetachCalls = 0;
     const server = new NodeServer(
       createHttpServer((callback) => {
         closeCalls++;
@@ -38,17 +73,22 @@ describe("NodeServer lifecycle", () => {
       () => {
         upgradeDisposeCalls++;
       },
+      () => {
+        transportDetachCalls++;
+      },
     );
 
     const first = server.stop();
     const concurrent = server.stop();
     assertStrictEquals(first, concurrent);
     await assertRejects(() => first, Error, "transient HTTP close failure");
+    assertEquals(transportDetachCalls, 0);
 
     await server.stop();
     await server.stop();
     assertEquals(upgradeDisposeCalls, 1);
     assertEquals(closeCalls, 2);
+    assertEquals(transportDetachCalls, 1);
   });
 
   it("does not close HTTP while upgrade resources failed to retire", async () => {
@@ -75,6 +115,106 @@ describe("NodeServer lifecycle", () => {
     assertEquals(closeCalls, 1);
   });
 
+  it("publishes one stop attempt before synchronous cleanup can re-enter", async () => {
+    let upgradeDisposeCalls = 0;
+    let closeCalls = 0;
+    let reentrantStop: Promise<void> | undefined;
+    const server = new NodeServer(
+      createHttpServer((callback) => {
+        closeCalls++;
+        callback();
+      }),
+      "localhost",
+      3_000,
+      () => {
+        upgradeDisposeCalls++;
+        reentrantStop = server.stop();
+      },
+    );
+
+    const stop = server.stop();
+    await Promise.resolve();
+    assertStrictEquals(reentrantStop, stop);
+    await stop;
+
+    assertEquals(upgradeDisposeCalls, 1);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("does not settle a pending close until Node emits close", async () => {
+    const closeListeners = new Set<() => void>();
+    const onceWrappers = new Map<() => void, () => void>();
+    const closeStarted = createDeferred<void>();
+    const notRunning = Object.assign(
+      new Error("Server is not running"),
+      { code: "ERR_SERVER_NOT_RUNNING" },
+    );
+    const transport: NodeHttpServer = {
+      listen: () => {},
+      once: (_event, listener) => {
+        const onceListener = () => {
+          closeListeners.delete(onceListener);
+          onceWrappers.delete(listener);
+          listener();
+        };
+        onceWrappers.set(listener, onceListener);
+        closeListeners.add(onceListener);
+        return transport;
+      },
+      off: (_event, listener) => {
+        const onceListener = onceWrappers.get(listener);
+        if (onceListener) closeListeners.delete(onceListener);
+        onceWrappers.delete(listener);
+        return transport;
+      },
+      close: (callback) => {
+        closeStarted.resolve();
+        callback(notRunning);
+      },
+    };
+    const server = new NodeServer(transport, "localhost", 3_000);
+    server.markListenStarted();
+    let settled = false;
+    const stopping = server.stop().then(() => {
+      settled = true;
+    });
+
+    await closeStarted.promise;
+    await Promise.resolve();
+    assertEquals(settled, false);
+    for (const listener of [...closeListeners]) listener();
+
+    await stopping;
+    await server.stop();
+
+    assertEquals(closeListeners.size, 0);
+  });
+
+  it("does not wait for a close event that the owned transport already emitted", async () => {
+    const rawServer = createServer();
+    const server = new NodeServer(
+      rawServer as unknown as NodeHttpServer,
+      "127.0.0.1",
+      0,
+    );
+    await new Promise<void>((resolve) => rawServer.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve, reject) => {
+      rawServer.close((error) => error ? reject(error) : resolve());
+    });
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      server.stop().then(() => "stopped" as const),
+      new Promise<"timeout">((resolve) => {
+        timeoutId = setTimeout(() => resolve("timeout"), 50);
+      }),
+    ]).finally(() => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    });
+
+    assertEquals(outcome, "stopped");
+  });
+
   it("rejects startup without listening when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -89,6 +229,68 @@ describe("NodeServer lifecycle", () => {
       DOMException,
       "aborted",
     );
+  });
+
+  it("rejects when the startup owner aborts before signal registration", async () => {
+    const controller = new AbortController();
+    const abortReason = new Error("owner canceled startup");
+    let rawServer: NativeHttpServer | undefined;
+    let onListenCalls = 0;
+    let rejection: unknown;
+
+    try {
+      await createNodeServerWithStartupOwner(
+        () => new Response("unreachable"),
+        {
+          hostname: "127.0.0.1",
+          port: 0,
+          signal: controller.signal,
+          onListen: () => {
+            onListenCalls++;
+          },
+        },
+        (server) => {
+          rawServer = rawHttpTransport(server);
+          controller.abort(abortReason);
+        },
+      );
+    } catch (error) {
+      rejection = error;
+    } finally {
+      if (rawServer?.listening) {
+        await new Promise<void>((resolve, reject) => {
+          rawServer?.close((error) => error ? reject(error) : resolve());
+        });
+      }
+    }
+
+    assertStrictEquals(rejection, abortReason);
+    assertEquals(onListenCalls, 0);
+    assertEquals(rawServer?.listening, false);
+  });
+
+  it("rejects an invalid runtime-error callback before binding", async () => {
+    let listened = false;
+    let rejection: unknown;
+    let started: Awaited<ReturnType<typeof createNodeServer>> | undefined;
+
+    try {
+      started = await createNodeServer(() => new Response("unreachable"), {
+        hostname: "127.0.0.1",
+        port: 0,
+        onListen: () => {
+          listened = true;
+        },
+        onRuntimeError: "invalid" as unknown as (error: Error) => void,
+      });
+    } catch (error) {
+      rejection = error;
+    } finally {
+      await started?.stop();
+    }
+
+    assertEquals(rejection instanceof TypeError, true);
+    assertEquals(listened, false);
   });
 
   it("rejects a listener startup error instead of leaving the promise pending", async () => {
@@ -114,6 +316,367 @@ describe("NodeServer lifecycle", () => {
       await new Promise<void>((resolve, reject) => {
         blocker.close((error) => error ? reject(error) : resolve());
       });
+    }
+  });
+
+  it("settles a synchronous listen validation failure without awaiting close", async () => {
+    await assertRejects(
+      () =>
+        withTimeout(
+          createNodeServer(() => new Response("unreachable"), {
+            hostname: "127.0.0.1",
+            port: -1,
+          }),
+          2_000,
+          "Node startup waited for a close event after listen threw synchronously",
+        ),
+      RangeError,
+    );
+  });
+
+  it("does not mark the transport pending before synchronous listen returns", async () => {
+    const listenDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "listen",
+    );
+    const closeDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "close",
+    );
+    const originalListen = NativeHttpServer.prototype.listen;
+    const originalClose = NativeHttpServer.prototype.close;
+    const listenError = new Error("listen threw synchronously");
+    const notRunning = Object.assign(
+      new Error("Server is not running"),
+      { code: "ERR_SERVER_NOT_RUNNING" },
+    );
+    let closeCalls = 0;
+
+    NativeHttpServer.prototype.listen = function (): NativeHttpServer {
+      throw listenError;
+    } as typeof originalListen;
+    NativeHttpServer.prototype.close = function (
+      this: NativeHttpServer,
+      callback?: (error?: Error) => void,
+    ): NativeHttpServer {
+      closeCalls++;
+      callback?.(notRunning);
+      return this;
+    } as typeof originalClose;
+
+    let rejection: unknown;
+    try {
+      try {
+        await withTimeout(
+          createNodeServer(() => new Response("unreachable"), {
+            hostname: "127.0.0.1",
+            port: 0,
+          }),
+          200,
+          "Node startup waited for a close event after listen threw synchronously",
+        );
+      } catch (error) {
+        rejection = error;
+      }
+    } finally {
+      if (listenDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "listen", listenDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "listen");
+      }
+      if (closeDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "close", closeDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "close");
+      }
+    }
+
+    assertStrictEquals(rejection, listenError);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("releases startup closures while retaining bounded late-outcome guards", async () => {
+    if (!isNode) return;
+    const listenDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "listen",
+    );
+    const originalListen = NativeHttpServer.prototype.listen;
+    const ownerPublished = createDeferred<void>();
+    const controller = new AbortController();
+    const abortReason = new Error("cancel pending native listen");
+    let rawServer: NativeHttpServer | undefined;
+
+    NativeHttpServer.prototype.listen = function (
+      this: NativeHttpServer,
+    ): NativeHttpServer {
+      return this;
+    } as typeof originalListen;
+
+    try {
+      const startup = createNodeServerWithStartupOwner(
+        () => new Response("unreachable"),
+        {
+          hostname: "pending-listen.veryfront.invalid",
+          port: 0,
+          signal: controller.signal,
+        },
+        (server) => {
+          rawServer = rawHttpTransport(server);
+          ownerPublished.resolve();
+        },
+      );
+      await ownerPublished.promise;
+      if (!rawServer) throw new Error("Node startup owner was not published");
+
+      const startupErrorListeners = rawServer.listeners("error");
+      const startupListeningListeners = rawServer.listeners("listening");
+      assertEquals(startupErrorListeners.length, 1);
+      assertEquals(startupListeningListeners.length > 0, true);
+
+      controller.abort(abortReason);
+      let rejection: unknown;
+      try {
+        await startup;
+      } catch (error) {
+        rejection = error;
+      }
+      assertStrictEquals(rejection, abortReason);
+
+      const lateErrorListeners = rawServer.listeners("error");
+      const lateListeningListeners = rawServer.listeners("listening");
+      assertEquals(lateErrorListeners.length, 1, "expected one late error guard");
+      assertEquals(
+        lateListeningListeners.length,
+        startupListeningListeners.length,
+        "expected one late listening guard alongside Node's existing listeners",
+      );
+      assertEquals(
+        lateErrorListeners.some((listener) => startupErrorListeners.includes(listener)),
+        false,
+        "startup error closure was retained",
+      );
+      assertEquals(
+        lateListeningListeners.filter((listener) => !startupListeningListeners.includes(listener))
+          .length,
+        1,
+        "late listening guard was not installed",
+      );
+      assertEquals(
+        startupListeningListeners.filter((listener) => !lateListeningListeners.includes(listener))
+          .length,
+        1,
+        "startup listening closure was retained",
+      );
+
+      assertEquals(rawServer.emit("error", new Error("late canceled bind")), true);
+      assertEquals(rawServer.listenerCount("error"), 0);
+      assertEquals(
+        rawServer.listenerCount("listening"),
+        startupListeningListeners.length - 1,
+      );
+    } finally {
+      controller.abort(abortReason);
+      if (listenDescriptor) {
+        Object.defineProperty(NativeHttpServer.prototype, "listen", listenDescriptor);
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "listen");
+      }
+    }
+  });
+
+  it("preserves fail-fast listener semantics without a runtime callback", async () => {
+    const server = await createNodeServer(() => new Response("ok"), {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const rawServer = rawHttpTransport(server);
+
+    try {
+      assertEquals(rawServer.listenerCount("error"), 0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("rejects with the exact abort reason when onListen aborts startup", async () => {
+    const controller = new AbortController();
+    const abortReason = new Error("abort during onListen");
+    let rejection: unknown;
+    let started: Awaited<ReturnType<typeof createNodeServer>> | undefined;
+
+    try {
+      started = await createNodeServer(() => new Response("unreachable"), {
+        hostname: "127.0.0.1",
+        port: 0,
+        signal: controller.signal,
+        onListen: () => {
+          controller.abort(abortReason);
+        },
+      });
+    } catch (error) {
+      rejection = error;
+    } finally {
+      await started?.stop();
+    }
+
+    assertStrictEquals(rejection, abortReason);
+  });
+
+  it("closes a listener that emits an error reentrantly during onListen", async () => {
+    const ownEmitDescriptor = Object.getOwnPropertyDescriptor(
+      NativeHttpServer.prototype,
+      "emit",
+    );
+    const originalEmit = NativeHttpServer.prototype.emit;
+    let rawServer: ReturnType<typeof createServer> | undefined;
+    NativeHttpServer.prototype.emit = function (
+      this: ReturnType<typeof createServer>,
+      event: string | symbol,
+      ...args: unknown[]
+    ): boolean {
+      if (event === "listening") {
+        rawServer = this;
+      }
+      return Reflect.apply(originalEmit, this, [event, ...args]);
+    } as typeof originalEmit;
+
+    const runtimeError = new Error("error during onListen");
+    let rejection: unknown;
+    let runtimeReports = 0;
+    let continuedAfterError = false;
+    let listeningAfterSettlement = false;
+    try {
+      try {
+        await createNodeServer(() => new Response("unreachable"), {
+          hostname: "127.0.0.1",
+          port: 0,
+          onListen: () => {
+            if (!rawServer) throw new Error("Native Node listener was not captured");
+            rawServer.emit("error", runtimeError);
+            continuedAfterError = true;
+          },
+          onRuntimeError: () => {
+            runtimeReports++;
+          },
+        });
+      } catch (error) {
+        rejection = error;
+      }
+    } finally {
+      if (ownEmitDescriptor) {
+        Object.defineProperty(
+          NativeHttpServer.prototype,
+          "emit",
+          ownEmitDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(NativeHttpServer.prototype, "emit");
+      }
+      listeningAfterSettlement = rawServer?.listening ?? false;
+      if (rawServer?.listening) {
+        await new Promise<void>((resolve, reject) => {
+          rawServer?.close((error) => error ? reject(error) : resolve());
+        });
+      }
+    }
+
+    assertStrictEquals(rejection, runtimeError);
+    assertEquals(runtimeReports, 0);
+    assertEquals(continuedAfterError, false);
+    assertEquals(listeningAfterSettlement, false);
+    assertEquals(rawServer?.listenerCount("error"), 0);
+  });
+
+  it("keeps a reentrant transport error terminal when onListen catches it", async () => {
+    const runtimeError = new Error("caught error during onListen");
+    let rawServer: NativeHttpServer | undefined;
+    let caughtError: unknown;
+    let continuedAfterError = false;
+    let rejection: unknown;
+    let started: Awaited<ReturnType<typeof createNodeServer>> | undefined;
+
+    try {
+      started = await createNodeServerWithStartupOwner(
+        () => new Response("unreachable"),
+        {
+          hostname: "127.0.0.1",
+          port: 0,
+          onListen: () => {
+            if (!rawServer) throw new Error("Native Node listener was not captured");
+            try {
+              rawServer.emit("error", runtimeError);
+            } catch (error) {
+              caughtError = error;
+            }
+            continuedAfterError = true;
+          },
+        },
+        (server) => {
+          rawServer = rawHttpTransport(server);
+        },
+      );
+    } catch (error) {
+      rejection = error;
+    } finally {
+      await started?.stop();
+      if (rawServer?.listening) {
+        await new Promise<void>((resolve, reject) => {
+          rawServer?.close((error) => error ? reject(error) : resolve());
+        });
+      }
+    }
+
+    assertStrictEquals(caughtError, runtimeError);
+    assertEquals(continuedAfterError, true);
+    assertStrictEquals(rejection, runtimeError);
+    assertEquals(rawServer?.listening, false);
+  });
+
+  it("routes a post-readiness transport error once and detaches the route on stop", async () => {
+    const runtimeError = new Error("late Node listener failure");
+    const reported: Error[] = [];
+    const server = await createNodeServer(() => new Response("ok"), {
+      hostname: "127.0.0.1",
+      port: 0,
+      onRuntimeError: (error) => {
+        reported.push(error);
+      },
+    });
+    const rawServer = rawHttpTransport(server);
+
+    try {
+      assertEquals(rawServer.listenerCount("error"), 1);
+      assertEquals(rawServer.emit("error", runtimeError), true);
+      assertEquals(reported.length, 1);
+      assertStrictEquals(reported[0], runtimeError);
+    } finally {
+      await server.stop();
+    }
+
+    assertEquals(rawServer.listenerCount("error"), 0);
+  });
+
+  it("contains synchronous and asynchronous runtime callback failures", async () => {
+    let callbackCalls = 0;
+    const server = await createNodeServer(() => new Response("ok"), {
+      hostname: "127.0.0.1",
+      port: 0,
+      onRuntimeError: () => {
+        callbackCalls++;
+        if (callbackCalls === 1) throw new Error("synchronous callback failure");
+        return Promise.reject(new Error("asynchronous callback failure"));
+      },
+    });
+    const rawServer = rawHttpTransport(server);
+
+    try {
+      assertEquals(rawServer.emit("error", new Error("first transport failure")), true);
+      assertEquals(rawServer.emit("error", new Error("second transport failure")), true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(callbackCalls, 2);
+    } finally {
+      await server.stop();
     }
   });
 
@@ -354,8 +917,8 @@ describe("NodeServer lifecycle", () => {
 
   it("force-closes an active HTTP connection so shutdown cannot deadlock", async () => {
     if (!isNode) return;
-    const handlerStarted = Promise.withResolvers<void>();
-    const requestAborted = Promise.withResolvers<void>();
+    const handlerStarted = createDeferred<void>();
+    const requestAborted = createDeferred<void>();
     const server = await createNodeServer(async (request) => {
       handlerStarted.resolve();
       if (request.signal.aborted) requestAborted.resolve();
@@ -392,8 +955,8 @@ describe("NodeServer lifecycle", () => {
 
   it("aborts the Fetch request when the HTTP client disconnects", async () => {
     if (!isNode) return;
-    const handlerStarted = Promise.withResolvers<void>();
-    const requestAborted = Promise.withResolvers<void>();
+    const handlerStarted = createDeferred<void>();
+    const requestAborted = createDeferred<void>();
     const server = await createNodeServer(async (request) => {
       handlerStarted.resolve();
       if (request.signal.aborted) requestAborted.resolve();
@@ -426,7 +989,7 @@ describe("NodeServer lifecycle", () => {
     if (!isNode) return;
     const totalChunks = 256;
     let producedChunks = 0;
-    const bodyCancelled = Promise.withResolvers<void>();
+    const bodyCancelled = createDeferred<void>();
     const server = await createNodeServer(() =>
       new Response(
         new ReadableStream<Uint8Array>({

@@ -41,6 +41,18 @@ function validateStep(step: ProxyShutdownStep): void {
   }
 }
 
+/** Validate a cleanup plan without starting any cleanup work. */
+export function validateProxyShutdownPolicy(
+  steps: readonly ProxyShutdownStep[],
+  timeoutMs: number,
+): void {
+  if (!Array.isArray(steps)) {
+    throw new TypeError("Proxy shutdown steps must be an array");
+  }
+  validateCleanupTimeout(timeoutMs);
+  for (const step of steps) validateStep(step);
+}
+
 /**
  * Run every cleanup step in order within one shared deadline.
  *
@@ -52,11 +64,7 @@ export async function runProxyShutdownSteps(
   steps: readonly ProxyShutdownStep[],
   timeoutMs: number,
 ): Promise<readonly ProxyShutdownStepFailure[]> {
-  if (!Array.isArray(steps)) {
-    throw new TypeError("Proxy shutdown steps must be an array");
-  }
-  validateCleanupTimeout(timeoutMs);
-  for (const step of steps) validateStep(step);
+  validateProxyShutdownPolicy(steps, timeoutMs);
 
   const deadline = performance.now() + timeoutMs;
   const failures: ProxyShutdownStepFailure[] = [];

@@ -106,6 +106,24 @@ configuration.
 | `SHUTDOWN_CLEANUP_TIMEOUT_MS`           | `4000`                   | `0..2147483647`                                                |
 | `VERYFRONT_PROXY_EXPECTED_REPLICAS`     | unset                    | `1..10000`; required in production                             |
 
+After the synchronous configuration snapshot is accepted, the proxy installs
+`SIGINT` and `SIGTERM` handlers before Sentry initialization or any other
+asynchronous acquisition. Until listener readiness commits startup, the first
+signal aborts the startup transaction. Every resource-producing stage is owned
+before its producer begins, so reverse-order rollback observes and closes a
+late successful result even when that producer ignores cancellation or settles
+after the cleanup deadline. Diagnostics flush before Sentry is invalidated,
+and signal handlers are the final rollback resource removed.
+
+Redis startup distinguishes borrowed stores from proxy-created stores. Borrowed
+stores are validated but never closed or unregistered by the proxy. A created
+store moves through direct store, cache, and proxy-handler ownership while its
+registry restoration remains independently armed until commit. Direct and
+transitive cleanup share one immutable close attempt, so a cleanup that
+outlives the shared deadline cannot concurrently close a non-idempotent
+extension store twice. Registration, restoration, and cleanup failures remain
+separate ordered causes rather than being hidden by the primary startup error.
+
 The request boundary validates and canonicalizes the `Host` authority before
 using it for project routing or token identity. Ports and DNS trailing dots are
 removed, international names use their ASCII form, and credentials, paths,
@@ -136,17 +154,22 @@ credentials only to the validated API origin, uses manual redirect handling,
 and rejects every upstream redirect instead of forwarding credentials or an
 untrusted location. BFF responses are always `no-store` and `nosniff`.
 
-On `SIGINT` or `SIGTERM`, new requests receive a retryable `503` while the
-proxy waits for tracked response bodies, including event streams, to finish.
-The health endpoint changes from `200 ok` to `503 draining` as soon as shutdown
-starts. Proxy-generated JSON, HTML, redirect, timeout, and draining responses
-are non-cacheable; content-bearing errors also use `nosniff`, and sign-in
-redirects use `Referrer-Policy: no-referrer`.
+After listener readiness atomically commits the transaction, `SIGINT`,
+`SIGTERM`, and a post-readiness HTTP-listener failure converge on one shared
+shutdown attempt. New requests receive a retryable `503` while the proxy waits
+for tracked response bodies, including event streams, to finish. The health
+endpoint changes from `200 ok` to `503 draining` as soon as shutdown starts.
+Proxy-generated JSON, HTML, redirect, timeout, and draining responses are
+non-cacheable; content-bearing errors also use `nosniff`, and sign-in redirects
+use `Referrer-Policy: no-referrer`.
+
 After the drain deadline, cleanup has one shared four-second budget by default.
-Every cleanup action is started even if an earlier action rejects or stalls:
-the routing bus, HTTP listener, renderer router, dedicated-server resolver,
-token/cache handler, and telemetry exporter. A cleanup rejection or deadline
-overrun produces a non-zero process exit after the remaining actions have been
+Every cleanup action is started in order even if an earlier action rejects or
+stalls: the routing bus, WebSocket bridges, HTTP listener, renderer router,
+dedicated-server resolver, proxy handler, direct token-cache fallback, telemetry
+exporter, application error flush, and signal handlers. Signal handlers are
+removed last. A listener failure, cleanup rejection, or deadline overrun
+produces a non-zero process exit after the remaining actions have been
 attempted.
 
 ### WebSocket bridge lifecycle

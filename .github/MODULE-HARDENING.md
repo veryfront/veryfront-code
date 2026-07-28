@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    51 |      87.9% | Current formal closure evidence remains valid       |
+| Closed                         |    52 |      89.7% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |     7 |      12.1% | Substantive recovered or current work exists        |
+| Touched, revalidation required |     6 |      10.3% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -68,6 +68,7 @@ stricter closure count.
 - `platform`
 - `provider`
 - `prompt`
+- `proxy`
 - `registry`
 - `release-assets`
 - `rendering`
@@ -97,7 +98,6 @@ None.
 ### Touched, revalidation required
 
 - `data`
-- `proxy`
 - `react`
 - `security`
 - `server`
@@ -126,7 +126,7 @@ The current closed review chain covers `agent`, `build`, `cache`, `channels`, `c
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
-`prompt`, `registry`, `release-assets`, `rendering`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
+`prompt`, `proxy`, `registry`, `release-assets`, `rendering`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
@@ -155,6 +155,12 @@ type-level regressions were remediated and revalidated.
 adapters, filesystem, HTTP and WebSocket lifecycle, KV and cache behavior,
 native compatibility, environment, process, path, test-support, public
 contracts, and cross-runtime consumers were remediated and revalidated.
+`proxy` is closed after its startup transaction, signal and listener ownership,
+cache configuration and lifecycle, routing and renderer dependencies, runtime
+shutdown, telemetry handoff, public operational contract, and direct consumers
+were remediated and revalidated. The narrow Platform and Observability changes
+made during that closure passed their complete affected portfolios and contract
+checks, so both previously closed units remain closed.
 `trigger` is closed after its source discovery, canonical identity, bounded
 input, deterministic duplicate handling, local task/workflow/agent execution,
 cancellation, lifecycle, public surface, and direct consumers were remediated
@@ -5814,5 +5820,122 @@ or high-confidence production risk.
 No known unresolved critical or high-confidence Rendering production risk
 remains. The `rendering` unit is closed at 51 of 58 formal units; seven units
 remain open or awaiting top-level revalidation.
+
+### Proxy closure checkpoint
+
+The `proxy` audit unit owns production gateway startup, configuration and
+authorization admission, renderer and resolver composition, routing and event
+bus wiring, token-cache construction, HTTP and WebSocket listener publication,
+telemetry startup, signal handling, rollback, and graceful shutdown. Its direct
+dependencies include Cache, Config, Observability, Platform, Rendering,
+Routing, Security, and the runtime registries. Direct consumers include the
+production proxy executable, deployment workflows, hosted request paths, and
+the documented request pipeline.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** process signals were acquired
+  only after asynchronous renderer and telemetry startup, while successful
+  producers could publish resources after cancellation or a cleanup deadline.
+  A startup signal could take the runtime default-exit path, and a late server,
+  cache, resolver, or reporter could outlive a rejected startup. Signal handlers
+  are now the first owned runtime resource; all fallible startup participates in
+  one abortable transaction; cleanup ownership is established before invoking
+  each producer; late fulfillment remains cleanup-owned; and rollback executes
+  live owners in deterministic reverse order without duplicate disposal.
+- **Symptom -> Source -> Consequence -> Remedy:** shutdown ownership moved from
+  the directly created token store to the aggregate cache and then to the proxy
+  handler before successful cleanup was established. Handler failure, timeout,
+  cancellation, or a late aggregate result could therefore leak the store or
+  close it more than once. Created cache operations now use immutable snapshots
+  and a shared one-shot close; borrowed stores are never claimed; ownership
+  transfers only after successful aggregate or handler cleanup; and runtime
+  shutdown retains an explicit token-cache fallback after the handler step.
+- **Symptom -> Source -> Consequence -> Remedy:** Redis cache setup accepted
+  mutable operation objects and nominally synchronous registry callbacks that
+  could return pending promises, partially publish a store, or fail during
+  rollback. Mutation and accessors could redirect cleanup, a stalled registrar
+  could hang startup, and registration, unregistration, and close failures could
+  hide one another. Redis operations and the close capability are captured as
+  stable data before publication; thenable registry results fail closed while
+  their rejections are observed; rollback is identity-guarded; and all setup and
+  cleanup failures are preserved in deterministic `AggregateError` order.
+- **Symptom -> Source -> Consequence -> Remedy:** cache configuration and
+  tracing boundaries permitted silent degradation or deferred observation of
+  caller-owned values. Invalid production configuration could select an
+  unintended backend, and later mutation could change diagnostics or behavior
+  after validation. Configuration now fails closed, constructed-versus-borrowed
+  ownership is explicit, and tracing records detached snapshots at the owned
+  boundary.
+- **Symptom -> Source -> Consequence -> Remedy:** Node 18.18 can complete a
+  delayed DNS lookup and bind after an earlier `Server.close()` has already
+  resolved. The cached successful stop made the late-listening branch a no-op,
+  leaving an unreachable native listener after startup cancellation. The
+  adapter now performs a fresh native close when a superseded generation emits
+  `listening`, contains connection cleanup and diagnostics, and keeps the exact
+  delayed-DNS and address-collision regressions in the minimum-supported-Node
+  lane.
+- **Symptom -> Source -> Consequence -> Remedy:** process signal registration
+  could succeed for one native event and fail for its companion while disposer
+  failure was swallowed. A partially installed listener could remain live and
+  the original failure could conceal cleanup loss. Registration is now
+  transactional; partial state is removed immediately; and simultaneous
+  registration and removal failures are reported registration-first in an
+  `AggregateError`.
+- **Symptom -> Source -> Consequence -> Remedy:** listener errors, signal
+  shutdown, startup rollback, Sentry publication, and repeated close calls used
+  overlapping but incompletely shared lifecycle state. Concurrent failures
+  could start multiple cleanup passes, publish a reporter after shutdown, or
+  lose the process-failure outcome. Listener and signal paths now share one
+  shutdown coordinator, close operations are serialized or singleflight,
+  Sentry initialization is generation-fenced, application diagnostics flush
+  before reporter invalidation, and signal handlers are released last.
+- **Symptom -> Source -> Consequence -> Remedy:** the runtime contracts and CI
+  lane did not fully state or exercise post-readiness Node error handling,
+  cleanup aggregation, early signal ownership, or late bind behavior. Future
+  maintenance could weaken these guarantees without failing the supported
+  runtime matrix. Platform and request-pipeline references now describe the
+  exact ownership and failure semantics, and CI executes both signal-lifecycle
+  and delayed-listener regressions on Node 18.18.
+
+Current reproducible evidence:
+
+- the complete Proxy portfolio passes 56 top-level suites and 530 nested steps
+  with zero failures, including startup cancellation, reverse rollback, cache
+  ownership, Redis publication, listener failure, shared shutdown, HTTP, and
+  WebSocket behavior;
+- the affected Observability portfolio passes 47 suites and 828 nested steps,
+  and the complete Platform portfolio passes 213 suites and 2,789 nested steps
+  with zero failures;
+- the exact minimum Node 18.18 workflow command passes all five signal and
+  listener-race tests with zero skips, while the independent final review's ten
+  focused Proxy suites pass 99 steps and five focused Platform suites pass 148
+  steps;
+- repository formatting checks 4,566 files across configured roots, lint checks
+  4,472 files across configured roots, all configured production and browser
+  entrypoints typecheck, dependency boundaries remain clean, and module
+  boundaries report zero cyclic edges;
+- documentation validation and all 764 link checks pass, the workflow YAML
+  parses, `git diff --check` is clean, and `deno.lock` is unchanged; and
+- an independent holistic review found no remaining Critical, High, or Warning
+  closure blocker in the final Proxy, Platform, and Sentry integration diff.
+
+The aggregate `verify:quick` command is presently stopped at its first gate by
+the stale `cli/templates/manifest.json` generated from the separately retained
+React/template batch. The check-only command made no files changes. Every
+downstream gate relevant to this checkpoint was run directly and passed; the
+manifest is intentionally left for the owning React checkpoint rather than
+mixing unrelated generated output into Proxy closure.
+
+Intentional compatibility boundaries remain explicit:
+
+| Severity | Boundary                                                           | Current control                                                                                                                                                          | Follow-up trigger                                                                                                         |
+| -------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Low      | Custom cache registry mutation remains a synchronous contract.     | Returned thenables reject startup immediately, are observed to prevent unhandled rejection, and identity-guarded rollback plus one-shot close retain ownership.          | Introduce an explicitly asynchronous registry API before accepting asynchronous publication or restoration.               |
+| Low      | Late native-listener retirement depends on runtime close behavior. | A fresh close begins synchronously in the superseded `listening` callback, all connections are retired, and Node 18.18 plus current-Node regressions cover the boundary. | Re-evaluate the transport-generation implementation when the minimum Node runtime or native HTTP server semantics change. |
+
+No known unresolved critical or high-confidence Proxy production risk remains.
+The `proxy` unit is closed at 52 of 58 formal units; six units remain open or
+awaiting top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

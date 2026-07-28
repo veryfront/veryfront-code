@@ -1,9 +1,15 @@
 import type { TokenCacheStore } from "../../extensions/cache/index.ts";
-import { register, tryResolve } from "../../extensions/contracts.ts";
+import { register, tryResolve, unregister } from "../../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { ENV_VAR_MISSING, getErrorMessage, INITIALIZATION_ERROR } from "#veryfront/errors";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { assertCacheOptionsObject, snapshotTokenCacheOperations } from "./validation.ts";
+import {
+  assertCacheOptionsObject,
+  requireSynchronousCacheRegistryOperation,
+  snapshotOwnedTokenCacheOperations,
+  snapshotTokenCacheClose,
+  snapshotTokenCacheOperations,
+} from "./validation.ts";
 
 const MAX_REDIS_URL_CODE_UNITS = 4_096;
 const MAX_REDIS_PREFIX_CODE_UNITS = 256;
@@ -23,9 +29,17 @@ type RedisTokenCacheStoreConstructor = new (options: {
 export interface RedisCacheBootstrapDependencies {
   readEnv?: (name: string) => string | undefined;
   resolveStore?: () => TokenCacheStore | undefined;
+  /** Publish the store synchronously; returned values and thenables are rejected. */
   registerStore?: (store: TokenCacheStore) => void;
+  /** Remove the published store synchronously during failed registration rollback. */
+  unregisterStore?: () => void;
   importModule?: () => Promise<unknown>;
 }
+
+export type RedisTokenCacheStoreAcquisition =
+  | Readonly<{ kind: "disabled"; store: null }>
+  | Readonly<{ kind: "borrowed"; store: TokenCacheStore }>
+  | Readonly<{ kind: "created"; store: TokenCacheStore }>;
 
 function readOwnDependency(
   dependencies: RedisCacheBootstrapDependencies,
@@ -153,19 +167,38 @@ async function importRedisExtension(): Promise<unknown> {
   );
 }
 
+async function failAfterCleanup(
+  detail: string,
+  failure: unknown,
+  cleanup: readonly (() => void | PromiseLike<void>)[],
+): Promise<never> {
+  const failures = [failure];
+  for (const action of cleanup) {
+    try {
+      await action();
+    } catch (cleanupFailure) {
+      failures.push(cleanupFailure);
+    }
+  }
+  const cause = failures.length === 1
+    ? failure
+    : new AggregateError(failures, `${detail}; cleanup also failed`);
+  throw INITIALIZATION_ERROR.create({ detail, cause });
+}
+
 /**
  * Register the Redis token-cache extension only when `CACHE_TYPE=redis`.
  * Explicit Redis selection is fail-closed for missing or invalid
  * configuration; an unavailable Redis service is handled later by
  * {@link ResilientCache}.
  */
-export async function ensureRedisTokenCacheStoreFromEnv(
+export async function acquireRedisTokenCacheStoreFromEnv(
   dependencies: RedisCacheBootstrapDependencies = {},
-): Promise<TokenCacheStore | null> {
+): Promise<RedisTokenCacheStoreAcquisition> {
   assertCacheOptionsObject(
     dependencies,
     "Redis cache bootstrap dependencies",
-    ["readEnv", "resolveStore", "registerStore", "importModule"],
+    ["readEnv", "resolveStore", "registerStore", "unregisterStore", "importModule"],
   );
   const readEnvValue = resolveDependency(
     dependencies,
@@ -182,6 +215,11 @@ export async function ensureRedisTokenCacheStoreFromEnv(
     "registerStore",
     (store: TokenCacheStore) => register("TokenCacheStore", store),
   ) as (store: TokenCacheStore) => void;
+  const unregisterStore = resolveDependency(
+    dependencies,
+    "unregisterStore",
+    () => unregister("TokenCacheStore"),
+  ) as () => void;
   const importModule = resolveDependency(
     dependencies,
     "importModule",
@@ -189,12 +227,14 @@ export async function ensureRedisTokenCacheStoreFromEnv(
   ) as () => Promise<unknown>;
 
   const cacheType = readEnvironmentValue(readEnvValue, "CACHE_TYPE") || "memory";
-  if (cacheType !== "redis") return null;
+  if (cacheType !== "redis") {
+    return Object.freeze({ kind: "disabled", store: null });
+  }
 
   const existing = resolveStore();
   if (existing) {
     snapshotTokenCacheOperations(existing, "Registered Redis token cache");
-    return existing;
+    return Object.freeze({ kind: "borrowed", store: existing });
   }
 
   const redisUrl = readEnvironmentValue(readEnvValue, "REDIS_URL");
@@ -229,26 +269,61 @@ export async function ensureRedisTokenCacheStoreFromEnv(
   let store: TokenCacheStore;
   try {
     store = new Store(options);
-    snapshotTokenCacheOperations(store, "Redis token cache extension");
   } catch (error) {
     throw INITIALIZATION_ERROR.create({
       detail: "Failed to initialize @veryfront/ext-cache-redis",
       cause: error,
     });
   }
+  const detail = "Failed to initialize @veryfront/ext-cache-redis";
+  let close: () => Promise<void>;
+  try {
+    close = snapshotTokenCacheClose(store, "Redis token cache extension");
+  } catch (error) {
+    throw INITIALIZATION_ERROR.create({ detail, cause: error });
+  }
+
+  let stableStore: TokenCacheStore;
+  try {
+    stableStore = snapshotOwnedTokenCacheOperations(
+      store,
+      "Redis token cache extension",
+    );
+  } catch (error) {
+    return await failAfterCleanup(detail, error, [close]);
+  }
 
   try {
-    registerStore(store);
+    requireSynchronousCacheRegistryOperation(
+      (registerStore as (store: TokenCacheStore) => unknown)(stableStore),
+      "Redis cache registration",
+    );
   } catch (error) {
-    try {
-      await store.close();
-    } catch {
-      // Preserve the registration failure as the actionable startup cause.
-    }
-    throw INITIALIZATION_ERROR.create({
-      detail: "Failed to register @veryfront/ext-cache-redis",
-      cause: error,
-    });
+    return await failAfterCleanup(
+      "Failed to register @veryfront/ext-cache-redis",
+      error,
+      [
+        () => {
+          if (resolveStore() !== stableStore) return;
+          requireSynchronousCacheRegistryOperation(
+            (unregisterStore as () => unknown)(),
+            "Redis cache registration rollback",
+          );
+        },
+        stableStore.close,
+      ],
+    );
   }
-  return store;
+  return Object.freeze({ kind: "created", store: stableStore });
+}
+
+/**
+ * Preserve the historical bootstrap API for consumers that only need the
+ * selected store. Startup coordinators should use
+ * {@link acquireRedisTokenCacheStoreFromEnv} so close ownership is explicit.
+ */
+export async function ensureRedisTokenCacheStoreFromEnv(
+  dependencies: RedisCacheBootstrapDependencies = {},
+): Promise<TokenCacheStore | null> {
+  return (await acquireRedisTokenCacheStoreFromEnv(dependencies)).store;
 }

@@ -41,6 +41,20 @@ export function assertCacheOptionsObject(
   }
 }
 
+/**
+ * Enforce synchronous registry mutation across cache startup seams. TypeScript
+ * permits async functions where a void-returning callback is expected, so the
+ * runtime must reject and observe returned thenables explicitly.
+ */
+export function requireSynchronousCacheRegistryOperation(
+  result: unknown,
+  label: string,
+): void {
+  if (result === undefined) return;
+  void Promise.resolve(result).catch(() => undefined);
+  throw new TypeError(`${label} must complete synchronously`);
+}
+
 function ownDataValue(
   descriptors: PropertyDescriptorMap,
   key: string,
@@ -121,7 +135,48 @@ export function snapshotTokenCacheOperations(
     clear: snapshotOperation(backend, "clear", label),
     has: snapshotOperation(backend, "has", label),
     stats: snapshotOperation(backend, "stats", label),
-    close: snapshotOperation(backend, "close", label),
+    close: snapshotTokenCacheClose(backend, label),
+  });
+}
+
+/**
+ * Capture cleanup ownership before validating the rest of an extension
+ * contract. The bound data-function snapshot cannot be replaced by a later
+ * property mutation or accessor.
+ */
+export function snapshotTokenCacheClose(
+  value: unknown,
+  label = "Token cache",
+): TokenCache["close"] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a cache object`);
+  }
+  return snapshotOperation(value as TokenCache, "close", label);
+}
+
+/**
+ * Snapshot a cache and place its owned close operation behind one immutable
+ * attempt. Independent aggregate and direct owners can then share teardown
+ * without assuming the backend's raw close operation is idempotent.
+ */
+export function snapshotOwnedTokenCacheOperations(
+  value: unknown,
+  label = "Token cache",
+): TokenCacheOperations {
+  const operations = snapshotTokenCacheOperations(value, label);
+  let closeAttempt: Promise<void> | null = null;
+  const close = (): Promise<void> => {
+    closeAttempt ??= Promise.resolve().then(() => operations.close());
+    return closeAttempt;
+  };
+  return Object.freeze({
+    get: operations.get,
+    set: operations.set,
+    delete: operations.delete,
+    clear: operations.clear,
+    has: operations.has,
+    stats: operations.stats,
+    close,
   });
 }
 

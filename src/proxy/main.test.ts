@@ -111,4 +111,124 @@ describe("proxy main request URL parsing", () => {
     assertStringIncludes(source, "exit(shutdownFailed ? 1 : 0)");
     assertEquals(source.includes("finally {\n    exit(0)"), false);
   });
+
+  it("owns signals before cancellable startup and removes them last during shutdown", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "createProxyStartupSignalRouter");
+    assertStringIncludes(source, "acquireProxySignalHandlers({");
+    assertStringIncludes(source, "startupRollback,");
+    assertStringIncludes(source, "registerSignal: onSignal");
+    assertStringIncludes(source, "handleShutdownFailure: async (error)");
+    assertStringIncludes(source, 'proxyLogger.error("Unhandled shutdown error"');
+    assertStringIncludes(source, "await flushApplicationErrors()");
+    assertStringIncludes(
+      source,
+      "startupSignalRouter.commit(() => startupRollback.commit())",
+    );
+    assertEquals(source.includes("prepareForRuntime:"), false);
+
+    const signalAcquireIndex = source.indexOf(
+      "acquireProxySignalHandlers({",
+    );
+    const sentryInitializationIndex = source.indexOf(
+      'initializeSentryFromEnv("veryfront-proxy")',
+    );
+    const sentryShutdownOwnerIndex = source.indexOf(
+      'startupRollback.own("sentry", shutdownSentry)',
+    );
+    const applicationErrorsOwnerIndex = source.indexOf(
+      'startupRollback.own("application-errors"',
+    );
+    const rendererAcquisitionIndex = source.indexOf("const rendererRouter = await");
+    const authAcquisitionIndex = source.indexOf("const authProvider = await");
+    const cacheAcquisitionIndex = source.indexOf("const startupCache = await");
+    const busAcquisitionIndex = source.indexOf("const routingInvalidationBus = await");
+    const rendererReadyIndex = source.indexOf("rendererRouter?.ready()");
+    assertEquals(signalAcquireIndex >= 0, true);
+    assertEquals(sentryShutdownOwnerIndex > signalAcquireIndex, true);
+    assertEquals(applicationErrorsOwnerIndex > sentryShutdownOwnerIndex, true);
+    assertEquals(sentryInitializationIndex > applicationErrorsOwnerIndex, true);
+    for (
+      const stageIndex of [
+        sentryInitializationIndex,
+        rendererAcquisitionIndex,
+        authAcquisitionIndex,
+        cacheAcquisitionIndex,
+        busAcquisitionIndex,
+      ]
+    ) {
+      assertEquals(stageIndex > signalAcquireIndex, true);
+    }
+    assertEquals(rendererReadyIndex > signalAcquireIndex, true);
+
+    const cleanupStart = source.indexOf(
+      "const cleanupFailures = await runProxyShutdownSteps([",
+    );
+    const cleanupEnd = source.indexOf(
+      "], SHUTDOWN_CLEANUP_TIMEOUT_MS);",
+      cleanupStart,
+    );
+    const cleanupPlan = source.slice(cleanupStart, cleanupEnd);
+    assertEquals(cleanupStart >= 0, true);
+    assertEquals(cleanupEnd > cleanupStart, true);
+    assertEquals(
+      cleanupPlan.lastIndexOf('name: "signal-handlers"'),
+      cleanupPlan.lastIndexOf("name:"),
+    );
+    const proxyHandlerCleanupIndex = cleanupPlan.indexOf('name: "proxy-handler"');
+    const tokenCacheCleanupIndex = cleanupPlan.indexOf('name: "token-cache"');
+    const telemetryCleanupIndex = cleanupPlan.indexOf('name: "telemetry"');
+    assertEquals(proxyHandlerCleanupIndex >= 0, true);
+    assertEquals(tokenCacheCleanupIndex > proxyHandlerCleanupIndex, true);
+    assertEquals(telemetryCleanupIndex > tokenCacheCleanupIndex, true);
+    assertStringIncludes(cleanupPlan, "run: () => cache.close()");
+    assertStringIncludes(cleanupPlan, "run: () => signalHandlers?.dispose()");
+  });
+
+  it("rolls back partially acquired startup resources without duplicate ownership", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    assertStringIncludes(source, "createProxyStartupRollback");
+    for (
+      const resourceName of [
+        "renderer-router",
+        "server-resolver",
+        "websocket-bridges",
+        "auth-provider-registration",
+        "proxy-handler",
+        "routing-invalidation-bus",
+        "http-server",
+      ]
+    ) {
+      assertStringIncludes(
+        source,
+        `await acquireProxyStartupResource(\n  "${resourceName}"`,
+      );
+    }
+    assertStringIncludes(source, 'startupRollback.own("telemetry"');
+    assertStringIncludes(source, "acquireProxyStartupCache(");
+    assertStringIncludes(source, "startupSignalRouter.startupSignal");
+    assertStringIncludes(
+      source,
+      "await handler.close();\n    startupCache.transferToHandler();",
+    );
+    assertEquals(
+      source.match(/startupCache\.transferToHandler\(\)/g)?.length,
+      1,
+    );
+    assertStringIncludes(source, "startProxyListener");
+    assertStringIncludes(source, "await listener.finished");
+    assertStringIncludes(source, "createProxyShutdownCoordinator");
+    assertStringIncludes(
+      source,
+      "shutdownCoordinator = await runProxyStartupStage(() =>",
+    );
+    assertStringIncludes(
+      source,
+      "const listener = await runProxyStartupStage(() =>",
+    );
+    assertStringIncludes(source, "Proxy startup rollback step failed");
+    assertStringIncludes(source, "Proxy startup rollback step timed out");
+  });
 });

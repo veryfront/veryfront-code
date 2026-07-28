@@ -294,11 +294,23 @@ jobs:
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
         run: deno task typecheck:consumer
+      - name: Install minimum-Node source-test dependencies
+        run: deno install --frozen
       - name: Select minimum supported Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "18.18.0"
           package-manager-cache: false
+      - name: Check minimum-Node lifecycle behavior
+        env:
+          VF_DISABLE_LRU_INTERVAL: "1"
+          NODE_ENV: production
+          LOG_FORMAT: text
+        run: >-
+          node --experimental-loader ./tests/node/resolver-hooks.mjs
+          --test
+          src/platform/compat/process.signal-runtime.test.ts
+          tests/node/http-server-node18.test.ts
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 
