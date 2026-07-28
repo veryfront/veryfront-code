@@ -1,59 +1,72 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { EventEmitter } from "node:events";
 import { toNodeHandler } from "./node-handler.ts";
 
-type FakeRes = {
+class FakeRes extends EventEmitter {
   statusCode?: number;
-  headersSent: boolean;
+  statusMessage = "";
+  headersSent = false;
   writeHeadHeaders?: Record<string, unknown>;
-  setHeaderCalls: Array<[string, unknown]>;
-  chunks: Uint8Array[];
-  ended: boolean;
-  writeHead(status: number, headers?: Record<string, unknown>): void;
-  setHeader(name: string, value: unknown): void;
-  write(chunk: Uint8Array): void;
-  end(body?: string): void;
-  on(event: string, listener: () => void): void;
-};
+  setHeaderCalls: Array<[string, unknown]> = [];
+  chunks: Uint8Array[] = [];
+  ended = false;
+  writableEnded = false;
+  destroyed = false;
+  destroyedError?: Error;
+  writeHeadCalls = 0;
+  headerMutationAfterSendAttempts = 0;
+  writeOutcomes: boolean[] = [];
+
+  writeHead(status: number, headers?: Record<string, unknown>): void {
+    this.writeHeadCalls++;
+    if (this.headersSent) {
+      this.headerMutationAfterSendAttempts++;
+      throw new Error("ERR_HTTP_HEADERS_SENT");
+    }
+    this.statusCode = status;
+    this.writeHeadHeaders = headers;
+    this.headersSent = true;
+  }
+
+  setHeader(name: string, value: unknown): void {
+    if (this.headersSent) {
+      this.headerMutationAfterSendAttempts++;
+      throw new Error("ERR_HTTP_HEADERS_SENT");
+    }
+    this.setHeaderCalls.push([name, value]);
+  }
+
+  write(chunk: Uint8Array): boolean {
+    this.headersSent = true;
+    this.chunks.push(chunk);
+    return this.writeOutcomes.shift() ?? true;
+  }
+
+  end(_body?: string): void {
+    this.headersSent = true;
+    this.ended = true;
+    this.writableEnded = true;
+  }
+
+  destroy(error?: Error): this {
+    this.destroyed = true;
+    this.destroyedError = error;
+    return this;
+  }
+}
 
 function createFakeRes(): FakeRes {
-  return {
-    headersSent: false,
-    setHeaderCalls: [],
-    chunks: [],
-    ended: false,
-    writeHead(status, headers) {
-      // Mirror Node: the head can only be written once, and never after
-      // headers have already been flushed.
-      if (this.headersSent) throw new Error("ERR_HTTP_HEADERS_SENT");
-      this.statusCode = status;
-      this.writeHeadHeaders = headers;
-      this.headersSent = true;
-    },
-    setHeader(name, value) {
-      // Mirror Node: headers cannot be mutated once they have been sent.
-      if (this.headersSent) throw new Error("ERR_HTTP_HEADERS_SENT");
-      this.setHeaderCalls.push([name, value]);
-    },
-    write(chunk) {
-      this.chunks.push(chunk);
-    },
-    end(_body) {
-      this.ended = true;
-    },
-    on(_event, _listener) {
-      // no-op: close-handler registration is not exercised in unit tests
-    },
-  };
+  return new FakeRes();
 }
 
 function createFakeReq(
   init: { method?: string; url?: string; headers?: Record<string, string | string[] | undefined> },
 ): import("node:http").IncomingMessage {
-  return {
+  return Object.assign(new EventEmitter(), {
     method: init.method ?? "GET",
     url: init.url ?? "/",
     headers: { host: "localhost", ...(init.headers ?? {}) },
-  } as unknown as import("node:http").IncomingMessage;
+  }) as unknown as import("node:http").IncomingMessage;
 }
 
 function collectSetCookies(res: FakeRes): string[] {
@@ -163,4 +176,85 @@ Deno.test("toNodeHandler passes array-valued request headers through to the Requ
 
   // A collapsed-to-first-element bug would yield only "one".
   assertEquals(seen, "one, two");
+});
+
+Deno.test("toNodeHandler aborts the Web request when the Node client disconnects", async () => {
+  let finishHandler!: (response: Response) => void;
+  const response = new Promise<Response>((resolve) => {
+    finishHandler = resolve;
+  });
+  let requestSignal: AbortSignal | undefined;
+  const nodeHandler = toNodeHandler((request) => {
+    requestSignal = request.signal;
+    return response;
+  });
+  const req = createFakeReq({ url: "/slow" });
+  const res = createFakeRes();
+
+  const completion = nodeHandler(
+    req,
+    res as unknown as import("node:http").ServerResponse,
+  ) as unknown as Promise<void>;
+  req.emit("aborted");
+  const disconnected = requestSignal?.aborted ?? false;
+  finishHandler(new Response("late"));
+  await completion;
+
+  assertEquals(disconnected, true);
+  assertEquals(res.chunks.length, 0);
+});
+
+Deno.test("toNodeHandler waits for drain after Node response backpressure", async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1]));
+      controller.enqueue(new Uint8Array([2]));
+      controller.close();
+    },
+  });
+  const nodeHandler = toNodeHandler(() => new Response(stream));
+  const res = createFakeRes();
+  res.writeOutcomes.push(false, true);
+
+  const completion = nodeHandler(
+    createFakeReq({ url: "/stream" }),
+    res as unknown as import("node:http").ServerResponse,
+  ) as unknown as Promise<void>;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assertEquals(res.chunks.length, 1);
+  res.emit("drain");
+  await completion;
+  assertEquals(res.chunks.length, 2);
+  assertEquals(res.ended, true);
+});
+
+Deno.test("toNodeHandler destroys a streaming response that fails after headers", async () => {
+  const streamError = new Error("stream failed after headers");
+  let pulls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls++;
+      if (pulls === 1) {
+        controller.enqueue(new Uint8Array([1]));
+        return;
+      }
+      controller.error(streamError);
+    },
+  });
+  const nodeHandler = toNodeHandler(() => new Response(stream));
+  const res = createFakeRes();
+  let completionError: unknown;
+
+  await (nodeHandler(
+    createFakeReq({ url: "/stream-error" }),
+    res as unknown as import("node:http").ServerResponse,
+  ) as unknown as Promise<void>).catch((error) => {
+    completionError = error;
+  });
+
+  assertEquals(completionError, undefined);
+  assertEquals(res.headerMutationAfterSendAttempts, 0);
+  assertEquals(res.destroyed, true);
+  assertStrictEquals(res.destroyedError, streamError);
 });

@@ -21,17 +21,38 @@ import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { getErrorCollector, getLogBuffer } from "#veryfront/observability";
 import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import {
+  RuntimeGenerationDrain,
+  type RuntimeGenerationLease,
+} from "../runtime-generation-drain.ts";
 
 const logger = serverLogger.component("dev");
 const DEV_SERVER_ALLOWED_METHODS = "GET, HEAD, OPTIONS";
-type RuntimeRequestHandler = (request: Request) => Promise<Response>;
+type RuntimeRequestHandler = ((request: Request) => Promise<Response>) & {
+  dispose?: () => void | Promise<void>;
+};
 type RuntimeRequestHandlerFactory = () => Promise<RuntimeRequestHandler>;
 interface RequestHandlerDependencies {
   runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
 }
+interface LeasedRuntimeHandler {
+  handler: RuntimeRequestHandler;
+  lease: RuntimeGenerationLease;
+}
 
 export class RequestHandler {
   private runtimeHandler?: RuntimeRequestHandler;
+  private runtimeHandlerInitialization?: Promise<RuntimeRequestHandler | undefined>;
+  private readonly runtimeHandlerInitializations = new Set<
+    Promise<RuntimeRequestHandler | undefined>
+  >();
+  private readonly ownedRuntimeHandlers = new Set<RuntimeRequestHandler>();
+  private readonly runtimeHandlerRetirements = new Map<RuntimeRequestHandler, Promise<void>>();
+  private readonly runtimeHandlerDrains = new Map<RuntimeRequestHandler, RuntimeGenerationDrain>();
+  private runtimeHandlerGeneration = 0;
+  private disposed = false;
+  private disposePromise?: Promise<void>;
   private readonly runtimeHandlerFactory?: RuntimeRequestHandlerFactory;
 
   constructor(
@@ -167,28 +188,104 @@ export class RequestHandler {
   }
 
   private async handleApplicationRequest(req: Request): Promise<Response> {
-    if (!this.runtimeHandler) {
-      if (this.runtimeHandlerFactory) {
-        this.runtimeHandler = await this.runtimeHandlerFactory();
-      } else {
-        const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
-        this.runtimeHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
-          projectDir: this.projectDir,
-          debug: this.isDebug(),
-          moduleServerUrl: "/_vf_modules",
-          config: this.config,
-          defaultProjectSlug: this.defaultProjectSlug,
-          defaultProjectId: this.defaultProjectId,
-          localProjects: this.localProjects,
-        });
+    const { handler, lease } = await this.getRuntimeHandler();
+    try {
+      const response = await handler(req);
+      return completeOnResponseBodyConsumption(response, lease.release, req.signal);
+    } catch (error) {
+      lease.release();
+      throw error;
+    }
+  }
+
+  private async getRuntimeHandler(): Promise<LeasedRuntimeHandler> {
+    while (true) {
+      if (this.disposed) throw new Error("Request handler has been disposed");
+      if (this.runtimeHandler) {
+        const leased = this.tryLeaseRuntimeHandler(this.runtimeHandler);
+        if (leased) return leased;
+        continue;
+      }
+
+      const initialization = this.runtimeHandlerInitialization ??
+        this.startRuntimeHandlerInitialization();
+      const runtimeHandler = await initialization;
+      if (
+        runtimeHandler &&
+        !this.disposed &&
+        this.runtimeHandler === runtimeHandler
+      ) {
+        const leased = this.tryLeaseRuntimeHandler(runtimeHandler);
+        if (leased) return leased;
       }
     }
+  }
 
-    return this.runtimeHandler(req);
+  private tryLeaseRuntimeHandler(
+    runtimeHandler: RuntimeRequestHandler,
+  ): LeasedRuntimeHandler | undefined {
+    if (this.disposed || this.runtimeHandler !== runtimeHandler) return undefined;
+    const drain = this.runtimeHandlerDrains.get(runtimeHandler);
+    if (!drain) throw new Error("Runtime handler ownership was not initialized");
+    const lease = drain.tryAcquire();
+    if (!lease) return undefined;
+    return { handler: runtimeHandler, lease };
+  }
+
+  private startRuntimeHandlerInitialization(): Promise<RuntimeRequestHandler | undefined> {
+    const generation = this.runtimeHandlerGeneration;
+    const initialization = this.createRuntimeHandler().then(async (runtimeHandler) => {
+      this.ownedRuntimeHandlers.add(runtimeHandler);
+      this.runtimeHandlerDrains.set(runtimeHandler, new RuntimeGenerationDrain());
+      if (this.disposed || generation !== this.runtimeHandlerGeneration) {
+        await this.retireRuntimeHandler(runtimeHandler);
+        return undefined;
+      }
+
+      this.runtimeHandler = runtimeHandler;
+      return runtimeHandler;
+    });
+    this.runtimeHandlerInitialization = initialization;
+    this.runtimeHandlerInitializations.add(initialization);
+
+    void initialization.then(
+      () => this.finishRuntimeHandlerInitialization(initialization),
+      () => this.finishRuntimeHandlerInitialization(initialization),
+    );
+    return initialization;
+  }
+
+  private finishRuntimeHandlerInitialization(
+    initialization: Promise<RuntimeRequestHandler | undefined>,
+  ): void {
+    this.runtimeHandlerInitializations.delete(initialization);
+    if (this.runtimeHandlerInitialization === initialization) {
+      this.runtimeHandlerInitialization = undefined;
+    }
+  }
+
+  private async createRuntimeHandler(): Promise<RuntimeRequestHandler> {
+    if (this.runtimeHandlerFactory) return await this.runtimeHandlerFactory();
+
+    const { createVeryfrontHandler } = await import("../runtime-handler/index.ts");
+    return createVeryfrontHandler(this.projectDir, this.adapter, {
+      projectDir: this.projectDir,
+      profile: "development",
+      debug: this.isDebug(),
+      moduleServerUrl: "/_vf_modules",
+      config: this.config,
+      defaultProjectSlug: this.defaultProjectSlug,
+      defaultProjectId: this.defaultProjectId,
+      localProjects: this.localProjects,
+    });
   }
 
   invalidateRuntimeHandler(): void {
+    this.runtimeHandlerGeneration++;
+    this.runtimeHandlerInitialization = undefined;
+    const previousRuntimeHandler = this.runtimeHandler;
     this.runtimeHandler = undefined;
+    if (previousRuntimeHandler) void this.retireRuntimeHandler(previousRuntimeHandler);
     invalidateRSCHandlersForProject(this.projectDir, this.defaultProjectId);
 
     resetApiHandler(this.projectDir).catch((error) => {
@@ -201,6 +298,71 @@ export class RequestHandler {
     clearRendererCacheForProject(rendererProjectKey).catch((error) => {
       logger.debug("clearRendererCacheForProject failed", error);
     });
+  }
+
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+
+    if (!this.disposed) {
+      this.disposed = true;
+      this.runtimeHandlerGeneration++;
+    }
+    this.runtimeHandlerInitialization = undefined;
+    this.runtimeHandler = undefined;
+
+    const attempt = this.disposeOwnedRuntimeHandlers();
+    this.disposePromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (this.disposePromise === attempt) this.disposePromise = undefined;
+      },
+    );
+    return attempt;
+  }
+
+  private retireRuntimeHandler(runtimeHandler: RuntimeRequestHandler): Promise<void> {
+    const activeRetirement = this.runtimeHandlerRetirements.get(runtimeHandler);
+    if (activeRetirement) return activeRetirement;
+
+    const retirement = (async () => {
+      await this.runtimeHandlerDrains.get(runtimeHandler)?.close();
+      await runtimeHandler.dispose?.();
+    })();
+    this.runtimeHandlerRetirements.set(runtimeHandler, retirement);
+    void retirement.then(
+      () => {
+        if (this.runtimeHandlerRetirements.get(runtimeHandler) === retirement) {
+          this.runtimeHandlerRetirements.delete(runtimeHandler);
+          this.ownedRuntimeHandlers.delete(runtimeHandler);
+          this.runtimeHandlerDrains.delete(runtimeHandler);
+        }
+      },
+      (error) => {
+        if (this.runtimeHandlerRetirements.get(runtimeHandler) === retirement) {
+          this.runtimeHandlerRetirements.delete(runtimeHandler);
+        }
+        logger.warn("Runtime handler retirement failed", { error });
+      },
+    );
+    return retirement;
+  }
+
+  private async disposeOwnedRuntimeHandlers(): Promise<void> {
+    await Promise.allSettled([...this.runtimeHandlerInitializations]);
+
+    const handlers = [...this.ownedRuntimeHandlers];
+    const results = await Promise.allSettled(
+      handlers.map((runtimeHandler) => this.retireRuntimeHandler(runtimeHandler)),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []
+    );
+
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Runtime handler retirement failed");
+    }
   }
 
   private handleServerError(error: unknown): Response {

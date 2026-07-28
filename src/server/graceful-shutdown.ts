@@ -49,6 +49,19 @@ export interface GracefulProductionShutdownOptions {
 
 type GracefulShutdownLogger = GracefulProductionShutdownOptions["logger"];
 
+class GracefulShutdownTimeoutError extends Error {
+  override name = "GracefulShutdownTimeoutError";
+
+  constructor(description: string) {
+    super(`Timed out while trying to ${description}`);
+  }
+}
+
+type CleanupStepOutcome =
+  | { readonly status: "completed" }
+  | { readonly status: "failed"; readonly error: unknown }
+  | { readonly status: "timeout"; readonly error: GracefulShutdownTimeoutError };
+
 interface GracefulProductionShutdownDependencies {
   markServerShuttingDown: () => void;
   setServerInitialized: (ready: boolean) => void;
@@ -92,16 +105,18 @@ async function runCleanupStep(
   action: () => void | Promise<void>,
   logger: GracefulShutdownLogger,
   cleanupDeadlineMs: number,
-): Promise<"completed" | "failed" | "timeout"> {
+): Promise<CleanupStepOutcome> {
   let result: void | Promise<void>;
   try {
     result = action();
   } catch (error) {
     logger.warn(`Failed to ${description} during graceful shutdown`, { error });
-    return "failed";
+    return { status: "failed", error };
   }
 
-  if (!result || typeof (result as PromiseLike<void>).then !== "function") return "completed";
+  if (!result || typeof (result as PromiseLike<void>).then !== "function") {
+    return { status: "completed" };
+  }
 
   const actionPromise = Promise.resolve(result);
   const remainingMs = Math.max(0, cleanupDeadlineMs - Date.now());
@@ -110,7 +125,10 @@ async function runCleanupStep(
     void actionPromise.catch((error) => {
       logger.warn(`Failed to ${description} after cleanup deadline exceeded`, { error });
     });
-    return "timeout";
+    return {
+      status: "timeout",
+      error: new GracefulShutdownTimeoutError(description),
+    };
   }
 
   type CleanupOutcome =
@@ -132,12 +150,15 @@ async function runCleanupStep(
 
   if (outcome.status === "failed") {
     logger.warn(`Failed to ${description} during graceful shutdown`, { error: outcome.error });
-    return "failed";
+    return outcome;
   } else if (outcome.status === "timeout") {
     logger.warn("Graceful shutdown cleanup deadline exceeded", { step: description });
-    return "timeout";
+    return {
+      status: "timeout",
+      error: new GracefulShutdownTimeoutError(description),
+    };
   }
-  return "completed";
+  return outcome;
 }
 
 /**
@@ -182,47 +203,75 @@ export async function gracefullyShutdownProductionServerWithDependencies(
   }
 
   const cleanupDeadlineMs = Date.now() + cleanupTimeoutMs;
-  await runCleanupStep(
-    "stop request tracking",
-    () => dependencies.requestTracker.shutdown(),
-    logger,
-    cleanupDeadlineMs,
+  const cleanupFailures: unknown[] = [];
+  const collectCleanupFailure = (outcome: CleanupStepOutcome): CleanupStepOutcome => {
+    if (outcome.status !== "completed") cleanupFailures.push(outcome.error);
+    return outcome;
+  };
+
+  collectCleanupFailure(
+    await runCleanupStep(
+      "stop request tracking",
+      () => dependencies.requestTracker.shutdown(),
+      logger,
+      cleanupDeadlineMs,
+    ),
   );
-  await runCleanupStep(
-    "abort the production server",
-    options.abort,
-    logger,
-    cleanupDeadlineMs,
+  collectCleanupFailure(
+    await runCleanupStep(
+      "abort the production server",
+      options.abort,
+      logger,
+      cleanupDeadlineMs,
+    ),
   );
-  const stopResult = await runCleanupStep(
-    "stop the production server",
-    options.stop,
-    logger,
-    cleanupDeadlineMs,
+  const stopResult = collectCleanupFailure(
+    await runCleanupStep(
+      "stop the production server",
+      options.stop,
+      logger,
+      cleanupDeadlineMs,
+    ),
   );
   if (options.dispose) {
-    if (stopResult === "completed") {
-      await runCleanupStep(
-        "dispose the production bootstrap",
-        options.dispose,
-        logger,
-        cleanupDeadlineMs,
+    if (stopResult.status === "completed") {
+      collectCleanupFailure(
+        await runCleanupStep(
+          "dispose the production bootstrap",
+          options.dispose,
+          logger,
+          cleanupDeadlineMs,
+        ),
       );
     } else {
       logger.warn(
         "Skipping production bootstrap disposal because the HTTP server may still be live",
         {
-          stopResult,
+          stopResult: stopResult.status,
         },
       );
     }
   }
-  await runCleanupStep(
-    "shut down telemetry",
-    dependencies.shutdownTelemetry,
-    logger,
-    cleanupDeadlineMs,
+  collectCleanupFailure(
+    await runCleanupStep(
+      "shut down telemetry",
+      dependencies.shutdownTelemetry,
+      logger,
+      cleanupDeadlineMs,
+    ),
   );
+
+  if (cleanupFailures.length > 0) {
+    logger.warn("Graceful shutdown incomplete", {
+      failureCount: cleanupFailures.length,
+    });
+    throw new AggregateError(
+      cleanupFailures,
+      `Graceful shutdown failed in ${cleanupFailures.length} cleanup phase${
+        cleanupFailures.length === 1 ? "" : "s"
+      }`,
+    );
+  }
 
   logger.info("Graceful shutdown complete");
   return drained;
@@ -232,9 +281,11 @@ export async function gracefullyShutdownProductionServerWithDependencies(
  * Enter lame-duck mode, mark readiness false, drain tracked requests and SSE
  * response bodies, and stop a production server process.
  *
- * This is a one-shot, process-level lifecycle. Call it once from a SIGINT or
- * SIGTERM handler. The function returns `true` when every tracked request drains
- * before the timeout and `false` when cleanup continues after the timeout.
+ * Process owners should share concurrent calls. The function returns `true`
+ * when every tracked request drains before the timeout and `false` when cleanup
+ * continues after the drain timeout. Required cleanup failures and timeouts are
+ * reported afterward in one ordered `AggregateError`, allowing the owner to
+ * retry unfinished cleanup or terminate with a failed process status.
  */
 export function gracefullyShutdownProductionServer(
   options: GracefulProductionShutdownOptions,

@@ -293,7 +293,9 @@ Deno.test("startNodeVeryfrontServer rejects readiness when stopped before bindin
       "Veryfront Node service server stopped before readiness",
     );
     assertEquals(handle.server.listening, false);
-    assertEquals(handle.server.listenerCount("error"), 0);
+    const retainedErrorListeners = handle.server.listeners("error");
+    assertEquals(retainedErrorListeners.length, 1);
+    assertEquals(retainedErrorListeners[0]?.name, "absorbCanceledNodeListenError");
     assertEquals(handle.server.listenerCount("close"), 0);
     assertEquals(process.listenerCount(signal), initialSignalListeners);
     assertEquals([shutdownCalls, runtimeStopCalls], [1, 1]);
@@ -327,9 +329,6 @@ Deno.test("startNodeVeryfrontServer removes readiness listeners when listen thro
   });
 
   try {
-    assertEquals(handle.server.listenerCount("error"), 0);
-    assertEquals(handle.server.listenerCount("close"), 0);
-
     let readyError: unknown;
     try {
       await handle.ready;

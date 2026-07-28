@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import dns from "node:dns";
 import { createServer, type Server as NativeHttpServer } from "node:http";
@@ -210,6 +210,54 @@ describe("Node 18.18 HTTP startup cancellation", () => {
       await new Promise<void>((resolve, reject) => {
         blocker.close((error) => error ? reject(error) : resolve());
       });
+    }
+  });
+
+  it("retires a service listener that binds after stop completes during lookup", async () => {
+    const { startNodeVeryfrontServer } = await import("../../src/server/service-server.ts");
+    const delayedLookup = delayNodeLookup("delayed-service.veryfront.invalid");
+    let handle: Awaited<ReturnType<typeof startNodeVeryfrontServer>> | undefined;
+    try {
+      const startup = startNodeVeryfrontServer({
+        runtime: {
+          fetch: () => new Response("unreachable"),
+          setShuttingDown: () => undefined,
+          stop: () => Promise.resolve(),
+        },
+        port: 0,
+        bindAddress: "delayed-service.veryfront.invalid",
+        signals: [],
+      });
+      await delayedLookup.started;
+      handle = await startup;
+
+      await handle.stop();
+      let readinessError: unknown;
+      try {
+        await handle.ready;
+      } catch (error) {
+        readinessError = error;
+      }
+      assertInstanceOf(readinessError, Error);
+      assertEquals(handle.server.listening, false);
+
+      const lateClose = createDeferred<void>();
+      handle.server.once("close", () => lateClose.resolve());
+      delayedLookup.release("127.0.0.1");
+      await withTimeout(
+        lateClose.promise,
+        1_000,
+        "Node 18 service listener remained live after delayed lookup completed",
+      );
+      assertEquals(handle.server.listening, false);
+      assertEquals(handle.server.address(), null);
+    } finally {
+      delayedLookup.restore();
+      if (handle?.server.listening) {
+        await new Promise<void>((resolve, reject) => {
+          handle?.server.close((error) => error ? reject(error) : resolve());
+        });
+      }
     }
   });
 });

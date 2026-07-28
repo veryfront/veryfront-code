@@ -44,13 +44,24 @@ describe("request-utils", () => {
     it("returns true for localhost", () => {
       assertEquals(isInternalHost("localhost"), true);
       assertEquals(isInternalHost("localhost:3000"), true);
+      assertEquals(isInternalHost("localhost:not-a-port"), false);
+      assertEquals(isInternalHost("localhost:"), false);
     });
 
     it("returns true for loopback addresses", () => {
       assertEquals(isInternalHost("127.0.0.1"), true);
       assertEquals(isInternalHost("127.0.0.1:8080"), true);
-      // Note: IPv6 ::1 is not supported by current implementation
-      // (split(":") breaks IPv6 addresses)
+      assertEquals(isInternalHost("127.0.0.1:not-a-port"), false);
+      assertEquals(isInternalHost("::1"), true);
+      assertEquals(isInternalHost("[::1]"), true);
+      assertEquals(isInternalHost("[::1]:3000"), true);
+    });
+
+    it("rejects public and malformed IPv6 host values", () => {
+      assertEquals(isInternalHost("2001:4860:4860::8888"), false);
+      assertEquals(isInternalHost("[2001:4860:4860::8888]:443"), false);
+      assertEquals(isInternalHost("[::1"), false);
+      assertEquals(isInternalHost("[::1]not-a-port"), false);
     });
 
     it("returns true for private 10.x.x.x addresses", () => {

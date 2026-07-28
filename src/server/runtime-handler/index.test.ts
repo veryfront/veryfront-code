@@ -8,7 +8,13 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
-import { createVeryfrontHandler, type RuntimeHandlerOptions } from "./index.ts";
+import {
+  createHandlerRegistry,
+  createVeryfrontHandler,
+  DEVELOPMENT_ONLY_HANDLER_NAMES,
+  HANDLER_NAMES,
+  type RuntimeHandlerOptions,
+} from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -152,6 +158,19 @@ function createProxyModeHandler(
   });
 }
 
+async function getLocalProjectSlugs(
+  handler: ReturnType<typeof createVeryfrontHandler>,
+): Promise<string[]> {
+  const response = await handler(
+    new Request("http://veryfront.me/_vf/api/projects"),
+  );
+  assertEquals(response.status, 200);
+  const body = await response.json() as {
+    data: Array<{ slug: string }>;
+  };
+  return body.data.map((project) => project.slug).sort();
+}
+
 interface ProxyRunWithContextOptions {
   productionMode?: boolean;
   releaseId?: string | null;
@@ -293,6 +312,145 @@ describe("server/runtime-handler/index", () => {
     clearConfigCache();
     defaultDiscoveryCache.clear();
     await HMRHandler.shutdown();
+  });
+
+  it("constructs the complete development registry and excludes dev handlers in production", () => {
+    const adapter = createMockAdapter();
+    const developmentNames = new Set(
+      createHandlerRegistry("/tmp/test-project", adapter, { profile: "development" })
+        .registry.getStats().handlerNames,
+    );
+    const productionNames = new Set(
+      createHandlerRegistry("/tmp/test-project", adapter, { profile: "production" })
+        .registry.getStats().handlerNames,
+    );
+
+    assertEquals(developmentNames.size, HANDLER_NAMES.length);
+    for (const name of HANDLER_NAMES) assertEquals(developmentNames.has(name), true, name);
+    for (const name of DEVELOPMENT_ONLY_HANDLER_NAMES) {
+      assertEquals(productionNames.has(name), false, name);
+    }
+    assertEquals(productionNames.has("StylesCSSHandler"), true);
+    assertEquals(productionNames.has("StudioBridgeModulesHandler"), true);
+  });
+
+  it("does not admit development control routes in the production profile for local sources", async () => {
+    const adapter = new DenoAdapter();
+    const projectDir = Deno.cwd();
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: {} as any,
+      defaultProjectSlug: "local-project",
+      defaultProjectId: "local-project",
+      defaultEnvironment: "production",
+      localProjects: { "local-project": projectDir },
+      profile: "production",
+    });
+    await handler.ready;
+
+    const requests = [
+      new Request("http://localhost/_vf_debug/context"),
+      new Request("http://localhost/_dev/api/files"),
+      new Request("http://localhost/_debug/memory"),
+      new Request("http://localhost/_veryfront/fs/mod.ts"),
+      new Request("http://localhost/_metrics"),
+      new Request("http://localhost/_veryfront/log", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ level: "info", message: "must not be accepted" }),
+      }),
+      new Request("http://localhost/_ws"),
+      new Request("http://localhost/README.md"),
+    ];
+
+    for (const request of requests) {
+      const response = await handler(request);
+      assertEquals(response.status, 404, `${request.method} ${new URL(request.url).pathname}`);
+      await response.body?.cancel();
+    }
+  });
+
+  it("does not inherit local project mappings from a previous runtime handler generation", async () => {
+    const adapter = createMockAdapter();
+    const first = createVeryfrontHandler("/first", adapter, {
+      projectDir: "/first",
+      config: {} as any,
+      localProjects: { retired: "/retired-project" },
+    });
+    const second = createVeryfrontHandler("/second", adapter, {
+      projectDir: "/second",
+      config: {} as any,
+    });
+
+    try {
+      await Promise.all([first.ready, second.ready]);
+      assertEquals(await getLocalProjectSlugs(first), ["retired"]);
+      assertEquals(await getLocalProjectSlugs(second), []);
+    } finally {
+      await Promise.all([first.dispose(), second.dispose()]);
+    }
+  });
+
+  it("keeps concurrent runtime handler local project mappings isolated", async () => {
+    const adapter = createMockAdapter();
+    const left = createVeryfrontHandler("/left", adapter, {
+      projectDir: "/left",
+      config: {} as any,
+      localProjects: { left: "/left-project" },
+    });
+    const right = createVeryfrontHandler("/right", adapter, {
+      projectDir: "/right",
+      config: {} as any,
+      localProjects: { right: "/right-project" },
+    });
+
+    try {
+      await Promise.all([left.ready, right.ready]);
+      const [leftProjects, rightProjects] = await Promise.all([
+        getLocalProjectSlugs(left),
+        getLocalProjectSlugs(right),
+      ]);
+      assertEquals(leftProjects, ["left"]);
+      assertEquals(rightProjects, ["right"]);
+    } finally {
+      await Promise.all([left.dispose(), right.dispose()]);
+    }
+  });
+
+  it("rejects new requests after disposing a runtime handler", async () => {
+    const handler = createVeryfrontHandler("/owned", createMockAdapter(), {
+      projectDir: "/owned",
+      config: {} as any,
+      localProjects: { owned: "/owned-project" },
+    });
+
+    await handler.ready;
+    assertEquals(await getLocalProjectSlugs(handler), ["owned"]);
+    await handler.dispose();
+
+    const response = await handler(new Request("http://localhost/_vf/api/projects"));
+    assertEquals(response.status, 503);
+    assertEquals(response.headers.get("cache-control"), "no-store");
+  });
+
+  it("waits for an active response body during disposal", async () => {
+    const handler = createVeryfrontHandler("/owned", createMockAdapter(), {
+      projectDir: "/owned",
+      config: {} as any,
+    });
+    await handler.ready;
+    const response = await handler(new Request("http://localhost/healthz"));
+
+    let disposed = false;
+    const disposal = handler.dispose().then(() => {
+      disposed = true;
+    });
+    await Promise.resolve();
+    assertEquals(disposed, false);
+
+    await response.body!.cancel("test complete");
+    await disposal;
+    assertEquals(disposed, true);
   });
 
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {

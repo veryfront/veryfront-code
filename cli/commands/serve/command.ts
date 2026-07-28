@@ -15,6 +15,53 @@ export interface ServeOptions {
   debug: boolean;
 }
 
+/** @internal Process terminal used by the production serve command. */
+export function createCliProductionShutdownHandler(options: {
+  readonly performShutdown: (signal: "SIGINT" | "SIGTERM") => void | Promise<unknown>;
+  readonly captureApplicationError: (
+    error: unknown,
+    context: { boundary: string },
+  ) => unknown;
+  readonly flushApplicationErrors: () => void | Promise<unknown>;
+  readonly exitProcess: (code: number) => void;
+  readonly logger: { warn: (...args: unknown[]) => void };
+}): (signal: "SIGINT" | "SIGTERM") => Promise<void> {
+  let shutdownPromise: Promise<void> | undefined;
+
+  return (signal) => {
+    if (shutdownPromise) return shutdownPromise;
+
+    const attempt = Promise.resolve().then(async () => {
+      let exitCode = 0;
+      try {
+        await options.performShutdown(signal);
+      } catch (error) {
+        exitCode = 1;
+        options.captureApplicationError(error, { boundary: "process.shutdown" });
+        options.logger.warn("Error while shutting down production server:", error);
+      }
+
+      try {
+        const flushed = await options.flushApplicationErrors();
+        if (flushed === false) {
+          const error = new Error("Application error diagnostics did not flush completely");
+          exitCode = 1;
+          options.captureApplicationError(error, { boundary: "process.shutdown.flush" });
+          options.logger.warn("Error while flushing shutdown diagnostics:", error);
+        }
+      } catch (error) {
+        exitCode = 1;
+        options.captureApplicationError(error, { boundary: "process.shutdown.flush" });
+        options.logger.warn("Error while flushing shutdown diagnostics:", error);
+      }
+
+      options.exitProcess(exitCode);
+    });
+    shutdownPromise = attempt;
+    return attempt;
+  };
+}
+
 async function runSplit(options: ServeOptions): Promise<void> {
   showLogo();
   const { runSplitMode } = await import("./split-mode.ts");
@@ -91,26 +138,19 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
   });
   await server.ready;
 
-  let shuttingDown = false;
-  const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-
-    try {
-      await gracefullyShutdownProductionServer({
+  const shutdown = createCliProductionShutdownHandler({
+    performShutdown: (signal) =>
+      gracefullyShutdownProductionServer({
         signal,
         abort: () => shutdownController.abort(),
         stop: server.stop,
         logger: cliLogger,
-      });
-    } catch (error) {
-      captureApplicationError(error, { boundary: "process.shutdown" });
-      cliLogger.warn("Error while shutting down production server:", error);
-    } finally {
-      await flushApplicationErrors();
-      exitProcess(0);
-    }
-  };
+      }),
+    captureApplicationError,
+    flushApplicationErrors,
+    exitProcess,
+    logger: cliLogger,
+  });
 
   registerTerminationSignals(shutdown);
 

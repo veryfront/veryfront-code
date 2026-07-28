@@ -11,9 +11,29 @@ import { getTimeoutFromEnv } from "#veryfront/middleware/builtin/timeout.ts";
 import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
+function hostnameFromHostValue(host: string): string {
+  if (host.startsWith("[")) {
+    const closingBracket = host.indexOf("]");
+    if (closingBracket < 0) return "";
+
+    const suffix = host.slice(closingBracket + 1);
+    if (suffix !== "" && !/^:\d+$/.test(suffix)) return "";
+    return host.slice(1, closingBracket);
+  }
+
+  const firstColon = host.indexOf(":");
+  if (firstColon < 0) return host;
+  if (firstColon === host.lastIndexOf(":")) {
+    return /^\d+$/.test(host.slice(firstColon + 1)) ? host.slice(0, firstColon) : "";
+  }
+
+  // Unbracketed multi-colon values are IPv6 literals, not host:port pairs.
+  return host;
+}
+
 /** Check if host is a private/internal IP address */
 export function isInternalHost(host: string): boolean {
-  const hostname = host.split(":")[0] ?? "";
+  const hostname = hostnameFromHostValue(host);
 
   if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
     return true;

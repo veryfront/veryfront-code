@@ -9,7 +9,7 @@ import {
   createRetryableDisposer,
   validateProductionEnvironment,
 } from "./bootstrap.ts";
-import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
+import { cwd, exit, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { initializeOTLPWithApis, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
@@ -289,6 +289,24 @@ function bootstrapForAuthorization(
     : bootstrapProd;
 }
 
+function snapshotSuppliedBootstrap(bootstrap: BootstrapResult): BootstrapResult {
+  const adapter = bootstrap.adapter;
+  const config = bootstrap.config;
+  const usingFSAdapter = bootstrap.usingFSAdapter;
+  const fsAdapterType = bootstrap.fsAdapterType;
+  const extensionLoader = bootstrap.extensionLoader;
+  const dispose = bootstrap.dispose;
+
+  return Object.freeze({
+    adapter,
+    config,
+    usingFSAdapter,
+    ...(fsAdapterType !== undefined ? { fsAdapterType } : {}),
+    extensionLoader,
+    ...(dispose !== undefined ? { dispose: () => dispose.call(bootstrap) } : {}),
+  });
+}
+
 async function startProductionServerWithAuthorization(
   options: StartProductionServerOptions,
   authorization: ProductionServerAuthorization,
@@ -314,10 +332,13 @@ async function startProductionServerWithAuthorization(
     bootstrapResult: suppliedBootstrap,
   } = options;
   const isAuthorizedLocalProxy = authorization === LOCAL_CLI_PROXY_SERVER_AUTHORIZATION;
+  const ownedSuppliedBootstrap = suppliedBootstrap
+    ? snapshotSuppliedBootstrap(suppliedBootstrap)
+    : undefined;
 
   // A supplied result skips bootstrapProd(), so the public path must perform
   // the hosted validation here. The exact private symbol is the only bypass.
-  if (suppliedBootstrap && !isAuthorizedLocalProxy) {
+  if (ownedSuppliedBootstrap && !isAuthorizedLocalProxy) {
     validateProductionEnvironment();
   }
 
@@ -340,6 +361,8 @@ async function startProductionServerWithAuthorization(
       let ssrPortInstalledValue: number | undefined;
       let ssrFetchInstalled = false;
       let ssrClientOnlyInstalled = false;
+      let activeRuntimeHandler: ReturnType<typeof createVeryfrontHandler> | undefined;
+      let runtimeHandlerDisposed = true;
 
       const installSSRPort = (port: number): void => {
         if (ssrPortInstalledValue === port) return;
@@ -405,6 +428,14 @@ async function startProductionServerWithAuthorization(
             failures.push(error);
           }
         }
+        if (!runtimeHandlerDisposed) {
+          try {
+            await activeRuntimeHandler?.dispose();
+            runtimeHandlerDisposed = true;
+          } catch (error) {
+            failures.push(error);
+          }
+        }
         if (!bootstrapDisposed) {
           try {
             await activeBootstrap?.dispose?.();
@@ -424,7 +455,7 @@ async function startProductionServerWithAuthorization(
       });
 
       try {
-        const baseAdapter = requestedAdapter ?? suppliedBootstrap?.adapter ??
+        const baseAdapter = requestedAdapter ?? ownedSuppliedBootstrap?.adapter ??
           (await runtime.get());
         const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
         ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
@@ -432,7 +463,7 @@ async function startProductionServerWithAuthorization(
 
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
         activeBootstrap = await resolveProductionBootstrap(
-          { projectDir, bootstrapResult: suppliedBootstrap },
+          { projectDir, bootstrapResult: ownedSuppliedBootstrap },
           baseAdapter,
           productionBootstrap,
         );
@@ -511,6 +542,7 @@ async function startProductionServerWithAuthorization(
 
         const baseHandler = createVeryfrontHandler(projectDir, adapter, {
           projectDir,
+          profile: "production",
           debug,
           config: bootstrap.config,
           defaultProjectSlug,
@@ -520,6 +552,8 @@ async function startProductionServerWithAuthorization(
           localProjects,
           projectEnvFetch,
         });
+        activeRuntimeHandler = baseHandler;
+        runtimeHandlerDisposed = false;
 
         const coreHandler = baseHandler;
 
@@ -621,6 +655,98 @@ export function startLocalCliProxyProductionServer(
     options,
     LOCAL_CLI_PROXY_SERVER_AUTHORIZATION,
   );
+}
+
+/**
+ * Coordinate direct-process shutdown without permanently latching a rejected
+ * cleanup attempt. Concurrent signals share one attempt; successful cleanup is
+ * terminal, while a later signal may retry incomplete cleanup.
+ *
+ * @internal Exported for process-lifecycle regression tests.
+ */
+export function createRetryableProductionShutdownHandler(
+  performShutdown: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
+): (signal: "SIGINT" | "SIGTERM") => Promise<void> {
+  let shutdownPromise: Promise<void> | undefined;
+
+  return (signal) => {
+    if (shutdownPromise) return shutdownPromise;
+
+    const attempt = Promise.resolve().then(() => performShutdown(signal));
+    shutdownPromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (shutdownPromise === attempt) shutdownPromise = undefined;
+      },
+    );
+    return attempt;
+  };
+}
+
+/**
+ * Fail a direct-process shutdown when its buffered application diagnostics
+ * could not be delivered before the flush deadline.
+ *
+ * @internal Exported for process-lifecycle regression tests.
+ */
+export async function flushProductionShutdownDiagnostics(
+  flushApplicationErrors: () => unknown | Promise<unknown>,
+  diagnosticsLogger: {
+    warn: (message: string, context?: Record<string, unknown>) => void;
+  },
+): Promise<void> {
+  const flushed = await flushApplicationErrors();
+  if (flushed !== false) return;
+
+  const error = new Error("Application error diagnostics did not flush completely");
+  diagnosticsLogger.warn("Error while flushing shutdown diagnostics", { error });
+  throw error;
+}
+
+/**
+ * Run direct-process cleanup and flush any diagnostics captured from a cleanup
+ * failure before reporting that failure to the signal boundary.
+ *
+ * @internal Exported for process-lifecycle regression tests.
+ */
+export async function runProductionShutdownWithDiagnostics(options: {
+  readonly performShutdown: () => unknown | Promise<unknown>;
+  readonly captureApplicationError: (
+    error: unknown,
+    context: { boundary: string },
+  ) => unknown;
+  readonly flushApplicationErrors: () => unknown | Promise<unknown>;
+  readonly logger: {
+    warn: (message: string, context?: Record<string, unknown>) => void;
+  };
+}): Promise<void> {
+  const failures: unknown[] = [];
+
+  try {
+    await options.performShutdown();
+  } catch (error) {
+    failures.push(error);
+    options.captureApplicationError(error, { boundary: "process.shutdown" });
+  }
+
+  try {
+    await flushProductionShutdownDiagnostics(
+      options.flushApplicationErrors,
+      options.logger,
+    );
+  } catch (error) {
+    failures.push(error);
+    options.captureApplicationError(error, { boundary: "process.shutdown.flush" });
+  }
+
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      "Production shutdown cleanup and diagnostics flush both failed",
+    );
+  }
 }
 
 if (import.meta.main) {
@@ -725,25 +851,26 @@ if (import.meta.main) {
       adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS"),
     );
 
-    let shuttingDown = false;
-    const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-
-      await gracefullyShutdownProductionServer({
-        signal,
-        drainTimeoutMs,
-        abort: () => shutdownController.abort(),
-        stop: server.stop,
+    const shutdown = createRetryableProductionShutdownHandler((signal) =>
+      runProductionShutdownWithDiagnostics({
+        performShutdown: () =>
+          gracefullyShutdownProductionServer({
+            signal,
+            drainTimeoutMs,
+            abort: () => shutdownController.abort(),
+            stop: server.stop,
+            logger,
+          }),
+        captureApplicationError,
+        flushApplicationErrors,
         logger,
-      });
-      await flushApplicationErrors();
-    };
+      })
+    );
 
     const handleSignal = (signal: "SIGINT" | "SIGTERM"): void => {
       void shutdown(signal).catch((error) => {
-        captureApplicationError(error, { boundary: "process.shutdown" });
         logger.warn("Unhandled error while shutting down production server", { signal, error });
+        exit(1);
       });
     };
 

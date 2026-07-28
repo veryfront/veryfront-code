@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { serveCommand } from "./command.ts";
+import { createCliProductionShutdownHandler, serveCommand } from "./command.ts";
 import type { ServeOptions } from "./command.ts";
 
 describe("commands/serve/command", () => {
@@ -112,6 +112,84 @@ describe("commands/serve/command", () => {
         debug: false,
       };
       assertEquals(Object.keys(options).length, 7);
+    });
+  });
+
+  describe("createCliProductionShutdownHandler", () => {
+    it("exits zero after one shared successful shutdown", async () => {
+      const exits: number[] = [];
+      let shutdownCalls = 0;
+      let flushCalls = 0;
+      const shutdown = createCliProductionShutdownHandler({
+        performShutdown: () => {
+          shutdownCalls++;
+          return Promise.resolve();
+        },
+        captureApplicationError: () => {},
+        flushApplicationErrors: () => {
+          flushCalls++;
+          return Promise.resolve();
+        },
+        exitProcess: (code) => exits.push(code),
+        logger: { warn: () => {} },
+      });
+
+      const first = shutdown("SIGTERM");
+      assertStrictEquals(shutdown("SIGINT"), first);
+      await first;
+
+      assertEquals(shutdownCalls, 1);
+      assertEquals(flushCalls, 1);
+      assertEquals(exits, [0]);
+    });
+
+    it("reports incomplete shutdown and exits one", async () => {
+      const shutdownError = new AggregateError(
+        [new Error("listener live")],
+        "cleanup incomplete",
+      );
+      const captured: Array<{ error: unknown; context: { boundary: string } }> = [];
+      const warnings: unknown[][] = [];
+      const exits: number[] = [];
+      const shutdown = createCliProductionShutdownHandler({
+        performShutdown: () => Promise.reject(shutdownError),
+        captureApplicationError: (error, context) => captured.push({ error, context }),
+        flushApplicationErrors: () => Promise.resolve(),
+        exitProcess: (code) => exits.push(code),
+        logger: { warn: (...args) => warnings.push(args) },
+      });
+
+      await shutdown("SIGTERM");
+
+      assertEquals(captured.length, 1);
+      assertStrictEquals(captured[0]?.error, shutdownError);
+      assertEquals(captured[0]?.context, { boundary: "process.shutdown" });
+      assertEquals(warnings.length, 1);
+      assertEquals(exits, [1]);
+    });
+
+    it("reports an incomplete diagnostics flush and exits one", async () => {
+      const captured: Array<{ error: unknown; context: { boundary: string } }> = [];
+      const warnings: unknown[][] = [];
+      const exits: number[] = [];
+      const shutdown = createCliProductionShutdownHandler({
+        performShutdown: () => Promise.resolve(),
+        captureApplicationError: (error, context) => captured.push({ error, context }),
+        flushApplicationErrors: () => Promise.resolve(false),
+        exitProcess: (code) => exits.push(code),
+        logger: { warn: (...args) => warnings.push(args) },
+      });
+
+      await shutdown("SIGTERM");
+
+      assertEquals(captured.length, 1);
+      assertEquals(captured[0]?.context, { boundary: "process.shutdown.flush" });
+      assertEquals(
+        captured[0]?.error instanceof Error && captured[0].error.message,
+        "Application error diagnostics did not flush completely",
+      );
+      assertEquals(warnings.length, 1);
+      assertEquals(exits, [1]);
     });
   });
 });

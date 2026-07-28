@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -10,7 +15,10 @@ import type { BootstrapResult } from "./bootstrap.ts";
 import { startLocalCliProxyProductionServer } from "#veryfront/server-cli-startup";
 import {
   createProductionReadiness,
+  createRetryableProductionShutdownHandler,
+  flushProductionShutdownDiagnostics,
   resolveProductionBootstrap,
+  runProductionShutdownWithDiagnostics,
   startProductionServer,
   type StartProductionServerOptions,
 } from "./production-server.ts";
@@ -76,6 +84,78 @@ describe("resolveProductionBootstrap()", () => {
 });
 
 describe("startProductionServer() lifecycle", () => {
+  it("retires the runtime handler after its listener stops", async () => {
+    const bootstrap = createBootstrapResult(() => {});
+    const runtimeHandlerDisposeStarted = Promise.withResolvers<void>();
+    const finishRuntimeHandlerDispose = Promise.withResolvers<void>();
+    let runtimeHandlerDisposeCalls = 0;
+    bootstrap.adapter.serve = (handler, options) => {
+      const ownedHandler = handler as typeof handler & { dispose?: () => Promise<void> };
+      const originalDispose = ownedHandler.dispose;
+      ownedHandler.dispose = async () => {
+        runtimeHandlerDisposeCalls++;
+        await originalDispose?.();
+        runtimeHandlerDisposeStarted.resolve();
+        await finishRuntimeHandlerDispose.promise;
+      };
+      options.onListen?.({ hostname: "127.0.0.1", port: 4_321 });
+      return Promise.resolve({
+        addr: { hostname: "127.0.0.1", port: 4_321 },
+        stop: () => Promise.resolve(),
+      });
+    };
+
+    const handle = await startLocalCliProxyProductionServer({
+      projectDir: "/project",
+      port: 4_321,
+      bootstrapResult: bootstrap,
+    });
+    await handle.ready;
+    let stopped = false;
+    const stopping = handle.stop().then(() => {
+      stopped = true;
+    });
+    await runtimeHandlerDisposeStarted.promise;
+    await Promise.resolve();
+    assertEquals(stopped, false);
+
+    finishRuntimeHandlerDispose.resolve();
+    await stopping;
+
+    assertEquals(runtimeHandlerDisposeCalls, 1);
+    assertEquals(stopped, true);
+  });
+
+  it("retains the originally transferred bootstrap disposer across caller mutation", async () => {
+    let originalDisposeCalls = 0;
+    let replacementDisposeCalls = 0;
+    const bootstrap = createBootstrapResult(() => {
+      originalDisposeCalls++;
+    });
+    bootstrap.adapter.serve = (_handler, options) => {
+      options.onListen?.({ hostname: "127.0.0.1", port: 4_321 });
+      return Promise.resolve({
+        addr: { hostname: "127.0.0.1", port: 4_321 },
+        stop: () => Promise.resolve(),
+      });
+    };
+
+    const starting = startLocalCliProxyProductionServer({
+      projectDir: "/project",
+      port: 4_321,
+      bootstrapResult: bootstrap,
+    });
+    bootstrap.dispose = () => {
+      replacementDisposeCalls++;
+    };
+
+    const handle = await starting;
+    await handle.ready;
+    await handle.stop();
+
+    assertEquals([originalDisposeCalls, replacementDisposeCalls], [1, 0]);
+  });
+
   it("rejects a partial primitive generation before opening the listener", async () => {
     let serveCalls = 0;
     let bootstrapDisposeCalls = 0;
@@ -490,5 +570,112 @@ describe("createProductionReadiness()", () => {
     await assertRejects(() => readiness.ready(), Error, "startup cancelled");
     await Promise.resolve();
     assertEquals(isServerInitialized(), false);
+  });
+});
+
+describe("createRetryableProductionShutdownHandler()", () => {
+  it("shares an attempt, resets after failure, and latches success", async () => {
+    const firstFailure = new Error("cleanup incomplete");
+    const signals: Array<"SIGINT" | "SIGTERM"> = [];
+    const shutdown = createRetryableProductionShutdownHandler((signal) => {
+      signals.push(signal);
+      return signals.length === 1 ? Promise.reject(firstFailure) : Promise.resolve();
+    });
+
+    const first = shutdown("SIGTERM");
+    assertStrictEquals(shutdown("SIGINT"), first);
+    await assertRejects(() => first, Error, "cleanup incomplete");
+
+    const retry = shutdown("SIGINT");
+    await retry;
+    assertStrictEquals(shutdown("SIGTERM"), retry);
+    assertEquals(signals, ["SIGTERM", "SIGINT"]);
+  });
+});
+
+describe("runProductionShutdownWithDiagnostics()", () => {
+  it("captures cleanup failure before flushing diagnostics", async () => {
+    const cleanupFailure = new Error("cleanup incomplete");
+    const events: string[] = [];
+    let received: unknown;
+
+    try {
+      await runProductionShutdownWithDiagnostics({
+        performShutdown: () => {
+          events.push("cleanup");
+          return Promise.reject(cleanupFailure);
+        },
+        captureApplicationError: (_error, context) => {
+          events.push(`capture:${context.boundary}`);
+        },
+        flushApplicationErrors: () => {
+          events.push("flush");
+          return Promise.resolve(true);
+        },
+        logger: { warn: () => {} },
+      });
+    } catch (error) {
+      received = error;
+    }
+
+    assertStrictEquals(received, cleanupFailure);
+    assertEquals(events, ["cleanup", "capture:process.shutdown", "flush"]);
+  });
+
+  it("combines cleanup and flush failures in phase order", async () => {
+    for (const incompleteFlush of [false, true]) {
+      const cleanupFailure = new Error("cleanup incomplete");
+      const flushFailure = new Error("flush failed");
+      const capturedBoundaries: string[] = [];
+      let received: unknown;
+
+      try {
+        await runProductionShutdownWithDiagnostics({
+          performShutdown: () => Promise.reject(cleanupFailure),
+          captureApplicationError: (_error, context) => {
+            capturedBoundaries.push(context.boundary);
+          },
+          flushApplicationErrors: () =>
+            incompleteFlush ? Promise.resolve(false) : Promise.reject(flushFailure),
+          logger: { warn: () => {} },
+        });
+      } catch (error) {
+        received = error;
+      }
+
+      assertInstanceOf(received, AggregateError);
+      assertEquals(received.errors.length, 2);
+      assertStrictEquals(received.errors[0], cleanupFailure);
+      if (incompleteFlush) {
+        assertEquals(
+          received.errors[1] instanceof Error ? received.errors[1].message : undefined,
+          "Application error diagnostics did not flush completely",
+        );
+      } else {
+        assertStrictEquals(received.errors[1], flushFailure);
+      }
+      assertEquals(capturedBoundaries, [
+        "process.shutdown",
+        "process.shutdown.flush",
+      ]);
+    }
+  });
+});
+
+describe("flushProductionShutdownDiagnostics()", () => {
+  it("warns and rejects when application-error flushing is incomplete", async () => {
+    const warnings: unknown[][] = [];
+
+    await assertRejects(
+      () =>
+        flushProductionShutdownDiagnostics(
+          () => Promise.resolve(false),
+          { warn: (...args) => warnings.push(args) },
+        ),
+      Error,
+      "Application error diagnostics did not flush completely",
+    );
+
+    assertEquals(warnings.length, 1);
   });
 });

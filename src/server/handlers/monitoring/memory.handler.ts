@@ -4,6 +4,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_OK,
+  HTTP_TOO_MANY_REQUESTS,
   PRIORITY_HIGH,
 } from "#veryfront/utils/constants/index.ts";
 import {
@@ -14,13 +15,86 @@ import {
   getMemorySnapshot,
 } from "#veryfront/utils/memory/index.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
 
 const logger = rendererLogger.component("memory-debug-handler");
 
 /** Delay after forcing GC before re-measuring heap, so the runtime can settle */
 const GC_SETTLE_DELAY_MS = 200;
+const GC_MIN_INTERVAL_MS = 60_000;
+
+interface MemoryDebugHandlerDependencies {
+  authHandler: Pick<AuthHandler, "handle">;
+  forceGC: typeof forceGC;
+  getHeapStats: typeof getHeapStats;
+  now: () => number;
+  settle: () => Promise<void>;
+}
+
+interface GcSnapshot {
+  timestamp: string;
+  gcTriggered: boolean;
+  before: ReturnType<typeof getHeapStats>;
+  after: ReturnType<typeof getHeapStats>;
+  freedMB: number;
+}
+
+type GcAdmission =
+  | { kind: "operation"; operation: Promise<GcSnapshot> }
+  | { kind: "rate-limited"; retryAfterSeconds: number };
+
+class ForcedGcCoordinator {
+  private inFlight: Promise<GcSnapshot> | undefined;
+  private nextAllowedAt = 0;
+
+  admit(now: number, operation: () => Promise<GcSnapshot>): GcAdmission {
+    if (this.inFlight) {
+      return { kind: "operation", operation: this.inFlight };
+    }
+
+    if (now < this.nextAllowedAt) {
+      return {
+        kind: "rate-limited",
+        retryAfterSeconds: Math.max(1, Math.ceil((this.nextAllowedAt - now) / 1_000)),
+      };
+    }
+
+    this.nextAllowedAt = now + GC_MIN_INTERVAL_MS;
+    const sharedOperation = operation();
+    this.inFlight = sharedOperation;
+    void sharedOperation.finally(() => {
+      if (this.inFlight === sharedOperation) this.inFlight = undefined;
+    }).catch(() => undefined);
+
+    return { kind: "operation", operation: sharedOperation };
+  }
+}
+
+const processForcedGcCoordinator = new ForcedGcCoordinator();
 
 export class MemoryDebugHandler extends BaseHandler {
+  private readonly dependencies: MemoryDebugHandlerDependencies;
+  private readonly gcCoordinator: ForcedGcCoordinator;
+
+  constructor(dependencies: Partial<MemoryDebugHandlerDependencies> = {}) {
+    super();
+    const hasInjectedGcRuntime = dependencies.forceGC !== undefined ||
+      dependencies.getHeapStats !== undefined ||
+      dependencies.now !== undefined ||
+      dependencies.settle !== undefined;
+    this.gcCoordinator = hasInjectedGcRuntime
+      ? new ForcedGcCoordinator()
+      : processForcedGcCoordinator;
+    this.dependencies = {
+      authHandler: new AuthHandler(),
+      forceGC,
+      getHeapStats,
+      now: Date.now,
+      settle: () => new Promise((resolve) => setTimeout(resolve, GC_SETTLE_DELAY_MS)),
+      ...dependencies,
+    };
+  }
+
   metadata: HandlerMetadata = {
     name: "MemoryDebugHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
@@ -119,25 +193,88 @@ export class MemoryDebugHandler extends BaseHandler {
   }
 
   private async handleGC(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const beforeHeap = getHeapStats();
-    const gcTriggered = await forceGC();
+    if (req.method !== "POST") {
+      return this.respond(
+        new Response("Method not allowed", {
+          status: 405,
+          headers: {
+            "Allow": "POST",
+            "Cache-Control": "no-store",
+            "Content-Type": "text/plain; charset=utf-8",
+          },
+        }),
+      );
+    }
 
-    await new Promise((resolve) => setTimeout(resolve, GC_SETTLE_DELAY_MS)); // no cleanup needed: one-shot
+    if (!this.hasConfiguredOperatorAuth(ctx)) {
+      return this.respond(
+        this.createResponseBuilder(ctx)
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
+          .withCache("no-store")
+          .withHeaders({ "WWW-Authenticate": 'Basic realm="Secure Area", Bearer' })
+          .text("Unauthorized", 401),
+      );
+    }
 
-    const afterHeap = getHeapStats();
-    const freedMB = Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100;
+    const authResult = await this.dependencies.authHandler.handle(req, ctx);
+    if (authResult.response) return authResult;
 
-    return this.jsonResponse(
-      {
-        timestamp: new Date().toISOString(),
-        gcTriggered,
-        before: beforeHeap,
-        after: afterHeap,
-        freedMB,
-      },
-      req,
-      ctx,
-    );
+    const now = this.dependencies.now();
+    const admission = this.gcCoordinator.admit(now, () => this.runGC());
+    if (admission.kind === "rate-limited") {
+      return this.respond(
+        this.createResponseBuilder(ctx)
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
+          .withCache("no-store")
+          .withHeaders({ "Retry-After": String(admission.retryAfterSeconds) })
+          .json({ error: "Forced garbage collection is rate limited" }, HTTP_TOO_MANY_REQUESTS),
+      );
+    }
+
+    return this.jsonResponse(await admission.operation, req, ctx);
+  }
+
+  private async runGC(): Promise<GcSnapshot> {
+    const before = this.dependencies.getHeapStats();
+    const gcTriggered = await this.dependencies.forceGC();
+    await this.dependencies.settle();
+    const after = this.dependencies.getHeapStats();
+    const freedMB = Math.round((before.usedHeapSizeMB - after.usedHeapSizeMB) * 100) / 100;
+
+    return {
+      timestamp: new Date(this.dependencies.now()).toISOString(),
+      gcTriggered,
+      before,
+      after,
+      freedMB,
+    };
+  }
+
+  private hasConfiguredOperatorAuth(ctx: HandlerContext): boolean {
+    try {
+      if (
+        ctx.securityConfig &&
+        (Object.hasOwn(ctx.securityConfig, "auth") || ctx.securityConfig.auth !== undefined)
+      ) {
+        return true;
+      }
+    } catch {
+      // A hostile or malformed configuration is still passed to AuthHandler,
+      // which rejects it without exposing credential details.
+      return true;
+    }
+
+    try {
+      const env = ctx.adapter?.env;
+      return env !== undefined &&
+        ["VERYFRONT_BASIC_USER", "VERYFRONT_BASIC_PASS", "VERYFRONT_BEARER_TOKEN"].some(
+          (name) => env.get(name) !== undefined,
+        );
+    } catch {
+      return false;
+    }
   }
 
   private handlePressureCheck(req: Request, ctx: HandlerContext): HandlerResult {

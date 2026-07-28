@@ -643,6 +643,18 @@ export class DevServer {
       );
     }
 
+    if (this.requestHandler) {
+      const requestHandler = this.requestHandler;
+      await cleanup(
+        "Request handler",
+        () => requestHandler.dispose(),
+        () => {
+          if (this.requestHandler === requestHandler) this.requestHandler = undefined;
+          this._handler = undefined;
+        },
+      );
+    }
+
     throwCleanupFailures();
 
     if (this.devPortEnvInstallation) {

@@ -77,6 +77,12 @@ Primary source areas:
   ephemeral address, preserves distinct cookies, applies response backpressure,
   propagates client disconnect through the Fetch signal, and gives concurrent
   close calls one retryable teardown.
+- The public server `toNodeHandler()` compatibility entry point delegates to
+  that same canonical Node request listener instead of maintaining a second
+  Fetch bridge. Incoming disconnects abort `Request.signal`, response writes
+  respect Node backpressure, distinct cookies remain distinct, and streaming
+  failures destroy an already-committed response rather than writing new
+  headers.
 - Node keeps its raw HTTP listener error route after readiness only when
   `ServeOptions.onRuntimeError` is present. Each post-readiness raw server
   `error` event reaches that callback once; callback exceptions and rejected
@@ -95,6 +101,11 @@ Primary source areas:
   outcome. Their closed server may retain the two shared guards, but no active
   handle or application closure; the unreachable cycle is garbage-collectable
   because Node exposes no public cancellation acknowledgement.
+- The composable Node service server acquires that Platform startup owner before
+  publishing its handle and aborts it during pre-readiness stop. Consequently,
+  service startup, adapter startup, and compatibility startup use the same late
+  listener retirement and retryable transport teardown instead of parallel
+  ownership state machines.
 - Deno rejects already-aborted starts before binding, reports the native bound
   address for ephemeral ports, and owns an internal abort signal even when a
   caller supplies one. This keeps direct stop, adapter shutdown, and startup

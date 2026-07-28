@@ -96,7 +96,7 @@ import {
   createIsolationErrorResponse,
   startIsolatedRequest,
 } from "./isolation.ts";
-import { defaultDiscoveryCache } from "./local-project-discovery.ts";
+import { ProjectDiscoveryCache } from "./local-project-discovery.ts";
 import { buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
 import {
@@ -121,6 +121,11 @@ import {
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import {
+  RuntimeGenerationDrain,
+  type RuntimeGenerationLease,
+} from "../runtime-generation-drain.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -172,6 +177,27 @@ export const HANDLER_NAMES = [
 /** Union of all registered handler names. */
 export type HandlerName = (typeof HANDLER_NAMES)[number];
 
+/** Immutable startup-selected handler composition profile. */
+export type RuntimeProfile = "development" | "production";
+
+/** Handlers that must never be constructed by a production runtime. */
+export const DEVELOPMENT_ONLY_HANDLER_NAMES = Object.freeze(
+  [
+    "HMRHandler",
+    "MetricsHandler",
+    "MemoryDebugHandler",
+    "ClientLogHandler",
+    "DevEndpointsHandler",
+    "DebugContextHandler",
+    "DevDashboardHandler",
+    "ProjectsHandler",
+    "DevFileHandler",
+    "MarkdownPreviewHandler",
+  ] as const satisfies readonly HandlerName[],
+);
+
+const developmentOnlyHandlerNames = new Set<HandlerName>(DEVELOPMENT_ONLY_HANDLER_NAMES);
+
 /**
  * Dependencies for handler registry creation.
  * All fields are optional — when omitted, the real handler implementation is used.
@@ -182,6 +208,8 @@ export interface HandlerDependencies {
   overrides?: Partial<Record<HandlerName, Handler>>;
   /** When true, log handler registration details. */
   debug?: boolean;
+  /** Startup-selected route composition. Defaults to development for compatibility. */
+  profile?: RuntimeProfile;
 }
 
 /** Factory for each handler. Only called when no override is provided (lazy instantiation). */
@@ -256,7 +284,11 @@ export function createHandlerRegistry(
     ? (overrides.ApiHandlerWrapper as ApiHandlerWrapper)
     : new ApiHandlerWrapper(projectDir, adapter);
 
-  const handlers = HANDLER_NAMES.map((name) => {
+  const profile = deps.profile ?? "development";
+  const handlerNames = profile === "production"
+    ? HANDLER_NAMES.filter((name) => !developmentOnlyHandlerNames.has(name))
+    : HANDLER_NAMES;
+  const handlers = handlerNames.map((name) => {
     if (name === "ApiHandlerWrapper") return apiHandler;
     if (overrides[name]) return overrides[name]!;
     return handlerFactories[name](projectDir, adapter);
@@ -287,13 +319,20 @@ export interface RuntimeHandlerOptions {
   defaultEnvironment?: "preview" | "production";
   /** Injectable hosted-project HTTP capability. */
   projectEnvFetch?: typeof globalThis.fetch;
+  /** Startup-selected route composition. Defaults to development for compatibility. */
+  profile?: RuntimeProfile;
 }
 
 export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
-): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+): ((req: Request) => Promise<Response>) & {
+  ready?: Promise<void>;
+  dispose: () => Promise<void>;
+} {
+  const profile: RuntimeProfile = opts.profile ?? "development";
+  const discoveryCache = new ProjectDiscoveryCache();
   const isDebugEnabled = !!(opts.debug || adapter.env.get("VERYFRONT_DEBUG"));
 
   function logDebug(message: string, extra?: Record<string, unknown>): void {
@@ -310,7 +349,7 @@ export function createVeryfrontHandler(
   // Seed local project cache from explicit mappings (for tests and capability injection)
   if (opts.localProjects) {
     for (const [slug, path] of Object.entries(opts.localProjects)) {
-      defaultDiscoveryCache.projects.set(slug, path);
+      discoveryCache.projects.set(slug, path);
     }
     logDebug("[runtime-handler] Seeded local project cache", {
       projects: Object.keys(opts.localProjects),
@@ -348,6 +387,7 @@ export function createVeryfrontHandler(
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
     debug: opts.debug,
+    profile,
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
@@ -364,7 +404,13 @@ export function createVeryfrontHandler(
     logger.debug("Running in proxy mode - lazy initialization enabled");
   }
 
-  const handler = async (req: Request): Promise<Response> => {
+  const startupSettled = Promise.allSettled([configPromise, readyPromise]).then(() => undefined);
+  const generationDrain = new RuntimeGenerationDrain();
+
+  const executeRequest = async (
+    req: Request,
+    generationLease: RuntimeGenerationLease,
+  ): Promise<Response> => {
     const url = new URL(req.url);
     const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
 
@@ -541,6 +587,7 @@ export function createVeryfrontHandler(
 
           // Handle projects discovery UI
           if (
+            profile === "development" &&
             shouldHandleProjectsUI(url.pathname, projectRes.projectSlug, projectRes.parsedDomain)
           ) {
             const response = await handleProjectsRequest(
@@ -554,6 +601,7 @@ export function createVeryfrontHandler(
                 opts.debug,
                 config,
               ),
+              discoveryCache,
             );
             if (response) return response;
           }
@@ -578,6 +626,7 @@ export function createVeryfrontHandler(
             defaultEnvironment: opts.defaultEnvironment,
             envVarCache,
             hostedSourceBindingCache,
+            discoveryCache,
             profileAdapter: (operation) => profilePhase("runtime.resolve_adapter", operation),
             profileHostedSource: (operation) =>
               profilePhase("runtime.bind_hosted_source", operation),
@@ -683,6 +732,7 @@ export function createVeryfrontHandler(
           req.method,
           { signal: req.signal },
         );
+        generationLease.track(settled);
 
         if (error) {
           captureApplicationError(error, {
@@ -723,7 +773,46 @@ export function createVeryfrontHandler(
     });
   };
 
+  const handler = (req: Request): Promise<Response> => {
+    const generationLease = generationDrain.tryAcquire();
+    if (!generationLease) {
+      return Promise.resolve(
+        new Response("Handler is shutting down", {
+          status: 503,
+          headers: { "cache-control": "no-store" },
+        }),
+      );
+    }
+
+    return executeRequest(req, generationLease).then(
+      (response) =>
+        completeOnResponseBodyConsumption(response, generationLease.release, req.signal),
+      (error) => {
+        generationLease.release();
+        throw error;
+      },
+    );
+  };
+
   handler.ready = readyPromise;
+  let disposePromise: Promise<void> | undefined;
+  handler.dispose = () => {
+    if (disposePromise) return disposePromise;
+
+    const attempt = (async () => {
+      await generationDrain.close();
+      await startupSettled;
+      discoveryCache.clear();
+    })();
+    disposePromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (disposePromise === attempt) disposePromise = undefined;
+      },
+    );
+    return attempt;
+  };
 
   return handler;
 }

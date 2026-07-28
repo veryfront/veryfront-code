@@ -44,6 +44,22 @@ type CreateHandlerOptions = {
 };
 ```
 
+The selected mode is an immutable runtime profile. Production constructs its
+registry without development/control handlers: HMR, development files and UI,
+debug context and dashboards, metrics and memory-debug routes, client-log
+ingestion, local-project browsing, and Markdown preview are not registered.
+`localProjects` and other local-source metadata select where application source
+comes from; they never switch a production handler into the development
+profile. A request to one of those paths therefore follows the normal
+production not-found path even when its project source is local.
+
+When the development memory-debug handler is enabled for a local project,
+forced garbage collection is an operator action at `POST /_debug/memory/gc`.
+It requires configured Basic or Bearer authentication, returns `401` when no
+operator credentials are configured, shares concurrent calls, and admits at
+most one new operation per 60 seconds. Other methods return `405` with
+`Allow: POST`.
+
 The returned handler is callable and also exposes:
 
 ```ts
@@ -77,6 +93,15 @@ is idempotent. If cleanup rejects, ownership remains held and a later shutdown
 call retries the unfinished phases; a replacement server remains blocked until
 that retry succeeds.
 
+Process-level graceful shutdown drains tracked requests and then attempts every
+allowed cleanup phase within one deadline. A successful call returns whether
+the drain completed before its timeout. Any required cleanup failure or timeout
+rejects with an `AggregateError` after telemetry shutdown is attempted; its
+`errors` preserve cleanup execution order. Bootstrap disposal is skipped when
+the HTTP listener may still be live. Direct execution keeps a rejected attempt
+retryable, and the CLI exits nonzero rather than reporting incomplete cleanup as
+success.
+
 While a production server is starting, health readiness remains false. Startup,
 handler-readiness, or listener failures return readiness to false and run owned
 cleanup before the failure is reported.
@@ -94,8 +119,27 @@ const handler = await createHandler({ mode: "development", port: 3_000 });
 const server = createServer(toNodeHandler(handler));
 
 handler.upgrade(server);
-server.once("close", () => void handler.dispose());
+
+async function shutdown(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+  await handler.dispose();
+}
+
+process.once("SIGTERM", () => {
+  void shutdown().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+});
 ```
+
+The compatibility listener delegates to the canonical Platform Node bridge.
+Client disconnects abort the Fetch `Request.signal`; streamed responses wait for
+Node backpressure to drain; a stream failure before headers returns `500`, while
+a failure after headers destroys the response instead of attempting a second
+header write.
 
 The external server remains responsible for calling `server.close()`. Handler
 disposal removes the attached upgrade listener, terminates owned HMR sockets,
@@ -119,6 +163,21 @@ cleanup succeeds. If cleanup is incomplete, the rejection exposes
 `retryCleanup`; calling it or `stop()` retries only the unfinished cleanup
 phases. Calling `stop()` before the Node listener binds also rejects `ready`
 instead of leaving readiness pending.
+
+Node service startup uses the same Platform listener owner as adapter-backed
+servers. This owner also retires a native Node 18 listener that finishes a
+queued hostname lookup and binds after an earlier stop.
+
+## Generated framework styling candidates
+
+Framework component Tailwind candidates are collected recursively from the
+tracked React UI, chat, and primitive source roots. Test/spec files are excluded
+and the result is sorted and deduplicated. Run
+`deno task generate:framework-candidates:check` to compare current source with
+the tracked generated array without writing files; this check is also part of
+`generate:manifests:check`. Regeneration remains part of the build-generation
+workflow. A missing optional source root is tolerated, while permission and I/O
+failures are reported rather than treated as an empty candidate set.
 
 ## Related documentation
 

@@ -11,7 +11,11 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { HandlerContext } from "../handlers/types.ts";
-import { defaultDiscoveryCache, standardProjectDirs } from "./local-project-discovery.ts";
+import {
+  defaultDiscoveryCache,
+  type ProjectDiscoveryCache,
+  standardProjectDirs,
+} from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 
 const logger = serverLogger.component("projects-handler");
@@ -44,6 +48,7 @@ export async function handleProjectsRequest(
   req: Request,
   url: URL,
   ctx: HandlerContext,
+  discoveryCache: ProjectDiscoveryCache = defaultDiscoveryCache,
 ): Promise<Response | null> {
   const pathname = url.pathname;
 
@@ -72,7 +77,7 @@ export async function handleProjectsRequest(
 
   // Local projects discovery API
   if (pathname === "/_vf/api/projects") {
-    return await handleLocalProjectsDiscovery();
+    return await handleLocalProjectsDiscovery(discoveryCache);
   }
 
   return new Response("Not found", { status: 404 });
@@ -81,7 +86,9 @@ export async function handleProjectsRequest(
 /**
  * Discover and return local projects from standard directories.
  */
-async function handleLocalProjectsDiscovery(): Promise<Response> {
+async function handleLocalProjectsDiscovery(
+  discoveryCache: ProjectDiscoveryCache,
+): Promise<Response> {
   const nativeFs = createFileSystem();
   const basePath = cwd();
 
@@ -102,7 +109,7 @@ async function handleLocalProjectsDiscovery(): Promise<Response> {
           ]);
 
           if (hasApp || hasPages || hasComponents) {
-            defaultDiscoveryCache.projects.set(entry.name, projectPath);
+            discoveryCache.projects.set(entry.name, projectPath);
           }
         } catch (error) {
           logger.warn("Failed to stat project directory entry", {
@@ -119,7 +126,7 @@ async function handleLocalProjectsDiscovery(): Promise<Response> {
     }
   }
 
-  const localProjects = Array.from(defaultDiscoveryCache.projects.entries()).map((
+  const localProjects = Array.from(discoveryCache.projects.entries()).map((
     [slug, path],
   ) => ({
     id: slug,

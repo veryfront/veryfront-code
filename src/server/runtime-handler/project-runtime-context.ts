@@ -20,6 +20,7 @@ import {
   type HostedProxyRoutingBindingCache,
 } from "../project-env/index.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
+import type { ProjectDiscoveryCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
@@ -119,6 +120,8 @@ export interface ResolveProjectRuntimeContextInput {
   skipEnrichedContext?: boolean;
   envVarCache: ProjectEnvVarCacheLike;
   hostedSourceBindingCache: HostedSourceBindingCacheLike;
+  /** Handler-owned local project and adapter state. */
+  discoveryCache?: ProjectDiscoveryCache;
   profileAdapter?: RuntimeContextProfiler;
   profileHostedSource?: RuntimeContextProfiler;
   profileEnvVars?: RuntimeContextProfiler;
@@ -372,6 +375,7 @@ export async function resolveProjectRuntimeContext(
       pathname: input.url.pathname,
       isProxyMode: input.isProxyMode,
       proxyTopologyTrusted: input.proxyTopologyTrusted,
+      cache: input.discoveryCache,
       ...(input.isProxyMode ? { prepareHostedConfigContext } : {}),
     })
   );

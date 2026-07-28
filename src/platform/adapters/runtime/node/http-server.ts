@@ -150,6 +150,11 @@ export class NodeServer implements Server {
     return { hostname: this.hostname, port: this.port };
   }
 
+  /** @internal Native transport for compatibility facades that expose Node's server. */
+  get nativeHttpServer(): import("node:http").Server {
+    return this.server as unknown as import("node:http").Server;
+  }
+
   /** @internal Update an ephemeral (`port: 0`) listener with its bound port. */
   setListeningPort(port: number): void {
     this.port = port;
@@ -422,67 +427,25 @@ export class NodeWebSocketHandshakeController {
   }
 }
 
-type NodeRequestHandler = (
+export type NodeRequestHandler = (
   request: Request,
 ) => Promise<Response | WebSocketUpgradeResponse> | Response | WebSocketUpgradeResponse;
 
-export async function createNodeServer(
+/**
+ * Create the canonical Node listener for Web Request/Response handlers.
+ *
+ * This owns disconnect propagation, response backpressure, streaming failure
+ * containment, and listener cleanup for both Platform and public compatibility
+ * surfaces.
+ */
+export function createNodeRequestListener(
   handler: NodeRequestHandler,
-  options: ServeOptions = {},
-): Promise<Server> {
-  return await createNodeServerInternal(handler, options);
-}
-
-/** @internal Publish startup cleanup ownership before listener readiness. */
-export function createNodeServerWithStartupOwner(
-  handler: NodeRequestHandler,
-  options: ServeOptions,
-  ownStartupServer: (server: Server) => void,
-): Promise<Server> {
-  if (typeof ownStartupServer !== "function") {
-    return Promise.reject(new TypeError("Node server startup owner must be a function"));
-  }
-  return createNodeServerInternal(handler, options, ownStartupServer);
-}
-
-async function createNodeServerInternal(
-  handler: NodeRequestHandler,
-  options: ServeOptions,
-  ownStartupServer?: (server: Server) => void,
-): Promise<Server> {
-  const {
-    port = DEFAULT_PORT,
-    hostname = "localhost",
-    onListen,
-    onRuntimeError,
-    signal,
-  } = options;
-  if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
-    throw new TypeError("Node server runtime error callback must be a function");
-  }
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error
-      ? signal.reason
-      : new DOMException("Node server startup was aborted", "AbortError");
-  }
-  const { createServer } = await import("node:http");
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error
-      ? signal.reason
-      : new DOMException("Node server startup was aborted", "AbortError");
-  }
-  let wsServer: WSWebSocketServer | null = null;
-  let upgradesDisposed = false;
-  const rawUpgradeSockets = new Set<import("node:stream").Duplex>();
-  const activeRequestIds = new Set<string>();
-  const upgradeAbortControllers = new Map<string, AbortController>();
-  const handshakeController = new NodeWebSocketHandshakeController();
-  let abortListener: (() => void) | undefined;
-  let transportErrorListener: ((error: Error) => void) | undefined;
-  let startupListeningListener: (() => void) | undefined;
-  let retainTransportErrorListener = false;
-
-  const server = createServer(async (_req, _res) => {
+  fallbackHostname = "localhost",
+): (
+  request: import("node:http").IncomingMessage,
+  response: import("node:http").ServerResponse,
+) => Promise<void> {
+  return async (_req, _res) => {
     const requestAbort = new AbortController();
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const abortForDisconnect = () => {
@@ -496,19 +459,20 @@ async function createNodeServerInternal(
     _res.once("close", abortForPrematureResponseClose);
 
     try {
-      const url = new URL(_req.url ?? "/", `http://${_req.headers.host ?? hostname}`);
+      const url = new URL(_req.url ?? "/", `http://${_req.headers.host ?? fallbackHostname}`);
       const method = _req.method ?? "GET";
       const body = method === "GET" || method === "HEAD" ? null : _req;
-
-      const headersRecord: Record<string, string> = {};
+      const headers = new Headers();
       for (const [key, value] of Object.entries(_req.headers)) {
-        if (typeof value === "string") headersRecord[key] = value;
-        else if (Array.isArray(value)) headersRecord[key] = value[0] ?? "";
+        if (typeof value === "string") headers.append(key, value);
+        else if (Array.isArray(value)) {
+          for (const entry of value) headers.append(key, entry);
+        }
       }
 
       const requestInit: RequestInit & { duplex?: string } = {
         method,
-        headers: headersRecord,
+        headers,
         body: body as BodyInit | null,
         signal: requestAbort.signal,
       };
@@ -571,7 +535,66 @@ async function createNodeServerInternal(
         await responseReader.cancel(requestAbort.signal.reason).catch(() => undefined);
       }
     }
-  });
+  };
+}
+
+export async function createNodeServer(
+  handler: NodeRequestHandler,
+  options: ServeOptions = {},
+): Promise<Server> {
+  return await createNodeServerInternal(handler, options);
+}
+
+/** @internal Publish startup cleanup ownership before listener readiness. */
+export function createNodeServerWithStartupOwner(
+  handler: NodeRequestHandler,
+  options: ServeOptions,
+  ownStartupServer: (server: NodeServer) => void,
+): Promise<NodeServer> {
+  if (typeof ownStartupServer !== "function") {
+    return Promise.reject(new TypeError("Node server startup owner must be a function"));
+  }
+  return createNodeServerInternal(handler, options, ownStartupServer);
+}
+
+async function createNodeServerInternal(
+  handler: NodeRequestHandler,
+  options: ServeOptions,
+  ownStartupServer?: (server: NodeServer) => void,
+): Promise<NodeServer> {
+  const {
+    port = DEFAULT_PORT,
+    hostname = "localhost",
+    onListen,
+    onRuntimeError,
+    signal,
+  } = options;
+  if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
+    throw new TypeError("Node server runtime error callback must be a function");
+  }
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Node server startup was aborted", "AbortError");
+  }
+  const { createServer } = await import("node:http");
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Node server startup was aborted", "AbortError");
+  }
+  let wsServer: WSWebSocketServer | null = null;
+  let upgradesDisposed = false;
+  const rawUpgradeSockets = new Set<import("node:stream").Duplex>();
+  const activeRequestIds = new Set<string>();
+  const upgradeAbortControllers = new Map<string, AbortController>();
+  const handshakeController = new NodeWebSocketHandshakeController();
+  let abortListener: (() => void) | undefined;
+  let transportErrorListener: ((error: Error) => void) | undefined;
+  let startupListeningListener: (() => void) | undefined;
+  let retainTransportErrorListener = false;
+
+  const server = createServer(createNodeRequestListener(handler, hostname));
 
   const upgradeListener = (
     request: import("node:http").IncomingMessage,

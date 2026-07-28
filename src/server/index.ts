@@ -181,7 +181,18 @@ export type VeryfrontHandler = ((req: Request) => Promise<Response>) & {
  * app.all("*", (c) => handler(c.req.raw))
  * const server = serve({ fetch: app.fetch, port: 3000 })
  * handler.upgrade(server)
- * server.on("close", () => void handler.dispose())
+ * async function shutdown() {
+ *   await new Promise<void>((resolve, reject) => {
+ *     server.close((error) => error ? reject(error) : resolve())
+ *   })
+ *   await handler.dispose()
+ * }
+ * process.once("SIGTERM", () => {
+ *   void shutdown().catch((error) => {
+ *     console.error(error)
+ *     process.exitCode = 1
+ *   })
+ * })
  * ```
  */
 // Ensure responses use the native global Response class.
@@ -215,11 +226,17 @@ export async function createHandler(
     const bootstrap = await bootstrapProd(projectDir, adapter);
     const releaseHmrLifecycleOwner = HMRHandler.registerLifecycleOwner();
     let hmrLifecycleReleased = false;
+    let runtimeHandlerDispose: (() => void | Promise<void>) | undefined;
+    let runtimeHandlerDisposed = true;
     let disposalStarted = false;
     const runDispose = createRetryableDisposer(async () => {
       if (!hmrLifecycleReleased) {
         await releaseHmrLifecycleOwner();
         hmrLifecycleReleased = true;
+      }
+      if (!runtimeHandlerDisposed) {
+        await runtimeHandlerDispose?.();
+        runtimeHandlerDisposed = true;
       }
       await bootstrap.dispose?.();
     });
@@ -227,7 +244,10 @@ export async function createHandler(
       const internalHandler = createVeryfrontHandler(projectDir, bootstrap.adapter, {
         projectDir,
         config: bootstrap.config,
+        profile: "production",
       });
+      runtimeHandlerDispose = internalHandler.dispose;
+      runtimeHandlerDisposed = false;
       await internalHandler.ready;
       const handler = async (req: Request) => {
         if (disposalStarted) {
