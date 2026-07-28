@@ -13,6 +13,9 @@ import {
 } from "../../../tests/_helpers/http-polling.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
+  "Dev server running at",
+  "Listening on http://",
+  "Shutting down dev server",
   "declares capabilities",
   "loaded from",
   "Pre-converted schema",
@@ -28,6 +31,12 @@ const NOISY_DEFAULT_FRAGMENTS = [
   "GET / 200",
   "GET /_ws 101",
   "Neither CORS nor CSRF protection is configured",
+  "[HMR] Re-discovered:",
+  "triggerReload called",
+  "Global cache cleared",
+  "Skipping cache invalidation",
+  "[CLIENT WARN] Console warning",
+  "[HMR] Reloading page:",
 ] as const;
 
 const DEBUG_EXTENSION_DIAGNOSTICS = [
@@ -149,6 +158,7 @@ function startVeryfrontDev(
   port: number,
   args: string[] = [],
   env: Record<string, string> = {},
+  hmr = false,
 ): CliRun {
   const command = new Deno.Command(Deno.execPath(), {
     args: [
@@ -162,7 +172,7 @@ function startVeryfrontDev(
       projectDir,
       "--port",
       String(port),
-      "--no-hmr",
+      ...(hmr ? [] : ["--no-hmr"]),
       ...args,
     ],
     cwd: Deno.cwd(),
@@ -221,6 +231,25 @@ function startVeryfrontDev(
   };
 }
 
+async function waitForPageContent(
+  port: number,
+  expected: string,
+  timeoutMs = TEST_TIMEOUTS.SERVER_STARTUP,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchWithTimeout(`http://127.0.0.1:${port}/`, 1_000);
+      const content = await response.text();
+      if (content.includes(expected)) return;
+    } catch {
+      // The server may be between reloads.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for page content "${expected}"`);
+}
+
 async function requestPageAndApi(port: number): Promise<void> {
   const pageResponse = await fetchWithTimeout(`http://127.0.0.1:${port}/`);
   try {
@@ -263,7 +292,9 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Server ready at");
+          assertStringIncludes(output, "Ready at");
+          assert(!output.includes("Logged in as"));
+          assert(!output.includes("Press s to"));
 
           for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
             assert(
@@ -296,7 +327,7 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Server ready at");
+          assertStringIncludes(output, "Ready at");
           assertIncludesAny(
             output,
             DEBUG_EXTENSION_DIAGNOSTICS,
@@ -312,6 +343,48 @@ describe(
             DEBUG_API_BUILD_DIAGNOSTICS,
             "--debug should expose API build diagnostics",
           );
+        });
+      },
+    );
+
+    it(
+      "reloads changed files without printing routine HMR internals",
+      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      async () => {
+        await withTestContext("quiet-dev-output-hmr", async (context) => {
+          await scaffoldMinimalProject(context.projectDir);
+          const port = await context.allocatePort();
+          const run = startVeryfrontDev(context.projectDir, port, [], {}, true);
+          context.addCleanup(run.stop);
+
+          const ready = await pollHttpReadyByTimeout(`http://127.0.0.1:${port}/`, {
+            timeoutMs: TEST_TIMEOUTS.SERVER_STARTUP,
+            requestTimeoutMs: 1_000,
+            verifyWithSecondRequest: false,
+          });
+          assert(ready.ready, `HMR dev server did not become ready:\n${run.output()}`);
+
+          await writeTextFile(
+            join(context.projectDir, "app", "page.tsx"),
+            `export default function Page() {
+  return <main>updated dev logs page</main>;
+}
+`,
+          );
+
+          await waitForPageContent(port, "updated dev logs page");
+
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          await run.stop();
+
+          const output = run.output();
+          assertStringIncludes(output, "Ready at");
+          for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
+            assert(
+              !output.includes(fragment),
+              `default HMR output should not include "${fragment}"\nOutput:\n${output}`,
+            );
+          }
         });
       },
     );

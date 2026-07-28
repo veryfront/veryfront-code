@@ -84,8 +84,9 @@ describe("InitCommand Types", () => {
           },
         );
 
-        const liveLine = output.find((line) => line.includes("Live:"));
-        assertEquals(stripAnsi(liveLine ?? ""), `  Live: ${deployedUrl}`);
+        const expectedLiveLine = `  Live: ${deployedUrl}`;
+        const liveLine = output.map(stripAnsi).find((line) => line === expectedLiveLine);
+        assertEquals(liveLine, expectedLiveLine);
       } finally {
         console.log = originalLog;
         await remove(parentDir, { recursive: true }).catch(() => {});

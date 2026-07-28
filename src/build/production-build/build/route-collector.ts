@@ -29,7 +29,7 @@ export async function collectAllRoutes(
   config?: VeryfrontConfig,
 ): Promise<CollectedRoutes> {
   if (!ssg) {
-    logger.info("SSG disabled, skipping route collection");
+    logger.debug("SSG disabled, skipping route collection");
     return { pages: [], app: [] };
   }
 
@@ -50,10 +50,10 @@ export async function collectAllRoutes(
     ),
   ]);
 
-  logger.info(`Collected routes: ${pages.length} pages, ${app.length} app`);
+  logger.debug(`Collected routes: ${pages.length} pages, ${app.length} app`);
 
   if (app.length > 0) {
-    logger.info(`App routes: ${app.map((r) => r.path).join(", ")}`);
+    logger.debug(`App routes: ${app.map((r) => r.path).join(", ")}`);
   }
 
   return { pages, app };

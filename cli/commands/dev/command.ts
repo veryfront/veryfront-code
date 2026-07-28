@@ -12,21 +12,17 @@ import { startDevServer } from "veryfront/server";
 import { validateProviderConfig } from "veryfront/discovery";
 import { yellow } from "#cli/ui";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
-import { brand, dim, error as errorColor, success } from "#cli/ui";
+import { brand, dim, error as errorColor } from "#cli/ui";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import {
-  type AuthIdentity,
-  isApiKeyIdentity,
-  login,
-  validateCredential,
-} from "../../auth/login.ts";
+import { type AuthIdentity, isApiKeyIdentity, login } from "../../auth/login.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
-import { pushCommand } from "../push/index.ts";
+import { pushCommand, type PushOptions } from "../push/index.ts";
+import { createProjectSelector } from "./project-selector.ts";
 
 export interface DevOptions {
   port: number;
@@ -57,11 +53,23 @@ export async function preloadDevAuth(
 ): Promise<{ identity: AuthIdentity | null; projects: RemoteProject[] }> {
   if (!apiToken) return { identity: null, projects: [] };
 
-  const identity = await validateCredential(apiToken);
-  if (!identity) return { identity: null, projects: [] };
-
   const result = await fetchRemoteProjects(apiToken);
+  const identity = result.credentialType === "apiKey"
+    ? result.error ? null : { authenticated: true, type: "apiKey" } as const
+    : result.user;
   return { identity, projects: result.projects };
+}
+
+export function createSelectedProjectPushOptions(
+  projectDir: string,
+  project: RemoteProject,
+): PushOptions {
+  return {
+    projectDir,
+    projectSlug: project.slug,
+    force: true,
+    quiet: true,
+  };
 }
 
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
@@ -103,6 +111,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const runtimeAuth = await applyRuntimeAuthContext({
         linkedProjectSlug,
       });
+      const initialAuthPromise = preloadDevAuth(runtimeAuth.apiToken).catch(() => ({
+        identity: null,
+        projects: [],
+      }));
       // Validate provider config and print warnings (framework returns plain text, CLI adds colors)
       const aiValidation = validateProviderConfig(config);
       if (aiValidation.warnings.length > 0) {
@@ -161,17 +173,32 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         // MCP server failed to start - non-fatal, continue without it
       }
 
-      // Check for existing auth
-      try {
-        const initialAuth = await preloadDevAuth(runtimeAuth.apiToken);
+      const authReady = initialAuthPromise.then((initialAuth) => {
         identity = initialAuth.identity;
         projects = initialAuth.projects;
-      } catch {
-        // Auth check failed - non-fatal
-      }
+      });
+      void authReady;
 
       let keyboardHandler: KeyboardHandler | null = null;
       let shuttingDown = false;
+      const projectSelector = createProjectSelector({
+        prepare: () => authReady,
+        getProjects: () => projects,
+        getSelectedProjectId: () => selectedProject?.id ?? null,
+        pauseKeyboard: () => keyboardHandler?.stop(),
+        resumeKeyboard: () => keyboardHandler?.start(),
+        onEmpty: () => {
+          if (!identity) {
+            console.log(`  Press ${brand("a")} to sign in`);
+            return;
+          }
+          console.log("  No projects found");
+        },
+        onInterrupt: () => void shutdown(),
+        onSelect: (project) => {
+          selectedProject = project;
+        },
+      });
 
       async function runSyncAction(action: () => Promise<void>, successMsg: string): Promise<void> {
         try {
@@ -223,30 +250,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       const serverUrl = `http://veryfront.me:${finalPort}`;
 
       console.log();
-      console.log(`  ✓ Server ready at ${brand(serverUrl)}`);
+      console.log(`  ✓ Ready at ${brand(serverUrl)}`);
       if (mcpServer) {
-        console.log(
-          `  ✓ MCP ready at ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`,
-        );
+        console.log(`  MCP ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`);
       }
-      console.log();
 
-      // Context-aware next step hint
-      if (!identity) {
-        console.log(`  ${dim("To sync with Veryfront: press")} ${brand("a")} ${dim("to login")}`);
-      } else if (projects.length > 0) {
-        console.log(`  ✓ ${authStatus(identity)}`);
-        console.log(
-          `  ${dim("Press")} ${brand("s")} ${dim("to select a project, then")} ${brand("p")} ${
-            dim(
-              "to pull",
-            )
-          }`,
-        );
-      } else {
-        console.log(`  ✓ ${authStatus(identity)}`);
-        console.log(`  ${dim("Press")} ${brand("s")} ${dim("to see your projects")}`);
-      }
       console.log();
 
       if (open) {
@@ -263,6 +271,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           onClear: () => console.clear(),
           onQuit: () => void shutdown(),
           onAuth: async () => {
+            await authReady;
             if (identity) {
               console.log(
                 `  ${dim(authStatus(identity))}${dim(", press s to select a project")}`,
@@ -281,40 +290,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               `  ✓ ${authStatus(identity)}${dim(`, ${projects.length} projects`)}`,
             );
           },
-          onSync: () => {
-            if (!identity) {
-              console.log(`  ${dim("Press")} ${brand("a")} ${dim("to login")}`);
-              return;
-            }
-
-            if (projects.length === 0) {
-              console.log(`  ${dim("No projects")}`);
-              return;
-            }
-
-            projects.forEach((p, i) => {
-              const active = selectedProject?.id === p.id;
-              console.log(
-                `  ${active ? success("●") : dim("○")} ${brand(String(i + 1))} ${p.name}`,
-              );
-            });
-          },
-          onNumber: async (n) => {
-            const project = projects[n - 1];
-            if (!project) return;
-
-            selectedProject = project;
-            console.log(`  ${success("●")} ${project.name} ${dim("— pulling...")}`);
-            await runSyncAction(
-              () =>
-                pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
-              `Ready ${dim("— p pull / u push")}`,
-            );
-          },
+          onSync: () => void projectSelector.open(),
           onPull: async () => {
             const project = selectedProject;
             if (!project) {
-              console.log(`  ${dim("Press s to select project")}`);
+              console.log(`  Press ${brand("s")} to select a project`);
               return;
             }
 
@@ -326,14 +306,15 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             );
           },
           onPush: async () => {
-            if (!selectedProject) {
-              console.log(`  ${dim("Press s to select project")}`);
+            const project = selectedProject;
+            if (!project) {
+              console.log(`  Press ${brand("s")} to select a project`);
               return;
             }
 
             console.log(`  ${dim("Pushing...")}`);
             await runSyncAction(
-              () => pushCommand({ projectDir, force: true, quiet: true }),
+              () => pushCommand(createSelectedProjectPushOptions(projectDir, project)),
               `Pushed ${dim("— merge in Studio")}`,
             );
           },

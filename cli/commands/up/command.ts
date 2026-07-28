@@ -256,9 +256,9 @@ export async function upCommand(
 
   logSuccess(`${projectSlug} is ready`);
   console.log();
-  console.log(`  ${dim("Studio:")}  ${brand(urls.studio)}`);
-  console.log(`  ${dim("Preview:")} ${brand(urls.preview)}`);
+  console.log(`  Studio:  ${brand(urls.studio)}`);
+  console.log(`  Preview: ${brand(urls.preview)}`);
   console.log();
-  console.log(`  ${dim("Deploy:")}  ${brand("veryfront deploy")}`);
+  console.log(`  Deploy:  ${brand("veryfront deploy")}`);
   console.log();
 }

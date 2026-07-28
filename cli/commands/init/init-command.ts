@@ -5,7 +5,7 @@
 
 import { cliLogger as logger, isVerbose } from "#cli/utils";
 import { brand, dim, red } from "#cli/ui";
-import { createSpinner } from "../../ui/progress.ts";
+import { createTransientSpinner } from "../../ui/progress.ts";
 import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
@@ -458,85 +458,78 @@ export async function initCommand(
 
   if (projectName) await ensureDir(projectDir);
 
-  // Create project files with progress spinner
-  const filesSpinner = quiet ? null : createSpinner("Creating project files...");
   const createdPaths: string[] = [];
-  try {
-    for (const file of templateFiles as TemplateFile[]) {
-      if (file.path === ".env" || file.path === ".env.example") continue;
+  for (const file of templateFiles as TemplateFile[]) {
+    if (file.path === ".env" || file.path === ".env.example") continue;
 
-      const filePath = join(projectDir, file.path);
-      const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
+    const filePath = join(projectDir, file.path);
+    const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
 
-      if (fileDir !== projectDir) await ensureDir(fileDir);
+    if (fileDir !== projectDir) await ensureDir(fileDir);
 
-      await fs.writeTextFile(filePath, file.content);
-      createdPaths.push(file.path);
-      logger.debug(`Created file: ${file.path}`);
-    }
-
-    // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
-    if (!options.quiet) {
-      await createPackageJson(projectDir, projectName, {
-        dependencies: templateConfig?.npmDependencies,
-        firstPartyExtensions: templateConfig?.firstPartyExtensions,
-        integrations: loadedIntegrations.map((integration) => ({
-          name: integration.config.name,
-          npmDependencies: integration.config.npmDependencies,
-        })),
-      });
-      createdPaths.push("package.json");
-      if (runtime === "deno") {
-        await createDenoConfig(projectDir);
-        createdPaths.push("deno.json");
-      }
-    }
-
-    if (allEnvVars.length) {
-      const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
-        skipPrompt: options.skipEnvPrompt,
-        prefilledValues: options.env,
-      });
-
-      await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
-      createdPaths.push(".env");
-      logger.debug("Created file: .env");
-
-      await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
-      createdPaths.push(".env.example");
-      logger.debug("Created file: .env.example");
-    }
-
-    const gitignorePath = join(projectDir, ".gitignore");
-    let existingGitignore: string | undefined;
-    try {
-      existingGitignore = await fs.readTextFile(gitignorePath);
-    } catch {
-      existingGitignore = undefined;
-    }
-
-    await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
-    createdPaths.push(".gitignore");
-    logger.debug("Updated file: .gitignore");
-
-    filesSpinner?.success("Project files created");
-  } catch (err) {
-    filesSpinner?.error("Failed to create project files");
-    throw err;
+    await fs.writeTextFile(filePath, file.content);
+    createdPaths.push(file.path);
+    logger.debug(`Created file: ${file.path}`);
   }
+
+  // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
+  if (!options.quiet) {
+    await createPackageJson(projectDir, projectName, {
+      dependencies: templateConfig?.npmDependencies,
+      firstPartyExtensions: templateConfig?.firstPartyExtensions,
+      integrations: loadedIntegrations.map((integration) => ({
+        name: integration.config.name,
+        npmDependencies: integration.config.npmDependencies,
+      })),
+    });
+    createdPaths.push("package.json");
+    if (runtime === "deno") {
+      await createDenoConfig(projectDir);
+      createdPaths.push("deno.json");
+    }
+  }
+
+  if (allEnvVars.length) {
+    const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
+      skipPrompt: options.skipEnvPrompt,
+      prefilledValues: options.env,
+    });
+
+    await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+    createdPaths.push(".env");
+    logger.debug("Created file: .env");
+
+    await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+    createdPaths.push(".env.example");
+    logger.debug("Created file: .env.example");
+  }
+
+  const gitignorePath = join(projectDir, ".gitignore");
+  let existingGitignore: string | undefined;
+  try {
+    existingGitignore = await fs.readTextFile(gitignorePath);
+  } catch {
+    existingGitignore = undefined;
+  }
+
+  await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+  createdPaths.push(".gitignore");
+  logger.debug("Updated file: .gitignore");
 
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   if (!options.skipInstall) {
     const pm = await detectPackageManager(projectDir, pmPreference);
-    const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
+    const installSpinner = quiet
+      ? null
+      : createTransientSpinner(`Installing dependencies with ${pm}...`);
     const installSuccess = await installDependencies(projectDir, {
       silent: true,
       packageManager: pm,
     });
 
     if (installSuccess) {
-      installSpinner?.success("Dependencies installed");
+      installSpinner?.stop();
     } else {
       installSpinner?.error("Dependency installation failed");
       if (!quiet) {
@@ -547,17 +540,12 @@ export async function initCommand(
 
   // Initialize git if requested
   if (initGit) {
-    const gitSpinner = quiet ? null : createSpinner("Initializing git repository...");
     try {
       const { initializeGitRepo } = await import("../../utils/git.ts");
       const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
-      if (success) {
-        gitSpinner?.success("Git repository initialized");
-      } else {
-        gitSpinner?.error("Git initialization failed");
-      }
+      if (!success && !quiet) logger.warn("Git initialization failed");
     } catch {
-      gitSpinner?.error("Git initialization failed");
+      if (!quiet) logger.warn("Git initialization failed");
     }
   }
 
@@ -656,12 +644,10 @@ export async function initCommand(
 
     if (deployedUrl) {
       console.log("");
-      console.log(
-        `  ${dim("Live:")} ${brand(deployedUrl)}`,
-      );
+      console.log(`  Live: ${brand(deployedUrl)}`);
     } else {
       console.log("");
-      console.log(`  ${dim("Deploy:")} ${brand(deployCommandHint)}`);
+      console.log(`  Deploy: ${brand(deployCommandHint)}`);
     }
 
     const tips: string[] = [];

@@ -8,13 +8,16 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { formatPrompt } from "./terminal-select.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { resetColorCache, setTestColorLevel } from "#cli/ui";
+import { formatPrompt, formatSelectOption } from "./terminal-select.ts";
 
 // parseKeySequence is not exported, so we test through select/multiSelect behavior
 // For now, we document the expected key mappings
 
 describe("terminal-select", () => {
+  afterEach(() => resetColorCache());
+
   it("renders questions without a decorative marker by default", () => {
     assertEquals(formatPrompt("Choose an integration"), [
       "Choose an integration",
@@ -27,6 +30,32 @@ describe("terminal-select", () => {
       "Where should we create your project?",
       "  Use arrow keys to navigate, Enter to select",
     ]);
+  });
+
+  it("uses the brand dot as the only active-option accent", () => {
+    setTestColorLevel("truecolor");
+
+    assertEquals(
+      formatSelectOption(
+        { value: "ai-agent", label: "AI Agent", description: "Agent + chat UI + streaming" },
+        true,
+        false,
+      ),
+      "  \x1b[38;2;238;178;146m●\x1b[0m AI Agent",
+    );
+  });
+
+  it("can omit descriptions without muting option labels", () => {
+    setTestColorLevel("none");
+
+    assertEquals(
+      formatSelectOption(
+        { value: "node", label: "Node.js", description: "Default" },
+        false,
+        false,
+      ),
+      "    Node.js",
+    );
   });
 
   describe("key sequence parsing", () => {
