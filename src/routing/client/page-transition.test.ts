@@ -2,12 +2,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { PageTransition } from "./page-transition.ts";
 import type { RouteData } from "./page-loader.ts";
 
 interface MockElement {
   id?: string;
   innerHTML?: string;
+  ownerDocument?: MockDocument;
   style?: { opacity?: string; display?: string };
   classList?: {
     toggle: (className: string, force?: boolean) => void;
@@ -23,6 +25,8 @@ interface MockElement {
   textContent?: string;
   tagName?: string;
   _children?: MockElement[];
+  children?: MockElement[];
+  remove?: () => void;
   className?: string;
   onclick?: (() => void) | null;
   type?: string;
@@ -105,6 +109,7 @@ function setupMockDOM(): {
 
   const mockHeadElements: MockElement[] = [];
   const mockHead: MockElement = {
+    children: mockHeadElements,
     querySelectorAll: (selector: string) => {
       if (selector !== '[data-veryfront-managed="1"]') return [];
       return mockHeadElements.filter((el) => el.getAttribute?.("data-veryfront-managed") === "1");
@@ -185,6 +190,7 @@ function setupMockDOM(): {
       };
     },
   };
+  mockRoot.ownerDocument = mockDocument;
 
   (globalThis as any).document = mockDocument;
   (globalThis as any).scrollTo = (x: number, y: number) => {
@@ -235,7 +241,7 @@ describe("PageTransition", () => {
   describe("updatePage", () => {
     it(
       "should update document title when frontmatter includes title",
-      withMocks((mocks) => {
+      withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
         const data: RouteData = {
           html: "<div>Content</div>",
@@ -243,6 +249,7 @@ describe("PageTransition", () => {
         };
 
         pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
         assertEquals(
           mocks.mockDocument.title,
@@ -251,6 +258,147 @@ describe("PageTransition", () => {
         );
       }),
     );
+
+    it(
+      "commits destination metadata after retiring the previous React head",
+      withMocks(async (mocks) => {
+        const attributes = new Map<string, string>([
+          ["data-vf-head", "true"],
+          ["data-vf-react-head", "true"],
+          ["name", "description"],
+          ["content", "Previous description"],
+        ]);
+        const oldMeta: MockElement = {
+          tagName: "META",
+          getAttribute: (name) => attributes.get(name) ?? null,
+          setAttribute: (name, value) => attributes.set(name, value),
+          remove: () => {
+            const children = mocks.mockDocument.head?.children ?? [];
+            const index = children.indexOf(oldMeta);
+            if (index !== -1) children.splice(index, 1);
+          },
+        };
+        mocks.mockDocument.head?.appendChild?.(oldMeta);
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          {
+            html: "<main>Destination</main>",
+            frontmatter: {
+              title: "Destination title",
+              description: "Destination description",
+            },
+          },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(mocks.mockDocument.title, "Destination title");
+        assertEquals(
+          mocks.mockDocument.querySelector?.('meta[name="description"]')?.getAttribute?.(
+            "content",
+          ),
+          "Destination description",
+        );
+        assertEquals(oldMeta.getAttribute?.("content"), "Previous description");
+        assertEquals(
+          mocks.mockDocument.head?.children?.includes(oldMeta),
+          false,
+        );
+      }),
+    );
+
+    it("lets destination head directives win and executes each route script once", async () => {
+      const dom = new JSDOM(
+        `<!doctype html><html><head>
+          <title data-vf-head="true">Previous</title>
+          <meta data-vf-head="true" name="description" content="Previous">
+        </head><body><main id="root"></main></body></html>`,
+        { url: "https://example.com/", runScripts: "dangerously" },
+      );
+      const keys = [
+        "window",
+        "document",
+        "Node",
+        "Element",
+        "HTMLElement",
+        "HTMLTemplateElement",
+        "DocumentFragment",
+        "scrollTo",
+      ] as const;
+      const previous = new Map<string, PropertyDescriptor | undefined>();
+      for (const key of keys) {
+        previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+      }
+
+      const window = dom.window as typeof dom.window & {
+        __routeHeadRuns?: number;
+        __routeBodyRuns?: number;
+      };
+      const replacements: Record<(typeof keys)[number], unknown> = {
+        window,
+        document: window.document,
+        Node: window.Node,
+        Element: window.Element,
+        HTMLElement: window.HTMLElement,
+        HTMLTemplateElement: window.HTMLTemplateElement,
+        DocumentFragment: window.DocumentFragment,
+        scrollTo: () => {},
+      };
+      for (const key of keys) {
+        Object.defineProperty(globalThis, key, {
+          configurable: true,
+          value: replacements[key],
+          writable: true,
+        });
+      }
+
+      try {
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          {
+            html: `<vf-head>
+              <title>Directive title</title>
+              <meta name="description" content="Directive description">
+              <script>window.__routeHeadRuns=(window.__routeHeadRuns||0)+1;</script>
+            </vf-head>
+            <main>Destination</main>
+            <script>window.__routeBodyRuns=(window.__routeBodyRuns||0)+1;</script>`,
+            frontmatter: {
+              title: "Frontmatter title",
+              description: "Frontmatter description",
+            },
+          },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(window.document.title, "Directive title");
+        assertEquals(
+          window.document.head.querySelectorAll('meta[name="description"]').length,
+          1,
+        );
+        assertEquals(
+          window.document.head.querySelector('meta[name="description"]')?.getAttribute(
+            "content",
+          ),
+          "Directive description",
+        );
+        assertEquals(window.__routeHeadRuns, 1);
+        assertEquals(window.__routeBodyRuns, 1);
+      } finally {
+        for (const key of keys) {
+          const descriptor = previous.get(key);
+          if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+          else delete (globalThis as Record<string, unknown>)[key];
+        }
+        dom.window.close();
+      }
+    });
 
     it(
       "should not update document title when frontmatter has no title",
@@ -334,6 +482,35 @@ describe("PageTransition", () => {
           mocks.mockRoot.innerHTML,
           data.html,
           "Root element should accept trusted transition HTML that contains scripts",
+        );
+      }),
+    );
+
+    it(
+      "retires React head ownership even without a legacy head directive",
+      withMocks(async (mocks) => {
+        let removed = false;
+        const reactHeadNode: MockElement = {
+          getAttribute: (name: string) => name === "data-vf-head" ? "true" : null,
+          remove: () => {
+            removed = true;
+          },
+        };
+        mocks.mockDocument.head?.appendChild?.(reactHeadNode);
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          { html: "<main>Destination</main>", frontmatter: {} },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(
+          removed,
+          true,
+          "Replacing the React route must remove its document-level head nodes",
         );
       }),
     );
@@ -488,6 +665,24 @@ describe("PageTransition", () => {
 
         const pageTransition = new PageTransition(() => {});
         pageTransition.showError(new Error("Test error"));
+      }),
+    );
+
+    it(
+      "retires React head ownership before replacing the root with an error",
+      withMocks((mocks) => {
+        let removed = false;
+        mocks.mockDocument.head?.appendChild?.({
+          getAttribute: (name: string) => name === "data-vf-head" ? "true" : null,
+          remove: () => {
+            removed = true;
+          },
+        });
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.showError(new Error("Route failed"));
+
+        assertEquals(removed, true);
       }),
     );
 

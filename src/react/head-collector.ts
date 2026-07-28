@@ -10,11 +10,18 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  headLinkSingletonKeyFromRecord,
+  headMetaSingletonKeyFromRecord,
+  headScriptKeysIntersect,
+  scriptIdentityKeysFromRecord,
+} from "#veryfront/html/managed-head-protocol.ts";
 
 export interface HeadMeta {
   name?: string;
   property?: string;
-  content: string;
+  content?: string;
+  [key: string]: string | undefined;
 }
 
 export interface HeadLink {
@@ -34,12 +41,17 @@ interface HeadScript {
   [key: string]: string | undefined;
 }
 
+export interface HeadStyle {
+  content: string;
+  [key: string]: string | undefined;
+}
+
 export interface CollectedHead {
   title?: string;
   description?: string;
   metas: HeadMeta[];
   links: HeadLink[];
-  styles: string[];
+  styles: Array<string | HeadStyle>;
   /** Blocking scripts - injected at top of <head> before CSS */
   scripts: HeadScript[];
 }
@@ -66,43 +78,6 @@ const HEAD_COLLECTOR_STATE_SYMBOL = Symbol.for(
  * loss. So we enumerate the small, closed singleton set and default the
  * open-ended rest to accumulate.
  */
-const SINGLETON_META_KEYS = new Set<string>([
-  // Standard HTML metas
-  "description",
-  "robots",
-  "viewport",
-  "referrer",
-  "color-scheme",
-  "application-name",
-  "generator",
-  // Open Graph — single-valued core
-  "og:title",
-  "og:description",
-  "og:url",
-  "og:type",
-  "og:site_name",
-  "og:locale",
-  // Twitter cards — one per document
-  "twitter:card",
-  "twitter:site",
-  "twitter:creator",
-  "twitter:title",
-  "twitter:description",
-  "twitter:image",
-  "twitter:image:alt",
-]);
-
-const SINGLETON_LINK_RELS = new Set<string>([
-  "canonical",
-  "manifest",
-  "amphtml",
-]);
-
-/** The dedupe key for a meta: `property` (og/twitter) or `name`, else none. */
-function metaKey(meta: HeadMeta): string | undefined {
-  return meta.property ?? meta.name ?? undefined;
-}
-
 function createEmpty(): CollectedHead {
   return { metas: [], links: [], styles: [], scripts: [] };
 }
@@ -124,14 +99,16 @@ function createHeadCollectorState(): HeadCollectorState {
     if (data.description !== undefined) collected.description = data.description;
 
     for (const meta of data.metas ?? []) {
-      if (meta.name === "description" && meta.content) {
-        collected.description = meta.content;
+      const singletonKey = headMetaSingletonKeyFromRecord(meta);
+      if (singletonKey === "meta:description") {
+        collected.description = meta.content ?? "";
       }
-      const key = metaKey(meta);
       // Single-valued keys override the earlier (layout) tag; every other key
       // (and keyless metas) accumulates.
-      if (key && SINGLETON_META_KEYS.has(key)) {
-        const idx = collected.metas.findIndex((m) => metaKey(m) === key);
+      if (singletonKey) {
+        const idx = collected.metas.findIndex((existing) =>
+          headMetaSingletonKeyFromRecord(existing) === singletonKey
+        );
         if (idx !== -1) {
           collected.metas[idx] = meta;
           continue;
@@ -141,11 +118,13 @@ function createHeadCollectorState(): HeadCollectorState {
     }
 
     for (const link of data.links ?? []) {
-      const rel = link.rel;
+      const singletonKey = headLinkSingletonKeyFromRecord(link);
       // A single-valued `rel` (canonical, manifest, …) overrides the earlier
       // tag; every other rel (stylesheet, preload, icon, alternate, …) accumulates.
-      if (rel && SINGLETON_LINK_RELS.has(rel)) {
-        const idx = collected.links.findIndex((l) => l.rel === rel);
+      if (singletonKey) {
+        const idx = collected.links.findIndex((existing) =>
+          headLinkSingletonKeyFromRecord(existing) === singletonKey
+        );
         if (idx !== -1) {
           collected.links[idx] = link;
           continue;
@@ -155,11 +134,14 @@ function createHeadCollectorState(): HeadCollectorState {
     }
     if (data.styles?.length) collected.styles.push(...data.styles);
     for (const script of data.scripts ?? []) {
-      // Dedupe by id or src
-      const isDupe = collected.scripts.some((s) =>
-        (script.id && s.id === script.id) ||
-        (script.src && s.src === script.src)
-      );
+      const incomingKeys = scriptIdentityKeysFromRecord(script);
+      const isDupe = incomingKeys.length > 0 &&
+        collected.scripts.some((existing) =>
+          headScriptKeysIntersect(
+            scriptIdentityKeysFromRecord(existing),
+            incomingKeys,
+          )
+        );
       if (!isDupe) collected.scripts.push(script);
     }
   }

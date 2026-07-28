@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -455,6 +456,39 @@ describe("DOM Utils", () => {
 
       executeScripts(container);
     });
+
+    it("does not activate scripts inside head directives as body scripts", () => {
+      const originalDocument = (globalThis as GlobalWithDOM).document;
+      let createdScripts = 0;
+      try {
+        (globalThis as GlobalWithDOM).document = {
+          createElement: () => {
+            createdScripts++;
+            return {};
+          },
+        } as unknown as Document;
+
+        const container = {
+          querySelectorAll: () => [oldScript],
+        } as unknown as HTMLElement;
+        const wrapper = {
+          tagName: "VF-HEAD",
+          getAttribute: () => null,
+          parentElement: container,
+        };
+        const oldScript = {
+          parentElement: wrapper,
+          attributes: [],
+          parentNode: { replaceChild: () => {} },
+          textContent: "window.__runs++",
+        };
+
+        executeScripts(container);
+        assertEquals(createdScripts, 0);
+      } finally {
+        (globalThis as GlobalWithDOM).document = originalDocument;
+      }
+    });
   });
 
   describe("applyHeadDirectives", () => {
@@ -770,6 +804,81 @@ describe("DOM Utils", () => {
       } finally {
         mocks.cleanup();
       }
+    });
+
+    it("retires React Head ownership before legacy directives take authority", () => {
+      const mocks = setupMockDocument();
+      try {
+        const reactManaged = {
+          tagName: "META",
+          getAttribute: (name: string) => {
+            if (name === "data-veryfront-managed") return "1";
+            if (name === "data-vf-react-head") return "true";
+            return null;
+          },
+          parentElement: {
+            removeChild: (child: MockHeadElement) => {
+              const index = mocks.headElements.indexOf(child);
+              if (index !== -1) mocks.headElements.splice(index, 1);
+            },
+          },
+        };
+        mocks.headElements.push(reactManaged);
+
+        const nextMeta = new MockElement("META");
+        nextMeta.setAttribute("name", "description");
+        const wrapper = {
+          childNodes: [nextMeta],
+          parentElement: { removeChild: () => {} },
+        };
+        const container = {
+          querySelectorAll: () => [wrapper],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(mocks.headElements.includes(reactManaged), false);
+        assertEquals(mocks.headElements.length, 1);
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("applies directives only to the container owner document", () => {
+      const primary = new JSDOM(
+        `<!doctype html><html><head>
+          <title>Primary</title>
+          <meta data-veryfront-managed="1" name="primary" content="keep">
+        </head><body></body></html>`,
+      ).window.document;
+      const secondary = new JSDOM(
+        `<!doctype html><html><head>
+          <title>Secondary</title>
+          <meta data-veryfront-managed="1" name="stale" content="remove">
+        </head><body>
+          <main id="root">
+            <vf-head>
+              <title></title>
+              <meta name="description" content="Secondary description">
+            </vf-head>
+          </main>
+        </body></html>`,
+      ).window.document;
+      const container = secondary.getElementById("root") as HTMLElement;
+
+      applyHeadDirectives(container);
+
+      assertEquals(primary.title, "Primary");
+      assertExists(primary.head.querySelector('meta[name="primary"]'));
+      assertEquals(secondary.title, "");
+      assertEquals(secondary.head.querySelector('meta[name="stale"]'), null);
+      assertEquals(
+        secondary.head.querySelector('meta[name="description"]')?.getAttribute(
+          "content",
+        ),
+        "Secondary description",
+      );
+      assertEquals(container.querySelector("vf-head"), null);
     });
   });
 

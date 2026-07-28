@@ -101,4 +101,78 @@ describe("Head SSR collection", () => {
     assertEquals(head.metas.some((m) => m.property === "og:title"), true);
     assertEquals(head.links.some((l) => l.rel === "canonical"), true);
   });
+
+  it("uses the shared attribute/content protocol for SSR collection", async () => {
+    const { head } = await collectFromHead(
+      <Head>
+        <meta
+          name="robots"
+          content=""
+          onLoad={() => {
+            throw new Error("must not serialize");
+          }}
+        />
+        <link
+          rel="preload"
+          href="/font.woff2"
+          crossOrigin="anonymous"
+          onLoad={() => {
+            throw new Error("must not serialize");
+          }}
+        />
+        <style media="print" dangerouslySetInnerHTML={{ __html: ".print{}" }} />
+        <script
+          id="boot"
+          src="/boot.js"
+          async={false}
+          defer
+          onLoad={() => {
+            throw new Error("must not serialize");
+          }}
+          data-vf-react-head-owner="spoofed"
+        />
+      </Head>,
+    );
+
+    assertEquals(head.metas, [{ name: "robots", content: "" }]);
+    assertEquals(head.links, [{
+      crossorigin: "anonymous",
+      href: "/font.woff2",
+      rel: "preload",
+    }]);
+    assertEquals(head.styles, [{
+      media: "print",
+      content: ".print{}",
+    }]);
+    assertEquals(head.scripts, [{
+      defer: "",
+      id: "boot",
+      src: "/boot.js",
+    }]);
+  });
+
+  it("joins primitive child arrays for title and style content", async () => {
+    const { head } = await collectFromHead(
+      <Head>
+        <title>{["Hello", " ", 42]}</title>
+        <style>{[".a{", "color:red", "}"]}</style>
+      </Head>,
+    );
+
+    assertEquals(head.title, "Hello 42");
+    assertEquals(head.styles, [".a{color:red}"]);
+  });
+
+  it("keeps charset shell-owned and preserves absent meta content", async () => {
+    const { head } = await runWithHeadCollector(() =>
+      renderToString(
+        <Head>
+          <meta charSet="utf-8" />
+          <meta name="custom-flag" />
+        </Head>,
+      )
+    );
+
+    assertEquals(head.metas, [{ name: "custom-flag" }]);
+  });
 });
