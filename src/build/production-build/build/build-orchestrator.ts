@@ -203,24 +203,35 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         buildError = error;
       }
 
-      let publicationCleanupError: unknown;
+      const cleanupFailures: unknown[] = [];
       try {
         await publication?.cleanup();
       } catch (error) {
-        publicationCleanupError = error;
+        cleanupFailures.push(error);
       }
-      await performCleanup(context.renderer);
+      try {
+        await performCleanup(context.renderer);
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
 
       if (buildFailed) {
-        if (publicationCleanupError !== undefined) {
-          logger.warn("Build publication cleanup failed after the build error", {
-            error: publicationCleanupError,
-          });
-        }
-        throw buildError;
+        if (cleanupFailures.length === 0) throw buildError;
+        throw new AggregateError(
+          [buildError, ...cleanupFailures],
+          "Production build failed and cleanup also failed",
+        );
       }
-      if (publicationCleanupError !== undefined) throw publicationCleanupError;
-      if (!result) throw new Error("Build completed without producing a result");
+      if (cleanupFailures.length === 1) throw cleanupFailures[0];
+      if (cleanupFailures.length > 1) {
+        throw new AggregateError(
+          cleanupFailures,
+          "Production build completed but cleanup failed",
+        );
+      }
+      if (!result) {
+        throw new Error("Build completed without producing a result");
+      }
       logBuildCompletion(result);
       return result;
     },

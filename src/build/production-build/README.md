@@ -281,17 +281,12 @@ Clean up after failed builds:
 ```typescript
 import { cleanupCaches, performCleanup } from "#server/build/build";
 
-// Clean up all build artifacts
-await performCleanup({
-  outDir: "./dist",
-  cacheDir: ".cache",
-  tempDir: ".tmp",
-});
+// Destroy the renderer and clear the transform cache. Both cleanup operations
+// are attempted; the promise rejects with every failure if cleanup is incomplete.
+await performCleanup(renderer);
 
 // Clean up caches only
-await cleanupCaches({
-  cacheDir: ".cache",
-});
+await cleanupCaches();
 ```
 
 ### Incremental Builds

@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertBuildProducedOutput,
@@ -13,10 +18,35 @@ import type { BuildStats } from "#veryfront/server/build-types.ts";
 import type { CollectedRoutes } from "./route-collector.ts";
 import { getProjectReact } from "#veryfront/react";
 import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import {
+  __injectCachesForTests,
+  destroyTransformCache,
+} from "#veryfront/transforms/esm/transform-cache.ts";
 
 // React's server scheduler owns one process-lifetime MessagePort. Initialize it
 // during module setup so the suite's sanitizers still detect build-owned leaks.
 await Promise.all([getProjectReact(), getReactDOMServer()]);
+
+type CacheInjection = NonNullable<Parameters<typeof __injectCachesForTests>[0]>;
+type InjectedLocalFallback = NonNullable<CacheInjection["localFallback"]>;
+
+function injectTransformCacheClear(clear: () => void): void {
+  const localFallback = {
+    get: () => undefined,
+    set: () => undefined,
+    delete: () => false,
+    has: () => false,
+    clear,
+    size: 0,
+    entries: () => new Map().entries(),
+  } as unknown as InjectedLocalFallback;
+  __injectCachesForTests({ localFallback });
+}
+
+function restoreTransformCache(): void {
+  __injectCachesForTests(null);
+  destroyTransformCache();
+}
 
 describe("build/production-build/build/build-orchestrator", () => {
   describe("re-exports", () => {
@@ -113,6 +143,74 @@ describe("build/production-build/build/build-orchestrator", () => {
           false,
         );
       } finally {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("preserves the build failure when runtime cleanup also fails", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-cleanup-failure-" });
+      const outputDir = `${projectDir}/dist`;
+      const cleanupFailure = new Error("transform cache cleanup failed");
+      try {
+        await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+        await Deno.mkdir(`${projectDir}/app/about`, { recursive: true });
+        await Deno.writeTextFile(
+          `${projectDir}/pages/about.tsx`,
+          "export default function About() { return null; }",
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/app/about/page.tsx`,
+          "export default function About() { return null; }",
+        );
+        injectTransformCacheClear(() => {
+          throw cleanupFailure;
+        });
+
+        const error = await assertRejects(
+          () => buildProduction({ projectDir, outputDir }),
+          AggregateError,
+          "Production build failed and cleanup also failed",
+        );
+        assertInstanceOf(error, AggregateError);
+        assertEquals(error.errors.length, 2);
+        assertStringIncludes(String(error.errors[0]), "output collision");
+        assertEquals(error.errors[1], cleanupFailure);
+      } finally {
+        restoreTransformCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("surfaces runtime cleanup failure after publishing a complete build", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-published-cleanup-" });
+      const outputDir = `${projectDir}/dist`;
+      const cleanupFailure = new Error("transform cache cleanup failed");
+      try {
+        await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+        await Deno.writeTextFile(`${projectDir}/pages/index.mdx`, "# Published");
+        injectTransformCacheClear(() => {
+          throw cleanupFailure;
+        });
+
+        assertEquals(
+          await assertRejects(() =>
+            buildProduction({
+              projectDir,
+              outputDir,
+              enableSplitting: false,
+              enableCompression: false,
+            })
+          ),
+          cleanupFailure,
+        );
+        assertStringIncludes(
+          await Deno.readTextFile(`${outputDir}/index.html`),
+          "Published",
+        );
+      } finally {
+        restoreTransformCache();
         const { stop } = await import("veryfront/extensions/bundler");
         await stop();
         await Deno.remove(projectDir, { recursive: true });

@@ -1,12 +1,37 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  __injectCachesForTests,
+  destroyTransformCache,
+} from "#veryfront/transforms/esm/transform-cache.ts";
 import {
   cleanupCaches,
   cleanupRenderer,
   logBuildCompletion,
   performCleanup,
 } from "./build-cleanup.ts";
+
+type CacheInjection = NonNullable<Parameters<typeof __injectCachesForTests>[0]>;
+type InjectedLocalFallback = NonNullable<CacheInjection["localFallback"]>;
+
+function injectTransformCacheClear(clear: () => void): void {
+  const localFallback = {
+    get: () => undefined,
+    set: () => undefined,
+    delete: () => false,
+    has: () => false,
+    clear,
+    size: 0,
+    entries: () => new Map().entries(),
+  } as unknown as InjectedLocalFallback;
+  __injectCachesForTests({ localFallback });
+}
+
+function restoreTransformCache(): void {
+  __injectCachesForTests(null);
+  destroyTransformCache();
+}
 
 describe("build/production-build/build/build-cleanup", () => {
   describe("cleanupRenderer", () => {
@@ -32,9 +57,27 @@ describe("build/production-build/build/build-cleanup", () => {
   });
 
   describe("cleanupCaches", () => {
-    it("should not throw when transform cache module is not available", async () => {
-      // This test verifies the catch block handles missing module gracefully
-      await cleanupCaches();
+    it("destroys the transform cache", async () => {
+      let clearCalls = 0;
+      injectTransformCacheClear(() => clearCalls++);
+      try {
+        await cleanupCaches();
+        assertEquals(clearCalls, 1);
+      } finally {
+        restoreTransformCache();
+      }
+    });
+
+    it("propagates transform cache cleanup failures", async () => {
+      const cleanupFailure = new Error("transform cache cleanup failed");
+      injectTransformCacheClear(() => {
+        throw cleanupFailure;
+      });
+      try {
+        assertEquals(await assertRejects(() => cleanupCaches()), cleanupFailure);
+      } finally {
+        restoreTransformCache();
+      }
     });
   });
 
@@ -51,22 +94,45 @@ describe("build/production-build/build/build-cleanup", () => {
       assertEquals(destroyCalled, true);
     });
 
-    it("does not mask an active build failure when renderer cleanup also fails", async () => {
-      const buildError = new Error("build failed");
+    it("attempts cache cleanup before propagating a renderer cleanup failure", async () => {
+      const rendererFailure = new Error("renderer cleanup failed");
+      let cacheClearCalls = 0;
       const renderer = {
-        destroy: () => Promise.reject(new Error("cleanup failed")),
+        destroy: () => Promise.reject(rendererFailure),
         renderPage: () => Promise.resolve({ html: "" }),
       } as unknown as import("#veryfront/rendering/index.ts").VeryfrontRenderer;
 
-      const error = await assertRejects(async () => {
-        try {
-          throw buildError;
-        } finally {
-          await performCleanup(renderer);
-        }
-      });
+      injectTransformCacheClear(() => cacheClearCalls++);
+      try {
+        assertEquals(await assertRejects(() => performCleanup(renderer)), rendererFailure);
+        assertEquals(cacheClearCalls, 1);
+      } finally {
+        restoreTransformCache();
+      }
+    });
 
-      assertEquals(error, buildError);
+    it("aggregates renderer and cache cleanup failures", async () => {
+      const rendererFailure = new Error("renderer cleanup failed");
+      const cacheFailure = new Error("cache cleanup failed");
+      const renderer = {
+        destroy: () => Promise.reject(rendererFailure),
+        renderPage: () => Promise.resolve({ html: "" }),
+      } as unknown as import("#veryfront/rendering/index.ts").VeryfrontRenderer;
+
+      injectTransformCacheClear(() => {
+        throw cacheFailure;
+      });
+      try {
+        const error = await assertRejects(
+          () => performCleanup(renderer),
+          AggregateError,
+          "Production build runtime cleanup failed",
+        );
+        assertInstanceOf(error, AggregateError);
+        assertEquals(error.errors, [rendererFailure, cacheFailure]);
+      } finally {
+        restoreTransformCache();
+      }
     });
   });
 

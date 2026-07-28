@@ -7,21 +7,30 @@ export async function cleanupRenderer(renderer: VeryfrontRenderer): Promise<void
 }
 
 export async function cleanupCaches(): Promise<void> {
-  try {
-    const { destroyTransformCache } = await import("#veryfront/transforms/esm/transform-cache.ts");
-    destroyTransformCache();
-  } catch (_) {
-    /* expected: transform cache module may not be available */
-  }
+  const { destroyTransformCache } = await import(
+    "#veryfront/transforms/esm/transform-cache.ts"
+  );
+  destroyTransformCache();
 }
 
 export async function performCleanup(renderer: VeryfrontRenderer): Promise<void> {
+  const failures: unknown[] = [];
+
   try {
     await cleanupRenderer(renderer);
-  } catch (_) {
-    logger.warn("Renderer cleanup failed");
+  } catch (error) {
+    failures.push(error);
   }
-  await cleanupCaches();
+  try {
+    await cleanupCaches();
+  } catch (error) {
+    failures.push(error);
+  }
+
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "Production build runtime cleanup failed");
+  }
 }
 
 export function logBuildCompletion(stats: BuildStats): void {
