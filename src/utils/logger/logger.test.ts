@@ -84,6 +84,10 @@ describe("logger", () => {
       assertEquals(getDefaultLevel("", "true"), LogLevel.DEBUG);
     });
 
+    it("should use the shared truthy semantics for VERYFRONT_DEBUG", () => {
+      assertEquals(getDefaultLevel("", " Yes "), LogLevel.DEBUG);
+    });
+
     it("should return INFO by default", () => {
       // Pass empty strings to test default behavior without env var interference
       assertEquals(getDefaultLevel("", ""), LogLevel.INFO);

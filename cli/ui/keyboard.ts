@@ -16,6 +16,8 @@ export interface KeyboardHandler {
 }
 
 export interface KeyboardOptions {
+  /** Handler for '?' key - show shortcuts */
+  onHelp?: () => void;
   /** Handler for 'o' key - open in browser */
   onOpen?: () => void;
   /** Handler for 'c' key - clear console */
@@ -36,13 +38,16 @@ export interface KeyboardOptions {
   onPush?: () => void;
 }
 
-function handleKeyPress(key: string, options: KeyboardOptions): void {
+export function dispatchKeyPress(key: string, options: KeyboardOptions): void {
   if (key >= "1" && key <= "9") {
     options.onNumber?.(Number.parseInt(key, 10));
     return;
   }
 
   switch (key.toLowerCase()) {
+    case "?":
+      options.onHelp?.();
+      return;
     case "o":
       options.onOpen?.();
       return;
@@ -93,7 +98,7 @@ function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
           return;
         }
 
-        handleKeyPress(String.fromCharCode(byte), options);
+        dispatchKeyPress(String.fromCharCode(byte), options);
       } catch {
         return;
       }

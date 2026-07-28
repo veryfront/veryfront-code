@@ -6,11 +6,17 @@ export interface Shortcut {
 }
 
 export function shortcuts(items: Shortcut[]): string {
-  return `  ${items.map(({ key, label }) => `${dim(key)} ${label}`).join("  ")}`;
+  return `  ${items.map(({ key, label }) => `${brand(key)} ${label}`).join("  ")}`;
 }
 
 export const DEV_SHORTCUTS: Shortcut[] = [
+  { key: "?", label: "shortcuts" },
   { key: "o", label: "open" },
+  { key: "l", label: "verbose logs" },
+  { key: "s", label: "projects" },
+  { key: "p", label: "pull" },
+  { key: "u", label: "push" },
+  { key: "a", label: "account" },
   { key: "c", label: "clear" },
   { key: "q", label: "quit" },
 ];

@@ -3,7 +3,7 @@ import type { CommandHelp, CommandOption } from "./types.ts";
 import { bold, brand, dim, muted } from "../ui/colors.ts";
 
 export function formatHeader(): string {
-  return `${bold(brand("Veryfront"))} ${dim(VERSION)}`;
+  return `${bold("Veryfront")} ${dim(`(v${VERSION})`)}`;
 }
 
 export function formatCommandName(name: string, paddingLength: number): string {

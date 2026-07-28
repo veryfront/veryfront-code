@@ -11,21 +11,15 @@ import {
   setRawMode,
   writeStdout,
 } from "veryfront/platform";
+import { isTruthyEnvValue } from "veryfront/utils";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
-import {
-  bold,
-  brand,
-  dim,
-  error as errorColor,
-  shouldUseColor,
-  warning as warningColor,
-} from "../ui/colors.ts";
+import { bold, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
 
 type LoggerMethod = (...args: unknown[]) => void;
 
 function debugEnabled(): boolean {
-  return _verboseMode || getEnv("VERYFRONT_DEBUG") === "1";
+  return _verboseMode || isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
 }
 
 export const cliLogger: {
@@ -37,7 +31,7 @@ export const cliLogger: {
   component: (_name: string) => typeof cliLogger;
 } = {
   debug: (...args) => {
-    if (!debugEnabled()) return;
+    if (isJsonMode() || !debugEnabled()) return;
     console.debug(...args);
   },
   info: (...args) => console.log(...args),
@@ -78,16 +72,13 @@ export function isTTY(): boolean {
   return isStdoutTTY();
 }
 
-export function showLogo(): void {
+export function showHeader(): void {
   if (isJsonMode()) return;
-
-  if (!shouldUseColor()) {
-    cliLogger.info(`Veryfront ${VERSION}\n`);
-    return;
-  }
-
-  cliLogger.info(`${bold(brand("Veryfront"))} ${dim(VERSION)}\n`);
+  cliLogger.info(`${bold("Veryfront")} ${dim(`(v${VERSION})`)}\n`);
 }
+
+/** @deprecated Use {@link showHeader}. */
+export const showLogo = showHeader;
 
 export function logSuccess(message: string): void {
   console.log(`  ✓ ${message}`);

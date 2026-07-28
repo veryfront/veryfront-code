@@ -1,5 +1,6 @@
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { isStdoutTTY } from "#veryfront/platform/compat/process/lifecycle.ts";
+import { isTruthyEnvValue } from "../constants/env.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
@@ -140,7 +141,7 @@ export function getDefaultLevel(
 ): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
-  if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
+  if (isTruthyEnvValue(debugFlag)) return LogLevel.DEBUG;
   return LogLevel.INFO;
 }
 

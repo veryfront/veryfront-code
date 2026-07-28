@@ -1,7 +1,7 @@
 import { cwd } from "veryfront/platform";
 import { gracefullyShutdownProductionServer } from "veryfront/server";
 import { cliLogger } from "#cli/utils";
-import { exitProcess, registerTerminationSignals, showLogo } from "#cli/utils";
+import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { startCliProductionServer } from "#cli/shared/server-startup";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
@@ -126,7 +126,7 @@ export async function runProductionStartupWithErrorReporting<T>(
 }
 
 async function runSplit(options: ServeOptions): Promise<void> {
-  showLogo();
+  showHeader();
   const { runSplitMode } = await import("./split-mode.ts");
 
   const { DEFAULT_DEV_SERVER_PORT } = await import("#cli/utils");
@@ -141,7 +141,7 @@ async function runSplit(options: ServeOptions): Promise<void> {
 }
 
 async function runProxy(options: ServeOptions): Promise<void> {
-  showLogo();
+  showHeader();
   cliLogger.info(`Starting proxy server on ${options.bindAddress}:${options.port}`);
 
   const { setEnv } = await import("veryfront/platform");
@@ -195,7 +195,7 @@ export async function runProductionServer(
   options: ServeOptions,
   dependencies: ProductionServerDependencies = {},
 ): Promise<void> {
-  showLogo();
+  showHeader();
   const deferredReporter = createDeferredProductionStartupErrorReporter();
   const reporter = dependencies.reporter ?? deferredReporter.reporter;
   const initializeErrorReporting = dependencies.initializeErrorReporting ??

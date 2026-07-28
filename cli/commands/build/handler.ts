@@ -6,7 +6,7 @@ import { cliLogger, isVerbose, logSuccess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
-import { showLogo } from "#cli/utils";
+import { showHeader } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
 
@@ -56,7 +56,7 @@ export const parseBuildArgs = createArgParser(BuildArgsSchema, {
 });
 
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
+  showHeader();
   const opts = parseArgsOrThrow(parseBuildArgs, "build", args);
   await ensureCliBundlerContracts();
   const projectDir = cwd();
