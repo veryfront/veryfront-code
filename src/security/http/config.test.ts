@@ -126,6 +126,22 @@ describe("security/http/config", () => {
     assertEquals(loader.getSecurityConfig()?.csrf, true);
   });
 
+  it("honors standalone production intent when process env is development", async () => {
+    Deno.env.set("NODE_ENV", "development");
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      {
+        security: {},
+      },
+      true,
+    );
+
+    await loader.ensureLoaded();
+
+    assertEquals(loader.getSecurityConfig()?.csrf, true);
+  });
+
   it("does not warn that CSRF is unconfigured when production defaults enable it", async () => {
     Deno.env.set("NODE_ENV", "production");
     const { getOutput, restore } = captureConsoleLog();

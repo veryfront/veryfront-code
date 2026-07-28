@@ -112,6 +112,37 @@ describe("server/runtime-handler/index", () => {
     assertEquals(securityGuidance.length, 0);
   });
 
+  it("keeps explicit security warnings visible for standalone production", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const adapter = new DenoAdapter();
+    const { lines, restore } = captureConsoleOutput();
+    const originalVeryfrontEnv = Deno.env.get("VERYFRONT_ENV");
+    Deno.env.set("VERYFRONT_ENV", "development");
+
+    try {
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        config: {
+          security: { csrf: false },
+        } as any,
+        defaultEnvironment: "production",
+      });
+      await handler.ready;
+      await handler(new Request("http://localhost/healthz"));
+    } finally {
+      restore();
+      if (originalVeryfrontEnv === undefined) Deno.env.delete("VERYFRONT_ENV");
+      else Deno.env.set("VERYFRONT_ENV", originalVeryfrontEnv);
+      HMRHandler.shutdown();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+
+    assertEquals(
+      lines.some((line) => line.includes("Neither CORS nor CSRF protection is configured")),
+      true,
+    );
+  });
+
   it("returns 502 when x-token is missing in proxy mode", async () => {
     const handler = createProxyModeHandler();
 

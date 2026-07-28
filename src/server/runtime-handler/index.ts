@@ -312,7 +312,12 @@ export function createVeryfrontHandler(
     });
   }
 
-  const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
+  const securityLoader = new SecurityConfigLoader(
+    projectDir,
+    adapter,
+    opts.config,
+    opts.defaultEnvironment === "production",
+  );
 
   // Per-project environment variable cache (fetches from API, caches with 60s TTL)
   const apiBaseUrl = adapter.env.get("VERYFRONT_API_BASE_URL") ?? "https://api.veryfront.com/api";
