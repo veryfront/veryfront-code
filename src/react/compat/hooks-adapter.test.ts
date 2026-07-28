@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import {
@@ -739,6 +745,45 @@ describe("hooks-adapter", () => {
         for (const run of Array.from(scheduled.values())) run();
 
         assertEquals(callbacks, ["first", "second"]);
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+        globalThis.clearTimeout = originalClearTimeout;
+      }
+    });
+
+    it("fallback stays pending through queued work and resets after callback errors", () => {
+      const originalSetTimeout = globalThis.setTimeout;
+      const originalClearTimeout = globalThis.clearTimeout;
+      const scheduled = new Map<number, () => void>();
+      let nextTimerId = 1;
+
+      try {
+        globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+          const timerId = nextTimerId++;
+          scheduled.set(timerId, () => {
+            scheduled.delete(timerId);
+            if (typeof callback === "function") callback();
+          });
+          return timerId as ReturnType<typeof setTimeout>;
+        }) as typeof setTimeout;
+
+        globalThis.clearTimeout = ((timerId?: ReturnType<typeof setTimeout>) => {
+          if (typeof timerId === "number") scheduled.delete(timerId);
+        }) as typeof clearTimeout;
+
+        const pending: boolean[] = [];
+        const scheduler = createTransitionFallbackScheduler((value) => pending.push(value));
+        scheduler.startTransition(() => {});
+        scheduler.startTransition(() => {
+          throw new Error("transition failed");
+        });
+
+        const [runFirst, runSecond] = [...scheduled.values()];
+        runFirst?.();
+        assertEquals(pending, [true, true], "first completion must not clear pending work");
+
+        assertThrows(() => runSecond?.(), Error, "transition failed");
+        assertEquals(pending, [true, true, false]);
       } finally {
         globalThis.setTimeout = originalSetTimeout;
         globalThis.clearTimeout = originalClearTimeout;

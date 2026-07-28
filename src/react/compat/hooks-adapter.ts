@@ -46,8 +46,13 @@ export function createTransitionFallbackScheduler(
 
       const timerId = setTimeout(() => {
         timers.delete(timerId);
-        callback();
-        onPendingChange(false);
+        try {
+          callback();
+        } finally {
+          // Keep the fallback pending until every queued transition has run,
+          // and always release it when a callback throws.
+          if (timers.size === 0) onPendingChange(false);
+        }
       }, 0);
 
       timers.add(timerId);

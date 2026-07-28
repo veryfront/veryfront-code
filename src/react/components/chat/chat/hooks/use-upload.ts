@@ -51,6 +51,7 @@ export const INLINE_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024;
 interface Tracked {
   info: AttachmentInfo;
   file: File;
+  reader?: FileReader;
   xhr?: XMLHttpRequest;
 }
 
@@ -110,12 +111,18 @@ export function useUpload(
   const [tracked, setTracked] = React.useState<Tracked[]>([]);
   const trackedRef = React.useRef<Tracked[]>(tracked);
   trackedRef.current = tracked;
+  const mountedRef = React.useRef(true);
 
   const patch = React.useCallback(
     (id: string, next: Partial<AttachmentInfo>) => {
-      setTracked((prev) =>
-        prev.map((t) => t.info.id === id ? { ...t, info: { ...t.info, ...next } } : t)
-      );
+      if (!mountedRef.current) return;
+      setTracked((prev) => {
+        const updated = prev.map((t) =>
+          t.info.id === id ? { ...t, info: { ...t.info, ...next } } : t
+        );
+        trackedRef.current = updated;
+        return updated;
+      });
     },
     [],
   );
@@ -132,13 +139,22 @@ export function useUpload(
       }
       patch(info.id, { state: "uploading", progress: 0 });
       const reader = new FileReader();
-      reader.onload = () =>
+      entry.reader = reader;
+      reader.onload = () => {
+        entry.reader = undefined;
         patch(info.id, {
           state: "uploaded",
           progress: 100,
           url: typeof reader.result === "string" ? reader.result : undefined,
         });
-      reader.onerror = () => patch(info.id, { state: "error" });
+      };
+      reader.onerror = () => {
+        entry.reader = undefined;
+        patch(info.id, { state: "error" });
+      };
+      reader.onabort = () => {
+        entry.reader = undefined;
+      };
       reader.readAsDataURL(file);
     },
     [patch],
@@ -165,6 +181,7 @@ export function useUpload(
         });
       };
       xhr.onload = () => {
+        entry.xhr = undefined;
         if (xhr.status >= 200 && xhr.status < 300) {
           const response = parseChatUploadResponse(xhr.responseText);
           if (!response) {
@@ -181,8 +198,14 @@ export function useUpload(
           patch(info.id, { state: "error" });
         }
       };
-      xhr.onerror = () => patch(info.id, { state: "error" });
-      xhr.onabort = () => patch(info.id, { state: "error" });
+      xhr.onerror = () => {
+        entry.xhr = undefined;
+        patch(info.id, { state: "error" });
+      };
+      xhr.onabort = () => {
+        entry.xhr = undefined;
+        patch(info.id, { state: "error" });
+      };
 
       patch(info.id, { state: "uploading", progress: 0 });
       const form = new FormData();
@@ -207,7 +230,9 @@ export function useUpload(
           preview: isImage(file) ? URL.createObjectURL(file) : undefined,
         },
       }));
-      setTracked((prev) => [...prev, ...entries]);
+      const next = [...trackedRef.current, ...entries];
+      trackedRef.current = next;
+      setTracked(next);
       for (const entry of entries) start(entry);
     },
     [start],
@@ -215,9 +240,12 @@ export function useUpload(
 
   const remove = React.useCallback((id: string) => {
     const entry = trackedRef.current.find((t) => t.info.id === id);
+    entry?.reader?.abort();
     entry?.xhr?.abort();
     if (entry?.info.preview) URL.revokeObjectURL(entry.info.preview);
-    setTracked((prev) => prev.filter((t) => t.info.id !== id));
+    const next = trackedRef.current.filter((t) => t.info.id !== id);
+    trackedRef.current = next;
+    setTracked(next);
   }, []);
 
   const retry = React.useCallback((id: string) => {
@@ -227,10 +255,25 @@ export function useUpload(
 
   const clear = React.useCallback(() => {
     for (const t of trackedRef.current) {
+      t.reader?.abort();
       t.xhr?.abort();
       if (t.info.preview) URL.revokeObjectURL(t.info.preview);
     }
+    trackedRef.current = [];
     setTracked([]);
+  }, []);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      for (const entry of trackedRef.current) {
+        entry.reader?.abort();
+        entry.xhr?.abort();
+        if (entry.info.preview) URL.revokeObjectURL(entry.info.preview);
+      }
+      trackedRef.current = [];
+    };
   }, []);
 
   const attachments = React.useMemo(() => tracked.map((t) => t.info), [

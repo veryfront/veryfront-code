@@ -24,9 +24,9 @@ function installDom(): () => void {
     "HTMLElement",
     "localStorage",
   ] as const;
-  const previous: Record<string, unknown> = {};
-  for (const key of keys) previous[key] = (globalThis as Record<string, unknown>)[key];
-  Object.assign(globalThis, {
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of keys) previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  const replacements = {
     window,
     document: window.document,
     navigator: window.navigator,
@@ -35,10 +35,23 @@ function installDom(): () => void {
     Element: window.Element,
     HTMLElement: window.HTMLElement,
     localStorage: window.localStorage,
-  });
+  };
+  for (const [key, value] of Object.entries(replacements)) {
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+  assert(globalThis.localStorage === window.localStorage);
   window.localStorage.clear();
   return () => {
-    Object.assign(globalThis, previous);
+    for (const key of keys) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
     dom.window.close();
   };
 }
@@ -191,6 +204,66 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
     } finally {
       fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("does not let a superseded endpoint refresh overwrite the current list", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const pending = new Map<string, {
+      resolve: (response: Response) => void;
+      signal?: AbortSignal | null;
+    }>();
+    globalThis.fetch =
+      ((input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          pending.set(String(input), { resolve, signal: init?.signal });
+        })) as typeof fetch;
+
+    let latest: UseUploadsRegistryResult | null = null;
+    const Capture = ({ url }: { url: string }): null => {
+      latest = useUploadsRegistry({ storageKey: "test-endpoint-switch", url });
+      return null;
+    };
+    const root = createRoot(document.getElementById("root")!);
+
+    try {
+      flushSync(() => root.render(<Capture url="/old" />));
+      assert(pending.has("/old"));
+
+      flushSync(() => root.render(<Capture url="/new" />));
+      assert(pending.has("/new"));
+      assertEquals(pending.get("/old")?.signal?.aborted, true);
+
+      pending.get("/new")?.resolve(
+        Response.json({
+          items: [{ id: "new", name: "new.txt", mediaType: "text/plain" }],
+        }),
+      );
+      await flush(() => {});
+      assertEquals(
+        (latest as unknown as UseUploadsRegistryResult).items.map((item) => item.id),
+        ["new"],
+      );
+
+      // A transport that ignores abort can still resolve late. Generation
+      // ownership must prevent that stale body from replacing `/new`.
+      pending.get("/old")?.resolve(
+        Response.json({
+          items: [{ id: "old", name: "old.txt", mediaType: "text/plain" }],
+        }),
+      );
+      await flush(() => {});
+      assertEquals(
+        (latest as unknown as UseUploadsRegistryResult).items.map((item) => item.id),
+        ["new"],
+      );
+
+      flushSync(() => root.unmount());
+      await flush(() => {});
+    } finally {
+      globalThis.fetch = previousFetch;
       restoreDom();
     }
   });

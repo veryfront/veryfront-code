@@ -129,14 +129,26 @@ function AppShellRoot({
   const isControlledLeft = open?.left !== undefined;
   const isControlledRight = open?.right !== undefined;
 
-  const [leftDesktop, setLeftDesktop] = React.useState(() =>
-    readStored(storageKey, "left", defaultOpen?.left ?? true)
-  );
-  const [rightDesktop, setRightDesktop] = React.useState(() =>
-    readStored(storageKey, "right", defaultOpen?.right ?? false)
-  );
+  // The first client render must match SSR. Reading browser-only persistence in
+  // the state initializer removes a server-rendered sidebar during hydration
+  // and forces React to discard that subtree. Reconcile storage after mount.
+  const initialDesktopOpen = React.useRef({
+    left: defaultOpen?.left ?? true,
+    right: defaultOpen?.right ?? false,
+  });
+  const [leftDesktop, setLeftDesktop] = React.useState(initialDesktopOpen.current.left);
+  const [rightDesktop, setRightDesktop] = React.useState(initialDesktopOpen.current.right);
   const [leftMobile, setLeftMobile] = React.useState(false);
   const [rightMobile, setRightMobile] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isControlledLeft) {
+      setLeftDesktop(readStored(storageKey, "left", initialDesktopOpen.current.left));
+    }
+    if (!isControlledRight) {
+      setRightDesktop(readStored(storageKey, "right", initialDesktopOpen.current.right));
+    }
+  }, [storageKey, isControlledLeft, isControlledRight]);
 
   // Returning to a wider viewport drops any open mobile overlays.
   React.useEffect(() => {
