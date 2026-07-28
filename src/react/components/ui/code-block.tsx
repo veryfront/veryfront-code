@@ -316,17 +316,17 @@ export interface CodeBlockProps {
   }) => React.ReactNode;
 }
 
-/** Result of {@link useClipboard}: the copied flag + a `copy` trigger. */
+/** Result of {@link useClipboard}: transient copy feedback and a `copy` trigger. */
 export interface UseClipboardResult {
   /** `true` for ~2s after a successful copy. */
   copied: boolean;
   /** `true` for ~2s after both available copy mechanisms fail. */
   failed: boolean;
-  /** Copy `text` to the clipboard (with a `execCommand` fallback). */
+  /** Copy `text` to the clipboard (with an `execCommand` fallback). */
   copy: (ownerDocument?: Document) => void;
 }
 
-/** Clipboard copy hook: copies `text`, flips `copied` for ~2s. */
+/** Copy `text` and expose transient success or failure feedback. */
 export function useClipboard(text: string): UseClipboardResult {
   const { outcome, copy: copyWithFeedback } = useClipboardFeedback();
 
