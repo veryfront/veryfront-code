@@ -94,15 +94,28 @@ export class StaticHandler extends BaseHandler {
         const isPreviewMode = ctx.requestContext?.mode === "preview" && !isLocal;
         const builder = this.createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors);
-
-        const result = await this.staticService.resolveFile(pathname, {
+        const resolveOptions = {
           projectDir: ctx.projectDir,
           adapter: ctx.adapter,
           isPreviewMode,
           isLocalProject: isLocal,
-        });
+        };
+
+        const result = await this.staticService.resolveFile(pathname, resolveOptions);
 
         if (!result) {
+          if (
+            pathname === "/favicon.ico" &&
+            await this.staticService.resolveFile("/favicon.svg", resolveOptions)
+          ) {
+            return builder
+              .withSecurity(ctx.securityConfig ?? undefined, req)
+              .withCache("no-cache")
+              .withHeaders({ location: new URL("/favicon.svg", req.url).toString() })
+              .withStatus(307)
+              .build();
+          }
+
           if (isDynamicBuildFallbackPath(pathname)) return null;
           if (!this.staticService.isAssetRequest(pathname)) return null;
 

@@ -29,6 +29,22 @@ describe("config-generator", () => {
       }
     });
 
+    it("includes the standard local developer commands", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project");
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+        assertEquals(pkg.scripts, {
+          dev: "veryfront dev",
+          build: "veryfront build",
+          start: "veryfront serve",
+          eval: "veryfront eval",
+        });
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("pins React defaults to the framework npm shim version", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {

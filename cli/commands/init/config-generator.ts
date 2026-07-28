@@ -80,7 +80,8 @@ export async function createPackageJson(
     scripts: {
       dev: "veryfront dev",
       build: "veryfront build",
-      preview: "veryfront preview",
+      start: "veryfront serve",
+      eval: "veryfront eval",
     },
     pnpm: {
       onlyBuiltDependencies: ["esbuild", "veryfront"],

@@ -1,9 +1,34 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleServeCommand, parseServeArgs } from "./handler.ts";
+
+function withServeEnv(
+  values: { PORT?: string; VERYFRONT_PORT?: string; BIND_ADDRESS?: string },
+  run: () => void,
+): void {
+  const previous = {
+    PORT: getEnv("PORT"),
+    VERYFRONT_PORT: getEnv("VERYFRONT_PORT"),
+    BIND_ADDRESS: getEnv("BIND_ADDRESS"),
+  };
+
+  try {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) deleteEnv(key);
+      else setEnv(key, value);
+    }
+    run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) deleteEnv(key);
+      else setEnv(key, value);
+    }
+  }
+}
 
 describe("commands/serve/handler", () => {
   describe("handleServeCommand", () => {
@@ -49,16 +74,49 @@ describe("commands/serve/handler", () => {
     });
 
     describe("port handling", () => {
-      it("uses DEFAULT_DEV_SERVER_PORT (3000) when port is not specified", () => {
-        const args: ParsedArgs = { _: ["serve"] };
-        const port = args.port ?? 3000;
-        assertEquals(port, 3000);
+      it("uses deployment environment defaults when flags are omitted", () => {
+        withServeEnv(
+          { PORT: "4321", VERYFRONT_PORT: undefined, BIND_ADDRESS: "0.0.0.0" },
+          () => {
+            const parsed = parseServeArgs({ _: ["serve"] });
+
+            assertEquals(parsed.success, true);
+            assertExists(parsed.data);
+            assertEquals(parsed.data.port, 4321);
+            assertEquals(parsed.data.hostname, "0.0.0.0");
+          },
+        );
       });
 
-      it("uses explicit port when provided", () => {
-        const args: ParsedArgs = { _: ["serve"], port: 8080 };
-        const port = args.port ?? 3000;
-        assertEquals(port, 8080);
+      it("uses VERYFRONT_PORT when PORT is absent", () => {
+        withServeEnv(
+          { PORT: undefined, VERYFRONT_PORT: "4322", BIND_ADDRESS: undefined },
+          () => {
+            const parsed = parseServeArgs({ _: ["serve"] });
+
+            assertEquals(parsed.success, true);
+            assertExists(parsed.data);
+            assertEquals(parsed.data.port, 4322);
+          },
+        );
+      });
+
+      it("keeps explicit network flags ahead of environment defaults", () => {
+        withServeEnv(
+          { PORT: "4321", VERYFRONT_PORT: undefined, BIND_ADDRESS: "0.0.0.0" },
+          () => {
+            const parsed = parseServeArgs({
+              _: ["serve"],
+              port: 8080,
+              hostname: "127.0.0.1",
+            });
+
+            assertEquals(parsed.success, true);
+            assertExists(parsed.data);
+            assertEquals(parsed.data.port, 8080);
+            assertEquals(parsed.data.hostname, "127.0.0.1");
+          },
+        );
       });
     });
 
@@ -100,12 +158,17 @@ describe("commands/serve/handler", () => {
     });
 
     describe("hostname/host/bindAddress resolution", () => {
-      it("defaults production mode to localhost when no host flags are provided", () => {
-        const args: ParsedArgs = { _: ["serve"] };
-        const parsed = parseServeArgs(args);
-        assertEquals(parsed.success, true);
-        assertExists(parsed.data);
-        assertEquals(parsed.data.hostname, "127.0.0.1");
+      it("defaults production mode to all interfaces", () => {
+        withServeEnv(
+          { PORT: undefined, VERYFRONT_PORT: undefined, BIND_ADDRESS: undefined },
+          () => {
+            const parsed = parseServeArgs({ _: ["serve"] });
+
+            assertEquals(parsed.success, true);
+            assertExists(parsed.data);
+            assertEquals(parsed.data.hostname, "0.0.0.0");
+          },
+        );
       });
 
       it("uses --hostname when provided", () => {

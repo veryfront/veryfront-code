@@ -9,7 +9,8 @@ const DENO_CONFIG = {
   tasks: {
     dev: `deno run -A ${VERYFRONT_DENO_SPEC} dev`,
     build: `deno run -A ${VERYFRONT_DENO_SPEC} build`,
-    preview: `deno run -A ${VERYFRONT_DENO_SPEC} preview`,
+    start: `deno run -A ${VERYFRONT_DENO_SPEC} serve`,
+    eval: `deno run -A ${VERYFRONT_DENO_SPEC} eval`,
   },
 };
 
