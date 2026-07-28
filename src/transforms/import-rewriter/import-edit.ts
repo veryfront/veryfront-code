@@ -28,43 +28,23 @@ export async function initLexer(): Promise<void> {
   await initPromise;
 }
 
-// Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
-const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
-
-interface UrlMaskResult {
-  masked: string;
-  urlMap: Map<string, string>;
-}
-
-function maskHttpUrls(code: string): UrlMaskResult {
-  const urlMap = new Map<string, string>();
-  let counter = 0;
-
-  const masked = code.replace(
-    HTTP_URL_PATTERN,
-    (_match, quote: string, url: string) => {
-      const placeholder = `__VFURL_${counter++}__`;
-      urlMap.set(placeholder, url);
-      return `${quote}${placeholder}${quote}`;
-    },
-  );
-
-  return { masked, urlMap };
-}
-
-function unmaskUrl(specifier: string, urlMap: Map<string, string>): string {
-  return urlMap.get(specifier) ?? specifier;
-}
-
 /**
  * Parsed import information with position data.
  */
 export interface ParsedImportEdits {
   /** All imports found in the code */
   imports: ImportSpecifierInfo[];
-  /** URL map for restoring masked HTTP URLs */
+  /**
+   * @deprecated HTTP URLs are parsed directly. Retained as an empty map for
+   * compatibility with callers compiled against the earlier result shape.
+   */
   urlMap: Map<string, string>;
-  /** Original masked code (for position calculations) */
+  /**
+   * Source code indexed by the import positions.
+   *
+   * The historical name is retained for API compatibility; the source is no
+   * longer masked.
+   */
   maskedCode: string;
 }
 
@@ -75,13 +55,12 @@ export interface ParsedImportEdits {
 export async function parseImportEdits(code: string): Promise<ParsedImportEdits> {
   await initLexer();
 
-  const { masked, urlMap } = maskHttpUrls(code);
-  const rawImports = getLexer().parse(masked);
+  const rawImports = getLexer().parse(code);
 
   const imports: ImportSpecifierInfo[] = rawImports
     .filter((imp) => imp.n !== undefined)
     .map((imp) => ({
-      specifier: unmaskUrl(imp.n!, urlMap),
+      specifier: imp.n!,
       isDynamic: imp.d > -1,
       start: imp.s,
       end: imp.e,
@@ -90,7 +69,7 @@ export async function parseImportEdits(code: string): Promise<ParsedImportEdits>
       raw: imp as ImportSpecifier,
     }));
 
-  return { imports, urlMap, maskedCode: masked };
+  return { imports, urlMap: new Map(), maskedCode: code };
 }
 
 /**
@@ -99,9 +78,9 @@ export async function parseImportEdits(code: string): Promise<ParsedImportEdits>
  * Takes the parsed imports and a map of specifier -> replacement.
  * Applies replacements from end to start to preserve positions.
  *
- * IMPORTANT: Positions from es-module-lexer are relative to the masked code
- * (HTTP URLs replaced with short placeholders). We must apply rewrites to the
- * masked code first, then unmask the final result to restore any untouched URLs.
+ * Positions from the module lexer index directly into `parsed.maskedCode`.
+ * Despite its compatibility-preserving name, that field contains the original
+ * unmasked source.
  */
 export function applyImportEdits(
   parsed: ParsedImportEdits,
@@ -146,12 +125,6 @@ export function applyImportEdits(
     }
 
     result = result.substring(0, imp.start) + specifier + result.substring(imp.end);
-  }
-
-  if (parsed.urlMap.size === 0) return result;
-
-  for (const [placeholder, url] of parsed.urlMap) {
-    result = result.replaceAll(placeholder, url);
   }
 
   return result;

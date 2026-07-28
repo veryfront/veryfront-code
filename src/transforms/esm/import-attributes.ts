@@ -9,7 +9,7 @@
  * @module transforms/esm/import-attributes
  */
 
-import { type ImportSpecifier, parseMaskedImports } from "./lexer.ts";
+import { type ImportSpecifier, parseImports } from "./lexer.ts";
 import { importAttributeRange } from "../import-rewriter/import-edit.ts";
 
 const ASSERT_KEYWORD = "assert";
@@ -50,17 +50,17 @@ function declaresJsonTypeOnly(clause: string, isDynamic: boolean): boolean {
 }
 
 /** Position of the legacy `assert` keyword this import uses, or `null`. */
-function findAssertKeyword(masked: string, imp: ImportSpecifier): number | null {
+function findAssertKeyword(code: string, imp: ImportSpecifier): number | null {
   if (imp.d === -1) {
     STATIC_ASSERT_KEYWORD.lastIndex = imp.se;
-    const match = STATIC_ASSERT_KEYWORD.exec(masked);
+    const match = STATIC_ASSERT_KEYWORD.exec(code);
     return match === null ? null : STATIC_ASSERT_KEYWORD.lastIndex - ASSERT_KEYWORD.length;
   }
 
   const { start, end } = attributeRange(imp);
   if (start >= end) return null;
 
-  const match = DYNAMIC_ASSERT_KEY.exec(masked.slice(start, end));
+  const match = DYNAMIC_ASSERT_KEY.exec(code.slice(start, end));
   return match === null ? null : start + match[0].length - ASSERT_KEYWORD.length;
 }
 
@@ -78,20 +78,20 @@ function findAssertKeyword(masked: string, imp: ImportSpecifier): number | null 
 export async function upgradeImportAssertions(code: string): Promise<string> {
   if (!code.includes(ASSERT_KEYWORD)) return code;
 
-  const { masked, imports, unmask } = await parseMaskedImports(code);
-  let result = masked;
+  const imports = await parseImports(code);
+  let result = code;
 
   for (let i = imports.length - 1; i >= 0; i--) {
     const imp = imports[i];
     if (!imp?.n) continue;
 
-    const keyword = findAssertKeyword(masked, imp);
+    const keyword = findAssertKeyword(code, imp);
     if (keyword === null) continue;
 
     result = result.slice(0, keyword) + "with" + result.slice(keyword + ASSERT_KEYWORD.length);
   }
 
-  return unmask(result);
+  return result;
 }
 
 /**
@@ -108,20 +108,20 @@ export async function stripJsonImportAttributes(
 ): Promise<string> {
   if (!code.includes("with")) return code;
 
-  const { masked, imports, unmask } = await parseMaskedImports(code);
-  let result = masked;
+  const imports = await parseImports(code);
+  let result = code;
 
   for (let i = imports.length - 1; i >= 0; i--) {
     const imp = imports[i];
     if (!imp?.n) continue;
-    if (!shouldStrip(unmask(imp.n))) continue;
+    if (!shouldStrip(imp.n)) continue;
 
     const { start, end } = attributeRange(imp);
     if (start >= end) continue;
-    if (!declaresJsonTypeOnly(masked.slice(start, end), imp.d > -1)) continue;
+    if (!declaresJsonTypeOnly(code.slice(start, end), imp.d > -1)) continue;
 
     result = result.slice(0, start) + result.slice(end);
   }
 
-  return unmask(result);
+  return result;
 }

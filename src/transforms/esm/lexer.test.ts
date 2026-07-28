@@ -70,7 +70,7 @@ describe("transforms/esm/lexer", () => {
       assertEquals(imports[0]!.n, "https://esm.sh/react@18");
     });
 
-    it("does not unmask a distinct placeholder-shaped specifier", async () => {
+    it("preserves placeholder-shaped specifiers", async () => {
       const code = [
         'import remote from "https://example.com/remote.js";',
         'import local from "./__VF_HTTP_MASK_e3c2_0__.js";',
@@ -148,6 +148,26 @@ const url = "https://example.com/api";
       });
       assertEquals(result.includes("https://example.com/api"), true);
       assertEquals(result.includes("baz"), true);
+    });
+
+    it("does not rewrite placeholder-shaped source text while preserving HTTP URLs", async () => {
+      const code = [
+        'import remote from "https://example.com/remote.js";',
+        'const marker = "__VF_HTTP_MASK_e3c2_0__";',
+        'import local from "./local.js";',
+      ].join("\n");
+
+      assertEquals(
+        await replaceSpecifiers(
+          code,
+          (specifier) => specifier === "./local.js" ? "./local-v2.js" : null,
+        ),
+        [
+          'import remote from "https://example.com/remote.js";',
+          'const marker = "__VF_HTTP_MASK_e3c2_0__";',
+          'import local from "./local-v2.js";',
+        ].join("\n"),
+      );
     });
   });
 

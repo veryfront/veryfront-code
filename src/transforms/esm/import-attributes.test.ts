@@ -77,6 +77,23 @@ describe("upgradeImportAssertions", () => {
         `import m from "./a.json" with { type: "json" };\n`,
     );
   });
+
+  it("does not rewrite placeholder-shaped source text", async () => {
+    const code = [
+      'const endpoint = "https://example.com/api";',
+      'const marker = "__VF_HTTP_MASK_e3c2_0__";',
+      'import m from "./a.json" assert { type: "json" };',
+    ].join("\n");
+
+    assertEquals(
+      await upgradeImportAssertions(code),
+      [
+        'const endpoint = "https://example.com/api";',
+        'const marker = "__VF_HTTP_MASK_e3c2_0__";',
+        'import m from "./a.json" with { type: "json" };',
+      ].join("\n"),
+    );
+  });
 });
 
 describe("stripJsonImportAttributes", () => {

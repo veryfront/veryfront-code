@@ -51,14 +51,16 @@ export { foo } from "bar";
       assertEquals(parsed.imports.length, 0);
     });
 
-    it("restores masked HTTP URLs in specifiers", async () => {
+    it("parses HTTP URL specifiers directly", async () => {
       const code = `import React from "https://esm.sh/react@18";`;
       const parsed = await parseAllImports(code);
       assertEquals(parsed.imports.length, 1);
       assertEquals(parsed.imports[0]!.specifier, "https://esm.sh/react@18");
+      assertEquals(parsed.maskedCode, code);
+      assertEquals(parsed.urlMap.size, 0);
     });
 
-    it("does not unmask a distinct placeholder-shaped specifier", async () => {
+    it("preserves placeholder-shaped specifiers", async () => {
       const code = [
         'import remote from "https://example.com/remote.js";',
         'import local from "./__VFURL_0__.js";',
@@ -147,6 +149,29 @@ const url = "https://example.com/api";
       const rewrites = new Map([[0, { specifier: "preact" }]]);
       const result = applyRewrites(code, parsed, rewrites);
       assertEquals(result.includes("https://example.com/api"), true);
+    });
+
+    it("does not rewrite placeholder-shaped source text while preserving HTTP URLs", async () => {
+      const code = [
+        'import remote from "https://example.com/remote.js";',
+        'const marker = "__VFURL_0__";',
+        'import local from "./local.js";',
+      ].join("\n");
+      const parsed = await parseAllImports(code);
+      const result = applyRewrites(
+        code,
+        parsed,
+        new Map([[1, { specifier: "./local-v2.js" }]]),
+      );
+
+      assertEquals(
+        result,
+        [
+          'import remote from "https://example.com/remote.js";',
+          'const marker = "__VFURL_0__";',
+          'import local from "./local-v2.js";',
+        ].join("\n"),
+      );
     });
   });
 

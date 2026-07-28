@@ -81,7 +81,7 @@ describe("build/renderer/utils/module-imports", () => {
     assertStringIncludes(rewritten, '{ with: { type: "json" } }');
   });
 
-  it("does not unmask placeholder-shaped replacement text", async () => {
+  it("preserves placeholder-shaped replacement text", async () => {
     const code = [
       'import remote from "https://example.com/remote.js";',
       'import local from "./local.js";',
@@ -97,5 +97,25 @@ describe("build/renderer/utils/module-imports", () => {
       "https://example.com/remote.js",
       replacement,
     ]);
+  });
+
+  it("does not rewrite placeholder-shaped text already present in source", async () => {
+    const code = [
+      'import remote from "https://example.com/remote.js";',
+      'const marker = "__VFURL_0__";',
+      'import local from "./local.js";',
+    ].join("\n");
+
+    assertEquals(
+      await replaceModuleImportSpecifiers(
+        code,
+        new Map([["./local.js", "./local-v2.js"]]),
+      ),
+      [
+        'import remote from "https://example.com/remote.js";',
+        'const marker = "__VFURL_0__";',
+        'import local from "./local-v2.js";',
+      ].join("\n"),
+    );
   });
 });

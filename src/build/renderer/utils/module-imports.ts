@@ -38,37 +38,6 @@ function getLiteralRange(
   return { start, end };
 }
 
-function restoreMaskedUrls(
-  code: string,
-  urlMap: ReadonlyMap<string, string>,
-): string {
-  let restored = code;
-  for (const [placeholder, url] of urlMap) {
-    restored = restored.replaceAll(placeholder, url);
-  }
-  return restored;
-}
-
-function protectReplacementFromUrlUnmasking(
-  serialized: string,
-  urlMap: ReadonlyMap<string, string>,
-): string {
-  let protectedLiteral = serialized;
-  for (const placeholder of urlMap.keys()) {
-    // The lexer mask uses an underscore-prefixed identifier. Encode the first
-    // underscore in replacement literals so the later source unmask cannot
-    // rewrite caller-controlled replacement text that resembles a placeholder.
-    if (!placeholder.startsWith("_")) {
-      throw new TypeError("Module lexer returned an unsupported URL placeholder");
-    }
-    protectedLiteral = protectedLiteral.replaceAll(
-      placeholder,
-      `\\u005f${placeholder.slice(1)}`,
-    );
-  }
-  return protectedLiteral;
-}
-
 /** Parse actual ESM dependencies without matching comments or string contents. */
 export async function parseModuleImports(
   code: string,
@@ -115,13 +84,10 @@ export async function replaceModuleImportSpecifiers(
     }
 
     const range = getLiteralRange(moduleImport, parsed.maskedCode);
-    const serialized = protectReplacementFromUrlUnmasking(
-      JSON.stringify(replacement),
-      parsed.urlMap,
-    );
+    const serialized = JSON.stringify(replacement);
     rewritten = rewritten.slice(0, range.start) + serialized +
       rewritten.slice(range.end);
   }
 
-  return restoreMaskedUrls(rewritten, parsed.urlMap);
+  return rewritten;
 }
