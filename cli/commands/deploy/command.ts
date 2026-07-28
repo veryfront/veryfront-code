@@ -857,6 +857,13 @@ function projectApiReference(config: ResolvedConfig): string {
   return config.projectId ?? config.projectSlug;
 }
 
+async function needsBootstrapPush(
+  projectDir: string,
+  skipSourcePush: boolean | undefined,
+): Promise<boolean> {
+  return !skipSourcePush && !(await readPushReceipt(projectDir));
+}
+
 async function persistProjectLink(
   projectDir: string,
   config: ResolvedConfig,
@@ -1149,19 +1156,20 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet)
   );
   let { config, client, project } = setup;
+  const bootstrapPush = await needsBootstrapPush(projectDir, skipSourcePush);
 
   if (dryRun && !project) {
     spinner.stop();
     if (!quiet) {
-      const actions = skipSourcePush
-        ? `create release and deploy to "${env}"`
-        : `push source to "${branch}", create release, and deploy to "${env}"`;
+      const actions = bootstrapPush
+        ? `push source to "${branch}", create release, and deploy to "${env}"`
+        : `create release and deploy to "${env}"`;
       logInfo(`Would ${actions} for project ${setup.plannedProjectSlug}`);
     }
     return;
   }
 
-  if (!skipSourcePush) {
+  if (bootstrapPush) {
     updateProgress("Uploading source...", `Pushing source to "${branch}"...`);
     await runWithProgress(() =>
       pushCommand({
@@ -1198,8 +1206,24 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
 
   if (dryRun) {
+    if (!bootstrapPush && !skipSourcePush) {
+      await runWithProgress(() =>
+        resolvePushedSource({
+          projectDir,
+          controlPlane: config.apiUrl,
+          projectId: project.id,
+          projectSlug: project.slug,
+          branch,
+        })
+      );
+    }
     spinner.stop();
-    if (!quiet) logInfo(`Would create release from "${branch}" and deploy to "${env}"`);
+    if (!quiet) {
+      const actions = bootstrapPush
+        ? `push source to "${branch}", create release, and deploy to "${env}"`
+        : `create release and deploy to "${env}"`;
+      logInfo(`Would ${actions}`);
+    }
     return;
   }
 
@@ -1352,6 +1376,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     const environmentConfig = getEnvironmentConfig();
     const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);
     let { config, client, project } = setup;
+    const bootstrapPush = await needsBootstrapPush(projectDir, skipSourcePush);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
     if (dryRun && !project) {
@@ -1368,7 +1393,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
           controlPlane: normalizeControlPlane(config.apiUrl),
           plannedActions: [
             "create-project",
-            ...(skipSourcePush ? [] : ["push-source"]),
+            ...(bootstrapPush ? ["push-source"] : []),
             "create-release",
             "deploy",
           ],
@@ -1377,7 +1402,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
       return;
     }
 
-    if (!skipSourcePush) {
+    if (bootstrapPush) {
       streamJsonLine({ type: "step", name: "push-source", status: "started" });
       await pushCommand({
         projectDir,
@@ -1408,6 +1433,15 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     streamJsonLine({ type: "step", name: "resolve-target", status: "completed" });
 
     if (dryRun) {
+      if (!bootstrapPush && !skipSourcePush) {
+        await resolvePushedSource({
+          projectDir,
+          controlPlane: config.apiUrl,
+          projectId: project.id,
+          projectSlug: project.slug,
+          branch,
+        });
+      }
       streamJsonLine({
         type: "result",
         success: true,
@@ -1419,6 +1453,11 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
           environment: env,
           environmentId: environment.id,
           controlPlane: normalizeControlPlane(config.apiUrl),
+          plannedActions: [
+            ...(bootstrapPush ? ["push-source"] : []),
+            "create-release",
+            "deploy",
+          ],
         },
       });
       return;

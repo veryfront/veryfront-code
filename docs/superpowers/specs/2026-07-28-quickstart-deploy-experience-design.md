@@ -109,7 +109,7 @@ The source digest, not Git cleanliness, identifies the bytes available for relea
 
 ### Deploy and production
 
-`veryfront deploy` pushes the current source unless source upload was already completed by a composed command, creates a release from that branch, and deploys it to `production` by default.
+`veryfront deploy` creates a release from the last verified Push receipt and deploys it to `production` by default. If no Push receipt exists yet, it first runs a quiet Push so first deploy still works as one command.
 
 `--env` and `--environment` select another environment.
 
@@ -208,7 +208,7 @@ Errors state the failed contract and the next action:
 - missing linked project: stop rather than create an unrelated replacement;
 - project-name collision during first link: reserve and persist the returned alternative;
 - changed source during push: rerun `veryfront push`;
-- mismatched receipt or digest during deploy: rerun `veryfront push` or `veryfront deploy`;
+- mismatched receipt or digest during deploy: rerun `veryfront push` for the target branch, then deploy again;
 - dependency installation failure: run the printed package-manager command.
 
 Normal errors omit stack traces. `--verbose` includes diagnostic context.

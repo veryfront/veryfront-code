@@ -16,6 +16,8 @@ const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
 const RELEASE_ID = "770e8400-e29b-41d4-a716-446655440000";
 const DEPLOYMENT_ID = "880e8400-e29b-41d4-a716-446655440000";
+const PUSHED_SOURCE = "export const value = 1;\n";
+const STALE_SOURCE = "export const value = 2;\n";
 
 async function runGit(projectDir: string, ...args: string[]) {
   const result = await new Deno.Command("git", {
@@ -49,6 +51,404 @@ async function commitProject(projectDir: string) {
     }).output()).stdout,
   ).trim();
 }
+
+async function withDeployEnv<T>(
+  projectDir: string,
+  fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
+): Promise<T> {
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
+    await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
+    const commitSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: PUSHED_SOURCE },
+      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+    ]);
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    return await fn({ commitSha, sourceDigest });
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    setJsonMode(false);
+    setVerboseMode(false);
+    await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+function createDeployFetchHandler(options: {
+  requests: string[];
+  releaseSource?: string;
+  sourceDigest: string;
+  uploadedPaths?: string[];
+  branchCreates?: string[];
+}) {
+  let environmentReads = 0;
+  const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
+
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const url = new URL(request.url);
+    const requestKey = `${request.method} ${url.pathname}${url.search}`;
+    options.requests.push(requestKey);
+
+    if (request.method === "GET" && url.hostname === "my-project.production.veryfront.com") {
+      return new Response("ready");
+    }
+    if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
+      return Response.json({ id: PROJECT_ID, slug: "my-project" });
+    }
+    if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
+      return Response.json({ data: [], page_info: {} });
+    }
+    if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/files`) {
+      return Response.json({ data: [], page_info: {} });
+    }
+    if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
+      return Response.json({ id: PROJECT_ID, slug: "my-project" });
+    }
+    if (request.method === "POST" && url.pathname === `/api/projects/${PROJECT_ID}/branches`) {
+      const body = await request.json() as { name?: string };
+      options.branchCreates?.push(body.name ?? "");
+      return Response.json({ id: "branch-feature", name: body.name, projectId: PROJECT_ID });
+    }
+    if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/branches`) {
+      return Response.json({ data: [], page_info: {} });
+    }
+    if (
+      request.method === "PUT" &&
+      (url.pathname.startsWith(`/api/projects/${PROJECT_ID}/files/`) ||
+        url.pathname.startsWith("/api/projects/my-project/files/"))
+    ) {
+      options.uploadedPaths?.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+      return Response.json({});
+    }
+    if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+      environmentReads++;
+      return Response.json({
+        data: [{
+          id: ENVIRONMENT_ID,
+          name: "production",
+          project_id: PROJECT_ID,
+          protected: false,
+          deployment: environmentReads === 1 ? null : {
+            id: DEPLOYMENT_ID,
+            release: { id: RELEASE_ID, name: "production-release" },
+          },
+        }],
+      });
+    }
+    if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+      return Response.json({
+        id: RELEASE_ID,
+        name: "production-release",
+        version: "0.0.41",
+        project_id: PROJECT_ID,
+      }, { status: 201 });
+    }
+    if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+      return Response.json({
+        id: RELEASE_ID,
+        name: "production-release",
+        version: "0.0.41",
+        project_id: PROJECT_ID,
+      });
+    }
+    if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)) {
+      return Response.json({
+        data: [
+          {
+            path: "app.ts",
+            data: JSON.stringify({ body: releaseSource, path: "app.ts" }),
+          },
+          {
+            path: "veryfront.json",
+            data: JSON.stringify({
+              body: '{"projectSlug":"my-project"}\n',
+              path: "veryfront.json",
+            }),
+          },
+        ],
+        page_info: {},
+      });
+    }
+    if (
+      request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)
+    ) {
+      return Response.json({
+        state: "ready",
+        manifest_version: 1,
+        manifest: {
+          schemaVersion: 1,
+          projectId: PROJECT_ID,
+          releaseId: RELEASE_ID,
+          releaseVersion: 41,
+          manifestVersion: 1,
+          builderVersion: "test",
+          sourceContentHash: options.sourceDigest,
+          createdAt: "2026-07-10T09:20:00.000Z",
+          assetBasePath: "/_vf/assets",
+          modules: {},
+          css: [],
+          routes: {},
+          dependencies: {},
+          fallback: { mode: "jit", gaps: [] },
+        },
+      });
+    }
+    if (request.method === "POST" && url.pathname.endsWith("/deployments")) {
+      return Response.json({
+        id: DEPLOYMENT_ID,
+        release_id: RELEASE_ID,
+        environment_id: ENVIRONMENT_ID,
+        routing_convergence: { status: "converged", acknowledged: 1, recipients: 1 },
+      }, { status: 201 });
+    }
+    if (request.method === "GET" && url.pathname.endsWith(`/deployments/${DEPLOYMENT_ID}`)) {
+      return Response.json({
+        id: DEPLOYMENT_ID,
+        release_id: RELEASE_ID,
+        environment_id: ENVIRONMENT_ID,
+      });
+    }
+    return Response.json({ message: "not found" }, { status: 404 });
+  };
+}
+
+it("deploys production from the existing verified push without mutating source", async () => {
+  for (const jsonMode of [false, true]) {
+    const projectDir = await Deno.makeTempDir();
+    await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: PROJECT_ID,
+        projectSlug: "my-project",
+        branch: "feature-x",
+        commitSha,
+        sourceDigest,
+        clean: true,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+      await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+      const requests: string[] = [];
+      const uploadedPaths: string[] = [];
+      const branchCreates: string[] = [];
+      const output: string[] = [];
+      const originalLog = console.log;
+      setJsonMode(jsonMode);
+      console.log = (...args: unknown[]) => {
+        output.push(args.map(String).join(" "));
+      };
+
+      try {
+        await withMockFetch(
+          createDeployFetchHandler({ requests, sourceDigest, uploadedPaths, branchCreates }),
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "feature-x",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+              environmentPollIntervalMs: 1,
+              environmentTimeoutMs: 1_000,
+            }),
+        );
+      } finally {
+        console.log = originalLog;
+      }
+
+      assertEquals(uploadedPaths, []);
+      assertEquals(branchCreates, []);
+      assertEquals(
+        requests.some((request) => request.startsWith("PUT ")),
+        false,
+      );
+      assertEquals(
+        requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+        true,
+      );
+
+      if (jsonMode) {
+        const result = output.map((line) => JSON.parse(line)).at(-1);
+        assertEquals(result.data.branch, "feature-x");
+        assertEquals(result.data.sourceDigest, sourceDigest);
+      }
+    });
+  }
+});
+
+it("bootstraps exactly one quiet push when no verified push receipt exists", async () => {
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        deployCommand({
+          projectDir,
+          branch: "main",
+          env: "production",
+          dryRun: false,
+          force: false,
+          quiet: true,
+          environmentPollIntervalMs: 1,
+          environmentTimeoutMs: 1_000,
+        }),
+    );
+
+    assertEquals(uploadedPaths, ["app.ts", "veryfront.json"]);
+    assertEquals(
+      requests.filter((request) => request.endsWith("/files/app.ts")).length,
+      1,
+    );
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  });
+});
+
+it("fails on a stale verified push receipt instead of replacing it", async () => {
+  const projectDir = await Deno.makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: `${"1".repeat(40)}`,
+      sourceDigest,
+      clean: true,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+
+    const requests: string[] = [];
+    const uploadedPaths: string[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: true,
+              force: false,
+              quiet: true,
+            }),
+          Error,
+          "The latest push came from a different commit. Run veryfront push again.",
+        ),
+    );
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest, uploadedPaths }),
+      () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: false,
+              quiet: true,
+            }),
+          Error,
+          "The latest push came from a different commit. Run veryfront push again.",
+        ),
+    );
+
+    assertEquals(uploadedPaths, []);
+    assertEquals(
+      requests.some((request) => request.startsWith("PUT ")),
+      false,
+    );
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      false,
+    );
+  });
+});
+
+it("reports dry-run deploy actions from the verified push state in human and JSON modes", async () => {
+  for (const jsonMode of [false, true]) {
+    const projectDir = await Deno.makeTempDir();
+    await withDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: PROJECT_ID,
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest,
+        clean: true,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+
+      const requests: string[] = [];
+      const output: string[] = [];
+      const originalLog = console.log;
+      setJsonMode(jsonMode);
+      console.log = (...args: unknown[]) => {
+        output.push(args.map(String).join(" "));
+      };
+
+      try {
+        await withMockFetch(
+          createDeployFetchHandler({ requests, sourceDigest }),
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: true,
+              force: false,
+              quiet: false,
+            }),
+        );
+      } finally {
+        console.log = originalLog;
+      }
+
+      if (jsonMode) {
+        const result = output.map((line) => JSON.parse(line)).at(-1);
+        assertEquals(result.data.plannedActions, ["create-release", "deploy"]);
+      } else {
+        const humanOutput = stripAnsi(output.join("\n"));
+        assertEquals(
+          humanOutput.includes('Would create release and deploy to "production"'),
+          true,
+        );
+        assertEquals(humanOutput.includes("push source"), false);
+      }
+    });
+  }
+});
 
 it("uses canonical production read-back in human and JSON modes", async () => {
   const projectDir = await Deno.makeTempDir();

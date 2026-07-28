@@ -45,9 +45,11 @@ See [Configuration](./configuration.md) for the Cloud bootstrap environment
 variables.
 
 CI should use explicit project configuration, such as `VERYFRONT_PROJECT_SLUG`
-or `VERYFRONT_PROJECT_ID`. Those environment references take precedence over
-`veryfront.config.ts`, legacy `veryfront.json`, and the ignored local link in
-`.veryfront/project.json`.
+or committed config. Project reference precedence is
+`VERYFRONT_PROJECT_SLUG` or environment configuration, then
+`veryfront.config.ts`, then legacy `veryfront.json`, then lower-level tenant or
+project-ID environment references such as `VERYFRONT_PROJECT_ID`, then the
+ignored local link in `.veryfront/project.json`.
 
 ## Define the managed source set
 
@@ -87,10 +89,12 @@ veryfront deploy --branch main --env staging --yes
 ```
 
 Push records the checked-out commit and source digest in
-`.veryfront/push-receipt.json`. Deploy requires that receipt to match the same
-project, branch, commit, and checkout, then verifies the release source digest
-before assigning it to the environment. Do not split the two commands across CI
-jobs or clean the checkout between them.
+`.veryfront/push-receipt.json`. Deploy uses that last verified Push receipt,
+requires it to match the same project, branch, commit, and checkout, then
+verifies the release source digest before assigning it to the environment. If no
+receipt exists, Deploy bootstraps one with a quiet Push, but CI should keep the
+explicit Push step so review and production promotion remain separate. Do not
+split the two commands across CI jobs or clean the checkout between them.
 
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.

@@ -84,15 +84,18 @@ npx veryfront push --branch feature-x
 npx veryfront deploy --branch feature-x --env staging
 ```
 
-Deploy reads the local Push receipt and verifies the release was built from the
-exact pushed source digest before assigning it to the environment. Use
-`veryfront open` after deployment to open the project. Use `veryfront open
---json` when automation needs the deployed URL.
+Deploy uses the last verified Push receipt and verifies the release was built
+from that exact source digest before assigning it to the environment. If no Push
+receipt exists, Deploy first runs a quiet Push so the first deployment still
+works as one command. Use `veryfront open` after deployment to open the project.
+Deploy prints the environment URL; use `veryfront open --json` when automation
+needs the same URL later.
 
-Explicit project configuration wins over the local link: environment variables,
-then `veryfront.config.ts`, then legacy `veryfront.json`. Keep
-`.veryfront/project.json` ignored unless you intentionally use committed
-configuration instead.
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link. Keep `.veryfront/project.json` ignored unless you intentionally use
+committed configuration instead.
 
 ## Set production environment variables
 

@@ -98,6 +98,10 @@ is ready for production, deploy the exact pushed source digest:
 npx veryfront deploy --env production
 ```
 
-Explicit project configuration still takes precedence. Use `VERYFRONT_PROJECT_SLUG`,
-`VERYFRONT_PROJECT_ID`, `veryfront.config.ts`, or the legacy `veryfront.json`
-when you need a committed project binding.
+Deploy uses the last verified Push receipt. If no receipt exists yet, it first
+runs a quiet Push so the first production deploy still works as one command.
+
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link.

@@ -61,10 +61,15 @@ After checking the preview, deploy the exact pushed source digest:
 npx veryfront deploy --env production
 ```
 
-Deploy reads the local Push receipt, verifies the release source digest, waits
-for browser assets, and prints the environment URL. Explicit project
-configuration wins over the local link: environment variables, then
-`veryfront.config.ts`, then legacy `veryfront.json`.
+Deploy uses the last verified Push receipt, verifies the release source digest,
+waits for browser assets, and prints the environment URL. If no Push receipt
+exists, Deploy first runs a quiet Push so a first deployment still works as one
+command.
+
+Project reference precedence is `VERYFRONT_PROJECT_SLUG` or environment
+configuration, then `veryfront.config.ts`, then legacy `veryfront.json`, then
+lower-level tenant or project-ID environment references, then the ignored local
+link.
 
 ## Deploy somewhere else
 
