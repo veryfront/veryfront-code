@@ -278,12 +278,23 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
     assertEquals(typeof runtimeSystem, "function");
     assertEquals(
-      runtimeMessages?.[0]?.parts.find((part) => part.type === "image"),
-      {
-        type: "image",
-        mediaType: "image/png",
-        url: "https://uploads.example.com/screenshot.png",
-      },
+      runtimeMessages?.[0]?.parts,
+      [
+        { type: "text", text: "Hello" },
+        {
+          type: "image",
+          mediaType: "image/png",
+          url: "https://uploads.example.com/screenshot.png",
+        },
+        {
+          type: "text",
+          text: "Attached files from earlier conversation context:\n\n" +
+            "<uploaded_files>\n" +
+            '<file name="image" url="https://uploads.example.com/screenshot.png" ' +
+            'type="image/png" />\n' +
+            "</uploaded_files>",
+        },
+      ],
     );
     const prompt = await (runtimeSystem as () => Promise<string>)();
     assertStringIncludes(
