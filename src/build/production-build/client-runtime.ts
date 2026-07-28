@@ -9,59 +9,34 @@ import {
   fromFileUrl,
   isAbsolute,
   join,
+  relative,
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import type { OnResolveArgs, Plugin } from "veryfront/extensions/bundler";
+import { build, type OnResolveArgs, type Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createError, toError } from "#veryfront/errors";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-
-// Try to import pre-bundled client scripts (available in npm builds)
-let CLIENT_ROUTER_BUNDLE: string | undefined;
-let CLIENT_PREFETCH_BUNDLE: string | undefined;
-
-try {
-  const templates = await import("./templates.ts");
-  CLIENT_ROUTER_BUNDLE = (templates as { CLIENT_ROUTER_BUNDLE?: string }).CLIENT_ROUTER_BUNDLE;
-  CLIENT_PREFETCH_BUNDLE =
-    (templates as { CLIENT_PREFETCH_BUNDLE?: string }).CLIENT_PREFETCH_BUNDLE;
-} catch (_) {
-  /* expected: pre-bundled scripts not available in Deno development mode */
-}
+import { BUILD_FAILED } from "#veryfront/errors";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import { CLIENT_PREFETCH_BUNDLE, CLIENT_ROUTER_BUNDLE } from "./templates.ts";
 
 interface ClientScriptGenerationOptions {
   forceSourceBundle?: boolean;
 }
 
-interface FileStatResult {
-  isFile: boolean;
-}
-
-async function statFile(path: string): Promise<FileStatResult | null> {
-  const fs = createFileSystem();
-  try {
-    const stat = await fs.stat(path);
-    return { isFile: stat.isFile };
-  } catch (_) {
-    /* expected: file may not exist */
-    return null;
-  }
-}
-
-async function readTextFile(path: string): Promise<string> {
-  const fs = createFileSystem();
-  return fs.readTextFile(path);
-}
-
 const moduleDir = dirname(fromFileUrl(import.meta.url));
 const packageRoot = resolve(join(moduleDir, "..", "..", ".."));
+const CLIENT_RUNTIME_PROTOCOL_VERSION = "2.0.0";
+const MAX_CLIENT_SOURCE_BYTES = 4 * 1024 * 1024;
+const MAX_CLIENT_BUNDLE_BYTES = 8 * 1024 * 1024;
 const vfSrcPrefix = "@vf-src/";
 const veryfrontInternalPrefix = "#veryfront/";
 const moduleExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts"] as const;
 const externalSpecifier = /^(std\/|@std\/|node:|deno:|https?:)/;
 const relativeSpecifier = /^\.{1,2}(?:\/|$)/;
-const unresolvedInternalAlias = /(?:^|["'])#veryfront\//;
+const internalSourceSpecifiers = ["#veryfront/", "@vf-src/"] as const;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Encoder = new TextEncoder();
+let physicalPackageRootPromise: Promise<string> | undefined;
 
 const clientAliasPaths = new Map([
   ["#veryfront/config", "src/rendering/client/browser-stubs/config.ts"],
@@ -81,7 +56,7 @@ export function generateAppModule(): string {
   // Export for ES modules
   if (typeof window !== 'undefined') {
     window.__veryfront = window.__veryfront || {};
-    window.__veryfront.version = '2.0.0';
+    window.__veryfront.version = '${CLIENT_RUNTIME_PROTOCOL_VERSION}';
     window.__veryfront.initialized = true;
   }
 
@@ -97,7 +72,7 @@ export function generateAppModule(): string {
   };
 })();
 
-export const version = '2.0.0';
+export const version = '${CLIENT_RUNTIME_PROTOCOL_VERSION}';
 export const hydrate = window.hydrate;
 `;
 }
@@ -128,16 +103,39 @@ function loadClientScript(
   sourceEntry: string,
   options?: ClientScriptGenerationOptions,
 ): Promise<string> {
-  if (
-    preBundledScript &&
-    !options?.forceSourceBundle &&
-    !unresolvedInternalAlias.test(preBundledScript)
-  ) {
+  if (!options?.forceSourceBundle && preBundledScript !== undefined) {
+    assertUsableClientBundle(preBundledScript, scriptName, "embedded");
     logger.debug(`Using pre-bundled client ${scriptName} script`);
     return Promise.resolve(preBundledScript);
   }
 
   return bundleClientEntry(sourceEntry);
+}
+
+function assertUsableClientBundle(
+  script: string,
+  scriptName: string,
+  source: "embedded" | "generated",
+): void {
+  if (script.trim().length === 0) {
+    throw BUILD_FAILED.create({
+      detail: `The ${source} client ${scriptName} bundle is empty`,
+    });
+  }
+
+  const byteLength = utf8Encoder.encode(script).byteLength;
+  if (byteLength > MAX_CLIENT_BUNDLE_BYTES) {
+    throw BUILD_FAILED.create({
+      detail: `The ${source} client ${scriptName} bundle exceeds ${MAX_CLIENT_BUNDLE_BYTES} bytes`,
+    });
+  }
+
+  if (internalSourceSpecifiers.some((specifier) => script.includes(specifier))) {
+    throw BUILD_FAILED.create({
+      detail: `The ${source} client ${scriptName} bundle contains unresolved internal imports; ` +
+        "regenerate the embedded client bundles",
+    });
+  }
 }
 
 /**
@@ -213,13 +211,16 @@ function createPathResolverPlugin(): Plugin {
 
         if (specifier.startsWith(vfSrcPrefix)) {
           const lookupBase = resolve(packageRoot, specifier.slice(vfSrcPrefix.length));
+          assertPathWithinPackage(lookupBase);
           const resolved = await resolveFromCandidates(lookupBase);
           return resolved ? { path: resolved } : null;
         }
 
         const aliasPath = clientAliasPaths.get(specifier);
         if (aliasPath) {
-          return { path: resolve(packageRoot, aliasPath) };
+          const lookupBase = resolve(packageRoot, aliasPath);
+          const resolved = await resolveFromCandidates(lookupBase);
+          return resolved ? { path: resolved } : null;
         }
 
         if (specifier.startsWith(veryfrontInternalPrefix)) {
@@ -228,6 +229,7 @@ function createPathResolverPlugin(): Plugin {
             "src",
             specifier.slice(veryfrontInternalPrefix.length),
           );
+          assertPathWithinPackage(lookupBase);
           const resolved = await resolveFromCandidates(lookupBase);
           return resolved ? { path: resolved } : null;
         }
@@ -235,6 +237,7 @@ function createPathResolverPlugin(): Plugin {
         if (relativeSpecifier.test(specifier)) {
           const importerDir = determineImporterDir(args);
           const lookupBase = resolve(importerDir, specifier);
+          assertPathWithinPackage(lookupBase);
           const resolved = await resolveFromCandidates(lookupBase);
           return resolved ? { path: resolved } : null;
         }
@@ -262,11 +265,101 @@ function determineImporterDir(args: OnResolveArgs): string {
 }
 
 async function resolveFromCandidates(basePath: string): Promise<string | null> {
+  assertPathWithinPackage(basePath);
   for (const candidate of buildCandidatePaths(basePath)) {
-    const stat = await statFile(candidate);
-    if (stat?.isFile) return candidate;
+    if (await isSafeClientSourceFile(candidate)) return candidate;
   }
   return null;
+}
+
+function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const relativePath = relative(rootPath, candidatePath);
+  return relativePath === "." ||
+    (!isAbsolute(relativePath) &&
+      relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !relativePath.startsWith("..\\"));
+}
+
+function assertPathWithinPackage(candidatePath: string): void {
+  if (!isPathWithin(packageRoot, candidatePath)) {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source resolution escaped the framework package root",
+    });
+  }
+}
+
+function getPhysicalPackageRoot(): Promise<string> {
+  physicalPackageRootPromise ??= realPath(packageRoot).catch((error) => {
+    physicalPackageRootPromise = undefined;
+    throw error;
+  });
+  return physicalPackageRootPromise;
+}
+
+async function assertPhysicalPathWithinPackage(candidatePath: string): Promise<void> {
+  const [physicalRoot, physicalCandidate] = await Promise.all([
+    getPhysicalPackageRoot(),
+    realPath(candidatePath),
+  ]);
+  if (!isPathWithin(physicalRoot, physicalCandidate)) {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source resolved outside the framework package root",
+    });
+  }
+}
+
+async function getClientSourceFileInfo(path: string) {
+  assertPathWithinPackage(path);
+  const fs = createFileSystem();
+  const info = fs.lstat ? await fs.lstat(path) : await fs.stat(path);
+  if (
+    info.isSymlink ||
+    !info.isFile ||
+    info.isDirectory ||
+    !Number.isSafeInteger(info.size) ||
+    info.size < 0
+  ) {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source is not a safe regular file",
+    });
+  }
+  if (info.size > MAX_CLIENT_SOURCE_BYTES) {
+    throw BUILD_FAILED.create({
+      detail: `Client runtime source exceeds ${MAX_CLIENT_SOURCE_BYTES} bytes`,
+    });
+  }
+  await assertPhysicalPathWithinPackage(path);
+  return { fs, size: info.size };
+}
+
+async function isSafeClientSourceFile(path: string): Promise<boolean> {
+  try {
+    await getClientSourceFileInfo(path);
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+}
+
+async function readClientSource(path: string): Promise<string> {
+  const { fs, size } = await getClientSourceFileInfo(path);
+  const bytes = await fs.readFile(path);
+  if (bytes.byteLength !== size || bytes.byteLength > MAX_CLIENT_SOURCE_BYTES) {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source changed while it was being read",
+    });
+  }
+
+  try {
+    return utf8Decoder.decode(bytes);
+  } catch (error) {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source is not valid UTF-8",
+      cause: error,
+    });
+  }
 }
 
 function buildCandidatePaths(basePath: string): string[] {
@@ -315,85 +408,74 @@ function createFsLoaderPlugin(): Plugin {
     name: "veryfront-fs-loader",
     setup(build) {
       build.onLoad({ filter: /.*/ }, async (args) => {
-        try {
-          const contents = await readTextFile(args.path);
-          const ext = extname(args.path).toLowerCase();
-          const loader = extensionToLoader[ext] ?? "js";
-          return { contents, loader };
-        } catch (error) {
-          logger.debug("fs-loader: failed to read file", { path: args.path, error });
-          return null;
-        }
+        const contents = await readClientSource(args.path);
+        const ext = extname(args.path).toLowerCase();
+        const loader = extensionToLoader[ext] ?? "js";
+        return { contents, loader };
       });
     },
   };
 }
 
 async function bundleClientEntry(entryRelative: string): Promise<string> {
-  const { build, stop } = await import("veryfront/extensions/bundler");
   const entryUrl = new URL(entryRelative, import.meta.url);
   const shimUrl = new URL("../../rendering/client/browser-stubs/logger.ts", import.meta.url);
 
   const entryPath = fromFileUrl(entryUrl);
   const entryDir = dirname(entryPath);
   const shimPath = fromFileUrl(shimUrl);
-  const source = await readTextFile(entryPath);
+  const source = await readClientSource(entryPath);
   const loader = entryPath.endsWith(".tsx") ? "tsx" : "ts";
 
-  let result;
-  try {
-    result = await build({
-      absWorkingDir: packageRoot,
-      stdin: {
-        contents: source,
-        loader,
-        resolveDir: entryDir,
-        sourcefile: entryPath,
-      },
-      bundle: true,
-      format: "esm",
-      platform: "browser",
-      target: "es2020",
-      write: false,
-      sourcemap: false,
-      packages: "external",
-      mainFields: ["module", "browser", "main"],
-      resolveExtensions: [...moduleExtensions],
-      loader: {
-        ".ts": "ts",
-        ".tsx": "tsx",
-        ".js": "js",
-      },
-      external: [
-        "react",
-        "react-dom",
-        "react-dom/client",
-        "react/jsx-runtime",
-        "react/jsx-dev-runtime",
-      ],
-      plugins: [
-        createClientShimPlugin(shimPath),
-        createPathResolverPlugin(),
-        createFsLoaderPlugin(),
-      ],
+  const result = await build({
+    absWorkingDir: packageRoot,
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir: entryDir,
+      sourcefile: entryPath,
+    },
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    write: false,
+    sourcemap: false,
+    packages: "external",
+    mainFields: ["module", "browser", "main"],
+    resolveExtensions: [...moduleExtensions],
+    loader: {
+      ".ts": "ts",
+      ".tsx": "tsx",
+      ".js": "js",
+    },
+    external: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
+    plugins: [
+      createClientShimPlugin(shimPath),
+      createPathResolverPlugin(),
+      createFsLoaderPlugin(),
+    ],
+  });
+
+  if (result.errors.length > 0) {
+    throw BUILD_FAILED.create({
+      detail: `The bundler reported errors for client entry ${entryRelative}`,
     });
-  } finally {
-    try {
-      await stop();
-    } catch (error) {
-      logger.warn("Failed to stop esbuild service cleanly", error);
-    }
+  }
+  if (result.outputFiles.length !== 1) {
+    throw BUILD_FAILED.create({
+      detail: `Expected one bundled output for client entry ${entryRelative}, ` +
+        `received ${result.outputFiles.length}`,
+    });
   }
 
-  const output = result.outputFiles?.[0]?.text;
-  if (!output) {
-    throw toError(
-      createError({
-        type: "build",
-        message: `Failed to bundle client entry: ${entryRelative}`,
-      }),
-    );
-  }
-
+  const output = result.outputFiles[0]!.text;
+  assertUsableClientBundle(output, entryRelative, "generated");
   return output;
 }

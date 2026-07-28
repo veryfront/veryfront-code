@@ -45,6 +45,10 @@ describe("build/production-build/build/output-generator", () => {
       assertEquals(writes.some((write) => write.path.endsWith("_veryfront/client.js")), true);
       assertEquals(writes.some((write) => write.path.endsWith("_veryfront/router.js")), true);
       assertEquals(writes.some((write) => write.path.endsWith("_veryfront/prefetch.js")), true);
+      assertEquals(
+        writes.find((write) => write.path.endsWith("_veryfront/client.js"))?.content,
+        writes.find((write) => write.path.endsWith("_veryfront/router.js"))?.content,
+      );
       assertEquals(mkdirs.some((path) => path.endsWith("_veryfront")), true);
       assertEquals(
         writes.some((write) => write.path.endsWith("_veryfront/hydration-runtime.js")),

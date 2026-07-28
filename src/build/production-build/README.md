@@ -148,7 +148,7 @@ const appCode = generateAppModule();
 const importMap = await generateImportMap();
 
 // Generate router script
-const routerCode = generateRouterScript();
+const routerCode = await generateRouterScript(adapter);
 ```
 
 ## Key Concepts
@@ -219,11 +219,7 @@ Generate client-side JavaScript:
 ```typescript
 import { generateClientModule } from "#server/build";
 
-const clientCode = generateClientModule({
-  hydration: true,
-  routing: true,
-  prefetching: true,
-});
+const clientCode = await generateClientModule();
 ```
 
 ## Advanced Usage

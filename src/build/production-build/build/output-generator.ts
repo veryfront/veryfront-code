@@ -24,7 +24,6 @@ import {
   generateAppModule,
   generateClientModule,
   generatePrefetchScript,
-  generateRouterScript,
 } from "../client-runtime.ts";
 import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
 import { generateManifest, generateRedirects } from "../manifest.ts";
@@ -60,33 +59,23 @@ export async function generateClientScripts(
 
   if (dryRun) return;
 
-  await writeOutputFile(adapter, join(outputDir, "_veryfront/app.js"), generateAppModule());
-  await writeOutputFile(
-    adapter,
-    join(outputDir, "_veryfront/client.js"),
-    await generateClientModule(),
-  );
-  await writeOutputFile(
-    adapter,
-    join(outputDir, "_veryfront/router.js"),
-    await generateRouterScript(adapter),
-  );
-  await writeOutputFile(
-    adapter,
-    join(outputDir, "_veryfront/prefetch.js"),
-    await generatePrefetchScript(adapter),
-  );
+  const [routerRuntime, prefetchRuntime] = await Promise.all([
+    generateClientModule(),
+    generatePrefetchScript(adapter),
+  ]);
   const hydrationRuntime = generateProdHydrationModule();
-  await writeOutputFile(
-    adapter,
-    join(outputDir, "_veryfront/hydration-runtime.js"),
-    hydrationRuntime,
-  );
-  await writeOutputFile(
-    adapter,
-    join(outputDir, getProdHydrationModulePath().slice(1)),
-    hydrationRuntime,
-  );
+  const outputs = [
+    ["_veryfront/app.js", generateAppModule()],
+    ["_veryfront/client.js", routerRuntime],
+    ["_veryfront/router.js", routerRuntime],
+    ["_veryfront/prefetch.js", prefetchRuntime],
+    ["_veryfront/hydration-runtime.js", hydrationRuntime],
+    [getProdHydrationModulePath().slice(1), hydrationRuntime],
+  ] as const;
+
+  for (const [relativePath, content] of outputs) {
+    await writeOutputFile(adapter, join(outputDir, relativePath), content);
+  }
 }
 
 async function writeOutputFile(
