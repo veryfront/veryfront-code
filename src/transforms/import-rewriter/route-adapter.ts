@@ -1,15 +1,210 @@
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { serverLogger } from "#veryfront/utils";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
-import { resolveContainedPackagePath } from "./package-resolution.ts";
-import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
-  resolveExportEntry as resolveRouteExportEntry,
-  toCjsDestructureBindings,
-} from "#veryfront/routing/api/module-loader/loader-helpers.ts";
+  pickPackageExportEntry,
+  resolveContainedPackagePath,
+  resolvePackageExportPath,
+} from "./package-resolution.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { toCjsDestructureBindings } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
 
 const logger = serverLogger.component("api");
+const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
+const MAX_ROUTE_DEPENDENCIES = 10_000;
+const MAX_PACKAGE_NAME_LENGTH = 214;
+const MAX_DEPENDENCY_RANGE_LENGTH = 1024;
+const packageJsonEncoder = new TextEncoder();
+
+type PackageJsonReader =
+  & Pick<FileSystem, "readTextFile">
+  & Partial<Pick<FileSystem, "stat">>;
+
+function isSafePackageName(name: unknown): name is string {
+  if (
+    typeof name !== "string" ||
+    name.length === 0 ||
+    name.length > MAX_PACKAGE_NAME_LENGTH ||
+    name.includes("\0")
+  ) {
+    return false;
+  }
+  const parts = name.startsWith("@") ? name.slice(1).split("/") : name.split("/");
+  if (parts.length !== (name.startsWith("@") ? 2 : 1)) return false;
+  return parts.every((part) =>
+    part.length > 0 &&
+    part !== "." &&
+    part !== ".." &&
+    /^[A-Za-z0-9._~-]+$/.test(part)
+  );
+}
+
+function isSafeDependencyRange(range: unknown): range is string {
+  if (
+    typeof range !== "string" ||
+    range.length === 0 ||
+    range.length > MAX_DEPENDENCY_RANGE_LENGTH
+  ) {
+    return false;
+  }
+  for (let index = 0; index < range.length; index++) {
+    const char = range[index]!;
+    if (
+      range.charCodeAt(index) <= 0x1f || char === `"` || char === `'` || char === "\\" ||
+      char === "`"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function assertSafeUserDependencies(userDeps: Map<string, string>): void {
+  if (userDeps.size > MAX_ROUTE_DEPENDENCIES) {
+    throw new RangeError(`Route declares more than ${MAX_ROUTE_DEPENDENCIES} dependencies`);
+  }
+  for (const [name, range] of userDeps) {
+    if (!isSafePackageName(name) || !isSafeDependencyRange(range)) {
+      const label = typeof name === "string" ? name.slice(0, 120) : "<non-string>";
+      throw new TypeError(`Invalid route dependency metadata for "${label}"`);
+    }
+  }
+}
+
+async function readBoundedPackageJson(
+  path: string,
+  fs: PackageJsonReader,
+): Promise<string> {
+  if (fs.stat) {
+    const stat = await fs.stat(path);
+    if (!stat.isFile) throw new TypeError("Package metadata path is not a regular file");
+    if (!Number.isSafeInteger(stat.size) || stat.size < 0) {
+      throw new TypeError("Package metadata size is invalid");
+    }
+    if (stat.size > MAX_PACKAGE_JSON_BYTES) {
+      throw new RangeError(`Package metadata exceeds ${MAX_PACKAGE_JSON_BYTES} bytes`);
+    }
+  }
+
+  const content = await fs.readTextFile(path);
+  if (packageJsonEncoder.encode(content).byteLength > MAX_PACKAGE_JSON_BYTES) {
+    throw new RangeError(`Package metadata exceeds ${MAX_PACKAGE_JSON_BYTES} bytes`);
+  }
+  return content;
+}
+
+function parsePackageJsonObject(content: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(content);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Package metadata must be a JSON object");
+  }
+  return value as Record<string, unknown>;
+}
+
+async function readOptionalPackageJsonForRoute(
+  packageJsonPath: string,
+  fs: PackageJsonReader,
+): Promise<Record<string, unknown> | null> {
+  let content: string;
+  try {
+    content = await readBoundedPackageJson(packageJsonPath, fs);
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+  return parsePackageJsonObject(content);
+}
+
+export async function resolveNodePackageToFileUrlForRoute(
+  projectDir: string,
+  packageName: string,
+  fs: FileSystem,
+  pathToFileUrl: (path: string) => URL,
+): Promise<string | null> {
+  if (!isSafePackageName(packageName)) {
+    throw new TypeError("Invalid route dependency name");
+  }
+
+  const packagePath = pathHelper.resolve(
+    pathHelper.join(projectDir, "node_modules", packageName),
+  );
+  const packageJson = await readOptionalPackageJsonForRoute(
+    pathHelper.join(packagePath, "package.json"),
+    fs,
+  );
+  if (!packageJson) return null;
+
+  const entryPoint = resolveEsmEntry(packageJson);
+  if (!entryPoint || entryPoint.length > 4096 || entryPoint.includes("\0")) {
+    throw new TypeError(`Installed dependency "${packageName}" has an invalid entry path`);
+  }
+  const resolvedPath = pathHelper.resolve(pathHelper.join(packagePath, entryPoint));
+  if (!isWithinDirectory(packagePath, resolvedPath)) {
+    throw new TypeError(`Installed dependency "${packageName}" has an escaping entry path`);
+  }
+  return pathToFileUrl(resolvedPath).href;
+}
+
+export interface VeryfrontExportLocation {
+  import?: string;
+}
+
+export async function loadVeryfrontExportsMapForRoute(
+  projectDir: string,
+  fs: FileSystem,
+): Promise<Record<string, VeryfrontExportLocation>> {
+  const packagePath = pathHelper.resolve(
+    pathHelper.join(projectDir, "node_modules", "veryfront"),
+  );
+  const packageJson = await readOptionalPackageJsonForRoute(
+    pathHelper.join(packagePath, "package.json"),
+    fs,
+  );
+  if (!packageJson || packageJson.exports === undefined) return {};
+  if (
+    !packageJson.exports ||
+    typeof packageJson.exports !== "object" ||
+    Array.isArray(packageJson.exports)
+  ) {
+    throw new TypeError("Installed veryfront package exports must be an object");
+  }
+
+  const result: Record<string, VeryfrontExportLocation> = {};
+  for (const [subpath, rawLocation] of Object.entries(packageJson.exports)) {
+    if (
+      (subpath !== "." && !subpath.startsWith("./")) ||
+      subpath.length > 4096 ||
+      subpath.includes("\0")
+    ) {
+      throw new TypeError(`Installed veryfront package has an invalid export key`);
+    }
+    const importPath = pickPackageExportEntry(rawLocation) ?? undefined;
+    if (
+      importPath === undefined &&
+      rawLocation &&
+      (typeof rawLocation === "object" || Array.isArray(rawLocation))
+    ) {
+      result[subpath] = {};
+      continue;
+    }
+    if (
+      typeof importPath !== "string" ||
+      importPath.length === 0 ||
+      importPath.length > 4096 ||
+      importPath.includes("\0") ||
+      !importPath.startsWith("./")
+    ) {
+      throw new TypeError(`Installed veryfront export "${subpath}" has an invalid import path`);
+    }
+    const resolvedPath = pathHelper.resolve(pathHelper.join(packagePath, importPath));
+    if (!isWithinDirectory(packagePath, resolvedPath)) {
+      throw new TypeError(`Installed veryfront export "${subpath}" escapes its package`);
+    }
+    result[subpath] = { import: importPath };
+  }
+  return result;
+}
 
 /** Node.js built-in module names, shared across route-loader external rewrites. */
 export const NODE_BUILTINS = [
@@ -50,19 +245,33 @@ export const NODE_BUILTINS = [
 
 export async function readProjectDependenciesForRoute(
   projectDir: string,
-  fs: Pick<FileSystem, "readTextFile">,
+  fs: PackageJsonReader,
 ): Promise<Map<string, string>> {
-  try {
-    const content = await fs.readTextFile(pathHelper.join(projectDir, "package.json"));
-    const pkg = JSON.parse(content) as { dependencies?: Record<string, string> };
-    return new Map(Object.entries(pkg.dependencies ?? {}));
-  } catch (_) {
-    /* expected: package.json may not exist */
-    return new Map();
+  const pkg = await readOptionalPackageJsonForRoute(
+    pathHelper.join(projectDir, "package.json"),
+    fs,
+  );
+  if (!pkg) return new Map();
+  const dependencies = pkg.dependencies;
+  if (dependencies === undefined) return new Map();
+  if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) {
+    throw new TypeError("Project package.json dependencies must be an object");
   }
+
+  const entries = Object.entries(dependencies);
+  if (
+    entries.length > MAX_ROUTE_DEPENDENCIES ||
+    entries.some(([, range]) => typeof range !== "string")
+  ) {
+    throw new TypeError("Project package.json dependencies are invalid");
+  }
+  const result = new Map(entries as Array<[string, string]>);
+  assertSafeUserDependencies(result);
+  return result;
 }
 
 export function getNodeExternalPackagesToResolveForRoute(userDeps: Map<string, string>): string[] {
+  assertSafeUserDependencies(userDeps);
   const externalPackagesToResolve = ["zod"];
 
   for (const name of userDeps.keys()) {
@@ -100,14 +309,8 @@ function isEsmPackage(pkgJson: Record<string, unknown>, entry: string): boolean 
  * export, then the `module` field, then `main`.
  */
 function resolveEsmEntry(pkgJson: Record<string, unknown>): string | undefined {
-  const exportsField = pkgJson.exports;
-  if (exportsField && typeof exportsField === "object") {
-    const dot = (exportsField as Record<string, unknown>)["."];
-    const fromExports = resolveRouteExportEntry(dot ?? exportsField);
-    if (fromExports) return fromExports;
-  } else if (typeof exportsField === "string") {
-    return exportsField;
-  }
+  const fromExports = resolvePackageExportPath(pkgJson.exports, ".");
+  if (fromExports) return fromExports;
 
   const moduleField = pkgJson.module;
   if (typeof moduleField === "string") return moduleField;
@@ -127,37 +330,38 @@ export async function resolveEsmUserDependenciesForRoute(
   fs: FileSystem,
   userDeps: Map<string, string>,
 ): Promise<Map<string, EsmDependencyLocation>> {
+  assertSafeUserDependencies(userDeps);
   const esmDeps = new Map<string, EsmDependencyLocation>();
 
   for (const name of userDeps.keys()) {
     const packageDir = pathHelper.resolve(pathHelper.join(projectDir, "node_modules", name));
-    try {
-      const pkgJson = JSON.parse(
-        await fs.readTextFile(pathHelper.join(packageDir, "package.json")),
-      ) as Record<string, unknown>;
-
-      const entry = resolveEsmEntry(pkgJson);
-      if (!entry || !isEsmPackage(pkgJson, entry)) continue;
-
-      // The entry path comes from the dependency's own package.json, which is
-      // attacker-influenceable (a malicious/compromised package could set
-      // "main": "../../../etc/passwd"). Reject entries that resolve outside the
-      // package directory so a crafted package.json cannot turn into a file://
-      // import that escapes node_modules. This mirrors the containment guard the
-      // CJS loader shim enforces via __vf_assertContained.
-      const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
-      if (!isWithinDirectory(packageDir, entryPath)) {
-        logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
-        continue;
-      }
-
-      esmDeps.set(name, {
-        entryUrl: pathHelper.toFileUrl(entryPath).href,
-        packageDir,
-      });
-    } catch (_) {
-      /* expected: package.json missing/invalid -> treat as CJS */
+    const pkgJson = await readOptionalPackageJsonForRoute(
+      pathHelper.join(packageDir, "package.json"),
+      fs,
+    );
+    if (!pkgJson) continue;
+    const entry = resolveEsmEntry(pkgJson);
+    if (!entry || !isEsmPackage(pkgJson, entry)) continue;
+    if (entry.length > 4096 || entry.includes("\0")) {
+      throw new TypeError(`Installed dependency "${name}" has an invalid entry path`);
     }
+
+    // The entry path comes from the dependency's own package.json, which is
+    // attacker-influenceable (a malicious/compromised package could set
+    // "main": "../../../etc/passwd"). Reject entries that resolve outside the
+    // package directory so a crafted package.json cannot turn into a file://
+    // import that escapes node_modules. This mirrors the containment guard the
+    // CJS loader shim enforces via __vf_assertContained.
+    const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
+    if (!isWithinDirectory(packageDir, entryPath)) {
+      logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
+      continue;
+    }
+
+    esmDeps.set(name, {
+      entryUrl: pathHelper.toFileUrl(entryPath).href,
+      packageDir,
+    });
   }
 
   return esmDeps;
@@ -191,6 +395,7 @@ export function rewriteCompiledUserDependencyImportsForRoute(
   userDeps: Map<string, string>,
   esmDeps: Map<string, EsmDependencyLocation> = new Map(),
 ): string {
+  assertSafeUserDependencies(userDeps);
   let transformed = code;
 
   for (const name of userDeps.keys()) {
@@ -295,6 +500,7 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
   userDeps: Map<string, string>,
   options: { requireInstalledExactVersions?: boolean } = {},
 ): Promise<string> {
+  assertSafeUserDependencies(userDeps);
   const importedSpecifiers = new Set(
     (await parseImports(code))
       .map((imp) => imp.n)
@@ -311,18 +517,17 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
     const [name, version] = entry;
     let resolvedVersion = version;
     let installedVersion: unknown;
-    try {
-      const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
-      const pkgContent = await fs.readTextFile(pkgPath);
-      const pkg = JSON.parse(pkgContent) as { version?: string };
-      installedVersion = pkg.version;
-    } catch {
+    const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
+    const packageJson = await readOptionalPackageJsonForRoute(pkgPath, fs);
+    if (!packageJson) {
       if (options.requireInstalledExactVersions) {
         throw new TypeError(
           `Prepared API route dependency "${name}" must be installed before worker execution`,
         );
       }
       /* expected: installed package.json may not exist, fall back to declared range */
+    } else {
+      installedVersion = packageJson.version;
     }
     if (options.requireInstalledExactVersions) {
       if (typeof installedVersion !== "string" || !isExactNpmVersion(installedVersion)) {
@@ -331,7 +536,7 @@ export async function rewriteDenoNpmDependencyImportsForRoute(
         );
       }
       resolvedVersion = installedVersion;
-    } else if (typeof installedVersion === "string" && installedVersion) {
+    } else if (typeof installedVersion === "string" && isExactNpmVersion(installedVersion)) {
       resolvedVersion = installedVersion;
     }
 

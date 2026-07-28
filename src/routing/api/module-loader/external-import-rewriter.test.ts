@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -7,6 +12,7 @@ import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   NODE_BUILTINS,
+  readProjectDependencies,
   resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
@@ -18,7 +24,9 @@ function createFakeFileSystem(files: Record<string, string>): FileSystem {
   return {
     readTextFile(path: string): Promise<string> {
       const content = files[path];
-      if (content === undefined) throw new Error(`missing test file: ${path}`);
+      if (content === undefined) {
+        throw Object.assign(new Error(`missing test file: ${path}`), { code: "ENOENT" });
+      }
       return Promise.resolve(content);
     },
     readFile(): Promise<Uint8Array> {
@@ -33,8 +41,18 @@ function createFakeFileSystem(files: Record<string, string>): FileSystem {
     exists(path: string): Promise<boolean> {
       return Promise.resolve(path in files);
     },
-    stat(): Promise<FileInfo> {
-      throw new Error("stat not implemented in fake fs");
+    stat(path: string): Promise<FileInfo> {
+      const content = files[path];
+      if (content === undefined) {
+        throw Object.assign(new Error(`missing test file: ${path}`), { code: "ENOENT" });
+      }
+      return Promise.resolve({
+        size: new TextEncoder().encode(content).byteLength,
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        mtime: null,
+      });
     },
     mkdir(): Promise<void> {
       throw new Error("mkdir not implemented in fake fs");
@@ -55,6 +73,55 @@ function createFakeFileSystem(files: Record<string, string>): FileSystem {
 }
 
 describe("external-import-rewriter", () => {
+  describe("readProjectDependencies", () => {
+    it("distinguishes a missing package file from malformed metadata", async () => {
+      assertEquals(
+        await readProjectDependencies("/missing", createFakeFileSystem({})),
+        new Map(),
+      );
+
+      await assertRejects(
+        () =>
+          readProjectDependencies(
+            "/srv/app",
+            createFakeFileSystem({ "/srv/app/package.json": "{" }),
+          ),
+        SyntaxError,
+      );
+    });
+
+    it("rejects oversized package metadata", async () => {
+      const oversizedMetadata = " ".repeat(2 * 1024 * 1024);
+
+      await assertRejects(
+        () =>
+          readProjectDependencies(
+            "/srv/app",
+            createFakeFileSystem({ "/srv/app/package.json": oversizedMetadata }),
+          ),
+        RangeError,
+        "exceeds",
+      );
+    });
+
+    it("propagates operational metadata failures", async () => {
+      const permissionError = Object.assign(new Error("metadata read denied"), {
+        code: "EACCES",
+      });
+      const deniedFileSystem = {
+        ...createFakeFileSystem({}),
+        stat: () => Promise.reject(permissionError),
+      };
+
+      const error = await assertRejects(
+        () => readProjectDependencies("/srv/app", deniedFileSystem),
+        Error,
+        "metadata read denied",
+      );
+      assertEquals(error, permissionError);
+    });
+  });
+
   describe("getNodeExternalPackagesToResolve", () => {
     it("always includes zod even with no user deps", () => {
       assertEquals(getNodeExternalPackagesToResolve(new Map()), ["zod"]);
@@ -154,6 +221,18 @@ describe("external-import-rewriter", () => {
       assertEquals(rewriteCompiledBinaryUserDependencyImports(code, deps), code);
     });
 
+    it("rejects dependency names that could inject generated code", () => {
+      assertRejects(
+        async () => {
+          rewriteCompiledBinaryUserDependencyImports(
+            `import value from "safe";`,
+            new Map([['safe"); globalThis.compromised = true; //', "^1"]]),
+          );
+        },
+        TypeError,
+      );
+    });
+
     it("rewrites ESM-only dependency imports to resolved file URLs", () => {
       const esmDeps = new Map([
         ["esm-only", {
@@ -235,6 +314,22 @@ describe("external-import-rewriter", () => {
       assertEquals(deps.size, 0);
     });
 
+    it("propagates malformed installed package metadata", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/broken/package.json": "{",
+      });
+
+      await assertRejects(
+        () =>
+          resolveEsmUserDependencies(
+            "/srv/app",
+            fs,
+            new Map([["broken", "^1"]]),
+          ),
+        SyntaxError,
+      );
+    });
+
     for (
       const [name, packageJson, entryUrl] of [
         [
@@ -291,6 +386,23 @@ describe("external-import-rewriter", () => {
 
       assertStringIncludes(out, `from "npm:lodash@4.17.21"`);
       assertStringIncludes(out, `from "npm:lodash@4.17.21/merge"`);
+    });
+
+    it("propagates malformed installed versions instead of silently using a range", async () => {
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/lodash/package.json": "{",
+      });
+
+      await assertRejects(
+        () =>
+          rewriteDenoNpmDependencyImports(
+            `import lodash from "lodash";`,
+            "/srv/app",
+            fs,
+            new Map([["lodash", "^4"]]),
+          ),
+        SyntaxError,
+      );
     });
   });
 

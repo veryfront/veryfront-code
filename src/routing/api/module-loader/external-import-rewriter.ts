@@ -7,9 +7,11 @@ import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer
 import {
   finalizePreparedWorkerImportsForRoute,
   getNodeExternalPackagesToResolveForRoute,
+  loadVeryfrontExportsMapForRoute,
   NODE_BUILTINS as ROUTE_NODE_BUILTINS,
   readProjectDependenciesForRoute,
   resolveEsmUserDependenciesForRoute,
+  resolveNodePackageToFileUrlForRoute,
   rewriteCompiledUserDependencyImportsForRoute,
   rewriteCompiledVeryfrontImportsForRoute,
   rewriteDenoNodeBuiltinsForRoute,
@@ -17,9 +19,9 @@ import {
 } from "#veryfront/transforms/import-rewriter/route-adapter.ts";
 import type {
   EsmDependencyLocation as RouteEsmDependencyLocation,
+  VeryfrontExportLocation,
 } from "#veryfront/transforms/import-rewriter/route-adapter.ts";
-import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
-import { resolveExportEntry } from "./loader-helpers.ts";
+import { resolveContainedPackagePath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 
 const logger = serverLogger.component("api");
 
@@ -28,7 +30,7 @@ export const NODE_BUILTINS = ROUTE_NODE_BUILTINS;
 
 export async function readProjectDependencies(
   projectDir: string,
-  fs: Pick<FileSystem, "readTextFile">,
+  fs: Pick<FileSystem, "readTextFile"> & Partial<Pick<FileSystem, "stat">>,
 ): Promise<Map<string, string>> {
   return await readProjectDependenciesForRoute(projectDir, fs);
 }
@@ -134,25 +136,12 @@ export async function resolveNodePackageToFileUrl(
   fs: FileSystem,
   pathToFileURL: typeof import("node:url").pathToFileURL,
 ): Promise<string | null> {
-  const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
-  const packageJsonPath = pathHelper.join(packagePath, "package.json");
-
-  try {
-    const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-    let entryPoint: string | undefined;
-
-    if (pkgJson.exports) {
-      entryPoint = resolveExportEntry(pkgJson.exports["."]);
-    }
-
-    entryPoint ||= pkgJson.module || pkgJson.main || "index.js";
-    if (!entryPoint) return null;
-
-    return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
-  } catch (_) {
-    /* expected: package.json may not exist or be invalid */
-    return null;
-  }
+  return await resolveNodePackageToFileUrlForRoute(
+    projectDir,
+    packageName,
+    fs,
+    pathToFileURL,
+  );
 }
 
 export type EsmDependencyLocation = RouteEsmDependencyLocation;
@@ -174,17 +163,8 @@ export async function resolveEsmUserDependencies(
 export async function loadVeryfrontExportsMap(
   projectDir: string,
   fs: FileSystem,
-): Promise<Record<string, { import?: string }>> {
-  const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-  const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
-
-  try {
-    const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
-    return pkgJson.exports || {};
-  } catch (_error) {
-    logger.debug("Could not read veryfront package.json");
-    return {};
-  }
+): Promise<Record<string, VeryfrontExportLocation>> {
+  return await loadVeryfrontExportsMapForRoute(projectDir, fs);
 }
 
 export async function rewriteNodeExternalImports(
@@ -211,10 +191,17 @@ export async function rewriteNodeExternalImports(
 
     const subpath = specifier.slice(pkg.length);
     if (subpath) {
-      const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
-      const resolvedSubpath = `${packageDir}${subpath}`;
-      logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
-      replacements.set(specifier, resolvedSubpath);
+      if (subpath.length > 4096 || subpath.includes("\0") || subpath.includes("\\")) {
+        throw new TypeError(`Route dependency "${specifier.slice(0, 120)}" has an invalid subpath`);
+      }
+      const packageDir = pathHelper.resolve(pathHelper.join(projectDir, "node_modules", pkg));
+      const resolvedPath = resolveContainedPackagePath(packageDir, `.${subpath}`);
+      if (!resolvedPath) {
+        throw new TypeError(`Route dependency "${specifier.slice(0, 120)}" escapes its package`);
+      }
+      const resolvedUrl = pathToFileURL(resolvedPath).href;
+      logger.debug(`Resolved ${specifier} -> ${resolvedUrl}`);
+      replacements.set(specifier, resolvedUrl);
       continue;
     }
 
@@ -318,11 +305,7 @@ export async function rewriteExternalImports(
   let transformed = code;
 
   if (isNode) {
-    try {
-      transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
-    } catch (e) {
-      logger.warn(`Failed to import node:module: ${snapshotThrowableDiagnostic(e)}`);
-    }
+    transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
   }
 
   if (isDeno) {

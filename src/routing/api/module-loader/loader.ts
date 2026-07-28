@@ -133,7 +133,7 @@ export function prepareHandlerModule(
         // zod remains external to the bundle, so strict preparation must pin
         // its installed version just like a project-declared dependency. The
         // declared value is intentionally unused in strict mode.
-        preparedDependencies.set("zod", "");
+        preparedDependencies.set("zod", "*");
         const source = await rewriteExternalImports(
           built.code,
           built.projectDir,
@@ -612,6 +612,7 @@ function buildAndTranspileModule(
 
       const projectSourceReader = {
         readTextFile: (filePath: string) => adapter.fs.readFile(filePath),
+        stat: (filePath: string) => adapter.fs.stat(filePath),
       };
       const allDeps = await readProjectDependencies(projectDir, projectSourceReader);
 

@@ -134,6 +134,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         ...adapter.fs,
         readFile: (path: string) => fs.readTextFile(toReal(path)),
         exists: (path: string) => fs.exists(toReal(path)),
+        stat: (path: string) => fs.stat(toReal(path)),
       },
     };
 
@@ -173,6 +174,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         ...adapter.fs,
         readFile: (path: string) => fs.readTextFile(toReal(path)),
         exists: (path: string) => fs.exists(toReal(path)),
+        stat: (path: string) => fs.stat(toReal(path)),
       },
     };
 
@@ -219,6 +221,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         ...adapter.fs,
         readFile: (path: string) => fs.readTextFile(toReal(path)),
         exists: (path: string) => fs.exists(toReal(path)),
+        stat: (path: string) => fs.stat(toReal(path)),
       },
     };
 
@@ -726,6 +729,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       JSON.stringify({
         exports: {
           ".": { import: "./dist/index.js" },
+          "./tsconfig.json": "./tsconfig.json",
         },
       }),
     );
@@ -783,6 +787,88 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/feature"/);
+  });
+
+  it("rejects Node dependency subpaths that escape their package", async () => {
+    const tmpDir = await makeTempDir();
+
+    await assertRejects(
+      () =>
+        rewriteNodeExternalImports(
+          'import secret from "my-lib/../../outside.js";',
+          tmpDir,
+          fs,
+          new Map([["my-lib", "^1.0.0"]]),
+        ),
+      TypeError,
+      "escapes its package",
+    );
+  });
+
+  it("propagates malformed Node dependency metadata", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(join(depDir, "package.json"), "{");
+
+    await assertRejects(
+      () =>
+        rewriteNodeExternalImports(
+          'import thing from "my-lib";',
+          tmpDir,
+          fs,
+          new Map([["my-lib", "^1.0.0"]]),
+        ),
+      SyntaxError,
+    );
+  });
+
+  it("rejects Node dependency entries that escape their package", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(
+      join(depDir, "package.json"),
+      JSON.stringify({ main: "../../../outside.js" }),
+    );
+
+    await assertRejects(
+      () =>
+        rewriteNodeExternalImports(
+          'import thing from "my-lib";',
+          tmpDir,
+          fs,
+          new Map([["my-lib", "^1.0.0"]]),
+        ),
+      TypeError,
+      "escaping entry path",
+    );
+  });
+
+  it("rejects veryfront export entries that escape the installed package", async () => {
+    const tmpDir = await makeTempDir();
+    const vfDir = join(tmpDir, "node_modules", "veryfront");
+    await fs.mkdir(vfDir, { recursive: true });
+    await fs.writeTextFile(
+      join(vfDir, "package.json"),
+      JSON.stringify({
+        exports: {
+          ".": { import: "./../../../outside.js" },
+        },
+      }),
+    );
+
+    await assertRejects(
+      () =>
+        rewriteNodeExternalImports(
+          'import { defineConfig } from "veryfront";',
+          tmpDir,
+          fs,
+          new Map(),
+        ),
+      TypeError,
+      "escapes its package",
+    );
   });
 
   it("rewrites only parsed Node import specifiers", async () => {
