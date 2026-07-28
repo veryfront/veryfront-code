@@ -84,7 +84,7 @@ describe("InitCommand Types", () => {
           },
         );
 
-        const liveLine = output.find((line) => line.includes("Live:"));
+        const liveLine = output.find((line) => line.includes(deployedUrl));
         assertEquals(stripAnsi(liveLine ?? ""), `  Live: ${deployedUrl}`);
       } finally {
         console.log = originalLog;

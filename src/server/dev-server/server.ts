@@ -258,7 +258,7 @@ export class DevServer {
       signal: this.options.signal,
       onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
-        logger.info(`Dev server running at ${url}`);
+        logger.debug(`Dev server running at ${url}`);
 
         try {
           // _isReady must be set inside onListen — the server is only truly ready
@@ -414,7 +414,7 @@ export class DevServer {
       clearTranspileCache();
       const config = this.buildDiscoveryConfig();
       const result = await discoverAll(config);
-      logger.info(
+      logger.debug(
         `[HMR] Re-discovered: ${result.tools.size} tools, ${result.agents.size} agents, ` +
           `${result.skills.size} skills, ${result.workflows.size} workflows, ` +
           `${result.prompts.size} prompts, ${result.resources.size} resources`,
@@ -467,7 +467,7 @@ export class DevServer {
   }
 
   async stop(): Promise<void> {
-    logger.info("Shutting down dev server...");
+    logger.debug("Shutting down dev server");
 
     this.reloadUnsubscribe?.();
     this.invalidateUnsubscribe?.();

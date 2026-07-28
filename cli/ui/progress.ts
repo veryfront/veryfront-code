@@ -125,6 +125,11 @@ export function createNoopSpinner(): SpinnerController {
   };
 }
 
+export function createTransientSpinner(text: string): SpinnerController {
+  if (!isTTY() || isAnimationDisabled()) return createNoopSpinner();
+  return createSpinner(text);
+}
+
 export function createSpinner(text: string): SpinnerController {
   if (!isTTY() || isAnimationDisabled()) {
     const print = (prefix: string, msg: string): void => {

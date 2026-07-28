@@ -23,7 +23,7 @@ import {
 import { writeProjectLink } from "../../shared/project-link.ts";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess } from "#cli/utils";
-import { brand, createNoopSpinner, createSpinner, dim } from "#cli/ui";
+import { brand, createNoopSpinner, createSpinner } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
@@ -363,8 +363,8 @@ function outputPushResult(
       : `${target === "main" ? "Main" : `Branch "${branchName}"`} is up to date.`,
   );
   console.log();
-  console.log(`  ${dim("Studio:")}  ${brand(urls.studio)}`);
-  console.log(`  ${dim("Preview:")} ${brand(urls.preview)}`);
+  console.log(`  Studio:  ${brand(urls.studio)}`);
+  console.log(`  Preview: ${brand(urls.preview)}`);
   console.log();
 }
 

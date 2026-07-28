@@ -104,7 +104,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
           return;
         }
 
-        displayBuildSuccess(stats, startTime, outputDir, dryRun);
+        displayBuildSuccess(stats, startTime, options.outputDir ?? "dist", dryRun);
       } catch (error) {
         if (isJsonMode()) {
           streamJsonLine({

@@ -106,18 +106,22 @@ describe("cli/templates", () => {
     const page = await Deno.readTextFile(
       new URL("./files/ai-agent/app/page.tsx", import.meta.url),
     );
+    assertEquals(agent.includes('name: "Assistant"'), true);
+    assertEquals(agent.includes('description: "Turn a rough idea into a clear next move."'), true);
     assertEquals(
       agent.includes(
-        'prompt: "Create a concise plan for building and launching a small web application."',
+        'prompt: "Turn this rough idea into a focused plan with the first three steps: "',
       ),
       true,
     );
     assertEquals(
       agent.includes(
-        '"Calculate an 18% tip on $84.50, then split the total evenly among three people."',
+        '"Calculate an 18% tip on $84.50, split the total among three people, and explain the result briefly."',
       ),
       true,
     );
+    assertEquals(agent.includes('title: "Shape an idea"'), true);
+    assertEquals(agent.includes('title: "Run the numbers"'), true);
     assertEquals(assistantEval.includes('target: "agent:assistant"'), true);
     assertEquals(assistantEval.includes('metrics.agent.calledTool("calculator").gate()'), true);
     assertEquals(assistantEval.includes("metrics.agent.noFailedTools().gate()"), true);

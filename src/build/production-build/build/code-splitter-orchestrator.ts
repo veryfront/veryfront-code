@@ -19,7 +19,7 @@ export async function runCodeSplitting(
     return { manifest: null, chunks: 0 };
   }
 
-  logger.info("Running code splitter...");
+  logger.debug("Running code splitter...");
 
   const splitter = createCodeSplitter({
     projectDir,
@@ -37,7 +37,7 @@ export async function runCodeSplitting(
   const { entries, shared, manifest } = await splitter.split();
   const chunks = entries.size + shared.size;
 
-  logger.info(`Created ${chunks} chunks`);
+  logger.debug(`Created ${chunks} chunks`);
 
   return { manifest, chunks };
 }

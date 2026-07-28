@@ -27,12 +27,21 @@ function canRunWizard(): boolean {
 }
 
 export function formatWizardIntro(): string {
-  return "\nLet's set up your project.";
+  return `\n${SETUP_COPY.intro}`;
 }
+
+export const SETUP_COPY = {
+  intro: "Let's set up your project.",
+  location: "Create project in:",
+  template: "Choose a starter template:",
+  runtime: "Select runtime:",
+  git: "Initialize Git?",
+} as const;
 
 const SETUP_PROMPT_DISPLAY = {
   showMarker: false,
   showInstructions: false,
+  showDescriptions: false,
 } as const;
 
 export async function runInteractiveWizard(
@@ -57,16 +66,16 @@ export async function runInteractiveWizard(
   // Location prompt (skip when name was provided via CLI)
   if (!existingName) {
     const locationChoice = await select(
-      "Where should we create your project?",
+      SETUP_COPY.location,
       [
         {
           value: "current",
-          label: "Current folder",
+          label: "Current directory",
           description: "Use this directory",
         },
         {
           value: "new",
-          label: "New folder",
+          label: "New directory",
           description: "Create a new directory",
         },
       ],
@@ -118,7 +127,7 @@ export async function runInteractiveWizard(
 
   // Template selection
   const templateChoice = await select(
-    "What would you like to build?",
+    SETUP_COPY.template,
     getTemplateSelectOptions(),
     0,
     SETUP_PROMPT_DISPLAY,
@@ -142,7 +151,7 @@ export async function runInteractiveWizard(
   let runtime: InitRuntime = presetRuntime ?? "node";
   if (presetRuntime === undefined) {
     const runtimeChoice = await select(
-      "What runtime should this project use?",
+      SETUP_COPY.runtime,
       [
         { value: "node", label: "Node.js", description: "Default" },
         { value: "bun", label: "Bun", description: "Fast JS runtime" },
@@ -169,7 +178,7 @@ export async function runInteractiveWizard(
 
   // Git init prompt
   const gitChoice = await select(
-    "Initialize a git repository?",
+    SETUP_COPY.git,
     [
       { value: "yes", label: "Yes", description: "Initialize git and create first commit" },
       { value: "no", label: "No", description: "Skip git initialization" },
