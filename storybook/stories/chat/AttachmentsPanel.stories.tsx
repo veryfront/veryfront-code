@@ -231,13 +231,18 @@ export const Loading: Story = {
           `import { AttachmentsPanel, useAttachments } from "veryfront/chat";
 
 const uploads = useAttachments({ url: "/api/uploads" });
+const error = uploads.uploadError ?? uploads.refreshError ??
+  uploads.removeError ?? uploads.storageError;
 
-<AttachmentsPanel
-  uploads={uploads.items}
-  loading={uploads.isLoading}
-  onRemoveUpload={(id) => uploads.remove(id)}
-  onAttach={(files) => uploads.upload(files)}
-/>`,
+<>
+  {error && <p role="alert">{error.message}</p>}
+  <AttachmentsPanel
+    uploads={uploads.items}
+    loading={uploads.isLoading}
+    onRemoveUpload={(id) => uploads.remove(id)}
+    onAttach={(files) => uploads.upload(files)}
+  />
+</>`,
       },
     },
   },

@@ -46,6 +46,19 @@ describe("AttachmentsPanel", () => {
     assert(!html.includes('aria-label="Remove run-analysis.csv"'));
   });
 
+  it("does not offer actions for an executable upload URL", () => {
+    const html = renderToString(
+      <AttachmentsPanel
+        uploads={[{
+          id: "unsafe",
+          name: "unsafe.html",
+          url: "javascript:alert(document.cookie)",
+        }]}
+      />,
+    );
+    assert(!html.includes('aria-label="Actions for unsafe.html"'));
+  });
+
   it("renders the Attachments header + close button when onClose is set", () => {
     const html = renderToString(
       <AttachmentsPanel uploads={uploads} onClose={() => undefined} />,

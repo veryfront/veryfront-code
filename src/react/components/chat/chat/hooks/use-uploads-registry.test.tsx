@@ -1,3 +1,4 @@
+import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -56,10 +57,13 @@ function installDom(): () => void {
   };
 }
 
-/** Stub fetch: POST → an upload response; DELETE → ok. Records DELETE ids. */
-function stubFetch(): { deletes: string[]; gets: string[]; restore: () => void } {
+/** Stub fetch: POST → an upload response; DELETE → configured status. Records DELETE ids. */
+function stubFetch(
+  options: { deleteStatus?: number } = {},
+): { deletes: string[]; deleteUrls: string[]; gets: string[]; restore: () => void } {
   const previous = globalThis.fetch;
   const deletes: string[] = [];
+  const deleteUrls: string[] = [];
   const gets: string[] = [];
   let counter = 0;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -81,14 +85,20 @@ function stubFetch(): { deletes: string[]; gets: string[]; restore: () => void }
       );
     }
     if (method === "DELETE") {
+      deleteUrls.push(url);
       deletes.push(new URL(url, "https://example.com").searchParams.get("id") ?? "");
-      return Promise.resolve(new Response(JSON.stringify({ deleted: true }), { status: 200 }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ deleted: options.deleteStatus === undefined }), {
+          status: options.deleteStatus ?? 200,
+        }),
+      );
     }
     gets.push(url);
     return Promise.resolve(new Response("{}", { status: 200 }));
   }) as typeof fetch;
   return {
     deletes,
+    deleteUrls,
     gets,
     restore: () => {
       globalThis.fetch = previous;
@@ -97,7 +107,7 @@ function stubFetch(): { deletes: string[]; gets: string[]; restore: () => void }
 }
 
 function mount(storageKey: string) {
-  let latest: UseUploadsRegistryResult | null = null;
+  let latest: ReturnType<typeof useAttachments> | null = null;
   function Capture(): null {
     latest = useUploadsRegistry({ storageKey });
     return null;
@@ -109,6 +119,25 @@ function mount(storageKey: string) {
   // persist-to-localStorage effect actually run.
   flushSync(() => root.render(<Capture />));
   return { root, get: () => latest! };
+}
+
+function mountOptions(
+  options: Parameters<typeof useAttachments>[0],
+) {
+  let latest: ReturnType<typeof useAttachments> | null = null;
+  function Capture(props: Parameters<typeof useAttachments>[0]): null {
+    latest = useAttachments(props);
+    return null;
+  }
+  const root = createRoot(document.getElementById("root")!);
+  flushSync(() => root.render(<Capture {...options} />));
+  return {
+    root,
+    get: () => latest!,
+    render: (next: Parameters<typeof useAttachments>[0]) => {
+      flushSync(() => root.render(<Capture {...next} />));
+    },
+  };
 }
 
 /** Run an async interaction, then flush the resulting render + passive effects. */
@@ -127,6 +156,22 @@ function fakeFile(name: string): File {
 describe("react/components/chat/hooks/useUploadsRegistry", () => {
   it("useUploadsRegistry is a back-compat alias of useAttachments", () => {
     assert(useUploadsRegistry === useAttachments);
+  });
+
+  it("keeps the legacy result interface structurally source-compatible", () => {
+    const legacyResult = {
+      items: [],
+      isLoading: false,
+      isUploading: false,
+      uploadError: null,
+      clearUploadError: () => undefined,
+      upload: () => undefined,
+      add: () => undefined,
+      remove: () => Promise.resolve(),
+      clear: () => undefined,
+      refresh: () => Promise.resolve(),
+    } satisfies UseUploadsRegistryResult;
+    assertEquals(legacyResult.items, []);
   });
 
   it("uploads a file, captures the server id, and persists it", async () => {
@@ -281,6 +326,697 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
     } finally {
       fetchStub.restore();
+      restoreDom();
+    }
+  });
+  it("remove() replaces an endpoint id without disturbing other query state", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      const reg = mountOptions({
+        storageKey: "test-delete-query",
+        url: "/api/uploads?source=panel&id=stale#details",
+      });
+      await flush(() => {});
+      flushSync(() =>
+        reg.get().add({
+          id: "current",
+          name: "current.txt",
+          url: "/uploads/current",
+        })
+      );
+
+      await reg.get().remove("current");
+      await flush(() => {});
+
+      assertEquals(
+        fetchStub.deleteUrls.at(-1),
+        "/api/uploads?source=panel&id=current#details",
+      );
+      assertEquals(reg.get().items, []);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("remove() keeps the item when server cleanup is incomplete", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch({ deleteStatus: 502 });
+    try {
+      const reg = mount("test-uploads-del-retry");
+      await flush(() => reg.get().upload([fakeFile("a.txt")]));
+      const id = reg.get().items[0]!.id;
+
+      await reg.get().remove(id);
+      await flush(() => {});
+
+      assert(fetchStub.deletes.includes(id), "a DELETE was attempted");
+      assertEquals(reg.get().items.map((item) => item.id), [id]);
+      assert(reg.get().removeError instanceof Error);
+      flushSync(() => reg.get().clearRemoveError());
+      assertEquals(reg.get().removeError, null);
+      flushSync(() => reg.root.unmount());
+      await flush(() => {});
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("rejects malformed, oversized, and executable persisted registry data", () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      localStorage.setItem(
+        "test-invalid-cache",
+        JSON.stringify([{
+          id: "unsafe",
+          name: "unsafe.html",
+          url: "javascript:alert(1)",
+        }]),
+      );
+      const invalid = mount("test-invalid-cache");
+      assertEquals(invalid.get().items, []);
+      assert(invalid.get().storageError instanceof Error);
+      flushSync(() => invalid.root.unmount());
+
+      localStorage.setItem("test-oversized-cache", `"${"x".repeat(1_100_000)}"`);
+      const oversized = mount("test-oversized-cache");
+      assertEquals(oversized.get().items, []);
+      assert(oversized.get().storageError instanceof Error);
+      flushSync(() => oversized.root.unmount());
+
+      localStorage.setItem(
+        "test-duplicate-cache",
+        JSON.stringify([
+          { id: "same", name: "first.txt", url: "/uploads/first" },
+          { id: "same", name: "second.txt", url: "/uploads/second" },
+        ]),
+      );
+      const duplicate = mount("test-duplicate-cache");
+      assertEquals(duplicate.get().items, []);
+      assert(duplicate.get().storageError instanceof Error);
+      flushSync(() => duplicate.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("rejects executable URLs from list and upload responses", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(
+          Response.json({
+            id: "unsafe-upload",
+            name: "unsafe.html",
+            url: "data:text/html,<script>alert(1)</script>",
+          }),
+        );
+      }
+      return Promise.resolve(
+        Response.json({
+          items: [{
+            id: "unsafe-list",
+            name: "unsafe.html",
+            url: "javascript:alert(1)",
+          }],
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      localStorage.setItem(
+        "test-unsafe-server-url",
+        JSON.stringify([{
+          id: "cached",
+          name: "cached.txt",
+          url: "/uploads/cached",
+        }]),
+      );
+      const reg = mount("test-unsafe-server-url");
+      await flush(() => {});
+      assertEquals(
+        reg.get().items.map((item) => item.id),
+        ["cached"],
+        "an invalid list snapshot must not erase the validated cache",
+      );
+
+      await flush(() => reg.get().upload([fakeFile("unsafe.html")]));
+      assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
+      assert(reg.get().uploadError instanceof Error);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("surfaces failed and duplicate refreshes without erasing the cache", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    let response = new Response("unavailable", { status: 503 });
+    globalThis.fetch = (() => Promise.resolve(response.clone())) as typeof fetch;
+
+    try {
+      localStorage.setItem(
+        "test-refresh-errors",
+        JSON.stringify([{
+          id: "cached",
+          name: "cached.txt",
+          url: "/uploads/cached",
+        }]),
+      );
+      const reg = mount("test-refresh-errors");
+      await flush(() => {});
+      assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
+      assert(reg.get().refreshError instanceof Error);
+
+      flushSync(() => reg.get().clearRefreshError());
+      assertEquals(reg.get().refreshError, null);
+      response = Response.json({
+        items: [
+          { id: "same", name: "first.txt", url: "/uploads/first" },
+          { id: "same", name: "second.txt", url: "/uploads/second" },
+        ],
+      });
+      await reg.get().refresh();
+      await flush(() => {});
+
+      assertEquals(
+        reg.get().items.map((item) => item.id),
+        ["cached"],
+        "an ambiguous snapshot must not replace the validated cache",
+      );
+      assert(reg.get().refreshError instanceof Error);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("rejects a declared oversized list response before parsing it", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response('{"items":[]}', {
+          headers: { "content-length": String(9 * 1024 * 1024) },
+        }),
+      )) as typeof fetch;
+
+    try {
+      const reg = mount("test-oversized-response");
+      await flush(() => {});
+      assertEquals(reg.get().items, []);
+      assert(reg.get().refreshError instanceof Error);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("surfaces localStorage write failures instead of reporting false persistence", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      const reg = mount("test-storage-failure");
+      await flush(() => {});
+
+      const storage = globalThis.localStorage;
+      const storagePrototype = Object.getPrototypeOf(storage) as Storage;
+      const originalDescriptor = Object.getOwnPropertyDescriptor(
+        storagePrototype,
+        "setItem",
+      );
+      Object.defineProperty(storagePrototype, "setItem", {
+        configurable: true,
+        value: () => {
+          throw new DOMException("blocked", "SecurityError");
+        },
+      });
+
+      await flush(() =>
+        reg.get().add({
+          id: "stored",
+          name: "stored.txt",
+          url: "/api/uploads?id=stored",
+        })
+      );
+      assert(reg.get().storageError instanceof Error);
+      assertEquals(reg.get().items.map((item) => item.id), ["stored"]);
+
+      flushSync(() => reg.get().clearStorageError());
+      assertEquals(reg.get().storageError, null);
+      if (originalDescriptor) {
+        Object.defineProperty(storagePrototype, "setItem", originalDescriptor);
+      }
+      flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("reports an oversized registry instead of attempting an unbounded cache write", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      const key = "test-oversized-write";
+      const reg = mount(key);
+      await flush(() => {});
+
+      flushSync(() => {
+        for (let index = 0; index < 260; index += 1) {
+          reg.get().add({
+            id: `large-${index}`,
+            name: `${index}-${"x".repeat(4_080)}`,
+            url: `/uploads/${index}`,
+          });
+        }
+      });
+      await flush(() => {});
+
+      assertEquals(reg.get().items.length, 260);
+      assert(reg.get().storageError instanceof Error);
+      assertEquals(
+        localStorage.getItem(key),
+        null,
+        "the oversized payload must not be handed to localStorage",
+      );
+      flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("aborts an upload on endpoint switch and ignores a transport that completes late", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const pending: Array<{
+      method: string;
+      url: string;
+      signal?: AbortSignal | null;
+      resolve: (response: Response) => void;
+    }> = [];
+    globalThis.fetch =
+      ((input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          pending.push({
+            method: init?.method ?? "GET",
+            url: String(input),
+            signal: init?.signal,
+            resolve,
+          });
+        })) as typeof fetch;
+
+    try {
+      const reg = mountOptions({
+        storageKey: "test-stale-upload",
+        url: "/old",
+      });
+      const oldGet = pending.find((request) => request.url === "/old" && request.method === "GET");
+      assert(oldGet);
+      oldGet.resolve(Response.json({ items: [] }));
+      await flush(() => {});
+
+      flushSync(() => reg.get().upload([fakeFile("old.txt")]));
+      const oldPost = pending.find(
+        (request) => request.url === "/old" && request.method === "POST",
+      );
+      assert(oldPost);
+
+      reg.render({ storageKey: "test-stale-upload", url: "/new" });
+      assertEquals(oldPost.signal?.aborted, true);
+      const newGet = pending.find((request) => request.url === "/new" && request.method === "GET");
+      assert(newGet);
+      newGet.resolve(Response.json({ items: [] }));
+      await flush(() => {});
+
+      oldPost.resolve(
+        Response.json({
+          id: "stale",
+          name: "stale.txt",
+          url: "/old?id=stale",
+        }),
+      );
+      await flush(() => {});
+      assertEquals(reg.get().items, []);
+      assertEquals(reg.get().uploadError, null);
+      assertEquals(reg.get().isUploading, false);
+
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("does not let a stale delete remove the current endpoint's item", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const pending: Array<{
+      method: string;
+      url: string;
+      signal?: AbortSignal | null;
+      resolve: (response: Response) => void;
+    }> = [];
+    globalThis.fetch =
+      ((input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          pending.push({
+            method: init?.method ?? "GET",
+            url: String(input),
+            signal: init?.signal,
+            resolve,
+          });
+        })) as typeof fetch;
+
+    try {
+      const reg = mountOptions({ storageKey: "test-stale-delete", url: "/old" });
+      pending.find((request) => request.url === "/old" && request.method === "GET")?.resolve(
+        Response.json({ items: [{ id: "same", name: "old.txt" }] }),
+      );
+      await flush(() => {});
+
+      const removal = reg.get().remove("same");
+      const oldDelete = pending.find((request) =>
+        request.url.startsWith("/old?") && request.method === "DELETE"
+      );
+      assert(oldDelete);
+
+      reg.render({ storageKey: "test-stale-delete", url: "/new" });
+      assertEquals(oldDelete.signal?.aborted, true);
+      pending.find((request) => request.url === "/new" && request.method === "GET")?.resolve(
+        Response.json({ items: [{ id: "same", name: "current.txt" }] }),
+      );
+      await flush(() => {});
+
+      oldDelete.resolve(Response.json({ deleted: true }));
+      await removal;
+      await flush(() => {});
+      assertEquals(reg.get().items.map((item) => item.name), ["current.txt"]);
+
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("latest refresh wins even when the endpoint identity is unchanged", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const pending: Array<{
+      signal?: AbortSignal | null;
+      resolve: (response: Response) => void;
+    }> = [];
+    globalThis.fetch =
+      ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          pending.push({ signal: init?.signal, resolve });
+        })) as typeof fetch;
+
+    try {
+      const reg = mountOptions({ storageKey: "test-latest-refresh", url: "/uploads" });
+      assertEquals(pending.length, 1);
+      const first = pending[0]!;
+
+      const secondPromise = reg.get().refresh();
+      assertEquals(first.signal?.aborted, true);
+      const second = pending[1]!;
+      second.resolve(Response.json({ items: [{ id: "new", name: "new.txt" }] }));
+      await secondPromise;
+      await flush(() => {});
+
+      first.resolve(Response.json({ items: [{ id: "old", name: "old.txt" }] }));
+      await flush(() => {});
+      assertEquals(reg.get().items.map((item) => item.id), ["new"]);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("follows bounded list pagination before publishing server truth", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      const url = String(input);
+      requested.push(url);
+      const offset = Number(
+        new URL(url, "https://example.com").searchParams.get("offset") ?? "0",
+      );
+      return Promise.resolve(
+        Response.json(
+          offset === 0
+            ? {
+              items: [{ id: "newest", name: "newest.txt" }],
+              offset: 0,
+              limit: 1,
+              hasMore: true,
+            }
+            : {
+              items: [{ id: "older", name: "older.txt" }],
+              offset: 1,
+              limit: 1,
+              hasMore: false,
+            },
+        ),
+      );
+    }) as typeof fetch;
+
+    try {
+      const reg = mountOptions({
+        storageKey: "test-paginated-refresh",
+        url: "/uploads?scope=rag",
+      });
+      await flush(() => {});
+
+      assertEquals(requested, [
+        "/uploads?scope=rag",
+        "/uploads?scope=rag&limit=1&offset=1",
+      ]);
+      assertEquals(
+        reg.get().items.map((item) => item.id),
+        ["newest", "older"],
+      );
+      assertEquals(reg.get().refreshError, null);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("rejects pagination loops without issuing unbounded requests", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return Promise.resolve(
+        Response.json({
+          items: [{ id: `item-${requested.length}`, name: "item.txt" }],
+          offset: 0,
+          limit: 1,
+          hasMore: true,
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      localStorage.setItem(
+        "test-pagination-loop",
+        JSON.stringify([{ id: "cached", name: "cached.txt" }]),
+      );
+      const reg = mountOptions({
+        storageKey: "test-pagination-loop",
+        url: "/uploads",
+      });
+      await flush(() => {});
+
+      assertEquals(requested, [
+        "/uploads",
+        "/uploads?limit=1&offset=1",
+      ]);
+      assertEquals(reg.get().items.map((item) => item.id), ["cached"]);
+      assert(reg.get().refreshError instanceof Error);
+      flushSync(() => reg.root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("loads a changed storage key without copying the previous cache into it", async () => {
+    const restoreDom = installDom();
+    const fetchStub = stubFetch();
+    try {
+      localStorage.setItem(
+        "test-cache-a",
+        JSON.stringify([{ id: "a", name: "a.txt", url: "/uploads/a" }]),
+      );
+      localStorage.setItem(
+        "test-cache-b",
+        JSON.stringify([{ id: "b", name: "b.txt", url: "/uploads/b" }]),
+      );
+      const reg = mountOptions({ storageKey: "test-cache-a" });
+      assertEquals(reg.get().items.map((item) => item.id), ["a"]);
+
+      reg.render({ storageKey: "test-cache-b" });
+      await flush(() => {});
+      assertEquals(reg.get().items.map((item) => item.id), ["b"]);
+      assertEquals(
+        JSON.parse(localStorage.getItem("test-cache-b") ?? "[]").map(
+          (item: { id: string }) => item.id,
+        ),
+        ["b"],
+      );
+      flushSync(() => reg.root.unmount());
+    } finally {
+      fetchStub.restore();
+      restoreDom();
+    }
+  });
+
+  it("aborts every fetch owner on unmount and consumes late rejections", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const pending: Array<{
+      signal?: AbortSignal | null;
+      reject: (error: Error) => void;
+    }> = [];
+    globalThis.fetch =
+      ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          pending.push({ signal: init?.signal, reject });
+        })) as typeof fetch;
+
+    try {
+      const reg = mountOptions({ storageKey: "test-unmount", url: "/uploads" });
+      flushSync(() =>
+        reg.get().add({
+          id: "existing",
+          name: "existing.txt",
+          url: "/uploads/existing",
+        })
+      );
+      const removal = reg.get().remove("existing");
+      flushSync(() => reg.get().upload([fakeFile("upload.txt")]));
+      assertEquals(pending.length, 3, "GET, DELETE, and POST are all pending");
+
+      const retained = reg.get();
+      flushSync(() => reg.root.unmount());
+      assert(
+        pending.every((request) => request.signal?.aborted),
+        "all operation signals are aborted during cleanup",
+      );
+      retained.upload([fakeFile("retained.txt")]);
+      retained.add({ id: "late", name: "late.txt", url: "/uploads/late" });
+      retained.clear();
+      retained.clearUploadError();
+      retained.clearStorageError();
+      retained.clearRefreshError();
+      retained.clearRemoveError();
+      await retained.remove("late");
+      await retained.refresh();
+      assertEquals(pending.length, 3, "retained callbacks must not start work after unmount");
+
+      for (const request of pending) request.reject(new Error("late transport failure"));
+      await removal;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      globalThis.fetch = previousFetch;
+      restoreDom();
+    }
+  });
+
+  it("an abandoned concurrent endpoint render cannot steal committed refresh ownership", async () => {
+    const restoreDom = installDom();
+    const previousFetch = globalThis.fetch;
+    const pending: Array<{
+      signal?: AbortSignal | null;
+      resolve: (response: Response) => void;
+    }> = [];
+    globalThis.fetch =
+      ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          pending.push({ signal: init?.signal, resolve });
+        })) as typeof fetch;
+    let committed: ReturnType<typeof useAttachments> | null = null;
+    let attemptedSuspendedRender = false;
+    const never = new Promise<void>(() => undefined);
+
+    try {
+      const Capture = (
+        { url, suspend = false }: { url: string; suspend?: boolean },
+      ): null => {
+        const result = useAttachments({
+          storageKey: "test-abandoned-refresh",
+          url,
+        });
+        React.useLayoutEffect(() => {
+          committed = result;
+        });
+        if (suspend) {
+          attemptedSuspendedRender = true;
+          throw never;
+        }
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() =>
+        root.render(
+          <React.Suspense fallback={null}>
+            <Capture url="/committed" />
+          </React.Suspense>,
+        )
+      );
+      assertEquals(pending.length, 1);
+
+      React.startTransition(() => {
+        root.render(
+          <React.Suspense fallback={null}>
+            <Capture url="/abandoned" suspend />
+          </React.Suspense>,
+        );
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(attemptedSuspendedRender, true);
+      assertEquals(pending[0]?.signal?.aborted, false);
+      assertEquals(pending.length, 1, "an uncommitted scope must not start a refresh");
+
+      pending[0]?.resolve(
+        Response.json({ items: [{ id: "committed", name: "committed.txt" }] }),
+      );
+      await flush(() => {});
+      assertEquals(
+        (committed as unknown as ReturnType<typeof useAttachments>).items.map(
+          (item) => item.id,
+        ),
+        ["committed"],
+      );
+
+      flushSync(() =>
+        root.render(
+          <React.Suspense fallback={null}>
+            <Capture url="/committed" />
+          </React.Suspense>,
+        )
+      );
+      flushSync(() => root.unmount());
+    } finally {
+      globalThis.fetch = previousFetch;
       restoreDom();
     }
   });
