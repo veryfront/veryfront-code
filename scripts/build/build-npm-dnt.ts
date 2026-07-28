@@ -419,6 +419,7 @@ await buildExtensionPackages({
 });
 
 await verifyNpmRootImportLifecycle();
+await verifyNpmProxyStreamingPortability();
 
 async function verifyNpmRootImportLifecycle(): Promise<void> {
 	const timeoutMs = 10_000;
@@ -467,6 +468,74 @@ async function verifyNpmRootImportLifecycle(): Promise<void> {
 	}
 
 	console.log("✅ Verified npm root import lifecycle");
+}
+
+async function verifyNpmProxyStreamingPortability(): Promise<void> {
+	const source = `
+const { injectContextHeaders } = await import("./esm/src/proxy/handler.js");
+const { fetchWithProxyDeadline } = await import("./esm/src/proxy/outbound-request.js");
+const stream = (text) => new ReadableStream({
+  start(controller) {
+    controller.enqueue(new TextEncoder().encode(text));
+    controller.close();
+  },
+});
+const request = new Request("http://project.preview.veryfront.com/upload", {
+  method: "POST",
+  body: stream("handler body"),
+  duplex: "half",
+});
+const forwarded = injectContextHeaders(request, {
+  projectSlug: "project",
+  environment: "preview",
+  contentSourceId: "preview-main",
+  host: "project.preview.veryfront.com",
+  parsedDomain: {
+    slug: "project",
+    branch: null,
+    environment: "preview",
+    isVeryfrontDomain: true,
+    isDraft: true,
+    allowIframeEmbed: true,
+  },
+  isLocalProject: false,
+});
+if (await forwarded.text() !== "handler body") {
+  throw new Error("Built npm proxy handler changed the streamed request body");
+}
+let outboundBody;
+const response = await fetchWithProxyDeadline("http://127.0.0.1/upload", {
+  timeoutMs: 1_000,
+  init: {
+    method: "POST",
+    body: stream("outbound body"),
+  },
+  fetchImpl: async (input, init) => {
+    outboundBody = await new Request(input, init).text();
+    return new Response(null, { status: 204 });
+  },
+});
+if (response.status !== 204 || outboundBody !== "outbound body") {
+  throw new Error("Built npm proxy fetch changed the streamed request body");
+}
+`;
+	const output = await new Deno.Command("node", {
+		args: ["--input-type=module", "--eval", source],
+		cwd: "./npm",
+		env: { VF_DISABLE_LRU_INTERVAL: "0" },
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+
+	if (!output.success) {
+		const stderr = new TextDecoder().decode(output.stderr).trim();
+		throw new Error(
+			`Built npm proxy streaming verification failed with exit code ${output.code}.` +
+				(stderr ? `\n${stderr}` : ""),
+		);
+	}
+
+	console.log("✅ Verified npm proxy streaming portability");
 }
 
 function addTypesExportEntries(

@@ -25,6 +25,7 @@ import {
 } from "./project-metadata-client.ts";
 import { resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
+import { withProxyStreamingBodyDuplex } from "./request-init.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
   "x-token",
@@ -1195,11 +1196,14 @@ export function createProxyContextHeaders(
 }
 
 export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
-  return new Request(req.url, {
-    method: req.method,
-    headers: createProxyContextHeaders(req.headers, ctx),
-    body: req.body,
-    redirect: "manual",
-    signal: req.signal,
-  });
+  return new Request(
+    req.url,
+    withProxyStreamingBodyDuplex({
+      method: req.method,
+      headers: createProxyContextHeaders(req.headers, ctx),
+      body: req.body,
+      redirect: "manual",
+      signal: req.signal,
+    }),
+  );
 }

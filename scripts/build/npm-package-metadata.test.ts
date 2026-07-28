@@ -785,6 +785,18 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
   });
 
+  it("verifies proxy streaming bodies against the built npm artifact in Node", async () => {
+    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+    assertStringIncludes(source, "await verifyNpmProxyStreamingPortability();");
+    assertStringIncludes(source, "./esm/src/proxy/handler.js");
+    assertStringIncludes(source, "./esm/src/proxy/outbound-request.js");
+    assertStringIncludes(
+      source,
+      "outboundBody = await new Request(input, init).text()",
+    );
+  });
+
   it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {
     const generatedFiles = [
       "npm/esm/cli/commands/mcp/handler.js",

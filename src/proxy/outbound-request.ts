@@ -2,6 +2,7 @@ import { awaitAbortable, createAbortError, throwIfAborted } from "#veryfront/uti
 import { cancelProxyResponseBody } from "./response-body.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 import { normalizeProxyOriginFormPath } from "./request-path.ts";
+import { withProxyStreamingBodyDuplex } from "./request-init.ts";
 
 const MAX_OUTBOUND_URL_CODE_UNITS = 4_096;
 export const API_PROXY_PATH_PREFIX = "/_vf/api";
@@ -124,10 +125,13 @@ export async function fetchWithProxyDeadline(
 
   try {
     const request = Promise.resolve().then(() =>
-      fetchImpl(input, {
-        ...options.init,
-        signal: controller.signal,
-      })
+      fetchImpl(
+        input,
+        withProxyStreamingBodyDuplex({
+          ...options.init,
+          signal: controller.signal,
+        }),
+      )
     );
     void request.then(
       (lateResponse) => {

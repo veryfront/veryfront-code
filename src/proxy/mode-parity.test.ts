@@ -6,7 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Verifies: Combined mode and split mode produce identical header values
  * for the same input request.
  */
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   createProxyHandler,
@@ -297,6 +297,42 @@ describe("Proxy-Renderer Mode Parity", () => {
           : injected.signal.reason,
         "client disconnected",
       );
+    });
+
+    it("forwards a streaming body without changing its ownership", async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("streamed body"));
+          controller.close();
+        },
+      });
+      const original = new Request(
+        "http://proj.preview.veryfront.com/upload",
+        {
+          method: "POST",
+          body,
+          duplex: "half",
+        } as RequestInit & { duplex: "half" },
+      );
+
+      const injected = injectContextHeaders(original, {
+        projectSlug: "proj",
+        environment: "preview",
+        contentSourceId: "preview-main",
+        host: "proj.preview.veryfront.com",
+        parsedDomain: {
+          slug: "proj",
+          isVeryfrontDomain: true,
+          environment: "preview",
+          branch: null,
+          isDraft: true,
+          allowIframeEmbed: true,
+        },
+        isLocalProject: false,
+      });
+
+      assertStrictEquals(injected.body, original.body);
+      assertEquals(await injected.text(), "streamed body");
     });
   });
 

@@ -101,6 +101,32 @@ Deno.test("proxy outbound requests", async (t) => {
     assertEquals(lateBodyCanceled, true);
   });
 
+  await t.step("marks forwarded ReadableStream bodies as half duplex", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("streamed body"));
+        controller.close();
+      },
+    });
+    let receivedInit: (RequestInit & { duplex?: "half" }) | undefined;
+
+    const response = await fetchWithProxyDeadline("https://api.example/upload", {
+      timeoutMs: 100,
+      init: {
+        method: "POST",
+        body,
+      },
+      fetchImpl: (_input, init) => {
+        receivedInit = init as RequestInit & { duplex?: "half" };
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    });
+
+    assertEquals(response.status, 204);
+    assertStrictEquals(receivedInit?.body, body);
+    assertEquals(receivedInit?.duplex, "half");
+  });
+
   await t.step("clears retry delays when the caller aborts", async () => {
     const caller = new AbortController();
     const reason = new Error("request closed");
