@@ -1443,6 +1443,68 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(request.messages[0]?.parts as unknown, rawReplayParts);
   });
 
+  it("normalizes persisted uploaded file parts from runtime invocations", async () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      messages: [
+        {
+          id: "user-message-1",
+          role: "user",
+          parts: [
+            {
+              type: "image",
+              upload_id: "upload-image-1",
+              media_type: "image/png",
+              url: "https://uploads.example.com/screenshot.png",
+            },
+            {
+              type: "file",
+              upload_id: "upload-file-1",
+              media_type: "application/pdf",
+              url: "https://uploads.example.com/report.pdf",
+              filename: "report.pdf",
+            },
+          ],
+        },
+      ],
+    });
+
+    const expectedParts = [
+      {
+        type: "file",
+        uploadId: "upload-image-1",
+        mediaType: "image/png",
+        url: "https://uploads.example.com/screenshot.png",
+      },
+      {
+        type: "file",
+        uploadId: "upload-file-1",
+        mediaType: "application/pdf",
+        url: "https://uploads.example.com/report.pdf",
+        filename: "report.pdf",
+      },
+    ];
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(request.messages[0]?.parts as unknown, expectedParts);
+    assertEquals(parsed.messages[0]?.parts as unknown, expectedParts);
+  });
+
   it("carries environment runtime target metadata from runtime invocations", () => {
     const baseInvocation = createRuntimeInvocation();
     const invocation = RuntimeAgentRunInvocationSchema.parse({
