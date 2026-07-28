@@ -280,7 +280,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   let template: InitTemplate;
   let projectName = name;
-  let initGit = Boolean((options as InitOptions & { initGit?: boolean }).initGit);
+  let initGit = options.initGit ?? false;
 
   // Validate project name before doing anything else
   if (name) {

@@ -16,6 +16,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
+import type { InitOptions } from "./types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
 const EXPECTED_FAVICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -45,7 +46,7 @@ function runInitCommand(
 }
 
 function runQuietInitCommand(
-  options: Record<string, unknown>,
+  options: InitOptions,
   cwd = TEST_DIR,
   env?: Record<string, string>,
 ): Promise<{ code: number; stdout?: string; stderr?: string }> {
@@ -71,8 +72,21 @@ async function createFakeNpm(
 ): Promise<{ binDir: string; logPath: string }> {
   const binDir = await makeTempDir({ prefix: "veryfront-fake-npm-" });
   const logPath = join(binDir, "npm.log");
-  const npmPath = join(binDir, "npm");
-  const script = `#!/usr/bin/env sh
+  const isWindows = Deno.build.os === "windows";
+  const npmPath = join(binDir, isWindows ? "npm.cmd" : "npm");
+  const script = isWindows
+    ? [
+      "@echo off",
+      `>>"${logPath}" echo %CD% %*`,
+      ...(mode === "success"
+        ? [
+          `>package-lock.json echo {"lockfileVersion":3,"packages":{}}`,
+          "exit /b 0",
+        ]
+        : ["exit /b 42"]),
+      "",
+    ].join("\r\n")
+    : `#!/usr/bin/env sh
 printf '%s\\n' "$PWD $*" >> "${logPath}"
 if [ "${mode}" = "success" ]; then
   printf '%s\\n' '{"lockfileVersion":3,"packages":{}}' > package-lock.json
@@ -81,13 +95,16 @@ fi
 exit 42
 `;
   await Deno.writeTextFile(npmPath, script);
-  await Deno.chmod(npmPath, 0o755);
+  if (!isWindows) {
+    await Deno.chmod(npmPath, 0o755);
+  }
   return { binDir, logPath };
 }
 
 function withPath(binDir: string): Record<string, string> {
+  const delimiter = Deno.build.os === "windows" ? ";" : ":";
   return {
-    PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+    PATH: `${binDir}${delimiter}${Deno.env.get("PATH") ?? ""}`,
     GIT_AUTHOR_NAME: "Veryfront Test",
     GIT_AUTHOR_EMAIL: "test@veryfront.local",
     GIT_COMMITTER_NAME: "Veryfront Test",
@@ -250,7 +267,7 @@ describe("init command integration", () => {
         assertEquals(result.code, 0, (result.stdout ?? "") + (result.stderr ?? ""));
         assertEquals(
           await readTextFile(join(dir, "package-lock.json")),
-          '{"lockfileVersion":3,"packages":{}}\n',
+          `{"lockfileVersion":3,"packages":{}}${Deno.build.os === "windows" ? "\r\n" : "\n"}`,
         );
         assertEquals(
           (await runGit(["ls-files", "package-lock.json"], dir)).trim(),
