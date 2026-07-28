@@ -1,4 +1,10 @@
 import React, { useEffect } from "react";
+import {
+  descriptorFromHeadProps,
+  HEAD_REACT_OWNER_ATTRIBUTE,
+  type ManagedHeadDescriptor,
+} from "#veryfront/html/managed-head-protocol.ts";
+import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
 
 /** Router state exposed through `useRouter()`. */
 export interface RouterValue {
@@ -143,9 +149,11 @@ const globalPageContext = globalThis as typeof globalThis & {
 type CollectHeadFn = (data: {
   title?: string;
   description?: string;
-  metas?: Array<{ name?: string; property?: string; content: string }>;
+  metas?: Array<
+    { name?: string; property?: string; content?: string; [key: string]: string | undefined }
+  >;
   links?: Array<Record<string, string>>;
-  styles?: string[];
+  styles?: Array<string | { content: string; [key: string]: string | undefined }>;
   scripts?: Array<Record<string, string | undefined>>;
 }) => void;
 
@@ -161,92 +169,18 @@ function isServerEnvironment(): boolean {
   return typeof window === "undefined";
 }
 
-function getDocumentNonce(): string | undefined {
-  if (typeof document === "undefined") return undefined;
+type ClientHeadDescriptor = ManagedHeadDescriptor;
 
-  const element = document.querySelector<HTMLElement>("script[nonce], style[nonce], link[nonce]");
-  if (!element) return undefined;
-
-  const nonce = element.nonce || element.getAttribute("nonce") || "";
-  return nonce || undefined;
-}
-
-const HEAD_ATTRIBUTE_NAMES: Readonly<Record<string, string>> = {
-  charSet: "charset",
-  className: "class",
-  crossOrigin: "crossorigin",
-  fetchPriority: "fetchpriority",
-  htmlFor: "for",
-  httpEquiv: "http-equiv",
-  imageSizes: "imagesizes",
-  imageSrcSet: "imagesrcset",
-  noModule: "nomodule",
-  referrerPolicy: "referrerpolicy",
-};
-
-function getHeadElementContent(
-  props: Record<string, unknown>,
-): { content?: string; isRawHTML: boolean } {
-  const rawHTML = props.dangerouslySetInnerHTML;
-  if (
-    rawHTML && typeof rawHTML === "object" &&
-    "__html" in rawHTML
-  ) {
-    const value = (rawHTML as { __html?: unknown }).__html;
-    if (value !== undefined && value !== null) {
-      return { content: String(value), isRawHTML: true };
-    }
-  }
-
-  if (typeof props.children === "string" || typeof props.children === "number") {
-    return { content: String(props.children), isRawHTML: false };
-  }
-
-  return { isRawHTML: false };
-}
-
-function hasMatchingHeadScript(
-  id: string | undefined,
-  src: string | undefined,
-  content: string | undefined,
-): boolean {
-  for (const script of document.head.querySelectorAll<HTMLScriptElement>("script")) {
-    if (id && script.id === id) return true;
-    if (src && script.getAttribute("src") === src) return true;
-    if (
-      !id && !src && content !== undefined &&
-      script.hasAttribute("data-vf-head") &&
-      script.textContent === content
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function applyHeadElementAttributes(
-  element: Element,
-  props: Record<string, unknown>,
-): void {
-  for (const [key, value] of Object.entries(props)) {
-    if (key === "children" || key === "dangerouslySetInnerHTML") continue;
-    // React event callbacks cannot be represented as HTML attributes. Turning
-    // a function into source text is both incorrect and unsafe.
-    if (/^on[A-Z]/.test(key) || typeof value === "function" || typeof value === "symbol") {
-      continue;
-    }
-
-    const attrName = HEAD_ATTRIBUTE_NAMES[key] ?? key;
-    if (typeof value === "boolean") {
-      if (value) element.setAttribute(attrName, "");
-      continue;
-    }
-
-    if (value != null && typeof value !== "object") {
-      element.setAttribute(attrName, String(value));
-    }
-  }
+function createClientHeadDescriptor(
+  child: React.ReactElement,
+  nonce: string | undefined,
+): ClientHeadDescriptor | null {
+  if (typeof child.type !== "string") return null;
+  return descriptorFromHeadProps(
+    child.type,
+    child.props as Record<string, unknown>,
+    nonce,
+  );
 }
 
 function collectHead(data: Parameters<CollectHeadFn>[0]): void {
@@ -566,111 +500,82 @@ function flattenHeadChildren(children: React.ReactNode): React.ReactElement[] {
 /** Applies document head elements during SSR and client rendering. */
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
   const isSSR = isServerEnvironment();
+  const ownerRef = React.useRef<object | null>(null);
+  const anchorRef = React.useRef<HTMLDivElement | null>(null);
+  const managerRef = React.useRef<ReturnType<typeof getClientHeadManager> | null>(
+    null,
+  );
+  if (!ownerRef.current) ownerRef.current = {};
 
   if (isSSR && children) {
     flattenHeadChildren(children).forEach((child) => {
-      const { type } = child;
-      const props = child.props as Record<string, unknown>;
-      if (typeof type !== "string" || type === "body") return;
+      const descriptor = createClientHeadDescriptor(child, undefined);
+      if (!descriptor) return;
+      const attributes = Object.fromEntries(descriptor.attributes);
 
-      if (type === "title") {
-        collectHead({ title: String(props.children ?? "") });
-        return;
-      }
-
-      if (type === "meta") {
-        collectHead({
-          metas: [{
-            name: props.name as string | undefined,
-            property: props.property as string | undefined,
-            content: String(props.content ?? ""),
-          }],
-        });
-        return;
-      }
-
-      if (type === "link") {
-        const link: Record<string, string> = {};
-        for (const [key, value] of Object.entries(props)) {
-          if (value != null) link[key] = String(value);
-        }
-        collectHead({ links: [link] });
-        return;
-      }
-
-      if (type === "style") {
-        collectHead({ styles: [String(props.children ?? "")] });
-        return;
-      }
-
-      if (type === "script") {
-        const script: Record<string, string | undefined> = {};
-        for (const [key, value] of Object.entries(props)) {
-          if (key === "children" || key === "dangerouslySetInnerHTML") continue;
-          if (value != null) script[key] = String(value);
-        }
-        if (props.dangerouslySetInnerHTML) {
-          const html = props.dangerouslySetInnerHTML as { __html?: string };
-          if (html.__html) script.content = html.__html;
-        } else if (typeof props.children === "string") {
-          script.content = props.children;
-        }
-        collectHead({ scripts: [script] });
+      switch (descriptor.tagName) {
+        case "title":
+          collectHead({ title: descriptor.content ?? "" });
+          return;
+        case "meta":
+          collectHead({
+            metas: [attributes],
+          });
+          return;
+        case "link":
+          collectHead({ links: [attributes] });
+          return;
+        case "style":
+          collectHead({
+            styles: descriptor.attributes.length === 0
+              ? [descriptor.content ?? ""]
+              : [{ ...attributes, content: descriptor.content ?? "" }],
+          });
+          return;
+        case "script":
+          collectHead({
+            scripts: [{
+              ...attributes,
+              ...(descriptor.content !== undefined && {
+                content: descriptor.content,
+              }),
+            }],
+          });
       }
     });
   }
 
   useEffect(() => {
-    if (!children) return;
+    const owner = ownerRef.current;
+    const anchor = anchorRef.current;
+    const ownerDocument = anchor?.ownerDocument;
+    if (!owner || !anchor || !ownerDocument) return;
 
-    const addedElements: Element[] = [];
-    const nonce = getDocumentNonce();
+    const nonce = getManagedHeadNonce(ownerDocument);
+    const descriptors = flattenHeadChildren(children)
+      .map((child) => createClientHeadDescriptor(child, nonce))
+      .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null);
+    const manager = getClientHeadManager(ownerDocument);
+    if (managerRef.current && managerRef.current !== manager) {
+      managerRef.current.deactivate(owner);
+    }
+    manager.update(owner, anchor, descriptors);
+    managerRef.current = manager;
+  });
 
-    flattenHeadChildren(children).forEach((child) => {
-      const { type } = child;
-      const props = child.props as Record<string, unknown>;
-      if (typeof type !== "string" || type === "body") return;
-
-      if (type === "title") {
-        document.title = String(props.children ?? "");
-        return;
-      }
-
-      if (type === "script") {
-        const src = props.src as string | undefined;
-        const id = props.id as string | undefined;
-        const { content } = getHeadElementContent(props);
-        if (hasMatchingHeadScript(id, src, content)) return;
-      }
-
-      const element = document.createElement(type);
-      if ((type === "style" || type === "script") && !props.nonce && nonce) {
-        element.setAttribute("nonce", nonce);
-      }
-      applyHeadElementAttributes(element, props);
-
-      const { content, isRawHTML } = getHeadElementContent(props);
-      if (content !== undefined) {
-        if (isRawHTML && type !== "script" && type !== "style") {
-          element.innerHTML = content;
-        } else {
-          element.textContent = content;
-        }
-      }
-
-      if (type === "script") element.setAttribute("data-vf-head", "true");
-      element.setAttribute("data-veryfront-managed", "1");
-      document.head.appendChild(element);
-      addedElements.push(element);
-    });
-
+  useEffect(() => {
+    const owner = ownerRef.current;
+    if (!owner) return;
     return () => {
-      for (const el of addedElements) el.remove();
+      managerRef.current?.deactivate(owner);
+      managerRef.current = null;
     };
-  }, [children]);
+  }, []);
 
   return React.createElement("div", {
+    ref: anchorRef,
     "data-veryfront-head": "1",
+    [HEAD_REACT_OWNER_ATTRIBUTE]: "1",
     style: { display: "none" },
   });
 }

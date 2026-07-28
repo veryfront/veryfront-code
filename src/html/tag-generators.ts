@@ -6,6 +6,7 @@ import {
   escapeInlineScriptContent,
   escapeInlineStyleContent,
 } from "./html-escape.ts";
+import { isHeadFrameworkAttribute } from "./managed-head-protocol.ts";
 
 const MAX_TAG_ATTRIBUTES = 32;
 const MAX_VISITED_TAG_ATTRIBUTES = 128;
@@ -94,7 +95,13 @@ function filterAttrs(
     if (typeof key !== "string") {
       throw inspectionError("HTML tag attributes cannot be inspected");
     }
-    if (excludeKeys.includes(key) || /^on/i.test(key)) continue;
+    if (
+      excludeKeys.includes(key) ||
+      /^on/i.test(key) ||
+      isHeadFrameworkAttribute(key)
+    ) {
+      continue;
+    }
     if (descriptor.get || descriptor.set || !("value" in descriptor)) {
       throw inspectionError("HTML tag attributes cannot be inspected");
     }

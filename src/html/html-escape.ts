@@ -87,13 +87,14 @@ export function buildNonceAttribute(nonce?: string): string {
 }
 
 export function escapeInlineScriptContent(content: string): string {
-  return String(content ?? "").replace(/<\/script/gi, "<\\/script");
+  return escapeManagedHeadRawText(String(content ?? ""), "script");
 }
 
 export function escapeInlineStyleContent(content: string): string {
-  return String(content ?? "").replace(/<\/style/gi, "<\\/style");
+  return escapeManagedHeadRawText(String(content ?? ""), "style");
 }
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
+import { escapeManagedHeadRawText } from "./managed-head-protocol.ts";
 
 const ATTRIBUTE_NAME_PATTERN = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
 const MAX_ATTRIBUTE_ENTRIES = 128;

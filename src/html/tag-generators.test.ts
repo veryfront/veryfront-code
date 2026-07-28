@@ -9,6 +9,32 @@ import {
 } from "./tag-generators.ts";
 
 describe("tag-generators", () => {
+  it("does not let structured metadata spoof framework head ownership", () => {
+    const markerAttributes = {
+      "DATA-VF-HEAD": "spoofed",
+      "data-vf-react-head": "spoofed",
+      "Data-Vf-React-Head-Owner": "spoofed",
+      "data-veryfront-managed": "spoofed",
+      "DATA-VF-HASH": "spoofed",
+    };
+    const output = [
+      generateMetaTags({
+        meta: [{ name: "author", content: "A", ...markerAttributes }],
+      } as never),
+      generateLinkTags({
+        links: [{ rel: "preload", href: "/asset", ...markerAttributes }],
+      } as never),
+      generateScriptTags({
+        scripts: [{ src: "/asset.js", ...markerAttributes }],
+      } as never),
+      generateStyleTags({
+        styles: [{ content: ".safe{}", ...markerAttributes }],
+      } as never),
+    ].join("\n");
+
+    assertEquals(output.includes("spoofed"), false);
+  });
+
   describe("generateMetaTags", () => {
     it("should always include charset meta tag", () => {
       assertStringIncludes(generateMetaTags({}), '<meta charset="UTF-8">');

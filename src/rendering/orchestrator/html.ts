@@ -4,12 +4,17 @@ import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
   buildImportMapJson,
+  escapeHTML,
   extractHTMLMetadata,
   generateHTMLShellParts,
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+import {
+  HEAD_PROVENANCE_ATTRIBUTE,
+  headMetaSingletonKeyFromRecord,
+} from "#veryfront/html/managed-head-protocol.ts";
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
@@ -31,6 +36,7 @@ import {
 } from "./html-project-css.ts";
 import {
   buildHeadElements as buildCollectedHeadElements,
+  mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
@@ -39,6 +45,28 @@ import { toHTMLFrontmatter } from "../frontmatter.ts";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+function injectHeadScriptsAfterCharset(html: string, scripts: string): string {
+  const headOpen = html.indexOf("<head>");
+  const headClose = headOpen < 0 ? -1 : html.indexOf("</head>", headOpen);
+  if (headOpen >= 0 && headClose >= 0) {
+    let cursor = headOpen + "<head>".length;
+    while (cursor < headClose) {
+      const metaStart = html.indexOf("<meta", cursor);
+      if (metaStart < 0 || metaStart >= headClose) break;
+      const metaEnd = html.indexOf(">", metaStart + "<meta".length);
+      if (metaEnd < 0 || metaEnd >= headClose) break;
+      const tag = html.slice(metaStart, metaEnd + 1).toLowerCase();
+      if (tag.includes(" charset=")) {
+        return html.slice(0, metaEnd + 1) +
+          `\n  ${scripts}` +
+          html.slice(metaEnd + 1);
+      }
+      cursor = metaEnd + 1;
+    }
+  }
+  return html.replace("<head>", `<head>\n  ${scripts}`);
+}
 
 /**
  * Resolve the release ID for manifest consumption from render options.
@@ -390,17 +418,24 @@ export class HTMLGenerator {
     projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
-    const enrichedFrontmatter = {
-      ...mergedFrontmatter,
-      ...(head?.title && { title: head.title }),
-      ...(head?.description && { description: head.description }),
-    };
+    const layoutFrontmatter = toHTMLFrontmatter(
+      context.layoutBundle?.frontmatter,
+    );
+    const {
+      frontmatter: enrichedFrontmatter,
+      emissionHead,
+      marksViewport,
+    } = mergeCollectedHeadWithShell(
+      mergedFrontmatter,
+      layoutFrontmatter,
+      head,
+    );
 
     const { start, end } = await generateHTMLShellParts(
       {
         slug: context.slug,
         frontmatter: enrichedFrontmatter,
-        layoutFrontmatter: toHTMLFrontmatter(context.layoutBundle?.frontmatter),
+        layoutFrontmatter,
         ssrHash: context.ssrHash,
       },
       htmlOptions,
@@ -410,14 +445,50 @@ export class HTMLGenerator {
       projectCSSPromise,
     );
 
-    const { scripts, other } = buildCollectedHeadElements(head);
-    if (!scripts && !other) return { start, end };
-
     let modifiedStart = start;
 
-    // Inject blocking scripts at TOP of <head> (after opening tag, before meta/CSS)
+    // The shell always emits its own title and viewport, while React Head must
+    // retain exact text/attributes for deterministic client adoption. Replace
+    // or remove only these fixed framework-generated shapes, then let the
+    // collected-head serializer emit the authoritative marked metadata.
+    if (head?.title !== undefined) {
+      const titleStart = modifiedStart.indexOf("<title>");
+      const titleEnd = titleStart < 0
+        ? -1
+        : modifiedStart.indexOf("</title>", titleStart + "<title>".length);
+      if (titleStart >= 0 && titleEnd >= 0) {
+        modifiedStart = modifiedStart.slice(0, titleStart) +
+          `<title ${HEAD_PROVENANCE_ATTRIBUTE}="true">${escapeHTML(head.title)}</title>` +
+          modifiedStart.slice(titleEnd + "</title>".length);
+      }
+    }
+
+    const headDescription = head?.description ??
+      head?.metas.find((meta) => headMetaSingletonKeyFromRecord(meta) === "meta:description")
+        ?.content;
+    if (headDescription !== undefined && headDescription.length > 0) {
+      modifiedStart = modifiedStart.replace(
+        `<meta name="description" content="${escapeHTML(headDescription)}">`,
+        "",
+      );
+    }
+    if (marksViewport) {
+      const viewport = head?.metas.find((meta) =>
+        headMetaSingletonKeyFromRecord(meta) === "meta:viewport"
+      );
+      modifiedStart = modifiedStart.replace(
+        `<meta name="viewport" content="${escapeHTML(viewport?.content ?? "")}">`,
+        "",
+      );
+    }
+
+    const { scripts, other } = buildCollectedHeadElements(emissionHead);
+    if (!scripts && !other) return { start: modifiedStart, end };
+
+    // Keep the encoding declaration first, then inject blocking scripts before
+    // the remaining metadata and CSS.
     if (scripts) {
-      modifiedStart = modifiedStart.replace("<head>", `<head>\n  ${scripts}`);
+      modifiedStart = injectHeadScriptsAfterCharset(modifiedStart, scripts);
     }
 
     // Inject other head elements at BOTTOM of <head> (before closing tag)

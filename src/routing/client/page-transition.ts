@@ -1,4 +1,5 @@
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
+import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
@@ -46,11 +47,19 @@ export class PageTransition {
       this.pendingTransitionTimeout = undefined;
 
       // Server-rendered navigation HTML may include framework-managed scripts.
-      rootElement.innerHTML = validateTrustedHtml(String(data.html), { allowInlineScripts: true });
+      const trustedHtml = validateTrustedHtml(String(data.html), {
+        allowInlineScripts: true,
+      });
+      // Replacing the React root disconnects every <Head> registration. Retire
+      // its document-level ownership first even when the destination has no
+      // legacy head directive, otherwise stale canonical/style/script nodes
+      // survive indefinitely.
+      retireClientHeadOwnership(rootElement.ownerDocument);
+      rootElement.innerHTML = trustedHtml;
       rootElement.style.opacity = "1";
 
-      executeScripts(rootElement);
       applyHeadDirectives(rootElement);
+      executeScripts(rootElement);
       this.setupViewportPrefetch(rootElement);
       manageFocus(rootElement);
       this.handleScroll(isPopState, scrollY);
@@ -85,6 +94,7 @@ export class PageTransition {
 
     errorDiv.append(heading, message, button);
 
+    retireClientHeadOwnership(rootElement.ownerDocument);
     rootElement.innerHTML = "";
     rootElement.appendChild(errorDiv);
   }

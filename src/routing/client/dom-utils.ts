@@ -1,5 +1,10 @@
 import { rendererLogger } from "#veryfront/utils";
 import type { FrontmatterData, PageData } from "./types.ts";
+import {
+  HEAD_LEGACY_MANAGED_ATTRIBUTE,
+  HEAD_REACT_OWNER_ATTRIBUTE,
+} from "#veryfront/html/managed-head-protocol.ts";
+import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
 
 const logger = rendererLogger.component("veryfront");
 const EXPLICIT_URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -78,8 +83,14 @@ function updateMetaTag(
 }
 
 export function executeScripts(container: HTMLElement): void {
+  const targetDocument = container.ownerDocument ?? document;
   for (const oldScript of container.querySelectorAll("script")) {
-    const newScript = document.createElement("script");
+    // Head-directive scripts are activated when their clone is appended to the
+    // document head. Activating them here as body scripts as well would execute
+    // the same server-provided code twice.
+    if (isInsideHeadDirective(oldScript, container)) continue;
+
+    const newScript = targetDocument.createElement("script");
 
     for (const { name, value } of oldScript.attributes) {
       newScript.setAttribute(name, value);
@@ -90,41 +101,71 @@ export function executeScripts(container: HTMLElement): void {
   }
 }
 
+function isInsideHeadDirective(node: Element, boundary: Element): boolean {
+  let current = node.parentElement;
+  while (current && current !== boundary) {
+    if (
+      current.tagName.toLowerCase() === "vf-head" ||
+      current.getAttribute("data-veryfront-head") === "1"
+    ) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
 export function applyHeadDirectives(container: HTMLElement): void {
-  const nodes = container.querySelectorAll('[data-veryfront-head="1"], vf-head');
+  const targetDocument = container.ownerDocument ?? document;
+  const nodes = [...container.querySelectorAll('[data-veryfront-head="1"], vf-head')]
+    .filter((node) =>
+      typeof node.getAttribute !== "function" ||
+      node.getAttribute(HEAD_REACT_OWNER_ATTRIBUTE) !== "1"
+    );
   if (!nodes.length) return;
 
-  cleanManagedHeadTags();
+  retireClientHeadOwnership(targetDocument);
+  cleanManagedHeadTags(targetDocument);
 
   for (const wrapper of nodes) {
-    const contentSource =
-      typeof HTMLTemplateElement !== "undefined" && wrapper instanceof HTMLTemplateElement
-        ? wrapper.content
-        : wrapper;
+    const TemplateElement = targetDocument.defaultView?.HTMLTemplateElement ??
+      globalThis.HTMLTemplateElement;
+    const contentSource = TemplateElement && wrapper instanceof TemplateElement
+      ? wrapper.content
+      : wrapper;
 
-    processHeadWrapper(contentSource);
+    processHeadWrapper(contentSource, targetDocument);
     wrapper.parentElement?.removeChild(wrapper);
   }
 }
 
-function cleanManagedHeadTags(): void {
-  for (const element of document.head.querySelectorAll('[data-veryfront-managed="1"]')) {
+function cleanManagedHeadTags(targetDocument: Document): void {
+  for (
+    const element of targetDocument.head.querySelectorAll(
+      `[${HEAD_LEGACY_MANAGED_ATTRIBUTE}="1"]`,
+    )
+  ) {
     element.parentElement?.removeChild(element);
   }
 }
 
-function processHeadWrapper(wrapper: Element | DocumentFragment): void {
+function processHeadWrapper(
+  wrapper: Element | DocumentFragment,
+  targetDocument: Document,
+): void {
+  const ElementConstructor = targetDocument.defaultView?.Element ??
+    globalThis.Element;
   for (const node of wrapper.childNodes) {
-    if (!(node instanceof Element)) continue;
+    if (!ElementConstructor || !(node instanceof ElementConstructor)) continue;
 
     const tagName = node.tagName.toLowerCase();
 
     if (tagName === "title") {
-      document.title = node.textContent || document.title;
+      targetDocument.title = node.textContent ?? "";
       continue;
     }
 
-    const clone = document.createElement(tagName);
+    const clone = targetDocument.createElement(tagName);
 
     for (const { name, value } of node.attributes) {
       clone.setAttribute(name, value);
@@ -134,8 +175,8 @@ function processHeadWrapper(wrapper: Element | DocumentFragment): void {
       clone.textContent = node.textContent;
     }
 
-    clone.setAttribute("data-veryfront-managed", "1");
-    document.head.appendChild(clone);
+    clone.setAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE, "1");
+    targetDocument.head.appendChild(clone);
   }
 }
 

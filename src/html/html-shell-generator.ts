@@ -428,9 +428,9 @@ async function generateHTMLShellPartsImpl(
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
 <head>
+  ${metaTags}
   ${hydrationErrorSuppression}
   ${themePersistenceScript}
-  ${metaTags}
   <title>${escapeHTML(effectiveTitle)}</title>
 
   <!-- Import map for ESM module resolution -->

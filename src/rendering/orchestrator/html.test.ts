@@ -93,13 +93,16 @@ describe("HTMLGenerator helpers", () => {
       });
     });
 
-    it("should skip description meta tags", () => {
+    it("should preserve description meta tags for exact Head adoption", () => {
       const head: Head = {
         metas: [{ name: "description", content: "A description" }],
         links: [],
         styles: [],
       };
-      assertEquals(buildHeadElements({ ...head, scripts: [] } as any), { scripts: "", other: "" });
+      assertEquals(
+        buildHeadElements({ ...head, scripts: [] } as any).other,
+        '<meta data-vf-head="true" name="description" content="A description">',
+      );
     });
 
     it("should render meta tags with name attribute", () => {
@@ -185,8 +188,16 @@ describe("HTMLGenerator helpers", () => {
         styles: [".body { color: red; }", ".header { font-size: 2rem; }"],
       };
       const result = buildHeadElements({ ...head, scripts: [] } as any).other;
-      assertEquals(result.includes("<style>.body { color: red; }</style>"), true);
-      assertEquals(result.includes("<style>.header { font-size: 2rem; }</style>"), true);
+      assertEquals(
+        result.includes('<style data-vf-head="true">.body { color: red; }</style>'),
+        true,
+      );
+      assertEquals(
+        result.includes(
+          '<style data-vf-head="true">.header { font-size: 2rem; }</style>',
+        ),
+        true,
+      );
     });
 
     it("should combine multiple metas, links, and styles", () => {
@@ -201,7 +212,7 @@ describe("HTMLGenerator helpers", () => {
       const result = buildHeadElements({ ...head, scripts: [] } as any).other;
       assertEquals(result.includes("<meta"), true);
       assertEquals(result.includes("<link"), true);
-      assertEquals(result.includes("<style>"), true);
+      assertEquals(result.includes('<style data-vf-head="true">'), true);
     });
   });
 
@@ -949,16 +960,197 @@ describe("HTMLGenerator helpers", () => {
         collectedHead: {
           title: "",
           description: "",
-          metas: [],
+          metas: [{ charset: "utf-8" }],
           links: [],
           styles: [".from-head{color:blue}"],
           scripts: [{ content: "window.__HEAD_OK__=true" }],
         },
       });
 
-      assertEquals(html.includes('<style nonce="nonce-123">.from-head{color:blue}</style>'), true);
+      assertEquals(
+        html.includes(
+          '<style data-vf-head="true" nonce="nonce-123">.from-head{color:blue}</style>',
+        ),
+        true,
+      );
       assertEquals(html.includes('<script data-vf-head="true"'), true);
       assertEquals(html.includes('nonce="nonce-123">window.__HEAD_OK__=true</script>'), true);
+      assertEquals((html.match(/<meta charset=/gi) ?? []).length, 1);
+      assertEquals(
+        html.indexOf('<meta charset="UTF-8">') <
+          html.indexOf('<script data-vf-head="true"'),
+        true,
+      );
+    });
+
+    it("merges collected Head singletons before shell serialization", async () => {
+      const mockAdapter = createMockAdapter(async () => "");
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<div>Hello</div>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {
+              title: "Frontmatter title",
+              description: "Frontmatter description",
+              viewport: "width=400",
+              links: [{
+                rel: "canonical",
+                href: "https://example.com/frontmatter",
+              }],
+              scripts: [
+                { id: "frontmatter", src: "/shared.js" },
+                {
+                  content: "globalThis.__headShared=(globalThis.__headShared||0)+1;",
+                },
+              ],
+            },
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        collectedHead: {
+          title: "Head title",
+          description: "Head description",
+          metas: [{ name: "viewport", content: "width=900" }],
+          links: [{
+            rel: "canonical",
+            href: "https://example.com/head",
+          }],
+          styles: [],
+          scripts: [
+            { id: "head", src: "/shared.js" },
+            {
+              content: "globalThis.__headShared=(globalThis.__headShared||0)+1;",
+            },
+          ],
+        },
+      });
+
+      assertEquals(
+        html.includes(
+          '<title data-vf-head="true">Head title</title>',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<meta data-vf-head="true" name="description" content="Head description">',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<meta data-vf-head="true" name="viewport" content="width=900">',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<link data-vf-head="true" rel="canonical" href="https://example.com/head">',
+        ),
+        true,
+      );
+      assertEquals(
+        (html.match(/rel="canonical"/g) ?? []).length,
+        1,
+      );
+      assertEquals(
+        (html.match(/src="\/shared\.js"/g) ?? []).length,
+        1,
+      );
+      assertEquals(
+        (html.match(/<script\b[^>]*>globalThis\.__headShared=/g) ?? [])
+          .length,
+        1,
+      );
+      assertEquals(
+        (html.match(/<meta[^>]+name="description"[^>]*>/g) ?? []).length,
+        1,
+      );
+      assertEquals(
+        (html.match(/<meta[^>]+name="viewport"[^>]*>/g) ?? []).length,
+        1,
+      );
+    });
+
+    it("preserves empty collected metadata and exact viewport attributes", async () => {
+      const mockAdapter = createMockAdapter(async () => "");
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML({
+        html: "<div>Hello</div>",
+        pageInfo: {
+          entity: {
+            path: "/project/app/page.tsx",
+            frontmatter: {
+              title: "Fallback title",
+              description: "Fallback description",
+              viewport: "width=400",
+            },
+          },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "test-page",
+        ssrHash: "hash123",
+        collectedHead: {
+          title: "",
+          description: "",
+          metas: [
+            {
+              name: "description",
+              content: "",
+              "data-source": "react",
+            },
+            {
+              name: "viewport",
+              content: "",
+              media: "screen",
+            },
+          ],
+          links: [],
+          styles: [],
+          scripts: [],
+        },
+      });
+
+      assertEquals(
+        html.includes('<title data-vf-head="true"></title>'),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<meta data-vf-head="true" name="description" content="" data-source="react">',
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes(
+          '<meta data-vf-head="true" name="viewport" content="" media="screen">',
+        ),
+        true,
+      );
+      assertEquals(
+        (html.match(/<meta[^>]+name="description"[^>]*>/g) ?? []).length,
+        1,
+      );
+      assertEquals(
+        (html.match(/<meta[^>]+name="viewport"[^>]*>/g) ?? []).length,
+        1,
+      );
     });
 
     it("replaces existing nonce attributes with the response nonce without duplication", async () => {

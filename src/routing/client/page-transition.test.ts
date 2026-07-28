@@ -8,6 +8,7 @@ import type { RouteData } from "./page-loader.ts";
 interface MockElement {
   id?: string;
   innerHTML?: string;
+  ownerDocument?: MockDocument;
   style?: { opacity?: string; display?: string };
   classList?: {
     toggle: (className: string, force?: boolean) => void;
@@ -23,6 +24,8 @@ interface MockElement {
   textContent?: string;
   tagName?: string;
   _children?: MockElement[];
+  children?: MockElement[];
+  remove?: () => void;
   className?: string;
   onclick?: (() => void) | null;
   type?: string;
@@ -105,6 +108,7 @@ function setupMockDOM(): {
 
   const mockHeadElements: MockElement[] = [];
   const mockHead: MockElement = {
+    children: mockHeadElements,
     querySelectorAll: (selector: string) => {
       if (selector !== '[data-veryfront-managed="1"]') return [];
       return mockHeadElements.filter((el) => el.getAttribute?.("data-veryfront-managed") === "1");
@@ -185,6 +189,7 @@ function setupMockDOM(): {
       };
     },
   };
+  mockRoot.ownerDocument = mockDocument;
 
   (globalThis as any).document = mockDocument;
   (globalThis as any).scrollTo = (x: number, y: number) => {
@@ -339,6 +344,35 @@ describe("PageTransition", () => {
     );
 
     it(
+      "retires React head ownership even without a legacy head directive",
+      withMocks(async (mocks) => {
+        let removed = false;
+        const reactHeadNode: MockElement = {
+          getAttribute: (name: string) => name === "data-vf-head" ? "true" : null,
+          remove: () => {
+            removed = true;
+          },
+        };
+        mocks.mockDocument.head?.appendChild?.(reactHeadNode);
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          { html: "<main>Destination</main>", frontmatter: {} },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(
+          removed,
+          true,
+          "Replacing the React route must remove its document-level head nodes",
+        );
+      }),
+    );
+
+    it(
       "should not perform transition when root element is missing",
       withMocks((mocks) => {
         mocks.mockDocument.getElementById = () => null;
@@ -488,6 +522,24 @@ describe("PageTransition", () => {
 
         const pageTransition = new PageTransition(() => {});
         pageTransition.showError(new Error("Test error"));
+      }),
+    );
+
+    it(
+      "retires React head ownership before replacing the root with an error",
+      withMocks((mocks) => {
+        let removed = false;
+        mocks.mockDocument.head?.appendChild?.({
+          getAttribute: (name: string) => name === "data-vf-head" ? "true" : null,
+          remove: () => {
+            removed = true;
+          },
+        });
+
+        const pageTransition = new PageTransition(() => {});
+        pageTransition.showError(new Error("Route failed"));
+
+        assertEquals(removed, true);
       }),
     );
 
