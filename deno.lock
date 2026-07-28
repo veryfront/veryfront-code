@@ -95,6 +95,7 @@
     "npm:remark-gfm@4.0.1": "4.0.1",
     "npm:remark-parse@11.0.0": "11.0.0",
     "npm:remark-rehype@11.1.2": "11.1.2",
+    "npm:sharp@0.34.5": "0.34.5",
     "npm:tailwindcss@4.2.2": "4.2.2",
     "npm:undici@7.28.0": "7.28.0",
     "npm:unified@11.0.5": "11.0.5",

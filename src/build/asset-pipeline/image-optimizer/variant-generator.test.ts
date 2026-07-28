@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { generateImageVariants } from "./variant-generator.ts";
 import type { ImageFormat, SharpConstructor, SharpInstance, SharpMetadata } from "./types.ts";
 
@@ -109,27 +109,25 @@ describe("build/asset-pipeline/image-optimizer/variant-generator", () => {
       });
     });
 
-    it("should use default width when metadata has no width", async () => {
+    it("should reject missing image dimensions", async () => {
       await withTempOutputDir(async (outputDir) => {
         const sharp = createMockSharp({ height: 600 }); // no width
         const image = createMockSharpInstance({ height: 600 });
-        const formats: ImageFormat[] = ["webp"];
-        const sizes = [320, 640];
-
-        const variants = await generateImageVariants(
-          sharp,
-          image,
-          "nowidth.jpg",
-          { height: 600 }, // no width
-          formats,
-          sizes,
-          80,
-          outputDir,
+        await assertRejects(
+          () =>
+            generateImageVariants(
+              sharp,
+              image,
+              "nowidth.jpg",
+              { height: 600 },
+              ["webp"],
+              [320, 640],
+              80,
+              outputDir,
+            ),
+          TypeError,
+          "positive integer dimensions",
         );
-
-        // When no metaWidth, validSizes = sizes (all pass), plus DEFAULT_IMAGE_WIDTH (1920)
-        // [320, 640, 1920] x 1 format = 3
-        assertEquals(variants.length, 3, "should use all sizes when width is unknown");
       });
     });
 
@@ -155,23 +153,75 @@ describe("build/asset-pipeline/image-optimizer/variant-generator", () => {
       });
     });
 
-    it("should handle empty formats array", async () => {
+    it("should reject an empty formats array", async () => {
       await withTempOutputDir(async (outputDir) => {
         const sharp = createMockSharp();
         const image = createMockSharpInstance();
 
-        const variants = await generateImageVariants(
-          sharp,
-          image,
-          "test.jpg",
-          { width: 1920, height: 1080 },
-          [], // no formats
-          [320],
-          80,
-          outputDir,
+        await assertRejects(
+          () =>
+            generateImageVariants(
+              sharp,
+              image,
+              "test.jpg",
+              { width: 1920, height: 1080 },
+              [],
+              [320],
+              80,
+              outputDir,
+            ),
+          TypeError,
+          "non-empty",
+        );
+      });
+    });
+
+    it("should reject encoded variants without real dimensions", async () => {
+      await withTempOutputDir(async (outputDir) => {
+        const sharp = createMockSharp({});
+        const image = createMockSharpInstance({ width: 640, height: 480 });
+
+        await assertRejects(
+          () =>
+            generateImageVariants(
+              sharp,
+              image,
+              "test.jpg",
+              { width: 640, height: 480 },
+              ["webp"],
+              [320],
+              80,
+              outputDir,
+            ),
+          TypeError,
+          "invalid dimensions",
+        );
+      });
+    });
+
+    it("should reject an empty encoder result", async () => {
+      await withTempOutputDir(async (outputDir) => {
+        const sharp = createMockSharp();
+        const image = createMockSharpInstance(
+          { width: 640, height: 480 },
+          new Uint8Array(),
         );
 
-        assertEquals(variants.length, 0, "should produce no variants with no formats");
+        await assertRejects(
+          () =>
+            generateImageVariants(
+              sharp,
+              image,
+              "test.jpg",
+              { width: 640, height: 480 },
+              ["webp"],
+              [320],
+              80,
+              outputDir,
+            ),
+          TypeError,
+          "empty",
+        );
       });
     });
 

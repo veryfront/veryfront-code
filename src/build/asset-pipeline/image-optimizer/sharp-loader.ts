@@ -1,17 +1,20 @@
 import { logger } from "#veryfront/utils";
-import { SHARP_CDN_URL } from "./constants.ts";
+import { DEPENDENCY_MISSING } from "#veryfront/errors";
+import { SHARP_MODULE_SPECIFIER } from "./constants.ts";
 import type { SharpConstructor } from "./types.ts";
 
-export async function loadSharp(): Promise<SharpConstructor | null> {
+export async function loadSharp(): Promise<SharpConstructor> {
   try {
-    const { default: sharp } = await import(SHARP_CDN_URL);
+    const { default: sharp } = await import(SHARP_MODULE_SPECIFIER);
+    if (typeof sharp !== "function") {
+      throw new TypeError("Sharp module did not export an image constructor");
+    }
     logger.info("Sharp image optimizer loaded successfully");
-    return sharp;
+    return sharp as unknown as SharpConstructor;
   } catch (error) {
-    logger.warn("Sharp not available. Install with: npm install sharp", {
-      error: error instanceof Error ? error.message : String(error),
+    throw DEPENDENCY_MISSING.create({
+      detail: `Image optimization requires ${SHARP_MODULE_SPECIFIER}`,
+      cause: error,
     });
-    logger.info("Skipping image optimization. Images will be copied as-is.");
-    return null;
   }
 }

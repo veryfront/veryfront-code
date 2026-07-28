@@ -37,6 +37,7 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { MAX_PATH_LENGTH } from "#veryfront/utils/constants/security.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import {
   isProjectRelativeDiscoveryPath,
   MAX_PROJECT_DISCOVERY_DIRECTORIES,
@@ -568,8 +569,16 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           images: v
             .object({
               enabled: v.boolean().optional(),
+              projectDir: v.string().optional(),
               formats: v.array(v.enum(["webp", "avif", "jpeg", "png"])).optional(),
-              sizes: v.array(v.number().int().positive()).optional(),
+              sizes: v
+                .array(
+                  v.number().int().positive().max(
+                    IMAGE_OPTIMIZATION.MAX_DIMENSION,
+                  ),
+                )
+                .max(IMAGE_OPTIMIZATION.MAX_OUTPUT_SIZES)
+                .optional(),
               quality: v.number().int().min(1).max(100).optional(),
               inputDir: v.string().optional(),
               outputDir: v.string().optional(),
