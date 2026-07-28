@@ -116,9 +116,22 @@ export function getFinalRunExitCode(
       }
       return exitCodes.SUCCESS;
 
+    case "cancelled":
+      logger.warn(`Workflow was cancelled: ${runId}`);
+      return exitCodes.WORKFLOW_FAILED;
+
+    case "pending":
+    case "running":
+      logger.warn(`Workflow did not reach a durable final state: ${finalRun.status}`);
+      return exitCodes.WORKFLOW_FAILED;
+
     default:
-      logger.warn(`Unexpected final status: ${finalRun?.status}`);
-      return exitCodes.SUCCESS;
+      logger.warn(
+        finalRun
+          ? `Unexpected final status: ${finalRun.status}`
+          : `Workflow run was not found after execution: ${runId}`,
+      );
+      return exitCodes.WORKFLOW_FAILED;
   }
 }
 

@@ -28,11 +28,13 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
+import {
+  enhanceAdapterWithFS as defaultEnhanceAdapterWithFS,
+} from "#veryfront/platform/adapters/fs/integration.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import {
-  discoverProjectAgentRuntime,
+  discoverProjectAgentRuntime as defaultDiscoverProjectAgentRuntime,
   runWithProjectAgentRuntime,
 } from "#veryfront/agent/project/agent-runtime.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
@@ -75,6 +77,35 @@ export interface DynamicWorkflowRunEntrypointConfig {
   debug?: boolean;
 }
 
+/** @internal Injectable runtime seams for deterministic entrypoint tests. */
+export interface DynamicWorkflowRunDependencies {
+  enhanceAdapterWithFS: typeof defaultEnhanceAdapterWithFS;
+  discoverProjectAgentRuntime: typeof defaultDiscoverProjectAgentRuntime;
+}
+
+const DEFAULT_DYNAMIC_WORKFLOW_RUN_DEPENDENCIES: DynamicWorkflowRunDependencies = {
+  enhanceAdapterWithFS: defaultEnhanceAdapterWithFS,
+  discoverProjectAgentRuntime: defaultDiscoverProjectAgentRuntime,
+};
+
+async function failDynamicWorkflowRun(
+  backend: WorkflowBackend,
+  runId: string,
+  error: unknown,
+  expectedWorkerId: string | undefined,
+  exitCode: number,
+): Promise<number> {
+  await failRunExecution(
+    backend,
+    logger,
+    DYNAMIC_EXIT_CODES,
+    runId,
+    error,
+    expectedWorkerId,
+  );
+  return exitCode;
+}
+
 /**
  * Run a workflow run with dynamic discovery.
  *
@@ -88,6 +119,17 @@ export interface DynamicWorkflowRunEntrypointConfig {
  */
 export async function runDynamicWorkflowRun(
   config: DynamicWorkflowRunEntrypointConfig,
+): Promise<number> {
+  return await runDynamicWorkflowRunWithDependencies(
+    config,
+    DEFAULT_DYNAMIC_WORKFLOW_RUN_DEPENDENCIES,
+  );
+}
+
+/** @internal Execute with explicit dependencies without changing the public worker surface. */
+export async function runDynamicWorkflowRunWithDependencies(
+  config: DynamicWorkflowRunEntrypointConfig,
+  dependencies: DynamicWorkflowRunDependencies,
 ): Promise<number> {
   const { backend, debug = false } = config;
 
@@ -118,8 +160,13 @@ export async function runDynamicWorkflowRun(
     const tenant = getTenantFromEnv() ?? run._tenant;
 
     if (!tenant) {
-      logger.error("No tenant context available");
-      return DYNAMIC_EXIT_CODES.CONFIG_ERROR;
+      return await failDynamicWorkflowRun(
+        backend,
+        runId,
+        new Error("No tenant context available"),
+        expectedWorkerId,
+        DYNAMIC_EXIT_CODES.CONFIG_ERROR,
+      );
     }
 
     if (debug) {
@@ -133,33 +180,63 @@ export async function runDynamicWorkflowRun(
       async () => {
         // Set up FS adapter with Veryfront API backend
         const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
+        const contentSource = tenant.productionMode && tenant.releaseId
+          ? { type: "release" as const, releaseId: tenant.releaseId }
+          : tenant.productionMode && tenant.environmentName
+          ? { type: "environment" as const, name: tenant.environmentName }
+          : { type: "branch" as const, branch: tenant.branch ?? "main" };
 
         const fsConfig = {
           fs: {
             type: "veryfront-api" as const,
             veryfront: {
-              baseUrl: apiUrl,
+              apiBaseUrl: apiUrl,
+              apiToken: tenant.token,
               proxyMode: false, // We're setting context directly
               projectSlug: tenant.projectSlug,
+              projectId: tenant.projectId,
+              contentSource,
             },
           },
         };
 
-        const adapter = await enhanceAdapterWithFS(denoAdapter, fsConfig);
+        let adapter;
+        try {
+          adapter = await dependencies.enhanceAdapterWithFS(denoAdapter, fsConfig);
+        } catch (error) {
+          return await failDynamicWorkflowRun(
+            backend,
+            runId,
+            error,
+            expectedWorkerId,
+            DYNAMIC_EXIT_CODES.CONFIG_ERROR,
+          );
+        }
 
         if (debug) {
           logger.info("FS adapter initialized");
         }
 
         // Discover workflows and the project-local agent/tool registries they may reference.
-        const discoveryResult = await discoverProjectAgentRuntime({
-          projectDir: "", // Root of project (relative paths with API)
-          adapter,
-          fsAdapter: adapter.fs,
-          cacheKey: tenant.projectId ?? tenant.projectSlug,
-          verbose: debug,
-          sourceIntegrationPolicy,
-        });
+        let discoveryResult;
+        try {
+          discoveryResult = await dependencies.discoverProjectAgentRuntime({
+            projectDir: "", // Root of project (relative paths with API)
+            adapter,
+            fsAdapter: adapter.fs,
+            cacheKey: tenant.projectId ?? tenant.projectSlug,
+            verbose: debug,
+            sourceIntegrationPolicy,
+          });
+        } catch (error) {
+          return await failDynamicWorkflowRun(
+            backend,
+            runId,
+            error,
+            expectedWorkerId,
+            DYNAMIC_EXIT_CODES.DISCOVERY_FAILED,
+          );
+        }
 
         if (discoveryResult.errors.length > 0 && debug) {
           logger.warn("Some workflow files failed to load:", discoveryResult.errors);
@@ -168,8 +245,13 @@ export async function runDynamicWorkflowRun(
         const workflows = [...discoveryResult.workflows.values()];
 
         if (workflows.length === 0) {
-          logger.error("No workflows discovered");
-          return DYNAMIC_EXIT_CODES.DISCOVERY_FAILED;
+          return await failDynamicWorkflowRun(
+            backend,
+            runId,
+            new Error("No workflows discovered"),
+            expectedWorkerId,
+            DYNAMIC_EXIT_CODES.DISCOVERY_FAILED,
+          );
         }
 
         if (debug) {
@@ -182,11 +264,16 @@ export async function runDynamicWorkflowRun(
         // Find the matching workflow
         const workflow = workflows.find((w) => w.id === run.workflowId);
         if (!workflow) {
-          logger.error(`Workflow not found: ${run.workflowId}`);
           logger.error(
             `[DynamicWorkflowRun] Available workflows: ${workflows.map((w) => w.id).join(", ")}`,
           );
-          return DYNAMIC_EXIT_CODES.NOT_FOUND;
+          return await failDynamicWorkflowRun(
+            backend,
+            runId,
+            new Error(`Workflow not found: "${run.workflowId}"`),
+            expectedWorkerId,
+            DYNAMIC_EXIT_CODES.NOT_FOUND,
+          );
         }
 
         if (debug) {

@@ -132,15 +132,31 @@ describe("workflow worker shared helpers", () => {
     );
   });
 
-  it("maps waiting and unexpected statuses to success exit codes", () => {
+  it("maps only completed and waiting runs to the success exit code", () => {
     const logger = createLogger();
     const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
 
     assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "completed" } as never, false),
+      0,
+    );
+    assertEquals(
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "waiting" } as never, false),
       0,
     );
-    assertEquals(getFinalRunExitCode(logger, exitCodes, "run-1", null, false), 0);
+  });
+
+  it("fails closed for missing, active, and cancelled final run states", () => {
+    const logger = createLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+
+    assertEquals(getFinalRunExitCode(logger, exitCodes, "run-1", null, false), 1);
+    for (const status of ["pending", "running", "cancelled"] as const) {
+      assertEquals(
+        getFinalRunExitCode(logger, exitCodes, "run-1", { status } as never, false),
+        1,
+      );
+    }
   });
 
   it("maps failed runs to the failure exit code", () => {
