@@ -43,7 +43,9 @@ import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
-import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { type ApiClient, createApiClient } from "#cli/shared/config";
+import { getProjectTarget, type ProjectTarget } from "../../shared/deployment-provenance.ts";
+import { reserveProjectSlug, type ReserveResult } from "#cli/shared/reserve-slug";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
 
 // ANSI escape codes
@@ -67,6 +69,22 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "microsoft", label: "Microsoft" },
   { id: "token", label: "API Token" },
 ];
+
+export async function resolveDemoReservedProject(
+  reserveResult: ReserveResult,
+  token: string,
+  client: ApiClient = createApiClient({
+    apiUrl: resolveCliApiUrl(),
+    apiToken: token,
+    projectSlug: reserveResult.slug,
+  }),
+): Promise<ProjectTarget> {
+  if (reserveResult.projectId) {
+    return { id: reserveResult.projectId, slug: reserveResult.slug };
+  }
+
+  return getProjectTarget(client, reserveResult.slug);
+}
 
 function clearCountdownLine(): void {
   write(`\r  ${" ".repeat(30)}\r`);
@@ -355,12 +373,13 @@ async function executeStepAction(
 
       try {
         const reserveResult = await reserveProjectSlug(slug, token);
+        const project = await resolveDemoReservedProject(reserveResult, token);
         await writeProjectLink(projectDir, {
           controlPlane: resolveCliApiUrl(),
-          projectId: reserveResult.projectId,
-          projectSlug: reserveResult.slug,
+          projectId: project.id,
+          projectSlug: project.slug,
         });
-        actualProjectSlug = reserveResult.slug;
+        actualProjectSlug = project.slug;
         console.log("  ✓ Project registered");
 
         console.log(`  ${dim("Pushing code...")}`);
