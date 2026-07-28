@@ -292,7 +292,13 @@ export function createVeryfrontHandler(
   opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
   const isDebugEnabled = (): boolean => {
-    return Boolean(opts.debug) || isTruthyEnvValue(getHostEnv("VERYFRONT_DEBUG"));
+    if (opts.debug) return true;
+
+    const hostDebug = getHostEnv("VERYFRONT_DEBUG");
+    if (hostDebug !== undefined) return isTruthyEnvValue(hostDebug);
+
+    const hasBindingBackedEnv = adapter.id === "cloudflare" || adapter.id === "memory";
+    return hasBindingBackedEnv && isTruthyEnvValue(adapter.env.get("VERYFRONT_DEBUG"));
   };
 
   function logDebug(message: string, extra?: Record<string, unknown>): void {

@@ -1,23 +1,33 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
+import { runWithProjectEnv } from "../project-env/storage.ts";
 import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { requestTracker } from "./request-tracker.ts";
 
-function createMockAdapter(): RuntimeAdapter {
+function createMockAdapter(
+  envValues: Record<string, string> = {},
+  id: RuntimeId = "memory",
+): RuntimeAdapter {
   return {
-    id: "test",
+    id,
     name: "test",
     capabilities: {},
     fs: {
       exists: () => Promise.resolve(false),
     } as unknown as RuntimeAdapter["fs"],
     env: {
-      get: (_key: string) => undefined,
+      get: (key: string) => envValues[key],
       set: () => {},
       delete: () => {},
       has: () => false,
@@ -59,11 +69,98 @@ function captureConsoleOutput(): { lines: string[]; restore: () => void } {
   };
 }
 
+function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
+  const entries: LogEntry[] = [];
+  const originalLogLevel = Deno.env.get("LOG_LEVEL");
+  const originalDebug = Deno.env.get("VERYFRONT_DEBUG");
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  Deno.env.delete("VERYFRONT_DEBUG");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+
+  return {
+    entries,
+    restore: () => {
+      if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+      else Deno.env.set("LOG_LEVEL", originalLogLevel);
+      if (originalDebug === undefined) Deno.env.delete("VERYFRONT_DEBUG");
+      else Deno.env.set("VERYFRONT_DEBUG", originalDebug);
+      __resetLoggerConfigForTests();
+      __resetLogRecordEmitterForTests();
+    },
+  };
+}
+
+function createDebugTestHandler(
+  adapter: RuntimeAdapter,
+  projectDir = "/tmp/test-project",
+) {
+  return createVeryfrontHandler(projectDir, adapter, {
+    projectDir,
+    config: {
+      fs: { veryfront: { proxyMode: true } },
+    } as any,
+  });
+}
+
 describe("server/runtime-handler/index", () => {
   afterEach(() => {
     injectIsolationDepsForTests(null);
     HMRHandler.shutdown();
     requestTracker.shutdown();
+  });
+
+  it("preserves debug flags supplied by binding-backed runtime adapters", () => {
+    const { entries, restore } = captureDebugLogs();
+
+    try {
+      for (const id of ["cloudflare", "memory"] as const) {
+        entries.length = 0;
+        createDebugTestHandler(
+          createMockAdapter({ VERYFRONT_DEBUG: "yes" }, id),
+          `/tmp/test-project-${id}`,
+        );
+
+        assertEquals(
+          entries.some((entry) => entry.message === "[runtime-handler] handler initialized"),
+          true,
+        );
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  it("reads host debug state per request despite a project env overlay", async () => {
+    const { entries, restore } = captureDebugLogs();
+
+    try {
+      const handler = createDebugTestHandler(new DenoAdapter());
+      entries.length = 0;
+
+      Deno.env.set("VERYFRONT_DEBUG", "yes");
+      await runWithProjectEnv(
+        { VERYFRONT_DEBUG: "0" },
+        () => handler(new Request("http://localhost/healthz")),
+      );
+      assertEquals(
+        entries.some((entry) => entry.message === "Processing GET /healthz"),
+        true,
+      );
+
+      Deno.env.delete("VERYFRONT_DEBUG");
+      entries.length = 0;
+      await runWithProjectEnv(
+        { VERYFRONT_DEBUG: "yes" },
+        () => handler(new Request("http://localhost/healthz")),
+      );
+      assertEquals(
+        entries.some((entry) => entry.message === "Processing GET /healthz"),
+        false,
+      );
+    } finally {
+      restore();
+    }
   });
 
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
