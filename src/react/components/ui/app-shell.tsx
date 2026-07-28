@@ -31,6 +31,67 @@ export type AppShellSide = "left" | "right";
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+interface DocumentScrollLock {
+  count: number;
+  previousOverflow: string;
+}
+
+const documentScrollLocks = new WeakMap<Document, DocumentScrollLock>();
+
+/**
+ * Lock one document's body until every AppShell overlay using it has released
+ * ownership. The final release restores the exact value from before the first
+ * lock, independent of overlay mount/unmount order.
+ */
+function acquireDocumentScrollLock(ownerDocument: Document): () => void {
+  const existing = documentScrollLocks.get(ownerDocument);
+  if (existing) {
+    existing.count += 1;
+  } else {
+    documentScrollLocks.set(ownerDocument, {
+      count: 1,
+      previousOverflow: ownerDocument.body.style.overflow,
+    });
+  }
+  ownerDocument.body.style.overflow = "hidden";
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+
+    const current = documentScrollLocks.get(ownerDocument);
+    if (!current) return;
+    current.count -= 1;
+    if (current.count > 0) return;
+
+    ownerDocument.body.style.overflow = current.previousOverflow;
+    documentScrollLocks.delete(ownerDocument);
+  };
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  const element = target as Element | null;
+  if (!element || typeof element.closest !== "function") return false;
+  if (element.closest("input, textarea, select")) return true;
+
+  const contentEditableRoot = element.closest("[contenteditable]");
+  return contentEditableRoot !== null &&
+    contentEditableRoot.getAttribute("contenteditable")?.toLowerCase() !== "false";
+}
+
+function assignRef<T>(
+  ref: React.Ref<T> | undefined,
+  value: T | null,
+): (() => void) | undefined {
+  if (typeof ref === "function") {
+    const cleanup = ref(value);
+    return typeof cleanup === "function" ? cleanup : undefined;
+  }
+  if (ref) ref.current = value;
+  return undefined;
+}
+
 interface AppShellContextValue {
   /** Viewport is below the `sm` breakpoint (< 640px). */
   isMobile: boolean;
@@ -125,6 +186,19 @@ function AppShellRoot({
 }: AppShellProps): React.ReactElement {
   const isMobile = useIsMobile();
   const baseId = React.useId();
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const mergedRootRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      rootRef.current = node;
+      const cleanupExternalRef = assignRef(ref, node);
+      return () => {
+        rootRef.current = null;
+        if (cleanupExternalRef) cleanupExternalRef();
+        else assignRef(ref, null);
+      };
+    },
+    [ref],
+  );
 
   const isControlledLeft = open?.left !== undefined;
   const isControlledRight = open?.right !== undefined;
@@ -212,25 +286,28 @@ function AppShellRoot({
   // ⌘/Ctrl+B toggles the left sidebar (shadcn parity).
   React.useEffect(() => {
     if (!keyboardShortcut) return;
+    const ownerDocument = rootRef.current?.ownerDocument;
+    if (!ownerDocument) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === "b" || e.key === "B")) {
-        e.preventDefault();
-        value.toggle("left");
-      }
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== "b" && e.key !== "B")) return;
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target)) return;
+
+      e.preventDefault();
+      value.toggle("left");
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    ownerDocument.addEventListener("keydown", onKeyDown);
+    return () => ownerDocument.removeEventListener("keydown", onKeyDown);
   }, [keyboardShortcut, value]);
 
   return (
     <AppShellContext.Provider value={value}>
       <DesignTokenStyle />
       <div
-        ref={ref}
+        {...props}
+        ref={mergedRootRef}
         className={cn("flex h-full w-full", className)}
         data-vf-appshell=""
         {...UI_SCOPE_ATTRS}
-        {...props}
       >
         {children}
       </div>
@@ -253,6 +330,8 @@ function SidebarOverlay({
   id,
   className,
   children,
+  style,
+  "aria-label": ariaLabel,
   ...props
 }: AppShellSidebarProps & { id: string }): React.ReactElement {
   const ctx = useAppShell();
@@ -269,9 +348,9 @@ function SidebarOverlay({
 
   React.useEffect(() => {
     const panel = panelRef.current;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const ownerDocument = panel?.ownerDocument ?? document;
+    const previouslyFocused = ownerDocument.activeElement as HTMLElement | null;
+    const releaseScrollLock = acquireDocumentScrollLock(ownerDocument);
 
     const raf = requestAnimationFrame(() => setEntered(true));
     const focusables = () =>
@@ -291,19 +370,19 @@ function SidebarOverlay({
         e.preventDefault();
         return;
       }
-      if (e.shiftKey && document.activeElement === first) {
+      if (e.shiftKey && ownerDocument.activeElement === first) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      } else if (!e.shiftKey && ownerDocument.activeElement === last) {
         e.preventDefault();
         first.focus();
       }
     };
-    document.addEventListener("keydown", onKeyDown);
+    ownerDocument.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = prevOverflow;
+      ownerDocument.removeEventListener("keydown", onKeyDown);
+      releaseScrollLock();
       cancelAnimationFrame(raf);
       previouslyFocused?.focus?.();
     };
@@ -319,11 +398,12 @@ function SidebarOverlay({
         onClick={() => ctx.setOpen(side ?? "left", false)}
       />
       <aside
+        {...props}
         ref={panelRef}
         id={id}
         role="dialog"
         aria-modal="true"
-        aria-label={props["aria-label"] ?? "Sidebar"}
+        aria-label={ariaLabel ?? "Sidebar"}
         tabIndex={-1}
         className={cn(
           "absolute inset-y-0 z-50 flex h-full flex-col bg-[var(--background)] shadow-xl outline-none",
@@ -331,8 +411,11 @@ function SidebarOverlay({
           side === "right" ? "right-0" : "left-0",
           className,
         )}
-        style={{ width, transform: entered ? "translateX(0)" : hiddenTransform }}
-        {...props}
+        style={{
+          ...style,
+          width,
+          transform: entered ? "translateX(0)" : hiddenTransform,
+        }}
       >
         {children}
       </aside>
@@ -346,6 +429,8 @@ function AppShellSidebar({
   width = 240,
   className,
   children,
+  style,
+  "aria-label": ariaLabel,
   ...props
 }: AppShellSidebarProps): React.ReactElement | null {
   const ctx = useAppShell();
@@ -355,11 +440,13 @@ function AppShellSidebar({
   if (ctx.isMobile) {
     return (
       <SidebarOverlay
+        {...props}
         side={side}
         width={width}
         id={id}
         className={className}
-        {...props}
+        style={style}
+        aria-label={ariaLabel}
       >
         {children}
       </SidebarOverlay>
@@ -368,11 +455,11 @@ function AppShellSidebar({
 
   return (
     <aside
-      id={id}
-      aria-label={props["aria-label"] ?? "Sidebar"}
-      className={cn("flex h-full shrink-0 flex-col", className)}
-      style={{ width }}
       {...props}
+      id={id}
+      aria-label={ariaLabel ?? "Sidebar"}
+      className={cn("flex h-full shrink-0 flex-col", className)}
+      style={{ ...style, width }}
     >
       {children}
     </aside>
@@ -501,6 +588,7 @@ function AppShellTrigger({
 
   return (
     <Button
+      {...props}
       variant={variant}
       size={size}
       className={className}
@@ -512,7 +600,6 @@ function AppShellTrigger({
         onClick?.(e);
         ctx.toggle(side);
       }}
-      {...props}
     >
       {icon ?? defaultIcon}
     </Button>
