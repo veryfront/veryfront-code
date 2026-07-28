@@ -15,6 +15,7 @@ import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { resolveCliApiUrl } from "./constants.ts";
+import { readProjectLink } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -50,6 +51,7 @@ export const getResolvedConfigSchema = defineSchema((v) =>
     apiToken: v.string(),
     apiTokenSource: v.enum(["env", "env-file", "config-file", "token-store"]).optional(),
     projectSlug: v.string(),
+    projectId: v.string().optional(),
   })
 );
 export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
@@ -69,6 +71,7 @@ export type ProjectReferenceSource =
   | { kind: "module-config"; name: string }
   | { kind: "json-config"; name: "veryfront.json" }
   | { kind: "tenant-environment"; name: string }
+  | { kind: "local-link"; name: ".veryfront/project.json" }
   | { kind: "inferred"; name: "project files" };
 
 export interface ResolvedConfigDetails {
@@ -185,6 +188,22 @@ function resolveTenantProjectReference(): { reference: string; name: string } | 
   return undefined;
 }
 
+function normalizeControlPlaneForComparison(controlPlane: string): string | null {
+  try {
+    const url = new URL(controlPlane);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function controlPlanesMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeControlPlaneForComparison(left);
+  const normalizedRight = normalizeControlPlaneForComparison(right);
+  return normalizedLeft !== null && normalizedLeft === normalizedRight;
+}
+
 async function resolveApiTokenForMode(
   env: EnvironmentConfig,
   configFile: VeryfrontConfig | null,
@@ -251,6 +270,7 @@ async function resolveConfigBase(
   }
 
   let projectSlug: string | null | undefined;
+  let projectId: string | undefined;
   let projectReferenceSource: ProjectReferenceSource;
   if (env.projectSlug !== undefined) {
     projectSlug = env.projectSlug;
@@ -270,8 +290,15 @@ async function resolveConfigBase(
       projectSlug = tenantReference.reference;
       projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
     } else {
-      projectSlug = await inferProjectSlug(dir);
-      projectReferenceSource = { kind: "inferred", name: "project files" };
+      const projectLink = await readProjectLink(dir);
+      if (projectLink && controlPlanesMatch(projectLink.controlPlane, apiUrl)) {
+        projectSlug = projectLink.projectSlug;
+        projectId = projectLink.projectId;
+        projectReferenceSource = { kind: "local-link", name: ".veryfront/project.json" };
+      } else {
+        projectSlug = await inferProjectSlug(dir);
+        projectReferenceSource = { kind: "inferred", name: "project files" };
+      }
     }
   }
   if (!projectSlug) {
@@ -281,7 +308,13 @@ async function resolveConfigBase(
   }
 
   return {
-    config: { apiUrl, apiToken, ...(apiTokenSource ? { apiTokenSource } : {}), projectSlug },
+    config: {
+      apiUrl,
+      apiToken,
+      ...(apiTokenSource ? { apiTokenSource } : {}),
+      projectSlug,
+      ...(projectId ? { projectId } : {}),
+    },
     projectReferenceSource,
   };
 }

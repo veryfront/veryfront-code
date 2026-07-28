@@ -20,6 +20,19 @@ async function withTempConfigProject(
   }
 }
 
+async function writeRawProjectLink(projectDir: string, projectSlug: string): Promise<void> {
+  await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+  await Deno.writeTextFile(
+    join(projectDir, ".veryfront", "project.json"),
+    JSON.stringify({
+      version: 1,
+      controlPlane: "https://api.veryfront.com",
+      projectId: "linked-project-id",
+      projectSlug,
+    }),
+  );
+}
+
 describe("Config Command", () => {
   describe("JSON output structure", () => {
     it("creates envelope with all config fields", () => {
@@ -100,6 +113,17 @@ describe("Config Command", () => {
       } finally {
         if (saved) Deno.env.set("VERYFRONT_PROJECT_SLUG", saved);
       }
+    });
+
+    it("reports projectSlug and source from a local project link", async () => {
+      await withTempConfigProject({}, async (projectDir) => {
+        await writeRawProjectLink(projectDir, "linked-project");
+
+        const data = await getConfigCommandData(projectDir);
+
+        assertEquals(data.projectSlug, "linked-project");
+        assertEquals(data.configSource, ".veryfront/project.json");
+      });
     });
   });
 
