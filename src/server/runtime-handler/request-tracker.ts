@@ -74,6 +74,22 @@ function buildRequestProfileLogContext(record: RequestProfileRecord): Record<str
   };
 }
 
+function logRequestCompletion(
+  message: string,
+  statusCode: number,
+  context: Record<string, unknown>,
+): void {
+  if (statusCode >= 500) {
+    logger.error(message, context);
+  } else if (statusCode >= 400) {
+    logger.warn(message, context);
+  } else if (statusCode >= 200 && statusCode < 400) {
+    logger.debug(message, context);
+  } else {
+    logger.info(message, context);
+  }
+}
+
 class RequestTracker {
   private inFlight = new Map<string, TrackedRequest>();
   private statusInterval: ReturnType<typeof setInterval> | undefined;
@@ -215,7 +231,7 @@ class RequestTracker {
       logContext.request_profile = buildRequestProfileLogContext(profile);
     }
 
-    logger.info(`${tracked.method} ${tracked.path} ${statusCode}`, logContext);
+    logRequestCompletion(`${tracked.method} ${tracked.path} ${statusCode}`, statusCode, logContext);
   }
 
   markLongLived(requestId: string): void {

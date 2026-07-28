@@ -3,18 +3,36 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 import { requestTracker } from "./request-tracker.ts";
 
-describe("server/runtime-handler/request-tracker", () => {
+const originalLogLevel = Deno.env.get("LOG_LEVEL");
+
+function captureLogs(): LogEntry[] {
+  const entries: LogEntry[] = [];
+  Deno.env.set("LOG_LEVEL", "DEBUG");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return entries;
+}
+
+describe({
+  name: "server/runtime-handler/request-tracker",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
   afterEach(() => {
     // Clean up any tracked requests
     for (const tracked of requestTracker.getInFlightRequests()) {
       requestTracker.complete(tracked.requestId, 200);
     }
     Deno.env.delete("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
+    if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
+    else Deno.env.set("LOG_LEVEL", originalLogLevel);
+    __resetLoggerConfigForTests();
     __resetLogRecordEmitterForTests();
   });
 
@@ -184,6 +202,82 @@ describe("server/runtime-handler/request-tracker", () => {
   });
 
   describe("complete logging behavior", () => {
+    it("logs successful request completions at debug level", () => {
+      const entries = captureLogs();
+
+      requestTracker.start("ok-req", "proj", "/ok", "GET");
+      requestTracker.complete("ok-req", 200);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /ok 200");
+      assertEquals(entry?.level, "debug");
+      assertEquals(entry?.context?.statusCode, 200);
+    });
+
+    it("logs redirect request completions at debug level", () => {
+      const entries = captureLogs();
+
+      requestTracker.start("redirect-req", "proj", "/moved", "GET");
+      requestTracker.complete("redirect-req", 302);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /moved 302");
+      assertEquals(entry?.level, "debug");
+      assertEquals(entry?.context?.statusCode, 302);
+    });
+
+    it("logs client error request completions at warn level", () => {
+      const entries = captureLogs();
+
+      requestTracker.start("not-found", "proj", "/missing", "GET");
+      requestTracker.complete("not-found", 404);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /missing 404");
+      assertEquals(entry?.level, "warn");
+      assertEquals(entry?.context?.statusCode, 404);
+    });
+
+    it("logs server error request completions at error level", () => {
+      const entries = captureLogs();
+
+      requestTracker.start("error-req", "proj", "/broken", "GET");
+      requestTracker.complete("error-req", 500);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /broken 500");
+      assertEquals(entry?.level, "error");
+      assertEquals(entry?.context?.statusCode, 500);
+    });
+
+    it("keeps slow and very slow timer diagnostics visible", () => {
+      const entries = captureLogs();
+      const originalSetTimeout = globalThis.setTimeout;
+
+      globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay === 10_000) {
+          if (typeof callback === "function") callback(...args);
+          return 1 as unknown as ReturnType<typeof setTimeout>;
+        }
+        if (delay === 15_000) {
+          if (typeof callback === "function") callback(...args);
+          return 2 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return originalSetTimeout(callback, delay, ...args);
+      }) as typeof setTimeout;
+
+      try {
+        requestTracker.start("slow-req", "proj", "/slow", "GET");
+        requestTracker.complete("slow-req", 200);
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+      }
+
+      const slowEntry = entries.find((candidate) => candidate.message === "Slow request detected");
+      const verySlowEntry = entries.find((candidate) =>
+        candidate.message === "Very slow request - likely stuck"
+      );
+
+      assertEquals(slowEntry?.level, "warn");
+      assertEquals(verySlowEntry?.level, "error");
+    });
+
     it("handles module request with short duration (no debug log)", () => {
       requestTracker.start("fast-mod", "proj", "/_vf_modules/fast.js", "GET");
       requestTracker.complete("fast-mod", 200);
@@ -197,8 +291,7 @@ describe("server/runtime-handler/request-tracker", () => {
     });
 
     it("attaches request profile details to slow completion logs", () => {
-      const entries: LogEntry[] = [];
-      __registerLogRecordEmitter((entry) => entries.push(entry));
+      const entries = captureLogs();
       Deno.env.set("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS", "0");
 
       requestTracker.start("profiled-req", "proj", "/", "GET", "production", "rel-1");
@@ -236,13 +329,13 @@ describe("server/runtime-handler/request-tracker", () => {
     });
 
     it("handles 404 status completion", () => {
-      requestTracker.start("not-found", "proj", "/missing", "GET");
-      requestTracker.complete("not-found", 404);
+      requestTracker.start("not-found-legacy", "proj", "/missing", "GET");
+      requestTracker.complete("not-found-legacy", 404);
     });
 
     it("handles 500 status completion", () => {
-      requestTracker.start("error-req", "proj", "/broken", "GET");
-      requestTracker.complete("error-req", 500);
+      requestTracker.start("error-req-legacy", "proj", "/broken", "GET");
+      requestTracker.complete("error-req-legacy", 500);
     });
   });
 

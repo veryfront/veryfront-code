@@ -526,6 +526,14 @@ function warnLocalToolSkipping(agentId: string, modelId: string): void {
   );
 }
 
+function debugRuntimeModelRemap(requestedModel: string, resolvedModelString: string): void {
+  if (resolvedModelString === requestedModel) return;
+
+  logger.debug(
+    `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
+  );
+}
+
 type RuntimeStepState = {
   systemPrompt: string;
   context?: Record<string, unknown>;
@@ -652,11 +660,7 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
-    if (resolvedModelString !== requestedModel) {
-      logger.info(
-        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
-      );
-    }
+    debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
       setSpanAttributes(span, {
@@ -725,11 +729,7 @@ export class AgentRuntime {
     const transport = await this.resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
-    if (resolvedModelString !== requestedModel) {
-      logger.info(
-        `⚡ Using runtime model "${resolvedModelString}" instead of "${requestedModel}".`,
-      );
-    }
+    debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     const memoryMessages = await this.prepareTurnMessages(messages);
 
