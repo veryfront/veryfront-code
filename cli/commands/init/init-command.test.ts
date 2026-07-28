@@ -10,7 +10,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
-import { initCommand } from "./init-command.ts";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { writeProjectLink } from "../../shared/project-link.ts";
+import { initCommand, resolveDeployedProjectSlug } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -33,6 +35,33 @@ describe("InitCommand Types", () => {
   });
 
   describe("InitOptions", () => {
+    it("resolves the deployed slug from the local project link", async () => {
+      const projectDir = await makeTempDir({ prefix: "veryfront-init-deployed-slug-" });
+      const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL"];
+      const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+        _resetEnvironmentConfig();
+        await writeProjectLink(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: "project-123",
+          projectSlug: "canonical-slug",
+        });
+
+        assertEquals(await resolveDeployedProjectSlug(projectDir), "canonical-slug");
+      } finally {
+        envKeys.forEach((key, index) => {
+          const value = savedEnv[index];
+          if (value === undefined) Deno.env.delete(key);
+          else Deno.env.set(key, value);
+        });
+        _resetEnvironmentConfig();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("creates a named project beneath parentDir", async () => {
       const parentDir = await makeTempDir({ prefix: "veryfront-init-parent-" });
       const name = `parent-target-${crypto.randomUUID()}`;

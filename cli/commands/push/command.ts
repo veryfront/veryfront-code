@@ -697,11 +697,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       } else {
         try {
           mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
-          if (shouldPersistProjectLink(projectReferenceSource)) {
+          if (shouldPersistProjectLink(projectReferenceSource) || config.projectId) {
             const project = await getProjectTarget(client, projectApiReference(config));
-            config = dryRun
-              ? { ...config, projectId: project.id, projectSlug: project.slug }
-              : await persistProjectLink(projectDir, config, project);
+            config = !dryRun && shouldPersistProjectLink(projectReferenceSource)
+              ? await persistProjectLink(projectDir, config, project)
+              : { ...config, projectId: project.id, projectSlug: project.slug };
           }
         } catch (error) {
           if (getErrorStatus(error) !== 404) throw error;

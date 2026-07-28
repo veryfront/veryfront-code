@@ -266,6 +266,11 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
   return lines;
 }
 
+export async function resolveDeployedProjectSlug(projectDir: string): Promise<string> {
+  const { resolveConfigWithAuth } = await import("#cli/shared/config");
+  return (await resolveConfigWithAuth(projectDir)).projectSlug;
+}
+
 /**
  * Initializes a new Veryfront project with the specified template
  */
@@ -560,7 +565,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (options.deploy) {
     const { chdir } = await import("veryfront/platform");
     const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
-    const { readConfigFile } = await import("#cli/shared/config");
     const { deployCommand } = await import("../deploy/index.ts");
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
@@ -586,8 +590,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
             quiet: true,
           });
 
-          const configFile = await readConfigFile(projectDir);
-          deployedSlug = configFile?.projectSlug;
+          deployedSlug = await resolveDeployedProjectSlug(projectDir);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           log(`\n  Deploy failed: ${message}`);
