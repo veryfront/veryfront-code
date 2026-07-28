@@ -6,11 +6,13 @@
 
 export {
   calculateAspectRatio,
+  calculateRequiredAspectRatio,
   CSS_EXTENSIONS,
   findCSSFiles,
   generateSrcSet,
   getImageDimensions,
   getOptimizedFormat,
+  getRequiredImageDimensions,
   getStandardPseudoSelectors,
   getVariantPath,
   globFiles,

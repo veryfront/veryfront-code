@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { processFormat } from "./format-processor.ts";
 import type { SharpInstance } from "./types.ts";
@@ -64,17 +64,23 @@ describe("build/asset-pipeline/image-optimizer/format-processor", () => {
       assertEquals(mock.lastCall?.args, [{ compressionLevel: 9, adaptiveFiltering: true }]);
     });
 
-    it("should return image unchanged for unknown format", () => {
+    it("should reject an unknown format", () => {
       const mock = createMockSharp();
-      const result = processFormat(mock, "bmp" as never, 80);
-      assertEquals(result, mock);
+      assertThrows(
+        () => processFormat(mock, "bmp" as never, 80),
+        TypeError,
+        "Unsupported image output format",
+      );
       assertEquals(mock.lastCall, null);
     });
 
-    it("should handle quality 0", () => {
+    it("should reject quality 0", () => {
       const mock = createMockSharp();
-      processFormat(mock, "webp", 0);
-      assertEquals(mock.lastCall?.args, [{ quality: 0 }]);
+      assertThrows(
+        () => processFormat(mock, "webp", 0),
+        TypeError,
+        "1 through 100",
+      );
     });
 
     it("should handle quality 100", () => {

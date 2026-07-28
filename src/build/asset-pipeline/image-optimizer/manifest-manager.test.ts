@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
@@ -9,40 +9,111 @@ import type { OptimizedImageMetadata } from "./types.ts";
 describe("manifest-manager", () => {
   it("writes and loads manifests via compat fs", async () => {
     const tmpDir = await makeTempDir();
-    const manifest = new Map<string, OptimizedImageMetadata>([
-      [
-        "logo.png",
-        {
-          original: "logo.png",
-          variants: [
-            {
+    try {
+      const manifest = new Map<string, OptimizedImageMetadata>([
+        [
+          "logo.png",
+          {
+            original: "logo.png",
+            originalSize: 2048,
+            variants: [
+              {
+                format: "webp",
+                size: 400,
+                width: 400,
+                height: 200,
+                path: "logo-400.webp",
+                fileSize: 1234,
+              },
+            ],
+            defaultFormat: "webp",
+            aspectRatio: 2,
+          },
+        ],
+      ]);
+
+      await writeManifest(manifest, tmpDir);
+
+      const manifestPath = join(tmpDir, "image-manifest.json");
+      const parsed = JSON.parse(await readTextFile(manifestPath)) as Record<
+        string,
+        OptimizedImageMetadata
+      >;
+
+      assertEquals(parsed.logo, undefined);
+      assertEquals(parsed["logo.png"]?.defaultFormat, "webp");
+
+      const loaded = await loadManifest(tmpDir);
+      assertEquals(loaded.size, 1);
+      assertEquals(loaded.get("logo.png")?.defaultFormat, "webp");
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("returns an empty manifest only when the file is absent", async () => {
+    const tmpDir = await makeTempDir();
+    try {
+      assertEquals((await loadManifest(tmpDir)).size, 0);
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("rejects malformed JSON and malformed entries", async () => {
+    const tmpDir = await makeTempDir();
+    const manifestPath = join(tmpDir, "image-manifest.json");
+    try {
+      await Deno.writeTextFile(manifestPath, "{");
+      await assertRejects(() => loadManifest(tmpDir), SyntaxError);
+
+      await Deno.writeTextFile(
+        manifestPath,
+        JSON.stringify({
+          "../logo.png": {
+            original: "../logo.png",
+            variants: [],
+            defaultFormat: "webp",
+            aspectRatio: 2,
+          },
+        }),
+      );
+      await assertRejects(
+        () => loadManifest(tmpDir),
+        TypeError,
+        "malformed",
+      );
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("loads legacy entries without originalSize", async () => {
+    const tmpDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tmpDir, "image-manifest.json"),
+        JSON.stringify({
+          "logo.png": {
+            original: "logo.png",
+            variants: [{
               format: "webp",
               size: 400,
               width: 400,
               height: 200,
               path: "logo-400.webp",
               fileSize: 1234,
-            },
-          ],
-          defaultFormat: "webp",
-          aspectRatio: 2,
-        },
-      ],
-    ]);
+            }],
+            defaultFormat: "webp",
+            aspectRatio: 2,
+          },
+        }),
+      );
 
-    await writeManifest(manifest, tmpDir);
-
-    const manifestPath = join(tmpDir, "image-manifest.json");
-    const parsed = JSON.parse(await readTextFile(manifestPath)) as Record<
-      string,
-      OptimizedImageMetadata
-    >;
-
-    assertEquals(parsed.logo, undefined);
-    assertEquals(parsed["logo.png"]?.defaultFormat, "webp");
-
-    const loaded = await loadManifest(tmpDir);
-    assertEquals(loaded.size, 1);
-    assertEquals(loaded.get("logo.png")?.defaultFormat, "webp");
+      const loaded = await loadManifest(tmpDir);
+      assertEquals(loaded.get("logo.png")?.originalSize, undefined);
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
   });
 });
