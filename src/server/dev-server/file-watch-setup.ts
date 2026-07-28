@@ -20,23 +20,17 @@ const DEFAULT_PRIMITIVE_DIRS = ["tools", "agents", "workflows", "prompts", "reso
  * These are generated/cached files that change during normal operation
  * but don't represent actual source code changes.
  */
-const IGNORED_PATH_PATTERNS = [
-  ".cache/",
-  ".cache\\",
-  "node_modules/",
-  "node_modules\\",
-  ".git/",
-  ".git\\",
-  ".veryfront/",
-  ".veryfront\\",
-  ".omx/",
-  ".omx\\",
+const IGNORED_DIRECTORY_NAMES = new Set([
+  ".cache",
+  "node_modules",
+  ".git",
+  ".veryfront",
+  ".omx",
   // Tool output directories that live inside the project root. Tools such as
   // the Playwright MCP server write per-step artifacts here continuously,
   // which would otherwise drive an open-ended HMR refresh loop.
-  ".playwright-mcp/",
-  ".playwright-mcp\\",
-];
+  ".playwright-mcp",
+]);
 
 /**
  * Generated-artifact file extensions that are never source and must never
@@ -97,7 +91,7 @@ function hasIgnoredArtifactFileName(path: string): boolean {
  * Exported for unit testing.
  */
 export function shouldIgnorePath(path: string): boolean {
-  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
+  return path.split(/[\\/]/).some((segment) => IGNORED_DIRECTORY_NAMES.has(segment)) ||
     hasIgnoredArtifactExtension(path) ||
     hasIgnoredArtifactFileName(path);
 }
