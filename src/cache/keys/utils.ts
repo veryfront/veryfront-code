@@ -7,6 +7,7 @@
  ********************************************************************************/
 
 import { VERSION } from "#veryfront/utils/version.ts";
+import { computeHash } from "#veryfront/utils";
 import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -212,16 +213,14 @@ function encodeCacheKeySegment(value: string): string {
   }).join("");
 }
 
-// Characters the API cache backend accepts. Two related sets:
-//
-// - A concrete KEY (get/set/del) may contain segment separators `:` and `/`,
-//   plus `.` `-` `_` and alphanumerics. It deliberately EXCLUDES `*`: a key is
-//   never a glob, and `*` is reserved as the escape marker below — excluding it
-//   from the passthrough set is what makes sanitizeCacheKey injective (no two
-//   inputs collide onto one key).
-// - A del-pattern additionally allows `*` as the glob wildcard.
-const cacheKeyEscapeEncoder = new TextEncoder();
-const CACHE_KEY_ALLOWED_CHAR = /^[a-zA-Z0-9_:./-]$/;
+// Keep these constraints aligned with veryfront-api's shared cache schemas.
+const CACHE_KEY_MAX_LENGTH = 512;
+const SANITIZED_CACHE_KEY_MARKER = "vf-sanitized:";
+const SHA256_HEX_LENGTH = 64;
+const MAX_TRUSTED_PREFIX_LENGTH = CACHE_KEY_MAX_LENGTH -
+  1 -
+  SANITIZED_CACHE_KEY_MARKER.length -
+  SHA256_HEX_LENGTH;
 export const CACHE_KEY_ALLOWED_PATTERN = /^[a-zA-Z0-9_:./-]+$/;
 export const CACHE_PATTERN_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
 
@@ -230,7 +229,9 @@ export const CACHE_PATTERN_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
  * and within the key character set — no `*`).
  */
 export function isValidCacheKey(key: string): boolean {
-  return key.length > 0 && CACHE_KEY_ALLOWED_PATTERN.test(key);
+  return key.length > 0 &&
+    key.length <= CACHE_KEY_MAX_LENGTH &&
+    CACHE_KEY_ALLOWED_PATTERN.test(key);
 }
 
 /**
@@ -238,7 +239,9 @@ export function isValidCacheKey(key: string): boolean {
  * within the key character set plus the `*` glob wildcard).
  */
 export function isValidCachePattern(pattern: string): boolean {
-  return pattern.length > 0 && CACHE_PATTERN_ALLOWED_PATTERN.test(pattern);
+  return pattern.length > 0 &&
+    pattern.length <= CACHE_KEY_MAX_LENGTH &&
+    CACHE_PATTERN_ALLOWED_PATTERN.test(pattern);
 }
 
 /**
@@ -257,32 +260,25 @@ export function digestCacheKey(key: string): string {
  * `/execute` path, loops until the request is flagged stuck — see veryfront
  * issues #162 / #175).
  *
- * Keys already within the allowed set are returned unchanged — the common case,
- * so no existing well-formed key is rewritten and no cache entry is orphaned.
- * Any out-of-set character (e.g. `?`, `=`, `&`, `%`, whitespace, `*`, or
- * non-ASCII that leaked in from a raw request URL, query string, or an
- * `undefined` token during key generation) is escaped as `*HH` byte sequences —
- * the same escape convention encodeCacheKeySegment uses for query params.
+ * Ordinary valid keys are returned unchanged. Malformed, empty, overlong, and
+ * reserved-namespace keys become a deterministic SHA-256 fallback. No part of
+ * the unsafe key is retained because it may contain a credential or other
+ * sensitive path data. A separately supplied trusted backend prefix can be
+ * retained so prefix-based invalidation still reaches the fallback entry.
+ * Reserving the namespace prevents a valid raw key from being mistaken for a
+ * generated fallback key.
  *
- * Because `*` is never a passthrough character, every `*` in the output is an
- * escape marker: the encoding is injective (no collisions) and deterministic,
- * so a `get` and the `set` that produced the value derive the identical key.
- *
- * NOTE: intended for concrete keys, not del-patterns. The `*HH` output contains
- * `*`, which a glob context would read as a wildcard, so a pattern must never be
- * routed through here — see isValidCachePattern and ApiCacheBackend.delByPattern.
+ * Intended for concrete keys only. Delete patterns are validated and rejected
+ * separately because rewriting a glob could broaden its deletion scope.
  */
-export function sanitizeCacheKey(key: string): string {
-  if (CACHE_KEY_ALLOWED_PATTERN.test(key)) return key;
+export async function sanitizeCacheKey(key: string, trustedPrefix = ""): Promise<string> {
+  if (isValidCacheKey(key) && !key.includes(SANITIZED_CACHE_KEY_MARKER)) return key;
 
-  return Array.from(key, (char) => {
-    if (CACHE_KEY_ALLOWED_CHAR.test(char)) return char;
-
-    return Array.from(
-      cacheKeyEscapeEncoder.encode(char),
-      (byte) => `*${byte.toString(16).toUpperCase().padStart(2, "0")}`,
-    ).join("");
-  }).join("");
+  const safePrefix = CACHE_KEY_ALLOWED_PATTERN.test(trustedPrefix) &&
+      !trustedPrefix.includes(SANITIZED_CACHE_KEY_MARKER)
+    ? `${trustedPrefix.slice(0, MAX_TRUSTED_PREFIX_LENGTH)}:`
+    : "";
+  return `${safePrefix}${SANITIZED_CACHE_KEY_MARKER}${await computeHash(key)}`;
 }
 
 export function createCacheKeyFilter(options: {

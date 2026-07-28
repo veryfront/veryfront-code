@@ -12,7 +12,6 @@ import {
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
-  CACHE_PATTERN_ALLOWED_PATTERN,
   CacheKeyPrefix,
   computeContentSourceId,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
@@ -29,6 +28,9 @@ import {
   getReadyManifestForRender,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+
+const API_CACHE_KEY_MAX_LENGTH = 512;
+const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
 
 describe("cache/keys", () => {
   describe("CacheKeyPrefix", () => {
@@ -516,15 +518,20 @@ describe("cache/keys", () => {
       assertEquals(isValidCacheKey(""), false);
     });
 
+    it("rejects keys and patterns longer than the API limit", () => {
+      assertEquals(isValidCacheKey("a".repeat(API_CACHE_KEY_MAX_LENGTH + 1)), false);
+      assertEquals(isValidCachePattern(`prefix:${"*".repeat(API_CACHE_KEY_MAX_LENGTH)}`), false);
+    });
+
     it("flags keys containing characters outside the allowed set", () => {
       assertEquals(isValidCacheKey("render:proj:/blog?ref=x&y=1"), false);
       assertEquals(isValidCacheKey("render:proj: has space"), false);
       assertEquals(isValidCacheKey("render:café"), false);
     });
 
-    it("returns well-formed keys unchanged (no cache churn)", () => {
+    it("returns well-formed keys unchanged (no cache churn)", async () => {
       const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
-      assertEquals(sanitizeCacheKey(key), key);
+      assertEquals(await sanitizeCacheKey(key), key);
     });
 
     it("treats `*` as a wildcard for patterns but not as a valid key character", () => {
@@ -545,35 +552,43 @@ describe("cache/keys", () => {
       assertEquals(isValidCachePattern("render:proj bad:*"), false);
     });
 
-    it("escapes a literal `*` in a key so the encoding stays collision-free", () => {
-      // `*` is the escape marker, so a literal `*` is itself escaped (`*2A`).
-      const sanitized = sanitizeCacheKey("render:proj:a*b");
-      assertMatch(sanitized, CACHE_PATTERN_ALLOWED_PATTERN);
-      assertEquals(sanitized, "render:proj:a*2Ab");
+    it("maps a literal `*` to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:proj:a*b");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:proj:a"), false);
     });
 
-    it("does not collide a literal `*HH`-looking key with an escaped character", () => {
-      // "a b" (space) and "a*20b" (literal star) must not map to the same key.
-      assertNotEquals(sanitizeCacheKey("a b"), sanitizeCacheKey("a*20b"));
+    it("does not collide a malformed key with a marker-looking valid key", async () => {
+      assertNotEquals(await sanitizeCacheKey("a b"), await sanitizeCacheKey("a*20b"));
     });
 
-    it("escapes query-string characters that leak into a key", () => {
-      // ? = & are the classic offenders from a raw request URL.
-      const sanitized = sanitizeCacheKey("render:proj:/blog?ref=x&y=1");
-      assertMatch(sanitized, CACHE_PATTERN_ALLOWED_PATTERN);
-      assertEquals(sanitized, "render:proj:/blog*3Fref*3Dx*26y*3D1");
+    it("maps leaked query-string characters to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:proj:/blog?ref=x&y=1");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:proj:/blog"), false);
     });
 
-    it("escapes whitespace and non-ASCII characters", () => {
-      const sanitized = sanitizeCacheKey("render:café page");
-      assertMatch(sanitized, CACHE_PATTERN_ALLOWED_PATTERN);
-      // é is two UTF-8 bytes, space is one.
-      assertEquals(sanitized, "render:caf*C3*A9*20page");
+    it("does not retain secret-bearing path prefixes from malformed URLs", async () => {
+      const sanitized = await sanitizeCacheKey(
+        "https://example.com/reset/token/secret123?next=/account",
+      );
+      assertEquals(sanitized.includes("secret123"), false);
+      assertEquals(isValidCacheKey(sanitized), true);
     });
 
-    it("is always valid after sanitizing arbitrary input", () => {
+    it("maps whitespace and non-ASCII characters to a valid concrete API key", async () => {
+      const sanitized = await sanitizeCacheKey("render:café page");
+      assertEquals(isValidCacheKey(sanitized), true);
+      assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+      assertEquals(sanitized.includes("render:caf"), false);
+    });
+
+    it("always returns a valid, length-bounded concrete key", async () => {
       for (
         const input of [
+          "",
           "a?b=c",
           "spaces here",
           "emoji-🚀-key",
@@ -581,15 +596,24 @@ describe("cache/keys", () => {
           "percent%20already",
           "back\\slash",
           'quote"key',
+          "a".repeat(API_CACHE_KEY_MAX_LENGTH + 1),
         ]
       ) {
-        assertMatch(sanitizeCacheKey(input), CACHE_PATTERN_ALLOWED_PATTERN);
+        const sanitized = await sanitizeCacheKey(input);
+        assertEquals(isValidCacheKey(sanitized), true);
+        assertMatch(sanitized, API_CACHE_KEY_PATTERN);
+        assertEquals(sanitized.length <= API_CACHE_KEY_MAX_LENGTH, true);
       }
     });
 
-    it("is deterministic so a get derives the same key as its set", () => {
+    it("keeps the reserved fallback namespace distinct from raw valid keys", async () => {
+      const sanitized = await sanitizeCacheKey("a b");
+      assertNotEquals(await sanitizeCacheKey(sanitized), sanitized);
+    });
+
+    it("is deterministic so a get derives the same key as its set", async () => {
       const raw = "render:proj:/blog?ref=x";
-      assertEquals(sanitizeCacheKey(raw), sanitizeCacheKey(raw));
+      assertEquals(await sanitizeCacheKey(raw), await sanitizeCacheKey(raw));
     });
   });
 });
