@@ -243,7 +243,7 @@ export async function initializeTransformCache(): Promise<boolean> {
     try {
       // Use TokenizingCacheGateway for consistent interface and isDistributed() checks
       cacheGateway = await CacheBackends.codeStore("TRANSFORM-CACHE", { keyPrefix: "transform" });
-      logger.info("Initialized with gateway", { backend: cacheGateway.type });
+      logger.debug("Initialized with gateway", { backend: cacheGateway.type });
     } catch (error) {
       logger.warn("Backend init failed, using memory", { error });
       // Fallback to memory backend wrapped in gateway for consistent interface

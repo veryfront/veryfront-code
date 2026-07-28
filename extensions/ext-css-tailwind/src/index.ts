@@ -66,7 +66,7 @@ const extTailwind: ExtensionFactory = () => {
     setup(ctx) {
       installTailwindPluginShims();
       ctx.provide("CSSProcessor", impl);
-      ctx.logger.info("[ext-css-tailwind] CSSProcessor registered");
+      ctx.logger.debug("[ext-css-tailwind] CSSProcessor registered");
     },
     teardown() {
       // Shims stay installed — removing them could break in-flight plugin

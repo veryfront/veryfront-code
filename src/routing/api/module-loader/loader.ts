@@ -157,7 +157,7 @@ function createImportMapPlugin(
 
   if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
 
-  logger.info(`Using import map with ${importMapEntries.length} entries`);
+  logger.debug(`Using import map with ${importMapEntries.length} entries`);
 
   return {
     name: "import-map",
@@ -521,7 +521,7 @@ function loadAndTranspileModule(
         );
       }
 
-      logger.info(`built handler ${resolvedPath}`);
+      logger.debug(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 

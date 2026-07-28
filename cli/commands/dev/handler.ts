@@ -7,6 +7,7 @@ import { isAbsolute, join } from "veryfront/platform/path";
 import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
+import { refreshLoggerConfig } from "veryfront/utils";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
@@ -64,6 +65,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // Enable verbose logging when --debug flag is passed
   if (opts.debug) {
     setEnv("LOG_LEVEL", "DEBUG");
+    refreshLoggerConfig();
   }
 
   // Clear stale ESM caches to prevent module resolution issues from previous runs

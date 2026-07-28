@@ -37,7 +37,7 @@ const extSandboxShellTools: ExtensionFactory = () => ({
   ],
   setup(ctx) {
     ctx.provide(SandboxShellToolsProviderName, provider);
-    ctx.logger.info("[ext-sandbox-shell-tools] Sandbox shell tools provider registered");
+    ctx.logger.debug("[ext-sandbox-shell-tools] Sandbox shell tools provider registered");
   },
 });
 
