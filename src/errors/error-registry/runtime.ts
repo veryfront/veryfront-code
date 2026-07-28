@@ -56,6 +56,15 @@ export const MIDDLEWARE_ERROR = defineError({
   suggestion: "Check middleware function for errors",
 });
 
+/** A workflow run cannot be created because its immutable id is already present. */
+export const WORKFLOW_RUN_CONFLICT = defineError({
+  slug: "workflow-run-conflict",
+  category: "RUNTIME",
+  status: 409,
+  title: "Workflow run already exists",
+  suggestion: "Use a unique run id or retrieve the existing workflow run",
+});
+
 /** Trigger target not found during local execution. */
 export const TRIGGER_TARGET_NOT_FOUND = defineError({
   slug: "trigger-target-not-found",
@@ -92,6 +101,7 @@ export const RUNTIME_REGISTRY = {
   "page-not-found": PAGE_NOT_FOUND,
   "api-error": API_ERROR,
   "middleware-error": MIDDLEWARE_ERROR,
+  "workflow-run-conflict": WORKFLOW_RUN_CONFLICT,
   "trigger-target-not-found": TRIGGER_TARGET_NOT_FOUND,
   "trigger-execution-failed": TRIGGER_EXECUTION_FAILED,
   "trigger-not-supported": TRIGGER_NOT_SUPPORTED,
