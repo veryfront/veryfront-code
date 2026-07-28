@@ -19,6 +19,7 @@ import {
   MAX_GITHUB_FILESYSTEM_ATTEMPTS,
   MAX_VERYFRONT_FILESYSTEM_RETRIES,
 } from "#veryfront/utils/config-resource-limits.ts";
+import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { validateVeryfrontConfig } from "./config.schema.ts";
 
@@ -30,6 +31,42 @@ describe("configSchema", () => {
     });
 
     assertEquals(cfg.router, "app");
+  });
+
+  it("keeps CSS asset-pipeline schema constraints aligned with runtime", () => {
+    const projectDir = Deno.cwd();
+    const css = {
+      enabled: true,
+      projectDir,
+      inputFiles: ["styles/main.css"],
+      browsers: ["defaults", "not IE 11"],
+      purge: true,
+      purgeContent: ["app/**/*.tsx"],
+      purgeSafelist: ["dynamic"],
+    };
+    assertEquals(
+      validateVeryfrontConfig({ assetPipeline: { css } }).assetPipeline?.css,
+      css,
+    );
+
+    for (
+      const invalid of [
+        { projectDir: "relative/project" },
+        { browsers: [] },
+        {
+          purgeSafelist: Array.from(
+            { length: CSS_OPTIMIZATION.MAX_PURGE_SAFELIST_ENTRIES + 1 },
+            (_, index) => `selector-${index}`,
+          ),
+        },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ assetPipeline: { css: invalid } }),
+        Error,
+        "assetPipeline.css",
+      );
+    }
   });
 
   it("rejects unknown top-level keys through the public validator", () => {

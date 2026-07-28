@@ -1,4 +1,6 @@
+import { DEPENDENCY_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
+import { LIGHTNING_CSS_MODULE_SPECIFIER } from "../constants.ts";
 import type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
@@ -6,30 +8,52 @@ import type {
   LightningCSSModule,
 } from "../types/index.ts";
 import { parseBrowserTargets } from "../utils.ts";
-import { INITIALIZATION_ERROR } from "#veryfront/errors";
+
+type LightningCSSLoader = () => Promise<LightningCSSModule>;
+
+function defaultLoader(): Promise<LightningCSSModule> {
+  return import(LIGHTNING_CSS_MODULE_SPECIFIER);
+}
 
 export class LightningCSSStrategy implements CSSOptimizationStrategy {
   readonly name = "lightning-css";
   readonly priority = 100;
 
   private lightningCSS: LightningCSSModule | null = null;
-  private initialized = false;
+  private initialization: Promise<boolean> | null = null;
+  private readonly loader: LightningCSSLoader;
 
-  async init(): Promise<boolean> {
-    if (this.initialized) return this.lightningCSS !== null;
-
-    this.initialized = true;
-
-    try {
-      this.lightningCSS = await import("https://esm.sh/lightningcss@1.29.2");
-      logger.info("Lightning CSS optimizer loaded successfully");
-      return true;
-    } catch (error) {
-      logger.warn("Lightning CSS not available. Install with: npm install lightningcss", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
+  constructor(loader: LightningCSSLoader = defaultLoader) {
+    if (typeof loader !== "function") {
+      throw new TypeError("Lightning CSS loader must be a function");
     }
+    this.loader = loader;
+  }
+
+  init(): Promise<boolean> {
+    if (this.lightningCSS) return Promise.resolve(true);
+    const pending = this.initialization ??= (async () => {
+      try {
+        const module = await this.loader();
+        if (!module || typeof module.transform !== "function") {
+          throw new TypeError(
+            "Lightning CSS module did not export a transform function",
+          );
+        }
+        this.lightningCSS = module;
+        logger.info("Lightning CSS optimizer loaded successfully");
+        return true;
+      } catch (error) {
+        throw DEPENDENCY_MISSING.create({
+          detail: `CSS optimization requires ${LIGHTNING_CSS_MODULE_SPECIFIER}`,
+          cause: error,
+        });
+      }
+    })();
+    return pending.catch((error) => {
+      if (this.initialization === pending) this.initialization = null;
+      throw error;
+    });
   }
 
   canProcess(options: CSSOptimizationOptions): boolean {
@@ -42,31 +66,32 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
     options: CSSOptimizationOptions,
   ): Promise<CSSProcessingResult> {
     if (!this.lightningCSS) {
-      throw INITIALIZATION_ERROR.create({ detail: "Lightning CSS not initialized" });
+      throw INITIALIZATION_ERROR.create({
+        detail: "Lightning CSS not initialized",
+      });
     }
 
-    try {
-      const result = this.lightningCSS.transform({
-        filename,
-        code: new TextEncoder().encode(content),
-        minify: options.minify ?? true,
-        sourceMap: options.sourceMap ?? false,
-        targets: parseBrowserTargets(options.browsers),
-        analyzeDependencies: false,
-      });
-
-      const decoder = new TextDecoder();
-
-      return {
-        code: decoder.decode(result.code),
-        sourceMap: result.map ? decoder.decode(result.map) : undefined,
-      };
-    } catch (error) {
-      logger.warn(`Lightning CSS processing failed for ${filename}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
+    const sourceMap = options.sourceMap ?? false;
+    const result = this.lightningCSS.transform({
+      filename,
+      code: new TextEncoder().encode(content),
+      minify: options.minify ?? true,
+      sourceMap,
+      targets: options.autoprefixer === false ? undefined : parseBrowserTargets(options.browsers),
+      analyzeDependencies: false,
+    });
+    if (!(result.code instanceof Uint8Array)) {
+      throw new TypeError("Lightning CSS returned invalid output bytes");
     }
+    if (sourceMap && !(result.map instanceof Uint8Array)) {
+      throw new TypeError("Lightning CSS did not return the requested source map");
+    }
+
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    return {
+      code: decoder.decode(result.code),
+      sourceMap: result.map ? decoder.decode(result.map) : undefined,
+    };
   }
 
   isAvailable(): boolean {

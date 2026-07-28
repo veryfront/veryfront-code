@@ -1,5 +1,5 @@
 import { basename, dirname, join, resolve } from "#veryfront/compat/path/index.ts";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 
@@ -16,8 +16,15 @@ export interface BuildPublication {
 }
 
 export interface BuildPublicationDependencies {
-  fs?: FileSystem;
+  fs?: BuildPublicationFileSystem;
   lockTimeoutMs?: number;
+}
+
+export interface BuildPublicationFileSystem {
+  rename?(from: string, to: string): Promise<void>;
+  exists(path: string): Promise<boolean>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
 function publicationError(detail: string, cause?: unknown): Error {

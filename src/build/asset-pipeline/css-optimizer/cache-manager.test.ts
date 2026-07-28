@@ -1,197 +1,138 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
-import { readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
 import type { CSSBundle } from "./types/index.ts";
+import { calculateSavings } from "./utils.ts";
 
-const TEST_DIR = "./.veryfront/test-cache";
-
-async function cleanupTestDir(): Promise<void> {
-  try {
-    await remove(TEST_DIR, { recursive: true });
-  } catch {
-    // Directory doesn't exist
-  }
-}
+const encoder = new TextEncoder();
 
 function createBundle(
   file: string,
-  size: number,
-  minifiedSize: number,
   content: string,
-  sourceMap?: string,
+  originalSize = encoder.encode(content).length,
 ): CSSBundle {
+  const minifiedSize = encoder.encode(content).length;
   return {
     file,
+    outputFile: `.veryfront/css/${file.replace(/\.css$/i, ".min.css")}`,
     content,
-    sourceMap,
-    size,
+    size: originalSize,
     minifiedSize,
-    savings: 50,
+    savings: calculateSavings(originalSize, minifiedSize),
   };
 }
 
-describe("CacheManager", () => {
-  it("addBundle and getBundle", () => {
+async function withTempDir(
+  callback: (directory: string) => Promise<void>,
+): Promise<void> {
+  const directory = await Deno.makeTempDir();
+  try {
+    await callback(directory);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+}
+
+describe("build/asset-pipeline/css-optimizer/cache-manager", () => {
+  it("stores defensive copies and invalidates statistics", () => {
     const cache = new CacheManager();
+    const bundle = createBundle("a.css", "a".repeat(50), 100);
+    cache.addBundle("a.css", bundle);
+    assertEquals(cache.getStats().averageSavings, 50);
 
-    cache.addBundle(
-      "test.css",
-      createBundle("test.css", 100, 50, ".test { color: red; }"),
-    );
+    bundle.content = "mutated";
+    assertEquals(cache.getBundle("a.css")?.content, "a".repeat(50));
+    const exposed = cache.getAllBundles();
+    exposed.get("a.css")!.content = "mutated";
+    assertEquals(cache.getBundle("a.css")?.content, "a".repeat(50));
 
-    const retrieved = cache.getBundle("test.css");
-    assertExists(retrieved);
-    assertEquals(retrieved.file, "test.css");
-    assertEquals(retrieved.size, 100);
+    cache.addBundle("b.css", createBundle("b.css", "b".repeat(25), 100));
+    assertEquals(cache.getStats(), {
+      totalFiles: 2,
+      originalSize: 200,
+      minifiedSize: 75,
+      totalSavings: 125,
+      averageSavings: 62.5,
+    });
   });
 
-  it("getAllBundles", () => {
+  it("serializes deterministic, complete manifests", () => {
     const cache = new CacheManager();
+    cache.addBundle("z.css", createBundle("z.css", ".z{}"));
+    cache.addBundle("a.css", createBundle("a.css", ".a{}"));
 
-    cache.addBundle("a.css", createBundle("a.css", 10, 5, ".a {}"));
-    cache.addBundle("b.css", createBundle("b.css", 20, 10, ".b {}"));
-
-    const bundles = cache.getAllBundles();
-    assertEquals(bundles.size, 2);
+    const serialized = cache.serializeManifest();
+    assertEquals(serialized.indexOf('"a.css"') < serialized.indexOf('"z.css"'), true);
+    assertEquals(serialized.includes('"content": ".a{}"'), true);
+    assertEquals(serialized.endsWith("\n"), true);
   });
 
-  it("clear", () => {
-    const cache = new CacheManager();
+  it("round-trips complete manifests", async () => {
+    await withTempDir(async (directory) => {
+      const cache = new CacheManager();
+      cache.addBundle("test.css", createBundle("test.css", ".test{}"));
+      await cache.writeManifest(directory);
 
-    cache.addBundle("test.css", createBundle("test.css", 10, 5, ".test {}"));
-
-    assertEquals(cache.size(), 1);
-
-    cache.clear();
-    assertEquals(cache.size(), 0);
+      const loaded = await loadCSSManifest(directory);
+      assertEquals(loaded.get("test.css")?.content, ".test{}");
+      assertEquals(loaded.get("test.css")?.minifiedSize, 7);
+    });
   });
 
-  it("getStats", () => {
-    const cache = new CacheManager();
+  it("hydrates legacy manifests from their generated CSS file", async () => {
+    await withTempDir(async (directory) => {
+      const content = ".legacy{}";
+      await Deno.writeTextFile(join(directory, "legacy.min.css"), content);
+      await Deno.writeTextFile(
+        join(directory, "css-manifest.json"),
+        JSON.stringify({
+          "legacy.css": {
+            file: "legacy.css",
+            size: 20,
+            minifiedSize: encoder.encode(content).length,
+            savings: calculateSavings(20, encoder.encode(content).length),
+          },
+        }),
+      );
 
-    cache.addBundle("test.css", createBundle("test.css", 1000, 500, ".test {}"));
-
-    const stats = cache.getStats();
-
-    assertEquals(stats.totalFiles, 1);
-    assertEquals(stats.originalSize, 1000);
-    assertEquals(stats.minifiedSize, 500);
-    assertEquals(stats.totalSavings, 500);
-    assertEquals(stats.averageSavings, 50);
+      const loaded = await loadCSSManifest(directory);
+      assertEquals(loaded.get("legacy.css")?.content, content);
+    });
   });
 
-  it("getStats with multiple bundles", () => {
-    const cache = new CacheManager();
-
-    cache.addBundle("a.css", createBundle("a.css", 1000, 500, ".a {}"));
-    cache.addBundle("b.css", createBundle("b.css", 2000, 1000, ".b {}"));
-
-    const stats = cache.getStats();
-
-    assertEquals(stats.totalFiles, 2);
-    assertEquals(stats.originalSize, 3000);
-    assertEquals(stats.minifiedSize, 1500);
-    assertEquals(stats.totalSavings, 1500);
-    assertEquals(stats.averageSavings, 50);
+  it("returns empty only for an absent manifest", async () => {
+    await withTempDir(async (directory) => {
+      assertEquals((await loadCSSManifest(directory)).size, 0);
+      await Deno.writeTextFile(join(directory, "css-manifest.json"), "{");
+      await assertRejects(
+        () => loadCSSManifest(directory),
+        TypeError,
+        "not valid JSON",
+      );
+    });
   });
 
-  it("writeManifest", async () => {
-    await cleanupTestDir();
-
-    const cache = new CacheManager();
-
-    cache.addBundle(
-      "test.css",
-      createBundle(
-        "test.css",
-        100,
-        50,
-        ".test { color: red; }",
-        "source-map-content",
-      ),
-    );
-
-    await cache.writeManifest(TEST_DIR);
-
-    const manifestPath = join(TEST_DIR, "css-manifest.json");
-    const parsed = JSON.parse(await readTextFile(manifestPath));
-
-    assertExists(parsed["test.css"]);
-    assertEquals(parsed["test.css"].file, "test.css");
-    assertEquals(parsed["test.css"].size, 100);
-
-    // Content and sourceMap should be excluded
-    assertEquals(parsed["test.css"].content, undefined);
-    assertEquals(parsed["test.css"].sourceMap, undefined);
-
-    await cleanupTestDir();
-  });
-
-  it("getTotalSavings format", () => {
-    const cache = new CacheManager();
-
-    cache.addBundle("test.css", createBundle("test.css", 10240, 5120, ".test {}"));
-
-    const savings = cache.getTotalSavings();
-
-    assertEquals(typeof savings, "string");
-    assertEquals(savings.includes("KB"), true);
-    assertEquals(savings.includes("→"), true);
-    assertEquals(savings.includes("%"), true);
-  });
-});
-
-describe("loadCSSManifest", () => {
-  it("loads valid manifest", async () => {
-    await cleanupTestDir();
-    await ensureDir(TEST_DIR);
-
-    const manifest = {
-      "test.css": {
-        file: "test.css",
-        size: 100,
-        minifiedSize: 50,
-        savings: 50,
-      },
-    };
-
-    await writeTextFile(
-      join(TEST_DIR, "css-manifest.json"),
-      JSON.stringify(manifest, null, 2),
-    );
-
-    const loaded = await loadCSSManifest(TEST_DIR);
-
-    assertEquals(loaded.size, 1);
-    const bundle = loaded.get("test.css");
-    assertExists(bundle);
-    assertEquals(bundle.size, 100);
-
-    await cleanupTestDir();
-  });
-
-  it("handles missing manifest", async () => {
-    await cleanupTestDir();
-
-    const loaded = await loadCSSManifest(TEST_DIR);
-    assertEquals(loaded.size, 0);
-
-    await cleanupTestDir();
-  });
-
-  it("handles corrupted manifest", async () => {
-    await cleanupTestDir();
-    await ensureDir(TEST_DIR);
-
-    await writeTextFile(join(TEST_DIR, "css-manifest.json"), "invalid{json}");
-
-    const loaded = await loadCSSManifest(TEST_DIR);
-    assertEquals(loaded.size, 0);
-
-    await cleanupTestDir();
+  it("rejects malformed entries instead of trusting casts", async () => {
+    await withTempDir(async (directory) => {
+      await Deno.writeTextFile(
+        join(directory, "css-manifest.json"),
+        JSON.stringify({
+          "../escape.css": {
+            file: "../escape.css",
+            content: ".x{}",
+            size: 4,
+            minifiedSize: 4,
+            savings: 0,
+          },
+        }),
+      );
+      await assertRejects(
+        () => loadCSSManifest(directory),
+        TypeError,
+        "malformed",
+      );
+    });
   });
 });

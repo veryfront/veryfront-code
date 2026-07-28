@@ -155,8 +155,8 @@ describe("PurgeStrategy", () => {
   });
 });
 
-describe("Strategy priority ordering", () => {
-  it("strategies have correct priority order", () => {
+describe("Legacy strategy metadata", () => {
+  it("keeps priority values stable for direct strategy consumers", () => {
     const lightning = new LightningCSSStrategy();
     const minification = new MinificationStrategy();
     const purge = new PurgeStrategy();

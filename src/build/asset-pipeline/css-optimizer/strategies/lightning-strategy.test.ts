@@ -42,12 +42,11 @@ describe("build/asset-pipeline/css-optimizer/strategies/lightning-strategy", () 
     });
 
     describe("init", () => {
-      it("should return false when lightningcss is not available", async () => {
+      it("should load the required pinned compiler", async () => {
         const strategy = new LightningCSSStrategy();
-        // In test environment, the esm.sh import will likely fail
         const result = await strategy.init();
-        // Either true or false is acceptable; we just verify it does not throw
-        assertEquals(typeof result, "boolean");
+        assertEquals(result, true);
+        assertEquals(strategy.isAvailable(), true);
       });
 
       it("should not re-initialize on subsequent calls", async () => {
@@ -56,6 +55,39 @@ describe("build/asset-pipeline/css-optimizer/strategies/lightning-strategy", () 
         const second = await strategy.init();
         assertEquals(first, second);
       });
+
+      it("should fail closed and coalesce a missing dependency", async () => {
+        let attempts = 0;
+        const strategy = new LightningCSSStrategy(() => {
+          attempts++;
+          return Promise.reject(new Error("unavailable"));
+        });
+        const [first, second] = await Promise.allSettled([
+          strategy.init(),
+          strategy.init(),
+        ]);
+        assertEquals(first.status, "rejected");
+        assertEquals(second.status, "rejected");
+        assertEquals(attempts, 1);
+        await assertRejects(() => strategy.init());
+        assertEquals(attempts, 2);
+      });
+    });
+
+    it("should generate the requested source map", async () => {
+      const strategy = new LightningCSSStrategy();
+      await strategy.init();
+      const result = await strategy.process(
+        ".field { user-select: none; }",
+        "field.css",
+        {
+          browsers: ["ie 11"],
+          autoprefixer: true,
+          sourceMap: true,
+        },
+      );
+      assertEquals(result.code.includes("-ms-user-select"), true);
+      assertEquals(JSON.parse(result.sourceMap!).version, 3);
     });
   });
 });

@@ -19,7 +19,7 @@ export class MinificationStrategy implements CSSOptimizationStrategy {
     filename: string,
     _options: CSSOptimizationOptions,
   ): Promise<CSSProcessingResult> {
-    logger.debug(`Using basic minification for ${filename}`);
+    logger.debug(`Using parser-backed minification for ${filename}`);
 
     return {
       code: basicMinify(content),
