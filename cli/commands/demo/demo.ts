@@ -32,9 +32,13 @@ import {
 } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
-import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS } from "#cli/shared/constants";
+import {
+  DEFAULT_CALLBACK_PORT,
+  DEFAULT_LOGIN_TIMEOUT_MS,
+  resolveCliApiUrl,
+} from "#cli/shared/constants";
 import { initCommand } from "../init/index.ts";
-import { writeProjectSlug } from "#cli/shared/config";
+import { writeProjectLink } from "../../shared/project-link.ts";
 import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
@@ -341,7 +345,6 @@ async function executeStepAction(
 
       const projectDir = join(cwd(), projectName);
       const slug = `${projectName}-${randomSuffix()}`;
-      await writeProjectSlug(projectDir, slug);
       actualProjectSlug = slug;
 
       const token = await readToken();
@@ -352,10 +355,12 @@ async function executeStepAction(
 
       try {
         const reserveResult = await reserveProjectSlug(slug, token);
-        if (reserveResult.slug !== slug) {
-          await writeProjectSlug(projectDir, reserveResult.slug);
-          actualProjectSlug = reserveResult.slug;
-        }
+        await writeProjectLink(projectDir, {
+          controlPlane: resolveCliApiUrl(),
+          projectId: reserveResult.projectId,
+          projectSlug: reserveResult.slug,
+        });
+        actualProjectSlug = reserveResult.slug;
         console.log("  ✓ Project registered");
 
         console.log(`  ${dim("Pushing code...")}`);
