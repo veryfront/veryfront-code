@@ -1,5 +1,5 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
-import { getEnv, getEnvNumber } from "#veryfront/compat/process.ts";
+import { getEnv, getEnvNumber } from "veryfront/platform";
 import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { ServerModeSchema } from "#cli/shared/types";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";

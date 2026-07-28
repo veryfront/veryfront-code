@@ -22,6 +22,7 @@ export {
   exit,
   getArgs,
   getEnv,
+  getEnvNumber,
   getOsType,
   getRuntimeVersion,
   getStdout,
