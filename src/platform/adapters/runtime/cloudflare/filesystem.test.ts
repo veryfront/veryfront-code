@@ -25,19 +25,32 @@ async function collectDirectory(
 }
 
 function createKVNamespace(initialEntries: Record<string, string>): KVNamespace {
-  const entries = new Map(Object.entries(initialEntries));
+  const entries = new Map<string, string | Uint8Array>(Object.entries(initialEntries));
   return {
     delete(key) {
       entries.delete(key);
       return Promise.resolve();
     },
-    get(key) {
-      return Promise.resolve(entries.get(key) ?? null);
+    get(key, type = "text") {
+      const value = entries.get(key);
+      if (value === undefined) return Promise.resolve(null);
+      if (type === "arrayBuffer") {
+        const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+        return Promise.resolve(bytes.slice().buffer);
+      }
+      return Promise.resolve(
+        typeof value === "string" ? value : new TextDecoder().decode(value),
+      );
     },
     getWithMetadata(key) {
+      const value = entries.get(key);
       return Promise.resolve({
         metadata: null,
-        value: entries.get(key) ?? null,
+        value: value === undefined
+          ? null
+          : typeof value === "string"
+          ? value
+          : new TextDecoder().decode(value),
       });
     },
     list(options = {}) {
@@ -52,7 +65,16 @@ function createKVNamespace(initialEntries: Record<string, string>): KVNamespace 
       });
     },
     put(key, value) {
-      entries.set(key, value);
+      if (typeof value === "string") {
+        entries.set(key, value);
+      } else if (value instanceof ArrayBuffer) {
+        entries.set(key, new Uint8Array(value.slice(0)));
+      } else {
+        entries.set(
+          key,
+          new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice(),
+        );
+      }
       return Promise.resolve();
     },
   };
@@ -242,6 +264,16 @@ describe("CloudflareFileSystemAdapter realPath", () => {
       Error,
       "25 MiB",
     );
+  });
+
+  it("round-trips binary files without text decoding", async () => {
+    const fs = new CloudflareFileSystemAdapter(createKVNamespace({}));
+    const bytes = new Uint8Array([0, 255, 1, 128, 2]);
+
+    await fs.writeFileBytes("assets/pixel.bin", bytes);
+
+    assertEquals([...await fs.readFileBytes("assets/pixel.bin")], [...bytes]);
+    assertEquals((await fs.stat("assets/pixel.bin")).size, bytes.byteLength);
   });
 
   it("does not silently succeed on mutating operations without a KV binding", async () => {

@@ -8,6 +8,8 @@ export type { DirectoryEntry };
 
 export interface FSAdapter {
   readFile(path: string): Promise<Uint8Array | string>;
+  /** Read raw bytes without an intermediate text decode when supported. */
+  readFileBytes?(path: string): Promise<Uint8Array>;
   /**
    * Read through EOF or at most `byteLimit` bytes directly from the backing
    * store.
@@ -31,6 +33,7 @@ export interface FSAdapter {
   readdir?(path: string): AsyncIterable<DirectoryEntry> | Promise<DirectoryEntry[]>;
 
   writeFile?(path: string, content: string): Promise<void>;
+  writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove?(path: string, options?: { recursive?: boolean }): Promise<void>;
 

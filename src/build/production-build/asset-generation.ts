@@ -4,15 +4,17 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
-import { dirname, join, relative } from "#veryfront/compat/path/index.ts";
-import { walk } from "#std/fs.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import type { DirEntry, FileInfo, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
-import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
+import { hasControlCharacters } from "../utils/string-validation.ts";
 
 const logger = serverLogger.component("build");
 const MAX_STATIC_ASSET_PATH_LENGTH = 4_096;
+const MAX_STATIC_ASSET_DEPTH = 64;
+const MAX_STATIC_ASSET_ENTRIES = 100_000;
 const RESERVED_PUBLIC_ROOTS = new Set(["_veryfront", "_vf"]);
 const RESERVED_PUBLIC_FILES = new Set(["sw.js", "_redirects"]);
 
@@ -28,128 +30,311 @@ export interface StaticAssetEntry {
   size: number;
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  const fs = createFileSystem();
+function compareNames(left: { name: string }, right: { name: string }): number {
+  if (left.name === right.name) return 0;
+  return left.name < right.name ? -1 : 1;
+}
+
+function compareAssetEntries(left: StaticAssetEntry, right: StaticAssetEntry): number {
+  const depth = left.relativePath.split("/").length -
+    right.relativePath.split("/").length;
+  if (depth !== 0) return depth;
+  if (left.relativePath === right.relativePath) return 0;
+  return left.relativePath < right.relativePath ? -1 : 1;
+}
+
+function portableNameKey(name: string): string {
+  return name.normalize("NFC").toLocaleLowerCase("en-US");
+}
+
+async function statPath(
+  adapter: RuntimeAdapter,
+  path: string,
+): Promise<FileInfo> {
+  const lstat = adapter.fs.lstat?.bind(adapter.fs);
+  return lstat ? await lstat(path) : await adapter.fs.stat(path);
+}
+
+async function statPathIfPresent(
+  adapter: RuntimeAdapter,
+  path: string,
+): Promise<FileInfo | null> {
   try {
-    await fs.stat(path);
-    return true;
+    return await statPath(adapter, path);
   } catch (error) {
-    if (isNotFoundError(error)) return false;
+    if (isNotFoundError(error)) return null;
     throw error;
   }
 }
 
-export async function discoverStaticAssets(projectDir: string): Promise<StaticAssetEntry[]> {
-  const fs = createFileSystem();
+function assertSafeAssetPath(relativePath: string): void {
+  if (
+    relativePath.length === 0 ||
+    relativePath.length > MAX_STATIC_ASSET_PATH_LENGTH ||
+    relativePath.startsWith("/") ||
+    relativePath.includes("\\") ||
+    hasControlCharacters(relativePath) ||
+    relativePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw BUILD_FAILED.create({
+      detail: `Invalid public asset path: ${relativePath}`,
+    });
+  }
+
+  const normalizedPath = relativePath.toLowerCase();
+  const firstSegment = normalizedPath.split("/")[0];
+  if (
+    (firstSegment && RESERVED_PUBLIC_ROOTS.has(firstSegment)) ||
+    RESERVED_PUBLIC_FILES.has(normalizedPath)
+  ) {
+    throw BUILD_FAILED.create({
+      detail: `Public asset path is reserved for generated build output: ${relativePath}`,
+    });
+  }
+}
+
+function assertUsableEntry(entry: DirEntry, relativePath: string): void {
+  if (
+    typeof entry.name !== "string" ||
+    entry.name.length === 0 ||
+    entry.name === "." ||
+    entry.name === ".." ||
+    entry.name.includes("/") ||
+    entry.name.includes("\\") ||
+    hasControlCharacters(entry.name)
+  ) {
+    throw BUILD_FAILED.create({
+      detail: `Invalid public directory entry: ${relativePath}`,
+    });
+  }
+  if (entry.isSymlink !== false) {
+    throw BUILD_FAILED.create({
+      detail: `Symbolic links are not supported in public assets: ${relativePath}`,
+    });
+  }
+  if (entry.isFile === entry.isDirectory) {
+    throw BUILD_FAILED.create({
+      detail: `Unsupported public asset type: ${relativePath}`,
+    });
+  }
+}
+
+function assertExpectedInfo(
+  info: FileInfo,
+  kind: "file" | "directory",
+  relativePath: string,
+): void {
+  if (info.isSymlink) {
+    throw BUILD_FAILED.create({
+      detail: `Symbolic links are not supported in public assets: ${relativePath}`,
+    });
+  }
+  const matchesKind = kind === "file"
+    ? info.isFile && !info.isDirectory
+    : info.isDirectory && !info.isFile;
+  if (!matchesKind) {
+    throw BUILD_FAILED.create({
+      detail: `Public asset changed type while being discovered: ${relativePath}`,
+    });
+  }
+  if (!Number.isSafeInteger(info.size) || info.size < 0) {
+    throw BUILD_FAILED.create({
+      detail: `Public asset has an invalid size: ${relativePath}`,
+    });
+  }
+}
+
+export async function discoverStaticAssets(
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): Promise<StaticAssetEntry[]> {
   const publicDir = join(projectDir, "public");
 
-  let publicInfo;
-  try {
-    publicInfo = await fs.stat(publicDir);
-  } catch (error) {
-    if (isNotFoundError(error)) return [];
-    throw error;
+  const publicInfo = await statPathIfPresent(adapter, publicDir);
+  if (publicInfo === null) return [];
+  if (publicInfo.isSymlink) {
+    throw BUILD_FAILED.create({
+      detail: `Symbolic links are not supported for the public asset root: ${publicDir}`,
+    });
   }
-  if (!publicInfo.isDirectory) {
+  if (!publicInfo.isDirectory || publicInfo.isFile) {
     throw BUILD_FAILED.create({ detail: `Public asset path is not a directory: ${publicDir}` });
   }
 
   const entries: StaticAssetEntry[] = [];
-  for await (const entry of walk(publicDir, { followSymlinks: false, includeDirs: true })) {
-    const relativePath = relative(publicDir, entry.path).replaceAll("\\", "/");
-    if (!relativePath || relativePath === ".") continue;
-    const firstSegment = relativePath.split("/")[0]?.toLocaleLowerCase("en-US");
-    if (
-      (firstSegment && RESERVED_PUBLIC_ROOTS.has(firstSegment)) ||
-      RESERVED_PUBLIC_FILES.has(relativePath.toLocaleLowerCase("en-US"))
-    ) {
+  let visitedEntries = 0;
+
+  const scan = async (
+    directoryPath: string,
+    relativeDirectory: string,
+    depth: number,
+  ): Promise<void> => {
+    if (depth > MAX_STATIC_ASSET_DEPTH) {
       throw BUILD_FAILED.create({
-        detail: `Public asset path is reserved for generated build output: ${relativePath}`,
+        detail: `Public asset tree exceeds ${MAX_STATIC_ASSET_DEPTH} directory levels`,
       });
     }
 
-    if (
-      relativePath.length > MAX_STATIC_ASSET_PATH_LENGTH ||
-      relativePath.startsWith("/") ||
-      relativePath.split("/").some((segment) =>
-        segment === "" || segment === "." || segment === ".."
-      )
-    ) {
-      throw BUILD_FAILED.create({
-        detail: `Invalid public asset path: ${relativePath}`,
-      });
+    const directoryEntries: DirEntry[] = [];
+    const portableNames = new Set<string>();
+    for await (const entry of adapter.fs.readDir(directoryPath)) {
+      visitedEntries++;
+      if (visitedEntries > MAX_STATIC_ASSET_ENTRIES) {
+        throw BUILD_FAILED.create({
+          detail: `Public asset tree exceeds ${MAX_STATIC_ASSET_ENTRIES} entries`,
+        });
+      }
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      assertUsableEntry(entry, relativePath);
+      const portableName = portableNameKey(entry.name);
+      if (portableNames.has(portableName)) {
+        throw BUILD_FAILED.create({
+          detail: `Public directory contains a portable path collision: ${relativePath}`,
+        });
+      }
+      portableNames.add(portableName);
+      directoryEntries.push(entry);
     }
-    if (entry.isSymlink) {
-      throw BUILD_FAILED.create({
-        detail: `Symbolic links are not supported in public assets: ${relativePath}`,
+    directoryEntries.sort(compareNames);
+
+    for (const entry of directoryEntries) {
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      assertSafeAssetPath(relativePath);
+      const sourcePath = join(directoryPath, entry.name);
+      const kind = entry.isDirectory ? "directory" : "file";
+      const info = await statPath(adapter, sourcePath);
+      assertExpectedInfo(info, kind, relativePath);
+      entries.push({
+        sourcePath,
+        relativePath,
+        kind,
+        size: kind === "file" ? info.size : 0,
       });
+      if (kind === "directory") {
+        await scan(sourcePath, relativePath, depth + 1);
+      }
     }
-    if (!entry.isFile && !entry.isDirectory) continue;
-    const size = entry.isFile ? (await fs.stat(entry.path)).size : 0;
+  };
 
-    entries.push({
-      sourcePath: entry.path,
-      relativePath,
-      kind: entry.isDirectory ? "directory" : "file",
-      size,
-    });
-  }
-
-  return entries.sort((left, right) => {
-    const depth = left.relativePath.split("/").length -
-      right.relativePath.split("/").length;
-    return depth || left.relativePath.localeCompare(right.relativePath);
-  });
+  await scan(publicDir, "", 0);
+  return entries.sort(compareAssetEntries);
 }
 
 /**
  * Copy static assets from public directory to output directory
  */
 export async function copyStaticAssets(
-  _adapter: RuntimeAdapter,
+  adapter: RuntimeAdapter,
   projectDir: string,
   outputDir: string,
   dryRun = false,
 ): Promise<AssetStats> {
-  const stats: AssetStats = { assets: 0, totalSize: 0 };
-  const fs = createFileSystem();
-  const entries = await discoverStaticAssets(projectDir);
+  const entries = await discoverStaticAssets(adapter, projectDir);
+  const fileEntries = entries.filter((entry) => entry.kind === "file");
+  const totalSize = fileEntries.reduce((total, entry) => total + entry.size, 0);
+  if (!Number.isSafeInteger(totalSize)) {
+    throw BUILD_FAILED.create({
+      detail: "Public asset inventory exceeds the supported total size",
+    });
+  }
+  const stats: AssetStats = { assets: fileEntries.length, totalSize };
   if (entries.length === 0) {
     logger.debug("No public assets found");
     return stats;
   }
 
+  if (dryRun) {
+    logger.info(`Counted ${stats.assets} static assets`);
+    return stats;
+  }
+
+  const readFileBytes = adapter.fs.readFileBytes?.bind(adapter.fs);
+  const writeFileBytes = adapter.fs.writeFileBytes?.bind(adapter.fs);
+  if (fileEntries.length > 0 && (!readFileBytes || !writeFileBytes)) {
+    throw BUILD_FAILED.create({
+      detail: "The selected runtime adapter does not support binary-safe public asset copying",
+    });
+  }
+
+  const outputInfo = await statPathIfPresent(adapter, outputDir);
+  if (
+    outputInfo &&
+    (outputInfo.isSymlink || !outputInfo.isDirectory || outputInfo.isFile)
+  ) {
+    throw BUILD_FAILED.create({
+      detail: `Build output path is not a safe directory: ${outputDir}`,
+    });
+  }
+
+  const destinationInfo = new Map<string, FileInfo | null>();
   for (const entry of entries) {
     const destinationPath = join(outputDir, entry.relativePath);
-
+    const info = await statPathIfPresent(adapter, destinationPath);
+    destinationInfo.set(destinationPath, info);
     if (entry.kind === "directory") {
-      if (!dryRun) {
-        if (await pathExists(destinationPath)) {
-          const info = await fs.stat(destinationPath);
-          if (!info.isDirectory) {
-            throw BUILD_FAILED.create({
-              detail: `Public directory collides with generated output: ${entry.relativePath}`,
-            });
-          }
-        } else {
-          await fs.mkdir(destinationPath, { recursive: true });
-        }
+      if (info?.isSymlink || (info && (!info.isDirectory || info.isFile))) {
+        throw BUILD_FAILED.create({
+          detail: `Public directory collides with generated output: ${entry.relativePath}`,
+        });
       }
       continue;
     }
-
-    stats.assets += 1;
-    stats.totalSize += entry.size;
-    if (dryRun) continue;
-
-    if (await pathExists(destinationPath)) {
+    if (info !== null) {
       throw BUILD_FAILED.create({
         detail: `Public asset would overwrite generated output: ${entry.relativePath}`,
       });
     }
+  }
 
-    await fs.mkdir(dirname(destinationPath), { recursive: true });
-    await fs.writeFile(destinationPath, await fs.readFile(entry.sourcePath));
+  const createdPaths: string[] = [];
+  const attemptedFiles: string[] = [];
+  try {
+    if (outputInfo === null) {
+      await adapter.fs.mkdir(outputDir, { recursive: true });
+      createdPaths.push(outputDir);
+    }
+    for (const entry of entries) {
+      if (entry.kind !== "directory") continue;
+      const destinationPath = join(outputDir, entry.relativePath);
+      if (destinationInfo.get(destinationPath) !== null) continue;
+      await adapter.fs.mkdir(destinationPath, { recursive: true });
+      createdPaths.push(destinationPath);
+    }
+
+    for (const entry of fileEntries) {
+      const sourceInfo = await statPath(adapter, entry.sourcePath);
+      assertExpectedInfo(sourceInfo, "file", entry.relativePath);
+      if (sourceInfo.size !== entry.size) {
+        throw BUILD_FAILED.create({
+          detail: `Public asset changed size while being copied: ${entry.relativePath}`,
+        });
+      }
+      const content = await readFileBytes!(entry.sourcePath);
+      if (content.byteLength !== entry.size) {
+        throw BUILD_FAILED.create({
+          detail: `Public asset changed size while being read: ${entry.relativePath}`,
+        });
+      }
+      const destinationPath = join(outputDir, entry.relativePath);
+      attemptedFiles.push(destinationPath);
+      await writeFileBytes!(destinationPath, content);
+    }
+  } catch (error) {
+    const cleanupErrors: unknown[] = [];
+    for (const path of [...createdPaths, ...attemptedFiles].reverse()) {
+      try {
+        await adapter.fs.remove(path);
+      } catch (cleanupError) {
+        if (!isNotFoundError(cleanupError)) cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        "Public asset copy failed and rollback was incomplete",
+      );
+    }
+    throw error;
   }
 
   logger.info(`Copied ${stats.assets} static assets`);

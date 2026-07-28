@@ -47,8 +47,12 @@ export interface KVGetWithMetadataResult<T = string> {
 }
 
 export interface KVNamespace {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, options?: { metadata?: KVMetadata }): Promise<void>;
+  get(key: string, type?: "text" | "arrayBuffer"): Promise<string | ArrayBuffer | null>;
+  put(
+    key: string,
+    value: string | ArrayBuffer | ArrayBufferView,
+    options?: { metadata?: KVMetadata },
+  ): Promise<void>;
   delete(key: string): Promise<void>;
   list(options?: KVListOptions): Promise<KVListResult>;
   getWithMetadata(key: string): Promise<KVGetWithMetadataResult>;

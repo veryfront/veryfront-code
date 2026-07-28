@@ -61,6 +61,20 @@ describe("MockAdapter", () => {
       assertEquals(new TextDecoder().decode(bytes), "hello");
     });
 
+    it("preserves binary files exactly", async () => {
+      const adapter = createMockAdapter();
+      const writeFileBytes = adapter.fs.writeFileBytes;
+      const readFileBytes = adapter.fs.readFileBytes;
+      assertExists(writeFileBytes);
+      assertExists(readFileBytes);
+      const bytes = new Uint8Array([0, 255, 1, 128]);
+
+      await writeFileBytes("/test.bin", bytes);
+
+      assertEquals([...await readFileBytes("/test.bin")], [...bytes]);
+      assertEquals(adapter.fs.byteFiles.get("/test.bin") === bytes, false);
+    });
+
     it("should throw for non-existent file", async () => {
       const adapter = createMockAdapter();
 

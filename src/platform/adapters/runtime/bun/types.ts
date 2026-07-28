@@ -54,7 +54,7 @@ export interface BunServer<T = unknown> {
 
 export interface BunNamespace {
   file(path: string): BunFile;
-  write(path: string, content: string): Promise<number>;
+  write(path: string, content: string | Uint8Array): Promise<number>;
   serve<T = unknown>(options: BunServeOptions<T>): BunServer<T>;
   readonly env: Record<string, string | undefined>;
 }

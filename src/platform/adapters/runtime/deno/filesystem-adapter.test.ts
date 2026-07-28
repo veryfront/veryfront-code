@@ -49,6 +49,19 @@ if (isDeno) {
       }
     });
 
+    it("round-trips binary files without text decoding", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-deno-binary-write-" });
+      const path = join(root, "file.bin");
+      const bytes = new Uint8Array([0, 255, 1, 128]);
+      try {
+        const adapter = new DenoFileSystemAdapter();
+        await adapter.writeFileBytes(path, bytes);
+        assertEquals([...await adapter.readFileBytes(path)], [...bytes]);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
     it("uses the native watcher and surfaces observed paths", async () => {
       const root = await Deno.makeTempDir({ prefix: "vf-deno-watch-" });
       const path = join(root, "created.txt");

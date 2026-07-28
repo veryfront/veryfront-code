@@ -323,12 +323,20 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
         context: { path: normalizedPath },
       });
     }
-    return content;
+    return typeof content === "string" ? content : new TextDecoder().decode(content);
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    const content = await this.readFile(path);
-    return textEncoder.encode(content);
+    const normalizedPath = normalizeVirtualPath(path);
+    assertFilePath(normalizedPath, "read");
+    const content = await this.getKV().get(normalizedPath, "arrayBuffer");
+    if (content === null) {
+      throw FILE_NOT_FOUND.create({
+        detail: `File not found: ${normalizedPath}`,
+        context: { path: normalizedPath },
+      });
+    }
+    return typeof content === "string" ? textEncoder.encode(content) : new Uint8Array(content);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -352,6 +360,23 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
     const kv = this.getKV();
     await assertWritableFilePath(kv, normalizedPath);
     await kv.put(normalizedPath, content);
+  }
+
+  async writeFileBytes(path: string, content: Uint8Array): Promise<void> {
+    const normalizedPath = normalizeVirtualPath(path);
+    assertFilePath(normalizedPath, "write");
+    if (content.byteLength > CLOUDFLARE_KV_MAX_VALUE_BYTES) {
+      throw CONFIG_INVALID.create({
+        detail: "Cloudflare filesystem content exceeds the 25 MiB KV value limit",
+        context: {
+          contentBytes: content.byteLength,
+          maxValueBytes: CLOUDFLARE_KV_MAX_VALUE_BYTES,
+        },
+      });
+    }
+    const kv = this.getKV();
+    await assertWritableFilePath(kv, normalizedPath);
+    await kv.put(normalizedPath, content.slice());
   }
 
   async exists(path: string): Promise<boolean> {
@@ -435,10 +460,10 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
       };
     }
 
-    const { value } = await kv.getWithMetadata(normalizedPath);
+    const value = await kv.get(normalizedPath, "arrayBuffer");
     if (value !== null) {
       return {
-        size: utf8ByteLength(value),
+        size: typeof value === "string" ? utf8ByteLength(value) : value.byteLength,
         isFile: true,
         isDirectory: false,
         isSymlink: false,

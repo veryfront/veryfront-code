@@ -6,6 +6,7 @@ import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
   fs: RuntimeAdapter["fs"] & {
     files: Map<string, string>;
+    byteFiles: Map<string, Uint8Array>;
     directories: Set<string>;
   };
 }
@@ -40,6 +41,7 @@ function isDescendantPath(candidate: string, path: string): boolean {
 
 export function createMockAdapter(): MockRuntimeAdapter {
   const files = new Map<string, string>();
+  const byteFiles = new Map<string, Uint8Array>();
   const directories = new Set<string>();
   const envVars = new Map<string, string>();
 
@@ -49,12 +51,16 @@ export function createMockAdapter(): MockRuntimeAdapter {
       normalizedPath === "" ||
       normalizedPath === "/" ||
       files.has(normalizedPath) ||
+      byteFiles.has(normalizedPath) ||
       directories.has(normalizedPath)
     ) {
       return true;
     }
 
     for (const filePath of files.keys()) {
+      if (isDescendantPath(filePath, normalizedPath)) return true;
+    }
+    for (const filePath of byteFiles.keys()) {
       if (isDescendantPath(filePath, normalizedPath)) return true;
     }
     for (const directoryPath of directories) {
@@ -75,6 +81,9 @@ export function createMockAdapter(): MockRuntimeAdapter {
     }
 
     for (const filePath of files.keys()) {
+      if (isDescendantPath(filePath, normalizedPath)) return true;
+    }
+    for (const filePath of byteFiles.keys()) {
       if (isDescendantPath(filePath, normalizedPath)) return true;
     }
     for (const directoryPath of directories) {
@@ -131,26 +140,41 @@ export function createMockAdapter(): MockRuntimeAdapter {
     shutdown: () => Promise.resolve(),
     fs: {
       files,
+      byteFiles,
       directories,
       readFile: (path: string) => {
-        const content = files.get(normalizeMockPath(path));
-        if (content == null) return Promise.reject(fileNotFoundError(path));
-        return Promise.resolve(content);
+        const normalizedPath = normalizeMockPath(path);
+        const content = files.get(normalizedPath);
+        if (content != null) return Promise.resolve(content);
+        const bytes = byteFiles.get(normalizedPath);
+        if (bytes != null) return Promise.resolve(new TextDecoder().decode(bytes));
+        return Promise.reject(fileNotFoundError(path));
       },
       readFileBytes: (path: string) => {
-        const content = files.get(normalizeMockPath(path));
-        if (content == null) return Promise.reject(fileNotFoundError(path));
-        return Promise.resolve(new TextEncoder().encode(content));
+        const normalizedPath = normalizeMockPath(path);
+        const bytes = byteFiles.get(normalizedPath);
+        if (bytes != null) return Promise.resolve(bytes.slice());
+        const content = files.get(normalizedPath);
+        if (content != null) return Promise.resolve(new TextEncoder().encode(content));
+        return Promise.reject(fileNotFoundError(path));
       },
       writeFile: (path: string, content: string) => {
-        files.set(normalizeMockPath(path), content);
+        const normalizedPath = normalizeMockPath(path);
+        files.set(normalizedPath, content);
+        byteFiles.delete(normalizedPath);
+        return Promise.resolve();
+      },
+      writeFileBytes: (path: string, content: Uint8Array) => {
+        const normalizedPath = normalizeMockPath(path);
+        byteFiles.set(normalizedPath, content.slice());
+        files.delete(normalizedPath);
         return Promise.resolve();
       },
       exists: (path: string) => Promise.resolve(hasPath(path)),
       readDir: async function* (path: string) {
         const normalizedPath = normalizeMockPath(path);
         if (!isDirectoryPath(normalizedPath)) {
-          if (files.has(normalizedPath)) {
+          if (files.has(normalizedPath) || byteFiles.has(normalizedPath)) {
             throw new TypeError(`Path is not a directory: ${path}`);
           }
           throw pathNotFoundError(path);
@@ -159,6 +183,9 @@ export function createMockAdapter(): MockRuntimeAdapter {
         const entries = new Map<string, { isFile: boolean; isDirectory: boolean }>();
 
         for (const filePath of files.keys()) {
+          addDirectoryEntry(entries, filePath, normalizedPath, false);
+        }
+        for (const filePath of byteFiles.keys()) {
           addDirectoryEntry(entries, filePath, normalizedPath, false);
         }
         for (const directoryPath of directories) {
@@ -175,6 +202,16 @@ export function createMockAdapter(): MockRuntimeAdapter {
         if (content != null) {
           return Promise.resolve({
             size: new TextEncoder().encode(content).byteLength,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(),
+          });
+        }
+        const bytes = byteFiles.get(normalizedPath);
+        if (bytes != null) {
+          return Promise.resolve({
+            size: bytes.byteLength,
             isFile: true,
             isDirectory: false,
             isSymlink: false,
@@ -212,11 +249,15 @@ export function createMockAdapter(): MockRuntimeAdapter {
       remove: (path: string, options?: { recursive?: boolean }) => {
         const normalizedPath = normalizeMockPath(path);
         files.delete(normalizedPath);
+        byteFiles.delete(normalizedPath);
         directories.delete(normalizedPath);
 
         if (options?.recursive) {
           for (const filePath of files.keys()) {
             if (isDescendantPath(filePath, normalizedPath)) files.delete(filePath);
+          }
+          for (const filePath of byteFiles.keys()) {
+            if (isDescendantPath(filePath, normalizedPath)) byteFiles.delete(filePath);
           }
           for (const dirPath of directories) {
             if (isDescendantPath(dirPath, normalizedPath)) directories.delete(dirPath);

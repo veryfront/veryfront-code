@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FSAdapterWrapper,
@@ -386,6 +391,16 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("readFileBytes", () => {
+    it("prefers the underlying binary reader when supported", async () => {
+      const fsAdapter = createMockFSAdapter({
+        readFile: () => Promise.resolve("text fallback"),
+        readFileBytes: () => Promise.resolve(new Uint8Array([0, 255, 1, 128])),
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals([...await wrapper.readFileBytes("/asset.bin")], [0, 255, 1, 128]);
+    });
+
     it("should return Uint8Array directly if readFile returns bytes", async () => {
       const bytes = new Uint8Array([1, 2, 3]);
       const fsAdapter = createMockFSAdapter({
@@ -452,6 +467,28 @@ describe("FSAdapterWrapper", () => {
       const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
       await assertRejects(() => wrapper.writeFile("/new.txt", "content"), NotSupportedError);
+    });
+  });
+
+  describe("writeFileBytes", () => {
+    it("exposes and delegates the binary-write capability when supported", async () => {
+      let written: { path: string; content: number[] } | null = null;
+      const fsAdapter = createMockFSAdapter({
+        writeFileBytes: (path: string, content: Uint8Array) => {
+          written = { path, content: [...content] };
+          return Promise.resolve();
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+      const writeFileBytes = wrapper.writeFileBytes;
+
+      assertExists(writeFileBytes);
+      await writeFileBytes("/new.bin", new Uint8Array([0, 255, 1]));
+      assertEquals(written, { path: "/new.bin", content: [0, 255, 1] });
+    });
+
+    it("does not advertise binary writes when the underlying adapter lacks them", () => {
+      assertEquals(new FSAdapterWrapper(createMockFSAdapter()).writeFileBytes, undefined);
     });
   });
 

@@ -102,9 +102,21 @@ import { copyStaticAssets } from "#server/build";
 await copyStaticAssets(
   adapter,
   "/project/root",
-  "/output/public",
+  "/output",
 );
 ```
+
+`copyStaticAssets()` inventories `<projectDir>/public` and copies each file
+byte-for-byte through the selected runtime adapter. An adapter that copies
+files must expose both `fs.readFileBytes()` and `fs.writeFileBytes()`; the
+operation fails before creating output when either capability is absent.
+
+Discovery is deterministic and bounded. Symbolic links, unsupported file
+types, unsafe paths, framework-reserved outputs, portable filename collisions,
+and overwrites of generated output are rejected. A dry run validates and
+counts the source tree without creating output. If a write fails, files and
+directories created by that copy attempt are rolled back; an incomplete
+rollback is reported as an aggregate error.
 
 ### Generate Client Runtime
 
@@ -427,9 +439,12 @@ const stats = await buildPagesRoutes({
 ### Assets Not Copied
 
 ```typescript
-// Ensure public directory exists
-await copyStaticAssets(adapter, projectDir, publicDir);
+// Ensure <projectDir>/public exists and the adapter supports byte reads/writes.
+await copyStaticAssets(adapter, projectDir, outputDir);
 ```
+
+The destination is the build output root, not its `public` subdirectory.
+Existing destination files are never overwritten.
 
 ### Manifest Generation Fails
 

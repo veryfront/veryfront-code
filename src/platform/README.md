@@ -369,6 +369,13 @@ omit it because their current upstream APIs return whole objects; advertising a
 post-read slice as a bounded read would be misleading. Consumers must retain a
 compatible, post-validated path for third-party adapters that omit the method.
 
+`FileSystemAdapter.readFileBytes(path)` and
+`FileSystemAdapter.writeFileBytes(path, content)` are the binary-safe whole-file
+capabilities. Node, Deno, Bun, Cloudflare KV, and the in-memory adapter preserve
+bytes without a text round trip. Hosted wrappers delegate each capability only
+when the underlying adapter implements it; consumers that require binary
+output must fail before writing when `writeFileBytes` is absent.
+
 ### Commands
 
 `runCommand()` passes `args` separately unless `shell: true` is explicitly

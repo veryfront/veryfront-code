@@ -112,6 +112,11 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
     await Deno.writeTextFile(path, content);
   }
 
+  async writeFileBytes(path: string, content: Uint8Array): Promise<void> {
+    assertDenoRuntime("writeFileBytes");
+    await Deno.writeFile(path, content);
+  }
+
   async rename(from: string, to: string): Promise<void> {
     assertDenoRuntime("rename");
     await Deno.rename(from, to);

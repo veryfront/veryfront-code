@@ -225,6 +225,8 @@ export interface FileSystemAdapter {
    */
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
+  /** Write raw bytes when binary-safe output is required. */
+  writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
   /** Atomically replace a path when the runtime supports same-filesystem rename. */
   rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;

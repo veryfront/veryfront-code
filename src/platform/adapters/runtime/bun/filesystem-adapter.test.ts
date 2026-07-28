@@ -7,9 +7,9 @@ import { BunFileSystemAdapter, type BunFileSystemRuntime } from "./filesystem-ad
 
 function runtimeFor(file: BunFile): {
   runtime: BunFileSystemRuntime;
-  writes: Array<[string, string]>;
+  writes: Array<[string, string | Uint8Array]>;
 } {
-  const writes: Array<[string, string]> = [];
+  const writes: Array<[string, string | Uint8Array]> = [];
   return {
     runtime: {
       file: () => file,
@@ -60,7 +60,12 @@ describe("BunFileSystemAdapter", () => {
     assertEquals([...await adapter.readFileBytes("/file.bin")], [1, 2, 3]);
     assertEquals(bytesCalls, 1);
     await adapter.writeFile("/output.txt", "value");
-    assertEquals(fake.writes, [["/output.txt", "value"]]);
+    const outputBytes = new Uint8Array([0, 255, 1]);
+    await adapter.writeFileBytes("/output.bin", outputBytes);
+    assertEquals(fake.writes, [
+      ["/output.txt", "value"],
+      ["/output.bin", outputBytes],
+    ]);
   });
 
   it("falls back to the Blob-compatible arrayBuffer method", async () => {
@@ -87,6 +92,11 @@ describe("BunFileSystemAdapter", () => {
     );
     await assertRejects(
       () => adapter.writeFile("/file.txt", "value"),
+      Error,
+      "only be used in the Bun runtime",
+    );
+    await assertRejects(
+      () => adapter.writeFileBytes("/file.bin", new Uint8Array([1])),
       Error,
       "only be used in the Bun runtime",
     );

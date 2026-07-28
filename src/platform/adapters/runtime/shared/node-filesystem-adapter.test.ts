@@ -27,6 +27,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       assertEquals(isNativeFileSystemAdapter(adapter), true);
       const file = `${root}/file.txt`;
       const largeFile = `${root}/large.bin`;
+      const writtenBinaryFile = `${root}/written.bin`;
       const link = `${root}/file-link.txt`;
 
       await adapter.writeFile(file, "hello");
@@ -35,10 +36,13 @@ describe("NodeCompatibleFileSystemAdapter", () => {
         largeBytes[index] = index % 251;
       }
       await Deno.writeFile(largeFile, largeBytes);
+      const writtenBytes = new Uint8Array([0, 255, 1, 128]);
+      await adapter.writeFileBytes(writtenBinaryFile, writtenBytes);
       await Deno.symlink(file, link);
 
       assertEquals(await adapter.readFile(file), "hello");
       assertEquals([...await adapter.readFileBytes(file)], [104, 101, 108, 108, 111]);
+      assertEquals([...await adapter.readFileBytes(writtenBinaryFile)], [...writtenBytes]);
       assertEquals(
         [...await adapter.readFileBytesBounded(file, 3)],
         [104, 101, 108],

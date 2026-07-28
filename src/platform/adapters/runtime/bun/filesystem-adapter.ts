@@ -34,6 +34,10 @@ export class BunFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
     await this.requireRuntime("writeFile").write(path, content);
   }
 
+  override async writeFileBytes(path: string, content: Uint8Array): Promise<void> {
+    await this.requireRuntime("writeFileBytes").write(path, content);
+  }
+
   private requireRuntime(operation: string): BunFileSystemRuntime {
     if (this.runtime) return this.runtime;
     throw NOT_SUPPORTED.create({

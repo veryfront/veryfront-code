@@ -131,6 +131,10 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
+  readonly writeFileBytes?: (
+    path: string,
+    content: Uint8Array,
+  ) => Promise<void>;
   readonly refreshSourceSnapshot?: (reason?: string) => Promise<void>;
   readonly ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
   readonly getSourceSnapshotVersion?: () => number | undefined | Promise<number | undefined>;
@@ -140,6 +144,10 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     if (typeof fsAdapter.readFileBytesBounded === "function") {
       this.readFileBytesBounded = (path: string, byteLimit: number) =>
         fsAdapter.readFileBytesBounded!.call(fsAdapter, path, byteLimit);
+    }
+    if (typeof fsAdapter.writeFileBytes === "function") {
+      this.writeFileBytes = (path: string, content: Uint8Array) =>
+        fsAdapter.writeFileBytes!.call(fsAdapter, path, content);
     }
     if (typeof fsAdapter.refreshSourceSnapshot === "function") {
       this.refreshSourceSnapshot = (reason?: string) =>
@@ -277,6 +285,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
+    if (this._fsAdapter.readFileBytes) {
+      return await this._fsAdapter.readFileBytes(path);
+    }
     const result = await this._fsAdapter.readFile(path);
     return typeof result === "string" ? new TextEncoder().encode(result) : result;
   }

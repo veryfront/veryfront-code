@@ -3,9 +3,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { copyStaticAssets, discoverStaticAssets, loadClientStyles } from "./asset-generation.ts";
 import type { AssetStats } from "./asset-generation.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-
-const unusedAdapter = {} as RuntimeAdapter;
+import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 describe("build/production-build/asset-generation", () => {
   describe("loadClientStyles", () => {
@@ -53,7 +52,7 @@ describe("build/production-build/asset-generation", () => {
     it("returns an empty inventory when public is absent", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-static-assets-" });
       try {
-        assertEquals(await discoverStaticAssets(projectDir), []);
+        assertEquals(await discoverStaticAssets(denoAdapter, projectDir), []);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -67,7 +66,7 @@ describe("build/production-build/asset-generation", () => {
       await Deno.symlink(`${root}/outside.txt`, `${projectDir}/public/link.txt`);
       try {
         await assertRejects(
-          () => discoverStaticAssets(projectDir),
+          () => discoverStaticAssets(denoAdapter, projectDir),
           Error,
           "Symbolic links are not supported",
         );
@@ -82,12 +81,32 @@ describe("build/production-build/asset-generation", () => {
       await Deno.writeTextFile(`${projectDir}/public/sw.js`, "public");
       try {
         await assertRejects(
-          () => discoverStaticAssets(projectDir),
+          () => discoverStaticAssets(denoAdapter, projectDir),
           Error,
           "reserved for generated build output: sw.js",
         );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects case and Unicode-normalization collisions deterministically", async () => {
+      for (
+        const names of [
+          ["Logo.svg", "logo.svg"],
+          ["caf\u00e9.txt", "cafe\u0301.txt"],
+        ]
+      ) {
+        const adapter = createMockAdapter();
+        for (const name of names) {
+          adapter.fs.files.set(`/project/public/${name}`, name);
+        }
+
+        await assertRejects(
+          () => discoverStaticAssets(adapter, "/project"),
+          Error,
+          "portable path collision",
+        );
       }
     });
   });
@@ -101,7 +120,7 @@ describe("build/production-build/asset-generation", () => {
       await Deno.mkdir(`${projectDir}/public/images`, { recursive: true });
       await Deno.writeFile(`${projectDir}/public/images/pixel.bin`, bytes);
       try {
-        const stats = await copyStaticAssets(unusedAdapter, projectDir, outputDir);
+        const stats = await copyStaticAssets(denoAdapter, projectDir, outputDir);
         assertEquals(stats.assets, 1);
         assertEquals(stats.totalSize, bytes.byteLength);
         assertEquals(
@@ -121,7 +140,7 @@ describe("build/production-build/asset-generation", () => {
       await Deno.writeTextFile(`${projectDir}/public/robots.txt`, "hello");
       try {
         const stats = await copyStaticAssets(
-          unusedAdapter,
+          denoAdapter,
           projectDir,
           outputDir,
           true,
@@ -143,7 +162,7 @@ describe("build/production-build/asset-generation", () => {
       await Deno.writeTextFile(`${outputDir}/index.html`, "generated");
       try {
         await assertRejects(
-          () => copyStaticAssets(unusedAdapter, projectDir, outputDir),
+          () => copyStaticAssets(denoAdapter, projectDir, outputDir),
           Error,
           "would overwrite generated output",
         );
@@ -151,6 +170,74 @@ describe("build/production-build/asset-generation", () => {
       } finally {
         await Deno.remove(root, { recursive: true });
       }
+    });
+
+    it("uses the selected adapter for discovery and binary output", async () => {
+      const adapter = createMockAdapter();
+      const bytes = new Uint8Array([0, 255, 1, 128, 2]);
+      adapter.fs.byteFiles.set("/project/public/images/pixel.bin", bytes);
+
+      const stats = await copyStaticAssets(adapter, "/project", "/output");
+
+      assertEquals(stats, { assets: 1, totalSize: bytes.byteLength });
+      assertEquals(
+        [...(adapter.fs.byteFiles.get("/output/images/pixel.bin") ?? [])],
+        [...bytes],
+      );
+    });
+
+    it("fails before writing when the selected adapter lacks binary output", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1, 2, 3]));
+      adapter.fs.writeFileBytes = undefined;
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "does not support binary-safe public asset copying",
+      );
+
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("preflights every collision before copying any asset", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/a.bin", new Uint8Array([1]));
+      adapter.fs.byteFiles.set("/project/public/z.bin", new Uint8Array([2]));
+      adapter.fs.byteFiles.set("/output/z.bin", new Uint8Array([9]));
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "would overwrite generated output: z.bin",
+      );
+
+      assertEquals(adapter.fs.byteFiles.has("/output/a.bin"), false);
+      assertEquals([...(adapter.fs.byteFiles.get("/output/z.bin") ?? [])], [9]);
+    });
+
+    it("rolls back copied files when a later binary write fails", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/a.bin", new Uint8Array([1]));
+      adapter.fs.byteFiles.set("/project/public/b.bin", new Uint8Array([2]));
+      const writeFileBytes = adapter.fs.writeFileBytes!.bind(adapter.fs);
+      let writes = 0;
+      adapter.fs.writeFileBytes = (path, content) => {
+        writes++;
+        return writes === 2
+          ? Promise.reject(new Error("storage unavailable"))
+          : writeFileBytes(path, content);
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "storage unavailable",
+      );
+
+      assertEquals(adapter.fs.byteFiles.has("/output/a.bin"), false);
+      assertEquals(adapter.fs.byteFiles.has("/output/b.bin"), false);
+      assertEquals(adapter.fs.directories.has("/output"), false);
     });
   });
 });

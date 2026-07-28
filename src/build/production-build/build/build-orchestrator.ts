@@ -93,7 +93,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
 
         const publicEntries = await withSpan(
           "build.discoverPublicAssets",
-          () => discoverStaticAssets(normalizedOptions.projectDir),
+          () => discoverStaticAssets(context.adapter, normalizedOptions.projectDir),
           {},
         );
         validateBuildOutputPlan({
