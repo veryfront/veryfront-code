@@ -7,6 +7,19 @@ const useIsomorphicLayoutEffect = typeof document !== "undefined"
   ? React.useLayoutEffect
   : React.useEffect;
 
+function assignRef<T>(
+  ref: React.ForwardedRef<T>,
+  value: T | null,
+): (() => void) | undefined {
+  if (typeof ref === "function") {
+    const cleanup = ref(value);
+    return typeof cleanup === "function" ? cleanup : undefined;
+  } else if (ref) {
+    ref.current = value;
+  }
+  return undefined;
+}
+
 export interface InputBoxProps extends
   Omit<
     React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>,
@@ -20,20 +33,50 @@ export interface InputBoxProps extends
   multiline?: boolean;
 }
 
+/** @internal Shared key handling kept pure so IME behavior is deterministic. */
+export function handleInputBoxKeyDown(
+  e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  onKeyDown: InputBoxProps["onKeyDown"],
+  onSubmit: InputBoxProps["onSubmit"],
+): void {
+  onKeyDown?.(e);
+  if (e.defaultPrevented) return;
+
+  const nativeEvent = e.nativeEvent as KeyboardEvent | undefined;
+  const isComposing = nativeEvent?.isComposing === true ||
+    (e as unknown as { isComposing?: boolean }).isComposing === true ||
+    e.keyCode === 229;
+  if (e.key !== "Enter" || e.shiftKey || isComposing || !onSubmit) return;
+
+  e.preventDefault();
+  onSubmit();
+}
+
 export const InputBox = React.forwardRef<
   HTMLInputElement | HTMLTextAreaElement,
   InputBoxProps
->(({ className, value, onChange, onSubmit, multiline, ...props }, ref) => {
+>(({ className, value, onChange, onSubmit, multiline, onKeyDown, ...props }, ref) => {
   const internalRef = React.useRef<HTMLTextAreaElement>(null);
-  const textareaRef = (ref as React.RefObject<HTMLTextAreaElement>) ||
-    internalRef;
+  const mergedTextareaRef = React.useCallback(
+    (node: HTMLTextAreaElement | null) => {
+      internalRef.current = node;
+      const cleanupExternalRef = assignRef(
+        ref as React.ForwardedRef<HTMLTextAreaElement>,
+        node,
+      );
+      return () => {
+        internalRef.current = null;
+        if (cleanupExternalRef) cleanupExternalRef();
+        else assignRef(ref as React.ForwardedRef<HTMLTextAreaElement>, null);
+      };
+    },
+    [ref],
+  );
 
   const handleKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
   ): void => {
-    if (e.key !== "Enter" || e.shiftKey || !onSubmit) return;
-    e.preventDefault();
-    onSubmit();
+    handleInputBoxKeyDown(e, onKeyDown, onSubmit);
   };
 
   // Auto-resize textarea to fit content. Runs in a layout effect (before paint)
@@ -41,18 +84,18 @@ export const InputBox = React.forwardRef<
   // class on the textarea holds the SSR height, so there is no post-hydration
   // jump.
   useIsomorphicLayoutEffect(() => {
-    const el = textareaRef.current;
+    const el = internalRef.current;
     if (!el || !multiline) return;
     el.style.height = "auto";
     if (value) {
       el.style.height = Math.min(el.scrollHeight, 200) + "px";
     }
-  }, [value, multiline, textareaRef]);
+  }, [value, multiline]);
 
   if (multiline) {
     return (
       <textarea
-        ref={textareaRef as React.RefObject<HTMLTextAreaElement>}
+        ref={mergedTextareaRef}
         className={className}
         // The auto-resize height is applied client-side only, so the inline
         // `height` differs between SSR and first client render.
@@ -156,6 +199,9 @@ export const SubmitButton = React.forwardRef<
       icons,
       disabled,
       children,
+      onClick,
+      type,
+      "aria-label": ariaLabelProp,
       ...props
     },
     ref,
@@ -164,6 +210,9 @@ export const SubmitButton = React.forwardRef<
     const showVoice = !showStop && !hasInput && !!onVoice;
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>): void => {
+      onClick?.(e);
+      if (e.defaultPrevented) return;
+
       if (showStop) {
         if (!onStop) return;
         e.preventDefault();
@@ -199,19 +248,21 @@ export const SubmitButton = React.forwardRef<
         state: "submit" as const,
       };
     })();
+    const buttonType = showStop || showVoice ? "button" : (type ?? "submit");
+    const isDisabled = showStop ? false : disabled;
 
     return (
       <button
+        {...props}
         ref={ref}
-        type={showStop || showVoice ? "button" : "submit"}
+        type={buttonType}
         className={className}
-        disabled={disabled && !showStop}
+        disabled={isDisabled}
         onClick={handleClick}
         data-submit-button=""
         data-state={state}
         data-loading={isLoading}
-        aria-label={ariaLabel}
-        {...props}
+        aria-label={ariaLabelProp ?? ariaLabel}
       >
         {children ?? icon}
       </button>
