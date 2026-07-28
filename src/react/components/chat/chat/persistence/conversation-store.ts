@@ -19,6 +19,36 @@
  */
 import type { ChatMessage } from "#veryfront/agent/react";
 
+/** Persistence operation associated with a {@link ConversationStoreError}. */
+export type ConversationStoreOperation = "list" | "load" | "save" | "delete" | "subscribe";
+
+/**
+ * Normalized persistence failure. Store implementations should reject rather
+ * than resolve when an operation did not complete; the React hooks wrap custom
+ * adapter rejections in this error so consumers can branch on `operation`
+ * without parsing an error message.
+ */
+export class ConversationStoreError extends Error {
+  /** Persistence operation that failed. */
+  readonly operation: ConversationStoreOperation;
+
+  constructor(operation: ConversationStoreOperation, cause: unknown) {
+    super(`Conversation store ${operation} failed`, { cause });
+    this.name = "ConversationStoreError";
+    this.operation = operation;
+  }
+}
+
+/** @internal Preserve an already-normalized failure or attach operation context. */
+export function toConversationStoreError(
+  operation: ConversationStoreOperation,
+  cause: unknown,
+): ConversationStoreError {
+  return cause instanceof ConversationStoreError && cause.operation === operation
+    ? cause
+    : new ConversationStoreError(operation, cause);
+}
+
 /** Fields shared by a conversation and its list summary. */
 interface ConversationMeta {
   id: string;
@@ -44,15 +74,29 @@ export interface Conversation extends ConversationMeta {
 /**
  * Async persistence contract for conversations. Implement all four methods;
  * `subscribe`/`dispose` are optional capabilities (feature-detect them).
+ *
+ * A hook owns the unsubscribe function returned by `subscribe`, but an
+ * injected store remains caller-owned. Hooks never call `dispose`, including
+ * during adapter replacement or unmount, because one store may be shared by
+ * multiple consumers and retired writes are allowed to finish.
  */
 export interface ConversationStore {
-  /** All conversations as summaries (no messages), newest first. */
+  /**
+   * All conversations as summaries (no messages), newest first.
+   * Reject when the list cannot be read or decoded.
+   */
   list(): Promise<ConversationSummary[]>;
-  /** Load one full conversation (with messages). `null` if it does not exist. */
+  /**
+   * Load one full conversation (with messages). `null` only when it does not
+   * exist; reject when persistence cannot be read or decoded.
+   */
   load(id: string): Promise<Conversation | null>;
-  /** Create-or-update by id (upsert). */
+  /** Create-or-update by id (upsert). Reject unless the write completed. */
   save(conversation: Conversation): Promise<void>;
-  /** Delete a conversation. Idempotent — deleting a missing id is not an error. */
+  /**
+   * Delete a conversation. Idempotent for a missing id; reject unless deletion
+   * completed.
+   */
   delete(id: string): Promise<void>;
   /**
    * Optional: notify when conversations change out-of-band (another tab or
@@ -60,6 +104,9 @@ export interface ConversationStore {
    * BroadcastChannel, an API via SSE) implement it; localStorage omits it.
    */
   subscribe?(onChange: (ids: string[]) => void): () => void;
-  /** Optional: release resources (sockets, db handles). */
+  /**
+   * Optional: release resources (sockets, db handles). The caller must invoke
+   * this only after the store's final consumer and pending operation finish.
+   */
   dispose?(): void;
 }

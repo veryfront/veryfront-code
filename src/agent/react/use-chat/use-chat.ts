@@ -172,12 +172,15 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
             return part;
           }
 
-          return {
+          const nextPart = {
             ...part,
             state: output.state ?? (output.errorText ? "output-error" : "output-available"),
-            output: output.output,
-            errorText: output.errorText,
-          };
+          } as ChatMessagePart & { output?: unknown; errorText?: string };
+          if (output.output === undefined) delete nextPart.output;
+          else nextPart.output = output.output;
+          if (output.errorText === undefined) delete nextPart.errorText;
+          else nextPart.errorText = output.errorText;
+          return nextPart;
         }),
       }))
     );
@@ -286,7 +289,10 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
             if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const withMeta = {
               ...assistantMessage,
-              metadata: { ...assistantMessage.metadata, model: serverModel },
+              metadata: {
+                ...assistantMessage.metadata,
+                ...(serverModel !== undefined ? { model: serverModel } : {}),
+              },
             };
             // A response delivered as a single complete message (no incremental
             // `onUpdate`) still passes through `streaming` for one commit so
@@ -341,7 +347,10 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
           onUpdate: (parts, messageId, messageMetadata) => {
             if (!isLatestRequest(requestIdRef.current, requestId)) return;
             const id = messageId ?? fallbackStreamingId;
-            const metadata = { ...messageMetadata, model: serverModel };
+            const metadata = {
+              ...messageMetadata,
+              ...(serverModel !== undefined ? { model: serverModel } : {}),
+            };
 
             if (messageId && messageId !== currentMessageIdRef.current) {
               const oldId = currentMessageIdRef.current;

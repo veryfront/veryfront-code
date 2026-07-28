@@ -11,7 +11,7 @@ function toSummary(c: Conversation): ConversationSummary {
   return {
     id: c.id,
     title: c.title,
-    ...(c.agentId ? { agentId: c.agentId } : {}),
+    ...(c.agentId !== undefined ? { agentId: c.agentId } : {}),
     messageCount: c.messages.length,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
@@ -20,27 +20,33 @@ function toSummary(c: Conversation): ConversationSummary {
 
 /** In-memory conversation persistence. Optionally seed with initial conversations. */
 export function memoryConversationStore(seed: Conversation[] = []): ConversationStore {
-  const map = new Map<string, Conversation>(seed.map((c) => [c.id, c]));
+  const map = new Map<string, Conversation>();
+  for (const conversation of seed) {
+    const snapshot = structuredClone(conversation);
+    if (map.has(snapshot.id)) {
+      throw new TypeError(`Duplicate seeded conversation id: "${snapshot.id}"`);
+    }
+    map.set(snapshot.id, snapshot);
+  }
 
   return {
-    list(): Promise<ConversationSummary[]> {
-      const summaries = Array.from(map.values(), toSummary).sort((a, b) =>
-        b.updatedAt - a.updatedAt
-      );
-      return Promise.resolve(summaries);
+    async list(): Promise<ConversationSummary[]> {
+      return Array.from(map.values(), toSummary).sort((a, b) => b.updatedAt - a.updatedAt);
     },
-    load(id: string): Promise<Conversation | null> {
+    async load(id: string): Promise<Conversation | null> {
       const found = map.get(id);
-      // Clone so callers can't mutate stored state through the returned object.
-      return Promise.resolve(found ? structuredClone(found) : null);
+      // Snapshot before returning so caller mutation after this call cannot
+      // change what the promise resolves to.
+      return found ? structuredClone(found) : null;
     },
-    save(conversation: Conversation): Promise<void> {
-      map.set(conversation.id, structuredClone(conversation));
-      return Promise.resolve();
+    async save(conversation: Conversation): Promise<void> {
+      // `async` converts clone failures into a rejected promise while the clone
+      // itself still happens at call time.
+      const snapshot = structuredClone(conversation);
+      map.set(snapshot.id, snapshot);
     },
-    delete(id: string): Promise<void> {
+    async delete(id: string): Promise<void> {
       map.delete(id);
-      return Promise.resolve();
     },
   };
 }
