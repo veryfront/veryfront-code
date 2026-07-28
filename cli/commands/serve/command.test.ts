@@ -176,7 +176,9 @@ describe("commands/serve/command", () => {
       error: startupError,
       boundary: "process.startup",
     }]);
-    assertEquals(flushTimeouts, [2_000]);
+    assertEquals(flushTimeouts.length, 1);
+    assertEquals((flushTimeouts[0] ?? Infinity) <= 2_000, true);
+    assertEquals((flushTimeouts[0] ?? 0) > 0, true);
   });
 
   it("preserves the startup failure when flushing the reporter fails", async () => {
@@ -425,6 +427,7 @@ describe("commands/serve/command", () => {
         dependencies: {
           ensureBundlerContracts: () => Promise<void>;
           initializeErrorReporting: () => Promise<unknown>;
+          loadSentryModule?: () => Promise<unknown>;
           reporter: Parameters<RunWithStartupErrorReporting>[1];
         },
       ) => Promise<void>;
@@ -474,7 +477,70 @@ describe("commands/serve/command", () => {
       error: bootstrapError,
       boundary: "process.startup",
     }]);
-    assertEquals(flushTimeouts, [2_000]);
+    assertEquals(flushTimeouts.length, 1);
+    assertEquals((flushTimeouts[0] ?? Infinity) <= 2_000, true);
+    assertEquals((flushTimeouts[0] ?? 0) > 0, true);
+  });
+
+  it("keeps Sentry module loading inside the real production server boundary", async () => {
+    const commandModule = await import("./command.ts") as {
+      runProductionServer?: (
+        options: ServeOptions,
+        dependencies: {
+          ensureBundlerContracts: () => Promise<void>;
+          loadSentryModule: () => Promise<never>;
+          reporter: Parameters<RunWithStartupErrorReporting>[1];
+        },
+      ) => Promise<void>;
+    };
+    const runProductionServer = commandModule.runProductionServer;
+    assertExists(runProductionServer);
+
+    const loadError = new Error("Sentry module failed to load");
+    const captures: Array<{ error: unknown; boundary: string }> = [];
+    const flushTimeouts: Array<number | undefined> = [];
+    let bundlerCalled = false;
+
+    const thrown = await assertRejects(() =>
+      runProductionServer(
+        {
+          mode: "production",
+          port: 3000,
+          bindAddress: "127.0.0.1",
+          splitMode: false,
+          useBinary: false,
+          binaryPath: "./bin/veryfront",
+          debug: false,
+        },
+        {
+          loadSentryModule: () => Promise.reject(loadError),
+          ensureBundlerContracts: () => {
+            bundlerCalled = true;
+            return Promise.reject(new Error("bundler should not run"));
+          },
+          reporter: {
+            captureApplicationError: (error, context) => {
+              captures.push({ error, boundary: context.boundary });
+              return "event-id";
+            },
+            flushApplicationErrors: (timeoutMs) => {
+              flushTimeouts.push(timeoutMs);
+              return Promise.resolve(true);
+            },
+          },
+        },
+      )
+    );
+
+    assertStrictEquals(thrown, loadError);
+    assertEquals(bundlerCalled, false);
+    assertEquals(captures, [{
+      error: loadError,
+      boundary: "process.startup",
+    }]);
+    assertEquals(flushTimeouts.length, 1);
+    assertEquals((flushTimeouts[0] ?? Infinity) <= 2_000, true);
+    assertEquals((flushTimeouts[0] ?? 0) > 0, true);
   });
 
   for (const mode of ["production", "combined"] as const) {

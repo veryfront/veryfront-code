@@ -27,6 +27,7 @@ type StartupErrorReportingOptions = {
 type ProductionServerDependencies = {
   ensureBundlerContracts?: () => Promise<void>;
   initializeErrorReporting?: () => Promise<unknown>;
+  loadSentryModule?: () => Promise<ProductionSentryModule>;
   reporter?: StartupErrorReporter;
 };
 
@@ -155,22 +156,36 @@ async function runProxy(options: ServeOptions): Promise<void> {
   await new Promise(() => {});
 }
 
-function createProductionStartupErrorReporter(
-  sentryModule: ProductionSentryModule,
-): StartupErrorReporter {
+function createDeferredProductionStartupErrorReporter(): {
+  reporter: StartupErrorReporter;
+  setSentryModule: (sentryModule: ProductionSentryModule) => void;
+} {
+  let sentryModule: ProductionSentryModule | undefined;
+
   return {
-    captureApplicationError: sentryModule.captureApplicationError,
-    flushApplicationErrors: sentryModule.flushApplicationErrors,
-    onReportingError: (operation, error) => {
-      cliLogger.warn(
-        `Error reporter failed to ${operation} production startup failure.`,
-      );
-      cliLogger.debug(
-        `Error reporter ${operation} failure details:`,
-        error,
-      );
+    reporter: {
+      captureApplicationError: (error, context) =>
+        sentryModule?.captureApplicationError(error, context),
+      flushApplicationErrors: (timeoutMs) =>
+        sentryModule?.flushApplicationErrors(timeoutMs) ?? Promise.resolve(true),
+      onReportingError: (operation, error) => {
+        cliLogger.warn(
+          `Error reporter failed to ${operation} production startup failure.`,
+        );
+        cliLogger.debug(
+          `Error reporter ${operation} failure details:`,
+          error,
+        );
+      },
+    },
+    setSentryModule: (loadedSentryModule) => {
+      sentryModule = loadedSentryModule;
     },
   };
+}
+
+function loadProductionSentryModule(): Promise<ProductionSentryModule> {
+  return import("veryfront/observability/sentry");
 }
 
 export async function runProductionServer(
@@ -178,9 +193,16 @@ export async function runProductionServer(
   dependencies: ProductionServerDependencies = {},
 ): Promise<void> {
   showLogo();
-  const sentryModule = await import("veryfront/observability/sentry");
-  const reporter = dependencies.reporter ??
-    createProductionStartupErrorReporter(sentryModule);
+  const deferredReporter = createDeferredProductionStartupErrorReporter();
+  const reporter = dependencies.reporter ?? deferredReporter.reporter;
+  const initializeErrorReporting = dependencies.initializeErrorReporting ??
+    (async () => {
+      const sentryModule = await (
+        dependencies.loadSentryModule ?? loadProductionSentryModule
+      )();
+      deferredReporter.setSentryModule(sentryModule);
+      await sentryModule.initializeSentryFromEnv();
+    });
 
   const { server, shutdownController } = await runProductionStartupWithErrorReporting(
     async () => {
@@ -222,8 +244,7 @@ export async function runProductionServer(
     },
     reporter,
     dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
-    dependencies.initializeErrorReporting ??
-      (() => sentryModule.initializeSentryFromEnv()),
+    initializeErrorReporting,
   );
 
   let shuttingDown = false;
