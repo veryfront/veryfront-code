@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    48 |      82.8% | Current formal closure evidence remains valid       |
+| Closed                         |    49 |      84.5% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |    10 |      17.2% | Substantive recovered or current work exists        |
+| Touched, revalidation required |     9 |      15.5% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -62,6 +62,7 @@ stricter closure count.
 - `mdx`
 - `metrics`
 - `middleware`
+- `modules`
 - `observability`
 - `oauth`
 - `platform`
@@ -94,7 +95,6 @@ None.
 ### Touched, revalidation required
 
 - `data`
-- `modules`
 - `proxy`
 - `react`
 - `rendering`
@@ -125,7 +125,7 @@ every affected unit.
 The current closed review chain covers `agent`, `build`, `cache`, `channels`, `chat`,
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`internal-agents`, `mcp`, `middleware`, `observability`, `oauth`, `platform`, `provider`,
+`internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
 `prompt`, `registry`, `release-assets`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
@@ -221,6 +221,11 @@ revalidated.
 `resource` is closed after its pattern grammar, construction and registry
 boundaries, read lifecycle, MCP projection and content budgets, public
 metadata, documentation, and direct consumers were remediated and revalidated.
+`modules` is closed after its project and import-map identities, contained
+resolution, component discovery and materialization, SSR dependency graphs,
+server request and cache boundaries, manifest and WebSocket lifecycle, public
+surfaces, migration documentation, and direct consumers were remediated and
+revalidated.
 `utils` is closed after its shared runtime boundaries, future-lockfile
 compatibility, browser import-map ownership, bounded memoization, public
 contracts, documentation, and direct consumers were remediated and
@@ -5515,5 +5520,115 @@ Current reproducible evidence:
 No known unresolved critical or high-confidence Build production risk remains.
 The `build` unit is closed at 48 of 58 formal units; 10 units remain open or
 awaiting top-level revalidation.
+
+### Modules closure checkpoint
+
+The `modules` audit unit owns component-source discovery, import-map loading
+and resolution, local and cross-project module resolution, source and React
+component loading, SSR dependency transformation and caching, HTTP module
+serving, route-module manifests, rate limiting, and module WebSocket
+lifecycle. Its direct dependencies include Cache, Config, Errors,
+Observability, Platform, Security, Transforms, and Utils. Direct consumers
+include Build, Discovery, HTML, Rendering, Routing, and Server's hosted and
+development request paths.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** resolver, import-map,
+  transform, source-miss, and response-cache identities omitted project,
+  content-source, import-map, release, React-version, or resolver dimensions
+  at different call sites. Concurrent tenants or revisions could reuse stale
+  resolution and transformed output, and invalidation could evict the wrong
+  project. Identity tuples are now bounded and injective, hosted transforms
+  bind validated import-map snapshots, cross-project loads and singleflight
+  state are scoped, source-miss storage has one owned versioned schema, and
+  project invalidation matches exact decoded identity fields.
+- **Symptom -> Source -> Consequence -> Remedy:** module paths, cross-project
+  references, SSR and data query values, and import directories admitted
+  ambiguous encodings, unbounded values, reserved-name collisions, or only
+  lexical containment. Requests could escape an intended root, alias internal
+  namespaces, amplify filesystem work, or publish under a misleading cache
+  key. Admission now rejects controls, malformed encoding, encoded
+  separators, traversal, oversized identities and lists, reserved framework
+  namespaces, non-files, and canonical symlink escapes before resolution or
+  cache publication.
+- **Symptom -> Source -> Consequence -> Remedy:** SSR dependency loading could
+  continue with invalid graphs, leak cross-project state, version the wrong
+  target, or rewrite import-looking text with regular expressions. Broken
+  modules could become reusable cache entries and strings or comments could be
+  corrupted. Graph failures now fail closed before publication, cache and
+  in-flight ownership include the complete project/source identity, every
+  import form is edited through the module lexer, and asynchronous
+  target-specific cache identities preserve both `.js` and `.mjs`.
+- **Symptom -> Source -> Consequence -> Remedy:** component discovery trusted
+  caller directories, followed canonical escapes, allowed duplicate basenames
+  to overwrite by traversal order, retained stale filesystem entries, and
+  loaded an unbounded number of sources concurrently. Discovery is now
+  lexically and canonically contained, depth and component counts are bounded,
+  entries are deterministic and immutable, duplicate names reject, reads are
+  coalesced with fixed concurrency, refreshes replace stale filesystem state,
+  and explicit registrations survive a refresh until explicitly removed or
+  cleared.
+- **Symptom -> Source -> Consequence -> Remedy:** module-server request and
+  response caches accepted incompletely scoped state, production transform
+  failures exposed internal diagnostics, unsupported methods could reach
+  filesystem and transform work, and HEAD behavior was not enforced at every
+  owned endpoint. Cache admission and invalidation now use bounded request
+  identities, production failures return redacted responses while retaining
+  structured server diagnostics, and every module/data namespace accepts only
+  `GET` and `HEAD` with deterministic bodyless HEAD responses.
+- **Symptom -> Source -> Consequence -> Remedy:** WebSocket messages used
+  character counts instead of byte counts, rejected peers and rate-limited
+  clients could retain listeners or connection state, bulk close could delete
+  clients admitted during cleanup, and manifest finalization could discard a
+  pending graph after validation failed. UTF-8 bytes and close reasons are
+  bounded, rejected connections clean up immediately, bulk close removes only
+  its captured clients, preload limits apply before missing-manifest shortcuts,
+  and failed finish validation retains the pending collection for explicit
+  recovery.
+- **Symptom -> Source -> Consequence -> Remedy:** the batch endpoint generated
+  invalid concatenated JavaScript, `ComponentRegistry.getLoader()` always
+  returned `undefined` while accepting ignored options, the synchronous SSR
+  facade retained a regex parser, and the unused `APIServer` leaked renderer
+  errors while classifying failures as not-found. The approved breaking cleanup
+  removes those implementations and exports, leaves a non-cacheable
+  `410 Gone` batch tombstone, and directs page-data traffic through the owned
+  hosted request pipeline.
+- **Symptom -> Source -> Consequence -> Remedy:** module documentation mixed
+  source, SSR, MDX, render, API, and HTTP loader ownership and advertised dead
+  constructors and endpoints. The module reference and loader guide now list
+  exact public and specialized entrypoints, operational boundaries, and
+  migration paths for every removed surface.
+
+Current reproducible evidence:
+
+- the complete Modules gate passes 61 top-level suites and 691 nested steps
+  with zero failures, including resolver/import-map identity, component
+  registry, source and SSR loading, manifests, request classification, cache
+  invalidation, WebSocket/rate-limit lifecycle, method semantics, and hosted
+  handler consumers;
+- the focused breaking-surface and integration gate passes 15 suites and 220
+  nested steps, while the affected Transforms portfolio passes 135 suites and
+  1,960 nested steps with zero failures;
+- every changed TypeScript source and test file lints and typechecks, the root
+  Modules and specialized server entrypoints typecheck, formatting and
+  `git diff --check` are clean; and
+- `deno task verify:quick` passes current generated manifests, formatting of
+  4,505 files, repository lint and policy ratchets, dependency and module
+  boundaries with zero cyclic edges, extension contracts, all configured
+  production/browser entrypoints, documentation validation, executable guide
+  examples, and all 757 links.
+
+Intentional compatibility boundaries remain explicit:
+
+| Severity | Boundary                                                            | Current control                                                                                                                                                    | Follow-up trigger                                                                                                              |
+| -------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Low      | The removed batch URL retains an HTTP tombstone.                    | `/_vf_modules/_batch` performs no generation or project I/O, accepts only `GET`/`HEAD`, returns non-cacheable `410 Gone`, and is covered by direct request tests.  | Remove the tombstone route after the published migration window and canonical-URL consumer rollout are complete.               |
+| Low      | Narrow legacy import regex constants remain in `loader-shared`.     | Production SSR rewriting uses the asynchronous lexer; the constants are documented as compatibility-only and are not a supported general source parser.            | Remove each constant with its last bounded consumer in an announced compatibility cleanup.                                     |
+| Low      | Explicitly standalone loader calls may omit an import-map identity. | Hosted paths bind a validated request snapshot and all reusable state includes output-affecting identities; ambient resolution remains only where the API permits. | Make the identity type-required in a versioned API revision once standalone ambient-resolution compatibility can be withdrawn. |
+
+No known unresolved critical or high-confidence Modules production risk
+remains. The `modules` unit is closed at 49 of 58 formal units; nine units
+remain open or awaiting top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
