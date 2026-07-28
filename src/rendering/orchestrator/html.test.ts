@@ -1374,7 +1374,7 @@ describe("HTMLGenerator helpers", () => {
       const mockAdapter = createMockAdapter(async (path: string) => {
         if (path === "/project/globals.css") return '@import "tailwindcss";';
         if (path === "/project/components/hero.css") {
-          return ".hero-banner { color: rgb(12 34 56); }";
+          return ".hero-banner { color: var(--hero-color); }";
         }
         return "";
       });
@@ -1415,7 +1415,7 @@ describe("HTMLGenerator helpers", () => {
       const css = getCSSByHash(cssHash);
       assertExists(css);
       assertStringIncludes(css, ".hero-banner");
-      assertStringIncludes(css, "rgb(12 34 56)");
+      assertStringIncludes(css, "var(--hero-color)");
     });
   });
 
