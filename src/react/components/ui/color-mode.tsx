@@ -26,13 +26,26 @@ const [ColorModeContext, useColorMode] = createStrictContext<ColorModeContextVal
 );
 export { useColorMode };
 
-function getSystemPreference(): ResolvedColorMode {
-  if (typeof window === "undefined") return "light";
-  return globalThis.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+function isColorMode(value: string | null): value is ColorMode {
+  return value === "light" || value === "dark" || value === "system";
 }
 
-function resolveMode(mode: ColorMode): ResolvedColorMode {
-  return mode === "system" ? getSystemPreference() : mode;
+function resolveMode(
+  mode: ColorMode,
+  systemPreference: ResolvedColorMode,
+): ResolvedColorMode {
+  return mode === "system" ? systemPreference : mode;
+}
+
+function readPersistedMode(storageKey: string, fallback: ColorMode): ColorMode {
+  if (typeof localStorage === "undefined") return fallback;
+  try {
+    const stored = localStorage.getItem(storageKey);
+    return isColorMode(stored) ? stored : fallback;
+  } catch (_) {
+    /* expected: localStorage may be unavailable */
+    return fallback;
+  }
 }
 
 const STORAGE_KEY = "vf-color-mode";
@@ -50,17 +63,35 @@ export function ColorModeProvider({
   storageKey = STORAGE_KEY,
   attribute = "class",
 }: ColorModeProviderProps): React.ReactElement {
-  const [mode, setModeState] = React.useState<ColorMode>(() => {
-    if (typeof window === "undefined") return defaultMode;
-    try {
-      return (localStorage.getItem(storageKey) as ColorMode) || defaultMode;
-    } catch (_) {
-      /* expected: localStorage may be unavailable */
-      return defaultMode;
-    }
-  });
+  // Browser-only preferences must not participate in the first client render:
+  // hydration has to reproduce the server snapshot before reconciling storage
+  // and the OS preference after mount.
+  const initialMode = React.useRef(defaultMode);
+  const [mode, setModeState] = React.useState<ColorMode>(initialMode.current);
+  const [systemPreference, setSystemPreference] = React.useState<ResolvedColorMode>("light");
+  const [hasReconciledClientState, setHasReconciledClientState] = React.useState(false);
 
-  const resolvedMode = resolveMode(mode);
+  const resolvedMode = resolveMode(mode, systemPreference);
+
+  React.useEffect(() => {
+    if (typeof globalThis.matchMedia !== "function") return;
+    const media = globalThis.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemPreference(media.matches ? "dark" : "light");
+    update();
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  React.useEffect(() => {
+    setModeState(readPersistedMode(storageKey, initialMode.current));
+    setHasReconciledClientState(true);
+  }, [storageKey]);
 
   const setMode = React.useCallback((newMode: ColorMode) => {
     setModeState(newMode);
@@ -77,6 +108,9 @@ export function ColorModeProvider({
 
   // Apply attribute to <html>
   React.useEffect(() => {
+    // ColorModeScript may already have applied the persisted theme. Avoid
+    // replacing it with the hydration seed before persistence is reconciled.
+    if (!hasReconciledClientState) return;
     const root = document.documentElement;
     if (attribute === "class") {
       root.classList.toggle("dark", resolvedMode === "dark");
@@ -85,16 +119,7 @@ export function ColorModeProvider({
       root.setAttribute("data-theme", resolvedMode);
     }
     root.style.colorScheme = resolvedMode;
-  }, [resolvedMode, attribute]);
-
-  // Listen for system preference changes when mode is "system"
-  React.useEffect(() => {
-    if (mode !== "system") return;
-    const mq = globalThis.matchMedia("(prefers-color-scheme: dark)");
-    const forceUpdate = () => setModeState("system");
-    mq.addEventListener("change", forceUpdate);
-    return () => mq.removeEventListener("change", forceUpdate);
-  }, [mode]);
+  }, [hasReconciledClientState, resolvedMode, attribute]);
 
   const value = React.useMemo(
     () => ({ mode, resolvedMode, setMode, toggleMode }),
@@ -136,7 +161,9 @@ export function ColorModeScript({
   const applyAttribute = attribute === "class"
     ? 'd.classList.add(r);d.classList.remove(r==="dark"?"light":"dark")'
     : 'd.setAttribute("data-theme",r)';
-  const script = `(function(){try{var m=localStorage.getItem(${jsonForInlineScript(storageKey)})||${
+  const script = `(function(){try{var m=localStorage.getItem(${
+    jsonForInlineScript(storageKey)
+  });if(m!=="light"&&m!=="dark"&&m!=="system")m=${
     jsonForInlineScript(defaultMode)
   };var r=m==="system"?globalThis.matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light":m;var d=document.documentElement;${applyAttribute};d.style.colorScheme=r}catch(e){}})()`;
   return <script dangerouslySetInnerHTML={{ __html: script }} />;
