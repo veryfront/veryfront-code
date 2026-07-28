@@ -104,6 +104,23 @@ describe("security/input-validation/limits", () => {
       );
     });
 
+    it("rejects Content-Length values outside the safe integer domain", () => {
+      const req = createStreamingRequest(
+        new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        { "content-length": "9007199254740992" },
+      );
+
+      assertThrows(
+        () => validateRequestLimits(req),
+        VeryfrontError,
+        "Invalid Content-Length",
+      );
+    });
+
     it("should reject oversized headers", () => {
       const headers: Record<string, string> = {};
 
@@ -115,6 +132,50 @@ describe("security/input-validation/limits", () => {
 
       assertThrows(
         () => validateRequestLimits(req, { maxHeaderSize: 1000 }),
+        VeryfrontError,
+        "Headers too large",
+      );
+    });
+
+    it("rejects invalid runtime limits instead of disabling enforcement", () => {
+      const req = new Request("http://localhost/");
+      for (
+        const limits of [
+          { maxBodySize: Number.POSITIVE_INFINITY },
+          { maxUrlLength: Number.NaN },
+          { maxHeaderSize: -1 },
+          { maxFileSize: 1.5 },
+          { maxBodySize: null as unknown as number },
+        ]
+      ) {
+        assertThrows(
+          () => validateRequestLimits(req, limits),
+          RangeError,
+          "must be a non-negative safe integer",
+        );
+      }
+    });
+
+    it("counts URL and header limits in UTF-8 bytes", () => {
+      const requestWithUnicodeUrl = {
+        url: "http://localhost/å",
+        headers: new Headers(),
+      } as Request;
+      assertThrows(
+        () =>
+          validateRequestLimits(requestWithUnicodeUrl, {
+            maxUrlLength: requestWithUnicodeUrl.url.length,
+          }),
+        VeryfrontError,
+        "URL too long",
+      );
+
+      const req = new Request("http://localhost/", {
+        headers: { "x-value": "å" },
+      });
+      const codeUnitSize = "x-value".length + "å".length + 4;
+      assertThrows(
+        () => validateRequestLimits(req, { maxHeaderSize: codeUnitSize }),
         VeryfrontError,
         "Headers too large",
       );

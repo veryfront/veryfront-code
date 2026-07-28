@@ -1,10 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
+import { MAX_WORKER_REQUEST_ID_CHARS } from "./worker-types.ts";
 import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import { computeHash } from "#veryfront/utils";
 
@@ -165,9 +172,68 @@ testSuite("ProjectWorker", () => {
       "Custom project worker scripts cannot use unrestricted network permissions",
     );
   });
+
+  it("rejects invalid request timeouts before starting a worker", () => {
+    for (
+      const requestTimeoutMs of [
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+      ]
+    ) {
+      assertThrows(
+        () =>
+          new ProjectWorker({
+            projectId: "invalid-timeout",
+            permissions: TEST_PERMISSIONS,
+            requestTimeoutMs,
+          }),
+        Error,
+        "requestTimeoutMs must be a positive safe integer",
+      );
+    }
+  });
 });
 
 testSuite("ProjectWorker - error handling", () => {
+  it("rejects malformed request ids before worker protocol admission", async () => {
+    const worker = createTestWorker("test-invalid-request-id");
+    worker.start();
+    try {
+      for (const id of ["", "x".repeat(MAX_WORKER_REQUEST_ID_CHARS + 1)]) {
+        await assertRejects(
+          () =>
+            worker.execute({
+              type: "execute-app-route",
+              id,
+              module: TEST_EMPTY_PREPARED_MODULE,
+              modulePath: "/project/route.ts",
+              method: "GET",
+              request: {
+                url: "http://localhost/api/test",
+                method: "GET",
+                headers: [],
+                body: null,
+              },
+              params: {},
+              projectDir: "/project",
+              sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+            }),
+          Error,
+          "Worker request id must be a non-empty string",
+        );
+      }
+
+      assertEquals(worker.hasPendingRequests, false);
+      assertEquals(worker.requestCount, 0);
+      assertEquals(worker.status, "idle");
+    } finally {
+      worker.terminate();
+    }
+  });
+
   it("rejects execute when worker is not started", async () => {
     const worker = createTestWorker();
 

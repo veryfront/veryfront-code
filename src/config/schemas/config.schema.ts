@@ -36,7 +36,11 @@ import {
   MAX_GITHUB_FILESYSTEM_ATTEMPTS,
   MAX_VERYFRONT_FILESYSTEM_RETRIES,
 } from "#veryfront/utils/config-resource-limits.ts";
-import { MAX_PATH_LENGTH } from "#veryfront/utils/constants/security.ts";
+import {
+  MAX_CSRF_NAME_LENGTH,
+  MAX_CSRF_TTL_SECONDS,
+  MAX_PATH_LENGTH,
+} from "#veryfront/utils/constants/security.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { CSS_OPTIMIZATION, IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import {
@@ -46,7 +50,6 @@ import {
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
-const MAX_CSRF_NAME_LENGTH = 256;
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
 const MAX_CSRF_EXCLUDE_PATH_LIST_LENGTH = 16_384;
 const CSRF_EXCLUDE_PATH_BASE_URL = "https://csrf-policy.invalid";
@@ -224,7 +227,7 @@ const getCsrfSchema = defineSchema((v) =>
           "CSRF exclusion paths exceed their aggregate size limit",
         )
         .optional(),
-      ttlSec: v.number().int().positive().optional(),
+      ttlSec: v.number().int().positive().max(MAX_CSRF_TTL_SECONDS).optional(),
     }).strict(),
   ])
 );

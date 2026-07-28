@@ -9,10 +9,10 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
-import { isCompiledBinary } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INVALID_ARGUMENT, TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import {
   isInternalEgressOverrideEnabled,
   type ResolveWorkerHost,
@@ -27,6 +27,7 @@ import type {
   WorkerStreamChunk,
   WorkerStreamEnd,
 } from "./worker-types.ts";
+import { MAX_WORKER_REQUEST_ID_CHARS } from "./worker-types.ts";
 
 const logger = serverLogger.component("project-worker");
 const textEncoder = new TextEncoder();
@@ -50,6 +51,35 @@ function postWorkerMessage(
     worker,
     transfer === undefined ? [message] : [message, transfer],
   );
+}
+
+function requireWorkerRequestId(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_WORKER_REQUEST_ID_CHARS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Worker request id must be a non-empty string no longer than ${MAX_WORKER_REQUEST_ID_CHARS} characters`,
+    });
+  }
+  return value;
+}
+
+function requireRequestTimeoutMs(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > MAX_TIMER_DELAY_MS
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Project worker requestTimeoutMs must be a positive safe integer no greater than ${MAX_TIMER_DELAY_MS}`,
+    });
+  }
+  return value;
 }
 
 // Intersection with the DOM `WorkerOptions` so the value is assignable to the
@@ -128,7 +158,7 @@ export class ProjectWorker {
   constructor(options: ProjectWorkerOptions) {
     this.projectId = options.projectId;
     this.permissions = options.permissions;
-    this.requestTimeoutMs = options.requestTimeoutMs;
+    this.requestTimeoutMs = requireRequestTimeoutMs(options.requestTimeoutMs);
     this.workerScriptUrl = options.workerScriptUrl;
     this.egressResolveHost = options.egressResolveHost;
   }
@@ -274,6 +304,12 @@ export class ProjectWorker {
    * Execute a request in this worker. Returns a typed response.
    */
   execute(request: WorkerRequest): Promise<WorkerResponse> {
+    let requestId: string;
+    try {
+      requestId = requireWorkerRequestId(request.id);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return withSpan(
       "worker.execute",
       () => {
@@ -282,7 +318,7 @@ export class ProjectWorker {
             UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` }),
           );
         }
-        if (this.pending.has(request.id)) {
+        if (this.pending.has(requestId)) {
           return Promise.reject(UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" }));
         }
 
@@ -292,7 +328,7 @@ export class ProjectWorker {
 
         return new Promise<WorkerResponse>((resolve, reject) => {
           const timer = setTimeout(() => {
-            this.pending.delete(request.id);
+            this.pending.delete(requestId);
             const timeoutError = TIMEOUT_ERROR.create({
               detail: `Worker request timed out after ${this.requestTimeoutMs}ms`,
             });
@@ -300,7 +336,7 @@ export class ProjectWorker {
             reject(timeoutError);
           }, this.requestTimeoutMs);
 
-          this.pending.set(request.id, {
+          this.pending.set(requestId, {
             resolve,
             reject,
             timer,
@@ -310,7 +346,7 @@ export class ProjectWorker {
             this.postToWorker(request);
           } catch {
             clearTimeout(timer);
-            this.pending.delete(request.id);
+            this.pending.delete(requestId);
             const sendError = UNKNOWN_ERROR.create({
               detail: "Worker request could not be sent",
             });
@@ -322,7 +358,7 @@ export class ProjectWorker {
       {
         "worker.projectId": this.projectId,
         "worker.requestType": request.type,
-        "worker.requestId": request.id,
+        "worker.requestId": requestId,
       },
     );
   }
@@ -336,11 +372,12 @@ export class ProjectWorker {
    * response (ssr-result with full HTML).
    */
   executeStream(request: WorkerRequest): ReadableStream<Uint8Array> {
+    const requestId = requireWorkerRequestId(request.id);
     if (!this.worker || this._status === "crashed" || this._status === "terminated") {
       throw UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` });
     }
 
-    if (this.pending.has(request.id) || this.streamHandlers.has(request.id)) {
+    if (this.pending.has(requestId) || this.streamHandlers.has(requestId)) {
       throw UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" });
     }
 
@@ -348,7 +385,6 @@ export class ProjectWorker {
     this._lastActivityAt = Date.now();
     this._status = "busy";
 
-    const requestId = request.id;
     let cancelRequest: (() => void) | undefined;
 
     return new ReadableStream<Uint8Array>({
@@ -578,17 +614,7 @@ export class ProjectWorker {
 
   private getWorkerScriptUrl(): string {
     if (this.workerScriptUrl) return this.workerScriptUrl;
-
-    // In compiled binary mode, use a data URL because blob URLs don't work
-    // See: deno-sandbox.ts for the same pattern
-    if (isCompiledBinary()) {
-      // For compiled binaries, we'd need to inline the worker script.
-      // For now, fall through to the import.meta.resolve path which works
-      // in development and standard Deno execution.
-    }
-
-    // Use import.meta.resolve to get the absolute URL of the worker script.
-    // This works in both `deno run` and `deno compile` contexts.
+    // The binary build explicitly includes this module in its VFS.
     return import.meta.resolve("./worker-script.ts");
   }
 

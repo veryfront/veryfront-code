@@ -15,6 +15,7 @@
  */
 
 import { serverLogger } from "#veryfront/utils";
+import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { getHostEnv, unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -22,6 +23,7 @@ import { SECURITY_VIOLATION, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { sanitizeDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
 import { basename, dirname, resolve as resolvePath } from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { ProjectWorker, type ProjectWorkerOptions } from "./project-worker.ts";
 import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerEnvAllowlist, buildWorkerPermissions } from "./worker-permissions.ts";
@@ -36,7 +38,6 @@ import { DEFAULT_WORKER_POOL_CONFIG } from "./worker-types.ts";
 const logger = serverLogger.component("worker-pool");
 const MAX_DIAGNOSTIC_PATH_LENGTH = 512;
 const MAX_DIAGNOSTIC_PROJECT_ID_LENGTH = 128;
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const apply = Reflect.apply;
 const stringSlice = String.prototype.slice;
 const stringToLowerCase = String.prototype.toLowerCase;
@@ -76,6 +77,8 @@ export interface WorkerPoolDependencies {
    * ProjectWorker directly.
    */
   createWorker?: (options: ProjectWorkerOptions) => ProjectWorker;
+  /** Test seam for deterministic host-memory pressure behavior. */
+  getHeapUsedPercent?: () => number;
 }
 
 function extractProjectEnvKeys(request: WorkerRequest): string[] {
@@ -142,23 +145,13 @@ function getHostEnvBoolean(key: string, fallback = false): boolean {
     case "no":
       return false;
     default:
-      return fallback;
+      throw new TypeError(
+        `${key} must be one of 1, 0, true, false, yes, or no`,
+      );
   }
 }
 
 function getHostEnvInteger(
-  key: string,
-  fallback: number,
-  maximum = MAX_SAFE_INTEGER,
-): number {
-  const value = getHostEnv(key);
-  if (value === undefined) return fallback;
-
-  const parsed = numberFromString(value);
-  return numberIsSafeInteger(parsed) && parsed >= 1 && parsed <= maximum ? parsed : fallback;
-}
-
-function getStrictHostEnvInteger(
   key: string,
   fallback: number,
   maximum = MAX_SAFE_INTEGER,
@@ -177,6 +170,46 @@ function getStrictHostEnvInteger(
     );
   }
   return parsed;
+}
+
+function requirePositivePoolInteger(
+  name: string,
+  value: unknown,
+  maximum = MAX_SAFE_INTEGER,
+): number {
+  if (
+    typeof value !== "number" ||
+    !numberIsSafeInteger(value) ||
+    value < 1 ||
+    value > maximum
+  ) {
+    throw new TypeError(
+      `Worker pool ${name} must be a positive safe integer no greater than ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function requireNonNegativePoolInteger(
+  name: string,
+  value: unknown,
+  maximum = MAX_SAFE_INTEGER,
+): number {
+  if (
+    typeof value !== "number" ||
+    !numberIsSafeInteger(value) ||
+    value < 0 ||
+    value > maximum
+  ) {
+    throw new TypeError(
+      `Worker pool ${name} must be a non-negative safe integer no greater than ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function valueOrDefault<T>(value: T | undefined, fallback: T): T {
+  return value === undefined ? fallback : value;
 }
 
 function normalizeReadPaths(paths: Iterable<string | undefined>): string[] {
@@ -217,6 +250,7 @@ export class WorkerPool {
   private pool = new Map<string, PoolEntry>();
   private readonly config: ResolvedWorkerPoolConfig;
   private readonly createWorker: (options: ProjectWorkerOptions) => ProjectWorker;
+  private readonly getHeapUsedPercent: () => number;
   private shuttingDown = false;
 
   private cleanupInterval: ReturnType<typeof setInterval> | undefined;
@@ -226,23 +260,71 @@ export class WorkerPool {
     config: Partial<WorkerPoolConfig> = {},
     dependencies: WorkerPoolDependencies = {},
   ) {
-    const maxActiveRequestsPerWorker = config.maxActiveRequestsPerWorker === undefined
-      ? DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker
-      : config.maxActiveRequestsPerWorker;
-    if (
-      !numberIsSafeInteger(maxActiveRequestsPerWorker) ||
-      maxActiveRequestsPerWorker < 1
-    ) {
-      throw new TypeError(
-        "Worker pool maxActiveRequestsPerWorker must be a positive safe integer",
-      );
-    }
     this.config = {
-      ...DEFAULT_WORKER_POOL_CONFIG,
-      ...config,
-      maxActiveRequestsPerWorker,
+      maxPoolSize: requirePositivePoolInteger(
+        "maxPoolSize",
+        valueOrDefault(
+          config.maxPoolSize,
+          DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
+        ),
+      ),
+      maxActiveRequestsPerWorker: requirePositivePoolInteger(
+        "maxActiveRequestsPerWorker",
+        valueOrDefault(
+          config.maxActiveRequestsPerWorker,
+          DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
+        ),
+      ),
+      idleTimeoutMs: requireNonNegativePoolInteger(
+        "idleTimeoutMs",
+        valueOrDefault(
+          config.idleTimeoutMs,
+          DEFAULT_WORKER_POOL_CONFIG.idleTimeoutMs,
+        ),
+        MAX_TIMER_DELAY_MS,
+      ),
+      requestTimeoutMs: requirePositivePoolInteger(
+        "requestTimeoutMs",
+        valueOrDefault(
+          config.requestTimeoutMs,
+          DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs,
+        ),
+        MAX_TIMER_DELAY_MS,
+      ),
+      healthCheckIntervalMs: requirePositivePoolInteger(
+        "healthCheckIntervalMs",
+        valueOrDefault(
+          config.healthCheckIntervalMs,
+          DEFAULT_WORKER_POOL_CONFIG.healthCheckIntervalMs,
+        ),
+        MAX_TIMER_DELAY_MS,
+      ),
+      maxRequestsPerWorker: requirePositivePoolInteger(
+        "maxRequestsPerWorker",
+        valueOrDefault(
+          config.maxRequestsPerWorker,
+          DEFAULT_WORKER_POOL_CONFIG.maxRequestsPerWorker,
+        ),
+      ),
+      maxWorkerAgeMs: requireNonNegativePoolInteger(
+        "maxWorkerAgeMs",
+        valueOrDefault(
+          config.maxWorkerAgeMs,
+          DEFAULT_WORKER_POOL_CONFIG.maxWorkerAgeMs,
+        ),
+        MAX_TIMER_DELAY_MS,
+      ),
+      memoryBudgetMb: requirePositivePoolInteger(
+        "memoryBudgetMb",
+        valueOrDefault(
+          config.memoryBudgetMb,
+          DEFAULT_WORKER_POOL_CONFIG.memoryBudgetMb,
+        ),
+      ),
     };
     this.createWorker = dependencies.createWorker ?? ((options) => new ProjectWorker(options));
+    this.getHeapUsedPercent = dependencies.getHeapUsedPercent ??
+      (() => getHeapStats().heapUsedPercent);
     this.startCleanup();
     this.startHealthChecks();
   }
@@ -1005,13 +1087,9 @@ export class WorkerPool {
    * not enforcement of `memoryBudgetMb`.
    */
   private evictUnderMemoryPressure(): void {
-    // Lazy import to avoid circular deps — this is only called during health checks
     try {
-      // deno-lint-ignore no-explicit-any
-      const { getHeapStats } = (globalThis as any).__veryfront_heap_stats ?? {};
-      if (!getHeapStats) return;
-
-      const { heapUsedPercent } = getHeapStats();
+      const heapUsedPercent = this.getHeapUsedPercent();
+      if (!Number.isFinite(heapUsedPercent) || heapUsedPercent < 0) return;
       if (heapUsedPercent < 70) return; // Only act above 70%
 
       // Sort workers by last access time (oldest first)
@@ -1032,8 +1110,10 @@ export class WorkerPool {
           poolSize: this.pool.size,
         });
       }
-    } catch {
-      // getHeapStats may not be available in all environments
+    } catch (error) {
+      logger.debug("Host heap statistics unavailable for worker eviction", {
+        error,
+      });
     }
   }
 }
@@ -1097,7 +1177,7 @@ export function getWorkerPool(): WorkerPool {
         "WORKER_MAX_POOL_SIZE",
         DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
       ),
-      maxActiveRequestsPerWorker: getStrictHostEnvInteger(
+      maxActiveRequestsPerWorker: getHostEnvInteger(
         "WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER",
         DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
       ),

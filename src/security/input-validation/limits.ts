@@ -5,10 +5,46 @@ const REQUEST_BODY_TOO_LARGE_DETAIL = "Request body exceeds size limit";
 const BODY_COALESCE_BLOCK_BYTES = 64 * 1024;
 const BODY_READ_YIELD_CHUNKS = 256;
 const MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS = 4_096;
+const textEncoder = new TextEncoder();
 
 export interface ReadBodyLimitOptions {
   /** Abort the read and cancel the underlying stream when the caller deadline expires. */
   signal?: AbortSignal;
+}
+
+function requireByteLimit(name: string, value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0
+  ) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+/** Resolve and validate every request-boundary limit before it is used. */
+export function resolveRequestLimits(
+  limits: RequestLimits = {},
+): Required<RequestLimits> {
+  return {
+    maxBodySize: requireByteLimit(
+      "Request body size limit",
+      limits.maxBodySize === undefined ? DEFAULT_LIMITS.maxBodySize : limits.maxBodySize,
+    ),
+    maxUrlLength: requireByteLimit(
+      "Request URL size limit",
+      limits.maxUrlLength === undefined ? DEFAULT_LIMITS.maxUrlLength : limits.maxUrlLength,
+    ),
+    maxHeaderSize: requireByteLimit(
+      "Request header size limit",
+      limits.maxHeaderSize === undefined ? DEFAULT_LIMITS.maxHeaderSize : limits.maxHeaderSize,
+    ),
+    maxFileSize: requireByteLimit(
+      "Request file size limit",
+      limits.maxFileSize === undefined ? DEFAULT_LIMITS.maxFileSize : limits.maxFileSize,
+    ),
+  };
 }
 
 export function isRequestBodyTooLargeError(error: unknown): error is VeryfrontError {
@@ -21,10 +57,7 @@ export function validateRequestLimits(
   request: Request,
   limits: RequestLimits = {},
 ): void {
-  const { maxUrlLength, maxBodySize, maxHeaderSize } = {
-    ...DEFAULT_LIMITS,
-    ...limits,
-  };
+  const { maxUrlLength, maxBodySize, maxHeaderSize } = resolveRequestLimits(limits);
 
   validateUrlLength(request.url, maxUrlLength);
   validateContentLength(request, maxBodySize);
@@ -32,11 +65,12 @@ export function validateRequestLimits(
 }
 
 function validateUrlLength(url: string, maxLength: number): void {
-  if (url.length <= maxLength) return;
+  const actualLength = textEncoder.encode(url).byteLength;
+  if (actualLength <= maxLength) return;
 
   throw createValidationError("URL too long", {
     maxLength,
-    actualLength: url.length,
+    actualLength,
   });
 }
 
@@ -58,14 +92,11 @@ function parseContentLength(contentLength: string): number {
     throw createValidationError("Invalid Content-Length header");
   }
 
-  return Number(contentLength);
-}
-
-function requireBodySizeLimit(maxSize: number): number {
-  if (!Number.isSafeInteger(maxSize) || maxSize < 0) {
-    throw new RangeError("Request body size limit must be a non-negative safe integer");
+  const parsed = Number(contentLength);
+  if (!Number.isSafeInteger(parsed)) {
+    throw createValidationError("Invalid Content-Length header");
   }
-  return maxSize;
+  return parsed;
 }
 
 function createBodyTooLargeError(
@@ -113,7 +144,10 @@ function validateHeaderSize(request: Request, maxSize: number): void {
   let headerSize = 0;
 
   for (const [key, value] of request.headers) {
-    headerSize += key.length + value.length + 4; // ": " and "\r\n"
+    headerSize += textEncoder.encode(key).byteLength +
+      textEncoder.encode(value).byteLength +
+      4; // ": " and "\r\n"
+    if (headerSize > maxSize) break;
   }
 
   if (headerSize <= maxSize) return;
@@ -161,7 +195,7 @@ export async function readBodyBytesWithLimit(
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
   options: ReadBodyLimitOptions = {},
 ): Promise<Uint8Array> {
-  requireBodySizeLimit(maxSize);
+  requireByteLimit("Request body size limit", maxSize);
   if (request.bodyUsed) {
     throw createValidationError("Request body has already been consumed");
   }

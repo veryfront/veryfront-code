@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createSecureFs } from "./secure-fs.ts";
+import { createSecureFs, wrapAdapterWithSecurity } from "./secure-fs.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
+import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
 
 // Minimal adapter stub — only getUnsafeAdapter() is being tested
 function createMockAdapter() {
@@ -33,6 +39,44 @@ describe("SecureFs", () => {
       VeryfrontError,
       "valid security context",
     );
+  });
+
+  it("rejects invalid runtime options instead of weakening validation", () => {
+    for (
+      const config of [
+        { baseDir: "" },
+        { context: null as unknown as "internal" },
+        { contextOptions: null as never },
+        {
+          contextOptions: {
+            allowedImportDirs: [""],
+          },
+        },
+        { throwOnError: "false" as unknown as boolean },
+        { onSecurityEvent: "noop" as unknown as () => void },
+        {
+          validationOptions: {
+            level: "unknown" as never,
+          },
+        },
+        {
+          validationOptions: {
+            allowAbsolute: "yes" as unknown as boolean,
+          },
+        },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          createSecureFs({
+            baseDir: "/tmp",
+            adapter: createMockAdapter(),
+            ...config,
+          }),
+        VeryfrontError,
+        "SecureFs",
+      );
+    }
   });
 
   it("rejects a missing write target beneath a symlinked parent", async () => {
@@ -103,6 +147,34 @@ describe("SecureFs", () => {
     }
   });
 
+  it("does not let validation updates replace the configured trust root", async () => {
+    const baseDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsideFile = `${outsideDir}/outside.txt`;
+    try {
+      await Deno.writeTextFile(outsideFile, "outside");
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+      });
+
+      secureFs.updateValidationOptions({
+        baseDir: outsideDir,
+        adapter: new DenoAdapter(),
+      });
+
+      await assertRejects(
+        () => secureFs.readFile(outsideFile),
+        VeryfrontError,
+        "outside base directory",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
   describe("getUnsafeAdapter", () => {
     it("throws in production", () => {
       const originalEnv = Deno.env.get("NODE_ENV");
@@ -147,5 +219,59 @@ describe("SecureFs", () => {
         }
       }
     });
+  });
+
+  it("preserves adapter lifecycle methods with their original receiver", async () => {
+    let initialized = false;
+    let shutDown = false;
+    const adapter = {
+      id: "memory",
+      name: "lifecycle-test",
+      capabilities: {
+        typescript: false,
+        jsx: false,
+        http2: false,
+        websocket: false,
+        workers: false,
+        fileWatching: false,
+        shell: false,
+        kvStore: false,
+        writableFs: false,
+      },
+      fs: createMockAdapter().fs,
+      env: { get: () => undefined, set: () => {}, toObject: () => ({}) },
+      server: {},
+      serve(
+        this: RuntimeAdapter,
+        _handler: (request: Request) => Promise<Response> | Response,
+        _options: ServeOptions,
+      ): Promise<Server> {
+        assertStrictEquals(this, adapter);
+        return Promise.resolve({
+          addr: { hostname: "localhost", port: 0 },
+          stop: () => Promise.resolve(),
+        });
+      },
+      initialize(this: RuntimeAdapter): Promise<void> {
+        assertStrictEquals(this, adapter);
+        initialized = true;
+        return Promise.resolve();
+      },
+      shutdown(this: RuntimeAdapter): Promise<void> {
+        assertStrictEquals(this, adapter);
+        shutDown = true;
+        return Promise.resolve();
+      },
+    } as unknown as RuntimeAdapter;
+
+    const wrapped = wrapAdapterWithSecurity(adapter, { baseDir: "/tmp" });
+    await wrapped.initialize?.();
+    await wrapped.serve(() => new Response(), {});
+    await wrapped.shutdown?.();
+
+    assertEquals(initialized, true);
+    assertEquals(shutDown, true);
+    assertStrictEquals(wrapped.env, adapter.env);
+    assertStrictEquals(wrapped.server, adapter.server);
   });
 });

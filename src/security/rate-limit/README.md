@@ -1,325 +1,57 @@
-# Rate Limiting Middleware
+# Legacy source-local rate limiter
 
-Protection against abuse and DoS attacks through configurable rate limiting.
-
-## Features
-
-- ✅ **Multiple Strategies**: Fixed window, sliding window, token bucket
-- ✅ **Flexible Storage**: Memory store (default), or custom implementations
-- ✅ **Custom Key Generation**: Rate limit by IP, API key, user ID, etc.
-- ✅ **Skip Logic**: Bypass rate limiting for specific requests
-- ✅ **Rate Limit Headers**: Standard `X-RateLimit-*` headers
-- ✅ **Preset Configurations**: Ready-to-use configs for common use cases
-
-## Quick Start
+This directory is not a published `veryfront/security/rate-limit` entrypoint.
+The supported public rate limiter is owned by
+[`veryfront/middleware`](../../middleware/README.md):
 
 ```typescript
-import { RateLimitPresets } from "veryfront/security/rate-limit";
-
-// Use a preset
-const rateLimiter = RateLimitPresets.moderate(); // 100 req/min
-
-// Apply in your handler
-export async function handler(request: Request) {
-  return await rateLimiter(request, async (req) => {
-    // Your handler logic
-    return new Response("OK");
-  });
-}
+import {
+  authRateLimit,
+  MemoryRateLimitStore,
+  rateLimit,
+} from "veryfront/middleware";
 ```
 
-## Strategies
-
-### Fixed Window
-
-Simple counter that resets at fixed intervals. Fast but allows bursts at boundaries.
-
-```typescript
-import { createRateLimiter } from "veryfront/security/rate-limit";
-
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000, // 1 minute
-  strategy: "fixed-window",
-});
-```
-
-### Sliding Window
-
-More accurate, prevents burst attacks by tracking individual timestamps.
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  strategy: "sliding-window",
-});
-```
-
-### Token Bucket
-
-Allows controlled bursts. Tokens refill at constant rate.
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  strategy: "token-bucket",
-});
-```
-
-## Custom Configuration
-
-### Rate Limit by API Key
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 1000,
-  windowMs: 3600000, // 1 hour
-  keyGenerator: (request) => {
-    return request.headers.get("x-api-key") || "anonymous";
-  },
-});
-```
-
-### Skip Admin Users
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  skip: async (request) => {
-    const apiKey = request.headers.get("x-api-key");
-    return apiKey === process.env.ADMIN_API_KEY;
-  },
-});
-```
-
-### Custom Error Response
-
-```typescript
-const limiter = createRateLimiter({
-  maxRequests: 10,
-  windowMs: 60000,
-  onRateLimitExceeded: (request, key) => {
-    return new Response(
-      JSON.stringify({
-        error: "Rate limit exceeded",
-        key,
-        message: "Please upgrade to premium for higher limits",
-      }),
-      {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  },
-});
-```
-
-## Presets
-
-### Strict (10 req/min)
-
-For sensitive operations.
-
-```typescript
-RateLimitPresets.strict();
-```
-
-### Moderate (100 req/min)
-
-For general web pages.
-
-```typescript
-RateLimitPresets.moderate();
-```
-
-### Lenient (1000 req/hour)
-
-For public APIs.
-
-```typescript
-RateLimitPresets.lenient();
-```
-
-### Auth (5 req/15min)
-
-For authentication endpoints.
-
-```typescript
-RateLimitPresets.auth();
-```
-
-Preset proxy headers remain untrusted by default, so rotating
-`X-Forwarded-For` values cannot bypass the limit. If a trusted reverse proxy
-sets the client address, enable proxy trust explicitly:
-
-```typescript
-const limiter = RateLimitPresets.auth({ trustProxy: true });
-```
-
-You can also provide a custom key generator, for example to limit by API key or
-authenticated user ID:
-
-```typescript
-const limiter = RateLimitPresets.auth({
-  keyGenerator: (request) => request.headers.get("x-api-key") ?? "anonymous",
-});
-```
-
-Existing store-only calls remain supported. Use
-`RateLimitPresets.auth(store)` or include the store in the options object as
-`RateLimitPresets.auth({ store })`.
-
-## Custom Store
-
-For distributed systems, implement the `RateLimitStore` interface:
-
-```typescript
-import type { RateLimitStore } from "veryfront/security/rate-limit";
-
-class RedisRateLimitStore implements RateLimitStore {
-  async increment(key: string): Promise<number> {
-    // Implement with Redis
-  }
-
-  async get(key: string): Promise<number> {
-    // Implement with Redis
-  }
-
-  async reset(key: string): Promise<void> {
-    // Implement with Redis
-  }
-
-  async resetAll(): Promise<void> {
-    // Implement with Redis
-  }
-}
-
-const limiter = createRateLimiter({
-  maxRequests: 100,
-  windowMs: 60000,
-  store: new RedisRateLimitStore(),
-});
-```
-
-## Response Headers
-
-All responses include rate limit headers:
-
-- `X-RateLimit-Limit`: Maximum requests allowed
-- `X-RateLimit-Remaining`: Requests remaining in window
-- `X-RateLimit-Reset`: Unix timestamp when limit resets
-
-When rate limit is exceeded:
-
-- HTTP status: `429 Too Many Requests`
-- `Retry-After`: Seconds to wait before retrying
-
-## Best Practices
-
-1. **Use appropriate limits**: Don't over-limit legitimate users
-2. **Choose right strategy**:
-   - Fixed window: Fast, good for most cases
-   - Sliding window: More accurate, prevents burst attacks
-   - Token bucket: Allow controlled bursts
-3. **Monitor limits**: Track `429` responses to tune limits
-4. **Fail open**: If rate limiting errors, allow request through
-5. **Distributed systems**: Use Redis or similar for shared state
-
-## Examples
-
-### Protect API Endpoint
-
-```typescript
-// app/api/users/route.ts
-import { RateLimitPresets } from "veryfront/security/rate-limit";
-
-const limiter = RateLimitPresets.moderate();
-
-export async function GET(request: Request) {
-  return await limiter(request, async () => {
-    const users = await db.users.findMany();
-    return Response.json(users);
-  });
-}
-```
-
-### Protect Authentication
-
-```typescript
-// app/api/auth/login/route.ts
-import { RateLimitPresets } from "veryfront/security/rate-limit";
-
-const limiter = RateLimitPresets.auth();
-
-export async function POST(request: Request) {
-  return await limiter(request, async () => {
-    const { email, password } = await request.json();
-    // ... authentication logic
-  });
-}
-```
-
-### Different Limits per Tier
-
-```typescript
-import { createRateLimiter } from "veryfront/security/rate-limit";
-
-const limiter = createRateLimiter({
-  maxRequests: 100, // Default
-  windowMs: 60000,
-  keyGenerator: (request) => {
-    const tier = request.headers.get("x-user-tier");
-    return `${tier}:${request.headers.get("x-api-key")}`;
-  },
-  onRateLimitExceeded: async (request, key) => {
-    const tier = key.split(":")[0];
-    const limits = {
-      free: 100,
-      pro: 1000,
-      enterprise: 10000,
-    };
-
-    return new Response(
-      JSON.stringify({
-        error: "Rate limit exceeded",
-        limit: limits[tier] || 100,
-        message: "Upgrade for higher limits",
-      }),
-      { status: 429 },
-    );
-  },
-});
-```
-
-## Testing
-
-```typescript
-import { createRateLimiter } from "veryfront/security/rate-limit";
-
-Deno.test("rate limiter blocks after limit", async () => {
-  const limiter = createRateLimiter({
-    maxRequests: 2,
-    windowMs: 60000,
-  });
-
-  const request = new Request("http://localhost/test");
-  const handler = async () => new Response("OK");
-
-  // First 2 should succeed
-  await limiter(request, handler);
-  await limiter(request, handler);
-
-  // 3rd should be blocked
-  const response = await limiter(request, handler);
-  assertEquals(response.status, 429);
-});
-```
-
-## See Also
-
-- [Security Overview](../README.md)
-- [Input Validation](../input-validation/)
-- [Path Validation](../path-validation.ts)
+The middleware implementation validates its configuration, bounds its
+in-memory identity store, computes `Retry-After` from the actual reset time,
+fails closed on store errors, and supports the framework middleware lifecycle.
+
+## Current source-local contents
+
+| File | Status |
+| --- | --- |
+| `client-key.ts` | Shared production helper used by the public middleware limiter |
+| `middleware.ts` | Legacy source-local API with no production consumer |
+| `memory-store.ts` | Legacy process-local store |
+| `strategies.ts` | Legacy fixed-window, sliding-window, and token-bucket strategies |
+| `types.ts` and `index.ts` | Legacy deep-import contracts |
+
+The legacy implementation is retained only while deep-import compatibility is
+being resolved. It must not be used for new code or documented as a package
+subpath.
+
+## Behavioral differences
+
+- Store/strategy failures return `503` and do not call downstream code.
+- Sliding-window and token-bucket strategies fall back to fixed-window behavior
+  for custom stores.
+- The legacy in-memory store has no distributed coordination and no bounded
+  identity capacity.
+- Preset and response-header behavior differs from the maintained middleware
+  implementation.
+
+These differences are why the two implementations must not be treated as
+interchangeable.
+
+## Migration
+
+| Legacy source-local API | Supported middleware API |
+| --- | --- |
+| `createRateLimiter(config)` | `rateLimit(options)` |
+| `RateLimitPresets.auth(...)` | `authRateLimit(...)` |
+| `MemoryRateLimitStore()` | `MemoryRateLimitStore(windowMs, options)` |
+
+The middleware callback contract uses the framework `Middleware` context rather
+than the legacy `(request, next)` function shape. Migrate at the middleware
+registration boundary instead of adding an adapter that perpetuates both
+lifecycles.

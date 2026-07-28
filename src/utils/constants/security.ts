@@ -14,4 +14,8 @@ export const DIRECTORY_TRAVERSAL_PATTERN = /\.\.[\/\\]/;
 export const ABSOLUTE_PATH_PATTERN = /^[\/\\]/;
 /** Maximum value for path length. */
 export const MAX_PATH_LENGTH = 4096;
+/** Maximum length of one configured CSRF cookie or header name. */
+export const MAX_CSRF_NAME_LENGTH = 256;
+/** Maximum safe integer accepted for a CSRF cookie Max-Age value. */
+export const MAX_CSRF_TTL_SECONDS = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_MAX_STRING_LENGTH = 1000;

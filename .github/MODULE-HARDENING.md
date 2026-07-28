@@ -341,6 +341,49 @@ Reproducible checkpoint evidence:
   outbound deadline and cancellation model, BFF redirect and caching policy,
   authentication parsing, and shutdown health behavior.
 
+### Security active checkpoint
+
+The `security` audit unit has completed its current implementation and
+consumer review. Its supported request, CORS, CSRF, response, path, filesystem,
+and worker boundaries are remediated and verified. It remains in revalidation
+rather than closed while two explicitly breaking dead-surface cleanups await
+approval: removing the unexported duplicate rate limiter (while retaining its
+shared client-key helper), and removing the unpublished `runInWorker` /
+`requestPermission` pseudo-sandbox facade and its unused platform adapter.
+
+The current non-breaking findings are remediated:
+
+- worker request identifiers, direct pool configuration, host feature flags,
+  timer values, and numeric environment limits are validated before admission;
+  invalid operator configuration now fails startup instead of silently
+  selecting a weaker fallback;
+- worker memory-pressure retirement now uses the real host heap profiler
+  through a deterministic test seam instead of an inert global hook, while the
+  documentation states that same-process Workers do not provide hard memory
+  containment;
+- CSRF cookie and header names, token lifetimes, and boolean serialization
+  options are validated at both schema and runtime boundaries; `__Host-` and
+  `__Secure-` prefixes always retain the `Secure` attribute;
+- URL and header limits are enforced in UTF-8 bytes, every direct limit is a
+  non-negative safe integer, unsafe `Content-Length` values are rejected, and
+  chunked form bodies are bounded before multipart or URL-encoded parsing;
+- `SecureFs` no longer permits explicit `undefined` or later option updates to
+  replace its trust root or validation defaults, and the adapter wrapper
+  forwards lifecycle methods with the original adapter receiver; and
+- the package export inventory and inline-JSON serialization failure contract
+  are regression-pinned, while the module and rate-limit references now
+  describe the actual supported surface instead of nonexistent APIs.
+
+Reproducible checkpoint evidence:
+
+- all 91 Security suites pass 1,027 nested steps with zero failures under leak
+  tracing;
+- affected Routing, Data, Rendering, Config, and Server consumers pass another
+  37 suites and 779 nested steps with zero failures under leak tracing;
+- focused input, HTML, CSRF, worker, pool, and secure-filesystem sources pass
+  direct formatting, lint, and type checks; and
+- the branch remains aligned with `origin/main` at this checkpoint.
+
 ### Task closure checkpoint
 
 The `task` audit unit owns the public `veryfront/task` definition and execution

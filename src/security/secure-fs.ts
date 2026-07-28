@@ -68,6 +68,84 @@ interface ContextOptions {
   allowedImportDirs?: string[];
 }
 
+const VALIDATION_LEVELS = new Set<NonNullable<ValidationOptions["level"]>>([
+  "strict",
+  "normal",
+  "permissive",
+]);
+
+function normalizeValidationOptions(
+  options: Partial<ValidationOptions> | undefined,
+): Partial<ValidationOptions> {
+  if (options === undefined) return {};
+  if (typeof options !== "object" || options === null) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs validationOptions must be an object",
+    });
+  }
+
+  const normalized = { ...options };
+  if (
+    normalized.level !== undefined &&
+    !VALIDATION_LEVELS.has(normalized.level)
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs validation level must be strict, normal, or permissive",
+    });
+  }
+  if (
+    normalized.allowedDirs !== undefined &&
+    (!Array.isArray(normalized.allowedDirs) ||
+      !normalized.allowedDirs.every((entry) => typeof entry === "string" && entry.length > 0))
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs allowedDirs must contain non-empty strings",
+    });
+  }
+  for (
+    const key of [
+      "followSymlinks",
+      "checkExists",
+      "allowAbsolute",
+    ] as const
+  ) {
+    if (
+      normalized[key] !== undefined &&
+      typeof normalized[key] !== "boolean"
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: `SecureFs ${key} must be a boolean`,
+      });
+    }
+  }
+  return normalized;
+}
+
+function normalizeContextOptions(
+  options: ContextOptions | undefined,
+): ContextOptions {
+  if (options === undefined) return {};
+  if (typeof options !== "object" || options === null) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs contextOptions must be an object",
+    });
+  }
+  if (
+    options.allowedImportDirs !== undefined &&
+    (!Array.isArray(options.allowedImportDirs) ||
+      !options.allowedImportDirs.every((entry) => typeof entry === "string" && entry.length > 0))
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs allowedImportDirs must contain non-empty strings",
+    });
+  }
+  return {
+    allowedImportDirs: options.allowedImportDirs === undefined
+      ? undefined
+      : [...options.allowedImportDirs],
+  };
+}
+
 function getContextValidationOptions(
   context: SecurityContext,
   baseDir: string,
@@ -106,14 +184,52 @@ export class SecureFs {
   private validationOptions: ValidationOptions;
 
   constructor(config: SecureFsConfig) {
-    const context = requireSecurityContext(config.context ?? "internal");
+    if (typeof config.baseDir !== "string" || config.baseDir.length === 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "SecureFs baseDir must be a non-empty string",
+      });
+    }
+    if (
+      typeof config.adapter !== "object" ||
+      config.adapter === null ||
+      typeof config.adapter.fs !== "object" ||
+      config.adapter.fs === null
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "SecureFs requires a runtime adapter with a filesystem",
+      });
+    }
+
+    const context = requireSecurityContext(
+      config.context === undefined ? "internal" : config.context,
+    );
+    if (
+      config.throwOnError !== undefined &&
+      typeof config.throwOnError !== "boolean"
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "SecureFs throwOnError must be a boolean",
+      });
+    }
+    if (
+      config.onSecurityEvent !== undefined &&
+      typeof config.onSecurityEvent !== "function"
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "SecureFs onSecurityEvent must be a function",
+      });
+    }
+
     this.config = {
-      contextOptions: {},
-      throwOnError: true,
-      onSecurityEvent: () => {},
-      validationOptions: {},
-      ...config,
+      baseDir: config.baseDir,
+      adapter: config.adapter,
       context,
+      contextOptions: normalizeContextOptions(config.contextOptions),
+      throwOnError: config.throwOnError === undefined ? true : config.throwOnError,
+      onSecurityEvent: config.onSecurityEvent ?? (() => {}),
+      validationOptions: normalizeValidationOptions(
+        config.validationOptions,
+      ),
     };
 
     this.validationOptions = this.buildValidationOptions(
@@ -315,12 +431,20 @@ export class SecureFs {
   }
 
   updateValidationOptions(options: Partial<ValidationOptions>): void {
-    this.validationOptions = { ...this.validationOptions, ...options };
+    this.validationOptions = {
+      ...this.validationOptions,
+      ...normalizeValidationOptions(options),
+      baseDir: this.config.baseDir,
+      adapter: this.config.adapter,
+    };
   }
 
   setContext(context: SecurityContext): void {
     const validatedContext = requireSecurityContext(context);
-    this.validationOptions = this.buildValidationOptions(validatedContext);
+    this.validationOptions = this.buildValidationOptions(
+      validatedContext,
+      this.config.contextOptions,
+    );
     this.config.context = validatedContext;
   }
 }
@@ -337,9 +461,26 @@ export function wrapAdapterWithSecurity(
 ): RuntimeAdapter & { secureFs: SecureFs } {
   const secureFs = createSecureFs({ ...options, adapter });
 
-  return {
-    ...adapter,
+  const wrapped: RuntimeAdapter & { secureFs: SecureFs } = {
+    id: adapter.id,
+    name: adapter.name,
+    capabilities: adapter.capabilities,
     fs: secureFs,
+    env: adapter.env,
+    server: adapter.server,
+    serve: (handler, serveOptions) => adapter.serve(handler, serveOptions),
     secureFs,
   };
+
+  if (adapter.shell !== undefined) wrapped.shell = adapter.shell;
+  if (adapter.kv !== undefined) wrapped.kv = adapter.kv;
+  if (adapter.watcher !== undefined) wrapped.watcher = adapter.watcher;
+  if (adapter.initialize !== undefined) {
+    wrapped.initialize = () => adapter.initialize!.call(adapter);
+  }
+  if (adapter.shutdown !== undefined) {
+    wrapped.shutdown = () => adapter.shutdown!.call(adapter);
+  }
+
+  return wrapped;
 }

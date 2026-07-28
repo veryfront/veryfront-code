@@ -293,6 +293,9 @@ export interface WorkerPoolConfig {
 /** Maximum request body size for worker isolation (10 MB) */
 export const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
 
+/** Maximum number of UTF-16 code units in one worker protocol request ID. */
+export const MAX_WORKER_REQUEST_ID_CHARS = 256;
+
 /** Maximum UTF-8 size of one prepared API route module (4 MiB). */
 export const MAX_WORKER_MODULE_SOURCE_BYTES = 4 * 1024 * 1024;
 

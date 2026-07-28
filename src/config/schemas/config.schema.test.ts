@@ -670,6 +670,10 @@ describe("configSchema", () => {
         { headerName: "x csrf" },
         { headerName: "x-csrf\r\nInjected" },
         { headerName: "x".repeat(257) },
+        { ttlSec: 0 },
+        { ttlSec: 1.5 },
+        { ttlSec: Number.POSITIVE_INFINITY },
+        { ttlSec: Number.MAX_SAFE_INTEGER + 1 },
       ]
     ) {
       assertThrows(

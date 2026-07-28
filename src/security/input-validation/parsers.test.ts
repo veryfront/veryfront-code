@@ -3,7 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "./errors.ts";
-import { parseJsonBody, parseQueryParams } from "./parsers.ts";
+import { parseFormData, parseJsonBody, parseQueryParams } from "./parsers.ts";
 
 describe("parseJsonBody", () => {
   const schema = defineSchema((v) =>
@@ -98,6 +98,58 @@ describe("parseJsonBody", () => {
       () => parseJsonBody(request, schema),
       VeryfrontError,
       "Validation failed",
+    );
+  });
+});
+
+describe("parseFormData", () => {
+  const schema = defineSchema((v) =>
+    v.object({
+      name: v.string(),
+    })
+  )();
+
+  it("parses a bounded URL-encoded form", async () => {
+    const request = new Request("http://localhost/form", {
+      method: "POST",
+      body: "name=Alice",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+
+    assertEquals(await parseFormData(request, schema), { name: "Alice" });
+  });
+
+  it("bounds a chunked form body before parsing it", async () => {
+    const request = new Request("http://localhost/form", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("name="));
+          controller.enqueue(new TextEncoder().encode("Alice"));
+          controller.close();
+        },
+      }),
+    });
+
+    await assertRejects(
+      () => parseFormData(request, schema, { limits: { maxBodySize: 5 } }),
+      VeryfrontError,
+      "exceeds size limit",
+    );
+  });
+
+  it("classifies malformed multipart bodies as validation failures", async () => {
+    const request = new Request("http://localhost/form", {
+      method: "POST",
+      body: "not-a-multipart-body",
+      headers: { "content-type": "multipart/form-data; boundary=missing" },
+    });
+
+    await assertRejects(
+      () => parseFormData(request, schema),
+      VeryfrontError,
+      "Invalid form data",
     );
   });
 });

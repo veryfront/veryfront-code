@@ -266,17 +266,20 @@
 
 **Key Features**:
 
-- Input validation with Zod
+- Bounded request parsing and input validation
 - Path traversal protection
-- CORS configuration
-- CSP (Content Security Policy)
-- Rate limiting
-- Sandbox for untrusted code
+- CORS, CSRF, authentication, and security response headers
+- Scoped filesystem access
+- Internal project-worker isolation
 
 **Directories**:
 
-- `rate-limit/` - Rate limiting implementation
-- `sandbox/` - Sandboxed execution
+- `http/` - Request handlers and response policy
+- `input-validation/` - Bounded body readers and parsers
+- `path-validation/` - Canonical path admission
+- `sandbox/` - Internal worker protocol and pool
+
+Public rate limiting is owned by `middleware/`.
 
 ---
 

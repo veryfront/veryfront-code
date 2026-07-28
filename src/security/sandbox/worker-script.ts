@@ -36,6 +36,7 @@ import type {
 import {
   MAX_WORKER_BODY_BYTES,
   MAX_WORKER_MODULE_SOURCE_BYTES,
+  MAX_WORKER_REQUEST_ID_CHARS,
   MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES,
   MAX_WORKER_RETAINED_MODULES,
 } from "./worker-types.ts";
@@ -159,7 +160,6 @@ const DATA_JAVASCRIPT_URL_PRESENCE_PATTERN =
   /data:(?:text|application)\/javascript(?:;[a-zA-Z0-9=+._-]+)*,/;
 const STACK_LOCATION_PATTERN = /:([0-9]+):([0-9]+)$/;
 const SANITIZED_DATA_MODULE_LABEL_PATTERN = /vf-api:(?:[0-9a-f]{64}|unknown)(?::[0-9]+:[0-9]+)?/;
-const MAX_WORKER_REQUEST_ID_CHARS = 256;
 const MAX_WORKER_PATH_CHARS = 32 * 1024;
 const MAX_WORKER_URL_CHARS = 64 * 1024;
 const MAX_WORKER_HEADER_COUNT = 1_024;

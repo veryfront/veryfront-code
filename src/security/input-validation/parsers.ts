@@ -1,8 +1,14 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { createValidationError, VeryfrontError } from "./errors.ts";
-import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
+import {
+  readBodyBytesWithLimit,
+  readBodyWithLimit,
+  resolveRequestLimits,
+  validateContentType,
+  validateRequestLimits,
+} from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
-import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
+import { type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
 import * as nodeBuffer from "node:buffer";
 
 const FileCtor = globalThis.File ??
@@ -14,12 +20,13 @@ export async function parseJsonBody<T>(
   schema: Schema<T>,
   options?: ParseJsonOptions,
 ): Promise<T> {
-  validateRequestLimits(request, options?.limits);
+  const limits = resolveRequestLimits(options?.limits);
+  validateRequestLimits(request, limits);
   validateContentType(request, "application/json");
 
   let data: unknown;
   try {
-    const text = await readBodyWithLimit(request, options?.limits?.maxBodySize);
+    const text = await readBodyWithLimit(request, limits.maxBodySize);
     data = JSON.parse(text);
   } catch (error) {
     if (error instanceof VeryfrontError && error.slug === "input-validation-failed") throw error;
@@ -50,18 +57,34 @@ export async function parseFormData<T>(
   schema: Schema<T>,
   options?: ParseFormOptions,
 ): Promise<T> {
-  validateRequestLimits(request, options?.limits);
+  const limits = resolveRequestLimits(options?.limits);
+  validateRequestLimits(request, limits);
 
   validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 
-  const formData = await request.formData();
+  let formData: FormData;
+  try {
+    const bytes = await readBodyBytesWithLimit(request, limits.maxBodySize);
+    const contentType = request.headers.get("content-type");
+    if (!contentType) {
+      throw createValidationError("Missing Content-Type header");
+    }
+    formData = await new Response(new Uint8Array(bytes), {
+      headers: { "content-type": contentType },
+    }).formData();
+  } catch (error) {
+    if (error instanceof VeryfrontError && error.slug === "input-validation-failed") throw error;
+    throw createValidationError("Invalid form data in request body", {
+      error: error instanceof Error ? error.message : "Parse error",
+    });
+  }
+
   const data: Record<string, unknown> = {};
-  const maxFileSize = options?.limits?.maxFileSize ?? DEFAULT_LIMITS.maxFileSize;
 
   for (const [key, value] of formData.entries()) {
-    if (value instanceof FileCtor && value.size > maxFileSize) {
+    if (value instanceof FileCtor && value.size > limits.maxFileSize) {
       throw createValidationError(`File ${key} too large`, {
-        maxSize: maxFileSize,
+        maxSize: limits.maxFileSize,
         actualSize: value.size,
       });
     }

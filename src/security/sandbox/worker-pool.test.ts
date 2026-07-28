@@ -18,6 +18,7 @@ import {
   isSSRIsolationEnabled,
   isWorkerIsolationEnabled,
   WorkerPool,
+  type WorkerPoolDependencies,
 } from "./worker-pool.ts";
 import type {
   RenderSSRRequest,
@@ -260,6 +261,7 @@ class ControlledWorker {
 function createControlledPool(
   config: Partial<WorkerPoolConfig> = {},
   behavior: ControlledWorkerBehavior = {},
+  dependencies: Pick<WorkerPoolDependencies, "getHeapUsedPercent"> = {},
 ): {
   pool: WorkerPool;
   workers: Map<string, ControlledWorker[]>;
@@ -276,6 +278,7 @@ function createControlledPool(
       ...config,
     },
     {
+      ...dependencies,
       createWorker(options) {
         const worker = new ControlledWorker(options, behavior);
         const generations = workers.get(options.projectId) ?? [];
@@ -628,6 +631,26 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
       );
     } finally {
       compatible.shutdown();
+    }
+  });
+
+  it("validates every direct pool resource and timer boundary", () => {
+    const invalidConfigs: Array<Partial<WorkerPoolConfig>> = [
+      { maxPoolSize: 0 },
+      { idleTimeoutMs: -1 },
+      { requestTimeoutMs: 0 },
+      { healthCheckIntervalMs: 0 },
+      { maxRequestsPerWorker: 0 },
+      { maxWorkerAgeMs: -1 },
+      { memoryBudgetMb: 0 },
+    ];
+
+    for (const config of invalidConfigs) {
+      assertThrows(
+        () => new WorkerPool(config),
+        TypeError,
+        "Worker pool",
+      );
     }
   });
 
@@ -1233,6 +1256,27 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(stats.memoryBudgetMb, 32);
     assertEquals(stats.memoryBudgetEnforced, false);
   });
+
+  it("retires only idle workers when real host heap pressure is high", async () => {
+    const controlled = createControlledPool(
+      { maxPoolSize: 4 },
+      {},
+      { getHeapUsedPercent: () => 75 },
+    );
+    pool = controlled.pool;
+
+    for (const scope of ["scope-a", "scope-b", "scope-c", "scope-d"]) {
+      pool.getOrCreateWorker(scope, ["/tmp"]);
+    }
+
+    await runHealthCheck(pool);
+
+    assertEquals(pool.getStats().poolSize, 3);
+    const terminated = [...controlled.workers.values()]
+      .flat()
+      .filter((worker) => worker.terminateCalls === 1);
+    assertEquals(terminated.length, 1);
+  });
 });
 
 describe("MAX_WORKER_BODY_BYTES", () => {
@@ -1364,30 +1408,38 @@ describe("Feature flag caching", () => {
         assertEquals(config.requestTimeoutMs, 1234);
       },
     );
-
-    __resetPoolForTests();
-    Deno.env.set("WORKER_MAX_POOL_SIZE", "0");
-    Deno.env.delete("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER");
-    Deno.env.set("WORKER_REQUEST_TIMEOUT_MS", "Infinity");
-
-    const singleton = getWorkerPool();
-    const config = (singleton as unknown as { config: WorkerPoolConfig }).config;
-    assertEquals(singleton.getStats().maxPoolSize, DEFAULT_WORKER_POOL_CONFIG.maxPoolSize);
-    assertEquals(
-      singleton.getStats().maxActiveRequestsPerWorker,
-      DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
-    );
-    assertEquals(config.requestTimeoutMs, DEFAULT_WORKER_POOL_CONFIG.requestTimeoutMs);
   });
 
-  it("fails closed for an invalid per-worker active-request limit", () => {
+  it("fails closed for invalid host pool limits", () => {
+    for (
+      const [name, value] of [
+        ["WORKER_MAX_POOL_SIZE", "0"],
+        ["WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "0"],
+        ["WORKER_REQUEST_TIMEOUT_MS", "Infinity"],
+      ] as const
+    ) {
+      __resetPoolForTests();
+      Deno.env.set(name, value);
+      try {
+        assertThrows(
+          () => getWorkerPool(),
+          RangeError,
+          `${name} must be a positive safe integer`,
+        );
+      } finally {
+        Deno.env.delete(name);
+      }
+    }
+  });
+
+  it("fails closed for invalid host isolation flags", () => {
     __resetPoolForTests();
-    Deno.env.set("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "0");
+    Deno.env.set("WORKER_ISOLATION_ENABLED", "treu");
 
     assertThrows(
-      () => getWorkerPool(),
-      RangeError,
-      "WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER must be a positive safe integer",
+      () => isWorkerIsolationEnabled(),
+      TypeError,
+      "WORKER_ISOLATION_ENABLED must be one of",
     );
   });
 
