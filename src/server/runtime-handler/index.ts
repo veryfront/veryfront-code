@@ -410,6 +410,7 @@ export function createVeryfrontHandler(
         preparedRequest.trackingFacts.method,
         preparedRequest.trackingFacts.environment,
         preparedRequest.trackingFacts.releaseId,
+        opts.defaultEnvironment === "production",
       );
 
       startContentMetrics();

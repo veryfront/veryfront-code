@@ -22,6 +22,7 @@ interface TrackedRequest {
   startTime: number;
   env?: string;
   releaseId?: string;
+  productionRuntime: boolean;
   slowTimer?: ReturnType<typeof setTimeout>;
   verySlowTimer?: ReturnType<typeof setTimeout>;
 }
@@ -79,8 +80,9 @@ function logRequestCompletion(
   message: string,
   statusCode: number,
   context: Record<string, unknown>,
+  productionRuntime: boolean,
 ): void {
-  if (!isProduction() || statusCode < 400) {
+  if ((!isProduction() && !productionRuntime) || statusCode < 400) {
     logger.debug(message, context);
     return;
   }
@@ -143,6 +145,7 @@ class RequestTracker {
     method: string,
     env?: string,
     releaseId?: string,
+    productionRuntime = false,
   ): void {
     this.startStatusLogging();
 
@@ -157,6 +160,7 @@ class RequestTracker {
       startTime,
       env,
       releaseId,
+      productionRuntime,
     };
 
     // WebSocket connections are long-lived by design and lightweight internal
@@ -241,7 +245,12 @@ class RequestTracker {
       logContext.request_profile = buildRequestProfileLogContext(profile);
     }
 
-    logRequestCompletion(`${tracked.method} ${tracked.path} ${statusCode}`, statusCode, logContext);
+    logRequestCompletion(
+      `${tracked.method} ${tracked.path} ${statusCode}`,
+      statusCode,
+      logContext,
+      tracked.productionRuntime,
+    );
   }
 
   markLongLived(requestId: string): void {

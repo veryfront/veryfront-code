@@ -276,6 +276,42 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(serverError?.level, "error");
     });
 
+    it("elevates standalone production failures when process env is development", () => {
+      const entries = captureLogs();
+
+      requestTracker.start(
+        "standalone-error",
+        "proj",
+        "/broken",
+        "GET",
+        undefined,
+        undefined,
+        true,
+      );
+      requestTracker.complete("standalone-error", 500);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /broken 500");
+      assertEquals(entry?.level, "error");
+    });
+
+    it("keeps local project failures quiet when process env is development", () => {
+      const entries = captureLogs();
+
+      requestTracker.start(
+        "local-error",
+        "proj",
+        "/broken",
+        "GET",
+        "production",
+        undefined,
+        false,
+      );
+      requestTracker.complete("local-error", 500);
+
+      const entry = entries.find((candidate) => candidate.message === "GET /broken 500");
+      assertEquals(entry?.level, "debug");
+    });
+
     it("does not let a hosted logging sink failure alter request completion", () => {
       Deno.env.set("VERYFRONT_ENV", "production");
       const entries = captureLogs();
