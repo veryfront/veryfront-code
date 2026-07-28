@@ -253,7 +253,7 @@ describe(
       });
     });
 
-    it("handles syntax errors gracefully", async () => {
+    it("reports syntax errors without mutating the original output", async () => {
       await withTestContext("optimizer-syntax-error", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -280,7 +280,8 @@ describe(
 
         await optimizeBundle(result, options);
 
-        assertExists(result.outputs.get("/test/broken.js"));
+        assertEquals(result.outputs.get("/test/broken.js")?.content, invalidCode);
+        assertEquals(result.errors.length, 1);
       });
     });
 

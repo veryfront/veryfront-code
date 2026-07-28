@@ -130,6 +130,21 @@ describe(
         assertEquals(typeof result.outputs.get("a.js")!.content, "string", "a.js should be string");
         assertEquals(typeof result.outputs.get("b.js")!.content, "string", "b.js should be string");
       });
+
+      it("should preserve every output when any optimization fails", async () => {
+        const valid = "const   valid   =   true;";
+        const invalid = "const broken = ;";
+        const result = createBundleResult([
+          { path: "valid.js", content: valid, type: "js" },
+          { path: "broken.js", content: invalid, type: "js" },
+        ]);
+
+        await optimizeBundle(result, createOptions("production"));
+
+        assertEquals(result.outputs.get("valid.js")?.content, valid);
+        assertEquals(result.outputs.get("broken.js")?.content, invalid);
+        assertEquals(result.errors.length, 1);
+      });
     });
   },
 );

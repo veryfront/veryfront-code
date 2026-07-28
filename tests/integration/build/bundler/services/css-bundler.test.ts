@@ -1,5 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import * as bundler from "veryfront/extensions/bundler";
 import {
   bundleCss,
   extractCssVariables,
@@ -21,9 +22,13 @@ function createResult(): BundleResult {
 }
 
 describe("CSS Bundler", () => {
+  afterAll(async () => {
+    await bundler.stop();
+  });
+
   describe("bundleCss", () => {
     it("bundles CSS in development mode", async () => {
-      await withTestContext("css-bundle-dev", (context) => {
+      await withTestContext("css-bundle-dev", async (context) => {
         const source = {
           path: "/test/styles.css",
           content: `
@@ -42,7 +47,7 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path);
         assertExists(output);
@@ -56,7 +61,7 @@ describe("CSS Bundler", () => {
     });
 
     it("minifies CSS in production mode", async () => {
-      await withTestContext("css-bundle-prod", (context) => {
+      await withTestContext("css-bundle-prod", async (context) => {
         const source = {
           path: "/test/styles.css",
           content: `
@@ -80,7 +85,7 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path)!;
         const minified = output.content;
@@ -98,7 +103,7 @@ describe("CSS Bundler", () => {
     });
 
     it("removes quotes from URLs when minifying", async () => {
-      await withTestContext("css-bundle-url", (context) => {
+      await withTestContext("css-bundle-url", async (context) => {
         const source = {
           path: "/test/styles.css",
           content: `
@@ -119,7 +124,7 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path)!;
 
@@ -132,7 +137,7 @@ describe("CSS Bundler", () => {
     });
 
     it("removes trailing semicolons before closing braces", async () => {
-      await withTestContext("css-bundle-semicolon", (context) => {
+      await withTestContext("css-bundle-semicolon", async (context) => {
         const source = {
           path: "/test/styles.css",
           content: `
@@ -151,7 +156,7 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path)!;
 
@@ -162,8 +167,8 @@ describe("CSS Bundler", () => {
       });
     });
 
-    it("handles malformed CSS gracefully", async () => {
-      await withTestContext("css-bundle-error", (context) => {
+    it("rejects malformed CSS without publishing partial output", async () => {
+      await withTestContext("css-bundle-error", async (context) => {
         const source = {
           path: "/test/malformed.css",
           content: `
@@ -181,16 +186,15 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        // Should not throw - just process as best as possible
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
-        // Should have output even for malformed CSS
-        assertExists(result.outputs.get(source.path));
+        assertEquals(result.outputs.has(source.path), false);
+        assertEquals(result.errors.length, 1);
       });
     });
 
     it("handles empty CSS", async () => {
-      await withTestContext("css-bundle-empty", (context) => {
+      await withTestContext("css-bundle-empty", async (context) => {
         const source = {
           path: "/test/empty.css",
           content: "",
@@ -204,7 +208,7 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path)!;
         assertEquals(output.content, "");
@@ -370,7 +374,7 @@ describe("CSS Bundler", () => {
 
   describe("integration tests", () => {
     it("processes complete CSS bundle", async () => {
-      await withTestContext("css-integration", (context) => {
+      await withTestContext("css-integration", async (context) => {
         const source = {
           path: "/test/app.css",
           content: `
@@ -402,7 +406,7 @@ describe("CSS Bundler", () => {
 
         const result = createResult();
 
-        bundleCss(source, options, result);
+        await bundleCss(source, options, result);
 
         const output = result.outputs.get(source.path)!;
 

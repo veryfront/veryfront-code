@@ -5,49 +5,58 @@ import { extractImports, processImports, resolveImportPath } from "./import-util
 
 describe("build/renderer/utils/import-utils", () => {
   describe("extractImports", () => {
-    it("should extract named imports", () => {
-      assertEquals(extractImports('import { useState } from "react";'), ["react"]);
+    it("should extract named imports", async () => {
+      assertEquals(await extractImports('import { useState } from "react";'), ["react"]);
     });
 
-    it("should extract default imports", () => {
-      assertEquals(extractImports('import React from "react";'), ["react"]);
+    it("should extract default imports", async () => {
+      assertEquals(await extractImports('import React from "react";'), ["react"]);
     });
 
-    it("should extract namespace imports", () => {
-      assertEquals(extractImports('import * as path from "path";'), ["path"]);
+    it("should extract namespace imports", async () => {
+      assertEquals(await extractImports('import * as path from "path";'), ["path"]);
     });
 
-    it("should extract side-effect imports", () => {
-      assertEquals(extractImports('import "./styles.css";'), ["./styles.css"]);
+    it("should extract side-effect imports", async () => {
+      assertEquals(await extractImports('import "./styles.css";'), ["./styles.css"]);
     });
 
-    it("should extract dynamic imports", () => {
-      assertEquals(extractImports('const mod = import("./lazy.ts");'), ["./lazy.ts"]);
+    it("should extract dynamic imports", async () => {
+      assertEquals(await extractImports('const mod = import("./lazy.ts");'), ["./lazy.ts"]);
     });
 
-    it("should deduplicate imports", () => {
+    it("should deduplicate imports", async () => {
       const code = ['import { a } from "react";', 'import { b } from "react";'].join(
         "\n",
       );
-      assertEquals(extractImports(code), ["react"]);
+      assertEquals(await extractImports(code), ["react"]);
     });
 
-    it("should extract multiple different imports", () => {
+    it("should extract multiple different imports", async () => {
       const code = [
         'import React from "react";',
         'import { render } from "react-dom";',
         'import "./global.css";',
       ].join("\n");
 
-      const imports = extractImports(code);
+      const imports = await extractImports(code);
 
       assertEquals(imports.includes("react"), true);
       assertEquals(imports.includes("react-dom"), true);
       assertEquals(imports.includes("./global.css"), true);
     });
 
-    it("should return empty for no imports", () => {
-      assertEquals(extractImports("const x = 1;"), []);
+    it("should return empty for no imports", async () => {
+      assertEquals(await extractImports("const x = 1;"), []);
+    });
+
+    it("should ignore import-shaped text in comments and strings", async () => {
+      const code = `
+        // import fake from "comment-only";
+        const example = 'import("string-only")';
+        import real from "actual";
+      `;
+      assertEquals(await extractImports(code), ["actual"]);
     });
   });
 
@@ -150,6 +159,20 @@ describe("build/renderer/utils/import-utils", () => {
       );
       assertEquals(result.includes("./new-mod-a"), true);
       assertEquals(result.includes("./mod-b"), true);
+    });
+
+    it("should serialize replacement specifiers without code injection", async () => {
+      const code = 'import value from "./value";';
+      const replacement = '"; globalThis.compromised = true; //';
+      const result = await processImports(
+        code,
+        "/project/src/app.ts",
+        "/project",
+        async () => replacement,
+      );
+
+      assertEquals(result.includes(JSON.stringify(replacement)), true);
+      assertEquals(result.includes('from "";'), false);
     });
   });
 });

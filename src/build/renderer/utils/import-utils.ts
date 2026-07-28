@@ -2,31 +2,17 @@
  * Import resolution and extraction utilities
  */
 
-import { existsSync } from "#veryfront/platform/compat/std/fs.ts";
-import { dirname, join, resolve } from "#veryfront/compat/path/index.ts";
+import { dirname, isAbsolute, join, resolve } from "#veryfront/compat/path/index.ts";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import { getModuleDependencies, replaceModuleImportSpecifiers } from "./module-imports.ts";
+import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
 
 /**
- * Extract import statements from code
+ * Extract actual module dependencies without matching comments, strings, or
+ * code examples.
  */
-export function extractImports(code: string): string[] {
-  const imports: string[] = [];
-
-  const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
-  const dynamicImportRegex = /import\s*\(['"]([^'"]+)['"]\)/g;
-
-  let match: RegExpExecArray | null;
-
-  while ((match = importRegex.exec(code)) !== null) {
-    const path = match[1];
-    if (path) imports.push(path);
-  }
-
-  while ((match = dynamicImportRegex.exec(code)) !== null) {
-    const path = match[1];
-    if (path) imports.push(path);
-  }
-
-  return [...new Set(imports)];
+export function extractImports(code: string): Promise<string[]> {
+  return getModuleDependencies(code);
 }
 
 /**
@@ -51,15 +37,44 @@ export function resolveImportPath(
 /**
  * Find component file with various extensions
  */
-export function findComponent(basePath: string, _projectDir: string): string | null {
+export async function findComponent(
+  basePath: string,
+  projectDir: string,
+): Promise<string | null> {
+  if (!isAbsolute(projectDir)) {
+    throw new TypeError("Component project directory must be absolute");
+  }
+
+  const absoluteBase = isAbsolute(basePath) ? resolve(basePath) : resolve(projectDir, basePath);
+  if (!isContainedBuildPath(projectDir, absoluteBase)) {
+    throw new TypeError("Component path must be inside the project directory");
+  }
+
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+  const fs = createFileSystem();
+  const canonicalProject = await realPath(projectDir);
 
   for (const ext of extensions) {
-    const fullPath = `${basePath}${ext}`;
-    if (existsSync(fullPath)) return fullPath;
-
-    const indexPath = join(basePath, `index${ext}`);
-    if (existsSync(indexPath)) return indexPath;
+    for (
+      const candidate of [
+        `${absoluteBase}${ext}`,
+        join(absoluteBase, `index${ext}`),
+      ]
+    ) {
+      try {
+        const info = await fs.stat(candidate);
+        if (!info.isFile) continue;
+        const canonicalCandidate = await realPath(candidate);
+        if (!isContainedBuildPath(canonicalProject, canonicalCandidate)) {
+          throw new TypeError(
+            "Component path resolves outside the project directory through a symbolic link",
+          );
+        }
+        return candidate;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+    }
   }
 
   return null;
@@ -74,24 +89,16 @@ export async function processImports(
   projectDir: string,
   processImport: (resolvedPath: string, authoredSpecifier: string) => Promise<string | null>,
 ): Promise<string> {
-  const imports = extractImports(code);
-  let processedCode = code;
+  const imports = await extractImports(code);
+  const replacements = new Map<string, string>();
 
   for (const authoredSpecifier of imports) {
     const resolvedPath = resolveImportPath(authoredSpecifier, filePath, projectDir);
     const newPath = await processImport(resolvedPath, authoredSpecifier);
 
     if (!newPath || newPath === authoredSpecifier) continue;
-
-    processedCode = processedCode.replace(
-      new RegExp(`(['"])${escapeRegExp(authoredSpecifier)}\\1`, "g"),
-      (_match, quote: string) => `${quote}${newPath}${quote}`,
-    );
+    replacements.set(authoredSpecifier, newPath);
   }
 
-  return processedCode;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return await replaceModuleImportSpecifiers(code, replacements);
 }

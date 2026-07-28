@@ -23,36 +23,36 @@ import { withTestContext } from "../../../../_helpers/context.ts";
 
 describe("Import Utils", () => {
   describe("extractImports", () => {
-    it("extracts simple named imports", () => {
-      const imports = extractImports(`import { Button } from './components/Button'`);
+    it("extracts simple named imports", async () => {
+      const imports = await extractImports(`import { Button } from './components/Button'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./components/Button");
     });
 
-    it("extracts default imports", () => {
-      const imports = extractImports(`import React from 'react'`);
+    it("extracts default imports", async () => {
+      const imports = await extractImports(`import React from 'react'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "react");
     });
 
-    it("extracts namespace imports", () => {
-      const imports = extractImports(`import * as utils from './utils'`);
+    it("extracts namespace imports", async () => {
+      const imports = await extractImports(`import * as utils from './utils'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./utils");
     });
 
-    it("extracts named imports", () => {
-      const imports = extractImports(`import { useState, useEffect } from 'react'`);
+    it("extracts named imports", async () => {
+      const imports = await extractImports(`import { useState, useEffect } from 'react'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "react");
     });
 
-    it("extracts imports from multiple lines", () => {
-      const imports = extractImports(`
+    it("extracts imports from multiple lines", async () => {
+      const imports = await extractImports(`
         import React from 'react'
         import { Button } from './components/Button'
         import * as utils from './utils'
@@ -64,8 +64,8 @@ describe("Import Utils", () => {
       assertEquals(imports.includes("./utils"), true);
     });
 
-    it("extracts dynamic imports", () => {
-      const imports = extractImports(`
+    it("extracts dynamic imports", async () => {
+      const imports = await extractImports(`
         const module = await import('./dynamic-module')
       `);
 
@@ -73,8 +73,8 @@ describe("Import Utils", () => {
       assertEquals(imports[0], "./dynamic-module");
     });
 
-    it("extracts both static and dynamic imports", () => {
-      const imports = extractImports(`
+    it("extracts both static and dynamic imports", async () => {
+      const imports = await extractImports(`
         import React from 'react'
         const LazyComponent = () => import('./LazyComponent')
       `);
@@ -84,22 +84,22 @@ describe("Import Utils", () => {
       assertEquals(imports.includes("./LazyComponent"), true);
     });
 
-    it("handles imports with single quotes", () => {
-      const imports = extractImports(`import { Button } from './components/Button'`);
+    it("handles imports with single quotes", async () => {
+      const imports = await extractImports(`import { Button } from './components/Button'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./components/Button");
     });
 
-    it("handles imports with double quotes", () => {
-      const imports = extractImports(`import { Button } from "./components/Button"`);
+    it("handles imports with double quotes", async () => {
+      const imports = await extractImports(`import { Button } from "./components/Button"`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./components/Button");
     });
 
-    it("removes duplicate imports", () => {
-      const imports = extractImports(`
+    it("removes duplicate imports", async () => {
+      const imports = await extractImports(`
         import React from 'react'
         import { useState } from 'react'
       `);
@@ -108,29 +108,29 @@ describe("Import Utils", () => {
       assertEquals(imports[0], "react");
     });
 
-    it("handles imports with file extensions", () => {
-      const imports = extractImports(`import styles from './styles.css'`);
+    it("handles imports with file extensions", async () => {
+      const imports = await extractImports(`import styles from './styles.css'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./styles.css");
     });
 
-    it("handles scoped package imports", () => {
-      const imports = extractImports(`import { Component } from '@company/design-system'`);
+    it("handles scoped package imports", async () => {
+      const imports = await extractImports(`import { Component } from '@company/design-system'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "@company/design-system");
     });
 
-    it("handles side-effect imports", () => {
-      const imports = extractImports(`import './styles.css'`);
+    it("handles side-effect imports", async () => {
+      const imports = await extractImports(`import './styles.css'`);
 
       assertEquals(imports.length, 1);
       assertEquals(imports[0], "./styles.css");
     });
 
-    it("returns empty array for code without imports", () => {
-      const imports = extractImports(`
+    it("returns empty array for code without imports", async () => {
+      const imports = await extractImports(`
         const x = 5
         console.log('Hello World')
       `);
@@ -140,17 +140,17 @@ describe("Import Utils", () => {
   });
 
   describe("resolveImportPath", () => {
-    it("resolves relative imports with ./", () => {
+    it("resolves relative imports with ./", async () => {
       const resolved = resolveImportPath("./components/Button", "/src/pages/index.tsx", "/project");
       assertEquals(resolved, "/src/pages/components/Button");
     });
 
-    it("resolves relative imports with ../", () => {
+    it("resolves relative imports with ../", async () => {
       const resolved = resolveImportPath("../utils/helpers", "/src/pages/index.tsx", "/project");
       assertEquals(resolved, "/src/utils/helpers");
     });
 
-    it("resolves nested relative imports", () => {
+    it("resolves nested relative imports", async () => {
       const resolved = resolveImportPath(
         "../../shared/constants",
         "/src/pages/blog/post.tsx",
@@ -159,12 +159,12 @@ describe("Import Utils", () => {
       assertEquals(resolved, "/src/shared/constants");
     });
 
-    it("keeps node_modules imports as-is", () => {
+    it("keeps node_modules imports as-is", async () => {
       const resolved = resolveImportPath("react", "/src/pages/index.tsx", "/project");
       assertEquals(resolved, "react");
     });
 
-    it("keeps scoped package imports as-is", () => {
+    it("keeps scoped package imports as-is", async () => {
       const resolved = resolveImportPath(
         "@company/design-system",
         "/src/pages/index.tsx",
@@ -173,7 +173,7 @@ describe("Import Utils", () => {
       assertEquals(resolved, "@company/design-system");
     });
 
-    it("keeps absolute paths unchanged", () => {
+    it("keeps absolute paths unchanged", async () => {
       const resolved = resolveImportPath(
         "/absolute/path/module",
         "/src/pages/index.tsx",
@@ -182,7 +182,7 @@ describe("Import Utils", () => {
       assertEquals(resolved, "/absolute/path/module");
     });
 
-    it("handles imports with file extensions", () => {
+    it("handles imports with file extensions", async () => {
       const resolved = resolveImportPath("./styles.css", "/src/pages/index.tsx", "/project");
       assertEquals(resolved, "/src/pages/styles.css");
     });
@@ -194,7 +194,7 @@ describe("Import Utils", () => {
         const componentPath = join(context.projectDir, "Button.tsx");
         await writeTextFile(componentPath, "export const Button = () => <div />");
 
-        const found = findComponent(join(context.projectDir, "Button"), context.projectDir);
+        const found = await findComponent(join(context.projectDir, "Button"), context.projectDir);
 
         assertExists(found);
         assertEquals(found, componentPath);
@@ -206,7 +206,7 @@ describe("Import Utils", () => {
         const componentPath = join(context.projectDir, "utils.ts");
         await writeTextFile(componentPath, "export const helper = () => {}");
 
-        const found = findComponent(join(context.projectDir, "utils"), context.projectDir);
+        const found = await findComponent(join(context.projectDir, "utils"), context.projectDir);
 
         assertExists(found);
         assertEquals(found, componentPath);
@@ -218,7 +218,7 @@ describe("Import Utils", () => {
         const componentPath = join(context.projectDir, "Button.jsx");
         await writeTextFile(componentPath, "export const Button = () => <div />");
 
-        const found = findComponent(join(context.projectDir, "Button"), context.projectDir);
+        const found = await findComponent(join(context.projectDir, "Button"), context.projectDir);
 
         assertExists(found);
         assertEquals(found, componentPath);
@@ -230,7 +230,7 @@ describe("Import Utils", () => {
         const componentPath = join(context.projectDir, "utils.js");
         await writeTextFile(componentPath, "export const helper = () => {}");
 
-        const found = findComponent(join(context.projectDir, "utils"), context.projectDir);
+        const found = await findComponent(join(context.projectDir, "utils"), context.projectDir);
 
         assertExists(found);
         assertEquals(found, componentPath);
@@ -242,7 +242,7 @@ describe("Import Utils", () => {
         const componentPath = join(context.projectDir, "article.mdx");
         await writeTextFile(componentPath, "# Article Title");
 
-        const found = findComponent(join(context.projectDir, "article"), context.projectDir);
+        const found = await findComponent(join(context.projectDir, "article"), context.projectDir);
 
         assertExists(found);
         assertEquals(found, componentPath);
@@ -257,7 +257,10 @@ describe("Import Utils", () => {
         const indexPath = join(dirPath, "index.tsx");
         await writeTextFile(indexPath, 'export * from "./Button"');
 
-        const found = findComponent(join(context.projectDir, "components"), context.projectDir);
+        const found = await findComponent(
+          join(context.projectDir, "components"),
+          context.projectDir,
+        );
 
         assertExists(found);
         assertEquals(found, indexPath);
@@ -275,7 +278,7 @@ describe("Import Utils", () => {
         const indexPath = join(dirPath, "index.tsx");
         await writeTextFile(indexPath, "export const Button = () => <div />");
 
-        const found = findComponent(join(context.projectDir, "Button"), context.projectDir);
+        const found = await findComponent(join(context.projectDir, "Button"), context.projectDir);
 
         assertExists(found);
         assertEquals(found, directPath);
@@ -285,7 +288,10 @@ describe("Import Utils", () => {
     it("returns null when component not found", async () => {
       // deno-lint-ignore require-await
       await withTestContext("find-component-not-found", async (context) => {
-        const found = findComponent(join(context.projectDir, "NonExistent"), context.projectDir);
+        const found = await findComponent(
+          join(context.projectDir, "NonExistent"),
+          context.projectDir,
+        );
         assertEquals(found, null);
       });
     });
@@ -303,7 +309,7 @@ describe("Import Utils", () => {
         async (path) => (path === "/src/pages/Button" ? "/dist/Button.js" : null),
       );
 
-      assertEquals(processed, `import { Button } from '/dist/Button.js'`);
+      assertEquals(processed, `import { Button } from "/dist/Button.js"`);
     });
 
     it("handles multiple imports", async () => {

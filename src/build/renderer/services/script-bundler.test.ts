@@ -4,6 +4,7 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { bundleScript } from "./script-bundler.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import type { BundleResult } from "../types/bundler-types.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 function createBundleResult(): BundleResult {
   return {
@@ -167,6 +168,124 @@ describe(
         );
 
         assertEquals(result.outputs.has("app.js"), true);
+      });
+
+      it("should bundle a dependency that exists only in the caller cache", async () => {
+        const projectDir = await Deno.makeTempDir();
+        try {
+          const result = createBundleResult();
+          const fileCache = new Map<string, string>([[
+            join(projectDir, "dependency.ts"),
+            "export const dependency = 42;",
+          ]]);
+
+          await bundleScript(
+            {
+              path: "app.ts",
+              content: 'import { dependency } from "./dependency.ts"; export default dependency;',
+              type: "ts",
+            },
+            { mode: "development", projectDir, external: [], sources: [] },
+            result,
+            esbuild,
+            fileCache,
+          );
+
+          assertEquals(result.errors.length, 0);
+          assertEquals(result.outputs.get("app.js")?.content.includes("42"), true);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("should restore the source cache and preserve outputs after failure", async () => {
+        const result = createBundleResult();
+        result.outputs.set("bad.js", {
+          path: "bad.js",
+          content: "previous",
+          type: "js",
+        });
+        const fileCache = new Map<string, string>([["bad.ts", "previous source"]]);
+
+        await bundleScript(
+          {
+            path: "bad.ts",
+            content: 'import missing from "./missing.ts"; export default missing;',
+            type: "ts",
+          },
+          { mode: "development", projectDir: "/tmp", external: [], sources: [] },
+          result,
+          esbuild,
+          fileCache,
+        );
+
+        assertEquals(fileCache.get("bad.ts"), "previous source");
+        assertEquals(result.outputs.get("bad.js")?.content, "previous");
+        assertEquals(result.dependencies.has("bad.ts"), false);
+        assertEquals(result.errors.length, 1);
+      });
+
+      it("should not publish staged CSS when another dependency fails", async () => {
+        const projectDir = await Deno.makeTempDir();
+        try {
+          await Deno.writeTextFile(join(projectDir, "styles.css"), ".button { color: blue; }");
+          const result = createBundleResult();
+          const fileCache = new Map<string, string>();
+
+          await bundleScript(
+            {
+              path: "app.ts",
+              content:
+                'import "./styles.css"; import missing from "./missing.ts"; export default missing;',
+              type: "ts",
+            },
+            { mode: "development", projectDir, external: [], sources: [] },
+            result,
+            esbuild,
+            fileCache,
+          );
+
+          assertEquals(result.outputs.size, 0);
+          assertEquals(fileCache.has("app.ts"), false);
+          assertEquals(result.errors.length, 1);
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("should reject lexical and symlink dependency escapes", async () => {
+        const root = await Deno.makeTempDir();
+        try {
+          const projectDir = join(root, "project");
+          await Deno.mkdir(projectDir);
+          const outsidePath = join(root, "outside.ts");
+          await Deno.writeTextFile(outsidePath, "export default 1;");
+
+          for (const specifier of ["../outside.ts", "./linked.ts"]) {
+            if (specifier === "./linked.ts") {
+              if (Deno.build.os === "windows") continue;
+              await Deno.symlink(outsidePath, join(projectDir, "linked.ts"));
+            }
+
+            const result = createBundleResult();
+            await bundleScript(
+              {
+                path: "app.ts",
+                content: `import value from ${JSON.stringify(specifier)}; export default value;`,
+                type: "ts",
+              },
+              { mode: "development", projectDir, external: [], sources: [] },
+              result,
+              esbuild,
+              new Map(),
+            );
+
+            assertEquals(result.outputs.size, 0);
+            assertEquals(result.errors.length, 1);
+          }
+        } finally {
+          await Deno.remove(root, { recursive: true });
+        }
       });
     });
   },

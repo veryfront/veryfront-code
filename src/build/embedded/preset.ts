@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { BUILD_FAILED, MODULE_NOT_FOUND, SECURITY_VIOLATION } from "#veryfront/errors";
+import { BUILD_FAILED, SECURITY_VIOLATION } from "#veryfront/errors";
 import * as esbuild from "veryfront/extensions/bundler";
 import type {
   OnLoadArgs,
@@ -8,14 +8,7 @@ import type {
   Plugin,
   PluginBuild,
 } from "veryfront/extensions/bundler";
-import {
-  dirname,
-  fromFileUrl,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from "#veryfront/compat/path/index.ts";
+import { dirname, isAbsolute, join, resolve } from "#veryfront/compat/path/index.ts";
 import { compileMDXProgram, compileMDXToJS } from "../compiler/mdx-to-js.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -33,25 +26,15 @@ import {
 } from "#veryfront/rendering/rsc/rsc-bundles.generated.ts";
 import { createBuildPublication } from "../production-build/build/build-publication.ts";
 import { assertSafeBuildOutputDirectory } from "../production-build/build/output-plan.ts";
+import {
+  isContainedBuildPath,
+  isNodeModulesPath,
+  resolveProjectModule,
+} from "../bundler/project-module-resolver.ts";
 
 const MAX_PATH_CHARACTERS = 4_096;
 const MAX_ROUTE_ENTRIES = 100_000;
 const MAX_ROUTE_DEPTH = 64;
-const LOCAL_MODULE_SUFFIXES = [
-  "",
-  ".tsx",
-  ".ts",
-  ".jsx",
-  ".js",
-  ".mts",
-  ".mjs",
-  ".cts",
-  ".cjs",
-  ".json",
-  ".css",
-  ".mdx",
-  ".md",
-] as const;
 const REACT_EXTERNALS = [
   "react",
   "react/*",
@@ -121,15 +104,6 @@ function validateEmbeddedOptions(options: BuildEmbeddedOptions): void {
   }
 }
 
-function isContainedPath(basePath: string, candidatePath: string): boolean {
-  const relativePath = relative(basePath, candidatePath);
-  return relativePath === "" ||
-    (relativePath !== ".." &&
-      !relativePath.startsWith("../") &&
-      !relativePath.startsWith("..\\") &&
-      !isAbsolute(relativePath));
-}
-
 async function canonicalTargetPath(path: string): Promise<string> {
   const absolutePath = resolve(path);
   try {
@@ -195,7 +169,7 @@ async function assertConfiguredSourceDirectory(
     canonicalTargetPath(projectDir),
     canonicalTargetPath(join(projectDir, directory)),
   ]);
-  if (!isContainedPath(canonicalProject, canonicalDirectory)) {
+  if (!isContainedBuildPath(canonicalProject, canonicalDirectory)) {
     throw SECURITY_VIOLATION.create({
       detail: `Embedded source directory resolves outside the project: ${directory}`,
     });
@@ -610,117 +584,6 @@ async function discoverPagesRoutes(
   return await discoverRoutes(fs, join(projectDir, pagesDirectory), "pages", budget);
 }
 
-function splitSpecifierSuffix(specifier: string): {
-  path: string;
-  suffix: string;
-} {
-  const queryIndex = specifier.indexOf("?");
-  const fragmentIndex = specifier.indexOf("#");
-  const suffixIndex = queryIndex === -1
-    ? fragmentIndex
-    : fragmentIndex === -1
-    ? queryIndex
-    : Math.min(queryIndex, fragmentIndex);
-  return suffixIndex === -1 ? { path: specifier, suffix: "" } : {
-    path: specifier.slice(0, suffixIndex),
-    suffix: specifier.slice(suffixIndex),
-  };
-}
-
-function localImportBase(
-  specifier: string,
-  resolveDir: string,
-  projectDir: string,
-): { path: string; suffix: string } | null {
-  if (specifier.startsWith("file:")) {
-    const url = new URL(specifier);
-    if (url.protocol !== "file:") return null;
-    const suffix = `${url.search}${url.hash}`;
-    url.search = "";
-    url.hash = "";
-    return { path: fromFileUrl(url), suffix };
-  }
-
-  const local = splitSpecifierSuffix(specifier);
-  if (local.path.startsWith("@/")) {
-    return {
-      path: resolve(projectDir, local.path.slice(2)),
-      suffix: local.suffix,
-    };
-  }
-  if (local.path.startsWith("/")) {
-    return {
-      path: resolve(projectDir, local.path.slice(1)),
-      suffix: local.suffix,
-    };
-  }
-  if (local.path.startsWith(".")) {
-    return {
-      path: resolve(resolveDir, local.path),
-      suffix: local.suffix,
-    };
-  }
-  return null;
-}
-
-function isNodeModulesPath(path: string): boolean {
-  return /(^|[/\\])node_modules([/\\]|$)/.test(path);
-}
-
-async function resolveLocalModule(
-  specifier: string,
-  resolveDir: string,
-  projectDir: string,
-  fs: FileSystem,
-): Promise<{ path: string; suffix: string }> {
-  const local = localImportBase(specifier, resolveDir, projectDir);
-  if (!local) {
-    throw MODULE_NOT_FOUND.create({
-      detail: `Embedded local module has an unsupported specifier: ${specifier}`,
-    });
-  }
-  if (!isContainedPath(projectDir, local.path)) {
-    throw SECURITY_VIOLATION.create({
-      detail: `Embedded module import resolves outside the project: ${specifier}`,
-    });
-  }
-
-  const hasKnownSuffix = LOCAL_MODULE_SUFFIXES.slice(1).some((suffix) =>
-    local.path.toLowerCase().endsWith(suffix)
-  );
-  const candidates = hasKnownSuffix ? [local.path] : [
-    local.path,
-    ...LOCAL_MODULE_SUFFIXES.slice(1).map((suffix) => `${local.path}${suffix}`),
-    ...LOCAL_MODULE_SUFFIXES.slice(1).map((suffix) => join(local.path, `index${suffix}`)),
-  ];
-  const canonicalProject = await realPath(projectDir);
-
-  for (const candidate of candidates) {
-    if (!isContainedPath(projectDir, candidate)) {
-      throw SECURITY_VIOLATION.create({
-        detail: `Embedded module import resolves outside the project: ${specifier}`,
-      });
-    }
-    try {
-      const info = await fs.stat(candidate);
-      if (!info.isFile) continue;
-      const canonicalCandidate = await realPath(candidate);
-      if (!isContainedPath(canonicalProject, canonicalCandidate)) {
-        throw SECURITY_VIOLATION.create({
-          detail: `Embedded module import escapes through a symbolic link: ${specifier}`,
-        });
-      }
-      return { path: candidate, suffix: local.suffix };
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-    }
-  }
-
-  throw MODULE_NOT_FOUND.create({
-    detail: `Cannot resolve embedded module ${JSON.stringify(specifier)} from ${resolveDir}`,
-  });
-}
-
 function createEmbeddedProjectPlugin(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -745,7 +608,7 @@ function createEmbeddedProjectPlugin(
 
         if (
           args.path.startsWith(".") &&
-          !isContainedPath(projectDir, resolve(args.resolveDir)) &&
+          !isContainedBuildPath(projectDir, resolve(args.resolveDir)) &&
           isNodeModulesPath(args.resolveDir)
         ) {
           // Bare dependencies are resolved by the bundler. Their own relative
@@ -753,14 +616,14 @@ function createEmbeddedProjectPlugin(
           return null;
         }
 
-        const local = localImportBase(args.path, args.resolveDir, projectDir);
-        if (!local) return null;
-        const resolved = await resolveLocalModule(
+        const resolved = await resolveProjectModule(
           args.path,
           args.resolveDir,
           projectDir,
           fs,
+          "Embedded",
         );
+        if (!resolved) return null;
         return {
           path: resolved.path,
           ...(resolved.suffix ? { suffix: resolved.suffix } : {}),

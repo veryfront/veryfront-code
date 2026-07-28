@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import * as bundler from "veryfront/extensions/bundler";
 import { bundleCss, extractCssVariables, processCssImports } from "./css-bundler.ts";
 import type { BundleResult } from "../types/bundler-types.ts";
 
@@ -14,10 +15,14 @@ function createBundleResult(): BundleResult {
 }
 
 describe("build/renderer/services/css-bundler", () => {
+  afterAll(async () => {
+    await bundler.stop();
+  });
+
   describe("bundleCss", () => {
-    it("should add CSS to result outputs", () => {
+    it("should add CSS to result outputs", async () => {
       const result = createBundleResult();
-      bundleCss(
+      await bundleCss(
         { path: "style.css", content: "body { color: red; }" },
         { mode: "development", projectDir: "/tmp", external: [], sources: [] },
         result,
@@ -28,9 +33,9 @@ describe("build/renderer/services/css-bundler", () => {
       assertEquals(output.type, "css");
     });
 
-    it("should minify CSS in production mode", () => {
+    it("should minify CSS in production mode", async () => {
       const result = createBundleResult();
-      bundleCss(
+      await bundleCss(
         { path: "style.css", content: "body {\n  color: red;\n  /* comment */\n}" },
         { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
@@ -41,10 +46,10 @@ describe("build/renderer/services/css-bundler", () => {
       assertEquals(output.content.includes("\n"), false);
     });
 
-    it("should not minify CSS in development mode", () => {
+    it("should not minify CSS in development mode", async () => {
       const result = createBundleResult();
       const css = "body {\n  color: red;\n  /* comment */\n}";
-      bundleCss(
+      await bundleCss(
         { path: "style.css", content: css },
         { mode: "development", projectDir: "/tmp", external: [], sources: [] },
         result,
@@ -53,9 +58,9 @@ describe("build/renderer/services/css-bundler", () => {
       assertEquals(output.content, css);
     });
 
-    it("should handle empty CSS", () => {
+    it("should handle empty CSS", async () => {
       const result = createBundleResult();
-      bundleCss(
+      await bundleCss(
         { path: "empty.css", content: "" },
         { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
@@ -64,9 +69,9 @@ describe("build/renderer/services/css-bundler", () => {
       assertEquals(result.outputs.get("empty.css")!.content, "");
     });
 
-    it("should minify url() quotes in production", () => {
+    it("should minify url() quotes in production", async () => {
       const result = createBundleResult();
-      bundleCss(
+      await bundleCss(
         { path: "bg.css", content: 'body { background: url("image.png"); }' },
         { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
@@ -75,15 +80,33 @@ describe("build/renderer/services/css-bundler", () => {
       assertEquals(output.content.includes("url(image.png)"), true);
     });
 
-    it("should remove trailing semicolons before closing braces in production", () => {
+    it("should remove trailing semicolons before closing braces in production", async () => {
       const result = createBundleResult();
-      bundleCss(
+      await bundleCss(
         { path: "s.css", content: "div { color: red; }" },
         { mode: "production", projectDir: "/tmp", external: [], sources: [] },
         result,
       );
       const output = result.outputs.get("s.css")!;
       assertEquals(output.content.includes(";}"), false);
+    });
+
+    it("should preserve the previous output when parsing fails", async () => {
+      const result = createBundleResult();
+      result.outputs.set("style.css", {
+        path: "style.css",
+        content: ".previous{color:green}",
+        type: "css",
+      });
+
+      await bundleCss(
+        { path: "style.css", content: ".broken { /*" },
+        { mode: "production", projectDir: "/tmp", external: [], sources: [] },
+        result,
+      );
+
+      assertEquals(result.outputs.get("style.css")?.content, ".previous{color:green}");
+      assertEquals(result.errors.length, 1);
     });
   });
 
@@ -150,6 +173,31 @@ describe("build/renderer/services/css-bundler", () => {
       const css = `--my-custom-var-123: value;`;
       const vars = extractCssVariables(css);
       assertEquals(vars["my-custom-var-123"], "value");
+    });
+
+    it("should ignore comments and strings while preserving nested semicolons", () => {
+      const css = `
+        /* --commented: no; */
+        .example::before { content: "--string: no;"; }
+        :root {
+          --data: url("data:image/svg+xml;utf8,<svg></svg>");
+          --calculation: calc(100% - var(--gap, 1rem));
+        }
+      `;
+      const vars = extractCssVariables(css);
+
+      assertEquals(vars.commented, undefined);
+      assertEquals(vars.string, undefined);
+      assertEquals(vars.data, 'url("data:image/svg+xml;utf8,<svg></svg>")');
+      assertEquals(vars.calculation, "calc(100% - var(--gap, 1rem))");
+    });
+
+    it("should return prototype-named variables as safe own properties", () => {
+      const vars = extractCssVariables(":root { --__proto__: safe; }");
+
+      assertEquals(Object.hasOwn(vars, "__proto__"), true);
+      assertEquals(vars.__proto__, "safe");
+      assertEquals(Object.getPrototypeOf(vars), Object.prototype);
     });
   });
 });
