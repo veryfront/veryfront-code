@@ -5,6 +5,7 @@ import * as React from "react";
 import type { ReactDOMServer } from "./server-loader.ts";
 import { __injectReactDOMServerForTests, resetReactCache } from "./server-loader.ts";
 import { renderToStaticMarkupAdapter, renderToStringAdapter } from "./string-renderer.ts";
+import { resetSSRAdapterTimeoutForTests, setSSRAdapterTimeoutForTests } from "./timeout.ts";
 
 type ReadableOptions = NonNullable<
   Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
@@ -24,6 +25,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
   afterEach(() => {
     __injectReactDOMServerForTests(null);
     resetReactCache();
+    resetSSRAdapterTimeoutForTests();
   });
 
   it("forwards readable-stream rendering options while buffering", async () => {
@@ -55,6 +57,7 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
     assertEquals(captured?.namespaceURI, "http://www.w3.org/1999/xhtml");
     assertEquals(captured?.nonce, "nonce-1");
     assertEquals(captured?.progressiveChunkSize, 4096);
+    assertEquals(captured?.signal instanceof AbortSignal, true);
   });
 
   it("forwards identifierPrefix to string and static renderers", async () => {
@@ -107,5 +110,45 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
       Error,
       "render failed",
     );
+  });
+
+  it("cancels a buffered stream that stops making progress", async () => {
+    let cancelled = false;
+    setSSRAdapterTimeoutForTests(5);
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>fallback</div>",
+      renderToStaticMarkup: () => "<div>unused</div>",
+      renderToReadableStream: async () =>
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+          },
+        }) as Awaited<
+          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+        >,
+    });
+
+    const html = await renderToStringAdapter(React.createElement("div"));
+
+    assertEquals(html, "<div>fallback</div>");
+    assertEquals(cancelled, true);
+  });
+
+  it("bounds stream setup even when the renderer ignores its abort signal", async () => {
+    let signal: AbortSignal | undefined;
+    setSSRAdapterTimeoutForTests(5);
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>fallback</div>",
+      renderToStaticMarkup: () => "<div>unused</div>",
+      renderToReadableStream: (_element, options) => {
+        signal = options?.signal as AbortSignal | undefined;
+        return new Promise(() => {});
+      },
+    });
+
+    const html = await renderToStringAdapter(React.createElement("div"));
+
+    assertEquals(html, "<div>fallback</div>");
+    assertEquals(signal?.aborted, true);
   });
 });

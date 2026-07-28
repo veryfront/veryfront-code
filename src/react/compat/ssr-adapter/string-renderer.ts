@@ -3,24 +3,83 @@ import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getReactDOMServer } from "./server-loader.ts";
+import { getSSRAdapterTimeoutMs } from "./timeout.ts";
 import type { SSROptions } from "./types.ts";
 
-async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
+interface RenderDeadline {
+  readonly promise: Promise<never>;
+  readonly signal: AbortSignal;
+  dispose(): void;
+}
+
+function createRenderDeadline(timeoutMs: number): RenderDeadline {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`SSR timeout: buffered React render exceeded ${timeoutMs}ms`);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+
+  return {
+    promise,
+    signal: controller.signal,
+    dispose() {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      timeoutId = undefined;
+    },
+  };
+}
+
+async function streamToString(
+  stream: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
+  let completed = false;
+  let rejectAbort!: (reason: unknown) => void;
+  const abortPromise = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+  const abort = () => {
+    rejectAbort(signal.reason ?? new DOMException("The render was aborted", "AbortError"));
+  };
 
   try {
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const { done, value } = await Promise.race([reader.read(), abortPromise]);
+      if (done) {
+        completed = true;
+        break;
+      }
       chunks.push(decoder.decode(value, { stream: true }));
     }
 
     chunks.push(decoder.decode());
     return chunks.join("");
   } finally {
-    reader.releaseLock();
+    signal.removeEventListener("abort", abort);
+    if (!completed) {
+      try {
+        reader.cancel(signal.reason).catch(() => {
+          /* expected: the stream may already be errored or cancelled */
+        });
+      } catch {
+        /* expected: the stream may already be errored or cancelled */
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      /* expected: a stream implementation may release its lock during cancellation */
+    }
   }
 }
 
@@ -40,8 +99,10 @@ export async function renderToStringAdapter(
   const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
 
   if (canUseReadableStream) {
+    const timeoutMs = getSSRAdapterTimeoutMs();
+    const deadline = createRenderDeadline(timeoutMs);
     try {
-      const stream = (await withSpan(
+      const setupPromise = withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
         () =>
           server.renderToReadableStream!(element, {
@@ -51,17 +112,41 @@ export async function renderToStringAdapter(
             namespaceURI: options.namespaceURI,
             nonce: options.nonce,
             onError: (error: unknown) => {
+              if (deadline.signal.aborted) return;
               logger.error("SSR renderToReadableStream error", error);
               notifyErrorObserver(options.onError, error);
             },
             progressiveChunkSize: options.progressiveChunkSize,
+            signal: deadline.signal,
           }),
         { "ssr.method": "renderToReadableStream" },
-      )) as ReadableStream<Uint8Array>;
+      ) as Promise<ReadableStream<Uint8Array>>;
 
-      return await streamToString(stream);
+      // A renderer that ignores AbortSignal may resolve after our deadline.
+      // Cancel that late stream instead of leaving its work detached.
+      setupPromise.then(
+        (lateStream) => {
+          if (deadline.signal.aborted) {
+            lateStream.cancel(deadline.signal.reason).catch(() => {
+              /* expected: a late stream may already be closed */
+            });
+          }
+        },
+        () => {
+          /* the awaited race below owns setup failures */
+        },
+      );
+
+      const stream = await Promise.race([setupPromise, deadline.promise]);
+
+      return await Promise.race([
+        streamToString(stream, deadline.signal),
+        deadline.promise,
+      ]);
     } catch (error) {
       logger.warn("SSR renderToReadableStream failed, falling back to renderToString", error);
+    } finally {
+      deadline.dispose();
     }
   }
 
