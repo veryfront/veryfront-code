@@ -21,7 +21,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { type AuthIdentity, isApiKeyIdentity, login } from "../../auth/login.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
-import { pushCommand } from "../push/index.ts";
+import { pushCommand, type PushOptions } from "../push/index.ts";
 import { createProjectSelector } from "./project-selector.ts";
 
 export interface DevOptions {
@@ -58,6 +58,18 @@ export async function preloadDevAuth(
     ? result.error ? null : { authenticated: true, type: "apiKey" } as const
     : result.user;
   return { identity, projects: result.projects };
+}
+
+export function createSelectedProjectPushOptions(
+  projectDir: string,
+  project: RemoteProject,
+): PushOptions {
+  return {
+    projectDir,
+    projectSlug: project.slug,
+    force: true,
+    quiet: true,
+  };
 }
 
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
@@ -294,14 +306,15 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             );
           },
           onPush: async () => {
-            if (!selectedProject) {
+            const project = selectedProject;
+            if (!project) {
               console.log(`  Press ${brand("s")} to select a project`);
               return;
             }
 
             console.log(`  ${dim("Pushing...")}`);
             await runSyncAction(
-              () => pushCommand({ projectDir, force: true, quiet: true }),
+              () => pushCommand(createSelectedProjectPushOptions(projectDir, project)),
               `Pushed ${dim("— merge in Studio")}`,
             );
           },
