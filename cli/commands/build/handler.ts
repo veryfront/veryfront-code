@@ -2,7 +2,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { dim } from "#cli/ui";
 import { join } from "veryfront/platform/path";
-import { cliLogger, isVerbose } from "#cli/utils";
+import { cliLogger, isVerbose, logSuccess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
@@ -102,6 +102,6 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     runtime: "deno",
   });
 
-  cliLogger.info("✓ Built embedded preset");
+  logSuccess("Built embedded preset");
   cliLogger.info(`  ${finalOutput}\n`);
 }

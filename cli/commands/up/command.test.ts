@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  _resetEnvironmentConfig,
+  createTestEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { join } from "veryfront/platform/path";
 import { parseUpArgs, UpArgsSchema, upCommand } from "./index.ts";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -26,6 +29,31 @@ function restoreEnv(name: string, value: string | undefined): void {
     return;
   }
   Deno.env.set(name, value);
+}
+
+class ExitSentinel extends Error {
+  constructor(readonly code: number) {
+    super(`exit(${code})`);
+  }
+}
+
+async function captureExit(run: () => Promise<void>): Promise<number> {
+  const originalExit = Deno.exit;
+  // deno-lint-ignore no-explicit-any
+  (Deno as any).exit = (code = 0) => {
+    throw new ExitSentinel(code);
+  };
+
+  try {
+    await run();
+    throw new Error("Expected command to exit");
+  } catch (error) {
+    if (error instanceof ExitSentinel) return error.code;
+    throw error;
+  } finally {
+    // deno-lint-ignore no-explicit-any
+    (Deno as any).exit = originalExit;
+  }
 }
 
 describe("Up Command", () => {
@@ -82,6 +110,73 @@ describe("Up Command", () => {
   });
 
   describe("upCommand", () => {
+    it("exits nonzero after an unauthenticated JSON result", async () => {
+      const originalConsoleLog = console.log;
+      const tempDir = await Deno.makeTempDir();
+      const output: string[] = [];
+
+      try {
+        setJsonMode(true);
+        console.log = (message?: unknown) => output.push(String(message));
+        const env = createTestEnvironmentConfig({
+          apiToken: undefined,
+          homeDir: tempDir,
+          xdgConfigHome: tempDir,
+        });
+
+        const exitCode = await captureExit(() => upCommand({ projectDir: tempDir }, env));
+
+        assertEquals(exitCode, 1);
+        assertEquals(output.length, 1);
+        assertEquals(JSON.parse(output[0]!), {
+          type: "result",
+          success: false,
+          error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+        });
+      } finally {
+        console.log = originalConsoleLog;
+        setJsonMode(false);
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("exits nonzero after an empty-folder JSON result", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalConsoleLog = console.log;
+      const tempDir = await Deno.makeTempDir();
+      const output: string[] = [];
+
+      try {
+        setJsonMode(true);
+        console.log = (message?: unknown) => output.push(String(message));
+        globalThis.fetch = (() =>
+          Promise.resolve(
+            Response.json({ id: "user-1", email: "dev@example.com" }),
+          )) as typeof fetch;
+        const env = createTestEnvironmentConfig({
+          apiBaseUrl: "https://auth.example.test",
+          apiToken: "session-token",
+          homeDir: tempDir,
+          xdgConfigHome: tempDir,
+        });
+
+        const exitCode = await captureExit(() => upCommand({ projectDir: tempDir }, env));
+
+        assertEquals(exitCode, 1);
+        assertEquals(output.length, 1);
+        assertEquals(JSON.parse(output[0]!), {
+          type: "result",
+          success: false,
+          error: "This folder is empty. Add project files or run veryfront init.",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+        console.log = originalConsoleLog;
+        setJsonMode(false);
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("uses VERYFRONT_API_BASE_URL when creating a project", async () => {
       const originalFetch = globalThis.fetch;
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");

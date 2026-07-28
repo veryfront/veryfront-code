@@ -272,7 +272,8 @@ function suggestPreviewBranchName(branchName: string): string {
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
-    .slice(0, 63) || "preview";
+    .slice(0, 63)
+    .replace(/-+$/g, "") || "preview";
 }
 
 function assertPreviewBranchName(branchName: string): void {
@@ -290,9 +291,11 @@ export function buildPushUrls(
   branchName: string,
 ): { studio: string; preview: string } {
   assertPreviewBranchName(branchName);
-  const preview = branchName === "main"
-    ? `https://${projectSlug}.preview.veryfront.com`
-    : `https://${projectSlug}--${branchName}.preview.veryfront.com`;
+  const previewLabel = branchName === "main" ? projectSlug : `${projectSlug}--${branchName}`;
+  if (previewLabel.length > 63) {
+    throw new Error("Preview hostname is too long. Shorten the project slug or branch name.");
+  }
+  const preview = `https://${previewLabel}.preview.veryfront.com`;
 
   return {
     studio: buildStudioUrl(projectSlug, { branch: branchName }),
@@ -717,7 +720,21 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         } finally {
           spinner.stop();
         }
-        if (!quiet) outputPushResult(config.projectSlug, branchName, 0, 0);
+        if (!quiet) {
+          if (dryRun && jsonOutput) {
+            outputPushDryRunResult(
+              config.projectSlug,
+              branchName,
+              projectExists,
+              0,
+              0,
+            );
+          } else if (dryRun) {
+            logInfo("Dry run complete. No files would change.");
+          } else {
+            outputPushResult(config.projectSlug, branchName, 0, 0);
+          }
+        }
         return;
       }
 

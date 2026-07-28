@@ -64,6 +64,7 @@ describe("cli/help/tips", () => {
   describe("getPostDeployTips", () => {
     it("should mention veryfront open", () => {
       assertEquals(getPostDeployTips().includes("veryfront open"), true);
+      assertEquals(getPostDeployTips().includes("npx"), false);
     });
 
     it("does not add a generic next-steps block", () => {

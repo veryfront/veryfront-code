@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, exitProcess } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
@@ -107,6 +107,7 @@ export async function upCommand(
         error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
       });
     }
+    exitProcess(1);
     return;
   }
 
@@ -128,6 +129,7 @@ export async function upCommand(
       cliLogger.info(`  ${brand("veryfront init")}`);
       cliLogger.info("");
     }
+    exitProcess(1);
     return;
   }
 

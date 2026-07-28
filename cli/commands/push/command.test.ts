@@ -179,9 +179,80 @@ describe("buildPushUrls", () => {
       'Preview branch "Feature/auth" is not DNS-safe. Use "feature-auth" instead.',
     );
   });
+
+  it("keeps suggested branch names DNS-safe after truncation", () => {
+    const branch = `${"A".repeat(62)}-extra`;
+    const suggestion = "a".repeat(62);
+
+    assertThrows(
+      () => buildPushUrls("my-project", branch),
+      Error,
+      `Preview branch "${branch}" is not DNS-safe. Use "${suggestion}" instead.`,
+    );
+  });
+
+  it("rejects combined project and branch labels over the DNS limit", () => {
+    assertThrows(
+      () => buildPushUrls("p".repeat(40), "b".repeat(22)),
+      Error,
+      "Preview hostname is too long. Shorten the project slug or branch name.",
+    );
+  });
 });
 
 describe("push JSON output", () => {
+  it("keeps an up-to-date dry run on the dry-run schema", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const projectDir = await Deno.makeTempDir();
+    const output: string[] = [];
+
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+      _resetEnvironmentConfig();
+      setJsonMode(true);
+      console.log = (message?: unknown) => output.push(String(message));
+
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+          return Response.json({ data: [], page_info: {} });
+        }
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+      }) as typeof fetch;
+
+      await pushCommand({ projectDir, dryRun: true });
+
+      assertEquals(output.length, 1);
+      assertEquals(JSON.parse(output[0]!), {
+        type: "result",
+        success: true,
+        data: {
+          projectSlug: "json-project",
+          branch: "main",
+          dryRun: true,
+          projectExists: true,
+          wouldUpload: 0,
+          wouldDelete: 0,
+          studioUrl: "https://veryfront.com/projects/json-project?branch=main",
+          previewUrl: "https://json-project.preview.veryfront.com",
+        },
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("emits one result line and no human output for a dry run", async () => {
     const originalFetch = globalThis.fetch;
     const originalLog = console.log;

@@ -13,6 +13,7 @@ import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
+import { getEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Color formatting functions (compatible with CLI colors)
@@ -23,21 +24,11 @@ interface ColorFormatter {
   dim: (text: string) => string;
 }
 
-function isTTY(): boolean {
-  const deno = globalThis as {
-    Deno?: {
-      stdout?: { isTerminal?: () => boolean };
-    };
-    process?: {
-      stdout?: { isTTY?: boolean };
-    };
-  };
-
-  if (typeof deno.Deno?.stdout?.isTerminal === "function") {
-    return deno.Deno.stdout.isTerminal();
-  }
-
-  return deno.process?.stdout?.isTTY ?? false;
+function shouldUseDefaultColor(): boolean {
+  const forceColor = getEnv("FORCE_COLOR");
+  if (forceColor !== undefined) return forceColor !== "0";
+  if (getEnv("NO_COLOR") !== undefined || getEnv("TERM") === "dumb") return false;
+  return isStdoutTTY();
 }
 
 function createColorFormatters(useColor: boolean): ColorFormatter {
@@ -95,7 +86,7 @@ export function formatCLIError(
   error: unknown,
   options: CLIErrorFormatOptions = {},
 ): string {
-  const colors = createColorFormatters(options.color ?? isTTY());
+  const colors = createColorFormatters(options.color ?? shouldUseDefaultColor());
 
   if (error instanceof VeryfrontError) {
     return formatVeryfrontError(error, colors, options);

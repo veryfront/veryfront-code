@@ -1,4 +1,4 @@
-import { dim } from "#cli/ui";
+import { brand, dim } from "#cli/ui";
 import { cliLogger, isVerbose } from "#cli/utils";
 import { exit, getStdout } from "veryfront/platform";
 
@@ -12,6 +12,7 @@ export function handleBuildError(error: unknown): never {
     cliLogger.error(`\n${dim("Stack trace:")}`);
     cliLogger.error(dim(error.stack.split("\n").slice(1, 5).join("\n")));
   }
+  cliLogger.error(`  Run ${brand("veryfront build --help")} for usage.`);
   cliLogger.error("");
 
   if (import.meta.main) exit(1);

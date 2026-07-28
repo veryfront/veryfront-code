@@ -68,5 +68,33 @@ describe("cli-error-boundary", () => {
       assertEquals(plain.includes("\x1b["), false);
       assertEquals(colored.includes("\x1b["), true);
     });
+
+    it("honors NO_COLOR when color control is implicit", () => {
+      const originalNoColor = Deno.env.get("NO_COLOR");
+      const originalForceColor = Deno.env.get("FORCE_COLOR");
+      const originalIsTerminal = Deno.stdout.isTerminal;
+
+      try {
+        Deno.env.set("NO_COLOR", "1");
+        Deno.env.delete("FORCE_COLOR");
+        Object.defineProperty(Deno.stdout, "isTerminal", {
+          configurable: true,
+          value: () => true,
+        });
+
+        const output = formatCLIError(new Error("Failure"));
+
+        assertEquals(output.includes("\x1b["), false);
+      } finally {
+        if (originalNoColor === undefined) Deno.env.delete("NO_COLOR");
+        else Deno.env.set("NO_COLOR", originalNoColor);
+        if (originalForceColor === undefined) Deno.env.delete("FORCE_COLOR");
+        else Deno.env.set("FORCE_COLOR", originalForceColor);
+        Object.defineProperty(Deno.stdout, "isTerminal", {
+          configurable: true,
+          value: originalIsTerminal,
+        });
+      }
+    });
   });
 });
