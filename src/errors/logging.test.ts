@@ -205,6 +205,25 @@ describe("logging", () => {
         assertEquals(parsed.requestId, "req-123");
       });
 
+      it("should not let context override canonical error fields", () => {
+        const error = CONFIG_NOT_FOUND.create({
+          context: {
+            slug: "spoofed-slug",
+            category: "SPOOFED",
+            status: 200,
+            docs: "https://example.com/spoofed",
+          },
+        });
+
+        logError(error);
+
+        const parsed = JSON.parse(consoleErrorLines[0]!);
+        assertEquals(parsed.context.slug, "config-not-found");
+        assertEquals(parsed.context.category, "CONFIG");
+        assertEquals(parsed.context.status, 404);
+        assertStringIncludes(parsed.context.docs, "errors/config-not-found");
+      });
+
       it("should use error.context in JSON when no context provided", () => {
         const error = CONFIG_NOT_FOUND.create({
           context: { path: "/config" },

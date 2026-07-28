@@ -76,13 +76,13 @@ export function logError(
     // and OTel log-record bridge all apply. Error-specific fields (slug, category,
     // status, docs) travel as structured context.
     serverLogger.error(error.title, {
+      ...(safeContext ?? {}),
       slug: error.slug,
       category: error.category,
       ...(error.detail && { detail: error.detail }),
       ...(error.suggestion && { suggestion: error.suggestion }),
       status: error.status,
       docs: entry.docs,
-      ...(safeContext ?? {}),
     });
   } else {
     // Single-line summary always visible at error level.
