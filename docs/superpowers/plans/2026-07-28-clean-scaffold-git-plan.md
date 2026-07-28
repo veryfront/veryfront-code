@@ -122,4 +122,3 @@ Require a tracked lockfile and empty `git status --porcelain`.
 - [ ] **Step 4: Push and open the PR**
 
 Use a narrow title about clean generated repositories and the Lore protocol in commits.
-

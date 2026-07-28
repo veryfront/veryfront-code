@@ -263,4 +263,3 @@ deno test -A \
 - [ ] **Step 4: Commit and push**
 
 Commit documentation/verification metadata with the Lore protocol and push the updated PR branch.
-
