@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    50 |      86.2% | Current formal closure evidence remains valid       |
+| Closed                         |    51 |      87.9% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |     8 |      13.8% | Substantive recovered or current work exists        |
+| Touched, revalidation required |     7 |      12.1% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -70,6 +70,7 @@ stricter closure count.
 - `prompt`
 - `registry`
 - `release-assets`
+- `rendering`
 - `repositories`
 - `resource`
 - `routing`
@@ -98,7 +99,6 @@ None.
 - `data`
 - `proxy`
 - `react`
-- `rendering`
 - `security`
 - `server`
 - `skill`
@@ -126,7 +126,7 @@ The current closed review chain covers `agent`, `build`, `cache`, `channels`, `c
 `client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
-`prompt`, `registry`, `release-assets`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
+`prompt`, `registry`, `release-assets`, `rendering`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
 `schemas`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
@@ -5764,6 +5764,55 @@ Intentional compatibility boundaries remain explicit:
 
 No known unresolved critical or high-confidence Transforms production risk
 remains. The `transforms` unit is closed at 50 of 58 formal units; eight units
+remain open or awaiting top-level revalidation.
+
+### Rendering final closure checkpoint
+
+The `rendering` audit unit owns the public renderer facade, renderer service
+lifecycle, production render pipeline, and the build composition that
+initializes and disposes those resources. The latest review re-established the
+public surface, direct consumers, dependency direction, concurrent lifecycle
+states, cleanup ownership, and failure semantics against the current branch.
+
+The final open lifecycle finding is remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** facade `initialize()` and
+  `destroy()` calls only coalesced adjacent same-kind operations; alternating
+  init/destroy/init or destroy/init/destroy sequences could overtake one
+  another, publish a stale generation, or dispose resources owned by a newer
+  generation. This was a lifecycle information-leakage and change-ordering
+  defect at the public facade boundary. The facade now serializes every
+  transition behind its predecessor, singleflights adjacent equivalent calls,
+  fences publication after every asynchronous initialization boundary, retains
+  lifecycle and pipeline ownership per generation, and records successful
+  cleanup phases so a retry repeats only the failed phase.
+
+Current reproducible evidence:
+
+- the public facade and renderer lifecycle pass two suites with 40 nested
+  steps, including init -> destroy -> init, destroy -> init -> destroy,
+  adjacent singleflight, generation fencing, sequential rebuild, partial
+  cleanup failure, and cleanup retry behavior;
+- the complete `src/rendering` portfolio passes 110 suites and 1,836 nested
+  steps with zero failures;
+- the real renderer-core integration passes seven steps, and the direct build
+  initializer/cleanup owners pass two suites with 28 nested steps;
+- `deno check` passes the public Rendering entrypoint and production-build
+  consumer, both changed files lint cleanly, and `git diff --check` is clean;
+  and
+- import inspection confirms the facade's orchestration fan-out remains an
+  acyclic composition boundary. Long-lived server rendering continues to use
+  its separate runtime renderer rather than racing facade rebuilds.
+
+The public constructors, render types, method signatures, eager
+`createRenderer()` initialization contract, and single-error versus
+`AggregateError` failure behavior are unchanged. Concurrent render calls
+during facade reinitialization remain unsupported and have no production
+consumer; this is recorded as a low residual testing boundary, not a critical
+or high-confidence production risk.
+
+No known unresolved critical or high-confidence Rendering production risk
+remains. The `rendering` unit is closed at 51 of 58 formal units; seven units
 remain open or awaiting top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.
