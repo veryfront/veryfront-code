@@ -179,6 +179,10 @@ type StructureNode = {
   children: Map<string, StructureNode>;
 };
 
+interface InitCommandDependencies {
+  deployProject?: (projectDir: string) => Promise<string | undefined>;
+}
+
 const STRUCTURE_ORDER = [
   "app",
   "pages",
@@ -269,7 +273,10 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
 /**
  * Initializes a new Veryfront project with the specified template
  */
-export async function initCommand(options: InitOptions): Promise<void> {
+export async function initCommand(
+  options: InitOptions,
+  dependencies: InitCommandDependencies = {},
+): Promise<void> {
   const { name, features = [], quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
@@ -558,41 +565,55 @@ export async function initCommand(options: InitOptions): Promise<void> {
   let deployedUrl: string | undefined;
   const manualDeployCommand = `${getDlxCommand(pmPreference)} veryfront deploy`;
   if (options.deploy) {
-    const { chdir } = await import("veryfront/platform");
-    const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
-    const { deployCommand } = await import("../deploy/index.ts");
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
-    const authResult = await ensureAuthenticated();
-    if (!authResult) {
-      log(`\n  Authentication required for --deploy. ${manualDeployHint}`);
+    if (dependencies.deployProject) {
+      try {
+        deployedUrl = await dependencies.deployProject(projectDir);
+        if (!deployedUrl) {
+          throw new Error("Deploy completed without a verified result.");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`\n  Deploy failed: ${message}`);
+        log(`  Your project was created locally. ${manualDeployHint}`);
+      }
     } else {
-      const token = await readToken();
-      if (!token) {
-        log(`\n  Could not read auth token. ${manualDeployHint}`);
+      const { chdir } = await import("veryfront/platform");
+      const { ensureAuthenticated, readToken } = await import("../../auth/index.ts");
+      const { deployCommand } = await import("../deploy/index.ts");
+      const authResult = await ensureAuthenticated();
+
+      if (!authResult) {
+        log(`\n  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
-        log(`\n  Deploying project...`);
+        const token = await readToken();
+        if (!token) {
+          log(`\n  Could not read auth token. ${manualDeployHint}`);
+        } else {
+          log(`\n  Deploying project...`);
 
-        try {
-          chdir(projectDir);
+          try {
+            chdir(projectDir);
 
-          const deployment = await deployCommand({
-            projectDir,
-            branch: "main",
-            env: "production",
-            force: true,
-            dryRun: false,
-            quiet: true,
-          });
+            const deployment = await deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              force: true,
+              dryRun: false,
+              quiet: true,
+            });
 
-          if (!deployment) {
-            throw new Error("Deploy completed without a verified result.");
+            if (!deployment) {
+              throw new Error("Deploy completed without a verified result.");
+            }
+            deployedUrl = deployment.url;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`\n  Deploy failed: ${message}`);
+            log(`  Your project was created locally. ${manualDeployHint}`);
           }
-          deployedUrl = deployment.url;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          log(`\n  Deploy failed: ${message}`);
-          log(`  Your project was created locally. ${manualDeployHint}`);
         }
       }
     }
