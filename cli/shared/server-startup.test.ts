@@ -31,7 +31,7 @@ function validReleaseManifest(): ReleaseAssetManifest {
     releaseVersion: 7,
     manifestVersion: 1,
     builderVersion: "0.1.765",
-    sourceContentHash: "source-hash",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-07-24T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {},

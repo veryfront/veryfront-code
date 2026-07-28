@@ -32,7 +32,7 @@ export function normalizeKnowledgeInputPath(inputPath: string): string {
 }
 
 export function normalizeProjectUploadPath(inputPath: string): string {
-  return normalizeKnowledgeInputPath(inputPath);
+  return normalizeKnowledgeInputPath(inputPath).replace(/\/+$/, "");
 }
 
 export function formatKnowledgeUploadSource(uploadPath: string): string {
