@@ -20,6 +20,10 @@ export interface CommandHelp {
   options?: CommandOption[];
   examples?: string[];
   notes?: string[];
+  /** Aliases shown inline in main help, e.g. ["g"] for generate */
+  aliases?: string[];
+  /** When true, hidden from main help unless --all is passed */
+  hidden?: boolean;
 }
 
 export type CommandRegistry = Record<string, CommandHelp>;

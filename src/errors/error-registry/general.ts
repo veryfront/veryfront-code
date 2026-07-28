@@ -38,6 +38,7 @@ export const INVALID_ARGUMENT = defineError({
   status: 400,
   title: "Invalid function argument",
   suggestion: "Check argument types and values",
+  exitCode: 2,
 });
 
 export const TIMEOUT_ERROR = defineError({

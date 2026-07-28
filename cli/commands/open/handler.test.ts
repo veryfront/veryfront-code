@@ -36,7 +36,7 @@ describe("Open Command", () => {
       assertEquals(url, "https://veryfront.com/studio/my-app");
     });
 
-    it("uses project slug with --project-slug override", () => {
+    it("uses project slug with --project override", () => {
       const url = buildUrl("custom-slug", { studio: false });
       assertEquals(url, "https://veryfront.com/projects/custom-slug");
     });

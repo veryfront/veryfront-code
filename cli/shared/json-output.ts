@@ -109,3 +109,10 @@ export async function outputJson(envelope: JsonEnvelope): Promise<void> {
 export function streamJsonLine(event: Record<string, unknown>): void {
   console.log(JSON.stringify(event));
 }
+
+/**
+ * Pretty-print any value as indented JSON to stdout.
+ */
+export function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}

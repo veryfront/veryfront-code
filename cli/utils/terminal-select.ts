@@ -75,10 +75,9 @@ export async function select(
   let selectedIndex = defaultIndex;
   const [heading, instructions] = formatPrompt(question, display.showMarker ?? false);
 
-  console.log("");
   console.log(heading);
   if (display.showInstructions ?? true) console.log(instructions);
-  console.log("");
+  console.log();
 
   function renderOptions(): void {
     for (let i = 0; i < options.length; i++) {

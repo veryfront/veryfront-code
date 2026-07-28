@@ -13,13 +13,23 @@ import {
 } from "veryfront/platform";
 import { isTruthyEnvValue } from "veryfront/utils";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
-import { bold, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
+import { bold, brand, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
+import {
+  cliLogger as _canonicalCliLogger,
+  LogLevel,
+  setLogLevel as _setCanonicalLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 
 type LoggerMethod = (...args: unknown[]) => void;
 
 function debugEnabled(): boolean {
   return _verboseMode || isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
+}
+
+function firstAsString(args: unknown[]): string {
+  const [first] = args;
+  return typeof first === "string" ? first : String(first);
 }
 
 export const cliLogger: {
@@ -34,11 +44,11 @@ export const cliLogger: {
     if (isJsonMode() || !debugEnabled()) return;
     console.debug(...args);
   },
-  info: (...args) => console.log(...args),
-  warn: (...args) => console.warn(...args),
-  error: (...args) => console.error(...args),
+  info: (...args) => _canonicalCliLogger.info(firstAsString(args), ...args.slice(1)),
+  warn: (...args) => _canonicalCliLogger.warn(firstAsString(args), ...args.slice(1)),
+  error: (...args) => _canonicalCliLogger.error(firstAsString(args), ...args.slice(1)),
   child: () => cliLogger,
-  // CLI logger uses plain text output; component names are intentionally ignored.
+  // CLI logger ignores component names — no structured tag in CLI output.
   component: () => cliLogger,
 };
 
@@ -74,7 +84,10 @@ export function isTTY(): boolean {
 
 export function showHeader(): void {
   if (isJsonMode()) return;
-  cliLogger.info(`${bold("Veryfront")} ${dim(`(v${VERSION})`)}\n`);
+
+  // Raw brand output — written directly to stdout, not through the canonical
+  // logger, so it never picks up a timestamp/tag/glyph prefix.
+  console.log(`${bold(brand("Veryfront"))} ${dim(`(v${VERSION})`)}\n`);
 }
 
 /** @deprecated Use {@link showHeader}. */
@@ -90,6 +103,13 @@ export function logError(message: string): void {
 
 export function logWarning(message: string): void {
   console.warn(`  ${warningColor("!")} ${message}`);
+}
+
+export function logUsageError(message: string, hint?: string): void {
+  logError(message);
+  if (hint) {
+    console.error(`  ${dim(hint)}`);
+  }
 }
 
 export function logInfo(message: string): void {
@@ -124,12 +144,26 @@ let _quietMode = false;
 
 export function setVerboseMode(enabled: boolean): void {
   _verboseMode = enabled;
-  if (enabled) _quietMode = false;
+  if (enabled) {
+    _quietMode = false;
+    // Propagate to the canonical logger so all framework output (server startup,
+    // config loading, etc.) also becomes visible at debug level.
+    _setCanonicalLogLevel(LogLevel.DEBUG);
+  } else {
+    // Restore to INFO (unless quiet mode is active, which holds WARN).
+    if (!_quietMode) _setCanonicalLogLevel(LogLevel.INFO);
+  }
 }
 
 export function setQuietMode(enabled: boolean): void {
   _quietMode = enabled;
-  if (enabled) _verboseMode = false;
+  if (enabled) {
+    _verboseMode = false;
+    _setCanonicalLogLevel(LogLevel.WARN);
+  } else {
+    // Restore to INFO (unless verbose mode is active, which holds DEBUG).
+    if (!_verboseMode) _setCanonicalLogLevel(LogLevel.INFO);
+  }
 }
 
 export function isVerbose(): boolean {

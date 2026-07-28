@@ -7,7 +7,7 @@ export const doctorHelp: CommandHelp = {
   usage: "veryfront doctor [options]",
   options: [
     {
-      flag: "-p, --port <number>",
+      flag: "--port <number>",
       description: "Port used by the development server",
     },
     {

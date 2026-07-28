@@ -1,11 +1,12 @@
-import { cliLogger } from "#cli/utils";
-import { getStdinReader, setRawMode, writeStdout } from "veryfront/platform";
+import { cliLogger, exitProcess } from "#cli/utils";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
-import { brand, dim, error, muted, warning } from "../ui/colors.ts";
+import { brand, dim, error, warning } from "../ui/colors.ts";
+import { createSpinner, type SpinnerController } from "../ui/progress.ts";
+import { PromptInterruptedError, select } from "../utils/terminal-select.ts";
 import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
@@ -31,6 +32,10 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "microsoft", label: "Microsoft" },
   { id: "token", label: "API Token" },
 ];
+
+class NetworkError extends Error {
+  override name = "NetworkError";
+}
 
 export function createOAuthState(): string {
   const bytes = new Uint8Array(32);
@@ -69,7 +74,8 @@ export async function validateToken(
     }
 
     return (await response.json()) as UserInfo;
-  } catch {
+  } catch (e) {
+    if (e instanceof TypeError) throw new NetworkError("Could not reach the Veryfront API");
     return null;
   }
 }
@@ -96,7 +102,8 @@ async function validateApiKey(
     });
     await response.body?.cancel();
     return response.ok;
-  } catch {
+  } catch (e) {
+    if (e instanceof TypeError) throw new NetworkError("Could not reach the Veryfront API");
     return false;
   }
 }
@@ -115,125 +122,84 @@ export async function validateCredential(
 }
 
 async function promptAuthMethod(): Promise<AuthMethod> {
-  console.log();
-  console.log("  " + dim("Choose authentication method:"));
-  console.log();
-
-  let selectedIndex = 0;
-
-  function drawOptions(): void {
-    for (let i = 0; i < AUTH_OPTIONS.length; i++) {
-      const opt = AUTH_OPTIONS[i]!;
-      console.log(
-        i === selectedIndex ? "  " + brand("❯") + " " + opt.label : "    " + muted(opt.label),
-      );
-    }
-  }
-
-  function redrawOptions(): void {
-    writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
-    for (let i = 0; i < AUTH_OPTIONS.length; i++) {
-      writeStdout("\x1b[2K\x1b[1B");
-    }
-    writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
-    drawOptions();
-  }
-
-  drawOptions();
-
-  setRawMode(true);
-  const reader = getStdinReader();
-  const dec = new TextDecoder();
-
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) return "google";
+    const result = await select(
+      dim("Choose authentication method:"),
+      AUTH_OPTIONS.map((o) => ({ value: o.id, label: o.label })),
+      0,
+      {
+        showMarker: false,
+        showInstructions: false,
+        showDescriptions: false,
+        interruptOnCtrlC: true,
+        clearOnCancel: false,
+      },
+    );
 
-      const key = dec.decode(value);
-
-      if (key === "\x03") return "token"; // Ctrl+C - default to token (will prompt)
-      if (key === "\r" || key === "\n") return AUTH_OPTIONS[selectedIndex]?.id ?? "token";
-
-      if (key === "\x1b[A" || key === "k") {
-        selectedIndex = Math.max(0, selectedIndex - 1);
-        redrawOptions();
-        continue;
-      }
-
-      if (key === "\x1b[B" || key === "j") {
-        selectedIndex = Math.min(AUTH_OPTIONS.length - 1, selectedIndex + 1);
-        redrawOptions();
-        continue;
-      }
-
-      if (key >= "1" && key <= "4") {
-        return AUTH_OPTIONS[Number.parseInt(key, 10) - 1]?.id ?? "token";
-      }
+    if (result === null) {
+      exitProcess(130);
+      return "token"; // unreachable
     }
-  } finally {
-    reader.releaseLock();
-    setRawMode(false);
+
+    return result as AuthMethod;
+  } catch (e) {
+    if (e instanceof PromptInterruptedError) {
+      exitProcess(130);
+      return "token"; // unreachable
+    }
+    throw e;
   }
 }
 
 async function loginWithOAuth(
   provider: "google" | "github" | "microsoft",
   env: EnvironmentConfig,
+  spinner: SpinnerController,
 ): Promise<string | null> {
-  console.log();
-
   if (!canOpenBrowser(env)) {
-    console.log("  " + warning("Browser login not available in this environment."));
+    spinner.stop();
+    console.log("  " + warning("!") + " Browser login not available in this environment.");
     console.log("  " + dim("Please use the API token option instead."));
     return null;
   }
-
-  console.log("  " + dim("Starting authentication server..."));
 
   const state = createOAuthState();
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
     server = await startCallbackServer(DEFAULT_CALLBACK_PORT, { expectedState: state });
   } catch (e) {
-    console.log("  " + error(`Failed to start server: ${e}`));
+    spinner.error(`Failed to start authentication server: ${e}`);
     return null;
   }
 
   const callbackUrl = getCallbackUrl(server.port);
   const authUrl = createOAuthAuthorizationUrl(provider, callbackUrl, state, env);
 
-  console.log("  " + brand("Opening browser to log in..."));
-  console.log();
-
+  spinner.update("Opening browser to log in...");
   try {
     await openBrowser(authUrl);
   } catch {
-    console.log("  " + dim("Could not open browser automatically."));
-    console.log("  " + dim("Please use the API token option instead."));
+    // Browser open failed; spinner text still visible so user knows what's happening
   }
 
-  console.log("  " + muted("Waiting for login..."));
+  spinner.update("Waiting for login...");
 
   try {
     const result = await server.waitForCallback(DEFAULT_LOGIN_TIMEOUT_MS);
 
     if (result.error) {
-      console.log();
-      console.log("  " + error("✗") + " Login failed: " + result.error);
+      spinner.error(`Login failed: ${result.error}`);
       return null;
     }
 
     if (!result.token) {
-      console.log();
-      console.log("  " + error("✗") + " No token received");
+      spinner.error("No token received");
       return null;
     }
 
     return result.token;
   } catch (e) {
-    console.log();
-    console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
+    spinner.error(e instanceof Error ? e.message : String(e));
     return null;
   } finally {
     await server.stop();
@@ -267,23 +233,59 @@ export async function login(
 
   const authMethod = method ?? (isTTY() ? await promptAuthMethod() : "token");
 
-  let token: string | null = null;
-  switch (authMethod) {
-    case "google":
-    case "github":
-    case "microsoft":
-      token = await loginWithOAuth(authMethod, env);
-      break;
-    case "token":
-      token = await loginWithToken();
-      break;
+  if (authMethod === "google" || authMethod === "github" || authMethod === "microsoft") {
+    const spinner = createSpinner("Starting authentication server...");
+    const token = await loginWithOAuth(authMethod, env, spinner);
+    if (!token) return null;
+
+    spinner.update("Validating token...");
+    let identity: AuthIdentity | null;
+    try {
+      identity = await validateCredential(token, env);
+    } catch (e) {
+      if (e instanceof NetworkError) {
+        spinner.stop();
+        console.log();
+        console.log("  " + error("✗") + " Could not reach the Veryfront API");
+        console.log("  " + dim("Check your network connection and try again"));
+        return null;
+      }
+      throw e;
+    }
+
+    if (!identity) {
+      spinner.error("Invalid token");
+      return null;
+    }
+
+    await saveToken(token, env);
+    spinner.success(
+      isApiKeyIdentity(identity)
+        ? "Authenticated with an API key"
+        : `Logged in as ${brand(identity.email)}`,
+    );
+    return identity;
   }
 
+  // Token path: no spinner, plain text status
+  const token = await loginWithToken();
   if (!token) return null;
 
   console.log("  " + dim("Validating token..."));
 
-  const identity = await validateCredential(token, env);
+  let identity: AuthIdentity | null;
+  try {
+    identity = await validateCredential(token, env);
+  } catch (e) {
+    if (e instanceof NetworkError) {
+      console.log();
+      console.log("  " + error("✗") + " Could not reach the Veryfront API");
+      console.log("  " + dim("Check your network connection and try again"));
+      return null;
+    }
+    throw e;
+  }
+
   if (!identity) {
     console.log();
     console.log("  " + error("✗") + " Invalid token");
@@ -398,7 +400,7 @@ export async function whoami(
   }
 
   console.log();
-  console.log("  " + warning("✗") + " Not logged in");
+  console.log("  " + error("✗") + " Not logged in");
   console.log("  " + dim("Run 'veryfront login' to authenticate"));
 
   // Show provider tokens

@@ -37,6 +37,8 @@ export interface ErrorDefinition {
   status: number;
   title: string;
   suggestion?: string;
+  /** Process exit code to use when this error reaches the CLI boundary (e.g. 2 for usage errors). */
+  exitCode?: number;
 }
 
 /**
@@ -73,6 +75,7 @@ export function defineError(definition: ErrorDefinition): RegisteredError {
         status: options?.status ?? definition.status,
         title: definition.title,
         suggestion: definition.suggestion,
+        exitCode: definition.exitCode,
         detail: options?.detail,
         cause: options?.cause,
         instance: options?.instance,
@@ -91,6 +94,8 @@ export interface VeryfrontErrorOptions extends ErrorCreateOptions {
   status: number;
   title: string;
   suggestion?: string;
+  /** Process exit code to use at the CLI boundary. */
+  exitCode?: number;
 }
 
 /**
@@ -106,6 +111,8 @@ export class VeryfrontError extends Error {
   override cause?: unknown;
   instance?: string;
   context?: unknown;
+  /** Process exit code for the CLI boundary (e.g. 2 for usage errors). */
+  exitCode?: number;
 
   constructor(message: string, options: VeryfrontErrorOptions) {
     super(message);
@@ -116,6 +123,7 @@ export class VeryfrontError extends Error {
     this.status = options.status;
     this.title = options.title;
     this.suggestion = options.suggestion;
+    this.exitCode = options.exitCode;
     this.detail = options.detail;
     this.cause = options.cause;
     this.instance = options.instance;

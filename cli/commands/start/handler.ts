@@ -16,8 +16,8 @@ const getStartArgsSchema = defineSchema((v) =>
 const StartArgsSchema = lazySchema(getStartArgsSchema);
 
 export const parseStartArgs = createArgParser(StartArgsSchema, {
-  port: { keys: ["port", "p"], type: "number" },
-  project: { keys: ["project"], type: "string" },
+  port: { keys: ["port"], type: "number" },
+  project: { keys: ["project-dir", "project"], type: "string" },
   headless: { keys: ["headless", "no-tui"], type: "boolean" },
 });
 

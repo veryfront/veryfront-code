@@ -24,6 +24,7 @@ import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfr
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { encodeBase64 } from "#veryfront/utils";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
 export type MetricAttributes = Record<string, MetricAttributeValue>;
@@ -368,8 +369,11 @@ function buildDirectOtlpBody(samples: DirectMetricSample[]) {
 }
 
 function logDirectExportFailure(error: unknown): void {
-  if (readEnv("VERYFRONT_DEBUG") !== "1") return;
-  console.warn("[metrics] direct OTLP export failed", error);
+  // debug level — suppressed at default INFO threshold, visible with --debug / LOG_LEVEL=DEBUG.
+  serverLogger.debug(
+    "metrics: direct OTLP export failed",
+    error instanceof Error ? error : { reason: String(error) },
+  );
 }
 
 async function flushDirectMetrics(): Promise<void> {

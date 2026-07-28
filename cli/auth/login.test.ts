@@ -56,8 +56,15 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
   describe("Token validation", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should detect invalid token format", async () => {
-      const { validateToken } = await import("./login.ts");
-      assertEquals(await validateToken(""), null);
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
+        const { validateToken } = await import("./login.ts");
+        assertEquals(await validateToken(""), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it("should use the provided API URL", async () => {
@@ -219,8 +226,15 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
   describe("User info from token", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return null for invalid JWT", async () => {
-      const { validateToken } = await import("./login.ts");
-      assertEquals(await validateToken("invalid-token"), null);
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
+        const { validateToken } = await import("./login.ts");
+        assertEquals(await validateToken("invalid-token"), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

@@ -17,7 +17,7 @@ export type OpenOptions = InferSchema<ReturnType<typeof getOpenArgsSchema>>;
 export const parseOpenArgs = createArgParser(OpenArgsSchema, {
   env: { keys: ["env"], type: "string" },
   studio: { keys: ["studio"], type: "boolean" },
-  projectSlug: { keys: ["project-slug", "project", "p"], type: "string" },
+  projectSlug: { keys: ["project", "p"], type: "string" },
 });
 
 const DASHBOARD_BASE = "https://veryfront.com";

@@ -104,7 +104,11 @@ export async function upCommand(
       streamJsonLine({
         type: "result",
         success: false,
-        error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+        error: {
+          code: "RUNTIME_ERROR",
+          slug: "unknown-error",
+          message: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+        },
       });
     }
     exitProcess(1);
@@ -120,7 +124,11 @@ export async function upCommand(
       streamJsonLine({
         type: "result",
         success: false,
-        error: "This folder is empty. Add project files or run veryfront init.",
+        error: {
+          code: "RUNTIME_ERROR",
+          slug: "unknown-error",
+          message: "This folder is empty. Add project files or run veryfront init.",
+        },
       });
     } else {
       logWarning("This folder is empty.");
@@ -139,8 +147,8 @@ export async function upCommand(
     projectSlug = context.config.projectSlug!;
   } else {
     if (!jsonOutput) {
-      cliLogger.info("");
-      cliLogger.info("Creating project...");
+      console.log();
+      console.log("  Creating project...");
     }
 
     let slug = context.suggestedSlug;

@@ -501,7 +501,7 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "serve");
         assertEquals(parsed.error.code, "USAGE_ERROR");
-        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.slug, "invalid-argument");
       } finally {
         restoreAll();
       }
@@ -543,7 +543,7 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "schedule");
         assertEquals(parsed.error.code, "USAGE_ERROR");
-        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.slug, "invalid-argument");
       } finally {
         restoreAll();
       }

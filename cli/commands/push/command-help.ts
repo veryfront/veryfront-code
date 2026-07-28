@@ -11,7 +11,7 @@ export const pushHelp: CommandHelp = {
       description: "Source directory (default: current directory)",
     },
     {
-      flag: "-p, --project-slug <slug>",
+      flag: "-p, --project <slug>",
       description: "Project slug to push to (overrides inferred project)",
     },
     {

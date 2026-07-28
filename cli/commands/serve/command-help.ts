@@ -2,12 +2,13 @@ import type { CommandHelp } from "../../help/types.ts";
 
 export const serveHelp: CommandHelp = {
   name: "serve",
+  aliases: ["preview"],
   category: "development",
-  description: "Start production server",
+  description: "Run the production HTTP server (headless)",
   usage: "veryfront serve [options]",
   options: [
     {
-      flag: "-p, --port <number>",
+      flag: "--port <number>",
       description: "Port to run on",
       default: "3000",
     },

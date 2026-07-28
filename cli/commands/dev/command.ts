@@ -10,9 +10,8 @@ import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
 import { validateProviderConfig } from "veryfront/discovery";
-import { yellow } from "#cli/ui";
-import { exitProcess, isTTY, registerTerminationSignals } from "#cli/utils";
-import { brand, dim, error as errorColor } from "#cli/ui";
+import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
+import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
@@ -79,6 +78,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
     "cli.command.dev",
     async () => {
       const { port, projectDir, hmr = true, open = false, demoMode = false } = options;
+      const startTime = Date.now();
 
       let doneResolve: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {
@@ -120,11 +120,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       // Validate provider config and print warnings (framework returns plain text, CLI adds colors)
       const aiValidation = validateProviderConfig(config);
       if (aiValidation.warnings.length > 0) {
-        console.log("");
-        for (const warning of aiValidation.warnings) {
-          console.log(`  ${yellow("!")} ${warning.replace(/\n/g, "\n    ")}`);
+        console.log();
+        for (const w of aiValidation.warnings) {
+          console.log(`  ${warning("!")} ${w.replace(/\n/g, "\n    ")}`);
         }
-        console.log("");
+        console.log();
       }
 
       if (config?.experimental?.precompileMDX) {
@@ -250,13 +250,17 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const serverUrl = `http://veryfront.me:${finalPort}`;
+      const elapsed = Date.now() - startTime;
 
       console.log();
-      console.log(`  ✓ Ready at ${brand(serverUrl)}`);
-      if (mcpServer) {
-        console.log(`  MCP ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`);
+      console.log(`  ✓ Ready in ${formatDuration(elapsed)}`);
+      console.log(`  ${brand(serverUrl)}`);
+      if (mcpServer && isVerbose()) {
+        console.log(`  ${dim("MCP")} ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`);
       }
-
+      if (isTTY()) {
+        console.log(devShortcuts());
+      }
       console.log();
 
       if (open) {

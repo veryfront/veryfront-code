@@ -131,7 +131,11 @@ describe("Up Command", () => {
         assertEquals(JSON.parse(output[0]!), {
           type: "result",
           success: false,
-          error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+          error: {
+            code: "RUNTIME_ERROR",
+            slug: "unknown-error",
+            message: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+          },
         });
       } finally {
         console.log = originalConsoleLog;
@@ -167,7 +171,11 @@ describe("Up Command", () => {
         assertEquals(JSON.parse(output[0]!), {
           type: "result",
           success: false,
-          error: "This folder is empty. Add project files or run veryfront init.",
+          error: {
+            code: "RUNTIME_ERROR",
+            slug: "unknown-error",
+            message: "This folder is empty. Add project files or run veryfront init.",
+          },
         });
       } finally {
         globalThis.fetch = originalFetch;

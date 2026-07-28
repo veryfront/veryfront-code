@@ -20,7 +20,7 @@ const DoctorArgsSchema = lazySchema(getDoctorArgsSchema);
 
 export const parseDoctorArgs = createArgParser(DoctorArgsSchema, {
   strict: { keys: ["strict", "s"], type: "boolean" },
-  port: { keys: ["port", "p"], type: "number" },
+  port: { keys: ["port"], type: "number" },
 });
 
 export async function handleDoctorCommand(args: ParsedArgs): Promise<void> {

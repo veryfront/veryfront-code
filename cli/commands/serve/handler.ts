@@ -38,7 +38,7 @@ const ServeArgsSchema = lazySchema(getServeArgsSchema);
 
 const parseServeArgsBase = createArgParser(ServeArgsSchema, {
   mode: { keys: ["mode", "m"], type: "string" },
-  port: { keys: ["port", "p"], type: "number" },
+  port: { keys: ["port"], type: "number" },
   hostname: { keys: ["hostname", "host"], type: "string" },
   split: { keys: ["split"], type: "boolean" },
   binary: { keys: ["binary"], type: "boolean" },
@@ -54,9 +54,7 @@ export const parseServeArgs: typeof parseServeArgsBase = (args) => {
     success: true,
     data: {
       ...result.data,
-      port: args.port === undefined && args.p === undefined
-        ? getDefaultServePort()
-        : result.data.port,
+      port: args.port === undefined ? getDefaultServePort() : result.data.port,
       hostname: args.hostname === undefined && args.host === undefined
         ? getDefaultBindAddress()
         : result.data.hostname,

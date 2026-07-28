@@ -1,4 +1,5 @@
 import type { ParsedArgs } from "#cli/shared/types";
+import { exitProcess, logUsageError } from "#cli/utils";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { getSkillInfo, listSkills } from "./command.ts";
 import { bold, dim } from "../../ui/colors.ts";
@@ -58,14 +59,16 @@ async function handleSkillList(): Promise<void> {
 async function handleSkillInfo(args: ParsedArgs): Promise<void> {
   const name = args._[2] as string | undefined;
   if (!name) {
-    console.error("Usage: veryfront skills info <name>");
-    Deno.exit(1);
+    logUsageError("Usage: veryfront skills info <name>");
+    exitProcess(2);
+    return;
   }
 
   const skill = await getSkillInfo(name);
   if (!skill) {
-    console.error(`Skill not found: ${name}`);
-    Deno.exit(1);
+    logUsageError(`Skill not found: ${name}`, "Try: veryfront skills list");
+    exitProcess(1);
+    return;
   }
 
   if (isJsonMode()) {

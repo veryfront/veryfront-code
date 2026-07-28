@@ -266,7 +266,7 @@ describe("schedule command", () => {
           input: "missing.json",
         } as ParsedArgs),
       Error,
-      "Invalid schedule arguments: remote runs use the source already pushed to Veryfront and do not accept --input.",
+      "Remote schedule runs use the source already pushed to Veryfront and do not accept --input.",
     );
   });
 });

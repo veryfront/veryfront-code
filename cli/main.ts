@@ -14,6 +14,12 @@
 await import("veryfront/platform/esbuild-init");
 await import("veryfront/discovery/runtime-modules-bootstrap");
 
+// Switch the canonical logger to CLI preset so all framework messages (server
+// startup, config loading) render in the CLI's visual language rather than the
+// server's HH:MM:SS  TAG  ● format. Must run before any framework module logs.
+const { setLoggerPreset } = await import("#veryfront/utils/logger/logger.ts");
+setLoggerPreset("cli");
+
 // All imports below must be dynamic to ensure esbuild init completes first
 const { getArgs } = await import("veryfront/platform");
 const { hasEnvLoaded, loadEnv, markEnvLoaded, supportsEnvFiles } = await import(

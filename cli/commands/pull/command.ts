@@ -20,7 +20,7 @@ import {
   resolveConfigWithAuth,
   type ResolvedConfig,
 } from "#cli/shared/config";
-import { confirmPrompt, isTTY, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { confirmPrompt, isTTY, logError, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { isInteractive } from "../../shared/interactive.ts";
 import { getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
@@ -365,7 +365,7 @@ async function writeFiles(
         written++;
         continue;
       }
-      cliLogger.error(`Failed to write ${result.path}:`, result.error);
+      logError(`Failed to write ${result.path}: ${result.error?.message ?? String(result.error)}`);
       failed++;
     }
   }
@@ -428,7 +428,11 @@ async function deleteLocalFiles(
       await fs.remove(op.path);
       deleted++;
     } catch (error) {
-      cliLogger.error(`Failed to delete ${op.relativePath}:`, error);
+      logError(
+        `Failed to delete ${op.relativePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       failed++;
     }
   }
