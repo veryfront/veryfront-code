@@ -33,6 +33,11 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     await Bun.write(path, content);
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    const { rename } = await import("node:fs/promises");
+    await rename(from, to);
+  }
+
   async exists(path: string): Promise<boolean> {
     const { stat } = await import("node:fs/promises");
 

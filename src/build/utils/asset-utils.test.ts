@@ -10,6 +10,7 @@ import {
   getRequiredImageDimensions,
   getStandardPseudoSelectors,
   getVariantPath,
+  isContainedAssetPath,
   isPseudoSelector,
 } from "./asset-utils.ts";
 
@@ -27,6 +28,45 @@ function createMetadata(
 }
 
 describe("build/utils/asset-utils", () => {
+  describe("isContainedAssetPath", () => {
+    it("accepts equality and descendants for absolute and relative paths", () => {
+      assertEquals(isContainedAssetPath("/project", "/project"), true);
+      assertEquals(isContainedAssetPath("/project", "/project/assets/app.css"), true);
+      assertEquals(isContainedAssetPath(".", "assets/app.css"), true);
+      assertEquals(isContainedAssetPath("project", "project/assets/app.css"), true);
+    });
+
+    it("rejects traversal, siblings, unrelated absolutes, and different drives", () => {
+      assertEquals(
+        isContainedAssetPath("/project", "/project/assets/../../secret.css"),
+        false,
+      );
+      assertEquals(isContainedAssetPath("/project", "/project-other/app.css"), false);
+      assertEquals(isContainedAssetPath("/project", "/other/app.css"), false);
+      assertEquals(
+        isContainedAssetPath("C:/project", "D:/project/assets/app.css"),
+        false,
+      );
+    });
+
+    it("normalizes Windows separators without prefix confusion", () => {
+      assertEquals(
+        isContainedAssetPath(
+          String.raw`C:\project`,
+          String.raw`C:\project\assets\app.css`,
+        ),
+        true,
+      );
+      assertEquals(
+        isContainedAssetPath(
+          String.raw`C:\project`,
+          String.raw`C:\project-other\app.css`,
+        ),
+        false,
+      );
+    });
+  });
+
   describe("isPseudoSelector", () => {
     it("should detect pseudo selectors", () => {
       assertEquals(isPseudoSelector(":hover"), true);

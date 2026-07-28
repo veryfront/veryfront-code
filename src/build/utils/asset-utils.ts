@@ -3,7 +3,15 @@
  * Merges CSS, Image, and Tailwind processor utilities
  */
 
-import { basename, dirname, extname, join } from "#veryfront/compat/path/index.ts";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import { logger } from "#veryfront/utils";
 import type {
@@ -18,6 +26,20 @@ import {
 } from "./file-types.ts";
 
 export const CSS_EXTENSIONS = [".css", ".scss", ".sass", ".less"];
+
+/**
+ * Return whether an asset path resolves to the base directory or one of its
+ * descendants. Resolving both operands keeps relative paths anchored to the
+ * same working directory, while `relative` handles platform path flavors.
+ */
+export function isContainedAssetPath(basePath: string, candidatePath: string): boolean {
+  const relativePath = relative(resolve(basePath), resolve(candidatePath));
+  return relativePath === "." ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !relativePath.startsWith("..\\") &&
+      !isAbsolute(relativePath));
+}
 
 export async function findCSSFiles(dir: string): Promise<string[]> {
   const cssFiles: string[] = [];

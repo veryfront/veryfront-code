@@ -50,6 +50,7 @@ describe("Filesystem Compat", () => {
       const methods = [
         "readTextFile",
         "writeTextFile",
+        "rename",
         "exists",
         "mkdir",
         "remove",
@@ -78,6 +79,20 @@ describe("Filesystem Compat", () => {
 
     it("should handle unicode content", async () => {
       await assertWriteReadTextFile("test-unicode.txt", "こんにちは 🌍 مرحبا");
+    });
+  });
+
+  describe("rename", () => {
+    it("atomically moves a file within one filesystem", async () => {
+      const fs = createFileSystem();
+      const from = join(testDir, "rename-source.txt");
+      const to = join(testDir, "rename-destination.txt");
+      await fs.writeTextFile(from, "renamed");
+
+      await fs.rename!(from, to);
+
+      assertEquals(await fs.exists(from), false);
+      assertEquals(await fs.readTextFile(to), "renamed");
     });
   });
 

@@ -17,9 +17,12 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
-import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
 import { createBuildPublication } from "../../production-build/build/build-publication.ts";
-import { calculateRequiredAspectRatio, generateSrcSet } from "../../utils/asset-utils.ts";
+import {
+  calculateRequiredAspectRatio,
+  generateSrcSet,
+  isContainedAssetPath,
+} from "../../utils/asset-utils.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
 import {
   DEFAULT_OPTIONS,
@@ -204,14 +207,14 @@ export class ImageOptimizer {
     if (
       inputDir === projectDir ||
       outputDir === projectDir ||
-      !isContainedBuildPath(projectDir, inputDir) ||
-      !isContainedBuildPath(projectDir, outputDir)
+      !isContainedAssetPath(projectDir, inputDir) ||
+      !isContainedAssetPath(projectDir, outputDir)
     ) {
       throw new TypeError("Image input and output directories must be inside the project");
     }
     if (
-      isContainedBuildPath(inputDir, outputDir) ||
-      isContainedBuildPath(outputDir, inputDir)
+      isContainedAssetPath(inputDir, outputDir) ||
+      isContainedAssetPath(outputDir, inputDir)
     ) {
       throw new TypeError("Image input and output directories must not overlap");
     }
@@ -253,14 +256,14 @@ export class ImageOptimizer {
       canonicalTargetPath(this.options.outputDir),
     ]);
     if (
-      !isContainedBuildPath(canonicalProject, canonicalInput) ||
-      !isContainedBuildPath(canonicalProject, canonicalOutput)
+      !isContainedAssetPath(canonicalProject, canonicalInput) ||
+      !isContainedAssetPath(canonicalProject, canonicalOutput)
     ) {
       throw new TypeError("Image input and output must remain inside the physical project");
     }
     if (
-      isContainedBuildPath(canonicalInput, canonicalOutput) ||
-      isContainedBuildPath(canonicalOutput, canonicalInput)
+      isContainedAssetPath(canonicalInput, canonicalOutput) ||
+      isContainedAssetPath(canonicalOutput, canonicalInput)
     ) {
       throw new TypeError("Physical image input and output directories must not overlap");
     }
