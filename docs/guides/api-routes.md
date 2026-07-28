@@ -41,6 +41,34 @@ export async function POST(ctx: APIContext) {
 }
 ```
 
+## Import route dependencies
+
+Import package functions into the route, then export an explicit HTTP handler:
+
+```ts
+// app/api/slug/route.ts
+import slugify from "slugify";
+
+export function POST(request: Request) {
+  return request.json().then(({ title }) => {
+    return Response.json({ slug: slugify(String(title)) });
+  });
+}
+```
+
+This form works for ESM packages and for CommonJS packages adapted by a
+compiled Veryfront release. Do not directly re-export a CommonJS package symbol
+as a route handler:
+
+```ts
+// Unsupported for CommonJS packages in compiled releases:
+export { handler as POST } from "legacy-commonjs-package";
+```
+
+Import the symbol first and wrap or assign it to an explicit handler export.
+Veryfront rejects an unsupported CommonJS re-export during route loading
+instead of leaving an unresolved runtime import.
+
 ## Basic route
 
 ```ts

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
@@ -30,6 +30,50 @@ import { hashString } from "../utils/hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 describe("MDX module path cache", () => {
+  it("propagates operational index failures instead of treating them as a cache miss", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-index-operational-error-" });
+    const localFs = getLocalFs();
+    const originalStat = localFs.stat.bind(localFs);
+    const indexPath = join(cacheDir, "_index.json");
+    const permissionError = Object.assign(new Error("module index read denied"), {
+      code: "EACCES",
+    });
+
+    try {
+      localFs.stat = (path: string) =>
+        path === indexPath ? Promise.reject(permissionError) : originalStat(path);
+
+      const error = await assertRejects(
+        () => getModulePathCache(cacheDir),
+        Error,
+        "module index read denied",
+      );
+      assertEquals(error, permissionError);
+    } finally {
+      localFs.stat = originalStat;
+      await remove(cacheDir, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
+  it("recovers from malformed index data as an explicitly empty cache", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-malformed-index-" });
+    try {
+      await writeTextFile(join(cacheDir, "_index.json"), "{");
+
+      const cache = await getModulePathCache(cacheDir);
+      assertEquals(cache.size, 0);
+      assertEquals(await getModulePathCache(cacheDir), cache);
+    } finally {
+      await remove(cacheDir, { recursive: true });
+      clearModulePathCache();
+    }
+  });
+
   it("partitions SSR cache directories by runtime version", async () => {
     const cacheBase = await makeTempDir({ prefix: "vf-mdx-versioned-cache-dir-" });
     const projectId = "project-versioned-cache";

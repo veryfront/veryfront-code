@@ -1,6 +1,6 @@
 import { join } from "#veryfront/compat/path";
 import { rendererLogger } from "#veryfront/utils";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_ROOT,
@@ -9,6 +9,8 @@ import {
 import { DIRECTORY_PREFIXES, LOG_PREFIX_MDX_LOADER, MODULE_EXTENSIONS } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { ModuleSourceLimitError } from "../module-fetcher/limits.ts";
+import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "../module-fetcher/recovery-payload.ts";
 
 const logger = rendererLogger.component("file-finder");
 
@@ -27,13 +29,82 @@ function decodeContent(content: string | Uint8Array): string {
   return typeof content === "string" ? content : new TextDecoder().decode(content);
 }
 
+function assertModuleSourceLimit(modulePath: string, sourceCode: string): string {
+  const sizeBytes = utf8ByteLength(sourceCode);
+  if (sizeBytes > MAX_MDX_MODULE_CODE_BYTES) {
+    throw new ModuleSourceLimitError(
+      modulePath,
+      sizeBytes,
+      MAX_MDX_MODULE_CODE_BYTES,
+    );
+  }
+  return sourceCode;
+}
+
+async function readAdapterModuleSource(
+  path: string,
+  modulePath: string,
+  fs: FileSystemAdapter,
+): Promise<string> {
+  if (typeof fs.readFileBytesBounded === "function") {
+    const content = await fs.readFileBytesBounded(
+      path,
+      MAX_MDX_MODULE_CODE_BYTES + 1,
+    );
+    if (content.byteLength > MAX_MDX_MODULE_CODE_BYTES) {
+      throw new ModuleSourceLimitError(
+        modulePath,
+        content.byteLength,
+        MAX_MDX_MODULE_CODE_BYTES,
+      );
+    }
+    return decodeContent(content);
+  }
+
+  if (typeof fs.stat === "function") {
+    const stat = await fs.stat(path);
+    if (!stat.isFile) throw new TypeError(`MDX module source is not a regular file: ${path}`);
+    if (
+      Number.isSafeInteger(stat.size) &&
+      stat.size >= 0 &&
+      stat.size > MAX_MDX_MODULE_CODE_BYTES
+    ) {
+      throw new ModuleSourceLimitError(
+        modulePath,
+        stat.size,
+        MAX_MDX_MODULE_CODE_BYTES,
+      );
+    }
+  }
+
+  return assertModuleSourceLimit(modulePath, decodeContent(await fs.readFile(path)));
+}
+
+async function readLocalModuleSource(path: string, modulePath: string): Promise<string> {
+  const localFs = getLocalFs();
+  const stat = await localFs.stat(path);
+  if (!stat.isFile) throw new TypeError(`MDX module source is not a regular file: ${path}`);
+  if (
+    Number.isSafeInteger(stat.size) &&
+    stat.size >= 0 &&
+    stat.size > MAX_MDX_MODULE_CODE_BYTES
+  ) {
+    throw new ModuleSourceLimitError(
+      modulePath,
+      stat.size,
+      MAX_MDX_MODULE_CODE_BYTES,
+    );
+  }
+  return assertModuleSourceLimit(modulePath, await localFs.readTextFile(path));
+}
+
 async function tryReadFile(
   path: string,
-  readFile: (path: string) => Promise<string | Uint8Array>,
+  readFile: (path: string) => Promise<string>,
 ): Promise<FileResolutionResult | null> {
   try {
     const content = await readFile(path);
-    return { sourceCode: decodeContent(content), actualFilePath: path };
+    return { sourceCode: content, actualFilePath: path };
   } catch (error) {
     if (isNotFoundError(error)) return null;
     throw error;
@@ -70,13 +141,17 @@ export async function resolveModuleFile(
       if (!resolvedPath) continue;
 
       try {
-        const content = await adapter.fs.readFile(resolvedPath);
+        const content = await readAdapterModuleSource(
+          resolvedPath,
+          normalizedPath,
+          adapter.fs,
+        );
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file via index`, {
           normalizedPath,
           basePath,
           resolvedPath,
         });
-        return { sourceCode: decodeContent(content), actualFilePath: resolvedPath };
+        return { sourceCode: content, actualFilePath: resolvedPath };
       } catch (error) {
         if (!isNotFoundError(error)) throw error;
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to read resolved file`, {
@@ -93,25 +168,33 @@ export async function resolveModuleFile(
   }
 
   if (!isFramework && projectDir && !adapter.fs.resolveFile) {
-    const localFs = getLocalFs();
     const normalizedProjectDir = stripTrailingSlashes(projectDir);
 
     for (const prefix of DIRECTORY_PREFIXES) {
       if (hasKnownExt) {
         const absolutePath = join(normalizedProjectDir, prefix + filePathWithoutJs);
-        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
+        const result = await tryReadFile(
+          absolutePath,
+          (p) => readAdapterModuleSource(p, normalizedPath, adapter.fs),
+        );
         if (result) return result;
       }
 
       for (const ext of MODULE_EXTENSIONS) {
         const absolutePath = join(normalizedProjectDir, prefix + filePathWithoutExt + ext);
-        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
+        const result = await tryReadFile(
+          absolutePath,
+          (p) => readAdapterModuleSource(p, normalizedPath, adapter.fs),
+        );
         if (result) return result;
       }
 
       for (const ext of MODULE_EXTENSIONS) {
         const absolutePath = join(normalizedProjectDir, prefix, filePathWithoutExt, `index${ext}`);
-        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
+        const result = await tryReadFile(
+          absolutePath,
+          (p) => readAdapterModuleSource(p, normalizedPath, adapter.fs),
+        );
         if (result) return result;
       }
     }
@@ -143,7 +226,10 @@ export async function resolveModuleFile(
     includeIndexFallback: false,
   });
   if (resolvedFrameworkPath) {
-    const content = await localFs.readTextFile(resolvedFrameworkPath.path);
+    const content = await readLocalModuleSource(
+      resolvedFrameworkPath.path,
+      normalizedPath,
+    );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
       basePath: filePathWithoutJs,
       resolvedPath: resolvedFrameworkPath.path,

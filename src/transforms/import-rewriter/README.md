@@ -132,6 +132,26 @@ This signals to the `ssrVfModulesPlugin` to:
 3. Transform and cache it locally
 4. Rewrite to a `file://` path for Deno's module loader
 
+### Compiled route modules
+
+Production route-module rewriting uses the asynchronous, lexer-scoped route
+helpers. Only parsed import specifiers and parsed import statements are
+eligible for replacement, so import-looking text inside comments, strings, and
+templates remains unchanged.
+
+The exported synchronous route helpers predate this contract and remain only
+for compatibility with bounded callers. They use statement regular
+expressions, are not general JavaScript parsers, and must not be run over an
+entire production module. New runtime consumers must use:
+
+- `rewriteCompiledVeryfrontImportsForRouteAsync()`;
+- `rewriteCompiledUserDependencyImportsForRouteAsync()`; and
+- `rewriteDenoNodeBuiltinsForRouteAsync()`.
+
+Compiled routes can import CommonJS dependencies and then export an explicit
+handler. A direct CommonJS re-export is rejected because it cannot be converted
+without changing its module semantics.
+
 ## Node Builtins
 
 | Context     | Handling                                |

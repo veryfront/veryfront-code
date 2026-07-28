@@ -13,8 +13,11 @@ import {
   resolveEsmUserDependenciesForRoute,
   resolveNodePackageToFileUrlForRoute,
   rewriteCompiledUserDependencyImportsForRoute,
+  rewriteCompiledUserDependencyImportsForRouteAsync,
   rewriteCompiledVeryfrontImportsForRoute,
+  rewriteCompiledVeryfrontImportsForRouteAsync,
   rewriteDenoNodeBuiltinsForRoute,
+  rewriteDenoNodeBuiltinsForRouteAsync,
   rewriteDenoNpmDependencyImportsForRoute,
 } from "#veryfront/transforms/import-rewriter/route-adapter.ts";
 import type {
@@ -310,7 +313,7 @@ export async function rewriteExternalImports(
 
   if (isDeno) {
     transformed = rewriteNpmImports(transformed, projectDir);
-    transformed = rewriteDenoNodeBuiltinImports(transformed);
+    transformed = await rewriteDenoNodeBuiltinsForRouteAsync(transformed);
 
     // Rewrite user-installed npm dependencies.
     // In non-compiled Deno: use npm: specifiers (resolved by Deno's npm support).
@@ -319,7 +322,11 @@ export async function rewriteExternalImports(
     // since npm: specifiers only work for packages embedded at compile time.
     if (isCompiledBinary()) {
       const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
-      transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps, esmDeps);
+      transformed = await rewriteCompiledUserDependencyImportsForRouteAsync(
+        transformed,
+        userDeps,
+        esmDeps,
+      );
     } else {
       transformed = await rewriteDenoNpmDependencyImports(
         transformed,
@@ -333,7 +340,7 @@ export async function rewriteExternalImports(
     // In compiled binaries, "veryfront" resolves to embedded source that can't be
     // imported from external temp files. Rewrite to use local runtime shims.
     if (isCompiledBinary()) {
-      transformed = rewriteCompiledBinaryVeryfrontImports(transformed);
+      transformed = await rewriteCompiledVeryfrontImportsForRouteAsync(transformed);
     }
   }
 

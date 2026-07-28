@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
@@ -328,6 +328,67 @@ describe("transforms/esm/import-parser", () => {
     } finally {
       stub.restore();
     }
+  });
+
+  it("propagates adapter resolution failures instead of reporting a missing import", async () => {
+    const permissionError = Object.assign(new Error("adapter resolution denied"), {
+      code: "EACCES",
+    });
+    const adapter = {
+      fs: {
+        resolveFile: () => Promise.reject(permissionError),
+      },
+    } as unknown as Awaited<ReturnType<typeof getLocalAdapter>>;
+
+    await withProject(
+      { "pages/index.ts": `import value from "./dependency"; export default value;` },
+      async (projectDir) => {
+        const filePath = join(projectDir, "pages/index.ts");
+        const error = await assertRejects(
+          async () =>
+            await parseLocalImports(
+              await Deno.readTextFile(filePath),
+              filePath,
+              projectDir,
+              adapter,
+            ),
+          Error,
+          "adapter resolution denied",
+        );
+        assertEquals(error, permissionError);
+      },
+    );
+  });
+
+  it("propagates adapter stat failures after an unresolved extension probe", async () => {
+    const permissionError = Object.assign(new Error("adapter stat denied"), {
+      code: "EACCES",
+    });
+    const adapter = {
+      fs: {
+        resolveFile: () => Promise.resolve(null),
+        stat: () => Promise.reject(permissionError),
+      },
+    } as unknown as Awaited<ReturnType<typeof getLocalAdapter>>;
+
+    await withProject(
+      { "pages/index.ts": `import value from "./dependency"; export default value;` },
+      async (projectDir) => {
+        const filePath = join(projectDir, "pages/index.ts");
+        const error = await assertRejects(
+          async () =>
+            await parseLocalImports(
+              await Deno.readTextFile(filePath),
+              filePath,
+              projectDir,
+              adapter,
+            ),
+          Error,
+          "adapter stat denied",
+        );
+        assertEquals(error, permissionError);
+      },
+    );
   });
 
   it("handles an .mdx file with no imports", async () => {

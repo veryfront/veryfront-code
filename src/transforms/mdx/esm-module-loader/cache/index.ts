@@ -33,6 +33,7 @@ import {
 } from "#veryfront/utils/cache-version.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { getMdxEsmSsrCacheDir, getMdxEsmSsrCacheDirs } from "../cache-paths.ts";
+import { resetCacheDirectory } from "./reset-directory.ts";
 export { getMdxEsmSsrCacheDir, getMdxEsmSsrCacheDirs } from "../cache-paths.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
@@ -292,27 +293,68 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
 
   try {
     const stat = await getLocalFs().stat(indexPath);
-    if (!stat?.isFile || (stat.size ?? 0) > MAX_MODULE_INDEX_BYTES) {
-      throw new Error("Invalid or oversized MDX module index");
-    }
-    const content = await getLocalFs().readTextFile(indexPath);
-    const index: unknown = JSON.parse(content);
-    if (!index || typeof index !== "object" || Array.isArray(index)) {
-      throw new Error("Invalid MDX module index shape");
-    }
-    for (const [path, cachePath] of Object.entries(index)) {
+    if (
+      !stat.isFile ||
+      !Number.isSafeInteger(stat.size) ||
+      stat.size < 0 ||
+      stat.size > MAX_MODULE_INDEX_BYTES
+    ) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Ignoring invalid module index metadata`, {
+        indexPath,
+        isFile: stat.isFile,
+        size: stat.size,
+        maxBytes: MAX_MODULE_INDEX_BYTES,
+      });
+    } else {
+      const content = await getLocalFs().readTextFile(indexPath);
       if (
-        typeof cachePath !== "string" ||
-        !parseMdxEsmPathCacheKey(path) ||
-        !isSafeModuleArtifactPath(cacheDir, cachePath)
+        content.length > MAX_MODULE_INDEX_BYTES ||
+        utf8ByteLength(content) > MAX_MODULE_INDEX_BYTES
       ) {
-        continue;
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Ignoring oversized module index`, {
+          indexPath,
+          maxBytes: MAX_MODULE_INDEX_BYTES,
+        });
+      } else {
+        let index: unknown;
+        let parseFailed = false;
+        try {
+          index = JSON.parse(content);
+        } catch (error) {
+          logger.warn(`${LOG_PREFIX_MDX_LOADER} Ignoring malformed module index`, {
+            indexPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          parseFailed = true;
+          index = null;
+        }
+
+        if (!index || typeof index !== "object" || Array.isArray(index)) {
+          if (!parseFailed) {
+            logger.warn(`${LOG_PREFIX_MDX_LOADER} Ignoring invalid module index shape`, {
+              indexPath,
+            });
+          }
+        } else {
+          for (const [path, cachePath] of Object.entries(index)) {
+            if (
+              typeof cachePath !== "string" ||
+              !parseMdxEsmPathCacheKey(path) ||
+              !isSafeModuleArtifactPath(cacheDir, cachePath)
+            ) {
+              continue;
+            }
+            cache.set(path, cachePath);
+          }
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
+        }
       }
-      cache.set(path, cachePath);
     }
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
-  } catch (_) {
-    /* expected: _index.json may not exist yet */
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      if (!existing) modulePathCaches.delete(cacheDir);
+      throw error;
+    }
   }
 
   modulePathCacheLoaded.add(cacheDir);
@@ -654,15 +696,11 @@ export async function clearESMDiskCache(): Promise<void> {
   const fs = getLocalFs();
 
   try {
-    // Remove entire cache directory and recreate it
-    // This handles nested project directories such as customer/local-main/
-    await fs.remove(cacheDir, { recursive: true });
-    await fs.mkdir(cacheDir, { recursive: true });
+    await resetCacheDirectory(fs, cacheDir);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
-    if (!isNotFoundError(error)) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
-    }
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
+    throw error;
   }
 }
 
@@ -799,14 +837,11 @@ export async function clearHttpBundleCache(): Promise<void> {
   const fs = getLocalFs();
 
   try {
-    // Remove entire cache directory and recreate it
-    await fs.remove(cacheDir, { recursive: true });
-    await fs.mkdir(cacheDir, { recursive: true });
+    await resetCacheDirectory(fs, cacheDir);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared HTTP bundle cache`);
   } catch (error) {
-    if (!isNotFoundError(error)) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear HTTP bundle cache`, error);
-    }
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear HTTP bundle cache`, error);
+    throw error;
   }
 }
 

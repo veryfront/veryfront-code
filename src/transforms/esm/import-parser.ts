@@ -3,7 +3,7 @@ import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { dirname, join, relative } from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   isFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
@@ -261,9 +261,9 @@ async function checkFileExists(path: string, adapter?: RuntimeAdapter): Promise<
     const fs = adapter?.fs.stat ? adapter.fs : createFileSystem();
     const stat = await fs.stat(path);
     return stat.isFile;
-  } catch (_) {
-    /* expected: file may not exist */
-    return false;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
   }
 }
 
@@ -299,9 +299,8 @@ async function resolveExistingFilePath(
       const normalizedPath = basePath.replace(/^\/+/, "");
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;
-    } catch (_) {
-      /* expected: resolveFile may not be supported */
-      // Fall through to traditional resolution
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
   }
 
@@ -334,10 +333,10 @@ async function resolveAliasImportPath(
   if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
-      if (resolved) return resolved;
-    } catch (_) {
-      /* expected: resolveFile may not be supported */
-      // Fall through to manual resolution
+      return resolved;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
     }
   }
 
@@ -346,9 +345,9 @@ async function resolveAliasImportPath(
     try {
       const stat = await fs.stat(absolutePath);
       return stat.isFile ? absolutePath : null;
-    } catch (_) {
-      /* expected: file may not exist */
-      return null;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
     }
   }
 
@@ -369,9 +368,9 @@ async function findFirstExistingFile(
       try {
         const stat = await fs.stat(path);
         return stat.isFile ? path : null;
-      } catch (_) {
-        /* expected: file may not exist */
-        return null;
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw error;
       }
     }),
   );

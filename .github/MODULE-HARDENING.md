@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    49 |      84.5% | Current formal closure evidence remains valid       |
+| Closed                         |    50 |      86.2% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |     9 |      15.5% | Substantive recovered or current work exists        |
+| Touched, revalidation required |     8 |      13.8% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -82,6 +82,7 @@ stricter closure count.
 - `task`
 - `testing`
 - `tool`
+- `transforms`
 - `trigger`
 - `types`
 - `utils`
@@ -101,7 +102,6 @@ None.
 - `security`
 - `server`
 - `skill`
-- `transforms`
 - `workflow`
 
 ### Pending current review
@@ -127,7 +127,7 @@ The current closed review chain covers `agent`, `build`, `cache`, `channels`, `c
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
 `prompt`, `registry`, `release-assets`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
+`schemas`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
@@ -5629,6 +5629,95 @@ Intentional compatibility boundaries remain explicit:
 
 No known unresolved critical or high-confidence Modules production risk
 remains. The `modules` unit is closed at 49 of 58 formal units; nine units
+remain open or awaiting top-level revalidation.
+
+### Transforms closure checkpoint
+
+The `transforms` audit unit owns TypeScript/JSX-to-ESM compilation, browser and
+SSR import rewriting, HTTP module bundling, Markdown and MDX compilation, CSS
+modules, ordered transform stages, module dependency admission, and local and
+distributed transform-cache formats. Its direct consumers include Build,
+Modules, Rendering, Routing, and Server; it depends on Cache, Config, Errors,
+Observability, Platform, Security, and Utils.
+
+The current findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** filesystem probes throughout
+  alias and relative-import resolution caught every throwable and reported an
+  ordinary miss. Permission, I/O, and adapter failures could therefore select
+  a different host file, emit an unresolved import, or cache output produced
+  from an invalid view of the project. Probes now classify only canonical
+  not-found failures as misses, propagate every operational failure, and treat
+  a remote adapter's authoritative `resolveFile()` miss as final instead of
+  falling through to the host filesystem.
+- **Symptom -> Source -> Consequence -> Remedy:** MDX project and framework
+  sources could be materialized through an unbounded adapter read before the
+  existing downstream size check ran, and one local fallback bypassed the
+  supplied runtime adapter. A large or inconsistent source could consume
+  excess memory or read from the wrong filesystem. Resolution now prefers the
+  adapter's genuine bounded-byte primitive, otherwise performs regular-file
+  and pre/post byte checks, enforces the 2 MiB UTF-8 limit before graph
+  admission, and keeps project reads on the supplied adapter.
+- **Symptom -> Source -> Consequence -> Remedy:** cache initialization fell
+  back to a temporary directory after any persistent-cache failure; module
+  index loading treated operational failures as an empty cache; missing cache
+  directories were not recreated during clear; and clear failures were
+  swallowed. Permission degradation, storage corruption, and I/O failure could
+  become an unexplained process-local cache or a falsely successful reset.
+  Temporary fallback is now limited to explicit permission and read-only
+  failures with a structured warning; operational index failures propagate
+  while bounded malformed indexes are discarded as corrupt data; and a shared
+  reset primitive always recreates the directory and propagates removal or
+  creation failures.
+- **Symptom -> Source -> Consequence -> Remedy:** compiled route loading ran
+  synchronous statement regular expressions across complete modules.
+  Import-looking content inside strings, comments, or templates could be
+  corrupted even though the module remained syntactically valid. Production
+  now uses asynchronous lexer-scoped Veryfront, dependency, and Node-builtin
+  rewrites; side-effect imports are supported; and unsupported CommonJS
+  re-exports reject during route loading with an actionable migration instead
+  of leaking an unresolved runtime import.
+- **Symptom -> Source -> Consequence -> Remedy:** missing-framework-bundle
+  discovery caught all existence-check failures and labeled each affected
+  bundle as absent. A permission or storage outage could trigger misleading
+  recovery work and obscure the real cause. The helper now relies on the
+  compatibility filesystem's exact missing-file contract and propagates
+  operational errors.
+- **Symptom -> Source -> Consequence -> Remedy:** the domain README described
+  an obsolete directory layout and omitted resource, cache-degradation, and
+  route-rewrite boundaries; the API-route guide did not describe the supported
+  compiled CommonJS shape. Maintainers and users could select unsafe internal
+  helpers or publish a route that failed only in a compiled release. The
+  internal references now document the actual ownership, limits, cache
+  semantics, and production lexer path, while the public guide shows the
+  explicit-handler migration.
+
+Current reproducible evidence:
+
+- the complete Transforms portfolio and affected Routing/Modules consumers pass
+  139 top-level test groups and 2,041 nested steps with zero failures;
+- the focused filesystem, cache reset, source-limit, and route-rewriter
+  regression sets pass, including permission and I/O propagation, malformed
+  index recovery, missing-directory recreation, bounded-read selection,
+  oversized-source rejection, import-looking string preservation, side-effect
+  imports, and fail-closed CommonJS re-exports;
+- all affected files format, lint, and typecheck, and `git diff --check` is
+  clean; and
+- `deno task verify:quick` passes current generated manifests, formatting of
+  4,516 files, repository lint and policy ratchets, dependency and module
+  boundaries with zero cyclic edges, extension contracts, all configured
+  production/browser entrypoints, documentation validation, executable guide
+  examples, and all 757 links.
+
+Intentional compatibility boundaries remain explicit:
+
+| Severity | Boundary                                                                                                                  | Current control                                                                                                                                                                                                                                  | Follow-up trigger                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Low      | Exported synchronous compiled-route rewrite helpers retain their historical regular-expression behavior.                  | Production route loading exclusively uses lexer-scoped async helpers; the sync functions are documented as compatibility-only bounded transforms and regression tests make the distinction explicit.                                             | Deprecate and remove the synchronous exports in an announced compatibility release after external consumer assessment.                                                  |
+| Low      | Some trusted remote filesystem APIs expose only whole-object reads and cannot implement a genuine bounded-read primitive. | The transform resolver checks regular-file metadata before reading, enforces the 2 MiB UTF-8 limit again afterward, and uses true bounded reads on native adapters; the owning remote transport remains responsible for its response allocation. | Make bounded reads mandatory when each supported remote backing API offers streaming/range reads, or isolate that transport before admitting it as an untrusted source. |
+
+No known unresolved critical or high-confidence Transforms production risk
+remains. The `transforms` unit is closed at 50 of 58 formal units; eight units
 remain open or awaiting top-level revalidation.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

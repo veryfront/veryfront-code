@@ -1,67 +1,92 @@
-# Transforms Domain
+# Transforms
 
-**Purpose**: Code transformation for ESM, MDX, and plugin systems
+The Transforms domain converts project and framework source into executable
+ESM. It owns source compilation, import rewriting, MD/MDX compilation, CSS
+modules, transform pipelines, and the disk and distributed cache formats used
+by those operations.
 
-## Overview
+## Public surface
 
-The transforms domain handles all code transformation operations:
+Application code should import documented framework APIs from `veryfront`.
+Framework internals use `#veryfront/transforms` for:
 
-- **ESM Transformation**: Convert TypeScript/JSX to browser-compatible ESM
-- **MDX Compilation**: Compile MDX files to React components
-- **Plugin System**: Remark/Rehype plugins for content transformation
+- `transformToESM()` and the ESM pipeline contracts;
+- `MDXRenderer`, `mdxRenderer`, and MDX cache controls;
+- registered remark and rehype plugin lists; and
+- `clearAllLocalCaches()` for explicit local cache invalidation.
+
+The root barrel is `src/transforms/index.ts`. Route-specific and loader-specific
+helpers are internal contracts and should be imported from their owning
+submodule only.
 
 ## Structure
 
-```
-transforms/
-├── index.ts              # Barrel exports
-├── esm-transform.ts      # Entry point for ESM transformation
-├── esm/                  # ESM transformation engine
-│   ├── transformer.ts    # Core transformation logic
-│   ├── import-rewriter.ts
-│   └── types.ts
-├── mdx/                  # MDX compilation system
-│   ├── compiler/         # MDX compiler
-│   ├── module-loader/    # MDX module loading
-│   └── types.ts
-└── plugins/              # Plugin system
-    ├── plugin-loader.ts
-    └── remark-*.ts       # Remark plugins
-```
+| Directory          | Responsibility                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `css-modules/`     | CSS-module compilation and scoped class names                                      |
+| `esm/`             | TypeScript/JSX transformation, import parsing, HTTP bundling, and transform caches |
+| `import-rewriter/` | Context-aware browser, SSR, and route import rewriting                             |
+| `md/`              | Markdown compilation                                                               |
+| `mdx/`             | MDX compilation, module loading, dependency graphs, and cache persistence          |
+| `pipeline/`        | Ordered transformation stages and stage contracts                                  |
+| `plugins/`         | Core access to extension-provided remark and rehype plugins                        |
+| `shared/`          | Internal transform utilities shared by subdomains                                  |
 
-## Quick Start
+## Operational boundaries
+
+- Production route rewriting is lexer-scoped. It edits only parsed module
+  specifiers or parsed import statements, never arbitrary import-looking text
+  in comments, strings, or templates.
+- MDX dependency admission is bounded to 2 MiB of UTF-8 source per module, 500
+  static dependencies per file, 500 unique modules per graph, and 16 concurrent
+  transforms.
+- Filesystem adapters that expose a genuine bounded-read primitive use it
+  before decoding. Adapters whose backing API supports only whole-object reads
+  are checked before and after the read; those adapters remain responsible for
+  bounding responses at their trusted transport boundary.
+- A missing or malformed cache index is treated as an empty cache. Operational
+  filesystem failures such as permission and I/O errors propagate to the
+  caller.
+- Cache initialization degrades to a process-local temporary directory only
+  for an explicit permission or read-only-filesystem failure. Other failures
+  propagate.
+- Explicit cache clearing recreates the cache directory and propagates removal
+  or creation failures. A reported successful clear therefore leaves a usable,
+  empty directory.
+
+## Example
 
 ```ts
-import { mdxRenderer, transformToESM } from "#veryfront/internal";
+import { transformToESM } from "#veryfront/transforms";
 
-// Transform TypeScript to ESM
-const result = await transformToESM(code, {
+const result = await transformToESM(source, {
   filename: "component.tsx",
   jsx: "react",
 });
-
-// Render MDX (for runtime usage)
-const module = await mdxRenderer.loadModuleESM(compiledCode, undefined, undefined, projectDir);
-// Use module.default or module exports
 ```
 
-## Key Files
+MDX execution is an internal runtime path:
 
-- **esm-transform.ts**: Main entry point for ESM transformation
-- **mdx/compiler/mdx-compiler.ts**: MDX compilation logic
-- **plugins/plugin-loader.ts**: Plugin loading and configuration
+```ts
+import { mdxRenderer } from "#veryfront/transforms";
 
-## Use Cases
+const module = await mdxRenderer.loadModuleESM(
+  compiledCode,
+  undefined,
+  undefined,
+  projectDir,
+);
+```
 
-1. **Development Server**: Transform modules on-the-fly for HMR
-2. **Build System**: Pre-compile all modules for production
-3. **Content Sites**: Compile MDX files to React components
-4. **Plugin Extensions**: Apply custom transformations via plugins
+## Verification
 
-## Testing
+Tests are co-located with their implementation. Run the complete domain suite
+when changing shared transform, cache, or module-loading behavior:
 
-Tests are co-located with their modules:
+```bash
+deno test --allow-all --unstable-worker-options src/transforms/
+```
 
-- `esm/*.test.ts` - ESM transformation tests
-- `mdx/**/*.test.ts` - MDX compilation tests
-- `plugins/*.test.ts` - Plugin system tests
+Route import changes also require
+`src/routing/api/module-loader/external-import-rewriter.test.ts` and
+`src/routing/api/module-loader/loader.test.ts`.

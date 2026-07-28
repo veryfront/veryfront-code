@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { applySSRImportRewritesAsync } from "#veryfront/modules/server/ssr-import-rewriter.ts";
@@ -19,8 +19,11 @@ import {
 import { applyImportEdits, parseImportEdits } from "./import-edit.ts";
 import { rewriteWithImportRewriteCore } from "./core.ts";
 import {
+  rewriteCompiledUserDependencyImportsForRouteAsync,
   rewriteCompiledVeryfrontImportsForRoute,
+  rewriteCompiledVeryfrontImportsForRouteAsync,
   rewriteDenoNodeBuiltinsForRoute,
+  rewriteDenoNodeBuiltinsForRouteAsync,
   rewriteDenoNpmDependencyImportsForRoute,
 } from "./route-adapter.ts";
 import type { ImportRewriteStrategy, RewriteContext } from "./types.ts";
@@ -420,6 +423,46 @@ describe("route import Adapter", () => {
     assertEquals(
       rewriteDenoNodeBuiltinsForRoute(rewriteCompiledVeryfrontImportsForRoute(code)),
       `const source = 'import x from "./_vf_react_head.mjs"; import("node:path");';`,
+    );
+  });
+
+  it("keeps production route rewrites scoped to actual imports", async () => {
+    const code = [
+      `const source = 'import x from "veryfront/react/head"; import("path"); import y from "lodash";';`,
+      `import { Head } from "veryfront/react/head";`,
+      `const pathModule = import("path");`,
+      `import merge from "lodash";`,
+      `import "lodash/register";`,
+    ].join("\n");
+
+    const rewrittenVeryfront = await rewriteCompiledVeryfrontImportsForRouteAsync(code);
+    const rewrittenBuiltins = await rewriteDenoNodeBuiltinsForRouteAsync(rewrittenVeryfront);
+    const result = await rewriteCompiledUserDependencyImportsForRouteAsync(
+      rewrittenBuiltins,
+      new Map([["lodash", "^4"]]),
+    );
+
+    assertEquals(
+      result.includes(
+        `'import x from "veryfront/react/head"; import("path"); import y from "lodash";'`,
+      ),
+      true,
+    );
+    assertEquals(result.includes(`from "./_vf_react_head.mjs"`), true);
+    assertEquals(result.includes(`import("node:path")`), true);
+    assertEquals(result.includes(`const merge = __vf_interopDefault(require("lodash"))`), true);
+    assertEquals(result.includes(`require("lodash/register")`), true);
+  });
+
+  it("rejects unsupported CommonJS re-exports during compiled route preparation", async () => {
+    await assertRejects(
+      () =>
+        rewriteCompiledUserDependencyImportsForRouteAsync(
+          `export { merge as GET } from "lodash";`,
+          new Map([["lodash", "^4"]]),
+        ),
+      TypeError,
+      "cannot re-export CommonJS dependency",
     );
   });
 

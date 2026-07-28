@@ -10,9 +10,11 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { exists as fsExists } from "#veryfront/platform/compat/fs.ts";
+import { exists as fsExists, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { getMdxEsmSsrCacheDir } from "./cache-paths.ts";
@@ -33,19 +35,57 @@ import {
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
 } from "./module-fetcher/limits.ts";
 
+type CacheDirectoryFileSystem = Pick<FileSystem, "mkdir" | "makeTempDir">;
+
+const CACHE_DIRECTORY_FALLBACK_ERROR_CODES = new Set([
+  "EACCES",
+  "EPERM",
+  "EROFS",
+]);
+const CACHE_DIRECTORY_FALLBACK_ERROR_NAMES = new Set([
+  "NotCapable",
+  "PermissionDenied",
+  "ReadOnlyFileSystem",
+  "ReadOnlyFilesystem",
+]);
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function readOwnStringProperty(error: Error, property: "code" | "name"): string | undefined {
+  const descriptor = getOwnPropertyDescriptor(error, property);
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+function isCacheDirectoryFallbackError(
+  error: unknown,
+  seen: Set<unknown> = new Set(),
+): boolean {
+  if (!isNativeErrorWithoutHooks(error) || seen.has(error)) return false;
+  seen.add(error);
+
+  const code = readOwnStringProperty(error, "code");
+  if (code && CACHE_DIRECTORY_FALLBACK_ERROR_CODES.has(code)) return true;
+
+  const name = readOwnStringProperty(error, "name");
+  if (name && CACHE_DIRECTORY_FALLBACK_ERROR_NAMES.has(name)) return true;
+
+  const causeDescriptor = getOwnPropertyDescriptor(error, "cause");
+  const cause = causeDescriptor && "value" in causeDescriptor ? causeDescriptor.value : undefined;
+  return cause !== undefined && isCacheDirectoryFallbackError(cause, seen);
+}
+
 /**
  * Check which framework bundles are missing from disk.
  * Returns the list of missing file paths.
  */
-export async function findMissingFrameworkBundles(paths: string[]): Promise<string[]> {
+export async function findMissingFrameworkBundles(
+  paths: string[],
+  pathExists: (path: string) => Promise<boolean> = fsExists,
+): Promise<string[]> {
   const missing: string[] = [];
   for (const path of paths) {
-    try {
-      if (!(await fsExists(path))) {
-        missing.push(path);
-      }
-    } catch (_) {
-      /* expected: file may not exist */
+    if (!(await pathExists(path))) {
       missing.push(path);
     }
   }
@@ -69,7 +109,10 @@ export function resolveProjectDir(context: ESMLoaderContext): string {
  * Initialize the ESM cache directory.
  * Includes contentSourceId in the path to isolate preview vs production caches.
  */
-export async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
+export async function initializeCacheDir(
+  context: ESMLoaderContext,
+  localFs: CacheDirectoryFileSystem = getLocalFs(),
+): Promise<string> {
   if (context.esmCacheDir) return context.esmCacheDir;
 
   if (!context.projectId) {
@@ -83,7 +126,6 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
     });
   }
 
-  const localFs = getLocalFs();
   // Full SHA-256 path components provide stable tenant isolation without raw
   // identifier path traversal or 32-bit hash collisions.
   const persistentCacheDir = getMdxEsmSsrCacheDir(context.projectId, context.contentSourceId);
@@ -93,8 +135,16 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
     context.esmCacheDir = persistentCacheDir;
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
     return persistentCacheDir;
-  } catch (_) {
-    /* expected: persistent cache dir may not be writable, fall through to temp dir */
+  } catch (error) {
+    if (!isCacheDirectoryFallbackError(error)) throw error;
+
+    logger.warn(
+      `${LOG_PREFIX_MDX_LOADER} Persistent cache directory is unavailable; using a process-local temporary cache`,
+      {
+        persistentCacheDir,
+        error: snapshotThrowableDiagnostic(error),
+      },
+    );
     const tenantKey = hashString(`${context.projectId}\0${context.contentSourceId}`).slice(0, 16);
     const tempDir = await localFs.makeTempDir({ prefix: `veryfront-mdx-esm-${tenantKey}-` });
     context.esmCacheDir = tempDir;

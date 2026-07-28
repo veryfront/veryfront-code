@@ -9,6 +9,8 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { resolveModuleFile } from "./file-finder.ts";
+import { ModuleSourceLimitError } from "../module-fetcher/limits.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "../module-fetcher/recovery-payload.ts";
 
 const mockAdapter = createMockAdapter();
 
@@ -99,6 +101,12 @@ describe("resolveModuleFile", () => {
       fs: {
         ...mockAdapter.fs,
         resolveFile: () => Promise.resolve("/virtual/components/Button.tsx"),
+        stat: () =>
+          Promise.resolve({
+            size: 32,
+            isFile: true,
+            isDirectory: false,
+          }),
         readFile: () => Promise.reject(permissionError),
       },
     };
@@ -114,6 +122,59 @@ describe("resolveModuleFile", () => {
       "permission denied",
     );
     assertEquals(error, permissionError);
+  });
+
+  it("prefers bounded byte reads when the adapter provides them", async () => {
+    let unboundedReadCalled = false;
+    let requestedLimit = 0;
+    const adapter = {
+      ...mockAdapter,
+      fs: {
+        ...mockAdapter.fs,
+        resolveFile: () => Promise.resolve("/virtual/components/Button.tsx"),
+        readFile: () => {
+          unboundedReadCalled = true;
+          return Promise.reject(new Error("unbounded read must not run"));
+        },
+        readFileBytesBounded: (_path: string, byteLimit: number) => {
+          requestedLimit = byteLimit;
+          return Promise.resolve(new TextEncoder().encode("export default 1;"));
+        },
+      },
+    };
+
+    const result = await resolveModuleFile(
+      "_vf_modules/components/Button.js",
+      adapter,
+      "/project",
+    );
+
+    assertEquals(result?.sourceCode, "export default 1;");
+    assertEquals(unboundedReadCalled, false);
+    assertEquals(requestedLimit, MAX_MDX_MODULE_CODE_BYTES + 1);
+  });
+
+  it("rejects an oversized bounded prefix before decoding the module", async () => {
+    const adapter = {
+      ...mockAdapter,
+      fs: {
+        ...mockAdapter.fs,
+        resolveFile: () => Promise.resolve("/virtual/components/Oversized.tsx"),
+        readFile: () => Promise.reject(new Error("unbounded read must not run")),
+        readFileBytesBounded: () => Promise.resolve(new Uint8Array(MAX_MDX_MODULE_CODE_BYTES + 1)),
+      },
+    };
+
+    await assertRejects(
+      () =>
+        resolveModuleFile(
+          "_vf_modules/components/Oversized.js",
+          adapter,
+          "/project",
+        ),
+      ModuleSourceLimitError,
+      "exceeds the source-size limit",
+    );
   });
 
   it("resolves framework react/* files", async () => {

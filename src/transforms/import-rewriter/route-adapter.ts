@@ -1,11 +1,16 @@
 import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { serverLogger } from "#veryfront/utils";
-import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import {
+  parseImports,
+  replaceSpecifiers,
+  rewriteImports,
+} from "#veryfront/transforms/esm/lexer.ts";
 import {
   pickPackageExportEntry,
   resolveContainedPackagePath,
   resolvePackageExportPath,
+  splitPackageSubpath,
 } from "./package-resolution.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { toCjsDestructureBindings } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
@@ -390,6 +395,24 @@ export function rewriteCompiledVeryfrontImportsForRoute(code: string): string {
   return transformed;
 }
 
+/**
+ * Lexer-scoped Veryfront shim rewrite used by production route loading.
+ *
+ * The synchronous compatibility helper above predates the module lexer and can
+ * match import-looking text inside strings. Keep its public behavior stable,
+ * but never run it over an entire production module.
+ */
+export function rewriteCompiledVeryfrontImportsForRouteAsync(
+  code: string,
+): Promise<string> {
+  return replaceSpecifiers(code, (specifier) => {
+    if (specifier === "veryfront") return "./_vf_runtime.mjs";
+    if (!specifier.startsWith("veryfront/")) return undefined;
+    const subpath = specifier.slice("veryfront/".length);
+    return `./_vf_${subpath.replace(/\//g, "_")}.mjs`;
+  });
+}
+
 export function rewriteCompiledUserDependencyImportsForRoute(
   code: string,
   userDeps: Map<string, string>,
@@ -441,6 +464,13 @@ export function rewriteCompiledUserDependencyImportsForRoute(
         new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
         () => `import("${esm.entryUrl}")`,
       );
+      transformed = transformed.replace(
+        new RegExp(`import\\s+["']${escaped}(/[^"']*)?["']`, "g"),
+        (match, subpath) => {
+          const url = subpath ? subpathUrl(subpath, match) : esm.entryUrl;
+          return url ? `import "${url}"` : match;
+        },
+      );
       continue;
     }
 
@@ -488,9 +518,49 @@ export function rewriteCompiledUserDependencyImportsForRoute(
       new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
       (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
     );
+    transformed = transformed.replace(
+      new RegExp(`import\\s+["']${escaped}(/[^"']*)?["']`, "g"),
+      (_, subpath) => `require("${name}${subpath || ""}")`,
+    );
   }
 
   return transformed;
+}
+
+/**
+ * Restrict legacy CJS statement rewrites to ranges identified by the module
+ * lexer. This preserves the compiled-binary conversion without allowing its
+ * regular expressions to modify comments, strings, or template contents.
+ */
+export async function rewriteCompiledUserDependencyImportsForRouteAsync(
+  code: string,
+  userDeps: Map<string, string>,
+  esmDeps: Map<string, EsmDependencyLocation> = new Map(),
+): Promise<string> {
+  assertSafeUserDependencies(userDeps);
+
+  return await rewriteImports(code, (specifier, statement) => {
+    if (!specifier.n) return null;
+    const { name } = splitPackageSubpath(specifier.n);
+    const version = userDeps.get(name);
+    if (version === undefined) return null;
+
+    const selectedDependencies = new Map([[name, version]]);
+    const selectedEsmDependencies = esmDeps.has(name)
+      ? new Map([[name, esmDeps.get(name)!]])
+      : new Map<string, EsmDependencyLocation>();
+    const rewritten = rewriteCompiledUserDependencyImportsForRoute(
+      statement,
+      selectedDependencies,
+      selectedEsmDependencies,
+    );
+    if (rewritten === statement && /^\s*export\b/.test(statement)) {
+      throw new TypeError(
+        `Compiled route cannot re-export CommonJS dependency "${specifier.n}"; import it and export an explicit route handler instead`,
+      );
+    }
+    return rewritten === statement ? null : rewritten;
+  });
 }
 
 export async function rewriteDenoNpmDependencyImportsForRoute(
@@ -635,4 +705,13 @@ export function rewriteDenoNodeBuiltinsForRoute(code: string): string {
   }
 
   return transformed;
+}
+
+/** Lexer-scoped Node built-in rewrite used by production route loading. */
+export function rewriteDenoNodeBuiltinsForRouteAsync(code: string): Promise<string> {
+  const builtins: ReadonlySet<string> = new Set(NODE_BUILTINS);
+  return replaceSpecifiers(
+    code,
+    (specifier) => builtins.has(specifier) ? `node:${specifier}` : undefined,
+  );
 }
