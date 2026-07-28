@@ -331,13 +331,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log(`  ${dim("Pushing...")}`);
             await runSyncAction(
               () => pushCommand(createSelectedProjectPushOptions(projectDir, project)),
-              `Pushed ${dim("— merge in Studio")}`,
+              `Pushed ${dim("- merge in Studio")}`,
             );
           },
         });
 
         keyboardHandler.start();
-        if (isTTY()) console.log(`  ${brand("?")} shortcuts`);
       }
 
       return {

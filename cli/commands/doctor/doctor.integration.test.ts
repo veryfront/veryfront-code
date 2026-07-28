@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
@@ -73,6 +78,27 @@ describe("CLI doctor command", () => {
       assertEquals(output, []);
     } finally {
       setJsonMode(false);
+      console.log = originalLog;
+    }
+  });
+
+  it("pluralizes warning counts in failure messages", async () => {
+    const originalLog = console.log;
+    console.log = () => {};
+
+    try {
+      const failure = await assertRejects(
+        () =>
+          reportDoctorResults([
+            { name: "Runtime", status: "fail", message: "Unsupported" },
+            { name: "Cache", status: "warn", message: "Not configured" },
+          ], {}),
+        Error,
+      );
+
+      assertStringIncludes(failure.message, "1 warning");
+      assertEquals(failure.message.includes("warning(s)"), false);
+    } finally {
       console.log = originalLog;
     }
   });

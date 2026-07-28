@@ -47,6 +47,10 @@ function summarizeResults(
   };
 }
 
+function formatWarningCount(count: number): string {
+  return `${count} warning${count === 1 ? "" : "s"}`;
+}
+
 type CheckFn = () => Promise<DiagnosticResult | DiagnosticResult[]>;
 
 async function streamCheck(fn: CheckFn, allResults: DiagnosticResult[]): Promise<void> {
@@ -59,7 +63,7 @@ async function streamCheck(fn: CheckFn, allResults: DiagnosticResult[]): Promise
     return;
   }
 
-  const label = (r: DiagnosticResult) => r.message ? `${r.name} — ${r.message}` : r.name;
+  const label = (r: DiagnosticResult) => r.message ? `${r.name} - ${r.message}` : r.name;
 
   const [first, ...rest] = batch;
 
@@ -103,13 +107,14 @@ export async function reportDoctorResults(
   },
 ): Promise<void> {
   const { passCount, warnCount, failCount } = summarizeResults(results);
+  const warnLabel = formatWarningCount(warnCount);
 
   if (isJsonMode()) {
     if (failCount > 0) {
       throw toError(
         createError({
           type: "config",
-          message: `Doctor checks failed: ${failCount} failed, ${warnCount} warnings`,
+          message: `Doctor checks failed: ${failCount} failed, ${warnLabel}`,
         }),
       );
     }
@@ -118,7 +123,7 @@ export async function reportDoctorResults(
       throw toError(
         createError({
           type: "config",
-          message: `Doctor strict mode: ${warnCount} warning(s) present`,
+          message: `Doctor strict mode: ${warnLabel} present`,
         }),
       );
     }
@@ -154,7 +159,6 @@ export async function reportDoctorResults(
   }
 
   const durationSuffix = opts.duration !== undefined ? ` in ${formatDuration(opts.duration)}` : "";
-  const warnLabel = `${warnCount} warning${warnCount === 1 ? "" : "s"}`;
 
   if (failCount > 0) {
     console.log(`  ${error("✗")} ${failCount} failed, ${warnLabel}, ${passCount} passed`);
@@ -162,7 +166,7 @@ export async function reportDoctorResults(
     throw toError(
       createError({
         type: "config",
-        message: `Doctor checks failed: ${failCount} failed, ${warnCount} warning(s)`,
+        message: `Doctor checks failed: ${failCount} failed, ${warnLabel}`,
       }),
     );
   }
@@ -175,7 +179,7 @@ export async function reportDoctorResults(
       throw toError(
         createError({
           type: "config",
-          message: `Doctor strict mode: ${warnCount} warning(s) present`,
+          message: `Doctor strict mode: ${warnLabel} present`,
         }),
       );
     }

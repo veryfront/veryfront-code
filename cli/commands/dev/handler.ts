@@ -27,7 +27,7 @@ const getDevArgsSchema = defineSchema((v) =>
 const DevArgsSchema = lazySchema(getDevArgsSchema);
 
 export const parseDevArgs = createArgParser(DevArgsSchema, {
-  port: { keys: ["port"], type: "number" },
+  port: { keys: ["port", "p"], type: "number" },
   project: { keys: ["project"], type: "string" },
   hmr: { keys: ["hmr"], type: "boolean" },
   noHmr: { keys: ["no-hmr"], type: "boolean" },

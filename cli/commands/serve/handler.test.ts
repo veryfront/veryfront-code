@@ -118,6 +118,14 @@ describe("commands/serve/handler", () => {
           },
         );
       });
+
+      it("keeps -p as a compatibility alias for --port", () => {
+        const parsed = parseServeArgs(parseCliArgs(["serve", "-p", "8081"]));
+
+        assertEquals(parsed.success, true);
+        assertExists(parsed.data);
+        assertEquals(parsed.data.port, 8081);
+      });
     });
 
     describe("boolean flag extraction", () => {

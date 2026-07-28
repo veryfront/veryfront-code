@@ -151,6 +151,25 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   }
 }
 
+export async function openOAuthLogin(
+  authUrl: string,
+  spinner: SpinnerController,
+  opener: (url: string) => Promise<void> = openBrowser,
+): Promise<boolean> {
+  try {
+    await opener(authUrl);
+    return true;
+  } catch {
+    spinner.stop();
+    console.log();
+    console.log(`  ${warning("!")} Could not open the browser.`);
+    console.log(`  ${dim("Continue in your browser:")}`);
+    console.log(`  ${brand(authUrl)}`);
+    console.log();
+    return false;
+  }
+}
+
 async function loginWithOAuth(
   provider: "google" | "github" | "microsoft",
   env: EnvironmentConfig,
@@ -176,13 +195,12 @@ async function loginWithOAuth(
   const authUrl = createOAuthAuthorizationUrl(provider, callbackUrl, state, env);
 
   spinner.update("Opening browser to log in...");
-  try {
-    await openBrowser(authUrl);
-  } catch {
-    // Browser open failed; spinner text still visible so user knows what's happening
+  const browserOpened = await openOAuthLogin(authUrl, spinner);
+  if (browserOpened) {
+    spinner.update("Waiting for login...");
+  } else {
+    console.log(`  ${dim("Waiting for login...")}`);
   }
-
-  spinner.update("Waiting for login...");
 
   try {
     const result = await server.waitForCallback(DEFAULT_LOGIN_TIMEOUT_MS);

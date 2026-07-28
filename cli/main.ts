@@ -9,16 +9,13 @@
  * ```
  */
 
-// CRITICAL: Extract esbuild binary and set env var BEFORE any imports
-// This must happen synchronously at the very start to ensure esbuild sees the correct path
+// Set the CLI logger preset before importing modules that may log during initialization.
+const { setLoggerPreset } = await import("veryfront/utils/logger");
+setLoggerPreset("cli");
+
+// Extract the esbuild binary before importing feature modules that may load esbuild.
 await import("veryfront/platform/esbuild-init");
 await import("veryfront/discovery/runtime-modules-bootstrap");
-
-// Switch the canonical logger to CLI preset so all framework messages (server
-// startup, config loading) render in the CLI's visual language rather than the
-// server's HH:MM:SS  TAG  ● format. Must run before any framework module logs.
-const { setLoggerPreset } = await import("#veryfront/utils/logger/logger.ts");
-setLoggerPreset("cli");
 
 // All imports below must be dynamic to ensure esbuild init completes first
 const { getArgs } = await import("veryfront/platform");

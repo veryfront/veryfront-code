@@ -58,5 +58,11 @@ describe("Open Command", () => {
       assertSuccess(result);
       assertEquals(result.data.projectSlug, "my-project");
     });
+
+    it("keeps --project-slug as a compatibility alias", () => {
+      const result = parseOpenArgs(parseCliArgs(["open", "--project-slug", "my-project"]));
+      assertSuccess(result);
+      assertEquals(result.data.projectSlug, "my-project");
+    });
   });
 });

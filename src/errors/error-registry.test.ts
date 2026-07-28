@@ -27,9 +27,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 96 registered errors", () => {
+    it("should have 98 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 96);
+      assertEquals(slugs.length, 98);
     });
   });
 
@@ -128,6 +128,11 @@ describe("error-registry", () => {
       assertEquals(error.slug, "config-not-found");
       assertEquals(error.category, "CONFIG");
       assertEquals(error.status, 404);
+    });
+
+    it("registers actionable CLI precondition errors", () => {
+      assertEquals(getErrorBySlug("authentication-required")?.status, 401);
+      assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
     it("should return correct error for all slugs", () => {
@@ -299,7 +304,7 @@ describe("error-registry", () => {
       DEV: 5,
       DEPLOY: 12,
       AGENT: 7,
-      GENERAL: 10,
+      GENERAL: 12,
     };
 
     for (

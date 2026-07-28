@@ -86,10 +86,10 @@ export function logError(
     });
   } else {
     // Single-line summary always visible at error level.
-    const summary = error.suggestion ? `${error.title} — ${error.suggestion}` : error.title;
+    const summary = error.suggestion ? `${error.title} - ${error.suggestion}` : error.title;
     serverLogger.error(summary);
 
-    // Full diagnostic detail at debug level — visible with --debug / LOG_LEVEL=DEBUG.
+    // Full diagnostic detail at debug level - visible with --debug / LOG_LEVEL=DEBUG.
     serverLogger.debug(`[${error.slug}] ${error.category}`, {
       ...(error.detail && { detail: error.detail }),
       docs: entry.docs,

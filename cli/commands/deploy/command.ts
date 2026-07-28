@@ -35,7 +35,7 @@ import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#c
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import { pushCommand } from "../push/index.ts";
-import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
   getProjectTarget,
@@ -47,10 +47,9 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
-import type { ReleaseAssetManifestResponse } from "#veryfront/release-assets/manifest-schema.ts";
-import { routeForPage } from "#veryfront/release-assets/route-path.ts";
-import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
-import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import { parseProjectDomain } from "veryfront/server";
+import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
 /**
  * Schema factory for deploy command arguments
@@ -1532,11 +1531,13 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
       const vfErr = ENVIRONMENT_NOT_FOUND.create({
         detail: `Environment "${env}" not found`,
       });
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error: { code: "RUNTIME_ERROR", slug: vfErr.slug, message: vfErr.detail ?? vfErr.message },
-      });
+      streamJsonLine(
+        createStreamErrorResult({
+          code: "RUNTIME_ERROR",
+          slug: vfErr.slug,
+          message: vfErr.detail ?? vfErr.message,
+        }),
+      );
       exitProcess(1);
       return null;
     }
@@ -1688,11 +1689,13 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
       detail: error instanceof Error ? error.message : String(error),
       cause: error instanceof Error ? error : undefined,
     });
-    streamJsonLine({
-      type: "result",
-      success: false,
-      error: { code: "RUNTIME_ERROR", slug: vfErr.slug, message: vfErr.detail ?? vfErr.message },
-    });
+    streamJsonLine(
+      createStreamErrorResult({
+        code: "RUNTIME_ERROR",
+        slug: vfErr.slug,
+        message: vfErr.detail ?? vfErr.message,
+      }),
+    );
     exitProcess(1);
     return null;
   }

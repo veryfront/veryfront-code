@@ -27,6 +27,8 @@ export {
   refreshLoggerConfig,
   rendererLogger,
   serverLogger,
+  setLoggerPreset,
+  setLogLevel,
 } from "./logger.ts";
 export {
   ANSI,

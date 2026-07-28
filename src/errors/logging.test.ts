@@ -71,6 +71,8 @@ describe("logging", () => {
         const errorOutput = consoleErrorLines.join("\n");
         assertStringIncludes(errorOutput, "Configuration file not found");
         assertStringIncludes(errorOutput, "Run 'vf init' to create a configuration file");
+        assertStringIncludes(errorOutput, " - ");
+        assertEquals(errorOutput.includes("—"), false);
         // Old multi-line fields are NOT in the error output.
         assertEquals(errorOutput.includes("Detail:"), false);
         assertEquals(errorOutput.includes("📚"), false);

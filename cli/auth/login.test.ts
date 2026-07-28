@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Login Module Tests
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
   afterAll,
   afterEach,
@@ -339,6 +339,37 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       assertEquals(redirectUri, "http://localhost:3456/callback?state=expected-state");
       assertEquals(parsed.searchParams.get("state"), "expected-state");
       assertEquals(new URL(redirectUri!).searchParams.get("state"), "expected-state");
+    });
+
+    it("prints a manual login URL when the browser cannot be opened", async () => {
+      const originalLog = console.log;
+      const output: string[] = [];
+      const spinnerEvents: string[] = [];
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        const { openOAuthLogin } = await import("./login.ts");
+        const opened = await openOAuthLogin(
+          "https://auth.example.test/login?state=expected-state",
+          {
+            update: (text) => spinnerEvents.push(`update:${text}`),
+            success: (text) => spinnerEvents.push(`success:${text ?? ""}`),
+            error: (text) => spinnerEvents.push(`error:${text ?? ""}`),
+            stop: () => spinnerEvents.push("stop"),
+          },
+          () => Promise.reject(new Error("browser unavailable")),
+        );
+
+        assertEquals(opened, false);
+        assertEquals(spinnerEvents, ["stop"]);
+        assertStringIncludes(output.join("\n"), "Could not open the browser");
+        assertStringIncludes(
+          output.join("\n"),
+          "https://auth.example.test/login?state=expected-state",
+        );
+      } finally {
+        console.log = originalLog;
+      }
     });
   });
 

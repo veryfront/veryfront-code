@@ -18,8 +18,9 @@ import { isJsonMode } from "../shared/json-output.ts";
 import {
   cliLogger as _canonicalCliLogger,
   LogLevel,
+  refreshLoggerConfig as _refreshCanonicalLoggerConfig,
   setLogLevel as _setCanonicalLogLevel,
-} from "#veryfront/utils/logger/logger.ts";
+} from "veryfront/utils/logger";
 
 type LoggerMethod = (...args: unknown[]) => void;
 
@@ -42,7 +43,7 @@ export const cliLogger: {
 } = {
   debug: (...args) => {
     if (isJsonMode() || !debugEnabled()) return;
-    console.debug(...args);
+    _canonicalCliLogger.debug(firstAsString(args), ...args.slice(1));
   },
   info: (...args) => _canonicalCliLogger.info(firstAsString(args), ...args.slice(1)),
   warn: (...args) => _canonicalCliLogger.warn(firstAsString(args), ...args.slice(1)),
@@ -85,9 +86,10 @@ export function isTTY(): boolean {
 export function showHeader(): void {
   if (isJsonMode()) return;
 
-  // Raw brand output — written directly to stdout, not through the canonical
+  // Raw brand output is written directly to stdout, not through the canonical
   // logger, so it never picks up a timestamp/tag/glyph prefix.
-  console.log(`${bold(brand("Veryfront"))} ${dim(`(v${VERSION})`)}\n`);
+  console.log(`${bold(brand("Veryfront"))} ${dim(`(v${VERSION})`)}`);
+  console.log();
 }
 
 /** @deprecated Use {@link showHeader}. */
@@ -142,28 +144,26 @@ export function registerTerminationSignals(
 let _verboseMode = false;
 let _quietMode = false;
 
+function syncCanonicalLogLevel(): void {
+  if (_verboseMode) {
+    _setCanonicalLogLevel(LogLevel.DEBUG);
+  } else if (_quietMode) {
+    _setCanonicalLogLevel(LogLevel.WARN);
+  } else {
+    _refreshCanonicalLoggerConfig();
+  }
+}
+
 export function setVerboseMode(enabled: boolean): void {
   _verboseMode = enabled;
-  if (enabled) {
-    _quietMode = false;
-    // Propagate to the canonical logger so all framework output (server startup,
-    // config loading, etc.) also becomes visible at debug level.
-    _setCanonicalLogLevel(LogLevel.DEBUG);
-  } else {
-    // Restore to INFO (unless quiet mode is active, which holds WARN).
-    if (!_quietMode) _setCanonicalLogLevel(LogLevel.INFO);
-  }
+  if (enabled) _quietMode = false;
+  syncCanonicalLogLevel();
 }
 
 export function setQuietMode(enabled: boolean): void {
   _quietMode = enabled;
-  if (enabled) {
-    _verboseMode = false;
-    _setCanonicalLogLevel(LogLevel.WARN);
-  } else {
-    // Restore to INFO (unless verbose mode is active, which holds DEBUG).
-    if (!_verboseMode) _setCanonicalLogLevel(LogLevel.INFO);
-  }
+  if (enabled) _verboseMode = false;
+  syncCanonicalLogLevel();
 }
 
 export function isVerbose(): boolean {

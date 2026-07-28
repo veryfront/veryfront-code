@@ -64,6 +64,30 @@ export interface ErrorEnvelope {
 
 export type JsonEnvelope<T = unknown> = SuccessEnvelope<T> | ErrorEnvelope;
 
+export interface StreamErrorDetails {
+  code: string;
+  slug: string;
+  message: string;
+}
+
+export type StreamErrorResult = Record<string, unknown> & {
+  type: "result";
+  success: false;
+  /** Legacy field kept as a string for existing NDJSON consumers. */
+  error: string;
+  /** Additive structured metadata for consumers that need stable error classification. */
+  errorDetails: StreamErrorDetails;
+};
+
+export function createStreamErrorResult(error: StreamErrorDetails): StreamErrorResult {
+  return {
+    type: "result",
+    success: false,
+    error: error.message,
+    errorDetails: error,
+  };
+}
+
 export function createSuccessEnvelope<T>(
   command: string,
   data: T,

@@ -303,8 +303,10 @@ async function expectDeployReceiptError(
 
   const result = output.map((line) => JSON.parse(line)).at(-1);
   assertEquals(result.success, false);
-  assertEquals(result.error.message.includes("orphaned"), true);
-  assertEquals(result.error.message.includes(forbiddenText), false);
+  assertEquals(result.error.includes("orphaned"), true);
+  assertEquals(result.error.includes(forbiddenText), false);
+  assertEquals(result.errorDetails.message, result.error);
+  assertEquals(typeof result.errorDetails.slug, "string");
 }
 
 it("deploys production from the existing verified push without mutating source", async () => {

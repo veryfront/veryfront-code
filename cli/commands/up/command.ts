@@ -19,7 +19,8 @@ import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 import { buildPushUrls } from "../push/command.ts";
 import { isInteractive } from "../../shared/interactive.ts";
-import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import { AUTHENTICATION_REQUIRED, PROJECT_SOURCE_EMPTY } from "veryfront/errors";
 
 export const getUpArgsSchema = defineSchema((v) =>
   v.object({
@@ -101,15 +102,15 @@ export async function upCommand(
   const userInfo = await ensureAuthenticated(env);
   if (!userInfo) {
     if (jsonOutput) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error: {
+      const message = "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.";
+      const authError = AUTHENTICATION_REQUIRED.create({ detail: message });
+      streamJsonLine(
+        createStreamErrorResult({
           code: "RUNTIME_ERROR",
-          slug: "unknown-error",
-          message: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
-        },
-      });
+          slug: authError.slug,
+          message,
+        }),
+      );
     }
     exitProcess(1);
     return;
@@ -121,15 +122,15 @@ export async function upCommand(
 
   if (context.type === "empty") {
     if (jsonOutput) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error: {
+      const message = "This folder is empty. Add project files or run veryfront init.";
+      const sourceError = PROJECT_SOURCE_EMPTY.create({ detail: message });
+      streamJsonLine(
+        createStreamErrorResult({
           code: "RUNTIME_ERROR",
-          slug: "unknown-error",
-          message: "This folder is empty. Add project files or run veryfront init.",
-        },
-      });
+          slug: sourceError.slug,
+          message,
+        }),
+      );
     } else {
       logWarning("This folder is empty.");
       cliLogger.info("");
