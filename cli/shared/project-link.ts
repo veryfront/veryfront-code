@@ -68,6 +68,9 @@ async function inspectProjectLinkPath(
 
 function normalizeControlPlane(controlPlane: string): string {
   const url = new URL(controlPlane);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new TypeError("Veryfront control-plane URLs must use HTTP or HTTPS.");
+  }
   const pathname = url.pathname.replace(/\/+$/, "");
   return `${url.origin}${pathname}`;
 }
@@ -84,9 +87,23 @@ function isProjectLink(value: unknown): value is ProjectLink {
   if (!value || typeof value !== "object") return false;
   const link = value as Record<string, unknown>;
   return link.version === PROJECT_LINK_VERSION &&
-    typeof link.controlPlane === "string" &&
-    typeof link.projectId === "string" &&
-    typeof link.projectSlug === "string";
+    isNonEmptyTrimmedString(link.controlPlane) &&
+    isControlPlaneUrl(link.controlPlane) &&
+    isNonEmptyTrimmedString(link.projectId) &&
+    isNonEmptyTrimmedString(link.projectSlug);
+}
+
+function isNonEmptyTrimmedString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+function isControlPlaneUrl(value: string): boolean {
+  try {
+    normalizeControlPlane(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readProjectLink(projectDir: string): Promise<ProjectLink | null> {
