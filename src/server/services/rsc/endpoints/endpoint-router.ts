@@ -5,7 +5,7 @@
 
 import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils";
 import { metrics } from "#veryfront/observability";
-import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
+import { HttpStatus, jsonErrorResponse, methodNotAllowed } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { buildImportMapJson } from "#veryfront/html";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
@@ -96,13 +96,20 @@ export async function handleRSCEndpoint(
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
   }
 
+  const method = req.method.toUpperCase();
+  if (sub === "module" && method !== "GET" && method !== "HEAD") {
+    return methodNotAllowed(["GET", "HEAD"], {
+      headers: { "cache-control": "no-store" },
+    });
+  }
+
   const url = new URL(req.url);
 
   try {
     // App-router client-page hydration imports browser-safe page modules from
     // this endpoint even when the broader RSC transport is not enabled.
     if (sub === "module") {
-      return await handleModuleEndpoint({
+      const response = await handleModuleEndpoint({
         req,
         searchParams: url.searchParams,
         projectDir,
@@ -113,6 +120,13 @@ export async function handleRSCEndpoint(
         adapter,
         config,
       });
+      return method === "HEAD"
+        ? new Response(null, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        })
+        : response;
     }
 
     if (!isRSCEnabled(config)) {

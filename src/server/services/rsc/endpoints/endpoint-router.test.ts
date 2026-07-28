@@ -300,6 +300,57 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("module endpoint", () => {
+    it("rejects non-GET/HEAD methods before validating module parameters", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscDisabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/module", {
+            method: "POST",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 405);
+      assertEquals(result?.headers.get("allow"), "GET, HEAD");
+    });
+
+    it("keeps HEAD status and headers GET-equivalent while omitting the module body", async () => {
+      const entryPath = "/tmp/test-project/app/Counter.tsx";
+      const source = '"use client"; export default function Counter() { return null; }';
+      const adapter = createMockAdapter({
+        knownFiles: [entryPath],
+        exists: (path) => Promise.resolve(path === entryPath),
+        readFile: () => Promise.resolve(source),
+      });
+      const url = "http://localhost/_veryfront/rsc/module?rel=app%2FCounter.tsx";
+
+      const getResponse = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscDisabledConfig,
+          req: new Request(url),
+          adapter,
+        }),
+      );
+      const headResponse = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/module",
+          config: rscDisabledConfig,
+          req: new Request(url, { method: "HEAD" }),
+          adapter,
+        }),
+      );
+
+      assertEquals(headResponse?.status, getResponse?.status);
+      assertEquals(
+        Object.fromEntries(headResponse!.headers),
+        Object.fromEntries(getResponse!.headers),
+      );
+      assertEquals((await getResponse!.text()).length > 0, true);
+      assertEquals(await headResponse!.text(), "");
+    });
+
     it("returns 400 when missing rel param", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
