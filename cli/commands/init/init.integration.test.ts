@@ -47,6 +47,7 @@ function runInitCommand(
 function runQuietInitCommand(
   options: Record<string, unknown>,
   cwd = TEST_DIR,
+  env?: Record<string, string>,
 ): Promise<{ code: number; stdout?: string; stderr?: string }> {
   const initCommandUrl = new URL("./init-command.ts", import.meta.url).href;
   const configPath = new URL("../../../deno.json", import.meta.url).pathname;
@@ -61,7 +62,47 @@ function runQuietInitCommand(
     ],
     cwd,
     capture: true,
+    env,
   });
+}
+
+async function createFakeNpm(
+  mode: "success" | "failure",
+): Promise<{ binDir: string; logPath: string }> {
+  const binDir = await makeTempDir({ prefix: "veryfront-fake-npm-" });
+  const logPath = join(binDir, "npm.log");
+  const npmPath = join(binDir, "npm");
+  const script = `#!/usr/bin/env sh
+printf '%s\\n' "$PWD $*" >> "${logPath}"
+if [ "${mode}" = "success" ]; then
+  printf '%s\\n' '{"lockfileVersion":3,"packages":{}}' > package-lock.json
+  exit 0
+fi
+exit 42
+`;
+  await Deno.writeTextFile(npmPath, script);
+  await Deno.chmod(npmPath, 0o755);
+  return { binDir, logPath };
+}
+
+function withPath(binDir: string): Record<string, string> {
+  return {
+    PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+    GIT_AUTHOR_NAME: "Veryfront Test",
+    GIT_AUTHOR_EMAIL: "test@veryfront.local",
+    GIT_COMMITTER_NAME: "Veryfront Test",
+    GIT_COMMITTER_EMAIL: "test@veryfront.local",
+  };
+}
+
+async function runGit(args: string[], cwd: string): Promise<string> {
+  const result = await runCommand("git", {
+    args,
+    cwd,
+    capture: true,
+  });
+  assertEquals(result.code, 0, (result.stdout ?? "") + (result.stderr ?? ""));
+  return result.stdout ?? "";
 }
 
 describe("init command integration", () => {
@@ -187,6 +228,107 @@ describe("init command integration", () => {
   });
 
   describe("file generation", () => {
+    it("commits the lockfile and leaves the scaffold clean after installing dependencies", async () => {
+      const name = `git-lock-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+      const fakeNpm = await createFakeNpm("success");
+
+      try {
+        const result = await runQuietInitCommand(
+          {
+            name,
+            template: "minimal",
+            runtime: "node",
+            initGit: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          },
+          TEST_DIR,
+          withPath(fakeNpm.binDir),
+        );
+
+        assertEquals(result.code, 0, (result.stdout ?? "") + (result.stderr ?? ""));
+        assertEquals(
+          await readTextFile(join(dir, "package-lock.json")),
+          '{"lockfileVersion":3,"packages":{}}\n',
+        );
+        assertEquals(
+          (await runGit(["ls-files", "package-lock.json"], dir)).trim(),
+          "package-lock.json",
+        );
+        assertEquals(await runGit(["status", "--porcelain"], dir), "");
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+        await remove(fakeNpm.binDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("does not invoke the package manager when install is skipped", async () => {
+      const name = `skip-install-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+      const fakeNpm = await createFakeNpm("success");
+
+      try {
+        const result = await runQuietInitCommand(
+          {
+            name,
+            template: "minimal",
+            runtime: "node",
+            initGit: true,
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          },
+          TEST_DIR,
+          withPath(fakeNpm.binDir),
+        );
+
+        assertEquals(result.code, 0, (result.stdout ?? "") + (result.stderr ?? ""));
+        assertEquals(await exists(fakeNpm.logPath), false);
+        assertEquals(await exists(join(dir, "package-lock.json")), false);
+        assertEquals(await runGit(["status", "--porcelain"], dir), "");
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+        await remove(fakeNpm.binDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("commits generated files and reports npm install recovery when dependency install fails", async () => {
+      const name = `failed-install-${randomSuffix()}`;
+      const dir = join(TEST_DIR, name);
+      const fakeNpm = await createFakeNpm("failure");
+
+      try {
+        const result = await runQuietInitCommand(
+          {
+            name,
+            template: "minimal",
+            runtime: "node",
+            initGit: true,
+            skipEnvPrompt: true,
+          },
+          TEST_DIR,
+          withPath(fakeNpm.binDir),
+        );
+        const output = (result.stdout ?? "") + (result.stderr ?? "");
+
+        assertEquals(result.code, 0, output);
+        assertEquals(output.includes("Run 'npm install' manually to install dependencies."), true);
+        assertEquals(await exists(join(dir, ".git")), true);
+        assertEquals(
+          (await runGit(["ls-files", "app/page.tsx", "package.json", ".gitignore"], dir))
+            .trim()
+            .split("\n")
+            .sort(),
+          [".gitignore", "app/page.tsx", "package.json"],
+        );
+        assertEquals(await runGit(["status", "--porcelain"], dir), "");
+      } finally {
+        await remove(dir, { recursive: true }).catch(() => {});
+        await remove(fakeNpm.binDir, { recursive: true }).catch(() => {});
+      }
+    });
+
     it("should create .env file when scaffolded integrations declare env vars", async () => {
       const result = await runInitCommand([
         projectName,
