@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
   buildEmbeddedPreset,
   isPageFile,
@@ -82,6 +82,250 @@ describe("build/embedded/preset", () => {
 
       assertEquals(result.manifest.routes.some((route) => route.path === "/docs"), true);
       assertEquals(result.manifest.routes.some((route) => route.path === "/about"), true);
+      assertEquals(
+        result.manifest.routes.filter((route) => route.path === "/").length,
+        1,
+      );
+
+      const clientDom = await Deno.readTextFile(
+        join(outDir, "embedded", "rsc", "client-dom.js"),
+      );
+      const hydrateClient = await Deno.readTextFile(
+        join(outDir, "embedded", "rsc", "hydrate-client.js"),
+      );
+      assertEquals(clientDom.includes("#veryfront/"), false);
+      assertEquals(hydrateClient.includes("#veryfront/"), false);
+      assertStringIncludes(clientDom, "consumeNdjsonStream");
+      assertStringIncludes(hydrateClient, "hydrateAllClientBoundaries");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("bundles project aliases and nested MDX dependencies into each route", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-route-imports-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(join(projectDir, "app", "blog"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "components"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "app", "page.mdx"), "# Home");
+      await Deno.writeTextFile(
+        join(projectDir, "components", "Button.tsx"),
+        "export function Button(){ return <span>Bundled component marker</span> }",
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "components", "Section.mdx"),
+        "# Nested MDX marker",
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "app", "blog", "page.mdx"),
+        [
+          'import { Button } from "@/components/Button.tsx"',
+          'import Section from "@/components/Section.mdx"',
+          "",
+          "<Button />",
+          "<Section />",
+        ].join("\n"),
+      );
+
+      await buildEmbeddedPreset({
+        projectDir,
+        outDir,
+        runtime: "deno",
+        config: {},
+      });
+
+      const code = await Deno.readTextFile(
+        join(outDir, "embedded", "app", "blog.js"),
+      );
+      assertStringIncludes(code, "Bundled component marker");
+      assertStringIncludes(code, "Nested MDX marker");
+      assertEquals(code.includes("@/components"), false);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("fails the whole build when a non-entry route cannot bundle", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-route-failure-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(join(projectDir, "app", "broken"), { recursive: true });
+      await Deno.mkdir(join(outDir, "embedded"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "app", "page.mdx"), "# Home");
+      await Deno.writeTextFile(
+        join(projectDir, "app", "broken", "page.mdx"),
+        'import Missing from "./missing.tsx"\n\n<Missing />',
+      );
+      await Deno.writeTextFile(
+        join(outDir, "embedded", "previous.txt"),
+        "previous",
+      );
+
+      await assertRejects(() =>
+        buildEmbeddedPreset({
+          projectDir,
+          outDir,
+          runtime: "deno",
+          config: {},
+        })
+      );
+
+      assertEquals(
+        await Deno.readTextFile(join(outDir, "embedded", "previous.txt")),
+        "previous",
+      );
+      await assertRejects(
+        () => Deno.stat(join(outDir, "embedded", "app.js")),
+        Deno.errors.NotFound,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects route collisions instead of selecting one by traversal order", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-route-collision-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "pages", "about.md"), "# Markdown");
+      await Deno.writeTextFile(join(projectDir, "pages", "about.mdx"), "# MDX");
+
+      await assertRejects(
+        () =>
+          buildEmbeddedPreset({
+            projectDir,
+            outDir,
+            runtime: "deno",
+            config: {},
+          }),
+        Error,
+        "Duplicate embedded route",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("uses an in-memory fallback without modifying the project", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-fallback-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    await Deno.mkdir(projectDir);
+
+    try {
+      const result = await buildEmbeddedPreset({
+        projectDir,
+        outDir,
+        runtime: "deno",
+        config: {},
+      });
+
+      assertEquals(result.manifest.routes, [{
+        path: "/",
+        file: "embedded/app.js",
+        type: "page",
+      }]);
+      await assertRejects(
+        () => Deno.stat(join(projectDir, ".veryfront")),
+        Deno.errors.NotFound,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects source directory traversal and route symlinks", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-source-safety-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    const outsideDir = join(root, "outside");
+    await Deno.mkdir(projectDir);
+    await Deno.mkdir(outsideDir);
+
+    try {
+      await assertRejects(
+        () =>
+          buildEmbeddedPreset({
+            projectDir,
+            outDir,
+            runtime: "deno",
+            config: { directories: { app: "../outside" } },
+          }),
+        TypeError,
+        "canonical project-relative",
+      );
+
+      await Deno.mkdir(join(projectDir, "app"));
+      await Deno.symlink(outsideDir, join(projectDir, "app", "linked"));
+      await assertRejects(
+        () =>
+          buildEmbeddedPreset({
+            projectDir,
+            outDir,
+            runtime: "deno",
+            config: {},
+          }),
+        Error,
+        "symbolic links",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects lexical and symlinked module-import escapes", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-import-safety-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    const outsideModule = join(root, "Outside.tsx");
+    await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+    await Deno.mkdir(join(projectDir, "components"), { recursive: true });
+    await Deno.writeTextFile(
+      outsideModule,
+      'export default function Outside(){ return "secret marker" }',
+    );
+
+    try {
+      await Deno.writeTextFile(
+        join(projectDir, "app", "page.mdx"),
+        'import Outside from "../../Outside.tsx"\n\n<Outside />',
+      );
+      await assertRejects(
+        () =>
+          buildEmbeddedPreset({
+            projectDir,
+            outDir,
+            runtime: "deno",
+            config: {},
+          }),
+        Error,
+        "outside the project",
+      );
+
+      await Deno.symlink(
+        outsideModule,
+        join(projectDir, "components", "Outside.tsx"),
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "app", "page.mdx"),
+        'import Outside from "@/components/Outside.tsx"\n\n<Outside />',
+      );
+      await assertRejects(
+        () =>
+          buildEmbeddedPreset({
+            projectDir,
+            outDir,
+            runtime: "deno",
+            config: {},
+          }),
+        Error,
+        "symbolic link",
+      );
     } finally {
       await Deno.remove(root, { recursive: true });
     }
@@ -97,8 +341,12 @@ describe("build/embedded/preset", () => {
 
     try {
       await Deno.mkdir(join(projectDir, "app"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "app/page.md"), "# Home");
-      await Deno.mkdir(join(outDir, "embedded", "manifest.json"), { recursive: true });
+      await Deno.writeTextFile(
+        join(projectDir, "app/page.mdx"),
+        'import Missing from "./missing.tsx"\n\n<Missing />',
+      );
+      await Deno.mkdir(join(outDir, "embedded"), { recursive: true });
+      await Deno.writeTextFile(join(outDir, "embedded", "previous.txt"), "previous");
 
       try {
         await buildEmbeddedPreset({
@@ -114,6 +362,18 @@ describe("build/embedded/preset", () => {
       assertEquals(buildError instanceof Error, true);
       assertEquals(services.length >= 1, true);
       assertEquals(services.every((service) => service.closed), true);
+      assertEquals(
+        await Deno.readTextFile(join(outDir, "embedded", "previous.txt")),
+        "previous",
+      );
+      assertEquals(
+        [...Deno.readDirSync(outDir)].some((entry) =>
+          entry.name.includes(".embedded.veryfront-stage-") ||
+          entry.name.includes(".embedded.veryfront-backup-") ||
+          entry.name === ".embedded.veryfront-build.lock"
+        ),
+        false,
+      );
     } finally {
       for (const service of services) service.child.ref();
       try {

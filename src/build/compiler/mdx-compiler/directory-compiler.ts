@@ -125,7 +125,9 @@ function remapPublishedResults(
     const relativePath = relative(stagingDir, result.outputPath);
     if (
       relativePath === "" ||
-      relativePath.startsWith("..") ||
+      relativePath === ".." ||
+      relativePath.startsWith("../") ||
+      relativePath.startsWith("..\\") ||
       isAbsolute(relativePath)
     ) {
       throw new Error(`Compiled MDX output escaped its staging directory: ${result.outputPath}`);

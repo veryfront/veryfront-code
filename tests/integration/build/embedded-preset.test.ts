@@ -162,7 +162,7 @@ describe(
 
         for (const filePath of files) {
           const code = await readTextFile(filePath);
-          assert(code.includes("export default") || /export\s+\{/.test(code));
+          assert(code.includes("export default") || /export\s*\{/.test(code));
         }
       });
     });

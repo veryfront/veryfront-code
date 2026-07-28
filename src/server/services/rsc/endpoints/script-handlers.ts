@@ -1,6 +1,9 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
-import { CLIENT_BOOT_BUNDLE, CLIENT_DOM_BUNDLE } from "./rsc-bundles.generated.ts";
+import {
+  CLIENT_BOOT_BUNDLE,
+  CLIENT_DOM_BUNDLE,
+} from "../../../../rendering/rsc/rsc-bundles.generated.ts";
 
 const logger = serverLogger.component("script-handlers");
 

@@ -19,10 +19,8 @@ const rscDir = join(projectRoot, "src", "rendering", "rsc");
 const outputPath = join(
   projectRoot,
   "src",
-  "server",
-  "services",
+  "rendering",
   "rsc",
-  "endpoints",
   "rsc-bundles.generated.ts",
 );
 
@@ -151,6 +149,12 @@ const clientBootBundle = await bundleScript(
 console.log("[prebundle-rsc-scripts] Bundling client-dom.ts...");
 const clientDomBundle = await bundleScript(join(rscDir, "client-dom.ts"));
 
+console.log("[prebundle-rsc-scripts] Bundling hydrate-client.ts...");
+const hydrateClientBundle = await bundleScript(
+  join(rscDir, "hydrate-client.ts"),
+  ["https://esm.sh/*", "/_veryfront/*", "react", "react-dom", "react-dom/*"],
+);
+
 const output = `/**
  * Pre-bundled RSC client scripts for compiled binary
  *
@@ -162,6 +166,8 @@ const output = `/**
 export const CLIENT_BOOT_BUNDLE: string = ${JSON.stringify(clientBootBundle)};
 
 export const CLIENT_DOM_BUNDLE: string = ${JSON.stringify(clientDomBundle)};
+
+export const HYDRATE_CLIENT_BUNDLE: string = ${JSON.stringify(hydrateClientBundle)};
 `;
 
 await Deno.writeTextFile(outputPath, output);
@@ -182,3 +188,4 @@ esbuild.stop();
 console.log(`[prebundle-rsc-scripts] Written to ${outputPath}`);
 console.log(`  client-boot: ${(clientBootBundle.length / 1024).toFixed(1)} KB`);
 console.log(`  client-dom: ${(clientDomBundle.length / 1024).toFixed(1)} KB`);
+console.log(`  hydrate-client: ${(hydrateClientBundle.length / 1024).toFixed(1)} KB`);

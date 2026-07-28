@@ -15,7 +15,10 @@ const fs = createFileSystem();
 function isContainedPath(basePath: string, candidatePath: string): boolean {
   const relativePath = relative(basePath, candidatePath);
   return relativePath === "" ||
-    (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !relativePath.startsWith("..\\") &&
+      !isAbsolute(relativePath));
 }
 
 async function canonicalTargetPath(path: string): Promise<string> {
@@ -121,7 +124,9 @@ export async function getCompiledOutputPath(
   const sourceRelativePath = relative(projectDir, sourcePath);
   if (
     sourceRelativePath === "" ||
-    sourceRelativePath.startsWith("..") ||
+    sourceRelativePath === ".." ||
+    sourceRelativePath.startsWith("../") ||
+    sourceRelativePath.startsWith("..\\") ||
     isAbsolute(sourceRelativePath)
   ) {
     throw SECURITY_VIOLATION.create({

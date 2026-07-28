@@ -1,12 +1,63 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { BUILD_FAILED, MODULE_NOT_FOUND, SECURITY_VIOLATION } from "#veryfront/errors";
 import * as esbuild from "veryfront/extensions/bundler";
-import { join } from "#veryfront/compat/path/index.ts";
-import { compileMDXToJS } from "../compiler/index.ts";
+import type {
+  OnLoadArgs,
+  OnResolveArgs,
+  OnResolveResult,
+  Plugin,
+  PluginBuild,
+} from "veryfront/extensions/bundler";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "#veryfront/compat/path/index.ts";
+import { compileMDXProgram, compileMDXToJS } from "../compiler/mdx-to-js.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isNotFoundError,
+  realPath,
+} from "#veryfront/platform/compat/fs.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
+import {
+  CLIENT_DOM_BUNDLE,
+  HYDRATE_CLIENT_BUNDLE,
+} from "#veryfront/rendering/rsc/rsc-bundles.generated.ts";
+import { createBuildPublication } from "../production-build/build/build-publication.ts";
+import { assertSafeBuildOutputDirectory } from "../production-build/build/output-plan.ts";
+
+const MAX_PATH_CHARACTERS = 4_096;
+const MAX_ROUTE_ENTRIES = 100_000;
+const MAX_ROUTE_DEPTH = 64;
+const LOCAL_MODULE_SUFFIXES = [
+  "",
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".mts",
+  ".mjs",
+  ".cts",
+  ".cjs",
+  ".json",
+  ".css",
+  ".mdx",
+  ".md",
+] as const;
+const REACT_EXTERNALS = [
+  "react",
+  "react/*",
+  "react-dom",
+  "react-dom/*",
+] as const;
 
 export interface BuildEmbeddedOptions {
   projectDir: string;
@@ -15,106 +66,272 @@ export interface BuildEmbeddedOptions {
   config?: VeryfrontConfig;
 }
 
+interface EmbeddedSource {
+  sourcePath: string;
+  content?: string;
+}
+
+interface DiscoveredRoute extends EmbeddedSource {
+  routePath: string;
+  outputRelativePath: string;
+}
+
+interface PlannedRoute extends EmbeddedSource {
+  routePath: string;
+  outputRelativePath: string;
+}
+
+interface DiscoveryBudget {
+  entries: number;
+}
+
+function buildError(detail: string, cause?: unknown): Error {
+  return BUILD_FAILED.create({ detail, cause });
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+  }
+  return false;
+}
+
+function validatePath(value: unknown, name: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${name} must be a non-empty string`);
+  }
+  if (value.length > MAX_PATH_CHARACTERS || hasControlCharacters(value)) {
+    throw new TypeError(`${name} must be a safe filesystem path`);
+  }
+}
+
+function validateEmbeddedOptions(options: BuildEmbeddedOptions): void {
+  if (!options || typeof options !== "object") {
+    throw new TypeError("Embedded build options must be an object");
+  }
+  validatePath(options.projectDir, "Embedded projectDir");
+  validatePath(options.outDir, "Embedded outDir");
+  if (
+    options.runtime !== "deno" &&
+    options.runtime !== "node" &&
+    options.runtime !== "bun"
+  ) {
+    throw new TypeError('Embedded runtime must be "deno", "node", or "bun"');
+  }
+}
+
+function isContainedPath(basePath: string, candidatePath: string): boolean {
+  const relativePath = relative(basePath, candidatePath);
+  return relativePath === "" ||
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !relativePath.startsWith("..\\") &&
+      !isAbsolute(relativePath));
+}
+
+async function canonicalTargetPath(path: string): Promise<string> {
+  const absolutePath = resolve(path);
+  try {
+    return await realPath(absolutePath);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const unresolved: string[] = [];
+  let current = absolutePath;
+  while (true) {
+    const parent = dirname(current);
+    if (parent === current) {
+      throw buildError(`Cannot resolve an existing ancestor for ${path}`);
+    }
+    unresolved.unshift(presetBasename(current));
+    try {
+      return resolve(await realPath(parent), ...unresolved);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      current = parent;
+    }
+  }
+}
+
+function validateConfiguredDirectory(
+  value: string | undefined,
+  fallback: string,
+  name: string,
+): string {
+  const directory = value ?? fallback;
+  validatePath(directory, name);
+  if (
+    isAbsolute(directory) ||
+    directory.includes("\\") ||
+    directory.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new TypeError(`${name} must be a canonical project-relative path`);
+  }
+  return directory;
+}
+
+async function assertProjectDirectory(path: string, fs: FileSystem): Promise<void> {
+  let info;
+  try {
+    info = await fs.stat(path);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      throw buildError(`Embedded project directory does not exist: ${path}`);
+    }
+    throw error;
+  }
+  if (!info.isDirectory) {
+    throw buildError(`Embedded project path is not a directory: ${path}`);
+  }
+}
+
+async function assertConfiguredSourceDirectory(
+  projectDir: string,
+  directory: string,
+): Promise<void> {
+  const [canonicalProject, canonicalDirectory] = await Promise.all([
+    canonicalTargetPath(projectDir),
+    canonicalTargetPath(join(projectDir, directory)),
+  ]);
+  if (!isContainedPath(canonicalProject, canonicalDirectory)) {
+    throw SECURITY_VIOLATION.create({
+      detail: `Embedded source directory resolves outside the project: ${directory}`,
+    });
+  }
+}
+
 /**
- * Build the embedded preset bundle.
- * Outputs:
- * - outDir/embedded/manifest.json
- * - outDir/embedded/app.js (SSR entry)
- * - outDir/embedded/rsc/*.js (RSC support)
+ * Build a complete embedded bundle and publish it atomically at
+ * `<outDir>/embedded`.
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
 ): Promise<{ manifest: EmbeddedBundleManifest }> {
-  let buildResult: { manifest: EmbeddedBundleManifest } | undefined;
-  let buildFailed = false;
-  let buildError: unknown;
+  validateEmbeddedOptions(options);
+
+  let result: { manifest: EmbeddedBundleManifest } | undefined;
+  let buildFailure: unknown;
+  try {
+    result = await executeEmbeddedBuild(options);
+  } catch (error) {
+    buildFailure = error;
+  }
+
+  let stopFailure: unknown;
+  try {
+    await esbuild.stop();
+  } catch (error) {
+    stopFailure = error;
+  }
+
+  if (buildFailure !== undefined) {
+    if (stopFailure !== undefined) {
+      throw new AggregateError(
+        [buildFailure, stopFailure],
+        "Embedded build failed and the bundler could not stop cleanly",
+      );
+    }
+    throw buildFailure;
+  }
+  if (stopFailure !== undefined) throw stopFailure;
+  if (!result) throw buildError("Embedded build completed without a result");
+  return result;
+}
+
+async function executeEmbeddedBuild(
+  options: BuildEmbeddedOptions,
+): Promise<{ manifest: EmbeddedBundleManifest }> {
+  const projectDir = resolve(options.projectDir);
+  const outDir = resolve(options.outDir);
+  const embeddedDir = join(outDir, "embedded");
+  const fs = createFileSystem();
+  const adapter = await runtime.get();
+
+  await assertProjectDirectory(projectDir, fs);
+  const config = options.config ?? await getConfig(projectDir, adapter);
+  const appDirectory = validateConfiguredDirectory(
+    config.directories?.app,
+    "app",
+    "Embedded app directory",
+  );
+  const pagesDirectory = validateConfiguredDirectory(
+    config.directories?.pages,
+    "pages",
+    "Embedded pages directory",
+  );
+  await Promise.all([
+    assertConfiguredSourceDirectory(projectDir, appDirectory),
+    assertConfiguredSourceDirectory(projectDir, pagesDirectory),
+  ]);
+  await assertSafeBuildOutputDirectory(projectDir, embeddedDir, {
+    ...config,
+    directories: {
+      ...config.directories,
+      app: appDirectory,
+      pages: pagesDirectory,
+    },
+  });
+
+  const publication = await createBuildPublication(embeddedDir, false);
+  let manifest: EmbeddedBundleManifest | undefined;
+  let operationFailure: unknown;
 
   try {
-    const { projectDir, outDir } = options;
-    const embeddedDir = join(outDir, "embedded");
-    const fs = createFileSystem();
-    const adapter = await runtime.get();
-    const config = options.config ?? await getConfig(projectDir, adapter);
-    const appDirectory = config.directories?.app ?? "app";
-    const pagesDirectory = config.directories?.pages ?? "pages";
+    const stagingDir = publication.buildDir;
+    await fs.mkdir(join(stagingDir, "rsc"), { recursive: true });
 
-    await fs.mkdir(embeddedDir, { recursive: true });
-    await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
-
-    const entryPath = await findOrCreateEntryPath(
+    const entry = await findEmbeddedEntry(
       fs,
       projectDir,
       appDirectory,
       pagesDirectory,
     );
-    const appOut = join(embeddedDir, "app.js");
-    const bundledAppCode = await bundleEmbeddedApp({
-      fs,
-      entryPath,
-      projectDir,
-      adapter: adapter as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
-    });
-
-    await fs.writeTextFile(appOut, bundledAppCode);
-
-    const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
+    const budget: DiscoveryBudget = { entries: 0 };
     const discovered = [
-      ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
-      ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
+      ...(await discoverAppRoutes(fs, projectDir, appDirectory, budget)),
+      ...(await discoverPagesRoutes(fs, projectDir, pagesDirectory, budget)),
     ];
+    const plannedRoutes = planRoutes(entry, discovered);
+    const bundleCache = new Map<string, Promise<string>>();
 
-    for (const r of discovered) {
-      try {
-        const mdxContent = await fs.readTextFile(r.sourcePath);
-        const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
+    for (const route of plannedRoutes) {
+      const cacheKey = route.content === undefined
+        ? route.sourcePath
+        : `${route.sourcePath}\0${route.content}`;
+      let bundle = bundleCache.get(cacheKey);
+      if (!bundle) {
+        bundle = bundleEmbeddedModule({
+          source: route,
           projectDir,
-          mode: "production",
+          runtimeTarget: options.runtime,
           adapter,
+          fs,
         });
-
-        await fs.mkdir(presetDirname(r.filePath), { recursive: true });
-        await fs.writeTextFile(r.filePath, compiled.code);
-
-        const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
-        routes.push({
-          path: r.routePath,
-          file: `embedded/${fileRel}`,
-          type: "page",
-        });
-      } catch (e) {
-        logger.warn("embedded: failed to compile route MDX", {
-          route: r.routePath,
-          error: String(e),
-        } as unknown);
+        bundleCache.set(cacheKey, bundle);
       }
+
+      const outputPath = join(stagingDir, route.outputRelativePath);
+      await fs.mkdir(dirname(outputPath), { recursive: true });
+      await fs.writeTextFile(outputPath, await bundle);
     }
 
-    routes.unshift({ path: "/", file: "embedded/app.js", type: "page" });
+    await Promise.all([
+      fs.writeTextFile(join(stagingDir, "rsc", "client-dom.js"), CLIENT_DOM_BUNDLE),
+      fs.writeTextFile(
+        join(stagingDir, "rsc", "hydrate-client.js"),
+        HYDRATE_CLIENT_BUNDLE,
+      ),
+    ]);
 
-    const rscFiles = [
-      new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
-      new URL("../../rendering/rsc/hydrate-client.ts", import.meta.url),
-    ];
-
-    for (const url of rscFiles) {
-      try {
-        const srcPath = url.pathname;
-        const src = await fs.readTextFile(srcPath);
-        const res = await esbuild.transform(src, {
-          loader: "ts",
-          target: "es2020",
-          format: "esm",
-        });
-        const name = presetBasename(srcPath).replace(/\.tsx?$/, ".js");
-        await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
-      } catch (e) {
-        logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
-      }
-    }
-
-    const manifest: EmbeddedBundleManifest = {
+    manifest = {
       version: 1,
-      routes,
+      routes: plannedRoutes.map((route) => ({
+        path: route.routePath,
+        file: `embedded/${route.outputRelativePath.replaceAll("\\", "/")}`,
+        type: "page" as const,
+      })),
       assets: [
         {
           path: "/_veryfront/rsc/dom.js",
@@ -128,77 +345,119 @@ export async function buildEmbeddedPreset(
         },
       ],
     };
-
     await fs.writeTextFile(
-      join(embeddedDir, "manifest.json"),
-      JSON.stringify(manifest, null, 2),
+      join(stagingDir, "manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`,
     );
-
-    logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
-
-    buildResult = { manifest };
+    await publication.publish();
   } catch (error) {
-    buildFailed = true;
-    buildError = error;
+    operationFailure = error;
   }
 
-  let stopFailed = false;
-  let stopError: unknown;
+  let cleanupFailure: unknown;
   try {
-    await esbuild.stop();
+    await publication.cleanup();
   } catch (error) {
-    stopFailed = true;
-    stopError = error;
+    cleanupFailure = error;
   }
 
-  if (buildFailed) {
-    if (stopFailed) {
-      logger.warn("Failed to stop esbuild after embedded preset build error", {
-        error: String(stopError),
-      } as unknown);
+  if (operationFailure !== undefined) {
+    if (cleanupFailure !== undefined) {
+      throw new AggregateError(
+        [operationFailure, cleanupFailure],
+        "Embedded build failed and its staging output could not be cleaned up",
+      );
     }
-    throw buildError;
+    throw operationFailure;
   }
+  if (cleanupFailure !== undefined) throw cleanupFailure;
+  if (!manifest) throw buildError("Embedded build did not produce a manifest");
 
-  if (stopFailed) throw stopError;
-  return buildResult!;
+  logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
+  return { manifest };
 }
 
-/** @internal — exported for testing */
-export function presetDirname(path: string): string {
-  const idx = path.lastIndexOf("/");
-  return idx === -1 ? "" : path.slice(0, idx);
+function validateRoutePath(routePath: string): void {
+  if (
+    routePath.length === 0 ||
+    routePath.length > MAX_PATH_CHARACTERS ||
+    !routePath.startsWith("/") ||
+    routePath.includes("\\") ||
+    routePath.includes("?") ||
+    routePath.includes("#") ||
+    hasControlCharacters(routePath) ||
+    (routePath !== "/" &&
+      routePath.split("/").some((segment, index) =>
+        index > 0 && (segment === "" || segment === "." || segment === "..")
+      ))
+  ) {
+    throw buildError(`Invalid embedded route path: ${JSON.stringify(routePath)}`);
+  }
 }
 
-/** @internal — exported for testing */
-export function presetBasename(path: string): string {
-  const idx = path.lastIndexOf("/");
-  return idx === -1 ? path : path.slice(idx + 1);
+function validateOutputRelativePath(outputPath: string): void {
+  if (
+    outputPath.length === 0 ||
+    outputPath.length > MAX_PATH_CHARACTERS ||
+    isAbsolute(outputPath) ||
+    outputPath.includes("\\") ||
+    outputPath.includes("?") ||
+    outputPath.includes("#") ||
+    hasControlCharacters(outputPath) ||
+    outputPath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw buildError(`Invalid embedded output path: ${JSON.stringify(outputPath)}`);
+  }
 }
 
-/** @internal — exported for testing */
-export function normalizeAppRoutePath(rel: string): string {
-  return rel === "" ? "/" : rel.startsWith("/") ? rel : `/${rel}`;
+function samePath(left: string, right: string): boolean {
+  return resolve(left) === resolve(right);
 }
 
-/** @internal — exported for testing */
-export function normalizePageRoutePath(relPath: string): string {
-  const withoutExt = relPath.replace(/\.(mdx|md)$/, "");
-  const norm = `/${withoutExt}`;
-  return norm.replace(/\/+/g, "/") || "/";
+function planRoutes(
+  entry: EmbeddedSource,
+  discovered: readonly DiscoveredRoute[],
+): PlannedRoute[] {
+  const planned: PlannedRoute[] = [{
+    ...entry,
+    routePath: "/",
+    outputRelativePath: "app.js",
+  }];
+  const routePaths = new Set<string>(["/"]);
+  const outputPaths = new Map<string, string>([["app.js", "/"]]);
+
+  for (const route of discovered) {
+    validateRoutePath(route.routePath);
+    validateOutputRelativePath(route.outputRelativePath);
+
+    if (route.routePath === "/" && samePath(route.sourcePath, entry.sourcePath)) {
+      continue;
+    }
+    if (routePaths.has(route.routePath)) {
+      throw buildError(`Duplicate embedded route: ${route.routePath}`);
+    }
+
+    const outputKey = route.outputRelativePath.normalize("NFC").toLocaleLowerCase("en-US");
+    const existingRoute = outputPaths.get(outputKey);
+    if (existingRoute) {
+      throw buildError(
+        `Embedded output collision between routes ${existingRoute} and ${route.routePath}`,
+      );
+    }
+
+    routePaths.add(route.routePath);
+    outputPaths.set(outputKey, route.routePath);
+    planned.push(route);
+  }
+  return planned;
 }
 
-/** @internal — exported for testing */
-export function isPageFile(name: string): boolean {
-  return (name.endsWith(".mdx") || name.endsWith(".md")) && !name.startsWith("_");
-}
-
-async function findOrCreateEntryPath(
-  fs: ReturnType<typeof createFileSystem>,
+async function findEmbeddedEntry(
+  fs: FileSystem,
   projectDir: string,
   appDirectory: string,
   pagesDirectory: string,
-): Promise<string> {
+): Promise<EmbeddedSource> {
   const candidates = [
     join(projectDir, appDirectory, "page.mdx"),
     join(projectDir, appDirectory, "page.md"),
@@ -206,154 +465,441 @@ async function findOrCreateEntryPath(
     join(projectDir, pagesDirectory, "index.md"),
   ];
 
-  for (const c of candidates) {
+  for (const candidate of candidates) {
     try {
-      const st = await fs.stat(c);
-      if (st.isFile) return c;
+      const lstat = fs.lstat ? await fs.lstat(candidate) : undefined;
+      if (lstat?.isSymlink) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Embedded entry must not be a symbolic link: ${candidate}`,
+        });
+      }
+      const stat = await fs.stat(candidate);
+      if (!stat.isFile) {
+        throw buildError(`Embedded entry candidate is not a file: ${candidate}`);
+      }
+      return { sourcePath: candidate };
     } catch (error) {
-      logger.debug(`Entry path not found: ${c}`, error);
+      if (!isNotFoundError(error)) throw error;
     }
   }
 
-  const entryPath = join(projectDir, ".veryfront", "__embedded_fallback__.tsx");
-  await fs.mkdir(join(projectDir, ".veryfront"), { recursive: true });
-  await fs.writeTextFile(
-    entryPath,
-    `export default function Page(){ return '<div>Veryfront</div>'; }`,
-  );
-  return entryPath;
+  return {
+    sourcePath: join(projectDir, ".veryfront", "__embedded_fallback__.mdx"),
+    content: "# Veryfront",
+  };
 }
 
-async function bundleEmbeddedApp(params: {
-  fs: ReturnType<typeof createFileSystem>;
-  entryPath: string;
-  projectDir: string;
-  adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
-}): Promise<string> {
-  const { fs, entryPath, projectDir, adapter } = params;
+function assertSafeEntryName(name: string): void {
+  if (
+    name.length === 0 ||
+    name.length > MAX_PATH_CHARACTERS ||
+    name === "." ||
+    name === ".." ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    hasControlCharacters(name)
+  ) {
+    throw buildError("Embedded route discovery received an invalid directory entry");
+  }
+}
 
+async function readSortedEntries(fs: FileSystem, directory: string) {
+  const entries: Array<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }> = [];
+  for await (const entry of fs.readDir(directory)) {
+    assertSafeEntryName(entry.name);
+    entries.push(entry);
+  }
+  return entries.sort((left, right) => left.name.localeCompare(right.name, "en-US"));
+}
+
+async function directoryExists(fs: FileSystem, path: string): Promise<boolean> {
   try {
-    let sourceCode = await fs.readTextFile(entryPath);
-    const isMdx = entryPath.endsWith(".mdx") || entryPath.endsWith(".md");
+    const info = await fs.stat(path);
+    if (!info.isDirectory) {
+      throw buildError(`Embedded route source is not a directory: ${path}`);
+    }
+    return true;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+}
 
-    if (isMdx) {
-      const compiled = await compileMDXToJS(entryPath, sourceCode, {
-        projectDir,
-        mode: "production",
-        adapter,
-      });
-      sourceCode = compiled.code;
+async function discoverRoutes(
+  fs: FileSystem,
+  base: string,
+  kind: "app" | "pages",
+  budget: DiscoveryBudget,
+): Promise<DiscoveredRoute[]> {
+  if (!(await directoryExists(fs, base))) return [];
+  const results: DiscoveredRoute[] = [];
+
+  async function walk(directory: string, relativeDirectory: string, depth: number): Promise<void> {
+    if (depth > MAX_ROUTE_DEPTH) {
+      throw buildError(`Embedded route depth exceeds ${MAX_ROUTE_DEPTH}`);
     }
 
-    const appBuild = await esbuild.build({
-      stdin: {
-        contents: sourceCode,
-        sourcefile: entryPath,
-        resolveDir: projectDir,
-        loader: "tsx",
-      },
-      bundle: true,
-      format: "esm",
-      platform: "neutral",
-      target: ["es2020"],
-      write: false,
-      logLevel: "silent",
-      external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
-    });
+    for (const entry of await readSortedEntries(fs, directory)) {
+      budget.entries++;
+      if (budget.entries > MAX_ROUTE_ENTRIES) {
+        throw buildError(`Embedded route discovery exceeds ${MAX_ROUTE_ENTRIES} entries`);
+      }
+      if (entry.isSymlink) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Embedded route discovery does not follow symbolic links: ${
+            join(directory, entry.name)
+          }`,
+        });
+      }
 
-    const code = appBuild.outputFiles?.[0]?.text;
-    if (code) return code;
+      const absolutePath = join(directory, entry.name);
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      if (entry.isDirectory) {
+        await walk(absolutePath, relativePath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile) continue;
 
-    throw toError(
-      createError({
-        type: "build",
-        message: "Failed to generate embedded app bundle: no output files",
-      }),
-    );
-  } catch (error) {
-    logger.error("Failed to bundle embedded app:", error);
-    throw toError(
-      createError({
-        type: "build",
-        message: `Failed to bundle embedded app: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      }),
-    );
+      if (kind === "app") {
+        if (entry.name !== "page.mdx" && entry.name !== "page.md") continue;
+        const routePath = normalizeAppRoutePath(relativeDirectory);
+        const outputRelativePath = routePath === "/" ? "app.js" : `app${routePath}.js`;
+        results.push({
+          routePath,
+          outputRelativePath,
+          sourcePath: absolutePath,
+        });
+        continue;
+      }
+
+      if (!isPageFile(entry.name)) continue;
+      const routePath = normalizePageRoutePath(relativePath);
+      const withoutExtension = relativePath.replace(/\.(?:mdx|md)$/i, "");
+      results.push({
+        routePath,
+        outputRelativePath: `pages/${withoutExtension}.js`,
+        sourcePath: absolutePath,
+      });
+    }
   }
+
+  await walk(base, "", 0);
+  return results;
 }
 
 async function discoverAppRoutes(
-  fs: ReturnType<typeof createFileSystem>,
+  fs: FileSystem,
   projectDir: string,
-  embeddedDir: string,
   appDirectory: string,
-): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
-  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
-  const base = join(projectDir, appDirectory);
-
-  async function walk(dir: string, rel = ""): Promise<void> {
-    for await (const ent of fs.readDir(dir)) {
-      const abs = join(dir, ent.name);
-      const relNext = rel ? `${rel}/${ent.name}` : ent.name;
-
-      if (ent.isDirectory) {
-        await walk(abs, relNext);
-        continue;
-      }
-
-      if (!ent.isFile || (ent.name !== "page.mdx" && ent.name !== "page.md")) continue;
-
-      const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
-      const norm = normalizeAppRoutePath(routePath);
-
-      const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
-      results.push({ routePath: norm, filePath, sourcePath: abs });
-    }
-  }
-
-  try {
-    await walk(base);
-  } catch (_) {
-    /* expected: no app directory */
-  }
-
-  return results;
+  budget: DiscoveryBudget,
+): Promise<DiscoveredRoute[]> {
+  return await discoverRoutes(fs, join(projectDir, appDirectory), "app", budget);
 }
 
 async function discoverPagesRoutes(
-  fs: ReturnType<typeof createFileSystem>,
+  fs: FileSystem,
   projectDir: string,
-  embeddedDir: string,
   pagesDirectory: string,
-): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
-  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
-  const base = join(projectDir, pagesDirectory);
+  budget: DiscoveryBudget,
+): Promise<DiscoveredRoute[]> {
+  return await discoverRoutes(fs, join(projectDir, pagesDirectory), "pages", budget);
+}
 
-  async function walk(dir: string, rel = ""): Promise<void> {
-    for await (const ent of fs.readDir(dir)) {
-      const abs = join(dir, ent.name);
-      const relNext = rel ? `${rel}/${ent.name}` : ent.name;
+function splitSpecifierSuffix(specifier: string): {
+  path: string;
+  suffix: string;
+} {
+  const queryIndex = specifier.indexOf("?");
+  const fragmentIndex = specifier.indexOf("#");
+  const suffixIndex = queryIndex === -1
+    ? fragmentIndex
+    : fragmentIndex === -1
+    ? queryIndex
+    : Math.min(queryIndex, fragmentIndex);
+  return suffixIndex === -1 ? { path: specifier, suffix: "" } : {
+    path: specifier.slice(0, suffixIndex),
+    suffix: specifier.slice(suffixIndex),
+  };
+}
 
-      if (ent.isDirectory) {
-        await walk(abs, relNext);
-        continue;
+function localImportBase(
+  specifier: string,
+  resolveDir: string,
+  projectDir: string,
+): { path: string; suffix: string } | null {
+  if (specifier.startsWith("file:")) {
+    const url = new URL(specifier);
+    if (url.protocol !== "file:") return null;
+    const suffix = `${url.search}${url.hash}`;
+    url.search = "";
+    url.hash = "";
+    return { path: fromFileUrl(url), suffix };
+  }
+
+  const local = splitSpecifierSuffix(specifier);
+  if (local.path.startsWith("@/")) {
+    return {
+      path: resolve(projectDir, local.path.slice(2)),
+      suffix: local.suffix,
+    };
+  }
+  if (local.path.startsWith("/")) {
+    return {
+      path: resolve(projectDir, local.path.slice(1)),
+      suffix: local.suffix,
+    };
+  }
+  if (local.path.startsWith(".")) {
+    return {
+      path: resolve(resolveDir, local.path),
+      suffix: local.suffix,
+    };
+  }
+  return null;
+}
+
+function isNodeModulesPath(path: string): boolean {
+  return /(^|[/\\])node_modules([/\\]|$)/.test(path);
+}
+
+async function resolveLocalModule(
+  specifier: string,
+  resolveDir: string,
+  projectDir: string,
+  fs: FileSystem,
+): Promise<{ path: string; suffix: string }> {
+  const local = localImportBase(specifier, resolveDir, projectDir);
+  if (!local) {
+    throw MODULE_NOT_FOUND.create({
+      detail: `Embedded local module has an unsupported specifier: ${specifier}`,
+    });
+  }
+  if (!isContainedPath(projectDir, local.path)) {
+    throw SECURITY_VIOLATION.create({
+      detail: `Embedded module import resolves outside the project: ${specifier}`,
+    });
+  }
+
+  const hasKnownSuffix = LOCAL_MODULE_SUFFIXES.slice(1).some((suffix) =>
+    local.path.toLowerCase().endsWith(suffix)
+  );
+  const candidates = hasKnownSuffix ? [local.path] : [
+    local.path,
+    ...LOCAL_MODULE_SUFFIXES.slice(1).map((suffix) => `${local.path}${suffix}`),
+    ...LOCAL_MODULE_SUFFIXES.slice(1).map((suffix) => join(local.path, `index${suffix}`)),
+  ];
+  const canonicalProject = await realPath(projectDir);
+
+  for (const candidate of candidates) {
+    if (!isContainedPath(projectDir, candidate)) {
+      throw SECURITY_VIOLATION.create({
+        detail: `Embedded module import resolves outside the project: ${specifier}`,
+      });
+    }
+    try {
+      const info = await fs.stat(candidate);
+      if (!info.isFile) continue;
+      const canonicalCandidate = await realPath(candidate);
+      if (!isContainedPath(canonicalProject, canonicalCandidate)) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Embedded module import escapes through a symbolic link: ${specifier}`,
+        });
       }
-
-      if (!ent.isFile) continue;
-      if (!isPageFile(ent.name)) continue;
-
-      const routePath = normalizePageRoutePath(relNext);
-      const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
-      results.push({ routePath, filePath, sourcePath: abs });
+      return { path: candidate, suffix: local.suffix };
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
     }
   }
 
-  try {
-    await walk(base);
-  } catch (_) {
-    /* expected: no pages directory */
-  }
+  throw MODULE_NOT_FOUND.create({
+    detail: `Cannot resolve embedded module ${JSON.stringify(specifier)} from ${resolveDir}`,
+  });
+}
 
-  return results;
+function createEmbeddedProjectPlugin(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  fs: FileSystem,
+  runtimeTarget: BuildEmbeddedOptions["runtime"],
+): Plugin {
+  return {
+    name: "veryfront-embedded-project",
+    setup(build: PluginBuild): void {
+      build.onResolve({ filter: /.*/ }, async (args: OnResolveArgs) => {
+        if (
+          args.path.startsWith("http://") ||
+          args.path.startsWith("https://")
+        ) {
+          if (runtimeTarget !== "deno") {
+            throw buildError(
+              `Remote module imports are not supported by the ${runtimeTarget} embedded target`,
+            );
+          }
+          return { path: args.path, external: true };
+        }
+
+        if (
+          args.path.startsWith(".") &&
+          !isContainedPath(projectDir, resolve(args.resolveDir)) &&
+          isNodeModulesPath(args.resolveDir)
+        ) {
+          // Bare dependencies are resolved by the bundler. Their own relative
+          // imports may live in a workspace-level/hoisted node_modules tree.
+          return null;
+        }
+
+        const local = localImportBase(args.path, args.resolveDir, projectDir);
+        if (!local) return null;
+        const resolved = await resolveLocalModule(
+          args.path,
+          args.resolveDir,
+          projectDir,
+          fs,
+        );
+        return {
+          path: resolved.path,
+          ...(resolved.suffix ? { suffix: resolved.suffix } : {}),
+        } as OnResolveResult;
+      });
+
+      build.onLoad(
+        { filter: /\.mdx?$/i },
+        async (args: OnLoadArgs) => {
+          const content = await fs.readTextFile(args.path);
+          const compiled = await compileMDXProgram(args.path, content, {
+            projectDir,
+            mode: "production",
+            adapter,
+          });
+          return {
+            contents: compiled.code,
+            loader: "js",
+            resolveDir: dirname(args.path),
+          };
+        },
+      );
+    },
+  };
+}
+
+function runtimeBuildSettings(runtimeTarget: BuildEmbeddedOptions["runtime"]): {
+  platform: "neutral" | "node";
+  target: string[];
+} {
+  switch (runtimeTarget) {
+    case "node":
+      return { platform: "node", target: ["node20"] };
+    case "bun":
+      return { platform: "node", target: ["es2022"] };
+    case "deno":
+      return { platform: "neutral", target: ["es2022"] };
+  }
+}
+
+async function bundleEmbeddedModule(params: {
+  source: EmbeddedSource;
+  projectDir: string;
+  runtimeTarget: BuildEmbeddedOptions["runtime"];
+  adapter: RuntimeAdapter;
+  fs: FileSystem;
+}): Promise<string> {
+  const { source, projectDir, runtimeTarget, adapter, fs } = params;
+  const sourceCode = source.content ?? await fs.readTextFile(source.sourcePath);
+  const isMdx = /\.mdx?$/i.test(source.sourcePath);
+  const compiledCode = isMdx
+    ? (await compileMDXToJS(source.sourcePath, sourceCode, {
+      projectDir,
+      mode: "production",
+      adapter,
+    })).code
+    : sourceCode;
+  const settings = runtimeBuildSettings(runtimeTarget);
+
+  try {
+    const result = await esbuild.build({
+      stdin: {
+        contents: compiledCode,
+        sourcefile: source.sourcePath,
+        resolveDir: dirname(source.sourcePath),
+        loader: "js",
+      },
+      bundle: true,
+      format: "esm",
+      platform: settings.platform,
+      target: settings.target,
+      minify: true,
+      treeShaking: true,
+      write: false,
+      logLevel: "silent",
+      external: [...REACT_EXTERNALS, "node:*"],
+      plugins: [
+        createEmbeddedProjectPlugin(
+          projectDir,
+          adapter,
+          fs,
+          runtimeTarget,
+        ),
+      ],
+    });
+
+    if (result.errors.length > 0) {
+      throw buildError(
+        `Embedded bundler reported ${result.errors.length} error${
+          result.errors.length === 1 ? "" : "s"
+        }`,
+      );
+    }
+    if (result.outputFiles.length !== 1) {
+      throw buildError(
+        "Embedded page produced additional assets; import CSS and binary assets through the public asset pipeline",
+      );
+    }
+    const code = result.outputFiles[0]?.text;
+    if (!code) throw buildError("Embedded page bundle produced no JavaScript");
+    return code;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw buildError(
+      `Failed to bundle embedded module ${source.sourcePath}: ${detail}`,
+      error,
+    );
+  }
+}
+
+/** @internal — exported for compatibility and focused tests. */
+export function presetDirname(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? "" : path.slice(0, idx);
+}
+
+/** @internal — exported for compatibility and focused tests. */
+export function presetBasename(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? path : path.slice(idx + 1);
+}
+
+/** @internal — exported for compatibility and focused tests. */
+export function normalizeAppRoutePath(relativeDirectory: string): string {
+  return relativeDirectory === ""
+    ? "/"
+    : relativeDirectory.startsWith("/")
+    ? relativeDirectory
+    : `/${relativeDirectory}`;
+}
+
+/** @internal — exported for compatibility and focused tests. */
+export function normalizePageRoutePath(relativePath: string): string {
+  const withoutExtension = relativePath.replace(/\.(mdx|md)$/i, "");
+  const normalized = `/${withoutExtension}`;
+  return normalized.replace(/\/+/g, "/") || "/";
+}
+
+/** @internal — exported for compatibility and focused tests. */
+export function isPageFile(name: string): boolean {
+  return /\.(?:mdx|md)$/i.test(name) && !name.startsWith("_");
 }
