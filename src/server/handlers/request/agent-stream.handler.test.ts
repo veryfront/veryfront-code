@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type { AgentMessage } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
@@ -194,6 +195,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
     let runtimeSystem: unknown;
+    let runtimeMessages: AgentMessage[] | undefined;
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -202,8 +204,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (runtimeAgent) => ({
-        stream: async (_messages, context, callbacks) => {
+        stream: async (messages, context, callbacks) => {
           runtimeSystem = runtimeAgent.config.system;
+          runtimeMessages = messages;
           streamContext = context;
           callbacks?.onFinish?.({
             text: "hello from runtime",
@@ -247,6 +250,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       title: "studio_context",
       data: { branchId: null },
     }];
+    invocation.messages[0].parts.push({
+      type: "image",
+      upload_id: "20000000-2000-4000-8000-200000000001",
+      media_type: "image/png",
+      url: "https://uploads.example.com/screenshot.png",
+    });
     const body = JSON.stringify(invocation);
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
@@ -268,6 +277,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
     assertEquals(typeof runtimeSystem, "function");
+    assertEquals(
+      runtimeMessages?.[0]?.parts.find((part) => part.type === "image"),
+      {
+        type: "image",
+        mediaType: "image/png",
+        url: "https://uploads.example.com/screenshot.png",
+      },
+    );
     const prompt = await (runtimeSystem as () => Promise<string>)();
     assertStringIncludes(
       prompt,

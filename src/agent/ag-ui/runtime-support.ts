@@ -25,9 +25,15 @@ export function normalizeAgUiRuntimeMessages(
 
     switch (message.role) {
       case "system":
-      case "user":
         toolNamesById.clear();
         parts.push({ type: "text", text: message.content });
+        break;
+      case "user":
+        toolNamesById.clear();
+        if (message.content.length > 0) {
+          parts.push({ type: "text", text: message.content });
+        }
+        parts.push(...message.attachments ?? []);
         break;
       case "assistant":
         if (typeof message.content === "string" && message.content.length > 0) {
