@@ -3,12 +3,11 @@ import { createValidationError, VeryfrontError } from "./errors.ts";
 import {
   readBodyBytesWithLimit,
   readBodyWithLimit,
-  resolveRequestLimits,
   validateContentType,
   validateRequestLimits,
 } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
-import { type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
+import { type ParseFormOptions, type ParseJsonOptions, type RequestLimits } from "./types.ts";
 import * as nodeBuffer from "node:buffer";
 
 const FileCtor = globalThis.File ??
@@ -20,8 +19,29 @@ export async function parseJsonBody<T>(
   schema: Schema<T>,
   options?: ParseJsonOptions,
 ): Promise<T> {
-  const limits = resolveRequestLimits(options?.limits);
-  validateRequestLimits(request, limits);
+  const limits = validateRequestLimits(request, options?.limits);
+
+  return await parseJsonBodyAfterRequestLimits(
+    request,
+    schema,
+    limits,
+    options?.sanitize,
+  );
+}
+
+/**
+ * Parse JSON after the caller has applied `validateRequestLimits()`.
+ *
+ * @internal This keeps composite request boundaries from repeating the
+ * URL/header/content-length checks while preserving `parseJsonBody()` as a
+ * safe standalone API.
+ */
+export async function parseJsonBodyAfterRequestLimits<T>(
+  request: Request,
+  schema: Schema<T>,
+  limits: Required<RequestLimits>,
+  sanitize = false,
+): Promise<T> {
   validateContentType(request, "application/json");
 
   let data: unknown;
@@ -38,7 +58,7 @@ export async function parseJsonBody<T>(
 
   const result = schema.safeParse(data);
   if (result.success) {
-    return options?.sanitize ? (sanitizeData(result.data) as T) : result.data;
+    return sanitize ? (sanitizeData(result.data) as T) : result.data;
   }
 
   const issues = result.issues ?? [];
@@ -57,8 +77,7 @@ export async function parseFormData<T>(
   schema: Schema<T>,
   options?: ParseFormOptions,
 ): Promise<T> {
-  const limits = resolveRequestLimits(options?.limits);
-  validateRequestLimits(request, limits);
+  const limits = validateRequestLimits(request, options?.limits);
 
   validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 

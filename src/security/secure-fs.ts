@@ -74,6 +74,15 @@ const VALIDATION_LEVELS = new Set<NonNullable<ValidationOptions["level"]>>([
   "permissive",
 ]);
 
+function cloneAndFreezeAllowedDirs(
+  allowedDirs: string[] | undefined,
+): string[] | undefined {
+  if (allowedDirs === undefined) return undefined;
+  const snapshot = [...allowedDirs];
+  Object.freeze(snapshot);
+  return snapshot;
+}
+
 function normalizeValidationOptions(
   options: Partial<ValidationOptions> | undefined,
 ): Partial<ValidationOptions> {
@@ -102,6 +111,7 @@ function normalizeValidationOptions(
       detail: "SecureFs allowedDirs must contain non-empty strings",
     });
   }
+  normalized.allowedDirs = cloneAndFreezeAllowedDirs(normalized.allowedDirs);
   for (
     const key of [
       "followSymlinks",
@@ -248,12 +258,16 @@ export class SecureFs {
       contextOptions,
     );
 
-    return {
+    const validationOptions: ValidationOptions = {
       ...contextValidationOptions,
       ...this.config.validationOptions,
       baseDir: this.config.baseDir,
       adapter: this.config.adapter,
     };
+    validationOptions.allowedDirs = cloneAndFreezeAllowedDirs(
+      validationOptions.allowedDirs,
+    );
+    return validationOptions;
   }
 
   private emitValidationEvent(
@@ -431,12 +445,16 @@ export class SecureFs {
   }
 
   updateValidationOptions(options: Partial<ValidationOptions>): void {
-    this.validationOptions = {
+    const validationOptions: ValidationOptions = {
       ...this.validationOptions,
       ...normalizeValidationOptions(options),
       baseDir: this.config.baseDir,
       adapter: this.config.adapter,
     };
+    validationOptions.allowedDirs = cloneAndFreezeAllowedDirs(
+      validationOptions.allowedDirs,
+    );
+    this.validationOptions = validationOptions;
   }
 
   setContext(context: SecurityContext): void {

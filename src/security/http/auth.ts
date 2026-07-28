@@ -36,8 +36,73 @@ type ResolvedAuth =
     token: string;
   }>
   | Readonly<{
-    kind: "ambiguous";
+    kind: "invalid";
   }>;
+
+const INVALID_AUTH = Object.freeze({ kind: "invalid" } as const);
+const AUTH_CONFIG_KEYS = new Set(["basic", "bearer"]);
+const BASIC_AUTH_CONFIG_KEYS = new Set(["username", "password", "realm"]);
+const BEARER_AUTH_CONFIG_KEYS = new Set(["token"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function resolveConfiguredAuth(value: unknown): ResolvedAuth {
+  try {
+    if (!isRecord(value) || !hasOnlyKeys(value, AUTH_CONFIG_KEYS)) {
+      return INVALID_AUTH;
+    }
+
+    const hasBasic = Object.hasOwn(value, "basic");
+    const hasBearer = Object.hasOwn(value, "bearer");
+    if (hasBasic === hasBearer) return INVALID_AUTH;
+
+    if (hasBasic) {
+      const basic = value.basic;
+      if (
+        !isRecord(basic) ||
+        !hasOnlyKeys(basic, BASIC_AUTH_CONFIG_KEYS) ||
+        !Object.hasOwn(basic, "username") ||
+        !Object.hasOwn(basic, "password") ||
+        typeof basic.username !== "string" ||
+        basic.username.length === 0 ||
+        typeof basic.password !== "string" ||
+        basic.password.length === 0
+      ) {
+        return INVALID_AUTH;
+      }
+
+      return Object.freeze({
+        kind: "basic",
+        username: basic.username,
+        password: basic.password,
+        realm: sanitizeRealm(basic.realm || "Secure Area"),
+      });
+    }
+
+    const bearer = value.bearer;
+    if (
+      !isRecord(bearer) ||
+      !hasOnlyKeys(bearer, BEARER_AUTH_CONFIG_KEYS) ||
+      !Object.hasOwn(bearer, "token") ||
+      typeof bearer.token !== "string" ||
+      bearer.token.length === 0
+    ) {
+      return INVALID_AUTH;
+    }
+
+    return Object.freeze({ kind: "bearer", token: bearer.token });
+  } catch {
+    // Treat hostile accessors and proxies as malformed configuration. The
+    // rejection path is intentionally generic so credentials never leak.
+    return INVALID_AUTH;
+  }
+}
 
 export class AuthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -58,27 +123,22 @@ export class AuthHandler extends BaseHandler {
     if (auth.kind === "bearer") {
       return Promise.resolve(this.checkBearerAuth(req, ctx, auth));
     }
-    return Promise.resolve(this.rejectAmbiguousAuth(req, ctx));
+    return Promise.resolve(this.rejectInvalidAuth(req, ctx));
   }
 
   private resolveAuth(ctx: HandlerContext): ResolvedAuth | null {
-    const authConfig = ctx.securityConfig?.auth as AuthConfig | undefined;
-
-    if (authConfig?.basic) {
-      const { username, password } = authConfig.basic;
-      if (!username || !password) return null;
-      return Object.freeze({
-        kind: "basic",
-        username,
-        password,
-        realm: sanitizeRealm(authConfig.basic.realm || "Secure Area"),
-      });
-    }
-
-    if (authConfig?.bearer) {
-      return authConfig.bearer.token
-        ? Object.freeze({ kind: "bearer", token: authConfig.bearer.token })
-        : null;
+    try {
+      if (
+        ctx.securityConfig &&
+        (
+          Object.hasOwn(ctx.securityConfig, "auth") ||
+          (ctx.securityConfig.auth as AuthConfig | undefined) !== undefined
+        )
+      ) {
+        return resolveConfiguredAuth(ctx.securityConfig.auth);
+      }
+    } catch {
+      return INVALID_AUTH;
     }
 
     // `__vfTestEnv` lets the test harness skip env-var credential loading so
@@ -89,13 +149,24 @@ export class AuthHandler extends BaseHandler {
       return null;
     }
 
-    const username = ctx.adapter.env.get("VERYFRONT_BASIC_USER") ?? "";
-    const password = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") ?? "";
-    const token = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") ?? "";
-    if (username && password && token) {
-      return Object.freeze({ kind: "ambiguous" });
-    }
-    if (username && password) {
+    const username: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_USER");
+    const password: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_PASS");
+    const token: unknown = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN");
+    const hasUsername = username !== undefined;
+    const hasPassword = password !== undefined;
+    const hasToken = token !== undefined;
+
+    if (!hasUsername && !hasPassword && !hasToken) return null;
+
+    if (
+      hasUsername &&
+      hasPassword &&
+      !hasToken &&
+      typeof username === "string" &&
+      username.length > 0 &&
+      typeof password === "string" &&
+      password.length > 0
+    ) {
       return Object.freeze({
         kind: "basic",
         username,
@@ -104,7 +175,17 @@ export class AuthHandler extends BaseHandler {
       });
     }
 
-    return token ? Object.freeze({ kind: "bearer", token }) : null;
+    if (
+      !hasUsername &&
+      !hasPassword &&
+      hasToken &&
+      typeof token === "string" &&
+      token.length > 0
+    ) {
+      return Object.freeze({ kind: "bearer", token });
+    }
+
+    return INVALID_AUTH;
   }
 
   private checkBasicAuth(
@@ -148,7 +229,7 @@ export class AuthHandler extends BaseHandler {
     );
   }
 
-  private rejectAmbiguousAuth(req: Request, ctx: HandlerContext): HandlerResult {
+  private rejectInvalidAuth(req: Request, ctx: HandlerContext): HandlerResult {
     return this.respond(
       this.createResponseBuilder(ctx)
         .withCORS(req, ctx.securityConfig?.cors)

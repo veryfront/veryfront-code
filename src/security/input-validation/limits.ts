@@ -56,12 +56,14 @@ export function isRequestBodyTooLargeError(error: unknown): error is VeryfrontEr
 export function validateRequestLimits(
   request: Request,
   limits: RequestLimits = {},
-): void {
-  const { maxUrlLength, maxBodySize, maxHeaderSize } = resolveRequestLimits(limits);
+): Required<RequestLimits> {
+  const resolved = resolveRequestLimits(limits);
+  const { maxUrlLength, maxBodySize, maxHeaderSize } = resolved;
 
   validateUrlLength(request.url, maxUrlLength);
   validateContentLength(request, maxBodySize);
   validateHeaderSize(request, maxHeaderSize);
+  return resolved;
 }
 
 function validateUrlLength(url: string, maxLength: number): void {

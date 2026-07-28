@@ -224,4 +224,144 @@ describe("AuthHandler realm sanitization", () => {
       testGlobals.__vfTestEnv = previousTestFlag;
     }
   });
+
+  it("fails closed for every partial, empty, or competing environment auth state", async () => {
+    const handler = createHandler();
+    const testGlobals = globalThis as Record<string, unknown>;
+    const hadTestFlag = Object.hasOwn(testGlobals, "__vfTestEnv");
+    const previousTestFlag = testGlobals.__vfTestEnv;
+    const values = [undefined, "", "configured"] as const;
+    const basicAuthorization = `Basic ${btoa("configured:configured")}`;
+    const bearerAuthorization = "Bearer configured";
+
+    testGlobals.__vfTestEnv = false;
+    try {
+      for (const username of values) {
+        for (const password of values) {
+          for (const token of values) {
+            const credentials: Readonly<Record<string, string | undefined>> = {
+              VERYFRONT_BASIC_USER: username,
+              VERYFRONT_BASIC_PASS: password,
+              VERYFRONT_BEARER_TOKEN: token,
+            };
+            const ctx: HandlerContext = {
+              projectDir: "/tmp/auth-test",
+              securityConfig: null,
+              cspUserHeader: null,
+              adapter: {
+                env: { get: (name: string) => credentials[name] },
+              } as unknown as HandlerContext["adapter"],
+              isLocalProject: false,
+            };
+            const authDisabled = username === undefined &&
+              password === undefined &&
+              token === undefined;
+            const validBasic = username === "configured" &&
+              password === "configured" &&
+              token === undefined;
+            const validBearer = username === undefined &&
+              password === undefined &&
+              token === "configured";
+
+            if (authDisabled) {
+              const result = await handler.handle(
+                new Request("http://localhost/test"),
+                ctx,
+              );
+              expect(result.continue).toBe(true);
+              continue;
+            }
+
+            if (validBasic || validBearer) {
+              const result = await handler.handle(
+                new Request("http://localhost/test", {
+                  headers: {
+                    authorization: validBasic ? basicAuthorization : bearerAuthorization,
+                  },
+                }),
+                ctx,
+              );
+              expect(result.continue).toBe(true);
+              continue;
+            }
+
+            for (
+              const authorization of [
+                undefined,
+                basicAuthorization,
+                bearerAuthorization,
+              ]
+            ) {
+              const headers = authorization === undefined ? undefined : { authorization };
+              const result = await handler.handle(
+                new Request("http://localhost/test", { headers }),
+                ctx,
+              );
+              const response = result.response as Response;
+
+              expect(result.continue).not.toBe(true);
+              expect(response.status).toBe(401);
+              expect(response.headers.get("WWW-Authenticate")).toBe(
+                'Basic realm="Secure Area", Bearer',
+              );
+              expect(await response.text()).toBe("Unauthorized");
+            }
+          }
+        }
+      }
+    } finally {
+      if (hadTestFlag) testGlobals.__vfTestEnv = previousTestFlag;
+      else delete testGlobals.__vfTestEnv;
+    }
+  });
+
+  it("rejects malformed or competing explicit auth config without exposing credentials", async () => {
+    const handler = createHandler();
+    const invalidAuthConfigs: readonly unknown[] = [
+      {},
+      { basic: {} },
+      { basic: { username: "admin" } },
+      { basic: { password: "secret" } },
+      { basic: { username: "", password: "secret" } },
+      { basic: { username: "admin", password: "" } },
+      { bearer: {} },
+      { bearer: { token: "" } },
+      {
+        basic: { username: "admin", password: "secret" },
+        bearer: { token: "private-token" },
+      },
+      { basic: undefined },
+      { unknownMode: { secret: "must-not-leak" } },
+      "invalid-auth-config",
+    ];
+
+    for (const auth of invalidAuthConfigs) {
+      const ctx: HandlerContext = {
+        projectDir: "/tmp/auth-test",
+        securityConfig: { auth } as unknown as SecurityConfig,
+        cspUserHeader: null,
+        adapter: {
+          env: { get: () => undefined },
+        } as unknown as HandlerContext["adapter"],
+        isLocalProject: false,
+      };
+      const result = await handler.handle(
+        new Request("http://localhost/test", {
+          headers: { authorization: "Bearer private-token" },
+        }),
+        ctx,
+      );
+      const response = result.response as Response;
+      const body = await response.text();
+
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe(
+        'Basic realm="Secure Area", Bearer',
+      );
+      expect(body).toBe("Unauthorized");
+      expect(body).not.toContain("admin");
+      expect(body).not.toContain("secret");
+      expect(body).not.toContain("private-token");
+    }
+  });
 });

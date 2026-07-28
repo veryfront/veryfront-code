@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   createValidator,
   sanitizePathForDisplay,
@@ -8,6 +10,14 @@ import {
   validatePathSync,
 } from "./index.ts";
 import { PathValidationError } from "./types.ts";
+
+function createAdapterWithFs(
+  overrides: Partial<RuntimeAdapter["fs"]>,
+): RuntimeAdapter {
+  const adapter = createMockAdapter();
+  Object.assign(adapter.fs, overrides);
+  return adapter;
+}
 
 describe("security/path-validation/index", () => {
   describe("validatePath", () => {
@@ -70,18 +80,17 @@ describe("security/path-validation/index", () => {
     });
 
     it("should reject symlinks in strict mode", async () => {
-      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
-        fs: {
-          // lstat detects the link itself; stat() would follow it and hide it.
-          lstat: (_path: string) =>
-            Promise.resolve({
-              isSymlink: true,
-              isDirectory: false,
-              isFile: true,
-              size: 0,
-            }),
-        },
-      };
+      const mockAdapter = createAdapterWithFs({
+        // lstat detects the link itself; stat() would follow it and hide it.
+        lstat: (_path: string) =>
+          Promise.resolve({
+            isSymlink: true,
+            isDirectory: false,
+            isFile: true,
+            size: 0,
+            mtime: null,
+          }),
+      });
 
       const result = await validatePath("src/link.ts", {
         baseDir: "/project",
@@ -96,11 +105,9 @@ describe("security/path-validation/index", () => {
     });
 
     it("should reject when file not found and checkExists is true", async () => {
-      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
-        fs: {
-          stat: () => Promise.reject(new Error("ENOENT")),
-        },
-      };
+      const mockAdapter = createAdapterWithFs({
+        stat: () => Promise.reject(new Error("ENOENT")),
+      });
 
       const result = await validatePath("src/missing.ts", {
         baseDir: "/project",
@@ -143,22 +150,20 @@ describe("security/path-validation/index", () => {
     });
 
     it("should reject a missing target beneath a symlinked parent outside the base", async () => {
-      const mockAdapter: Parameters<typeof validatePath>[1]["adapter"] = {
-        fs: {
-          realPath: (path: string) => {
-            if (path === "/project/link/new.txt") {
-              return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
-            }
-            if (path === "/project/link") {
-              return Promise.resolve("/outside");
-            }
-            if (path === "/project") {
-              return Promise.resolve("/project");
-            }
-            return Promise.reject(new Error(`unexpected path: ${path}`));
-          },
+      const mockAdapter = createAdapterWithFs({
+        realPath: (path: string) => {
+          if (path === "/project/link/new.txt") {
+            return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+          }
+          if (path === "/project/link") {
+            return Promise.resolve("/outside");
+          }
+          if (path === "/project") {
+            return Promise.resolve("/project");
+          }
+          return Promise.reject(new Error(`unexpected path: ${path}`));
         },
-      };
+      });
 
       const result = await validatePath("link/new.txt", {
         baseDir: "/project",

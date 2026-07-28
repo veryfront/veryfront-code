@@ -5,11 +5,7 @@ The supported public rate limiter is owned by
 [`veryfront/middleware`](../../middleware/README.md):
 
 ```typescript
-import {
-  authRateLimit,
-  MemoryRateLimitStore,
-  rateLimit,
-} from "veryfront/middleware";
+import { authRateLimit, MemoryRateLimitStore, rateLimit } from "veryfront/middleware";
 ```
 
 The middleware implementation validates its configuration, bounds its
@@ -18,13 +14,13 @@ fails closed on store errors, and supports the framework middleware lifecycle.
 
 ## Current source-local contents
 
-| File | Status |
-| --- | --- |
-| `client-key.ts` | Shared production helper used by the public middleware limiter |
-| `middleware.ts` | Legacy source-local API with no production consumer |
-| `memory-store.ts` | Legacy process-local store |
-| `strategies.ts` | Legacy fixed-window, sliding-window, and token-bucket strategies |
-| `types.ts` and `index.ts` | Legacy deep-import contracts |
+| File                      | Status                                                           |
+| ------------------------- | ---------------------------------------------------------------- |
+| `client-key.ts`           | Shared production helper used by the public middleware limiter   |
+| `middleware.ts`           | Legacy source-local API with no production consumer              |
+| `memory-store.ts`         | Legacy process-local store                                       |
+| `strategies.ts`           | Legacy fixed-window, sliding-window, and token-bucket strategies |
+| `types.ts` and `index.ts` | Legacy deep-import contracts                                     |
 
 The legacy implementation is retained only while deep-import compatibility is
 being resolved. It must not be used for new code or documented as a package
@@ -45,11 +41,11 @@ interchangeable.
 
 ## Migration
 
-| Legacy source-local API | Supported middleware API |
-| --- | --- |
-| `createRateLimiter(config)` | `rateLimit(options)` |
-| `RateLimitPresets.auth(...)` | `authRateLimit(...)` |
-| `MemoryRateLimitStore()` | `MemoryRateLimitStore(windowMs, options)` |
+| Legacy source-local API      | Supported middleware API                  |
+| ---------------------------- | ----------------------------------------- |
+| `createRateLimiter(config)`  | `rateLimit(options)`                      |
+| `RateLimitPresets.auth(...)` | `authRateLimit(...)`                      |
+| `MemoryRateLimitStore()`     | `MemoryRateLimitStore(windowMs, options)` |
 
 The middleware callback contract uses the framework `Middleware` context rather
 than the legacy `(request, next)` function shape. Migrate at the middleware

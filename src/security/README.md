@@ -13,15 +13,15 @@ and bearer-token request gate. Public rate limiting belongs to
 
 The root entrypoint exports the following groups:
 
-| Area | Runtime exports |
-| --- | --- |
-| HTTP handlers | `BaseHandler`, `AuthHandler`, `CsrfHandler`, `SecurityConfigLoader` |
+| Area             | Runtime exports                                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP handlers    | `BaseHandler`, `AuthHandler`, `CsrfHandler`, `SecurityConfigLoader`                                                                          |
 | Input boundaries | `validateRequestLimits`, `readBodyWithLimit`, `parseJsonBody`, `parseFormData`, `parseQueryParams`, `createValidatedHandler`, `sanitizeData` |
-| CORS | `cors`, `corsSimple`, `validateOrigin`, `validateOriginSync`, `applyCORSHeaders`, `applyCORSHeadersSync`, `handleCORSPreflight` |
-| CSRF | `generateCsrfToken`, `validateCsrf`, `applyCsrfCookie` |
-| Responses | `ResponseBuilder`, `createResponseBuilder`, `applySecurityHeaders`, `buildCacheControl`, `generateNonce` |
-| Paths and files | `validatePath`, `validatePathSync`, `createValidator`, `createSecureFs`, `SecureFs`, `wrapAdapterWithSecurity` |
-| Deno permissions | `BUILD_HELPER_PERMISSIONS`, `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS` |
+| CORS             | `cors`, `corsSimple`, `validateOrigin`, `validateOriginSync`, `applyCORSHeaders`, `applyCORSHeadersSync`, `handleCORSPreflight`              |
+| CSRF             | `generateCsrfToken`, `validateCsrf`, `applyCsrfCookie`                                                                                       |
+| Responses        | `ResponseBuilder`, `createResponseBuilder`, `applySecurityHeaders`, `buildCacheControl`, `generateNonce`                                     |
+| Paths and files  | `validatePath`, `validatePathSync`, `createValidator`, `createSecureFs`, `SecureFs`, `wrapAdapterWithSecurity`                               |
+| Deno permissions | `BUILD_HELPER_PERMISSIONS`, `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS`                                                                 |
 
 Types are exported beside their owning runtime contracts. The exact runtime
 inventory is regression-pinned in [`index.test.ts`](./index.test.ts); adding or

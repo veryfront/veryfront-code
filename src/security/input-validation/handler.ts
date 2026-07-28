@@ -1,6 +1,7 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { VeryfrontError } from "./errors.ts";
-import { parseJsonBody, parseQueryParams } from "./parsers.ts";
+import { validateRequestLimits } from "./limits.ts";
+import { parseJsonBodyAfterRequestLimits, parseQueryParams } from "./parsers.ts";
 import { type RequestLimits, type ValidatedData } from "./types.ts";
 
 /** Configuration for `createValidatedHandler()`. */
@@ -23,10 +24,16 @@ export function createValidatedHandler<TBody = unknown, TQuery = unknown>(
 ): (request: Request) => Promise<Response> {
   return async function validatedHandler(request: Request): Promise<Response> {
     try {
+      const limits = validateRequestLimits(request, config.limits);
+
       const validated: ValidatedData<TBody, TQuery> = {};
 
       if (config.body) {
-        validated.body = await parseJsonBody(request, config.body, { limits: config.limits });
+        validated.body = await parseJsonBodyAfterRequestLimits(
+          request,
+          config.body,
+          limits,
+        );
       }
 
       if (config.query) {

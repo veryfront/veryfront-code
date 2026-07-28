@@ -209,6 +209,68 @@ describe("security/input-validation/handler", () => {
       assertEquals(res.status, 400);
     });
 
+    it("should enforce URL limits without a body schema", async () => {
+      let invoked = false;
+      const handler = createValidatedHandler(
+        { limits: { maxUrlLength: 32 } },
+        () => {
+          invoked = true;
+          return new Response("OK");
+        },
+      );
+
+      const res = await handler(
+        new Request(`http://localhost/api/${"x".repeat(100)}`),
+      );
+
+      assertEquals(res.status, 400);
+      assertEquals((await res.json()).error, "URL too long");
+      assertEquals(invoked, false);
+    });
+
+    it("should enforce header limits with only a query schema", async () => {
+      const querySchema = defineSchema((v) => v.object({ page: v.string() }))();
+      let invoked = false;
+      const handler = createValidatedHandler(
+        { query: querySchema, limits: { maxHeaderSize: 32 } },
+        () => {
+          invoked = true;
+          return new Response("OK");
+        },
+      );
+
+      const res = await handler(
+        new Request("http://localhost/api/test?page=1", {
+          headers: { "x-large-header": "x".repeat(100) },
+        }),
+      );
+
+      assertEquals(res.status, 400);
+      assertEquals((await res.json()).error, "Headers too large");
+      assertEquals(invoked, false);
+    });
+
+    it("should enforce declared body limits without a body schema", async () => {
+      let invoked = false;
+      const handler = createValidatedHandler(
+        { limits: { maxBodySize: 10 } },
+        () => {
+          invoked = true;
+          return new Response("OK");
+        },
+      );
+
+      const res = await handler(
+        new Request("http://localhost/api/test", {
+          headers: { "content-length": "100" },
+        }),
+      );
+
+      assertEquals(res.status, 400);
+      assertEquals((await res.json()).error, "Request body too large");
+      assertEquals(invoked, false);
+    });
+
     it("should work with no schemas configured", async () => {
       const handler = createValidatedHandler({}, (_req, validated) =>
         new Response(

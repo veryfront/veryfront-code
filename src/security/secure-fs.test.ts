@@ -175,6 +175,56 @@ describe("SecureFs", () => {
     }
   });
 
+  it("snapshots allowedDirs supplied during construction", async () => {
+    const baseDir = await Deno.makeTempDir();
+    const allowedDirs = ["public"];
+    try {
+      await Deno.mkdir(`${baseDir}/private`);
+      await Deno.writeTextFile(`${baseDir}/private/secret.txt`, "secret");
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+        validationOptions: { allowedDirs },
+      });
+
+      allowedDirs.push("private");
+
+      await assertRejects(
+        () => secureFs.readFile("private/secret.txt"),
+        VeryfrontError,
+        "not allowed",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
+  it("snapshots allowedDirs supplied by every validation update", async () => {
+    const baseDir = await Deno.makeTempDir();
+    const allowedDirs = ["public"];
+    try {
+      await Deno.mkdir(`${baseDir}/private`);
+      await Deno.writeTextFile(`${baseDir}/private/secret.txt`, "secret");
+      const secureFs = createSecureFs({
+        baseDir,
+        adapter: new DenoAdapter(),
+        context: "internal",
+      });
+
+      secureFs.updateValidationOptions({ allowedDirs });
+      allowedDirs.push("private");
+
+      await assertRejects(
+        () => secureFs.readFile("private/secret.txt"),
+        VeryfrontError,
+        "not allowed",
+      );
+    } finally {
+      await Deno.remove(baseDir, { recursive: true });
+    }
+  });
+
   describe("getUnsafeAdapter", () => {
     it("throws in production", () => {
       const originalEnv = Deno.env.get("NODE_ENV");
