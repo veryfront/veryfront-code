@@ -58,7 +58,9 @@ function formatVeryfrontError(
 ): string {
   const lines = ["", `${colors.red("✗")} ${error.detail ?? error.title}`];
 
-  if (error.suggestion && error.slug !== "unknown-error") {
+  if (error.slug === "unknown-error") {
+    lines.push(colors.dim("  Run with --verbose for details"));
+  } else if (error.suggestion) {
     lines.push(colors.dim(`  ${error.suggestion}`));
   }
 

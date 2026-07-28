@@ -10,6 +10,7 @@ import { createIssuesManager, type Issue, type IssuePrefix, parseState } from "v
 import { bold, muted, success } from "#cli/ui";
 
 import type { ParsedArgs } from "#cli/shared/types";
+import { printJson } from "../../shared/json-output.ts";
 import { getNumberArg, getStringArg } from "../../shared/parsed-args.ts";
 
 /** Extract a boolean value from parsed args by checking multiple keys */
@@ -90,10 +91,6 @@ function getJsonFlag(args: ParsedArgs): boolean {
 function getId(args: ParsedArgs, index: number): string | undefined {
   const value = args._[index];
   return typeof value === "string" ? value : undefined;
-}
-
-function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
 }
 
 function getPrefix(prefix: string | undefined, fallback?: IssuePrefix): IssuePrefix | undefined {

@@ -3,7 +3,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * Login Module Tests
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import {
   afterAll,
   afterEach,
@@ -55,9 +60,21 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
   });
 
   describe("Token validation", { sanitizeOps: false, sanitizeResources: false }, () => {
-    it("should detect invalid token format", async () => {
-      const { validateToken } = await import("./login.ts");
-      assertEquals(await validateToken(""), null);
+    it("should reject empty tokens without a network request", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      try {
+        globalThis.fetch = (() => {
+          fetchCalls++;
+          return Promise.resolve(new Response(null, { status: 401 }));
+        }) as typeof fetch;
+        const { validateToken } = await import("./login.ts");
+        assertEquals(await validateToken(""), null);
+        assertEquals(await validateToken(" \t "), null);
+        assertEquals(fetchCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
 
     it("should use the provided API URL", async () => {
@@ -80,6 +97,25 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
         assertExists(await validateToken("test-token", env));
         assertEquals(requestedUrl, "https://auth.example.test/me");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("returns null for network failures unless throwing is requested", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new TypeError("network unavailable"))) as typeof fetch;
+        const { validateToken } = await import("./login.ts");
+
+        assertEquals(await validateToken("test-token", testEnv), null);
+        await assertRejects(
+          () => validateToken("test-token", testEnv, { throwOnNetworkError: true }),
+          Error,
+          "Could not reach the Veryfront API",
+        );
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -171,6 +207,20 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("returns null when API key validation cannot reach the API", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        globalThis.fetch = (() =>
+          Promise.reject(new TypeError("network unavailable"))) as typeof fetch;
+        const { validateCredential } = await import("./login.ts");
+
+        assertEquals(await validateCredential("vf_test_secret", testEnv), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("reports an API key as authenticated in whoami JSON without exposing the key", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;
@@ -219,8 +269,15 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
   describe("User info from token", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return null for invalid JWT", async () => {
-      const { validateToken } = await import("./login.ts");
-      assertEquals(await validateToken("invalid-token"), null);
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = (() =>
+          Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
+        const { validateToken } = await import("./login.ts");
+        assertEquals(await validateToken("invalid-token"), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 
@@ -325,6 +382,37 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       assertEquals(redirectUri, "http://localhost:3456/callback?state=expected-state");
       assertEquals(parsed.searchParams.get("state"), "expected-state");
       assertEquals(new URL(redirectUri!).searchParams.get("state"), "expected-state");
+    });
+
+    it("prints a manual login URL when the browser cannot be opened", async () => {
+      const originalLog = console.log;
+      const output: string[] = [];
+      const spinnerEvents: string[] = [];
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        const { openOAuthLogin } = await import("./login.ts");
+        const opened = await openOAuthLogin(
+          "https://auth.example.test/login?state=expected-state",
+          {
+            update: (text) => spinnerEvents.push(`update:${text}`),
+            success: (text) => spinnerEvents.push(`success:${text ?? ""}`),
+            error: (text) => spinnerEvents.push(`error:${text ?? ""}`),
+            stop: () => spinnerEvents.push("stop"),
+          },
+          () => Promise.reject(new Error("browser unavailable")),
+        );
+
+        assertEquals(opened, false);
+        assertEquals(spinnerEvents, ["stop"]);
+        assertStringIncludes(output.join("\n"), "Could not open the browser");
+        assertStringIncludes(
+          output.join("\n"),
+          "https://auth.example.test/login?state=expected-state",
+        );
+      } finally {
+        console.log = originalLog;
+      }
     });
   });
 

@@ -22,12 +22,20 @@ import {
 } from "#cli/shared/config";
 import { writeProjectLink } from "../../shared/project-link.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { exitProcess, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
+import {
+  DEPLOYMENT_ERROR,
+  ENVIRONMENT_NOT_FOUND,
+  RELEASE_MISSING_VERSION,
+  SOURCE_DIGEST_MISMATCH,
+  UNKNOWN_ERROR,
+  VeryfrontError,
+} from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import { pushCommand } from "../push/index.ts";
-import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
   getProjectTarget,
@@ -39,10 +47,9 @@ import {
   resolveGitSource,
   validatePushReceipt,
 } from "../../shared/deployment-provenance.ts";
-import type { ReleaseAssetManifestResponse } from "#veryfront/release-assets/manifest-schema.ts";
-import { routeForPage } from "#veryfront/release-assets/route-path.ts";
-import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
-import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { type ReleaseAssetManifestResponse, routeForPage } from "veryfront/release-assets";
+import { parseProjectDomain } from "veryfront/server";
+import { isWithinDirectory, normalizePath } from "veryfront/utils";
 
 /**
  * Schema factory for deploy command arguments
@@ -347,7 +354,9 @@ function normalizeDeployment(deployment: DeploymentResponse): Deployment {
   const releaseId = deployment.release_id ?? referenceId(deployment.release);
   const environmentId = deployment.environment_id ?? referenceId(deployment.environment);
   if (!releaseId || !environmentId) {
-    throw new Error(`Deployment ${deployment.id} response is missing release or environment IDs`);
+    throw DEPLOYMENT_ERROR.create({
+      detail: `Deployment ${deployment.id} response is missing release or environment IDs`,
+    });
   }
   return {
     id: deployment.id,
@@ -380,9 +389,9 @@ export function assertProjectOwnership(
   projectId: string,
 ): void {
   if (resource.project_id && resource.project_id !== projectId) {
-    throw new Error(
-      `${resourceType} ${resource.id} does not belong to resolved project ${projectId}`,
-    );
+    throw DEPLOYMENT_ERROR.create({
+      detail: `${resourceType} ${resource.id} does not belong to resolved project ${projectId}`,
+    });
   }
 }
 
@@ -548,14 +557,20 @@ export async function verifyReleaseSource(
 ): Promise<ReleaseSourceVerification> {
   const release = await getRelease(client, projectReference, expected.releaseId);
   if (release.id !== expected.releaseId) {
-    throw new Error(`Release read-back returned ${release.id}; expected ${expected.releaseId}`);
+    throw DEPLOYMENT_ERROR.create({
+      detail: `Release read-back returned ${release.id}; expected ${expected.releaseId}`,
+    });
   }
   assertProjectOwnership("Release", release, expected.projectId);
   if (expected.releaseName && release.name !== expected.releaseName) {
-    throw new Error(`Release ${expected.releaseId} no longer matches the created release name`);
+    throw DEPLOYMENT_ERROR.create({
+      detail: `Release ${expected.releaseId} no longer matches the created release name`,
+    });
   }
   if (!release.version) {
-    throw new Error(`Release ${expected.releaseId} has no version`);
+    throw RELEASE_MISSING_VERSION.create({
+      detail: `Release ${expected.releaseId} has no version`,
+    });
   }
 
   const { attempts, delayMs } = boundedReleaseSourceVerificationOptions(options);
@@ -576,11 +591,11 @@ export async function verifyReleaseSource(
     if (attempt < attempts - 1 && delayMs > 0) await wait(delayMs);
   }
 
-  throw new Error(
-    `Release ${expected.releaseId} source does not match ${
+  throw SOURCE_DIGEST_MISMATCH.create({
+    detail: `Release ${expected.releaseId} source does not match ${
       formatSourceReference(expected.commitSha)
     }: expected source digest ${expected.sourceDigest}; last observed ${sourceDigest}`,
-  );
+  });
 }
 
 export async function verifyDeployment(
@@ -1320,7 +1335,9 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
   let environmentUrl: string;
   try {
     release = await createRelease(client, project.id, { name: releaseName, branch });
-    if (!release.version) throw new Error(`Release ${release.id} has no version`);
+    if (!release.version) {
+      throw RELEASE_MISSING_VERSION.create({ detail: `Release ${release.id} has no version` });
+    }
 
     updateProgress("Building release...", `Verifying ${release.version} source...`);
     const verifiedRelease = await verifyReleaseSource(client, project.id, {
@@ -1396,7 +1413,8 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
   logSuccess(
     `Deployed ${verification.projectSlug} to ${env} in ${formatDuration(Date.now() - startedAt)}`,
   );
-  console.log(`\n  ${brand(environmentUrl)}`);
+  console.log();
+  console.log(`  ${brand(environmentUrl)}`);
   console.log(
     `  ${
       dim(
@@ -1404,8 +1422,9 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
           environment.protected ? "Protected" : "Public"
         } · Release ${verification.releaseVersion}`,
       )
-    }\n`,
+    }`,
   );
+  console.log();
 
   if (verbose) {
     logInfo(`  Project: ${verification.projectSlug} (${verification.projectId})`);
@@ -1509,13 +1528,17 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
     if (!project) project = await getProject(client, projectApiReference(config));
     const environment = await getEnvironmentByName(client, project.id, env);
     if (!environment) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error: `Environment "${env}" not found`,
+      const vfErr = ENVIRONMENT_NOT_FOUND.create({
+        detail: `Environment "${env}" not found`,
       });
-      const { exit } = await import("veryfront/platform");
-      exit(1);
+      streamJsonLine(
+        createStreamErrorResult({
+          code: "RUNTIME_ERROR",
+          slug: vfErr.slug,
+          message: vfErr.detail ?? vfErr.message,
+        }),
+      );
+      exitProcess(1);
       return null;
     }
     assertProjectOwnership("Environment", environment, project.id);
@@ -1567,7 +1590,9 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
       name: releaseName,
       branch,
     });
-    if (!release.version) throw new Error(`Release ${release.id} has no version`);
+    if (!release.version) {
+      throw RELEASE_MISSING_VERSION.create({ detail: `Release ${release.id} has no version` });
+    }
     streamJsonLine({ type: "step", name: "create-release", status: "completed" });
 
     streamJsonLine({ type: "step", name: "verify-release-source", status: "started" });
@@ -1660,13 +1685,18 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
     });
     return result;
   } catch (error) {
-    streamJsonLine({
-      type: "result",
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
+    const vfErr = error instanceof VeryfrontError ? error : UNKNOWN_ERROR.create({
+      detail: error instanceof Error ? error.message : String(error),
+      cause: error instanceof Error ? error : undefined,
     });
-    const { exit } = await import("veryfront/platform");
-    exit(1);
+    streamJsonLine(
+      createStreamErrorResult({
+        code: "RUNTIME_ERROR",
+        slug: vfErr.slug,
+        message: vfErr.detail ?? vfErr.message,
+      }),
+    );
+    exitProcess(1);
     return null;
   }
 }

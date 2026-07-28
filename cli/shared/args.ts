@@ -105,7 +105,7 @@ export function extractArgs<T>(
  * const PullArgsSchema = getPullArgsSchema();
  *
  * const parsePullArgs = createArgParser(PullArgsSchema, {
- *   projectSlug: { keys: ["project-slug", "p"], type: "string", positional: 0 },
+ *   projectSlug: { keys: ["project", "p"], type: "string", positional: 0 },
  *   projectDir: { keys: ["project-dir", "dir", "d"], type: "string" },
  *   force: { keys: ["force", "f"], type: "boolean" },
  * });
@@ -158,7 +158,7 @@ export const CommonArgs = {
   branch: { keys: ["branch", "b"], type: "string" },
   env: { keys: ["environment", "env", "e"], type: "string" },
   projectDir: { keys: ["project-dir", "dir", "d"], type: "string" },
-  projectSlug: { keys: ["project-slug", "project", "p"], type: "string" },
+  projectSlug: { keys: ["project", "project-slug", "p"], type: "string" },
   quiet: { keys: ["quiet", "q"], type: "boolean" },
   releaseName: { keys: ["release-name"], type: "string" },
   into: { keys: ["into"], type: "string" },
@@ -374,13 +374,11 @@ function parse(
 export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
     alias: {
-      p: "port",
       h: "help",
       v: "version",
       q: "quiet",
       f: "force",
       s: "strict",
-      t: "template",
       j: "json",
       y: "yes",
       w: "with",

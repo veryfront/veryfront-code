@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1170",
+  "version": "0.1.1171",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -115,6 +115,8 @@
     "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
     "./utils": "./src/utils/index.ts",
+    "./utils/logger": "./src/utils/logger/index.ts",
+    "./release-assets": "./src/release-assets/index.ts",
     "./oauth": "./src/oauth/index.ts",
     "./provider": "./src/provider/index.ts",
     "./provider/shared": "./src/provider/shared/index.ts",
@@ -195,6 +197,7 @@
     "veryfront/utils/html-escape": "./src/utils/html-escape.ts",
     "veryfront/utils/import-lockfile": "./src/utils/import-lockfile.ts",
     "veryfront/utils/env-loader": "./src/utils/env-loader.ts",
+    "veryfront/utils/logger": "./src/utils/logger/index.ts",
     "veryfront/proxy/main": "./src/proxy/main.ts",
     "veryfront/proxy/handler": "./src/proxy/handler.ts",
     "veryfront/proxy/cache": "./src/proxy/cache/index.ts",

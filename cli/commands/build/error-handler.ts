@@ -1,12 +1,13 @@
 import { brand, dim } from "#cli/ui";
-import { cliLogger, isVerbose } from "#cli/utils";
+import { cliLogger, isVerbose, logError } from "#cli/utils";
 import { exit, getStdout } from "veryfront/platform";
 
 export function handleBuildError(error: unknown): never {
   getStdout()?.write?.(`\r${" ".repeat(80)}\r`);
 
   const message = error instanceof Error ? error.message : String(error);
-  cliLogger.error(`\n✗ ${message}`);
+  console.log();
+  logError(message);
 
   if (isVerbose() && error instanceof Error && error.stack) {
     cliLogger.error(`\n${dim("Stack trace:")}`);

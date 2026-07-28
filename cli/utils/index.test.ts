@@ -9,6 +9,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
+import { refreshLoggerConfig, serverLogger } from "veryfront/utils";
 import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 import { setJsonMode } from "../shared/json-output.ts";
 import {
@@ -23,6 +24,7 @@ import {
   logSuccess,
   logWarning,
   promptUser,
+  setQuietMode,
   setVerboseMode,
   showHeader,
   showLogo,
@@ -87,6 +89,7 @@ function withDebugEnv(value: string, fn: () => void): void {
   const originalVerbose = isVerbose();
   setVerboseMode(false);
   setEnv("VERYFRONT_DEBUG", value);
+  refreshLoggerConfig();
 
   try {
     fn();
@@ -97,6 +100,7 @@ function withDebugEnv(value: string, fn: () => void): void {
       setEnv("VERYFRONT_DEBUG", originalDebug);
     }
     setVerboseMode(originalVerbose);
+    refreshLoggerConfig();
   }
 }
 
@@ -116,6 +120,46 @@ describe("cliLogger", () => {
         setJsonMode(false);
       }
     });
+  });
+});
+
+describe("temporary log levels", () => {
+  it("restores the environment log level after verbose mode", () => {
+    const originalLevel = getEnv("LOG_LEVEL");
+
+    try {
+      setEnv("LOG_LEVEL", "ERROR");
+      refreshLoggerConfig();
+      setVerboseMode(true);
+      assertStringIncludes(captureOutput(() => serverLogger.debug("visible")).stdout, "visible");
+
+      setVerboseMode(false);
+      assertEquals(captureOutput(() => serverLogger.info("hidden")).stdout, "");
+    } finally {
+      setVerboseMode(false);
+      if (originalLevel === undefined) deleteEnv("LOG_LEVEL");
+      else setEnv("LOG_LEVEL", originalLevel);
+      refreshLoggerConfig();
+    }
+  });
+
+  it("restores the environment log level after quiet mode", () => {
+    const originalLevel = getEnv("LOG_LEVEL");
+
+    try {
+      setEnv("LOG_LEVEL", "DEBUG");
+      refreshLoggerConfig();
+      setQuietMode(true);
+      assertEquals(captureOutput(() => serverLogger.info("hidden")).stdout, "");
+
+      setQuietMode(false);
+      assertStringIncludes(captureOutput(() => serverLogger.debug("visible")).stdout, "visible");
+    } finally {
+      setQuietMode(false);
+      if (originalLevel === undefined) deleteEnv("LOG_LEVEL");
+      else setEnv("LOG_LEVEL", originalLevel);
+      refreshLoggerConfig();
+    }
   });
 });
 

@@ -294,7 +294,7 @@ describe(
 
           const output = run.output();
           assertStringIncludes(output, `Veryfront (v${VERSION})`);
-          assertStringIncludes(output, "Ready at");
+          assertStringIncludes(output, "Ready in");
           assert(!output.includes("Logged in as"));
           assert(!output.includes("Press s to"));
 
@@ -329,7 +329,7 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Ready at");
+          assertStringIncludes(output, "Ready in");
           assertIncludesAny(
             output,
             DEBUG_EXTENSION_DIAGNOSTICS,
@@ -380,7 +380,7 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Ready at");
+          assertStringIncludes(output, "Ready in");
           for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
             assert(
               !output.includes(fragment),

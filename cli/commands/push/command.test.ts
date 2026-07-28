@@ -1175,7 +1175,7 @@ describe("push receipt source snapshot", () => {
             return Promise.resolve();
           },
           options: { projectSlug: "my-project" },
-          message: "Use a different --project-slug value",
+          message: "Use a different --project value",
         },
       ];
 

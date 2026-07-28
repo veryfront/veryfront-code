@@ -529,7 +529,7 @@ export async function initCommand(
     });
 
     if (installSuccess) {
-      installSpinner?.stop();
+      installSpinner?.success("Dependencies installed");
     } else {
       installSpinner?.error("Dependency installation failed");
       if (!quiet) {
@@ -563,7 +563,8 @@ export async function initCommand(
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log(`\n  Deploy failed: ${message}`);
+        if (!quiet) console.log();
+        log(`  Deploy failed: ${message}`);
         log(`  Your project was created locally. ${manualDeployHint}`);
       }
     } else {
@@ -573,13 +574,16 @@ export async function initCommand(
       const authResult = await ensureAuthenticated();
 
       if (!authResult) {
-        log(`\n  Authentication required for --deploy. ${manualDeployHint}`);
+        if (!quiet) console.log();
+        log(`  Authentication required for --deploy. ${manualDeployHint}`);
       } else {
         const token = await readToken();
         if (!token) {
-          log(`\n  Could not read auth token. ${manualDeployHint}`);
+          if (!quiet) console.log();
+          log(`  Could not read auth token. ${manualDeployHint}`);
         } else {
-          log(`\n  Deploying project...`);
+          if (!quiet) console.log();
+          log(`  Deploying project...`);
 
           try {
             chdir(projectDir);
@@ -599,7 +603,8 @@ export async function initCommand(
             deployedUrl = deployment.url;
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            log(`\n  Deploy failed: ${message}`);
+            if (!quiet) console.log();
+            log(`  Deploy failed: ${message}`);
             log(`  Your project was created locally. ${manualDeployHint}`);
           }
         }
@@ -626,27 +631,27 @@ export async function initCommand(
   const deployCommandHint = `${getDlxCommand(pm)} veryfront deploy`;
 
   if (!quiet) {
-    console.log("");
+    console.log();
     console.log(`  ✓ ${displayName} ready`);
 
     if (isVerbose()) {
-      console.log("");
+      console.log();
       console.log("  Project structure");
       for (const line of structureLines) {
         console.log(`  ${line}`);
       }
     }
 
-    console.log("");
-    for (const step of localSteps) {
-      console.log(`  ${step}`);
+    console.log();
+    for (const [index, step] of localSteps.entries()) {
+      console.log(`  ${index === 0 ? brand(step) : step}`);
     }
 
     if (deployedUrl) {
-      console.log("");
+      console.log();
       console.log(`  Live: ${brand(deployedUrl)}`);
     } else {
-      console.log("");
+      console.log();
       console.log(`  Deploy: ${brand(deployCommandHint)}`);
     }
 
@@ -659,12 +664,12 @@ export async function initCommand(
     }
 
     if (tips.length) {
-      console.log("");
+      console.log();
       for (const tip of tips) {
         console.log(`  ${tip}`);
       }
     }
 
-    console.log("");
+    console.log();
   }
 }

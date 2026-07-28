@@ -84,7 +84,9 @@ export async function runInteractiveWizard(
     );
 
     if (locationChoice === null) {
-      console.log(muted("\n  Cancelled.\n"));
+      console.log();
+      console.log(muted("  Cancelled."));
+      console.log();
       return {
         projectName: null,
         template: DEFAULT_TEMPLATE,
@@ -98,7 +100,9 @@ export async function runInteractiveWizard(
     if (locationChoice === "new") {
       const name = await textInput("Project name", "my-app", SETUP_PROMPT_DISPLAY);
       if (name === null) {
-        console.log(muted("\n  Cancelled.\n"));
+        console.log();
+        console.log(muted("  Cancelled."));
+        console.log();
         return {
           projectName: null,
           template: DEFAULT_TEMPLATE,
@@ -134,7 +138,9 @@ export async function runInteractiveWizard(
   );
 
   if (templateChoice === null) {
-    console.log(muted("\n  Cancelled.\n"));
+    console.log();
+    console.log(muted("  Cancelled."));
+    console.log();
     return {
       projectName: null,
       template: DEFAULT_TEMPLATE,
@@ -162,7 +168,9 @@ export async function runInteractiveWizard(
     );
 
     if (runtimeChoice === null) {
-      console.log(muted("\n  Cancelled.\n"));
+      console.log();
+      console.log(muted("  Cancelled."));
+      console.log();
       return {
         projectName: null,
         template: DEFAULT_TEMPLATE,
@@ -188,7 +196,9 @@ export async function runInteractiveWizard(
   );
 
   if (gitChoice === null) {
-    console.log(muted("\n  Cancelled.\n"));
+    console.log();
+    console.log(muted("  Cancelled."));
+    console.log();
     return {
       projectName: null,
       template: DEFAULT_TEMPLATE,

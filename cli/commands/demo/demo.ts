@@ -23,7 +23,7 @@ import {
   typeCommand,
   typeLine,
 } from "#cli/ui";
-import { exitProcess, isTTY } from "#cli/utils";
+import { exitProcess, isTTY, logError } from "#cli/utils";
 import {
   createOAuthAuthorizationUrl,
   createOAuthState,
@@ -554,7 +554,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   autoMode = auto;
 
   if (!isTTY()) {
-    console.log("Demo requires an interactive terminal.");
+    logError("Demo requires an interactive terminal.");
     return;
   }
 

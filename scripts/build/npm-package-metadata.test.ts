@@ -25,6 +25,22 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
+Deno.test("exports CLI framework dependencies as public package subpaths", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+
+  for (
+    const [subpath, source] of [
+      ["utils/logger", "./src/utils/logger/index.ts"],
+      ["release-assets", "./src/release-assets/index.ts"],
+    ] as const
+  ) {
+    assertEquals(exports[`./${subpath}`], source);
+    assertEquals(imports[`veryfront/${subpath}`], source);
+  }
+});
+
 Deno.test("npm package provenance metadata points at veryfront-code", async () => {
   const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 

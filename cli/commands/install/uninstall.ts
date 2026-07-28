@@ -86,7 +86,7 @@ export async function uninstallTargets(
   }
 
   console.log();
-  console.log("  " + success("AI integrations removed."));
+  console.log("  ✓ AI integrations removed.");
   console.log();
 }
 

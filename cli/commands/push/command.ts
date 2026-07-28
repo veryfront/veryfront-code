@@ -23,7 +23,8 @@ import {
 import { writeProjectLink } from "../../shared/project-link.ts";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess } from "#cli/utils";
-import { brand, createNoopSpinner, createSpinner } from "#cli/ui";
+import { INVALID_ARGUMENT, PREVIEW_HOSTNAME_TOO_LONG } from "veryfront/errors";
+import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
 import { listAllFiles, type PullSource } from "../pull/index.ts";
@@ -154,9 +155,10 @@ export async function scanLocalFiles(
 
       if (entry.isSymlink) {
         if (ignoreChecker.isSupportedExtension(entry.name)) {
-          throw new Error(
-            `Veryfront push does not support symbolic links: "${relativePath}". Replace the link with a file and run veryfront push again.`,
-          );
+          throw INVALID_ARGUMENT.create({
+            detail:
+              `Veryfront push does not support symbolic links: "${relativePath}". Replace the link with a file and run veryfront push again.`,
+          });
         }
         continue;
       }
@@ -225,7 +227,7 @@ function projectSlugConflictError(
   let action: string;
   switch (source.kind) {
     case "argument":
-      action = "Use a different --project-slug value";
+      action = "Use a different --project value";
       break;
     case "environment":
       action = "Update or remove VERYFRONT_PROJECT_SLUG";
@@ -261,9 +263,9 @@ async function sourceFilesForGitTracking(
   }
 
   if (ignoreInfo.isSymlink || !ignoreInfo.isFile) {
-    throw new Error(
-      ".vfignore must be a regular file inside the project and cannot be a symbolic link.",
-    );
+    throw INVALID_ARGUMENT.create({
+      detail: ".vfignore must be a regular file inside the project and cannot be a symbolic link.",
+    });
   }
 
   return [...files, { path: ".vfignore", content: "" }];
@@ -303,11 +305,11 @@ function suggestPreviewBranchName(branchName: string): string {
 function assertPreviewBranchName(branchName: string): void {
   if (PREVIEW_BRANCH_PATTERN.test(branchName)) return;
 
-  throw new Error(
-    `Preview branch "${branchName}" is not DNS-safe. Use "${
+  throw INVALID_ARGUMENT.create({
+    detail: `Preview branch "${branchName}" is not DNS-safe. Use "${
       suggestPreviewBranchName(branchName)
     }" instead.`,
-  );
+  });
 }
 
 export function buildPushUrls(
@@ -317,7 +319,9 @@ export function buildPushUrls(
   assertPreviewBranchName(branchName);
   const previewLabel = branchName === "main" ? projectSlug : `${projectSlug}--${branchName}`;
   if (previewLabel.length > 63) {
-    throw new Error("Preview hostname is too long. Shorten the project slug or branch name.");
+    throw PREVIEW_HOSTNAME_TOO_LONG.create({
+      detail: "Preview hostname is too long. Shorten the project slug or branch name.",
+    });
   }
   const preview = `https://${previewLabel}.preview.veryfront.com`;
 
@@ -332,6 +336,7 @@ function outputPushResult(
   branchName: string,
   uploaded: number,
   deleted: number,
+  duration?: number,
 ): void {
   const urls = buildPushUrls(projectSlug, branchName);
 
@@ -357,10 +362,11 @@ function outputPushResult(
     ...(deleted > 0 ? [`${deleted} deleted`] : []),
   ];
   const target = branchName === "main" ? "main" : `branch "${branchName}"`;
+  const durationSuffix = duration !== undefined ? ` in ${formatDuration(duration)}` : "";
   logSuccess(
     changes.length > 0
-      ? `Pushed to ${target}: ${changes.join(", ")}.`
-      : `${target === "main" ? "Main" : `Branch "${branchName}"`} is up to date.`,
+      ? `Pushed to ${target}${durationSuffix}: ${changes.join(", ")}.`
+      : `${target === "main" ? "Main" : `Branch "${branchName}"`} is up to date${durationSuffix}.`,
   );
   console.log();
   console.log(`  Studio:  ${brand(urls.studio)}`);
@@ -606,6 +612,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       } = options;
       assertPreviewBranchName(branch);
       const jsonOutput = isJsonMode();
+      const startTime = Date.now();
 
       let spinner = quiet || jsonOutput
         ? createNoopSpinner()
@@ -625,7 +632,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (slugOverride) {
         config = { ...config, projectSlug: slugOverride };
-        projectReferenceSource = { kind: "argument", name: "--project-slug" };
+        projectReferenceSource = { kind: "argument", name: "--project" };
       }
 
       spinner.update("Loading ignore patterns...");
@@ -783,7 +790,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           } else if (dryRun) {
             logInfo("Dry run complete. No files would change.");
           } else {
-            outputPushResult(config.projectSlug, branchName, 0, 0);
+            outputPushResult(config.projectSlug, branchName, 0, 0, Date.now() - startTime);
           }
         }
         return;
@@ -905,6 +912,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         branchName,
         uploadResult.uploaded,
         deleteResult.deleted,
+        Date.now() - startTime,
       );
     },
     { "cli.dryRun": options.dryRun ?? false },

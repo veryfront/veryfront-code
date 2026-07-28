@@ -132,6 +132,11 @@ describe("Up Command", () => {
           type: "result",
           success: false,
           error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+          errorDetails: {
+            code: "RUNTIME_ERROR",
+            slug: "authentication-required",
+            message: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+          },
         });
       } finally {
         console.log = originalConsoleLog;
@@ -168,6 +173,11 @@ describe("Up Command", () => {
           type: "result",
           success: false,
           error: "This folder is empty. Add project files or run veryfront init.",
+          errorDetails: {
+            code: "RUNTIME_ERROR",
+            slug: "project-source-empty",
+            message: "This folder is empty. Add project files or run veryfront init.",
+          },
         });
       } finally {
         globalThis.fetch = originalFetch;

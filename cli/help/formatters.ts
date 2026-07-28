@@ -45,13 +45,20 @@ export function calculateMaxLength(items: Array<{ length: number }>): number {
   return Math.max(...items.map((item) => item.length));
 }
 
+function commandDisplayName(cmd: CommandHelp): string {
+  if (!cmd.aliases || cmd.aliases.length === 0) return cmd.name;
+  return `${cmd.name} (${cmd.aliases.join(", ")})`;
+}
+
 export function formatCommandList(
   commands: CommandHelp[],
   maxNameLength?: number,
 ): string[] {
+  const displayNames = commands.map(commandDisplayName);
   const padLength = maxNameLength ??
-    calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
+    calculateMaxLength(displayNames.map((n) => ({ length: n.length })));
   return commands.map(
-    (cmd) => `    ${formatCommandName(cmd.name, padLength)} ${formatDescription(cmd.description)}`,
+    (cmd, i) =>
+      `    ${formatCommandName(displayNames[i]!, padLength)} ${formatDescription(cmd.description)}`,
   );
 }
