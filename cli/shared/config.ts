@@ -15,7 +15,7 @@ import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { resolveCliApiUrl } from "./constants.ts";
-import { readProjectLink } from "./project-link.ts";
+import { readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -188,22 +188,6 @@ function resolveTenantProjectReference(): { reference: string; name: string } | 
   return undefined;
 }
 
-function normalizeControlPlaneForComparison(controlPlane: string): string | null {
-  try {
-    const url = new URL(controlPlane);
-    const pathname = url.pathname.replace(/\/+$/, "");
-    return `${url.origin}${pathname}`;
-  } catch {
-    return null;
-  }
-}
-
-function controlPlanesMatch(left: string, right: string): boolean {
-  const normalizedLeft = normalizeControlPlaneForComparison(left);
-  const normalizedRight = normalizeControlPlaneForComparison(right);
-  return normalizedLeft !== null && normalizedLeft === normalizedRight;
-}
-
 async function resolveApiTokenForMode(
   env: EnvironmentConfig,
   configFile: VeryfrontConfig | null,
@@ -290,8 +274,8 @@ async function resolveConfigBase(
       projectSlug = tenantReference.reference;
       projectReferenceSource = { kind: "tenant-environment", name: tenantReference.name };
     } else {
-      const projectLink = await readProjectLink(dir);
-      if (projectLink && controlPlanesMatch(projectLink.controlPlane, apiUrl)) {
+      const projectLink = await readProjectLinkForControlPlane(dir, apiUrl);
+      if (projectLink) {
         projectSlug = projectLink.projectSlug;
         projectId = projectLink.projectId;
         projectReferenceSource = { kind: "local-link", name: ".veryfront/project.json" };
