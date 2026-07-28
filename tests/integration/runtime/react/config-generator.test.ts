@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   createReactVersionSwitcher,
@@ -9,7 +9,8 @@ import {
   REACT_CONFIGS,
   type ReactVersion,
 } from "#veryfront/react/compat/config-generator.ts";
-import { readTextFile, stat, writeTextFile } from "#veryfront/testing/deno-compat";
+import { exists, mkdir, readTextFile, stat, writeTextFile } from "#veryfront/testing/deno-compat";
+import { REACT_VERSION_19 } from "#veryfront/utils/constants/cdn.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 
 function writeDenoJson(projectDir: string, value: unknown): Promise<void> {
@@ -56,7 +57,9 @@ describe("React Config Generator", () => {
         const config = await readJson(`${context.projectDir}/deno.react19.json`);
 
         assertEquals(typeof config.imports.react, "string");
-        assertEquals(config.imports.react.includes("19.0.0"), true);
+        assertEquals(REACT_CONFIGS["19"].exact, REACT_VERSION_19);
+        assertEquals(config.imports.react.includes(`@${REACT_VERSION_19}`), true);
+        assertEquals(config.imports.react.includes("-rc."), false);
       });
     });
 
@@ -122,7 +125,7 @@ describe("React Config Generator", () => {
     it("returns React 19 imports", () => {
       const imports = getReactImports("19");
       assertEquals(typeof imports.react, "string");
-      assert(imports.react?.includes("19.0.0"));
+      assert(imports.react?.includes(`@${REACT_VERSION_19}`));
     });
 
     it("throws on invalid version", () => {
@@ -292,6 +295,32 @@ describe("React Config Generator", () => {
       });
     });
 
+    it("does not let additional imports override the selected React version", async () => {
+      await withTestContext("config-additional-react", async (context: TestContext) => {
+        await writeDenoJson(context.projectDir, {
+          imports: {
+            react: "https://example.com/base-react.ts",
+          },
+        });
+
+        await generateReactVersionConfig(context.projectDir, "19", {
+          additional: {
+            imports: {
+              react: "https://example.com/additional-react.ts",
+              "react-dom": "https://example.com/additional-react-dom.ts",
+              "custom-lib": "https://example.com/custom-lib.ts",
+            },
+          },
+        });
+
+        const config = await readJson(`${context.projectDir}/deno.react19.json`);
+
+        assertEquals(config.imports.react, REACT_CONFIGS["19"].imports.react);
+        assertEquals(config.imports["react-dom"], REACT_CONFIGS["19"].imports["react-dom"]);
+        assertEquals(config.imports["custom-lib"], "https://example.com/custom-lib.ts");
+      });
+    });
+
     it("handles missing base config gracefully", async () => {
       await withTestContext("config-missing-base", async (context: TestContext) => {
         await generateReactVersionConfig(context.projectDir, "18", {
@@ -300,6 +329,77 @@ describe("React Config Generator", () => {
 
         const config = await readJson(`${context.projectDir}/deno.react18.json`);
         assertEquals(typeof config.imports.react, "string");
+      });
+    });
+
+    it("fails closed when the base config contains malformed JSON", async () => {
+      await withTestContext("config-malformed-base", async (context: TestContext) => {
+        await writeTextFile(`${context.projectDir}/deno.json`, "invalid json {");
+
+        await assertRejects(
+          () => generateReactVersionConfig(context.projectDir, "18"),
+          SyntaxError,
+        );
+        assertEquals(await exists(`${context.projectDir}/deno.react18.json`), false);
+      });
+    });
+
+    it("fails closed when the base config cannot be read", async () => {
+      await withTestContext("config-unreadable-base", async (context: TestContext) => {
+        await mkdir(`${context.projectDir}/base.json`);
+
+        await assertRejects(() =>
+          generateReactVersionConfig(context.projectDir, "18", {
+            extends: "base.json",
+          })
+        );
+        assertEquals(await exists(`${context.projectDir}/deno.react18.json`), false);
+      });
+    });
+
+    it("fails closed when the base config is not a JSON object", async () => {
+      await withTestContext("config-non-object-base", async (context: TestContext) => {
+        await writeTextFile(`${context.projectDir}/deno.json`, "[]");
+
+        await assertRejects(
+          () => generateReactVersionConfig(context.projectDir, "18"),
+          TypeError,
+          "must contain a JSON object",
+        );
+        assertEquals(await exists(`${context.projectDir}/deno.react18.json`), false);
+      });
+    });
+
+    it("fails closed when base imports contain non-string values", async () => {
+      await withTestContext("config-invalid-base-imports", async (context: TestContext) => {
+        await writeDenoJson(context.projectDir, {
+          imports: { react: 19 },
+        });
+
+        await assertRejects(
+          () => generateReactVersionConfig(context.projectDir, "19"),
+          TypeError,
+          "imports must be an object with string values",
+        );
+        assertEquals(await exists(`${context.projectDir}/deno.react19.json`), false);
+      });
+    });
+
+    it("fails closed when additional imports contain non-string values", async () => {
+      await withTestContext("config-invalid-additional-imports", async (context: TestContext) => {
+        await writeDenoJson(context.projectDir, { imports: {} });
+
+        await assertRejects(
+          () =>
+            generateReactVersionConfig(context.projectDir, "19", {
+              additional: {
+                imports: { react: 19 },
+              },
+            }),
+          TypeError,
+          "imports must be an object with string values",
+        );
+        assertEquals(await exists(`${context.projectDir}/deno.react19.json`), false);
       });
     });
   });

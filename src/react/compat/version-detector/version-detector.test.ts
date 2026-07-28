@@ -87,11 +87,14 @@ describe("React Version Detector", () => {
       assertEquals(info.features.enhancedStreaming, true);
     });
 
-    it("all versions have basic SSR capabilities", () => {
+    it("reports basic and legacy SSR capabilities for the detected version", () => {
       const info = getReactVersionInfo();
       assertEquals(info.features.renderToString, true);
       assertEquals(info.features.renderToStaticMarkup, true);
-      assertEquals(info.features.renderToNodeStream, true);
+      assertEquals(
+        info.features.renderToNodeStream,
+        info.major < 19 && !info.isReact19,
+      );
     });
 
     it("hasFeature checks individual features", () => {
@@ -109,7 +112,10 @@ describe("React Version Detector", () => {
       const info = getReactVersionInfo();
       if (info.major < 18) return;
 
-      assertEquals(info.features.serverComponents, info.minor >= 3);
+      assertEquals(
+        info.features.serverComponents,
+        info.major > 18 || (info.major === 18 && info.minor >= 3),
+      );
     });
   });
 

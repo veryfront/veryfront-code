@@ -10,7 +10,7 @@ export function detectFeatures(
   isReact19Flag: boolean,
 ): ReactFeatures {
   const isReact18Plus = major >= 18;
-  const serverComponents = isReact18Plus && minor >= 3;
+  const serverComponents = major > 18 || (major === 18 && minor >= 3);
 
   return {
     suspense: isReact18Plus,
@@ -27,7 +27,7 @@ export function detectFeatures(
 
     renderToString: true,
     renderToStaticMarkup: true,
-    renderToNodeStream: true,
+    renderToNodeStream: major < 19 && !isReact19Flag,
     renderToPipeableStream: isReact18Plus,
     renderToReadableStream: isReact18Plus,
   };

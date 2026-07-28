@@ -182,7 +182,10 @@ describe("hooks-adapter", () => {
 
       assertEquals(info.features.renderToString, true);
       assertEquals(info.features.renderToStaticMarkup, true);
-      assertEquals(info.features.renderToNodeStream, true);
+      assertEquals(
+        info.features.renderToNodeStream,
+        info.major < 19 && !info.isReact19,
+      );
 
       if (info.major >= 18) {
         assertEquals(info.features.renderToPipeableStream, true);

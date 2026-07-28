@@ -5,7 +5,7 @@ import { detectFeatures } from "./feature-detector.ts";
 
 describe("feature-detector", () => {
   describe("detectFeatures", () => {
-    it("returns all features disabled for React 17", () => {
+    it("disables React 18+ features for React 17", () => {
       const features = detectFeatures(17, 0, false);
 
       assertEquals(features.suspense, false);
@@ -18,7 +18,7 @@ describe("feature-detector", () => {
       assertEquals(features.renderToPipeableStream, false);
       assertEquals(features.renderToReadableStream, false);
 
-      // Always available
+      // Basic SSR methods remain available.
       assertEquals(features.renderToString, true);
       assertEquals(features.renderToStaticMarkup, true);
       assertEquals(features.renderToNodeStream, true);
@@ -33,6 +33,7 @@ describe("feature-detector", () => {
       assertEquals(features.transitions, true);
       assertEquals(features.renderToPipeableStream, true);
       assertEquals(features.renderToReadableStream, true);
+      assertEquals(features.renderToNodeStream, true);
 
       // React 19 features still off
       assertEquals(features.useFormStatus, false);
@@ -43,6 +44,8 @@ describe("feature-detector", () => {
       assertEquals(detectFeatures(18, 3, false).serverComponents, true);
       assertEquals(detectFeatures(18, 2, false).serverComponents, false);
       assertEquals(detectFeatures(18, 0, false).serverComponents, false);
+      assertEquals(detectFeatures(19, 0, true).serverComponents, true);
+      assertEquals(detectFeatures(20, 0, false).serverComponents, true);
     });
 
     it("enables React 19 features when isReact19Flag is true", () => {
@@ -57,6 +60,8 @@ describe("feature-detector", () => {
       // Also has React 18+ features
       assertEquals(features.suspense, true);
       assertEquals(features.streaming, true);
+      assertEquals(features.renderToNodeStream, false);
+      assertEquals(detectFeatures(18, 3, true).renderToNodeStream, false);
     });
 
     it("treats major >= 18 as React 18+ for base features", () => {
@@ -64,6 +69,8 @@ describe("feature-detector", () => {
 
       assertEquals(features.suspense, true);
       assertEquals(features.streaming, true);
+      assertEquals(features.serverComponents, true);
+      assertEquals(features.renderToNodeStream, false);
     });
   });
 });
