@@ -18,6 +18,7 @@ export class SecurityConfigLoader {
     private projectDir: string,
     private adapter: RuntimeAdapter,
     private configOverride?: VeryfrontConfig,
+    private productionRuntime = false,
   ) {}
 
   async ensureLoaded(): Promise<void> {
@@ -45,7 +46,7 @@ export class SecurityConfigLoader {
 
   private applyConfig(cfg?: VeryfrontConfig): void {
     const security: SecurityConfig = cfg?.security ? { ...cfg.security } as SecurityConfig : {};
-    const production = isProduction();
+    const production = this.productionRuntime || isProduction();
 
     if (security.headers) security.headers = { ...security.headers };
 
