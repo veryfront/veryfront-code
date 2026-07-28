@@ -53,6 +53,9 @@ describe("configSchema", () => {
       const invalid of [
         { projectDir: "relative/project" },
         { browsers: [] },
+        { criticalCSS: true },
+        { purge: true, sourceMap: true },
+        { purge: true, purgeContent: [] },
         {
           purgeSafelist: Array.from(
             { length: CSS_OPTIMIZATION.MAX_PURGE_SAFELIST_ENTRIES + 1 },
@@ -65,6 +68,39 @@ describe("configSchema", () => {
         () => validateVeryfrontConfig({ assetPipeline: { css: invalid } }),
         Error,
         "assetPipeline.css",
+      );
+    }
+  });
+
+  it("keeps image asset-pipeline schema constraints aligned with runtime", () => {
+    const images = {
+      projectDir: Deno.cwd(),
+      formats: ["webp", "png"],
+      sizes: [320, 640],
+      quality: 85,
+      inputDir: "public",
+      outputDir: ".veryfront/images",
+      preserveOriginal: true,
+    };
+    assertEquals(
+      validateVeryfrontConfig({ assetPipeline: { images } }).assetPipeline
+        ?.images,
+      images,
+    );
+
+    for (
+      const invalid of [
+        { projectDir: "relative/project" },
+        { formats: [] },
+        { formats: ["webp", "webp"] },
+        { sizes: [320, 320] },
+        { inputDir: "" },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ assetPipeline: { images: invalid } }),
+        Error,
+        "assetPipeline.images",
       );
     }
   });

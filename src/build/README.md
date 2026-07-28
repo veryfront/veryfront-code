@@ -50,9 +50,7 @@ build/
 
 - `buildProduction(config)` - Full production build
 - `buildStatic(routes, config)` - Static site generation
-- `compileM
-
-DX(source, options)` - MDX compilation
+- `compileMDX(source, options)` - MDX compilation
 
 ### Asset Pipeline
 
@@ -77,8 +75,9 @@ DX(source, options)` - MDX compilation
 ### External
 
 - `esbuild` - JavaScript bundling
-- `sharp` (optional) - Image optimization
-- `lightningcss` (optional) - CSS optimization
+- `sharp` - Required when image optimization is enabled
+- `lightningcss` and `browserslist` - Required when CSS optimization is enabled
+- `purgecss` - Required when CSS purging or critical-CSS extraction is enabled
 - `@mdx-js/mdx` - MDX compilation
 
 ## Usage Examples
@@ -120,26 +119,38 @@ console.log(`Generated ${result.staticPages.length} static pages`)
 ```typescript
 import { runAssetPipeline } from "./build/asset-pipeline";
 
+const projectDir = Deno.cwd();
 const result = await runAssetPipeline({
   images: {
-    enabled: true,
+    projectDir,
+    inputDir: "public",
+    outputDir: ".veryfront/images",
     formats: ["webp", "avif"],
     sizes: [640, 1280, 1920],
   },
+  tailwind: {
+    projectDir,
+    sourceDir: "styles",
+    outputDir: "generated-css",
+  },
   css: {
-    enabled: true,
+    projectDir,
+    inputDir: "generated-css",
+    outputDir: ".veryfront/css",
     minify: true,
     autoprefixer: true,
-  },
-  tailwind: {
-    enabled: true,
-    projectDir: "./my-app",
   },
 });
 
 console.log(`Optimized ${result.images.optimized} images`);
 console.log(`CSS savings: ${result.css.savings}%`);
 ```
+
+Asset stages are opt-in: an omitted stage does not run. Enabled stages run in
+Tailwind, CSS, then image order so Tailwind output can be a CSS input. Their
+output trees must not overlap. A requested stage failure rejects the pipeline;
+it is not converted into a successful result with zero statistics. Each stage
+publishes its own output transactionally.
 
 ### MDX Compilation
 
@@ -247,9 +258,12 @@ NODE_OPTIONS="--max-old-space-size=4096" deno task build
 
 ### Asset Optimization Failures
 
-- Check Sharp installation: `npm ls sharp`
-- Check Lightning CSS: `npm ls lightningcss`
-- Disable optional optimizers if needed
+- Call `getAssetPipelineStatus()` to inspect the pinned Sharp, Lightning CSS,
+  and PurgeCSS dependencies.
+- Verify that each enabled stage has an existing input directory inside its
+  project boundary.
+- Use distinct output directories for image, Tailwind, and CSS stages.
+- Disable a stage explicitly, or omit it, only when that output is not required.
 
 ## References
 

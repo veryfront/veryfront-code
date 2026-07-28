@@ -4,6 +4,10 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
 import { createBuildPublication } from "../../production-build/build/build-publication.ts";
+import {
+  DEFAULT_TAILWIND_OUTPUT_DIRECTORY,
+  DEFAULT_TAILWIND_SOURCE_DIRECTORY,
+} from "./constants.ts";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { TailwindProcessor } from "./processor.ts";
 import { isTailwindV4File } from "./detector.ts";
@@ -38,8 +42,8 @@ export function processTailwindCSS(
 
 export function processTailwindCSSInDirectory(
   projectDir: string,
-  cssDir: string = "styles",
-  outputDir: string = ".veryfront/css",
+  cssDir: string = DEFAULT_TAILWIND_SOURCE_DIRECTORY,
+  outputDir: string = DEFAULT_TAILWIND_OUTPUT_DIRECTORY,
 ): Promise<TailwindProcessResult[]> {
   return withSpan(
     "build.asset.processTailwindCSSInDirectory",

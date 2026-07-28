@@ -570,8 +570,24 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           images: v
             .object({
               enabled: v.boolean().optional(),
-              projectDir: v.string().optional(),
-              formats: v.array(v.enum(["webp", "avif", "jpeg", "png"])).optional(),
+              projectDir: v
+                .string()
+                .min(1)
+                .max(MAX_PATH_LENGTH_CHARS)
+                .refine(
+                  isAbsolute,
+                  "Image projectDir must be an absolute path",
+                )
+                .optional(),
+              formats: v
+                .array(v.enum(["webp", "avif", "jpeg", "png"]))
+                .min(1)
+                .max(4)
+                .refine(
+                  (formats) => new Set(formats).size === formats.length,
+                  "Image formats must be unique",
+                )
+                .optional(),
               sizes: v
                 .array(
                   v.number().int().positive().max(
@@ -579,10 +595,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                   ),
                 )
                 .max(IMAGE_OPTIMIZATION.MAX_OUTPUT_SIZES)
+                .refine(
+                  (sizes) => new Set(sizes).size === sizes.length,
+                  "Image sizes must be unique",
+                )
                 .optional(),
               quality: v.number().int().min(1).max(100).optional(),
-              inputDir: v.string().optional(),
-              outputDir: v.string().optional(),
+              inputDir: v.string().min(1).max(MAX_PATH_LENGTH_CHARS).optional(),
+              outputDir: v.string().min(1).max(MAX_PATH_LENGTH_CHARS).optional(),
               preserveOriginal: v.boolean().optional(),
             })
             .partial()
@@ -631,6 +651,21 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             })
             .partial()
             .strict()
+            .refine(
+              (options) => options.criticalCSS !== true,
+              "Batch criticalCSS is unsupported; call extractCriticalCSS explicitly",
+            )
+            .refine(
+              (options) => !(options.purge === true && options.sourceMap === true),
+              "CSS purge and sourceMap cannot be enabled together",
+            )
+            .refine(
+              (options) =>
+                options.purge !== true ||
+                options.purgeContent === undefined ||
+                options.purgeContent.length > 0,
+              "Enabled CSS purge requires non-empty purgeContent",
+            )
             .optional(),
         })
         .partial()

@@ -24,7 +24,9 @@ Primary source areas:
 2. Route collection discovers page and API entrypoints.
 3. Compiler and transform code converts MDX, CSS, import maps, and ESM inputs.
 4. Bundler code splits client and server entrypoints.
-5. Asset pipeline code optimizes CSS, images, and generated client assets.
+5. Requested asset stages run in Tailwind, CSS, then image order. Omitted
+   stages are no-ops; enabled-stage failures reject instead of returning
+   partial-success statistics.
 6. Output generation writes manifests and production files.
 
 ## Boundaries
@@ -32,6 +34,8 @@ Primary source areas:
 - Server runtime consumes build output but does not own production build steps.
 - Runtime adapters describe host capabilities, not build graph semantics.
 - Extension-provided bundler contracts belong in [extension system](./12-extension-system.md).
+- Asset-stage output trees must not overlap. Each stage stages and atomically
+  publishes its own output directory.
 
 ## Change checks
 
