@@ -35,6 +35,7 @@ export {
 
 // Utilities: parsing, filtering, normalization
 export {
+  CACHE_KEY_ALLOWED_PATTERN,
   createCacheKeyFilter,
   deleteAllKeysForProject,
   deleteAllKeysForProjectAsync,
@@ -42,8 +43,10 @@ export {
   getAllKeysForProject,
   getAllKeysForProjectAsync,
   getCacheKeyVersion,
+  isValidCacheKey,
   normalizeFilePath,
   parseRenderCacheKey,
+  sanitizeCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./utils.ts";
 

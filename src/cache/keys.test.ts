@@ -12,11 +12,14 @@ import {
   buildQueryAwareCacheKey,
   buildRenderCacheKey,
   buildRenderCachePrefix,
+  CACHE_KEY_ALLOWED_PATTERN,
   CacheKeyPrefix,
   computeContentSourceId,
   DEFAULT_EXCLUDED_QUERY_PARAMS,
   filterQueryParams,
+  isValidCacheKey,
   parseRenderCacheKey,
+  sanitizeCacheKey,
   sanitizeQueryParamsForCacheKey,
 } from "./keys.ts";
 import {
@@ -499,6 +502,69 @@ describe("cache/keys", () => {
     it("should include HubSpot tracking params", () => {
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsenc"), true);
       assertEquals(DEFAULT_EXCLUDED_QUERY_PARAMS.includes("_hsmi"), true);
+    });
+  });
+
+  describe("sanitizeCacheKey / isValidCacheKey", () => {
+    it("recognises a well-formed structural key as valid", () => {
+      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      assertEquals(isValidCacheKey(key), true);
+    });
+
+    it("treats the empty string as invalid", () => {
+      assertEquals(isValidCacheKey(""), false);
+    });
+
+    it("flags keys containing characters outside the allowed set", () => {
+      assertEquals(isValidCacheKey("render:proj:/blog?ref=x&y=1"), false);
+      assertEquals(isValidCacheKey("render:proj: has space"), false);
+      assertEquals(isValidCacheKey("render:café"), false);
+    });
+
+    it("returns well-formed keys unchanged (no cache churn)", () => {
+      const key = "veryfront:ssr-module:proj_123:production:rel-abc:components/Button.tsx";
+      assertEquals(sanitizeCacheKey(key), key);
+    });
+
+    it("preserves the glob wildcard and separators used by del-pattern", () => {
+      const pattern = "render:proj_123:production:rel-abc:*";
+      assertEquals(sanitizeCacheKey(pattern), pattern);
+      assertEquals(isValidCacheKey(pattern), true);
+    });
+
+    it("escapes query-string characters that leak into a key", () => {
+      // ? = & are the classic offenders from a raw request URL.
+      const sanitized = sanitizeCacheKey("render:proj:/blog?ref=x&y=1");
+      assertMatch(sanitized, CACHE_KEY_ALLOWED_PATTERN);
+      assertEquals(sanitized, "render:proj:/blog*3Fref*3Dx*26y*3D1");
+    });
+
+    it("escapes whitespace and non-ASCII characters", () => {
+      const sanitized = sanitizeCacheKey("render:café page");
+      assertMatch(sanitized, CACHE_KEY_ALLOWED_PATTERN);
+      // é is two UTF-8 bytes, space is one.
+      assertEquals(sanitized, "render:caf*C3*A9*20page");
+    });
+
+    it("is always valid after sanitizing arbitrary input", () => {
+      for (
+        const input of [
+          "a?b=c",
+          "spaces here",
+          "emoji-🚀-key",
+          "tab\tchar",
+          "percent%20already",
+          "back\\slash",
+          'quote"key',
+        ]
+      ) {
+        assertMatch(sanitizeCacheKey(input), CACHE_KEY_ALLOWED_PATTERN);
+      }
+    });
+
+    it("is deterministic so a get derives the same key as its set", () => {
+      const raw = "render:proj:/blog?ref=x";
+      assertEquals(sanitizeCacheKey(raw), sanitizeCacheKey(raw));
     });
   });
 });

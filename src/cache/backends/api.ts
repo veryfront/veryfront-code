@@ -2,6 +2,7 @@ import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
+import { isValidCacheKey, sanitizeCacheKey } from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
@@ -91,7 +92,21 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private prefixKey(key: string): string {
-    return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+    if (isValidCacheKey(prefixed)) return prefixed;
+
+    // Defence in depth: a key that leaked raw URL/query/undefined tokens would
+    // otherwise be rejected by the API with `HTTP 400: Cache key contains
+    // invalid characters`, and on the control-plane /execute path that 400
+    // loops until the request is flagged stuck (issues #162 / #175). Sanitize
+    // so the request succeeds, and warn so the upstream generation bug stays
+    // visible rather than being silently masked.
+    const sanitized = sanitizeCacheKey(prefixed);
+    logger.warn("Cache key contained invalid characters; sanitized before request", {
+      sanitizedKey: sanitized.slice(0, 200),
+      originalLength: prefixed.length,
+    });
+    return sanitized;
   }
 
   private async request<T>(

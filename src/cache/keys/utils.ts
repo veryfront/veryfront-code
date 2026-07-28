@@ -212,6 +212,51 @@ function encodeCacheKeySegment(value: string): string {
   }).join("");
 }
 
+// Characters the API cache backend accepts in a whole key/pattern. This is the
+// structural charset (segment separators `:` and `/`, the glob wildcard `*`,
+// plus `.` `-` `_` and alphanumerics) — a superset of the per-segment set used
+// by encodeCacheKeySegment, which additionally escapes `:` `/` `*`.
+const cacheKeyEscapeEncoder = new TextEncoder();
+const CACHE_KEY_ALLOWED_CHAR = /^[a-zA-Z0-9_:.*/-]$/;
+export const CACHE_KEY_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
+
+/**
+ * True when a key/pattern is already valid for the API cache backend
+ * (non-empty and within the allowed character set).
+ */
+export function isValidCacheKey(key: string): boolean {
+  return key.length > 0 && CACHE_KEY_ALLOWED_PATTERN.test(key);
+}
+
+/**
+ * Guarantee a cache key/pattern only contains characters the API cache backend
+ * accepts, so a malformed key can never reach the backend and trigger an
+ * `HTTP 400: Cache key contains invalid characters` (which, on the control-plane
+ * `/execute` path, loops until the request is flagged stuck — see veryfront
+ * issues #162 / #175).
+ *
+ * Keys already within the allowed set are returned unchanged — the common case,
+ * so no existing well-formed key is rewritten and no cache entry is orphaned.
+ * Any out-of-set character (e.g. `?`, `=`, `&`, `%`, whitespace, or non-ASCII
+ * that leaked in from a raw request URL, query string, or an `undefined` token
+ * during key generation) is escaped as `*HH` byte sequences — the same escape
+ * convention encodeCacheKeySegment uses for query params. Escaping is
+ * deterministic, so a `get` and the `set` that produced the value derive the
+ * identical key.
+ */
+export function sanitizeCacheKey(key: string): string {
+  if (CACHE_KEY_ALLOWED_PATTERN.test(key)) return key;
+
+  return Array.from(key, (char) => {
+    if (CACHE_KEY_ALLOWED_CHAR.test(char)) return char;
+
+    return Array.from(
+      cacheKeyEscapeEncoder.encode(char),
+      (byte) => `*${byte.toString(16).toUpperCase().padStart(2, "0")}`,
+    ).join("");
+  }).join("");
+}
+
 export function createCacheKeyFilter(options: {
   projectId?: string;
   environment?: "production" | "preview";
