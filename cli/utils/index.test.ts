@@ -20,7 +20,7 @@ import {
   logSuccess,
   logWarning,
   promptUser,
-  showLogo,
+  showHeader,
   VERSION,
 } from "./index.ts";
 
@@ -72,16 +72,16 @@ async function withMockPrompt<T>(
   }
 }
 
-describe("showLogo", () => {
+describe("showHeader", () => {
   it("renders a compact one-line command header", () => {
-    const { stdout } = captureOutput(showLogo);
-    assertEquals(stripAnsi(stdout).trim(), `Veryfront ${VERSION}`);
+    const { stdout } = captureOutput(showHeader);
+    assertEquals(stripAnsi(stdout).trim(), `Veryfront (v${VERSION})`);
   });
 
   it("does not write human output in JSON mode", () => {
     setJsonMode(true);
     try {
-      assertEquals(captureOutput(showLogo).stdout, "");
+      assertEquals(captureOutput(showHeader).stdout, "");
     } finally {
       setJsonMode(false);
     }
@@ -247,7 +247,7 @@ describe("confirmPrompt", () => {
 
 describe("exports", () => {
   it("all exports are available", () => {
-    assertExists(showLogo);
+    assertExists(showHeader);
     assertExists(promptUser);
     assertExists(logSuccess);
     assertExists(logError);
@@ -255,7 +255,7 @@ describe("exports", () => {
     assertExists(logInfo);
     assertExists(formatBytes);
 
-    assertEquals(typeof showLogo, "function");
+    assertEquals(typeof showHeader, "function");
     assertEquals(typeof promptUser, "function");
     assertEquals(typeof logSuccess, "function");
     assertEquals(typeof logError, "function");

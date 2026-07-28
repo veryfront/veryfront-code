@@ -11,8 +11,9 @@ import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
 import { validateProviderConfig } from "veryfront/discovery";
 import { yellow } from "#cli/ui";
-import { exitProcess, registerTerminationSignals } from "#cli/utils";
+import { exitProcess, isTTY, registerTerminationSignals } from "#cli/utils";
 import { brand, dim, error as errorColor } from "#cli/ui";
+import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
@@ -23,6 +24,7 @@ import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
 import { pushCommand, type PushOptions } from "../push/index.ts";
 import { createProjectSelector } from "./project-selector.ts";
+import { createDevLogController } from "./log-controller.ts";
 
 export interface DevOptions {
   port: number;
@@ -266,8 +268,18 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       if (!demoMode) {
+        const logs = createDevLogController();
         keyboardHandler = createKeyboardHandler({
+          onHelp: () => {
+            console.log();
+            console.log(shortcutsBlock(DEV_SHORTCUTS));
+            console.log();
+          },
           onOpen: () => void openBrowser(serverUrl),
+          onLogs: () => {
+            const verbose = logs.toggle();
+            console.log(`  Verbose logs ${verbose ? brand("on") : "off"}`);
+          },
           onClear: () => console.clear(),
           onQuit: () => void shutdown(),
           onAuth: async () => {
@@ -321,6 +333,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         });
 
         keyboardHandler.start();
+        if (isTTY()) console.log(`  ${brand("?")} shortcuts`);
       }
 
       return {

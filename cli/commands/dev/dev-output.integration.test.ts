@@ -11,6 +11,7 @@ import {
   pollHttpReadyByTimeout,
   waitForPromiseWithTimeout,
 } from "../../../tests/_helpers/http-polling.ts";
+import { VERSION } from "#cli/utils";
 
 const NOISY_DEFAULT_FRAGMENTS = [
   "Dev server running at",
@@ -292,6 +293,7 @@ describe(
           await run.stop();
 
           const output = run.output();
+          assertStringIncludes(output, `Veryfront (v${VERSION})`);
           assertStringIncludes(output, "Ready at");
           assert(!output.includes("Logged in as"));
           assert(!output.includes("Press s to"));

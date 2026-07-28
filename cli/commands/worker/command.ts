@@ -7,13 +7,13 @@
  */
 
 import { cliLogger } from "#cli/utils";
-import { exitProcess, registerTerminationSignals, showLogo } from "#cli/utils";
+import { exitProcess, registerTerminationSignals, showHeader } from "#cli/utils";
 import type { WorkerArgs } from "./handler.ts";
 
 export interface WorkerOptions extends WorkerArgs {}
 
 export async function workerCommand(options: WorkerOptions): Promise<void> {
-  showLogo();
+  showHeader();
 
   const { WorkflowRunManager } = await import(
     "../../../src/workflow/worker/run-manager.ts"

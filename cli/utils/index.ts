@@ -12,14 +12,7 @@ import {
   writeStdout,
 } from "veryfront/platform";
 import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
-import {
-  bold,
-  brand,
-  dim,
-  error as errorColor,
-  shouldUseColor,
-  warning as warningColor,
-} from "../ui/colors.ts";
+import { bold, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
 
 type LoggerMethod = (...args: unknown[]) => void;
@@ -78,15 +71,9 @@ export function isTTY(): boolean {
   return isStdoutTTY();
 }
 
-export function showLogo(): void {
+export function showHeader(): void {
   if (isJsonMode()) return;
-
-  if (!shouldUseColor()) {
-    cliLogger.info(`Veryfront ${VERSION}\n`);
-    return;
-  }
-
-  cliLogger.info(`${bold(brand("Veryfront"))} ${dim(VERSION)}\n`);
+  cliLogger.info(`${bold("Veryfront")} ${dim(`(v${VERSION})`)}\n`);
 }
 
 export function logSuccess(message: string): void {

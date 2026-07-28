@@ -6,7 +6,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
 import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
-import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
+import { cliLogger, DEFAULT_DEV_SERVER_PORT, showHeader } from "#cli/utils";
 import { refreshLoggerConfig } from "veryfront/utils";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
@@ -59,6 +59,7 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
 
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
+  showHeader();
   await ensureCliBundlerContracts();
   const projectDir = await resolveProjectDir(opts.project);
 
