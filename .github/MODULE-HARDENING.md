@@ -26,9 +26,9 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    41 |      70.7% | Current formal closure evidence remains valid       |
+| Closed                         |    42 |      72.4% | Current formal closure evidence remains valid       |
 | Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
-| Touched, revalidation required |    15 |      25.9% | Substantive recovered or current work exists        |
+| Touched, revalidation required |    14 |      24.1% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
 
@@ -75,6 +75,7 @@ stricter closure count.
 - `studio`
 - `task`
 - `testing`
+- `tool`
 - `trigger`
 - `types`
 - `webhook`
@@ -99,7 +100,6 @@ stricter closure count.
 - `security`
 - `server`
 - `skill`
-- `tool`
 - `transforms`
 - `workflow`
 
@@ -126,7 +126,7 @@ The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `platform`, `provider`, `prompt`, `registry`,
 `release-assets`, `repositories`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `trigger`, `types`, `webhook`, `index.ts`, and
+`schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
@@ -204,6 +204,11 @@ remediated and revalidated.
 component cache and import lifecycle, exact source-module identity, generated
 browser-helper parity, navigation ownership, redirect consumption, diagnostics,
 production bundle, and direct consumers were remediated and revalidated.
+`tool` is closed after its local and dynamic construction boundaries, schema
+classification, registry projection, host and remote materialization, remote
+MCP transport, project-scoped execution admission, provenance, tracing,
+credentials, documentation, and direct consumers were remediated and
+revalidated.
 `resource` and `utils` have received deep current-state reviews and substantial
 remediation. Resource remains open while its cache-policy breaking-change
 decision is unresolved. Utils remains open while its future-lockfile,
@@ -4959,5 +4964,102 @@ This is a regression checkpoint, not a premature closure decision:
 `data` retains the explicitly documented cache-identity breaking-change
 decision. The formal count therefore remains 41 of 58, with 17 units open or
 awaiting revalidation.
+
+### Tool closure checkpoint
+
+The `tool` audit unit owns local and dynamic tool construction, validator and
+JSON Schema adaptation, provider projection and registry behavior, owner scope,
+host and remote materialization, remote MCP transport, project-scoped catalog
+admission and execution, tracing, provenance, built-in tools, and the public
+`veryfront/tool` surface. Its direct consumers include Agent execution and
+discovery, hosted stream assembly, application MCP, integrations, internal
+agents, workflow, provider adapters, sandbox hosts, and public documentation.
+
+The current Tool findings are remediated:
+
+- **Symptom -> Source -> Consequence -> Remedy:** remote MCP requests admitted
+  unbounded responses and catalogs, accepted ambiguous JSON-RPC/SSE payloads,
+  followed redirects with credentials, and had incomplete cancellation and
+  pagination ownership. A remote server could amplify memory or work, return a
+  partial or mismatched catalog, loop cursors, or redirect authorization
+  headers. Requests now have owned 30-second cancellation scopes, strict
+  request and response budgets, matching protocol IDs, atomic bounded catalog
+  admission, finite pagination, duplicate rejection, credential-free HTTP(S)
+  endpoint validation, and redirect refusal.
+- **Symptom -> Source -> Consequence -> Remedy:** an admitted remote source
+  reread mutable endpoint, static headers, and explicit fetch configuration on
+  every call. Later mutation could silently redirect a credential-bearing
+  source. Construction now captures methods, callbacks, fetch, endpoint, and a
+  bounded static-header snapshot; only explicit endpoint/header resolvers are
+  request-time extension points. Accessor-backed configuration and execution
+  context fail without invoking getters, and hostile thrown values are never
+  coerced while classifying OAuth failures.
+- **Symptom -> Source -> Consequence -> Remedy:** a legal raw JSON Schema using
+  `__zod` as an extension keyword was misclassified as a validator, while MCP
+  metadata accepted malformed hints through manually constructed tools.
+  Contract detection now requires the parser surface, raw schemas remain
+  provider metadata, and one bounded known-field MCP metadata validator governs
+  factory, registry, and remote definitions.
+- **Symptom -> Source -> Consequence -> Remedy:** project-scoped discovery
+  trusted malformed `required` arrays and inherited/accessor values, reused
+  caller-owned context across asynchronous boundaries, and could execute a
+  tool removed after earlier discovery. Definitions and inputs are now
+  descriptor-safe bounded snapshots, duplicates and malformed schemas fail
+  atomically, one context snapshot governs each operation, and discovery plus
+  allowlist and required-input checks run again immediately before execution.
+- **Symptom -> Source -> Consequence -> Remedy:** host, remote-source, and trace
+  wrappers retained mutable definition callbacks and aliases, and provenance
+  lookup could consult inherited or accessor-backed state. Materialization now
+  captures executable callbacks, aliases, schemas, options, and trace
+  callbacks; execution context is snapshotted; duplicate materialized names
+  fail closed; and canonical remote provenance is an own immutable data marker
+  inspected without invoking caller code.
+- **Symptom -> Source -> Consequence -> Remedy:** the Context7 adapter retained
+  mutable explicit configuration and accepted whitespace, controls, or
+  unbounded credentials. Explicit values are captured, keys must be visible
+  ASCII without surrounding whitespace and fit the 8 KiB ceiling, and malformed
+  untyped input produces a stable configuration error.
+- **Symptom -> Source -> Consequence -> Remedy:** an empty unreferenced testing
+  placeholder remained, and a Rendering test added during the review hid
+  React's process-lifetime scheduler port behind two sanitizer opt-outs. The
+  dead file is removed; the scheduler is initialized outside per-test
+  accounting; that test now passes with resource/op sanitizers and
+  `--trace-leaks`; and the repository sanitizer ratchet remains 402/402.
+
+Current reproducible evidence:
+
+- all Tool suites pass 61 top-level tests and 171 nested steps, including
+  transport budgets and cancellation, protocol matching, static configuration
+  isolation, hostile error coercion, schema classification, metadata,
+  definition and context mutation, duplicate catalogs, execution-time
+  revalidation, provenance, credentials, host tools, tracing, owner scope, and
+  registry concurrency;
+- direct Agent discovery and execution consumers pass 29 top-level tests and
+  62 nested steps, and the signed Server agent-stream consumer passes 38 steps
+  with its required worker runtime flag;
+- the affected Rendering scheduler regression passes 17 steps with
+  `--trace-leaks`, while the sanitizer opt-out baseline remains 402/402;
+- generated references are deterministic, the Tool guide and concept
+  explanation document raw-schema semantics, remote transport limits,
+  construction snapshots, credential handling, and execution-time catalog
+  revalidation, and documentation validation passes all 40 reference pages,
+  67 guides, 112 public documentation files, executable examples, and 747
+  links; and
+- `deno task verify:quick` passes generated-manifest freshness,
+  repository-wide formatting and lint, architecture and policy ratchets, zero
+  cyclic module edges, documentation validation, and every configured
+  production and browser entrypoint typecheck.
+
+Intentional compatibility boundaries remain explicit:
+
+| Severity | Boundary                                                                 | Current control                                                                                                                                                                      | Follow-up trigger                                                                                          |
+| -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Low      | Raw JSON Schema does not parse local runtime input.                      | Raw schemas are bounded provider-facing metadata; validator-backed schemas parse before execution, and the public type documentation and guide state the distinction.                | Introduce a separately named runtime JSON Schema validator contract before changing existing tool input.   |
+| Low      | Host materialization omits a non-runnable or unconvertible host entry.   | The entry cannot execute, diagnostics disclose only its name and error class, valid siblings remain available, and admitted executable definitions and callbacks are captured.       | Change to atomic host-set rejection only with an announced host integration compatibility revision.        |
+| Low      | Resolver callbacks may intentionally observe caller-owned dynamic state. | The callback reference and execution context snapshot are fixed at admission/call boundaries; static transport values cannot mutate, and resolvers are the documented rotation path. | Add a declarative credential-provider abstraction if resolver code must itself become data-only and fixed. |
+
+No known unresolved critical or high-confidence Tool production risk remains.
+`tool` is closed at 42 of 58 formal units; 16 units remain to be closed or
+revalidated.
 
 Update this ledger in the same commit that closes or reopens an audit unit.

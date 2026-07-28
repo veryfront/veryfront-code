@@ -212,3 +212,28 @@ import { addSpanEvent, endServerSpan, extractContext } from "veryfront/observabi
 |------|-------------|--------|
 | `OTLPConfig` | Configuration used by otlpconfig. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L44) |
 | `WithSpanOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L273) |
+
+### `veryfront/observability/sentry`
+
+```ts
+import { captureApplicationError, flushApplicationErrors, initializeSentry } from "veryfront/observability/sentry";
+```
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L22) |
+| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L30) |
+| `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L54) |
+| `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L47) |
+| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L75) |
+| `resolveSentryConfigFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L31) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `ApplicationErrorContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L1) |
+| `ApplicationErrorReporter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L9) |
+| `SentryConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L16) |

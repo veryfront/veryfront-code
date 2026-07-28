@@ -163,6 +163,25 @@ describe("tool factory", () => {
       });
     });
 
+    it("treats __zod as a JSON Schema extension unless a parser is present", () => {
+      const t = tool({
+        id: "json-schema-extension",
+        description: "desc",
+        inputSchema: {
+          type: "object",
+          __zod: true,
+          properties: { query: { type: "string" } },
+        },
+        execute: async () => null,
+      });
+
+      assertEquals(t.inputSchemaJson, {
+        type: "object",
+        __zod: true,
+        properties: { query: { type: "string" } },
+      });
+    });
+
     it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
       assertThrows(
         () =>
@@ -234,6 +253,49 @@ describe("tool factory", () => {
         title: "Search",
         annotations: { readOnlyHint: true },
       });
+    });
+
+    it("rejects malformed MCP annotations", () => {
+      assertThrows(
+        () =>
+          tool({
+            id: "invalid-mcp-annotations",
+            description: "desc",
+            inputSchema: { type: "object" },
+            mcp: {
+              annotations: {
+                readOnlyHint: "yes",
+              } as unknown as { readOnlyHint: boolean },
+            },
+            execute: async () => null,
+          }),
+        Error,
+        "annotations",
+      );
+    });
+
+    it("turns throwing MCP reflection traps into a stable validation error", () => {
+      const mcp = new Proxy({}, {
+        ownKeys() {
+          return ["title"];
+        },
+        getOwnPropertyDescriptor() {
+          throw new Error("caller-controlled trap");
+        },
+      });
+
+      assertThrows(
+        () =>
+          tool({
+            id: "proxy-mcp",
+            description: "desc",
+            inputSchema: { type: "object" },
+            mcp,
+            execute: async () => null,
+          }),
+        Error,
+        "MCP configuration must be a bounded JSON object",
+      );
     });
   });
 

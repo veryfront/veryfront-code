@@ -10,6 +10,7 @@ import { INVALID_ARGUMENT, TOOL_ID_CONFLICT } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
+import { isToolAnnotations, snapshotToolMcpConfig } from "./mcp-metadata.ts";
 
 /**
  * Returns true when `incoming` is considered the same definition as `existing`:
@@ -100,24 +101,13 @@ function snapshotProviderMcpMetadata(
   toolId: string,
 ): Pick<ToolDefinition, "annotations" | "title"> {
   if (value === undefined) return {};
-  const snapshot = snapshotBoundedJsonValue(value);
-  if (
-    !snapshot.success ||
-    typeof snapshot.value !== "object" ||
-    snapshot.value === null ||
-    Array.isArray(snapshot.value)
-  ) {
-    throw new TypeError(`Tool "${toolId}" MCP metadata must be a bounded JSON object`);
-  }
-
-  const title = typeof snapshot.value.title === "string" &&
-      snapshot.value.title.length > 0
-    ? snapshot.value.title
+  const snapshot = snapshotToolMcpConfig(value, toolId);
+  const title = typeof snapshot?.title === "string" &&
+      snapshot.title.length > 0
+    ? snapshot.title
     : undefined;
-  const annotations = typeof snapshot.value.annotations === "object" &&
-      snapshot.value.annotations !== null &&
-      !Array.isArray(snapshot.value.annotations)
-    ? snapshot.value.annotations as ToolAnnotations
+  const annotations = isToolAnnotations(snapshot?.annotations)
+    ? snapshot.annotations as ToolAnnotations
     : undefined;
   return {
     ...(title ? { title } : {}),

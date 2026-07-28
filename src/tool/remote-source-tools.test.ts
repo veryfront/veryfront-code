@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { RemoteToolSource } from "./types.ts";
+import type { RemoteToolSource, ToolDefinition } from "./types.ts";
 import {
   createToolsFromRemoteDefinitions,
   loadRemoteToolsFromSource,
@@ -222,5 +222,111 @@ describe("tool/remote-source-tools", () => {
     );
     assertEquals(getterCalls, 0);
     assertEquals(executionCalls, 0);
+  });
+
+  it("captures remote definitions, aliases, and execution callbacks at materialization", async () => {
+    const calls: string[] = [];
+    const source: RemoteToolSource = {
+      id: "docs-source",
+      async listTools() {
+        return [];
+      },
+      async executeTool(toolName) {
+        calls.push(`captured:${toolName}`);
+        return { toolName };
+      },
+    };
+    const definition = {
+      name: "search_docs",
+      description: "Search docs",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+      },
+    } satisfies ToolDefinition;
+    const aliases = { search_docs: "docs_search" };
+    const tools = createToolsFromRemoteDefinitions(source, [definition], {
+      toolNameAliases: aliases,
+    });
+
+    definition.name = "delete_docs";
+    definition.description = "Delete docs";
+    (definition.parameters.properties.query as { type: string }).type = "number";
+    aliases.search_docs = "replacement";
+    source.executeTool = async (toolName) => {
+      calls.push(`replacement:${toolName}`);
+      return null;
+    };
+
+    assertEquals(Object.keys(tools), ["docs_search"]);
+    assertEquals(tools.docs_search?.description, "Search docs");
+    assertEquals(tools.docs_search?.inputSchemaJson, {
+      type: "object",
+      properties: { query: { type: "string" } },
+    });
+    assertEquals(await tools.docs_search?.execute({ query: "Veryfront" }), {
+      toolName: "search_docs",
+    });
+    assertEquals(calls, ["captured:search_docs"]);
+  });
+
+  it("rejects accessor-backed definitions and aliases without invoking them", () => {
+    const source: RemoteToolSource = {
+      id: "docs-source",
+      async listTools() {
+        return [];
+      },
+      async executeTool() {
+        return null;
+      },
+    };
+    let getterCalls = 0;
+    const definition = Object.defineProperty(
+      {
+        description: "Search docs",
+        parameters: { type: "object" },
+      },
+      "name",
+      {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return "search_docs";
+        },
+      },
+    );
+
+    assertThrows(
+      () =>
+        createToolsFromRemoteDefinitions(
+          source,
+          [definition as unknown as ToolDefinition],
+        ),
+      TypeError,
+      "Remote tool definition",
+    );
+
+    const aliases = Object.defineProperty({}, "search_docs", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "docs_search";
+      },
+    });
+    assertThrows(
+      () =>
+        createToolsFromRemoteDefinitions(
+          source,
+          [{
+            name: "search_docs",
+            description: "Search docs",
+            parameters: { type: "object" },
+          }],
+          { toolNameAliases: aliases as Record<string, string> },
+        ),
+      TypeError,
+      "tool name aliases",
+    );
+    assertEquals(getterCalls, 0);
   });
 });

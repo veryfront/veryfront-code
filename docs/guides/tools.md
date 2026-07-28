@@ -169,14 +169,83 @@ export default agent({
 });
 ```
 
+## Load a remote MCP source programmatically
+
+Use a remote source when application code needs to discover and materialize an
+MCP catalog outside agent configuration:
+
+```ts
+import { createRemoteMCPToolSource, loadRemoteToolsFromSource } from "veryfront/tool";
+
+const docsToken = process.env.DOCS_MCP_TOKEN;
+if (!docsToken) throw new Error("DOCS_MCP_TOKEN is required");
+
+const source = createRemoteMCPToolSource({
+  id: "product-docs",
+  endpoint: "https://docs.example.com/mcp",
+  headers: { Authorization: `Bearer ${docsToken}` },
+});
+
+const tools = await loadRemoteToolsFromSource(source, {
+  context: {
+    projectId: "project-123",
+  },
+  toolNameAliases: {
+    search_docs: "product_docs_search",
+  },
+});
+```
+
+Resolve credentials on the server. Do not forward browser-supplied tokens into
+the remote source without authenticating and authorizing the request first.
+Static endpoint, header, method, and explicit `fetch` values are admitted and
+captured when the source is created. Use endpoint or header resolver functions
+when credentials or routing must be resolved per request; mutating a static
+configuration object later does not redirect an already-created source.
+
+Remote HTTP endpoints must be absolute `http:` or `https:` URLs without
+embedded credentials. Authenticated requests do not follow redirects. The
+transport requires matching JSON-RPC 2.0 response IDs and admits a catalog
+atomically: malformed entries, duplicate names, repeated cursors, or exceeded
+limits reject the entire discovery result instead of returning a partial tool
+set.
+
+The built-in ceilings are 30 seconds per request, 50 catalog pages, 1,000 tools,
+16 MiB for a successful `tools/list` response, and 4 MiB for a successful
+`tools/call` response. A remote tool name is limited to 128 characters; its
+description and title are each limited to 1,024 characters; and each input
+schema is limited to 16 KiB and 64 levels of nesting. Source IDs and method
+names are limited to 128 characters, endpoint strings to 8,192 characters, and
+resolved request headers to 128 entries and 64 KiB.
+
+Project-scoped remote catalogs discover again immediately before execution.
+This means a tool removed by a credential, release, project, or policy change
+cannot remain executable merely because it appeared in an earlier discovery
+response.
+
 ## Tool configuration
 
-| Property      | Type                           | Description                                |
-| ------------- | ------------------------------ | ------------------------------------------ |
-| `description` | `string`                       | What the tool does (shown to the model)    |
-| `inputSchema` | `Schema<T>`                    | Schema for input validation                |
-| `execute`     | `(params) => Promise<unknown>` | Function that runs when the tool is called |
-| `id`          | `string`                       | Override the auto-generated ID             |
+| Property                    | Type                           | Description                                                 |
+| --------------------------- | ------------------------------ | ----------------------------------------------------------- |
+| `description`               | `string`                       | What the tool does (shown to the model)                     |
+| `inputSchema`               | `Schema<T> \| JsonSchema`      | Validator contract or provider-facing raw JSON Schema       |
+| `outputSchema`              | `Schema<T> \| JsonSchema`      | Optional structured output contract                         |
+| `execute`                   | `(params) => Promise<unknown>` | Function that runs when the tool is called                  |
+| `id`                        | `string`                       | Override the auto-generated ID                              |
+| `delegatedIntegrationTools` | `readonly string[]`            | Integration capabilities a local wrapper may delegate to    |
+| `mcp`                       | `object`                       | MCP visibility, title, cache, auth, and annotation metadata |
+
+Prefer a schema created with `defineSchema` for local tools. It validates and
+transforms input before `execute` runs. A raw JSON Schema is snapshotted and
+sent to providers, but it is not interpreted as a runtime validator by the tool
+factory. Raw schemas may use composition keywords such as `anyOf` without a
+top-level `type`.
+
+The factory captures the schema parser, execution callback, output transform,
+delegated integration list, JSON Schemas, and MCP metadata when the tool is
+created. Mutating the original configuration object later does not change the
+admitted tool contract. Create and register a new tool definition when the
+contract changes.
 
 ## Writing good descriptions
 

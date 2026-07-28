@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -228,5 +228,88 @@ describe("tool/host-tools", () => {
     const tools: ToolSet = createToolsFromHostDefinitions(hostTools);
 
     assertEquals(Object.keys(tools), ["search"]);
+  });
+
+  it("captures execution and tool-call id callbacks at materialization", async () => {
+    const definition = {
+      description: "Stable tool",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: (_input: unknown, context?: ToolExecutionContext) => context?.toolCallId,
+    };
+    const options = {
+      generateToolCallId: () => "captured-call-id",
+    };
+    const tools = createToolsFromHostDefinitions({ stable: definition }, options);
+
+    definition.execute = () => "replacement execute";
+    options.generateToolCallId = () => "replacement-call-id";
+
+    assertEquals(await tools.stable?.execute({}), "captured-call-id");
+  });
+
+  it("rejects accessor-backed host entries without invoking caller code", () => {
+    let toolSetGetterCalls = 0;
+    const accessorToolSet = Object.defineProperty({}, "unsafe", {
+      enumerable: true,
+      get() {
+        toolSetGetterCalls += 1;
+        return {};
+      },
+    });
+
+    assertThrows(
+      () => createToolsFromHostDefinitions(accessorToolSet),
+      TypeError,
+      "host tool set",
+    );
+    assertEquals(toolSetGetterCalls, 0);
+
+    let executeGetterCalls = 0;
+    const accessorDefinition = Object.defineProperty(
+      {
+        description: "Unsafe",
+        inputSchemaJson: emptyJsonSchema,
+      },
+      "execute",
+      {
+        enumerable: true,
+        get() {
+          executeGetterCalls += 1;
+          return () => "unsafe";
+        },
+      },
+    );
+
+    assertThrows(
+      () => createToolsFromHostDefinitions({ unsafe: accessorDefinition }),
+      TypeError,
+      'host tool "unsafe"',
+    );
+    assertEquals(executeGetterCalls, 0);
+  });
+
+  it("rejects accessor-backed execution context without invoking caller code", async () => {
+    let getterCalls = 0;
+    const tools = createToolsFromHostDefinitions({
+      safe: {
+        description: "Safe",
+        inputSchemaJson: emptyJsonSchema,
+        execute: () => "ok",
+      },
+    });
+    const context = Object.defineProperty({}, "toolCallId", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "unsafe";
+      },
+    });
+
+    await assertRejects(
+      () => tools.safe!.execute({}, context),
+      TypeError,
+      "execution context",
+    );
+    assertEquals(getterCalls, 0);
   });
 });

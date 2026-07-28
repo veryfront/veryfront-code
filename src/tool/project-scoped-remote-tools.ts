@@ -1,6 +1,12 @@
 import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
+import {
+  getOwnDataProperty,
+  isMissingOwnDataProperty,
+  snapshotEnumerableOwnDataObject,
+} from "./data-properties.ts";
+import { isToolAnnotations } from "./mcp-metadata.ts";
 
 /** Options accepted by project scoped remote tool. */
 export type ProjectScopedRemoteToolOptions = {
@@ -76,15 +82,29 @@ function getProjectNavigationToolNames(
 function getRequiredToolProperties(toolDefinition: ToolDefinition): string[] {
   const parameters = snapshotToolParameters(toolDefinition);
   const required = parameters.required;
-  return Array.isArray(required)
-    ? required.filter((property): property is string => typeof property === "string")
-    : [];
+  if (required === undefined) return [];
+  if (!Array.isArray(required)) {
+    throw new TypeError(
+      `Tool "${toolDefinition.name}" parameters.required must be an array of unique strings`,
+    );
+  }
+  const names = new Set<string>();
+  for (const property of required) {
+    if (typeof property !== "string" || names.has(property)) {
+      throw new TypeError(
+        `Tool "${toolDefinition.name}" parameters.required must be an array of unique strings`,
+      );
+    }
+    names.add(property);
+  }
+  return [...names];
 }
 
-function snapshotToolParameters(
-  toolDefinition: ToolDefinition,
+function snapshotToolParameterValue(
+  toolName: string,
+  value: unknown,
 ): Record<string, unknown> {
-  const snapshot = snapshotBoundedJsonValue(toolDefinition.parameters);
+  const snapshot = snapshotBoundedJsonValue(value);
   if (
     !snapshot.success ||
     typeof snapshot.value !== "object" ||
@@ -92,10 +112,33 @@ function snapshotToolParameters(
     Array.isArray(snapshot.value)
   ) {
     throw new TypeError(
-      `Tool "${toolDefinition.name}" parameters must be a bounded JSON Schema object`,
+      `Tool "${toolName}" parameters must be a bounded JSON Schema object`,
     );
   }
   return snapshot.value;
+}
+
+function snapshotToolParameters(
+  toolDefinition: ToolDefinition,
+): Record<string, unknown> {
+  let parameters: unknown;
+  try {
+    parameters = getOwnDataProperty(
+      toolDefinition,
+      "parameters",
+      `Tool "${toolDefinition.name}" definition`,
+    );
+  } catch {
+    throw new TypeError(
+      `Tool "${toolDefinition.name}" parameters must be a bounded JSON Schema object`,
+    );
+  }
+  if (isMissingOwnDataProperty(parameters)) {
+    throw new TypeError(
+      `Tool "${toolDefinition.name}" parameters must be a bounded JSON Schema object`,
+    );
+  }
+  return snapshotToolParameterValue(toolDefinition.name, parameters);
 }
 
 function requiresActiveProject(
@@ -119,8 +162,17 @@ function requiresProjectReference(toolDefinition: ToolDefinition): boolean {
 
 function hasToolProperty(toolDefinition: ToolDefinition, property: string): boolean {
   const properties = snapshotToolParameters(toolDefinition).properties;
-  return typeof properties === "object" && properties !== null &&
-    Object.prototype.hasOwnProperty.call(properties, property);
+  if (properties === undefined) return false;
+  if (
+    typeof properties !== "object" ||
+    properties === null ||
+    Array.isArray(properties)
+  ) {
+    throw new TypeError(
+      `Tool "${toolDefinition.name}" parameters.properties must be an object`,
+    );
+  }
+  return Object.prototype.hasOwnProperty.call(properties, property);
 }
 
 function acceptsProjectReference(toolDefinition: ToolDefinition): boolean {
@@ -181,7 +233,7 @@ export function filterProjectScopedRemoteToolDefinitions(
   projectId: string | null,
   options: ProjectScopedRemoteToolOptions = {},
 ): ToolDefinition[] {
-  if (projectId) {
+  if (normalizeProjectId(projectId)) {
     return [...toolDefinitions];
   }
 
@@ -241,6 +293,14 @@ export function resolveProjectScopedRemoteToolProjectId(
   context: ToolExecutionContext | undefined,
   defaultProjectId: string | null | undefined,
 ): string | null {
+  const contextSnapshot = snapshotToolExecutionContext(context);
+  return resolveProjectIdFromSnapshot(contextSnapshot, defaultProjectId);
+}
+
+function resolveProjectIdFromSnapshot(
+  context: ToolExecutionContext | undefined,
+  defaultProjectId: string | null | undefined,
+): string | null {
   return normalizeProjectId(context?.projectId) ?? normalizeProjectId(defaultProjectId);
 }
 
@@ -257,6 +317,14 @@ function withActiveProjectContext(
   context: ToolExecutionContext | undefined,
   activeProjectId: string | null,
 ): ToolExecutionContext | undefined {
+  const contextSnapshot = snapshotToolExecutionContext(context);
+  return withActiveProjectContextSnapshot(contextSnapshot, activeProjectId);
+}
+
+function withActiveProjectContextSnapshot(
+  context: ToolExecutionContext | undefined,
+  activeProjectId: string | null,
+): ToolExecutionContext | undefined {
   if (!activeProjectId) {
     return context;
   }
@@ -269,6 +337,16 @@ function withActiveProjectContext(
     ...(context ?? {}),
     projectId: activeProjectId,
   };
+}
+
+function snapshotToolExecutionContext(
+  context: ToolExecutionContext | undefined,
+): ToolExecutionContext | undefined {
+  if (context === undefined) return undefined;
+  if (typeof context !== "object" || context === null || Array.isArray(context)) {
+    throw new TypeError("Tool execution context must be an object");
+  }
+  return snapshotEnumerableOwnDataObject(context, "Tool execution context");
 }
 
 function snapshotToolInput(
@@ -294,80 +372,174 @@ function normalizeToolDefinitions(
   definitions: readonly ToolDefinition[],
 ): ToolDefinition[] {
   const names = new Set<string>();
-  return definitions.map((definition, index) => {
+  return definitions.map((definitionValue, index) => {
+    if (typeof definitionValue !== "object" || definitionValue === null) {
+      throw new TypeError(
+        `Remote source "${sourceId}" returned a malformed tool definition at index ${index}`,
+      );
+    }
+    const label = `Remote source "${sourceId}" tool definition at index ${index}`;
+    let name: unknown;
+    let description: unknown;
+    let parameters: unknown;
+    let title: unknown;
+    let annotations: unknown;
+    try {
+      name = getOwnDataProperty(definitionValue, "name", label);
+      description = getOwnDataProperty(definitionValue, "description", label);
+      parameters = getOwnDataProperty(definitionValue, "parameters", label);
+      title = getOwnDataProperty(definitionValue, "title", label);
+      annotations = getOwnDataProperty(definitionValue, "annotations", label);
+    } catch {
+      throw new TypeError(
+        `Remote source "${sourceId}" returned a malformed tool definition at index ${index}`,
+      );
+    }
     if (
-      typeof definition !== "object" ||
-      definition === null ||
-      typeof definition.name !== "string" ||
-      definition.name.length === 0 ||
-      typeof definition.description !== "string"
+      isMissingOwnDataProperty(name) ||
+      typeof name !== "string" ||
+      name.length === 0 ||
+      isMissingOwnDataProperty(description) ||
+      typeof description !== "string" ||
+      isMissingOwnDataProperty(parameters)
     ) {
       throw new TypeError(
         `Remote source "${sourceId}" returned a malformed tool definition at index ${index}`,
       );
     }
-    if (names.has(definition.name)) {
+    if (names.has(name)) {
       throw new TypeError(
-        `Remote source "${sourceId}" advertised duplicate tool name "${definition.name}"`,
+        `Remote source "${sourceId}" advertised duplicate tool name "${name}"`,
       );
     }
-    names.add(definition.name);
+    names.add(name);
 
     const normalized: ToolDefinition = {
-      name: definition.name,
-      description: definition.description,
-      parameters: snapshotToolParameters(definition),
+      name,
+      description,
+      parameters: snapshotToolParameterValue(name, parameters),
     };
-    if (definition.title !== undefined) {
-      if (typeof definition.title !== "string" || definition.title.length === 0) {
+    if (!isMissingOwnDataProperty(title) && title !== undefined) {
+      if (typeof title !== "string" || title.length === 0) {
         throw new TypeError(
-          `Remote source "${sourceId}" returned a malformed title for tool "${definition.name}"`,
+          `Remote source "${sourceId}" returned a malformed title for tool "${name}"`,
         );
       }
-      normalized.title = definition.title;
+      normalized.title = title;
     }
-    if (definition.annotations !== undefined) {
-      const annotations = snapshotBoundedJsonValue(definition.annotations);
+    if (!isMissingOwnDataProperty(annotations) && annotations !== undefined) {
+      const annotationSnapshot = snapshotBoundedJsonValue(annotations);
       if (
-        !annotations.success ||
-        typeof annotations.value !== "object" ||
-        annotations.value === null ||
-        Array.isArray(annotations.value)
+        !annotationSnapshot.success ||
+        !isToolAnnotations(annotationSnapshot.value)
       ) {
         throw new TypeError(
-          `Remote source "${sourceId}" returned malformed annotations for tool "${definition.name}"`,
+          `Remote source "${sourceId}" returned malformed annotations for tool "${name}"`,
         );
       }
-      normalized.annotations = annotations.value;
+      normalized.annotations = annotationSnapshot.value;
     }
     return normalized;
   });
+}
+
+function captureProjectScopedRemoteToolOptions(
+  options: ProjectScopedRemoteToolOptions | undefined,
+): ProjectScopedRemoteToolOptions {
+  const names = options?.projectNavigationToolNames;
+  if (names === undefined) return {};
+  const snapshot = snapshotBoundedJsonValue(names);
+  if (
+    !snapshot.success ||
+    !Array.isArray(snapshot.value)
+  ) {
+    throw new TypeError("Project navigation tool names must be a bounded array of strings");
+  }
+  const projectNavigationToolNames: string[] = [];
+  for (const name of snapshot.value) {
+    if (typeof name !== "string" || name.length === 0) {
+      throw new TypeError("Project navigation tool names must be a bounded array of strings");
+    }
+    projectNavigationToolNames.push(name);
+  }
+  return { projectNavigationToolNames };
+}
+
+function captureAllowedToolNameCheck(
+  allowedToolNames: ReadonlySet<string> | null | undefined,
+): (toolName: string) => boolean {
+  if (!allowedToolNames) return () => true;
+  const has = allowedToolNames.has;
+  if (typeof has !== "function") {
+    throw new TypeError("allowedToolNames must be a ReadonlySet");
+  }
+  return (toolName) => Reflect.apply(has, allowedToolNames, [toolName]);
 }
 
 /** Create project scoped remote tool catalog. */
 export function createProjectScopedRemoteToolCatalog(
   input: ProjectScopedRemoteToolCatalogOptions,
 ): ProjectScopedRemoteToolCatalog {
+  const source = input.source;
+  const sourceId = source.id;
+  const listSourceTools = source.listTools;
+  if (
+    typeof sourceId !== "string" ||
+    sourceId.length === 0 ||
+    typeof listSourceTools !== "function"
+  ) {
+    throw new TypeError("Project scoped remote tool source is invalid");
+  }
+  const defaultProjectId = input.defaultProjectId;
+  const isAllowed = captureAllowedToolNameCheck(input.allowedToolNames);
+  const projectScopedRemoteToolOptions = captureProjectScopedRemoteToolOptions(
+    input.projectScopedRemoteToolOptions,
+  );
+  const filterToolDefinitions = input.filterToolDefinitions;
+  if (
+    filterToolDefinitions !== undefined &&
+    typeof filterToolDefinitions !== "function"
+  ) {
+    throw new TypeError("Project scoped remote tool filter must be a function");
+  }
+
   async function listActiveToolDefinitions(
     context?: ToolExecutionContext,
   ): Promise<ProjectScopedRemoteToolDefinitions> {
-    const activeProjectId = resolveProjectScopedRemoteToolProjectId(
+    const { activeProjectId, toolDefinitions } = await loadActiveToolDefinitions(
       context,
-      resolveDefaultProjectId(input.defaultProjectId),
+    );
+    return { activeProjectId, toolDefinitions };
+  }
+
+  async function loadActiveToolDefinitions(
+    context?: ToolExecutionContext,
+  ): Promise<
+    ProjectScopedRemoteToolDefinitions & {
+      executeContext: ToolExecutionContext | undefined;
+    }
+  > {
+    const contextSnapshot = snapshotToolExecutionContext(context);
+    const activeProjectId = resolveProjectIdFromSnapshot(
+      contextSnapshot,
+      resolveDefaultProjectId(defaultProjectId),
     );
 
-    const sourceContext = withActiveProjectContext(context, activeProjectId);
+    const sourceContext = withActiveProjectContextSnapshot(
+      contextSnapshot,
+      activeProjectId,
+    );
     const scopedToolDefinitions = filterProjectScopedRemoteToolDefinitions(
       normalizeToolDefinitions(
-        input.source.id,
-        await input.source.listTools(sourceContext),
+        sourceId,
+        await Reflect.apply(listSourceTools, source, [sourceContext]),
       ),
       activeProjectId,
-      input.projectScopedRemoteToolOptions,
+      projectScopedRemoteToolOptions,
     );
-    const toolDefinitions = input.filterToolDefinitions
-      ? await input.filterToolDefinitions({
-        source: input.source,
+    const toolDefinitions = filterToolDefinitions
+      ? await filterToolDefinitions({
+        source,
         toolDefinitions: scopedToolDefinitions,
         activeProjectId,
         context: sourceContext,
@@ -376,27 +548,30 @@ export function createProjectScopedRemoteToolCatalog(
 
     return {
       activeProjectId,
-      toolDefinitions: normalizeToolDefinitions(input.source.id, toolDefinitions),
+      toolDefinitions: normalizeToolDefinitions(sourceId, toolDefinitions),
+      executeContext: sourceContext,
     };
   }
 
   return {
-    id: input.source.id,
+    id: sourceId,
     listActiveToolDefinitions,
     async listTools(context) {
       const { toolDefinitions } = await listActiveToolDefinitions(context);
-      return toolDefinitions.filter((toolDefinition) =>
-        isRemoteToolNameAllowed(toolDefinition.name, input.allowedToolNames)
-      );
+      return toolDefinitions.filter((toolDefinition) => isAllowed(toolDefinition.name));
     },
     async prepareExecution(executionInput) {
-      if (!isRemoteToolNameAllowed(executionInput.toolName, input.allowedToolNames)) {
+      if (!isAllowed(executionInput.toolName)) {
         throw PERMISSION_DENIED.create({
           detail: `Tool "${executionInput.toolName}" is not allowed for this run`,
         });
       }
 
-      const { activeProjectId, toolDefinitions } = await listActiveToolDefinitions(
+      const {
+        activeProjectId,
+        toolDefinitions,
+        executeContext,
+      } = await loadActiveToolDefinitions(
         executionInput.context,
       );
       const toolDefinition = toolDefinitions.find((definition) =>
@@ -405,7 +580,7 @@ export function createProjectScopedRemoteToolCatalog(
       if (!toolDefinition) {
         throw PERMISSION_DENIED.create({
           detail:
-            `Tool "${executionInput.toolName}" is not advertised by remote source "${input.source.id}"`,
+            `Tool "${executionInput.toolName}" is not advertised by remote source "${sourceId}"`,
         });
       }
       const toolInput = hydrateProjectScopedRemoteToolInput({
@@ -420,7 +595,7 @@ export function createProjectScopedRemoteToolCatalog(
         toolDefinitions,
         toolDefinition,
         toolInput,
-        executeContext: withActiveProjectContext(executionInput.context, activeProjectId),
+        executeContext,
       };
     },
   };
@@ -432,12 +607,17 @@ export async function listProjectScopedRemoteToolNames(
   options: ListProjectScopedRemoteToolNameOptions,
 ): Promise<string[]> {
   const remoteToolNames = new Set<string>();
-  const sourceContext = withActiveProjectContext(options.context, options.projectId);
+  const activeProjectId = normalizeProjectId(options.projectId);
+  const sourceContext = withActiveProjectContext(options.context, activeProjectId);
 
   for (const source of remoteSources) {
-    const toolDefinitions = filterProjectScopedRemoteToolDefinitions(
+    const definitions = normalizeToolDefinitions(
+      source.id,
       await source.listTools(sourceContext),
-      options.projectId,
+    );
+    const toolDefinitions = filterProjectScopedRemoteToolDefinitions(
+      definitions,
+      activeProjectId,
       options.projectScopedRemoteToolOptions,
     );
     for (const toolDefinition of toolDefinitions) {

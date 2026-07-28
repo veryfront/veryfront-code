@@ -12,13 +12,30 @@ export interface Context7ToolSourceConfig {
 }
 
 const DEFAULT_ENDPOINT = "https://mcp.context7.com/mcp";
+const MAX_CONTEXT7_API_KEY_BYTES = 8 * 1024;
+const UTF8_ENCODER = new TextEncoder();
 
-function resolveApiKey(config: Context7ToolSourceConfig): string {
-  const key = config.apiKey ?? getEnv("CONTEXT7_API_KEY");
-  if (!key) {
+function resolveApiKey(explicitApiKey: string | undefined): string {
+  const key = explicitApiKey === undefined ? getEnv("CONTEXT7_API_KEY") : explicitApiKey;
+  if (key === undefined || key === "") {
     throw CONFIG_VALIDATION_ERROR.create({
       detail:
         "Context7 API key is required. Pass apiKey or set the CONTEXT7_API_KEY environment variable.",
+    });
+  }
+  if (
+    typeof key !== "string" ||
+    key !== key.trim() ||
+    !/^[\x21-\x7e]+$/.test(key)
+  ) {
+    throw CONFIG_VALIDATION_ERROR.create({
+      detail:
+        "Context7 API key must be a non-empty visible ASCII string without surrounding whitespace. Pass apiKey or set CONTEXT7_API_KEY.",
+    });
+  }
+  if (UTF8_ENCODER.encode(key).byteLength > MAX_CONTEXT7_API_KEY_BYTES) {
+    throw CONFIG_VALIDATION_ERROR.create({
+      detail: `Context7 API key must not exceed ${MAX_CONTEXT7_API_KEY_BYTES} bytes.`,
     });
   }
   return key;
@@ -28,11 +45,13 @@ function resolveApiKey(config: Context7ToolSourceConfig): string {
 export function createContext7ToolSource(
   config: Context7ToolSourceConfig = {},
 ): RemoteToolSource {
+  const apiKey = config.apiKey;
+  const endpoint = config.endpoint ?? DEFAULT_ENDPOINT;
   return createRemoteMCPToolSource({
     id: "context7",
-    endpoint: config.endpoint ?? DEFAULT_ENDPOINT,
+    endpoint,
     headers: () => ({
-      CONTEXT7_API_KEY: resolveApiKey(config),
+      CONTEXT7_API_KEY: resolveApiKey(apiKey),
     }),
   });
 }

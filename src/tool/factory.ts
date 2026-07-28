@@ -4,6 +4,7 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { snapshotToolMcpConfig } from "./mcp-metadata.ts";
 
 interface ContractSchemaShape {
   __zod?: unknown;
@@ -28,11 +29,12 @@ function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
 
 function isContractSchema(value: unknown): value is ContractSchemaShape {
   if (value === null || typeof value !== "object") return false;
-  if ("__zod" in value) return true;
-  return (
-    "_output" in value &&
-    typeof (value as { parse?: unknown }).parse === "function"
-  );
+  try {
+    if (typeof (value as { parse?: unknown }).parse !== "function") return false;
+    return "__zod" in value || "_output" in value;
+  } catch {
+    return false;
+  }
 }
 
 function hasSchemaParse(schema: unknown): schema is SchemaWithParse {
@@ -112,47 +114,6 @@ function convertSchemaToJson(
   );
 }
 
-function snapshotMcpConfig(
-  value: ToolConfig["mcp"] | undefined,
-  toolId: string,
-): ToolConfig["mcp"] | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    schemaError(toolId, "MCP configuration must be a bounded JSON object");
-  }
-
-  const canonicalInput: Record<string, unknown> = {};
-  let keys: PropertyKey[];
-  try {
-    keys = Reflect.ownKeys(value);
-  } catch {
-    schemaError(toolId, "MCP configuration must be a bounded JSON object");
-  }
-  for (const key of keys) {
-    if (typeof key !== "string") {
-      schemaError(toolId, "MCP configuration must be a bounded JSON object");
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor)) {
-      schemaError(toolId, "MCP configuration must contain only data properties");
-    }
-    if (descriptor.enumerable && descriptor.value !== undefined) {
-      canonicalInput[key] = descriptor.value;
-    }
-  }
-
-  const snapshot = snapshotBoundedJsonValue(canonicalInput);
-  if (
-    !snapshot.success ||
-    typeof snapshot.value !== "object" ||
-    snapshot.value === null ||
-    Array.isArray(snapshot.value)
-  ) {
-    schemaError(toolId, "MCP configuration must be a bounded JSON object");
-  }
-  return snapshot.value as ToolConfig["mcp"];
-}
-
 let toolIdCounter = 0;
 
 function generateToolId(): string {
@@ -197,7 +158,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
   const delegatedIntegrationTools = config.delegatedIntegrationTools
     ? [...config.delegatedIntegrationTools]
     : undefined;
-  const mcp = snapshotMcpConfig(config.mcp, id);
+  const mcp = snapshotToolMcpConfig(config.mcp, id);
 
   const createdTool: Tool<TInput, TOutput> = {
     id,
@@ -263,7 +224,7 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   if (!inputSchemaJson) {
     schemaError(id, "inputSchemaJson must be a bounded JSON Schema object");
   }
-  const mcp = snapshotMcpConfig(config.mcp, id);
+  const mcp = snapshotToolMcpConfig(config.mcp, id);
 
   const createdTool: Tool<unknown, unknown> = {
     id,

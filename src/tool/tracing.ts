@@ -1,5 +1,11 @@
-import type { HostToolSet } from "./host-tools.ts";
+import type { HostToolDefinition, HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext } from "./types.ts";
+import {
+  getEnumerableOwnStringDataEntries,
+  getOwnDataProperty,
+  isMissingOwnDataProperty,
+  snapshotEnumerableOwnDataObject,
+} from "./data-properties.ts";
 
 /** Public API contract for host tool trace runner. */
 export type HostToolTraceRunner = <TResult>(
@@ -34,7 +40,11 @@ function defaultSpanName(toolName: string): string {
 }
 
 function getToolCallId(context: ToolExecutionContext | undefined): string | undefined {
-  return typeof context?.toolCallId === "string" ? context.toolCallId : undefined;
+  if (context === undefined || typeof context !== "object" || context === null) {
+    return undefined;
+  }
+  const value = getOwnDataProperty(context, "toolCallId", "Tool trace execution context");
+  return !isMissingOwnDataProperty(value) && typeof value === "string" ? value : undefined;
 }
 
 /** Wrap host tools with tracing metadata. */
@@ -45,26 +55,47 @@ export function traceHostTools<
   options: TraceHostToolsOptions<TAttributes>,
 ): HostToolSet {
   const traced: HostToolSet = {};
+  const trace = options.trace;
+  const buildAttributes = options.buildAttributes;
+  const setAttributes = options.setAttributes;
   const getSpanName = options.getSpanName ?? defaultSpanName;
+  if (
+    typeof trace !== "function" ||
+    (buildAttributes !== undefined && typeof buildAttributes !== "function") ||
+    (setAttributes !== undefined && typeof setAttributes !== "function") ||
+    typeof getSpanName !== "function"
+  ) {
+    throw new TypeError("Host tool trace callbacks must be functions");
+  }
 
-  for (const [toolName, definition] of Object.entries(tools)) {
-    if (!definition.execute) {
+  for (
+    const [toolName, definition] of getEnumerableOwnStringDataEntries(
+      tools,
+      "host tool set",
+    )
+  ) {
+    if (typeof definition !== "object" || definition === null) continue;
+    const definitionSnapshot = snapshotEnumerableOwnDataObject(
+      definition,
+      `host tool "${toolName}"`,
+    ) as HostToolDefinition;
+    const originalExecute = definitionSnapshot.execute;
+    if (typeof originalExecute !== "function") {
       traced[toolName] = definition;
       continue;
     }
 
-    const originalExecute = definition.execute;
     traced[toolName] = {
-      ...definition,
+      ...definitionSnapshot,
       execute: (input: unknown, context: ToolExecutionContext | undefined) =>
-        options.trace(getSpanName(toolName), () => {
-          const attributes = options.buildAttributes?.({
+        trace(getSpanName(toolName), () => {
+          const attributes = buildAttributes?.({
             toolName,
             toolCallId: getToolCallId(context),
             context,
           });
           if (attributes) {
-            options.setAttributes?.(attributes);
+            setAttributes?.(attributes);
           }
           return originalExecute(input, context);
         }),

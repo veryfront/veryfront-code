@@ -94,6 +94,28 @@ describe("tool registry", () => {
     });
   });
 
+  it("rejects malformed MCP metadata on manually constructed tools", () => {
+    const manualTool: Tool = {
+      id: "manual-tool",
+      type: "function",
+      description: "Manually constructed",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      inputSchemaJson: { type: "object" },
+      execute: async () => null,
+      mcp: {
+        annotations: {
+          destructiveHint: "yes",
+        } as unknown as { destructiveHint: boolean },
+      },
+    };
+
+    assertThrows(
+      () => toolToProviderDefinition(manualTool),
+      TypeError,
+      "annotations",
+    );
+  });
+
   it("should return provider definitions for all registered tools", () => {
     toolRegistry.register(
       "first-tool",

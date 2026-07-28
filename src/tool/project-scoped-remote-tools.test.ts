@@ -51,6 +51,18 @@ Deno.test("filterProjectScopedRemoteToolDefinitions preserves project-bound tool
   );
 });
 
+Deno.test("filterProjectScopedRemoteToolDefinitions treats blank project ids as absent", () => {
+  const tools = [
+    toolDefinition({ name: "list_projects" }),
+    toolDefinition({ name: "list_files", required: ["project_reference"] }),
+  ];
+
+  assertEquals(
+    filterProjectScopedRemoteToolDefinitions(tools, "   ").map((tool) => tool.name),
+    ["list_projects"],
+  );
+});
+
 Deno.test("filterProjectScopedRemoteToolDefinitions does not infer project scope without required fields", () => {
   const tools = [
     toolDefinition({ name: "list_agents" }),
@@ -465,6 +477,17 @@ Deno.test("project schema inspection does not execute accessors", () => {
   assertEquals(getterCalls, 0);
 });
 
+Deno.test("project schema inspection rejects malformed required arrays", () => {
+  const malformed = toolDefinition({ name: "search" });
+  malformed.parameters.required = ["query", 42] as unknown as string[];
+
+  assertThrows(
+    () => filterProjectScopedRemoteToolDefinitions([malformed], null),
+    TypeError,
+    'Tool "search" parameters.required',
+  );
+});
+
 Deno.test("listProjectScopedRemoteToolNames returns sorted unique visible names", async () => {
   const sourceA: RemoteToolSource = {
     id: "api",
@@ -502,6 +525,88 @@ Deno.test("listProjectScopedRemoteToolNames returns sorted unique visible names"
     }),
     ["list_files", "list_projects", "studio_open_project"],
   );
+});
+
+Deno.test("listProjectScopedRemoteToolNames validates each source catalog", async () => {
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [
+        toolDefinition({ name: "read_file" }),
+        toolDefinition({ name: "read_file" }),
+      ];
+    },
+    async executeTool() {
+      return null;
+    },
+  };
+
+  await assertRejectsWithMessage(
+    () => listProjectScopedRemoteToolNames([source], { projectId: null }),
+    'Remote source "api" advertised duplicate tool name "read_file"',
+  );
+});
+
+Deno.test("project scoped catalogs capture configuration references at construction", async () => {
+  const originalAllowed = new Set(["read_file"]);
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [
+        toolDefinition({ name: "read_file" }),
+        toolDefinition({ name: "write_file" }),
+      ];
+    },
+    async executeTool() {
+      return null;
+    },
+  };
+  const options = {
+    source,
+    allowedToolNames: originalAllowed,
+  };
+  const catalog = createProjectScopedRemoteToolCatalog(options);
+
+  options.allowedToolNames = new Set(["write_file"]);
+  source.listTools = async () => [toolDefinition({ name: "replacement" })];
+
+  assertEquals(
+    (await catalog.listTools()).map((definition) => definition.name),
+    ["read_file"],
+  );
+
+  originalAllowed.add("write_file");
+  assertEquals(
+    (await catalog.listTools()).map((definition) => definition.name),
+    ["read_file", "write_file"],
+  );
+});
+
+Deno.test("project scoped catalogs reject accessor-backed context without invoking it", async () => {
+  let getterCalls = 0;
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [toolDefinition({ name: "list_projects" })];
+    },
+    async executeTool() {
+      return null;
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({ source });
+  const context = Object.defineProperty({}, "projectId", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "unsafe-project";
+    },
+  }) as ToolExecutionContext;
+
+  await assertRejectsWithMessage(
+    () => catalog.listTools(context),
+    "Tool execution context must contain only own data properties",
+  );
+  assertEquals(getterCalls, 0);
 });
 
 async function assertRejectsWithMessage(

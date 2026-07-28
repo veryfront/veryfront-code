@@ -26,14 +26,16 @@ import {
 /** Detect contract `Schema<T>` (carries a `__zod` brand from the ext-schema-zod adapter). */
 function isContractSchema(value: unknown): value is Schema<unknown> {
   if (value === null || typeof value !== "object") return false;
-  if ("__zod" in value) return true;
-  // Fallback: defineSchema-produced wrappers expose `_output`, `parse`, and
-  // `safeParse`. Some test doubles may construct these directly.
-  return (
-    "_output" in value &&
-    typeof (value as { parse?: unknown }).parse === "function" &&
-    typeof (value as { safeParse?: unknown }).safeParse === "function"
-  );
+  try {
+    const hasParsers = typeof (value as { parse?: unknown }).parse === "function" &&
+      typeof (value as { safeParse?: unknown }).safeParse === "function";
+    if (!hasParsers) return false;
+    // Fallback: defineSchema-produced wrappers expose `_output`, `parse`, and
+    // `safeParse`. Some test doubles may construct these directly.
+    return "__zod" in value || "_output" in value;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -185,4 +185,65 @@ describe("tool/context7", () => {
       }
     }
   });
+
+  it("captures an explicit API key at construction", async () => {
+    const config = {
+      apiKey: "captured-key",
+      endpoint: "https://mcp.test/mcp",
+    };
+    const source = createContext7ToolSource(config);
+    config.apiKey = "replacement-key";
+    let capturedApiKey = "";
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        capturedApiKey = request.headers.get("CONTEXT7_API_KEY") ?? "";
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "context7:tools:list",
+          result: { tools: [] },
+        });
+      },
+      async () => await source.listTools(),
+    );
+
+    assertEquals(capturedApiKey, "captured-key");
+  });
+
+  it("rejects whitespace-only API keys", async () => {
+    const source = createContext7ToolSource({
+      apiKey: "   ",
+      endpoint: "https://mcp.test/mcp",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => Response.json({}),
+          async () => await source.listTools(),
+        ),
+      Error,
+      "visible ASCII",
+    );
+  });
+
+  it("rejects non-string API keys from untyped callers", async () => {
+    const source = createContext7ToolSource(
+      {
+        apiKey: 42,
+        endpoint: "https://mcp.test/mcp",
+      } as unknown as Parameters<typeof createContext7ToolSource>[0],
+    );
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => Response.json({}),
+          async () => await source.listTools(),
+        ),
+      Error,
+      "visible ASCII",
+    );
+  });
 });

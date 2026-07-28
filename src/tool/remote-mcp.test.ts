@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -703,12 +708,12 @@ describe("tool/remote-mcp", () => {
   });
 
   it("rejects unsafe endpoints and disables redirects for authenticated requests", async () => {
-    const credentialEndpointSource = createRemoteMCPToolSource({
-      id: "docs",
-      endpoint: "https://user:secret@mcp.test",
-    });
-    await assertRejects(
-      () => credentialEndpointSource.listTools(),
+    assertThrows(
+      () =>
+        createRemoteMCPToolSource({
+          id: "docs",
+          endpoint: "https://user:secret@mcp.test",
+        }),
       TypeError,
       "must not include credentials",
     );
@@ -730,6 +735,96 @@ describe("tool/remote-mcp", () => {
 
     await redirectSafeSource.listTools();
     assertEquals(redirectMode, "error");
+  });
+
+  it("captures static transport configuration at construction", async () => {
+    let originalFetchCalls = 0;
+    let replacementFetchCalls = 0;
+    let requestUrl = "";
+    let authorization = "";
+    const staticHeaders = { Authorization: "Bearer original-token" };
+    const originalFetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      originalFetchCalls += 1;
+      const request = new Request(input, init);
+      requestUrl = request.url;
+      authorization = request.headers.get("authorization") ?? "";
+      return Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:list",
+        result: { tools: [] },
+      });
+    }) as typeof fetch;
+    const config = {
+      id: "docs",
+      endpoint: "https://original.mcp.test/mcp",
+      headers: staticHeaders,
+      fetch: originalFetch,
+    };
+    const source = createRemoteMCPToolSource(config);
+
+    config.endpoint = "https://replacement.mcp.test/mcp";
+    staticHeaders.Authorization = "Bearer replacement-token";
+    config.fetch = (async () => {
+      replacementFetchCalls += 1;
+      return Response.json({});
+    }) as typeof fetch;
+
+    await source.listTools();
+
+    assertEquals(originalFetchCalls, 1);
+    assertEquals(replacementFetchCalls, 0);
+    assertEquals(requestUrl, "https://original.mcp.test/mcp");
+    assertEquals(authorization, "Bearer original-token");
+  });
+
+  it("rejects accessor-backed configuration without invoking it", () => {
+    let getterCalls = 0;
+    const config = Object.defineProperty({}, "endpoint", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "https://mcp.test";
+      },
+    });
+
+    assertThrows(
+      () =>
+        createRemoteMCPToolSource(
+          config as unknown as Parameters<typeof createRemoteMCPToolSource>[0],
+        ),
+      TypeError,
+      "own data properties",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
+  it("does not coerce hostile transport exceptions while classifying OAuth errors", async () => {
+    let coercionCalls = 0;
+    const thrown = {
+      toString() {
+        coercionCalls += 1;
+        return "invalid_grant";
+      },
+    };
+    const source = createRemoteMCPToolSource({
+      endpoint: "https://mcp.test",
+      fetch: (async () => {
+        throw thrown;
+      }) as typeof fetch,
+    });
+
+    let caught: unknown;
+    try {
+      await source.executeTool("search_docs", {});
+    } catch (error) {
+      caught = error;
+    }
+
+    assertEquals(caught, thrown);
+    assertEquals(coercionCalls, 0);
   });
 
   it("rejects cyclic outbound arguments before invoking the remote fetch", async () => {

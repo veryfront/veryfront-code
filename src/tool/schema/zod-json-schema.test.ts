@@ -222,6 +222,14 @@ describe("zodToJsonSchema", () => {
         "Invalid Veryfront schema",
       );
     });
+
+    it("should reject a __zod marker without the schema parser contract", () => {
+      assertThrows(
+        () => zodToJsonSchema({ __zod: true }),
+        Error,
+        "Invalid Veryfront schema",
+      );
+    });
   });
 });
 

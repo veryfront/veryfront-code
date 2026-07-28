@@ -1,13 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import type { RSCNode } from "../types.ts";
 import { renderAttributes, treeToHTML } from "./html-generator.ts";
 
-describe("rendering/rsc/server-renderer/html-generator", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+// React 19 owns one process-lifetime scheduler MessagePort. Create it during
+// module setup so per-test sanitizers still detect resources owned by each test.
+await getReactDOMServer();
+
+describe("rendering/rsc/server-renderer/html-generator", () => {
   describe("renderAttributes", () => {
     it("should return empty string for empty props", () => {
       assertEquals(renderAttributes({}), "");

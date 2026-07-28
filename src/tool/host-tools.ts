@@ -3,6 +3,10 @@ import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
+import {
+  getEnumerableOwnStringDataEntries,
+  snapshotEnumerableOwnDataObject,
+} from "./data-properties.ts";
 
 type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
@@ -80,14 +84,21 @@ function defaultToolCallId(toolName: string): string {
 function normalizeExecutionContext(
   toolName: string,
   context: ToolExecutionContext | undefined,
-  options: HostToolMaterializationOptions,
+  generateToolCallId: (toolName: string) => string,
 ): ToolExecutionContext {
-  const toolCallId = typeof context?.toolCallId === "string" && context.toolCallId.length > 0
-    ? context.toolCallId
-    : (options.generateToolCallId ?? defaultToolCallId)(toolName);
+  const normalizedContext = context === undefined
+    ? {}
+    : snapshotEnumerableOwnDataObject(context, "Tool execution context");
+  const toolCallId = typeof normalizedContext.toolCallId === "string" &&
+      normalizedContext.toolCallId.length > 0
+    ? normalizedContext.toolCallId
+    : generateToolCallId(toolName);
+  if (typeof toolCallId !== "string" || toolCallId.length === 0) {
+    throw new TypeError("Host tool call ID generator must return a non-empty string");
+  }
 
   return {
-    ...(isRecord(context) ? context : {}),
+    ...normalizedContext,
     toolCallId,
   };
 }
@@ -108,12 +119,30 @@ export function createToolsFromHostDefinitions(
   options: HostToolMaterializationOptions = {},
 ): ToolSet {
   const tools: ToolSet = {};
+  const generateToolCallId = options.generateToolCallId ?? defaultToolCallId;
+  if (typeof generateToolCallId !== "function") {
+    throw new TypeError("Host tool call ID generator must be a function");
+  }
 
-  for (const [toolName, definition] of Object.entries(definitions)) {
+  for (
+    const [toolName, definitionValue] of getEnumerableOwnStringDataEntries(
+      definitions,
+      "host tool set",
+    )
+  ) {
+    if (!isRecord(definitionValue)) continue;
+    const definition = snapshotEnumerableOwnDataObject(
+      definitionValue,
+      `host tool "${toolName}"`,
+    );
     if (!isHostToolDefinition(definition)) continue;
+    const originalExecute = definition.execute;
 
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
-      await definition.execute(input, normalizeExecutionContext(toolName, context, options));
+      await originalExecute(
+        input,
+        normalizeExecutionContext(toolName, context, generateToolCallId),
+      );
 
     try {
       let materializedTool: Tool | undefined;

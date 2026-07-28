@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import type { HostToolSet } from "./host-tools.ts";
 import { traceHostTools, type TraceHostToolsOptions } from "./tracing.ts";
 
@@ -149,4 +149,57 @@ Deno.test("traceHostTools returns an empty toolset for empty input", () => {
     trace: (_spanName, operation) => operation(),
   });
   assertEquals(traced, {});
+});
+
+Deno.test("traceHostTools captures tracing callbacks at construction", async () => {
+  const spans: string[] = [];
+  const attributes: Record<string, unknown>[] = [];
+  const options: TraceHostToolsOptions = {
+    trace: (spanName, operation) => {
+      spans.push(spanName);
+      return operation();
+    },
+    getSpanName: (toolName) => `captured.${toolName}`,
+    buildAttributes: ({ toolName }) => ({ toolName }),
+    setAttributes: (value) => attributes.push(value),
+  };
+  const traced = traceHostTools({
+    stable: {
+      execute: () => "captured",
+    },
+  }, options);
+
+  options.trace = () => {
+    throw new Error("replacement trace must not run");
+  };
+  options.getSpanName = () => "replacement";
+  options.buildAttributes = () => ({ replacement: true });
+  options.setAttributes = () => {
+    throw new Error("replacement attribute publisher must not run");
+  };
+
+  assertEquals(await requireTool(traced, "stable").execute?.({}), "captured");
+  assertEquals(spans, ["captured.stable"]);
+  assertEquals(attributes, [{ toolName: "stable" }]);
+});
+
+Deno.test("traceHostTools rejects accessor-backed tool entries without invoking them", () => {
+  let getterCalls = 0;
+  const tools = Object.defineProperty({}, "unsafe", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return { execute: () => "unsafe" };
+    },
+  }) as HostToolSet;
+
+  assertThrows(
+    () =>
+      traceHostTools(tools, {
+        trace: (_spanName, operation) => operation(),
+      }),
+    TypeError,
+    "host tool set",
+  );
+  assertEquals(getterCalls, 0);
 });
