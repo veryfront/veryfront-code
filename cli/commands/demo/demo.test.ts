@@ -110,9 +110,9 @@ describe("demo project registration", () => {
       { slug: "demo-canonical", projectId: "", created: true },
       "token",
       {
-        get: (path) => {
+        get: <T>(path: string): Promise<T> => {
           assertEquals(path, "/projects/demo-canonical");
-          return Promise.resolve({ id: "proj_canonical", slug: "demo-canonical" });
+          return Promise.resolve({ id: "proj_canonical", slug: "demo-canonical" } as T);
         },
         post: () => Promise.reject(new Error("unexpected post")),
         put: () => Promise.reject(new Error("unexpected put")),
