@@ -16,9 +16,7 @@ import {
   brand,
   dim,
   error as errorColor,
-  muted,
   shouldUseColor,
-  success as successColor,
   warning as warningColor,
 } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
@@ -83,21 +81,15 @@ export function showLogo(): void {
   if (isJsonMode()) return;
 
   if (!shouldUseColor()) {
-    cliLogger.info(`
-⚡ Veryfront v${VERSION}
-──────────────────────
-`);
+    cliLogger.info(`Veryfront ${VERSION}\n`);
     return;
   }
 
-  cliLogger.info(`
-${brand("⚡")} ${bold(brand("Veryfront"))} ${dim(`v${VERSION}`)}
-${muted("──────────────────────")}
-`);
+  cliLogger.info(`${bold(brand("Veryfront"))} ${dim(VERSION)}\n`);
 }
 
 export function logSuccess(message: string): void {
-  console.log(`  ${successColor("✓")} ${message}`);
+  console.log(`  ✓ ${message}`);
 }
 
 export function logError(message: string): void {
@@ -156,9 +148,16 @@ export function isQuiet(): boolean {
   return _quietMode;
 }
 
-export function promptUser(message: string): Promise<string> {
+export async function promptUser(message: string): Promise<string> {
+  const { isInteractive } = await import("../shared/interactive.ts");
+  if (!isInteractive()) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Interactive input is disabled. Pass the required value as a flag or argument.",
+    });
+  }
+
   const input = promptSync(message);
-  return Promise.resolve(input?.trim() ?? "");
+  return input?.trim() ?? "";
 }
 
 const CTRL_C = 0x03;

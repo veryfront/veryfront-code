@@ -1,9 +1,9 @@
-import { brand, dim, muted } from "#cli/ui";
-import { getAgentFace } from "../../ui/dot-matrix.ts";
+import { muted } from "#cli/ui";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
+import { isInteractive as isCliInteractive } from "../../shared/interactive.ts";
 import { select, textInput } from "../../utils/terminal-select.ts";
-import { DEFAULT_TEMPLATE, getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
+import { DEFAULT_TEMPLATE, getTemplateSelectOptions } from "./catalog.ts";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 
 /** Reject path separators and traversal so the name stays a single directory. */
@@ -23,8 +23,17 @@ export interface WizardResult {
 }
 
 function canRunWizard(): boolean {
-  return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
+  return isCliInteractive() && !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
+
+export function formatWizardIntro(): string {
+  return "\nLet's set up your project.";
+}
+
+const SETUP_PROMPT_DISPLAY = {
+  showMarker: false,
+  showInstructions: false,
+} as const;
 
 export async function runInteractiveWizard(
   existingName?: string,
@@ -41,13 +50,7 @@ export async function runInteractiveWizard(
     };
   }
 
-  // Show logo
-  console.log("");
-  console.log(getAgentFace({ litColor: "\x1b[38;2;252;143;93m" }));
-  console.log("");
-  console.log(`┌  ${brand("Veryfront")}`);
-  console.log(`│  Let's set up your project.`);
-  console.log("│");
+  console.log(formatWizardIntro());
 
   let projectName: string | null = existingName ?? null;
 
@@ -68,6 +71,7 @@ export async function runInteractiveWizard(
         },
       ],
       0,
+      SETUP_PROMPT_DISPLAY,
     );
 
     if (locationChoice === null) {
@@ -83,7 +87,7 @@ export async function runInteractiveWizard(
     }
 
     if (locationChoice === "new") {
-      const name = await textInput("Project name", "my-app");
+      const name = await textInput("Project name", "my-app", SETUP_PROMPT_DISPLAY);
       if (name === null) {
         console.log(muted("\n  Cancelled.\n"));
         return {
@@ -117,6 +121,7 @@ export async function runInteractiveWizard(
     "What would you like to build?",
     getTemplateSelectOptions(),
     0,
+    SETUP_PROMPT_DISPLAY,
   );
 
   if (templateChoice === null) {
@@ -144,6 +149,7 @@ export async function runInteractiveWizard(
         { value: "deno", label: "Deno", description: "Secure-by-default" },
       ],
       0,
+      SETUP_PROMPT_DISPLAY,
     );
 
     if (runtimeChoice === null) {
@@ -169,6 +175,7 @@ export async function runInteractiveWizard(
       { value: "no", label: "No", description: "Skip git initialization" },
     ],
     0,
+    SETUP_PROMPT_DISPLAY,
   );
 
   if (gitChoice === null) {
@@ -184,21 +191,6 @@ export async function runInteractiveWizard(
   }
 
   const initGit = gitChoice === "yes";
-
-  // Summary
-  const templateLabel = TEMPLATES.find((t) => t.id === template)?.label ?? template;
-  console.log("");
-  console.log(brand("Perfect!") + " Here's what we'll create:");
-  console.log("");
-  if (projectName) {
-    console.log(`  ${brand("Location:")} ./${projectName}/`);
-  } else {
-    console.log(`  ${brand("Location:")} ./  ${dim("(current folder)")}`);
-  }
-  console.log(`  ${brand("Template:")} ${templateLabel}`);
-  console.log(`  ${brand("Runtime:")} ${runtime}`);
-  console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
-  console.log("");
 
   return {
     projectName,

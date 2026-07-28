@@ -69,7 +69,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
   });
 
   if (isProxyMode && apiBaseUrl) {
-    logger.info("Using veryfront-api filesystem (proxy mode)");
+    logger.debug("Using veryfront-api filesystem (proxy mode)");
     return {
       type: "veryfront-api",
       veryfront: {
@@ -85,7 +85,7 @@ function getDefaultFsConfig(): VeryfrontConfig["fs"] {
     };
   }
 
-  logger.info("Using local filesystem (no proxy mode)");
+  logger.debug("Using local filesystem (no proxy mode)");
   return { type: "local" };
 }
 

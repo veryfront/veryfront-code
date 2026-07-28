@@ -10,7 +10,7 @@ import {
 } from "./project-structure.ts";
 import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-checks.ts";
 import { checkAIConfig } from "./ai-checks.ts";
-import { bold, checkList, error, success, warning } from "#cli/ui";
+import { bold, checkList, error, warning } from "#cli/ui";
 import { DEFAULT_DEV_PORT } from "#cli/shared/constants";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 
@@ -130,7 +130,7 @@ export async function reportDoctorResults(
     return;
   }
 
-  console.log(`  ${success("✓")} All ${passCount} checks passed`);
+  console.log(`  ✓ All ${passCount} checks passed`);
   console.log();
 }
 

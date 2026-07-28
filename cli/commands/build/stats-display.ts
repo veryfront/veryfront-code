@@ -1,6 +1,10 @@
-import { bold, cyan, dim, green, yellow } from "#cli/ui";
-import { cliLogger } from "#cli/utils";
+import { dim } from "#cli/ui";
+import { cliLogger, formatBytes } from "#cli/utils";
 import type { BuildStats } from "./types.ts";
+
+function formatCount(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
 
 export function displayBuildSuccess(
   stats: BuildStats,
@@ -9,32 +13,17 @@ export function displayBuildSuccess(
   dryRun: boolean,
 ): void {
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  const separator = dim("─".repeat(40));
-
-  cliLogger.info(`\n${green("✓")}${bold(green(" Build completed successfully!\n"))}`);
-
-  cliLogger.info(cyan("📊 Build Statistics"));
-  cliLogger.info(separator);
-  cliLogger.info(`  Pages       ${bold(String(stats.pages).padStart(6))} files`);
-  cliLogger.info(`  Chunks      ${bold(String(stats.chunks).padStart(6))} files`);
-  cliLogger.info(`  Assets      ${bold(String(stats.assets).padStart(6))} files`);
-  cliLogger.info(separator);
+  cliLogger.info(`  ✓ Built in ${duration}s`);
   cliLogger.info(
-    `  Total size  ${bold((stats.totalSize / 1024 / 1024).toFixed(2).padStart(6))} MB`,
+    `    ${formatCount(stats.pages, "page")}, ${formatCount(stats.chunks, "chunk")}, ${
+      formatCount(stats.assets, "asset")
+    }`,
   );
-  cliLogger.info(`  Build time  ${bold(duration.padStart(6))} seconds`);
-  cliLogger.info("");
+  cliLogger.info(`    ${formatBytes(stats.totalSize)} in ${outputDir}`);
 
   if (dryRun && stats.ssgPaths?.length) {
-    cliLogger.info(yellow("📝 SSG routes that would be generated:"));
-    for (const p of stats.ssgPaths) cliLogger.info(`  ${dim("•")} ${p}`);
-    cliLogger.info("");
+    cliLogger.info(`    ${dim("SSG routes:")} ${stats.ssgPaths.join(", ")}`);
   }
 
-  cliLogger.info(green("✨") + bold(" Your site is ready for deployment!"));
-  cliLogger.info(`\n  ${dim("Output directory:")} ${cyan(outputDir)}`);
-  cliLogger.info(`\n  ${dim("Next steps:")}`);
-  cliLogger.info(`    ${dim("•")} ${cyan("veryfront serve")} to preview locally`);
-  cliLogger.info(`    ${dim("•")} Deploy the ${cyan("dist")} directory to your host`);
   cliLogger.info("");
 }

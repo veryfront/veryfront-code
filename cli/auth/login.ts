@@ -5,9 +5,10 @@ import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from ".
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
-import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
+import { brand, dim, error, muted, warning } from "../ui/colors.ts";
 import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../shared/constants.ts";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
+import { isInteractive } from "../shared/interactive.ts";
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -259,6 +260,11 @@ export async function login(
   method?: AuthMethod,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<AuthIdentity | null> {
+  if (!isInteractive() && (method === undefined || method === "token")) {
+    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    return null;
+  }
+
   const authMethod = method ?? (isTTY() ? await promptAuthMethod() : "token");
 
   let token: string | null = null;
@@ -288,8 +294,8 @@ export async function login(
   console.log();
   console.log(
     isApiKeyIdentity(identity)
-      ? "  " + success("✓") + " Authenticated with an API key"
-      : "  " + success("✓") + " Logged in as " + brand(identity.email),
+      ? "  ✓ Authenticated with an API key"
+      : "  ✓ Logged in as " + brand(identity.email),
   );
   return identity;
 }
@@ -319,7 +325,7 @@ export async function ensureAuthenticated(
 
   if (!humanOutput) return null;
 
-  if (!isTTY()) {
+  if (!isTTY() || !isInteractive()) {
     cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
     return null;
   }
@@ -330,7 +336,7 @@ export async function ensureAuthenticated(
 export async function logout(env: EnvironmentConfig = getEnvironmentConfig()): Promise<void> {
   await deleteToken(env);
   console.log();
-  console.log("  " + success("✓") + " Logged out");
+  console.log("  ✓ Logged out");
 }
 
 async function reportCredential(
@@ -349,7 +355,7 @@ async function reportCredential(
     }
 
     console.log();
-    console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
+    console.log("  ✓ Logged in as " + brand(userInfo.email));
   } else {
     if (isJsonMode()) {
       await outputJson(createSuccessEnvelope("whoami", {
@@ -361,7 +367,7 @@ async function reportCredential(
     }
 
     console.log();
-    console.log("  " + success("✓") + " Authenticated with an API key");
+    console.log("  ✓ Authenticated with an API key");
   }
 
   console.log(
@@ -400,7 +406,7 @@ export async function whoami(
     const { listProviderTokens } = await import("./provider-store.ts");
     const providers = await listProviderTokens(env);
     for (const p of providers) {
-      console.log("  " + success("✓") + ` ${p} API key configured`);
+      console.log(`  ✓ ${p} API key configured`);
     }
   } catch {
     // Provider store not available

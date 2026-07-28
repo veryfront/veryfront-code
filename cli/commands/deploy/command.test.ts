@@ -5,13 +5,8 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import {
-  resetInteractiveMode,
-  setAutoConfirm,
-  setNonInteractive,
-} from "../../shared/interactive.ts";
 import {
   assertProjectOwnership,
   createDeployment,
@@ -24,7 +19,6 @@ import {
   getRelease,
   getReleaseSourceDigest,
   parseDeployArgs,
-  requiresExplicitDeployConfirmation,
   verifyDeployment,
   verifyReleaseSource,
   waitForEnvironmentReady,
@@ -386,25 +380,6 @@ describe("DeployArgsSchema", () => {
     if (!result.success) return;
 
     assertEquals(result.data.releaseName, "v1.0.0");
-  });
-});
-
-describe("deploy confirmation policy", () => {
-  afterEach(() => resetInteractiveMode());
-
-  it("requires --force or --yes in non-interactive environments", () => {
-    setNonInteractive(true);
-    assertEquals(requiresExplicitDeployConfirmation(false), true);
-  });
-
-  it("accepts explicit --yes auto-confirmation", () => {
-    setAutoConfirm(true);
-    assertEquals(requiresExplicitDeployConfirmation(false), false);
-  });
-
-  it("accepts the command-specific force flag", () => {
-    setNonInteractive(true);
-    assertEquals(requiresExplicitDeployConfirmation(true), false);
   });
 });
 

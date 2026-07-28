@@ -82,7 +82,7 @@ export async function uninstallTargets(
       // Ignore - parent dir might not be empty or might not exist
     }
 
-    console.log(`  ${success("✓")} ${tool.file} ${muted("removed")}`);
+    console.log(`  ✓ ${tool.file} ${muted("removed")}`);
   }
 
   console.log();

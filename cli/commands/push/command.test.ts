@@ -7,16 +7,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
-  assertMatch,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
+  buildPushUrls,
   capturePushSourceSnapshot,
   createBranch,
   ensureBranch,
-  generateBranchName,
   pushCommand,
   recordPushReceipt,
   resolvePushRemoteFiles,
@@ -34,6 +34,7 @@ import {
   readPushReceipt,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -156,22 +157,137 @@ async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<
   }
 }
 
-describe("generateBranchName", () => {
-  it("should generate a branch name with push- prefix", () => {
-    const name = generateBranchName();
-    assertMatch(name, /^push-/);
+describe("buildPushUrls", () => {
+  it("uses the stable project preview for main", () => {
+    assertEquals(buildPushUrls("my-project", "main"), {
+      studio: "https://veryfront.com/projects/my-project?branch=main",
+      preview: "https://my-project.preview.veryfront.com",
+    });
   });
 
-  it("should generate a branch name with timestamp", () => {
-    const name = generateBranchName();
-    assertMatch(name, /^push-\d{8}T\d{6}$/);
+  it("uses the exact branch name in named preview URLs", () => {
+    assertEquals(buildPushUrls("my-project", "feature-auth"), {
+      studio: "https://veryfront.com/projects/my-project?branch=feature-auth",
+      preview: "https://my-project--feature-auth.preview.veryfront.com",
+    });
   });
 
-  it("should generate unique names on successive calls", () => {
-    const name1 = generateBranchName();
-    const name2 = generateBranchName();
-    assertMatch(name1, /^push-\d{8}T\d{6}$/);
-    assertMatch(name2, /^push-\d{8}T\d{6}$/);
+  it("rejects branch names that cannot round-trip through preview DNS", () => {
+    assertThrows(
+      () => buildPushUrls("my-project", "Feature/auth"),
+      Error,
+      'Preview branch "Feature/auth" is not DNS-safe. Use "feature-auth" instead.',
+    );
+  });
+});
+
+describe("push JSON output", () => {
+  it("emits one result line and no human output for a dry run", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const output: string[] = [];
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+        console.log = (message?: unknown) => output.push(String(message));
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, dryRun: true });
+      });
+
+      assertEquals(output.length, 1);
+      assertEquals(JSON.parse(output[0]!), {
+        type: "result",
+        success: true,
+        data: {
+          projectSlug: "json-project",
+          branch: "main",
+          dryRun: true,
+          projectExists: true,
+          wouldUpload: 1,
+          wouldDelete: 0,
+          studioUrl: "https://veryfront.com/projects/json-project?branch=main",
+          previewUrl: "https://json-project.preview.veryfront.com",
+        },
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("emits one result line and no human output after a successful push", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+    const output: string[] = [];
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+        console.log = (message?: unknown) => output.push(String(message));
+
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({ data: [], page_info: {} });
+          }
+          if (
+            request.method === "PUT" &&
+            url.pathname === "/projects/json-project/files/app.ts"
+          ) {
+            return Response.json({});
+          }
+          if (request.method === "GET" && url.pathname === "/projects/json-project") {
+            return Response.json({ id: "project-123", slug: "json-project" });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir });
+      });
+
+      assertEquals(output.length, 1);
+      const result = JSON.parse(output[0]!);
+      assertEquals(result.type, "result");
+      assertEquals(result.success, true);
+      assertEquals(result.data.projectSlug, "json-project");
+      assertEquals(result.data.branch, "main");
+      assertEquals(result.data.dryRun, false);
+      assertEquals(result.data.uploaded, 1);
+      assertEquals(result.data.deleted, 0);
+      assertEquals(result.data.previewUrl, "https://json-project.preview.veryfront.com");
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
   });
 });
 
@@ -653,23 +769,13 @@ describe("push receipt source snapshot", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({
-          projectDir,
-          branch: "main",
-          force: true,
-          quiet: true,
-        });
+        await pushCommand({ projectDir, quiet: true });
 
         const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
         assertEquals(config.projectSlug, reservedSlug);
         assertEquals((await resolveConfig(projectDir)).projectSlug, reservedSlug);
 
-        await pushCommand({
-          projectDir,
-          branch: "main",
-          force: true,
-          quiet: true,
-        });
+        await pushCommand({ projectDir, quiet: true });
 
         assertEquals(projectCreateRequests, 2);
         assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json", "veryfront.json"]);

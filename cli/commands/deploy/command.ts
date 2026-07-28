@@ -22,12 +22,11 @@ import {
   writeProjectSlug,
 } from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { confirmPrompt, logInfo, logSuccess, logWarning } from "#cli/utils";
-import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
+import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
+import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import { pushCommand } from "../push/index.ts";
-import { isAutoConfirmEnabled } from "../../shared/interactive.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   computeSourceDigest,
@@ -53,6 +52,7 @@ export const getDeployArgsSchema = defineSchema((v) =>
     env: v.string().min(1).default("production"),
     releaseName: v.string().min(1).optional(),
     dryRun: v.boolean().default(false),
+    /** Deprecated compatibility flag; invoking deploy already authorizes the operation. */
     force: v.boolean().default(false),
     /** Quiet mode - suppress spinner/progress output */
     quiet: v.boolean().default(false),
@@ -69,6 +69,8 @@ export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 type ParsedDeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
 export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
   skipSourcePush?: boolean;
+  /** Internal composition control for parent commands that own the JSON result. */
+  suppressJsonOutput?: boolean;
   assetManifestPollIntervalMs?: number;
   assetManifestTimeoutMs?: number;
   environmentPollIntervalMs?: number;
@@ -87,10 +89,6 @@ export const parseDeployArgs = createArgParser(DeployArgsSchema, {
   force: CommonArgs.force,
   quiet: CommonArgs.quiet,
 });
-
-export function requiresExplicitDeployConfirmation(force: boolean): boolean {
-  return !force && !isAutoConfirmEnabled();
-}
 
 /**
  * Environment from the API
@@ -879,7 +877,7 @@ async function ensureProjectLinkedForDeploy(
     const project = await getProject(client, projectReference);
     if (isInferredReference && !hasPersistedSlug && !dryRun) {
       await writeProjectSlug(projectDir, project.slug);
-      if (!quiet) logInfo(`Linked project ${project.slug}`);
+      if (!quiet && isVerbose()) logInfo(`Linked project ${project.slug}`);
     }
     return {
       config: { ...config, projectSlug: project.slug },
@@ -921,7 +919,7 @@ async function ensureProjectLinkedForDeploy(
     initial.apiUrl,
   );
   await writeProjectSlug(projectDir, created.slug);
-  if (!quiet) logInfo(`Created project ${created.slug}`);
+  if (!quiet && isVerbose()) logInfo(`Created project ${created.slug}`);
   const createdConfig = { ...initial, projectSlug: created.slug };
   const createdClient = createApiClient(createdConfig);
   const project = created.projectId
@@ -1098,7 +1096,6 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     env,
     releaseName,
     dryRun,
-    force,
     quiet,
     skipSourcePush,
     assetManifestPollIntervalMs,
@@ -1107,14 +1104,33 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     environmentTimeoutMs,
   } = options;
 
-  if (isJsonMode()) {
+  if (isJsonMode() && !options.suppressJsonOutput) {
     return deployCommandJson(options);
   }
 
-  let spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
+  const startedAt = Date.now();
+  const verbose = isVerbose();
+  let progressText = verbose ? "Resolving configuration..." : "Linking project...";
+  const spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
+  const updateProgress = (summary: string, detail = summary): void => {
+    const next = verbose ? detail : summary;
+    if (next === progressText) return;
+    progressText = next;
+    spinner.update(next);
+  };
+  const runWithProgress = async <T>(operation: () => T | Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      spinner.stop();
+      throw error;
+    }
+  };
 
-  const environmentConfig = getEnvironmentConfig();
-  const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet);
+  const environmentConfig = await runWithProgress(getEnvironmentConfig);
+  const setup = await runWithProgress(() =>
+    ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet)
+  );
   let { config, client, project } = setup;
 
   if (dryRun && !project) {
@@ -1128,42 +1144,30 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     return;
   }
 
-  if (!force && !dryRun && !skipSourcePush) {
-    spinner.stop();
-    const confirmed = await confirmPrompt(
-      `Push source to "${branch}", create release, and deploy to "${env}"?`,
-      true,
-    );
-    if (!confirmed) {
-      console.log(`  ${muted("Deploy cancelled.")}`);
-      return;
-    }
-    spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
-  }
-
   if (!skipSourcePush) {
-    spinner.update(`Pushing source to "${branch}"...`);
-    spinner.stop();
-    await pushCommand({
-      projectDir,
-      branch,
-      force: true,
-      dryRun,
-      quiet: true,
-    });
-    spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
-    config = await resolveConfigWithAuth(projectDir, environmentConfig);
+    updateProgress("Uploading source...", `Pushing source to "${branch}"...`);
+    await runWithProgress(() =>
+      pushCommand({
+        projectDir,
+        branch,
+        force: true,
+        dryRun,
+        quiet: true,
+      })
+    );
+    updateProgress("Uploading source...", "Resolving configuration...");
+    config = await runWithProgress(() => resolveConfigWithAuth(projectDir, environmentConfig));
     client = createApiClient(config);
   }
 
   if (!project) {
-    spinner.update("Resolving project...");
-    project = await getProject(client, config.projectSlug);
+    updateProgress("Building release...", "Resolving project...");
+    project = await runWithProgress(() => getProject(client, config.projectSlug));
   }
 
-  spinner.update(`Looking up environment "${env}"...`);
+  updateProgress("Building release...", `Looking up environment "${env}"...`);
 
-  const environment = await getEnvironmentByName(client, project.id, env);
+  const environment = await runWithProgress(() => getEnvironmentByName(client, project.id, env));
   if (!environment) {
     spinner.stop();
     throw new Error(`Environment "${env}" not found`);
@@ -1182,7 +1186,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     return;
   }
 
-  spinner.update("Verifying pushed source...");
+  updateProgress("Building release...", "Verifying pushed source...");
   let source: { commitSha: string | null; sourceDigest: string };
   try {
     source = await resolvePushedSource({
@@ -1193,22 +1197,12 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       branch,
       requireClean: env === "production",
     });
-  } finally {
+  } catch (error) {
     spinner.stop();
+    throw error;
   }
 
-  if (!force && skipSourcePush) {
-    const confirmed = await confirmPrompt(
-      `Create release from "${branch}" and deploy to "${env}"?`,
-      true,
-    );
-    if (!confirmed) {
-      console.log(`  ${muted("Deploy cancelled.")}`);
-      return;
-    }
-  }
-
-  spinner = quiet ? createNoopSpinner() : createSpinner(`Creating release from "${branch}"...`);
+  updateProgress("Building release...", `Creating release from "${branch}"...`);
 
   let release: Release;
   let deployment: Deployment;
@@ -1218,7 +1212,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     release = await createRelease(client, project.id, { name: releaseName, branch });
     if (!release.version) throw new Error(`Release ${release.id} has no version`);
 
-    spinner.update(`Verifying ${release.version} source...`);
+    updateProgress("Building release...", `Verifying ${release.version} source...`);
     const verifiedRelease = await verifyReleaseSource(client, project.id, {
       projectId: project.id,
       releaseId: release.id,
@@ -1227,7 +1221,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       sourceDigest: source.sourceDigest,
     });
 
-    spinner.update(`Waiting for release assets for ${release.version}...`);
+    updateProgress("Building release...", `Waiting for release assets for ${release.version}...`);
     const expectedPageRoutes = await collectProjectPageRoutes(projectDir);
     await waitForReleaseAssetManifest(client, project.slug, release.id, {
       expectedRoutes: expectedPageRoutes,
@@ -1235,10 +1229,10 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       timeoutMs: assetManifestTimeoutMs,
     });
 
-    spinner.update(`Deploying ${release.version} to ${env}...`);
+    updateProgress(`Deploying to ${env}...`, `Deploying ${release.version} to ${env}...`);
     deployment = await createDeployment(client, project.id, release.id, environment.id);
 
-    spinner.update(`Verifying ${env} deployment...`);
+    updateProgress(`Deploying to ${env}...`, `Verifying ${env} deployment...`);
     verification = await verifyDeployment(client, project.id, {
       projectId: project.id,
       projectSlug: project.slug,
@@ -1256,7 +1250,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       buildEnvironmentUrl(verification.projectSlug, environment),
       readinessRoute,
     );
-    spinner.update(`Waiting for ${env} URL...`);
+    updateProgress(`Verifying ${env} URL...`, `Waiting for ${env} URL...`);
     await waitForEnvironmentReady(
       {
         projectSlug: verification.projectSlug,
@@ -1279,32 +1273,48 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   if (quiet) return;
 
-  logSuccess(`Deployed ${verification.releaseVersion} to ${env}`);
-  logInfo(`  Project: ${verification.projectSlug} (${verification.projectId})`);
-  logInfo(`  Environment: ${env} (${verification.environmentId})`);
-  logInfo(
-    `  Release: ${release.name} (${verification.releaseVersion}, ${verification.releaseId})`,
+  logSuccess(
+    `Deployed ${verification.projectSlug} to ${env} in ${formatDuration(Date.now() - startedAt)}`,
   );
-  logInfo(`  Deployment: ${verification.deploymentId}`);
-  if (deployment.routing_convergence?.status === "converged") {
+  console.log(`\n  ${brand(environmentUrl)}`);
+  console.log(
+    `  ${
+      dim(
+        `${
+          environment.protected ? "Protected" : "Public"
+        } · Release ${verification.releaseVersion}`,
+      )
+    }\n`,
+  );
+
+  if (verbose) {
+    logInfo(`  Project: ${verification.projectSlug} (${verification.projectId})`);
+    logInfo(`  Environment: ${env} (${verification.environmentId})`);
     logInfo(
-      `  Data plane: ${deployment.routing_convergence.acknowledged}/${deployment.routing_convergence.recipients} proxy replicas converged`,
+      `  Release: ${release.name} (${verification.releaseVersion}, ${verification.releaseId})`,
     );
+    logInfo(`  Deployment: ${verification.deploymentId}`);
+    if (deployment.routing_convergence?.status === "converged") {
+      logInfo(
+        `  Data plane: ${deployment.routing_convergence.acknowledged}/${deployment.routing_convergence.recipients} proxy replicas converged`,
+      );
+    }
+    logInfo(
+      verification.commitSha
+        ? `  Commit: ${verification.commitSha}`
+        : "  Commit: unavailable (source digest verified)",
+    );
+    logInfo(`  Source digest: ${verification.sourceDigest}`);
+    logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
   }
+
   const routingConvergenceWarning = getDeploymentRoutingConvergenceWarning(deployment);
   if (routingConvergenceWarning) logWarning(routingConvergenceWarning);
-  logInfo(`  URL: ${environmentUrl}`);
-  logInfo(`  Protected: ${environment.protected ? "yes" : "no"}`);
-  logInfo(
-    verification.commitSha
-      ? `  Commit: ${verification.commitSha}`
-      : "  Commit: unavailable (source digest verified)",
-  );
-  logInfo(`  Source digest: ${verification.sourceDigest}`);
-  logInfo(`  Control plane: ${normalizeControlPlane(config.apiUrl)}`);
 
-  const { getPostDeployTips } = await import("../../help/tips.ts");
-  console.log(getPostDeployTips());
+  if (verbose) {
+    const { getPostDeployTips } = await import("../../help/tips.ts");
+    console.log(getPostDeployTips());
+  }
 }
 
 async function deployCommandJson(options: DeployOptions): Promise<void> {
@@ -1314,7 +1324,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     env,
     releaseName,
     dryRun,
-    force,
     skipSourcePush,
     assetManifestPollIntervalMs,
     assetManifestTimeoutMs,
@@ -1323,19 +1332,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
   } = options;
 
   try {
-    // JSON mode requires --force or --yes to prevent accidental deploys
-    if (requiresExplicitDeployConfirmation(force)) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error:
-          "Deploy in JSON mode requires --force or --yes to confirm. This prevents accidental production deploys.",
-      });
-      const { exit } = await import("veryfront/platform");
-      exit(1);
-      return;
-    }
-
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const environmentConfig = getEnvironmentConfig();
     const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);

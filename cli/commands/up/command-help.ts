@@ -3,12 +3,12 @@ import type { CommandHelp } from "../../help/types.ts";
 export const upHelp: CommandHelp = {
   name: "up",
   category: "deploy",
-  description: "Deploy your app with one command (login, create, push, deploy)",
+  description: "Create and publish the initial cloud preview",
   usage: "veryfront up [options]",
   options: [
     {
       flag: "-f, --force",
-      description: "Skip interactive prompts",
+      description: "Accept the inferred project name",
     },
     {
       flag: "--dry-run",
@@ -17,9 +17,8 @@ export const upHelp: CommandHelp = {
   ],
   examples: ["veryfront up", "veryfront up --dry-run", "veryfront up --force"],
   notes: [
-    "This is the default command when running 'veryfront' without arguments",
-    "Automatically handles: authentication, project creation, push, and deploy",
-    "Opens browser for login if not authenticated",
-    "Creates a new project if code exists but no veryfront.json",
+    "Links or creates the project, pushes main, and provisions its preview",
+    "Use veryfront push for subsequent preview updates",
+    "Run veryfront deploy when the preview is ready for production",
   ],
 };

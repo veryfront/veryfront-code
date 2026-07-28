@@ -9,11 +9,26 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { formatPrompt } from "./terminal-select.ts";
 
 // parseKeySequence is not exported, so we test through select/multiSelect behavior
 // For now, we document the expected key mappings
 
 describe("terminal-select", () => {
+  it("renders questions without a decorative marker by default", () => {
+    assertEquals(formatPrompt("Choose an integration"), [
+      "Choose an integration",
+      "  Use arrow keys to navigate, Enter to select",
+    ]);
+  });
+
+  it("can render setup questions without a decorative marker", () => {
+    assertEquals(formatPrompt("Where should we create your project?", false), [
+      "Where should we create your project?",
+      "  Use arrow keys to navigate, Enter to select",
+    ]);
+  });
+
   describe("key sequence parsing", () => {
     // These tests document the expected key mappings
     // parseKeySequence converts raw bytes to key names

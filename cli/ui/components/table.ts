@@ -4,7 +4,7 @@
  * Renders data in a clean tabular format with alignment.
  */
 
-import { brand, dim, error, success, warning } from "../colors.ts";
+import { brand, dim, error, warning } from "../colors.ts";
 import { pad, repeat, visibleLength } from "../layout.ts";
 import { BORDER_STYLES, type BorderStyle } from "#cli/ui/box";
 
@@ -140,7 +140,7 @@ export function keyValueList(
     const paddedKey = pad(key, maxKeyWidth, "right");
 
     let icon = "";
-    if (status === "success") icon = `${success("✓")} `;
+    if (status === "success") icon = "✓ ";
     else if (status === "error") icon = `${error("✗")} `;
     else if (status === "warning") icon = `${warning("!")} `;
     else if (status === "info") icon = `${brand("●")} `;
@@ -166,7 +166,7 @@ export function checkList(
     let labelStyled: string;
 
     if (status === "pass") {
-      icon = success("✓");
+      icon = "✓";
       labelStyled = dim(label);
     } else if (status === "fail") {
       icon = error("✗");

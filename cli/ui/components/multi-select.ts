@@ -47,7 +47,7 @@ export async function multiSelect<T extends string>(
   options: MultiSelectOption<T>[],
   config: MultiSelectConfig,
 ): Promise<T[] | null> {
-  const checkboxStyle = config.checkboxStyle ?? brand;
+  const checkboxStyle = config.checkboxStyle ?? ((value: string) => value);
   const focusLabelStyle = config.focusLabelStyle ?? ((s: string) => s);
   const blurLabelStyle = config.blurLabelStyle ?? muted;
   const descriptionStyle = config.descriptionStyle ?? dim;
