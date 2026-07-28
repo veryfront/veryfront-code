@@ -525,7 +525,11 @@ type DenoGlobal = typeof globalThis & {
   };
 };
 
-/** Return whether an error or its cause chain represents a missing path. */
+/**
+ * Return whether an error or its cause chain represents a path that cannot be
+ * resolved. ENOTDIR is included because a missing candidate beneath a file is
+ * just as absent as an ENOENT candidate during filesystem lookup.
+ */
 export function isNotFoundError(error: unknown, seen: Set<unknown> = new Set()): boolean {
   if (seen.has(error)) return false;
   seen.add(error);
@@ -533,7 +537,8 @@ export function isNotFoundError(error: unknown, seen: Set<unknown> = new Set()):
   try {
     const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
     if (isDeno && NotFound && error instanceof NotFound) return true;
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT" || code === "ENOTDIR") return true;
 
     if (error instanceof Error) {
       if (

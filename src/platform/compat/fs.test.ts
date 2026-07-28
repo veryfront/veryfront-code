@@ -309,6 +309,12 @@ describe("Filesystem Compat", () => {
       assertEquals(isNotFoundError(error), true);
     });
 
+    it("should return true when a path candidate crosses a non-directory", () => {
+      const error = new Error("ENOTDIR") as Error & { code: string };
+      error.code = "ENOTDIR";
+      assertEquals(isNotFoundError(error), true);
+    });
+
     it("should return true for VeryfrontError with file-not-found slug", () => {
       const error = new Error("File not found") as Error & { slug: string; name: string };
       error.name = "VeryfrontError";

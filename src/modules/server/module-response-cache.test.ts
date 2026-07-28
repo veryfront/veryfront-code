@@ -147,4 +147,21 @@ describe("release module response cache", () => {
     assertEquals(recovered, undefined);
     assertEquals(diskCache.values.size, 0);
   });
+
+  it("does not expose mutable memory-cache entries to callers", async () => {
+    const cacheKey = "release-module-response:ownership";
+    await rememberReleaseModuleResponse(cacheKey, {
+      body: "export const value = 1;\n",
+      status: 200,
+      headers: [["content-type", "application/javascript"]],
+    });
+
+    const first = await getReleaseModuleResponse(cacheKey);
+    first!.entry.body = "tampered";
+    first!.entry.headers[0]![1] = "text/plain";
+
+    const second = await getReleaseModuleResponse(cacheKey);
+    assertEquals(second?.entry.body, "export const value = 1;\n");
+    assertEquals(second?.entry.headers, [["content-type", "application/javascript"]]);
+  });
 });

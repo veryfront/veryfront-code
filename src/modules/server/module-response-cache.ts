@@ -60,6 +60,14 @@ interface DistributedReleaseModuleResponseEntry {
   entry: ReleaseModuleResponseCacheEntry;
 }
 
+function cloneEntry(entry: ReleaseModuleResponseCacheEntry): ReleaseModuleResponseCacheEntry {
+  return {
+    body: entry.body,
+    status: entry.status,
+    headers: entry.headers.map(([name, value]) => [name, value]),
+  };
+}
+
 function normalizeEntry(value: unknown): ReleaseModuleResponseCacheEntry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const parsed = value as Partial<ReleaseModuleResponseCacheEntry>;
@@ -168,7 +176,7 @@ export async function getReleaseModuleResponse(
 ): Promise<ReleaseModuleResponseCacheHit | undefined> {
   const localEntry = releaseModuleResponseCache.get(cacheKey);
   if (localEntry) {
-    return { entry: localEntry, source: "memory" };
+    return { entry: cloneEntry(localEntry), source: "memory" };
   }
 
   const distributedCache = await getDistributedCache();
@@ -185,7 +193,7 @@ export async function getReleaseModuleResponse(
     }
 
     releaseModuleResponseCache.set(cacheKey, entry);
-    return { entry, source: "distributed" };
+    return { entry: cloneEntry(entry), source: "distributed" };
   } catch {
     return undefined;
   }

@@ -1,3 +1,5 @@
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+
 /** Minimal stat surface shared by the secure and platform filesystems. */
 interface StatCapableFs {
   stat(path: string): Promise<{ isFile: boolean }>;
@@ -16,8 +18,9 @@ export async function findFirstExistingFile(
     try {
       const stat = await fs.stat(path);
       return stat.isFile ? path : null;
-    } catch {
-      return null;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
     }
   }));
 
