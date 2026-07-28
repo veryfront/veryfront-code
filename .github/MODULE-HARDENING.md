@@ -316,6 +316,8 @@ The current proxy findings are otherwise remediated:
   content-source identity, request cancellation, internal-header replacement,
   and bidirectional removal of standard and `Connection`-owned hop-by-hop
   headers;
+- coalesced routing lookups detach an aborted waiter without cancelling the
+  shared owner request or forcing a duplicate control-plane lookup;
 - request Host authorities, upstream origins, API base paths, and origin-form
   paths are canonicalized without protocol-relative URL interpretation, and
   local filesystem projects are rejected in production;
@@ -333,7 +335,8 @@ The current proxy findings are otherwise remediated:
 
 Reproducible checkpoint evidence:
 
-- all 50 proxy suites pass 442 nested steps with zero failures;
+- all 50 proxy suites pass 447 nested steps with zero failures under leak
+  tracing;
 - `deno task verify:quick` passes formatting, lint, dependency and module
   boundaries (zero cyclic edges), extension audits, all 740 documentation links,
   and repository-wide typechecking;

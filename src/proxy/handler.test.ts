@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 import { createProxyHandler, injectContextHeaders, type ProxyContext } from "./handler.ts";
@@ -809,6 +814,93 @@ describe("Proxy Handler", () => {
         await handler.close();
       } finally {
         releaseFirstLookup();
+        await server.shutdown();
+      }
+    });
+
+    it("detaches an aborted caller without cancelling its shared routing lookup", async () => {
+      let routingLookups = 0;
+      let releaseLookup!: () => void;
+      let markLookupStarted!: () => void;
+      let markLookupJoined!: () => void;
+      const lookupStarted = new Promise<void>((resolve) => {
+        markLookupStarted = resolve;
+      });
+      const lookupJoined = new Promise<void>((resolve) => {
+        markLookupJoined = resolve;
+      });
+      const lookupRelease = new Promise<void>((resolve) => {
+        releaseLookup = resolve;
+      });
+      const { logger } = createRecordingLogger();
+      const recordDebug = logger.debug;
+      logger.debug = (message, extra) => {
+        recordDebug(message, extra);
+        if (message === "Proxy routing metadata lookup joined in-flight request") {
+          markLookupJoined();
+        }
+      };
+
+      const { server, port } = createMockServer(async (req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/-/proxy-routing/")) {
+          routingLookups++;
+          markLookupStarted();
+          await lookupRelease;
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            name: "My Project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              active_release_id: null,
+            }],
+          });
+        }
+        if (pathname.startsWith("/projects/-/proxy-access/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "my-project",
+            environments: [{
+              id: "env-1",
+              name: "staging",
+              protected: false,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port, "", logger);
+        const url = "http://my-project.staging.veryfront.com/page";
+        const headers = { host: "my-project.staging.veryfront.com" };
+        const owner = handler.processRequest(new Request(url, { headers }));
+        await lookupStarted;
+
+        const controller = new AbortController();
+        const joined = handler.processRequest(
+          new Request(url, { headers, signal: controller.signal }),
+        );
+        await lookupJoined;
+        controller.abort(new Error("joined request aborted"));
+
+        const error = await assertRejects(
+          () => joined,
+          Error,
+          "joined request aborted",
+        );
+        assertEquals(error, controller.signal.reason);
+        assertEquals(routingLookups, 1);
+
+        releaseLookup();
+        assertEquals((await owner).error?.status, 404);
+        assertEquals(routingLookups, 1);
+        await handler.close();
+      } finally {
+        releaseLookup();
         await server.shutdown();
       }
     });
