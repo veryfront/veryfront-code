@@ -1,8 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { serveCommand } from "./command.ts";
 import type { ServeOptions } from "./command.ts";
+
+type RunWithStartupErrorReporting = <T>(
+  startup: () => Promise<T>,
+  reporter: {
+    captureApplicationError: (
+      error: unknown,
+      context: { boundary: string },
+    ) => string | undefined;
+    flushApplicationErrors: (timeoutMs?: number) => Promise<boolean>;
+  },
+) => Promise<T>;
 
 describe("commands/serve/command", () => {
   describe("serveCommand", () => {
@@ -113,5 +129,63 @@ describe("commands/serve/command", () => {
       };
       assertEquals(Object.keys(options).length, 7);
     });
+  });
+
+  it("captures, flushes, and rethrows production startup failures exactly once", async () => {
+    const commandModule = await import("./command.ts") as {
+      runWithStartupErrorReporting?: RunWithStartupErrorReporting;
+    };
+    const runWithStartupErrorReporting = commandModule.runWithStartupErrorReporting;
+    assertExists(runWithStartupErrorReporting);
+
+    const startupError = new Error("startup failed");
+    const captures: Array<{ error: unknown; boundary: string }> = [];
+    const flushTimeouts: Array<number | undefined> = [];
+
+    const thrown = await assertRejects(() =>
+      runWithStartupErrorReporting(
+        () => Promise.reject(startupError),
+        {
+          captureApplicationError: (error, context) => {
+            captures.push({ error, boundary: context.boundary });
+            return "event-id";
+          },
+          flushApplicationErrors: (timeoutMs) => {
+            flushTimeouts.push(timeoutMs);
+            return Promise.resolve(true);
+          },
+        },
+      )
+    );
+
+    assertStrictEquals(thrown, startupError);
+    assertEquals(captures, [{
+      error: startupError,
+      boundary: "process.startup",
+    }]);
+    assertEquals(flushTimeouts, [2_000]);
+  });
+
+  it("preserves the startup failure when flushing the reporter fails", async () => {
+    const commandModule = await import("./command.ts") as {
+      runWithStartupErrorReporting?: RunWithStartupErrorReporting;
+    };
+    const runWithStartupErrorReporting = commandModule.runWithStartupErrorReporting;
+    assertExists(runWithStartupErrorReporting);
+
+    const startupError = new Error("startup failed");
+    const flushError = new Error("flush failed");
+
+    const thrown = await assertRejects(() =>
+      runWithStartupErrorReporting(
+        () => Promise.reject(startupError),
+        {
+          captureApplicationError: () => "event-id",
+          flushApplicationErrors: () => Promise.reject(flushError),
+        },
+      )
+    );
+
+    assertStrictEquals(thrown, startupError);
   });
 });
