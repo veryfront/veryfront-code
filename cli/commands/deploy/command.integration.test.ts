@@ -276,7 +276,7 @@ async function withInferredDeployEnv<T>(
 }
 
 async function expectDeployReceiptError(
-  operation: () => Promise<void>,
+  operation: () => Promise<unknown>,
   jsonMode: boolean,
   output: string[],
   forbiddenText: string,
@@ -779,12 +779,18 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         output.push(args.map(String).join(" "));
       };
 
+      let result;
       try {
-        await withMockFetch(handleRequest, () => runDeploy(jsonMode));
+        result = await withMockFetch(handleRequest, () => runDeploy(jsonMode));
       } finally {
         console.log = originalLog;
       }
 
+      assertEquals(result?.projectSlug, "my-project");
+      assertEquals(
+        result?.url,
+        "https://my-project.production.veryfront.com/dashboard",
+      );
       assertEquals(environmentReads, 2);
       assertEquals(environmentUrlReads, 2);
       assertEquals(releaseSourceReads, 2);
