@@ -24,14 +24,22 @@ export interface StartCliProxyModeServerOptions {
   projectDir: string;
   signal: AbortSignal;
   requestInterceptor: (req: Request) => Request | Promise<Request>;
-  defaultProjectSlug: string;
   defaultProjectId: string;
-  fallbackProjectSlug?: string;
+  linkedProjectSlug?: string;
 }
 
-function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): DiscoveryOptions {
+export function buildProxyRuntimeProjectIdentity(
+  options: Pick<StartCliProxyModeServerOptions, "defaultProjectId" | "linkedProjectSlug">,
+): Pick<StartProductionServerOptions, "defaultProjectSlug" | "defaultProjectId"> {
+  return {
+    defaultProjectSlug: options.defaultProjectId,
+    defaultProjectId: options.defaultProjectId,
+  };
+}
+
+export function buildDiscoveryConfig(options: StartCliProxyModeServerOptions): DiscoveryOptions {
   const token = getEnv("VERYFRONT_API_TOKEN") ?? "";
-  const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? options.fallbackProjectSlug ?? "";
+  const slug = getEnv("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
 
   return {
     baseDir: options.projectDir,
@@ -60,8 +68,7 @@ export async function startCliProxyModeServer(
     projectDir: options.projectDir,
     signal: options.signal,
     requestInterceptor: options.requestInterceptor,
-    defaultProjectSlug: options.defaultProjectSlug,
-    defaultProjectId: options.defaultProjectId,
+    ...buildProxyRuntimeProjectIdentity(options),
     discoveryConfig: buildDiscoveryConfig(options),
   });
   await ensureBuiltinContentProcessor();

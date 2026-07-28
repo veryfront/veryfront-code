@@ -613,54 +613,64 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const branchName = branch;
       const isMainBranch = branchName === "main";
 
-      // First-push: If project doesn't exist on server yet, create it unless this is a dry run.
       let mainFiles: RemoteFile[] = [];
       let projectExists = true;
-      try {
-        mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
-      } catch (error) {
-        // Project doesn't exist yet - create it on first push
-        if (getErrorStatus(error) === 404) {
-          if (dryRun) {
-            projectExists = false;
-            if (!quiet && !jsonOutput) {
-              logInfo(
-                `Project "${config.projectSlug}" does not exist. Dry run will not create it.`,
-              );
-            }
-          } else {
-            spinner.update("Creating project...");
-            let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
-            try {
-              reserveResult = await reserveProjectSlug(
-                config.projectSlug,
-                config.apiToken,
-                undefined,
-                config.apiUrl,
-                { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
-              );
-            } catch (reserveError) {
-              spinner.stop();
-              if (reserveError instanceof ProjectSlugConflictError) {
-                throw projectSlugConflictError(reserveError, projectReferenceSource);
-              }
-              throw reserveError;
-            }
-            if (reserveResult.slug !== config.projectSlug) {
-              await writeProjectSlug(projectDir, reserveResult.slug);
-              if (!quiet && !jsonOutput) logInfo(`Project slug: ${reserveResult.slug}`);
-            }
-            config = { ...config, projectSlug: reserveResult.slug };
-            // Now try to get files again (should be empty for new project)
-            try {
-              mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
-            } catch {
-              // Project just created, no files yet
-              mainFiles = [];
-            }
+
+      const createProject = async (): Promise<void> => {
+        spinner.update("Creating project...");
+        let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
+        try {
+          reserveResult = await reserveProjectSlug(
+            config.projectSlug,
+            config.apiToken,
+            undefined,
+            config.apiUrl,
+            { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
+          );
+        } catch (reserveError) {
+          spinner.stop();
+          if (reserveError instanceof ProjectSlugConflictError) {
+            throw projectSlugConflictError(reserveError, projectReferenceSource);
           }
-        } else {
-          throw error;
+          throw reserveError;
+        }
+        if (
+          projectReferenceSource.kind === "inferred" ||
+          reserveResult.slug !== config.projectSlug
+        ) {
+          await writeProjectSlug(projectDir, reserveResult.slug);
+          if (
+            reserveResult.slug !== config.projectSlug &&
+            !quiet && !jsonOutput
+          ) {
+            logInfo(`Project slug: ${reserveResult.slug}`);
+          }
+        }
+        config = { ...config, projectSlug: reserveResult.slug };
+        try {
+          mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+        } catch {
+          mainFiles = [];
+        }
+      };
+
+      const planProjectCreation = (): void => {
+        projectExists = false;
+        if (!quiet && !jsonOutput) {
+          logInfo(`Project "${config.projectSlug}" will be created on push.`);
+        }
+      };
+
+      if (projectReferenceSource.kind === "inferred") {
+        if (dryRun) planProjectCreation();
+        else await createProject();
+      } else {
+        try {
+          mainFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+        } catch (error) {
+          if (getErrorStatus(error) !== 404) throw error;
+          if (dryRun) planProjectCreation();
+          else await createProject();
         }
       }
 
