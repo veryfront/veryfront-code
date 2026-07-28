@@ -20,6 +20,26 @@ type StartupErrorReporter = {
   ) => void;
 };
 
+type StartupErrorReportingOptions = {
+  flushTimeoutMs?: number;
+};
+
+type ProductionServerDependencies = {
+  ensureBundlerContracts?: () => Promise<void>;
+  initializeErrorReporting?: () => Promise<unknown>;
+  reporter?: StartupErrorReporter;
+};
+
+type ServeCommandDependencies = {
+  runProductionServer?: (options: ServeOptions) => Promise<void>;
+};
+
+type ProductionSentryModule = {
+  captureApplicationError: StartupErrorReporter["captureApplicationError"];
+  flushApplicationErrors: StartupErrorReporter["flushApplicationErrors"];
+  initializeSentryFromEnv: () => Promise<unknown>;
+};
+
 export interface ServeOptions {
   mode: "combined" | "proxy" | "production";
   port: number;
@@ -33,21 +53,61 @@ export interface ServeOptions {
 export async function runWithStartupErrorReporting<T>(
   startup: () => Promise<T>,
   reporter: StartupErrorReporter,
+  options: StartupErrorReportingOptions = {},
 ): Promise<T> {
+  const flushTimeoutMs = options.flushTimeoutMs ?? STARTUP_ERROR_FLUSH_TIMEOUT_MS;
   try {
     return await startup();
   } catch (error) {
+    const reportingDeadline = Date.now() + flushTimeoutMs;
     try {
       reporter.captureApplicationError(error, { boundary: "process.startup" });
     } catch (reportingError) {
-      reporter.onReportingError?.("capture", reportingError);
+      notifyReportingError(reporter, "capture", reportingError);
     }
     try {
-      await reporter.flushApplicationErrors(STARTUP_ERROR_FLUSH_TIMEOUT_MS);
+      await flushReporterWithDeadline(
+        reporter,
+        Math.max(0, reportingDeadline - Date.now()),
+      );
     } catch (reportingError) {
-      reporter.onReportingError?.("flush", reportingError);
+      notifyReportingError(reporter, "flush", reportingError);
     }
     throw error;
+  }
+}
+
+function notifyReportingError(
+  reporter: StartupErrorReporter,
+  operation: "capture" | "flush",
+  error: unknown,
+): void {
+  try {
+    reporter.onReportingError?.(operation, error);
+  } catch {
+    // Diagnostics must never replace the startup failure being reported.
+  }
+}
+
+async function flushReporterWithDeadline(
+  reporter: StartupErrorReporter,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const flush = Promise.resolve()
+    .then(() => reporter.flushApplicationErrors(timeoutMs))
+    .catch((error) => {
+      notifyReportingError(reporter, "flush", error);
+      return false;
+    });
+  const deadline = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([flush, deadline]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
 
@@ -55,8 +115,10 @@ export async function runProductionStartupWithErrorReporting<T>(
   startup: () => Promise<T>,
   reporter: StartupErrorReporter,
   ensureBundlerContracts: () => Promise<void> = ensureCliBundlerContracts,
+  initializeObservability: () => Promise<unknown> = () => Promise.resolve(),
 ): Promise<T> {
   return await runWithStartupErrorReporting(async () => {
+    await initializeObservability();
     await ensureBundlerContracts();
     return await startup();
   }, reporter);
@@ -93,15 +155,32 @@ async function runProxy(options: ServeOptions): Promise<void> {
   await new Promise(() => {});
 }
 
-async function runProductionServer(options: ServeOptions): Promise<void> {
-  showLogo();
+function createProductionStartupErrorReporter(
+  sentryModule: ProductionSentryModule,
+): StartupErrorReporter {
+  return {
+    captureApplicationError: sentryModule.captureApplicationError,
+    flushApplicationErrors: sentryModule.flushApplicationErrors,
+    onReportingError: (operation, error) => {
+      cliLogger.warn(
+        `Error reporter failed to ${operation} production startup failure.`,
+      );
+      cliLogger.debug(
+        `Error reporter ${operation} failure details:`,
+        error,
+      );
+    },
+  };
+}
 
-  const {
-    captureApplicationError,
-    flushApplicationErrors,
-    initializeSentryFromEnv,
-  } = await import("veryfront/observability/sentry");
-  await initializeSentryFromEnv();
+export async function runProductionServer(
+  options: ServeOptions,
+  dependencies: ProductionServerDependencies = {},
+): Promise<void> {
+  showLogo();
+  const sentryModule = await import("veryfront/observability/sentry");
+  const reporter = dependencies.reporter ??
+    createProductionStartupErrorReporter(sentryModule);
 
   const { server, shutdownController } = await runProductionStartupWithErrorReporting(
     async () => {
@@ -141,19 +220,10 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
 
       return { server, shutdownController };
     },
-    {
-      captureApplicationError,
-      flushApplicationErrors,
-      onReportingError: (operation, error) => {
-        cliLogger.warn(
-          `Error reporter failed to ${operation} production startup failure.`,
-        );
-        cliLogger.debug(
-          `Error reporter ${operation} failure details:`,
-          error,
-        );
-      },
-    },
+    reporter,
+    dependencies.ensureBundlerContracts ?? ensureCliBundlerContracts,
+    dependencies.initializeErrorReporting ??
+      (() => sentryModule.initializeSentryFromEnv()),
   );
 
   let shuttingDown = false;
@@ -169,10 +239,10 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
         logger: cliLogger,
       });
     } catch (error) {
-      captureApplicationError(error, { boundary: "process.shutdown" });
+      reporter.captureApplicationError(error, { boundary: "process.shutdown" });
       cliLogger.warn("Error while shutting down production server:", error);
     } finally {
-      await flushApplicationErrors();
+      await reporter.flushApplicationErrors();
       exitProcess(0);
     }
   };
@@ -182,7 +252,10 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
   await new Promise(() => {});
 }
 
-export async function serveCommand(options: ServeOptions): Promise<void> {
+export async function serveCommand(
+  options: ServeOptions,
+  dependencies: ServeCommandDependencies = {},
+): Promise<void> {
   if (options.splitMode) {
     await runSplit(options);
     return;
@@ -194,6 +267,6 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
   }
 
   if (options.mode === "production" || options.mode === "combined") {
-    await runProductionServer(options);
+    await (dependencies.runProductionServer ?? runProductionServer)(options);
   }
 }
