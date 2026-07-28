@@ -149,22 +149,7 @@ function AgentPickerLoadingRows(): React.ReactElement {
   );
 }
 
-// ---------------------------------------------------------------------------
-// AgentPicker — compound, render-or-compose (mirrors `ToolCall`).
-//
-// `<AgentPicker agents={...} value={...} onValueChange={...} />` renders the
-// default data-driven combobox (pill/input trigger + searchable agent list).
-// Pass children to recompose the menu from `AgentPicker.Trigger`,
-// `AgentPicker.Content`, `AgentPicker.List`, `AgentPicker.Item` — each reads
-// `useAgentPicker()` for the shared selection + open state. Every sub-part
-// takes `className` merged LAST via `cn`. The preset keeps working unchanged
-// when no children are passed.
-//
-// The private `Popover` / `Command` primitives are composed, not modified: the
-// composed tree renders a real `<Popover>` (from Root) whose context flows to
-// `Trigger` (a `PopoverTrigger`) and `Content` (a `PopoverContent` + `Command`),
-// and `Command` context flows from `Content` down to `List` / `Item`.
-// ---------------------------------------------------------------------------
+// Compound render-or-compose implementation shared by the preset and addressable parts.
 
 /** Props for `AgentPicker.Trigger` — the pill/input combobox button. */
 export interface AgentPickerTriggerProps {
