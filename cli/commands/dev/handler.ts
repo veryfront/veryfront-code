@@ -66,6 +66,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // Enable verbose logging when --debug flag is passed
   if (opts.debug) {
     setEnv("LOG_LEVEL", "DEBUG");
+    setEnv("VERYFRONT_DEBUG", "1");
     refreshLoggerConfig();
   }
 

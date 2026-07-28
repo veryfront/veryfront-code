@@ -26,11 +26,14 @@ export function createDevLogController(): DevLogController {
 
       if (verbose) {
         setEnv("LOG_LEVEL", "DEBUG");
+        setEnv("VERYFRONT_DEBUG", "1");
       } else if (normalLevel === undefined) {
         deleteEnv("LOG_LEVEL");
       } else {
         setEnv("LOG_LEVEL", normalLevel);
       }
+
+      if (!verbose) deleteEnv("VERYFRONT_DEBUG");
 
       refreshLoggerConfig();
       return verbose;

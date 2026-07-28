@@ -22,7 +22,8 @@ import {
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
-import { setEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
@@ -78,7 +79,7 @@ export class DevServer {
   }
 
   private isDebug(): boolean {
-    return this.adapter?.env.get("VERYFRONT_DEBUG") === "1";
+    return isTruthyEnvValue(getHostEnv("VERYFRONT_DEBUG"));
   }
 
   private async logRSCStatus(): Promise<void> {
@@ -215,7 +216,6 @@ export class DevServer {
       this.options.projectDir,
       this.adapter,
       () => this._isReady,
-      () => this.isDebug(),
       this.appConfig,
       defaultProjectSlug,
       this.options.defaultProjectId,

@@ -33,8 +33,10 @@ describe("dev log controller", () => {
     assertEquals(logs.isVerbose(), false);
     assertEquals(logs.toggle(), true);
     assertEquals(getEnv("LOG_LEVEL"), "DEBUG");
+    assertEquals(getEnv("VERYFRONT_DEBUG"), "1");
     assertEquals(logs.toggle(), false);
     assertEquals(getEnv("LOG_LEVEL"), "WARN");
+    assertEquals(getEnv("VERYFRONT_DEBUG"), undefined);
   });
 
   it("can turn off an initially verbose dev session", () => {
@@ -44,5 +46,6 @@ describe("dev log controller", () => {
     assertEquals(logs.isVerbose(), true);
     assertEquals(logs.toggle(), false);
     assertEquals(getEnv("LOG_LEVEL"), "INFO");
+    assertEquals(getEnv("VERYFRONT_DEBUG"), undefined);
   });
 });

@@ -16,6 +16,8 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -289,10 +291,12 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
-  const isDebugEnabled = !!(opts.debug || adapter.env.get("VERYFRONT_DEBUG"));
+  const isDebugEnabled = (): boolean => {
+    return Boolean(opts.debug) || isTruthyEnvValue(getHostEnv("VERYFRONT_DEBUG"));
+  };
 
   function logDebug(message: string, extra?: Record<string, unknown>): void {
-    if (!isDebugEnabled) return;
+    if (!isDebugEnabled()) return;
     if (extra) {
       logger.debug(message, extra);
       return;
@@ -334,7 +338,7 @@ export function createVeryfrontHandler(
   })();
 
   const { registry, apiHandler } = createHandlerRegistry(projectDir, adapter, {
-    debug: opts.debug,
+    debug: Boolean(opts.debug),
   });
 
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
@@ -366,7 +370,7 @@ export function createVeryfrontHandler(
           adapter,
           securityLoader.getSecurityConfig(),
           securityLoader.getCspUserHeader(),
-          opts.debug,
+          isDebugEnabled(),
           config,
         );
 
@@ -523,7 +527,7 @@ export function createVeryfrontHandler(
                 adapter,
                 securityLoader.getSecurityConfig(),
                 securityLoader.getCspUserHeader(),
-                opts.debug,
+                isDebugEnabled(),
                 config,
               ),
             );
@@ -543,7 +547,7 @@ export function createVeryfrontHandler(
             proxyTrust: { proxyTrusted },
             securityConfig: securityLoader.getSecurityConfig(),
             cspUserHeader: securityLoader.getCspUserHeader(),
-            debug: opts.debug,
+            debug: isDebugEnabled(),
             routeRegistry: registry,
             moduleServerUrl: opts.moduleServerUrl,
             defaultEnvironment: opts.defaultEnvironment,
