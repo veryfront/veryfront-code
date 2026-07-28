@@ -248,7 +248,7 @@ export async function generateTailwindCSS(
         const comp = await getCompiler(css, options?.projectSlug);
         let output = comp.build(candidateArray);
 
-        if (options?.minify) output = minifyCSS(output);
+        if (options?.minify) output = await minifyCSS(output);
 
         logger.debug("Generated CSS", {
           candidateCount: candidateArray.length,

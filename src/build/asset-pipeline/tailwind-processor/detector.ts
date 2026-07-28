@@ -4,7 +4,6 @@
  */
 
 import { join } from "#veryfront/compat/path/index.ts";
-import { logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -23,16 +22,14 @@ export function isTailwindV4File(
         baseDir: projectDir,
         adapter,
         context: "build",
-        throwOnError: false,
+        throwOnError: true,
+        validationOptions: {
+          followSymlinks: false,
+        },
       });
 
-      try {
-        const content = await secureFs.readFile(filePath);
-        return tailwindV4ImportPattern.test(content);
-      } catch (error) {
-        logger.debug(`Failed to check file for Tailwind CSS: ${filePath}`, error);
-        return false;
-      }
+      const content = await secureFs.readFile(filePath);
+      return tailwindV4ImportPattern.test(content);
     },
     { "tailwind.filePath": filePath },
   );
