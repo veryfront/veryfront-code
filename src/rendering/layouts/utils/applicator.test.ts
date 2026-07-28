@@ -5,13 +5,14 @@ import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import * as React from "react";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { LayoutItem } from "#veryfront/types";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { createLayoutComponentCache } from "./component-loader.ts";
 import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "../../../react/compat/ssr-adapter/server-loader.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/index.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -111,6 +112,55 @@ describe(
     });
 
     describe("applyLayoutsFunctionBody", () => {
+      it("loads MDX layouts through the async ESM path", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        const loadedPrograms: string[] = [];
+        mutableRenderer.loadModuleESM = ((program: string) => {
+          loadedPrograms.push(program);
+          const marker = program.includes("named-layout") ? "named" : "nested";
+          return Promise.resolve({
+            default: ({ children }: { children?: React.ReactNode }) =>
+              React.createElement("section", { "data-layout": marker }, children),
+          });
+        }) as typeof mdxRenderer.loadModuleESM;
+
+        try {
+          const result = await applyLayoutsFunctionBody(
+            React.createElement("main", null, "page"),
+            { compiledCode: "export default /* named-layout */" } as MdxBundle,
+            [{
+              kind: "mdx",
+              bundle: {
+                compiledCode: "export default /* nested-layout */",
+              } as MdxBundle,
+            } as LayoutItem],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            createMockAdapter(),
+            undefined,
+            "project-id",
+            "project-slug",
+            "content-source-id",
+            undefined,
+            { imports: {}, scopes: {} },
+          );
+          const html = await renderToStringAdapter(result);
+
+          assertEquals(loadedPrograms.length, 2);
+          assertEquals(
+            html,
+            '<section data-layout="named"><section data-layout="nested"><main>page</main></section></section>',
+          );
+          assertEquals(html.includes("Migration Required"), false);
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
+      });
+
       it("uses the requested project React version", async () => {
         const loadedUrls: string[] = [];
         __setServerModuleLoaderForTests((url) => {

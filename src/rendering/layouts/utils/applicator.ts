@@ -7,7 +7,6 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
 import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
@@ -187,11 +186,18 @@ export async function applyLayoutsFunctionBody(
     });
 
     if (item.kind === "mdx" && item.bundle?.compiledCode) {
-      element = mdxRenderer.render(item.bundle.compiledCode, {
-        components: mergedComponents,
-        extractLayout: true,
-        children: element,
-      });
+      element = await applyMDXLayout(
+        element,
+        item.bundle,
+        projectDir,
+        mergedComponents,
+        adapter,
+        projectId,
+        projectSlug,
+        contentSourceId,
+        preloadedImportMap,
+        reactVersion,
+      );
       continue;
     }
 
@@ -234,11 +240,18 @@ export async function applyLayoutsFunctionBody(
   }
 
   if (layoutBundle?.compiledCode) {
-    element = mdxRenderer.render(layoutBundle.compiledCode, {
-      components: mergedComponents,
-      extractLayout: true,
-      children: element,
-    });
+    element = await applyMDXLayout(
+      element,
+      layoutBundle,
+      projectDir,
+      mergedComponents,
+      adapter,
+      projectId,
+      projectSlug,
+      contentSourceId,
+      preloadedImportMap,
+      reactVersion,
+    );
   }
 
   return element;
