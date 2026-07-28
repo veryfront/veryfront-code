@@ -8,16 +8,25 @@ import {
 	NPM_INTERNAL_ENTRY_POINTS,
 } from "./browser-safe-exports.mjs";
 
-Deno.test("ships the client root barrel without exposing it as a public package subpath", async () => {
+Deno.test("ships browser-only internal entry points without exposing public package subpaths", async () => {
 	const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 	const exports = denoJson.exports as Record<string, string>;
 	const imports = denoJson.imports as Record<string, string>;
 
 	assert(exports["./index.client"] === undefined);
+	assert(exports["./react/public"] === undefined);
 	assert(imports["veryfront/index.client"] === "./src/index.client.ts");
 	assert(
 		BROWSER_SAFE_INTERNAL_ENTRY_POINTS["./index.client"] ===
 			"./src/index.client.ts",
+	);
+	assert(
+		BROWSER_SAFE_INTERNAL_ENTRY_POINTS["./react/public"] ===
+			"./src/react/public.ts",
+	);
+	assert(
+		NPM_INTERNAL_ENTRY_POINTS["./react/public"] ===
+			"./src/react/public.ts",
 	);
 	assert(
 		NPM_INTERNAL_ENTRY_POINTS["./config/declarative-evaluator"] ===

@@ -53,6 +53,30 @@ const p = require('./node_modules/veryfront/package.json');
 if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(1);
 " || fail "root package does not pin @veryfront/ext-parser-babel to its version"
 node --input-type=module -e "
+await import('./node_modules/veryfront/esm/_dnt.polyfills.js');
+const resolver = await import(
+  './node_modules/veryfront/esm/src/platform/compat/framework-source-resolver.js'
+);
+const path = await import('node:path');
+const resolved = await resolver.resolveFrameworkSourcePath('react/public');
+const expectedPath = path.resolve(
+  'node_modules/veryfront/esm/src/react/public.js',
+);
+if (resolved?.path !== expectedPath) {
+  throw new Error(
+    'react/public resolved to ' + String(resolved?.path) +
+      ' instead of ' + expectedPath,
+  );
+}
+const fs = await import('node:fs/promises');
+const packageJson = JSON.parse(
+  await fs.readFile('./node_modules/veryfront/package.json', 'utf8'),
+);
+if (Object.hasOwn(packageJson.exports ?? {}, './react/public')) {
+  throw new Error('./react/public leaked into published package exports');
+}
+" || fail "installed framework resolver did not find the private react/public artifact"
+node --input-type=module -e "
 const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-extensions.js');
 const deferredModule = await import(
   './node_modules/veryfront/esm/src/extensions/deferred-extension.js'

@@ -3,6 +3,7 @@
 // export entries after compilation.
 export const BROWSER_SAFE_INTERNAL_ENTRY_POINTS = Object.freeze({
   "./index.client": "./src/index.client.ts",
+  "./react/public": "./src/react/public.ts",
 });
 
 // Server-only implementation modules that dnt must emit for clean-room
