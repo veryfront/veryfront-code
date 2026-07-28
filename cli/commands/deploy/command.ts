@@ -15,11 +15,12 @@ import { type EnvironmentConfig, getConfig, getEnvironmentConfig } from "veryfro
 import {
   type ApiClient,
   createApiClient,
+  type ProjectReferenceSource,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
-  writeProjectSlug,
 } from "#cli/shared/config";
+import { writeProjectLink } from "../../shared/project-link.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
@@ -850,6 +851,27 @@ async function inferDeployProjectSlug(projectDir: string): Promise<string> {
   return normalizeProjectSlug(dirName);
 }
 
+function shouldPersistProjectLink(source: ProjectReferenceSource): boolean {
+  return source.kind === "inferred" || source.kind === "local-link";
+}
+
+function projectApiReference(config: ResolvedConfig): string {
+  return config.projectId ?? config.projectSlug;
+}
+
+async function persistProjectLink(
+  projectDir: string,
+  config: ResolvedConfig,
+  project: ProjectTarget,
+): Promise<ResolvedConfig> {
+  await writeProjectLink(projectDir, {
+    controlPlane: config.apiUrl,
+    projectId: project.id,
+    projectSlug: project.slug,
+  });
+  return { ...config, projectId: project.id, projectSlug: project.slug };
+}
+
 async function ensureProjectLinkedForDeploy(
   projectDir: string,
   env: EnvironmentConfig,
@@ -863,7 +885,8 @@ async function ensureProjectLinkedForDeploy(
 }> {
   const details = await resolveConfigWithAuthDetails(projectDir, env);
   const initial = details.config;
-  const isInferredReference = details.projectReferenceSource.kind === "inferred";
+  const projectReferenceSource = details.projectReferenceSource;
+  const isInferredReference = projectReferenceSource.kind === "inferred";
   const projectReference = isInferredReference
     ? normalizeProjectSlug(initial.projectSlug || await inferDeployProjectSlug(projectDir))
     : initial.projectSlug;
@@ -872,9 +895,12 @@ async function ensureProjectLinkedForDeploy(
 
   if (!isInferredReference) {
     try {
-      const project = await getProject(client, projectReference);
+      const project = await getProject(client, projectApiReference(config));
+      const resolvedConfig = shouldPersistProjectLink(projectReferenceSource)
+        ? await persistProjectLink(projectDir, config, project)
+        : { ...config, projectSlug: project.slug };
       return {
-        config: { ...config, projectSlug: project.slug },
+        config: resolvedConfig,
         client,
         project,
         plannedProjectSlug: project.slug,
@@ -911,15 +937,15 @@ async function ensureProjectLinkedForDeploy(
     env,
     initial.apiUrl,
   );
-  await writeProjectSlug(projectDir, created.slug);
   if (!quiet && isVerbose()) logInfo(`Created project ${created.slug}`);
   const createdConfig = { ...initial, projectSlug: created.slug };
   const createdClient = createApiClient(createdConfig);
   const project = created.projectId
     ? { id: created.projectId, slug: created.slug }
     : await getProject(createdClient, created.slug);
+  const linkedConfig = await persistProjectLink(projectDir, createdConfig, project);
   return {
-    config: createdConfig,
+    config: linkedConfig,
     client: createdClient,
     project,
     plannedProjectSlug: created.slug,
@@ -1155,7 +1181,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   if (!project) {
     updateProgress("Building release...", "Resolving project...");
-    project = await runWithProgress(() => getProject(client, config.projectSlug));
+    project = await runWithProgress(() => getProject(client, projectApiReference(config)));
   }
 
   updateProgress("Building release...", `Looking up environment "${env}"...`);
@@ -1369,7 +1395,7 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
     }
 
     streamJsonLine({ type: "step", name: "resolve-target", status: "started" });
-    if (!project) project = await getProject(client, config.projectSlug);
+    if (!project) project = await getProject(client, projectApiReference(config));
     const environment = await getEnvironmentByName(client, project.id, env);
     if (!environment) {
       streamJsonLine({

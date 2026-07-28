@@ -6,6 +6,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
+import { readProjectLink } from "../../shared/project-link.ts";
 import { deployCommand, type DeploymentRoutingConvergence } from "./command.ts";
 import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
@@ -677,10 +678,13 @@ it("uses an alternative slug when inferred first deploy project creation conflic
     assertEquals(environmentUrlReads, 0);
     assertEquals(createSlugs[0], "taken-app");
     assertEquals(/^taken-app-[a-z0-9]{6}$/.test(createSlugs[1] ?? ""), true);
-    const linkedConfig = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)) as {
-      projectSlug?: string;
-    };
-    assertEquals(linkedConfig.projectSlug, createSlugs[1]);
+    const link = await readProjectLink(projectDir);
+    assertEquals(link?.projectId, PROJECT_ID);
+    assertEquals(link?.projectSlug, createSlugs[1]);
+    await assertRejects(
+      () => Deno.stat(`${projectDir}/veryfront.json`),
+      Deno.errors.NotFound,
+    );
   } finally {
     envKeys.forEach((key, index) => {
       const value = savedEnv[index];
