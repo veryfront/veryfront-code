@@ -156,12 +156,6 @@ export async function renderAppRouteToHTML(args: {
     importMap,
     reactVersion,
   });
-  if (typeof Page !== "function") {
-    throw COMPILATION_ERROR.create({
-      detail: "Invalid page component",
-      context: { pageFile, type: typeof Page },
-    });
-  }
 
   const hydrationStrategy = determineClientModuleStrategy({
     isLocalProject: false,
@@ -193,18 +187,19 @@ export async function renderAppRouteToHTML(args: {
       importMap,
       reactVersion,
     );
-    if (typeof Layout !== "function") {
+    const shouldUnwrapDocumentLayout = shouldUnwrapAppRouterDocumentLayout(
+      layoutPath,
+      projectDir,
+      config?.directories?.app,
+    );
+    if (shouldUnwrapDocumentLayout && typeof Layout !== "function") {
       throw COMPILATION_ERROR.create({
         detail: "Invalid layout component",
         context: { layoutPath, type: typeof Layout },
       });
     }
 
-    const LayoutToApply = shouldUnwrapAppRouterDocumentLayout(
-        layoutPath,
-        projectDir,
-        config?.directories?.app,
-      )
+    const LayoutToApply = shouldUnwrapDocumentLayout
       ? unwrapAppRouterDocumentLayout(React, Layout as ReactLayoutFunction)
       : Layout as ReactComponentLike;
 

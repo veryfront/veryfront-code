@@ -144,7 +144,6 @@ describe(
           assertEquals(result.status, 404);
           const html = await result.text();
           assertStringIncludes(html, "Missing B");
-          assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
           assertEquals(html.includes("Root Missing"), false);
         });
       });

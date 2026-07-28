@@ -274,8 +274,89 @@ Deno.test({
             contentSourceId: "test-content-source",
           }),
         Error,
-        "Invalid layout component",
+        "did not export a React component",
       );
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name: "server/build-app-route-renderer accepts a memoized page export",
+  async fn() {
+    const { projectDir, pageFile } = await makeProject();
+
+    try {
+      await Deno.writeTextFile(
+        pageFile,
+        `import * as React from "react";
+export default React.memo(function Page() {
+  return <main>Memoized page</main>;
+});
+`,
+      );
+
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, "Memoized page");
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name: "server/build-app-route-renderer accepts a memoized nested layout export",
+  async fn() {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-memo-layout-" });
+    const appDir = join(projectDir, "app");
+    const nestedDir = join(appDir, "nested");
+    const pageFile = join(nestedDir, "page.tsx");
+
+    try {
+      await Deno.mkdir(nestedDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(appDir, "layout.tsx"),
+        `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <main>{children}</main>;
+}
+`,
+      );
+      await Deno.writeTextFile(
+        join(nestedDir, "layout.tsx"),
+        `import * as React from "react";
+export default React.memo(function Layout(
+  { children }: { children: React.ReactNode },
+) {
+  return <section data-testid="memoized-layout">{children}</section>;
+});
+`,
+      );
+      await Deno.writeTextFile(
+        pageFile,
+        `export default function Page() {
+  return <p>Nested page</p>;
+}
+`,
+      );
+
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/nested",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, 'data-testid="memoized-layout"');
+      assertStringIncludes(html, "Nested page");
     } finally {
       await cleanupProject(projectDir);
     }
