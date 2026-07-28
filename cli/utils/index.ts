@@ -76,6 +76,9 @@ export function showHeader(): void {
   cliLogger.info(`${bold("Veryfront")} ${dim(`(v${VERSION})`)}\n`);
 }
 
+/** @deprecated Use {@link showHeader}. */
+export const showLogo = showHeader;
+
 export function logSuccess(message: string): void {
   console.log(`  ✓ ${message}`);
 }

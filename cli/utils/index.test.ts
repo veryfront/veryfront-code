@@ -21,6 +21,7 @@ import {
   logWarning,
   promptUser,
   showHeader,
+  showLogo,
   VERSION,
 } from "./index.ts";
 
@@ -247,6 +248,7 @@ describe("confirmPrompt", () => {
 
 describe("exports", () => {
   it("all exports are available", () => {
+    assertExists(showLogo);
     assertExists(showHeader);
     assertExists(promptUser);
     assertExists(logSuccess);
@@ -255,7 +257,9 @@ describe("exports", () => {
     assertExists(logInfo);
     assertExists(formatBytes);
 
+    assertEquals(typeof showLogo, "function");
     assertEquals(typeof showHeader, "function");
+    assertEquals(showLogo, showHeader);
     assertEquals(typeof promptUser, "function");
     assertEquals(typeof logSuccess, "function");
     assertEquals(typeof logError, "function");
