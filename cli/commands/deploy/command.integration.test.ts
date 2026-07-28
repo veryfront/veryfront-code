@@ -448,7 +448,7 @@ it("models an inferred missing project during dry-run deploy", async () => {
         quiet: true,
       }));
 
-    assertEquals(requests, ["GET /api/projects/missing-app"]);
+    assertEquals(requests, []);
   } finally {
     envKeys.forEach((key, index) => {
       const value = savedEnv[index];
@@ -526,6 +526,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const createSlugs: string[] = [];
   let environmentUrlReads = 0;
+  let inferredProjectLookups = 0;
 
   try {
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
@@ -554,6 +555,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
         return new Response("ready");
       }
       if (request.method === "GET" && url.pathname === "/api/projects/taken-app") {
+        inferredProjectLookups++;
         return Response.json({ message: "not found" }, { status: 404 });
       }
       if (request.method === "POST" && url.pathname === "/api/projects") {
@@ -562,7 +564,7 @@ it("uses an alternative slug when inferred first deploy project creation conflic
         if (body.slug === "taken-app") {
           return Response.json({ error: "taken" }, { status: 409 });
         }
-        assertEquals(/^taken-app-[a-z0-9]+$/.test(body.slug), true);
+        assertEquals(/^taken-app-[a-z0-9]{6}$/.test(body.slug), true);
         await writePushReceipt(projectDir, {
           controlPlane: "https://control.example.test/api",
           projectId: PROJECT_ID,
@@ -671,9 +673,10 @@ it("uses an alternative slug when inferred first deploy project creation conflic
       }));
 
     assertEquals(createSlugs.length, 2);
+    assertEquals(inferredProjectLookups, 0);
     assertEquals(environmentUrlReads, 0);
     assertEquals(createSlugs[0], "taken-app");
-    assertEquals(/^taken-app-[a-z0-9]+$/.test(createSlugs[1] ?? ""), true);
+    assertEquals(/^taken-app-[a-z0-9]{6}$/.test(createSlugs[1] ?? ""), true);
     const linkedConfig = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)) as {
       projectSlug?: string;
     };

@@ -860,7 +860,7 @@ describe("push receipt source snapshot", () => {
     });
   });
 
-  it("persists an inferred existing-project slug before uploading files", async () => {
+  it("creates a new project instead of linking an inferred existing-project slug", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [
       "VERYFRONT_API_TOKEN",
@@ -874,6 +874,9 @@ describe("push receipt source snapshot", () => {
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
 
     await withGitProject(async ({ projectDir }) => {
+      const createSlugs: string[] = [];
+      let reservedSlug = "";
+
       try {
         Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
         Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
@@ -889,12 +892,24 @@ describe("push receipt source snapshot", () => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
 
-          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+          if (request.method === "POST" && url.pathname === "/projects") {
+            const body = await request.json() as { slug: string };
+            createSlugs.push(body.slug);
+            if (body.slug === "my-project") {
+              return Response.json({ error: "slug taken" }, { status: 409 });
+            }
+            reservedSlug = body.slug;
+            return Response.json({ id: "project-123" }, { status: 201 });
+          }
+          if (
+            request.method === "GET" &&
+            url.pathname === `/projects/${reservedSlug}/files`
+          ) {
             return Response.json({ data: [], page_info: {} });
           }
           if (
             request.method === "PUT" &&
-            url.pathname.startsWith("/projects/my-project/files/")
+            url.pathname.startsWith(`/projects/${reservedSlug}/files/`)
           ) {
             return Response.json({ error: "upload failed" }, { status: 500 });
           }
@@ -909,7 +924,10 @@ describe("push receipt source snapshot", () => {
         );
 
         const config = JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`));
-        assertEquals(config.projectSlug, "my-project");
+        assertEquals(createSlugs[0], "my-project");
+        assertEquals(createSlugs.length, 2);
+        assertEquals(/^my-project-[a-z0-9]{6}$/.test(reservedSlug), true);
+        assertEquals(config.projectSlug, reservedSlug);
       } finally {
         globalThis.fetch = originalFetch;
         envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
