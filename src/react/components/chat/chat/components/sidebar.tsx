@@ -402,7 +402,8 @@ export function ChatSidebarItem({
         title={conversation.title}
         active={isActive || menuOpen}
         className={className}
-        onClick={() => onSelect(conversation.id)}
+        onActivate={() => onSelect(conversation.id)}
+        primaryActionProps={{ "aria-current": isActive ? "page" : undefined }}
         action={children ?? <ChatSidebarItemMenu />}
       />
     </ChatSidebarItemContext.Provider>
