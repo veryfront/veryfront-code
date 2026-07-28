@@ -47,15 +47,24 @@ describe("project link persistence", () => {
     });
   });
 
-  it("returns null for a malformed project link file", async () => {
+  it("rejects a malformed project link file with relink guidance", async () => {
     await withTempProject(async (projectDir) => {
       await writeRawProjectLink(projectDir, "{not json");
 
-      assertEquals(await readProjectLink(projectDir), null);
+      await assertRejects(
+        () => readProjectLink(projectDir),
+        Error,
+        ".veryfront/project.json",
+      );
+      await assertRejects(
+        () => readProjectLink(projectDir),
+        Error,
+        "remove it and relink",
+      );
     });
   });
 
-  it("returns null for an unsupported project link version", async () => {
+  it("rejects an unsupported project link version with relink guidance", async () => {
     await withTempProject(async (projectDir) => {
       await writeRawProjectLink(projectDir, {
         version: 2,
@@ -64,7 +73,16 @@ describe("project link persistence", () => {
         projectSlug: LINK.projectSlug,
       });
 
-      assertEquals(await readProjectLink(projectDir), null);
+      await assertRejects(
+        () => readProjectLink(projectDir),
+        Error,
+        ".veryfront/project.json",
+      );
+      await assertRejects(
+        () => readProjectLink(projectDir),
+        Error,
+        "remove it and relink",
+      );
     });
   });
 

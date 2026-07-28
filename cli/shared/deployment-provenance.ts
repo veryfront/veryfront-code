@@ -55,6 +55,12 @@ function receiptPathError(): Error {
   );
 }
 
+function invalidReceiptError(projectDir: string): Error {
+  return new Error(
+    `Veryfront could not read ${receiptPath(projectDir)}; remove it and run veryfront push again.`,
+  );
+}
+
 async function lstatIfPresent(path: string) {
   try {
     return await lstat(path);
@@ -238,13 +244,15 @@ export async function writePushReceipt(
 
 export async function readPushReceipt(projectDir: string): Promise<PushReceipt | null> {
   const fs = createFileSystem();
-  await inspectReceiptPath(projectDir);
+  const inspected = await inspectReceiptPath(projectDir);
+  if (!inspected.receiptExists) return null;
   try {
     const value: unknown = JSON.parse(await fs.readTextFile(receiptPath(projectDir)));
-    return isPushReceipt(value) ? value : null;
+    if (isPushReceipt(value)) return value;
   } catch {
-    return null;
+    throw invalidReceiptError(projectDir);
   }
+  throw invalidReceiptError(projectDir);
 }
 
 export async function clearPushReceipt(projectDir: string): Promise<void> {

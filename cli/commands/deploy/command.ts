@@ -33,6 +33,7 @@ import {
   getProjectTarget,
   normalizeControlPlane,
   type ProjectTarget,
+  type PushReceipt,
   readPushReceipt,
   resolveGitSource,
   validatePushReceipt,
@@ -857,11 +858,11 @@ function projectApiReference(config: ResolvedConfig): string {
   return config.projectId ?? config.projectSlug;
 }
 
-async function needsBootstrapPush(
-  projectDir: string,
+function needsBootstrapPush(
+  receipt: PushReceipt | null,
   skipSourcePush: boolean | undefined,
-): Promise<boolean> {
-  return !skipSourcePush && !(await readPushReceipt(projectDir));
+): boolean {
+  return !skipSourcePush && !receipt;
 }
 
 async function persistProjectLink(
@@ -880,6 +881,7 @@ async function persistProjectLink(
 async function ensureProjectLinkedForDeploy(
   projectDir: string,
   env: EnvironmentConfig,
+  receipt: PushReceipt | null,
   dryRun: boolean,
   quiet: boolean,
 ): Promise<{
@@ -926,6 +928,12 @@ async function ensureProjectLinkedForDeploy(
   }
 
   const suggestedSlug = normalizeProjectSlug(projectReference);
+  if (receipt) {
+    throw new Error(
+      `The local push receipt is orphaned: ${projectDir}/.veryfront/push-receipt.json targets project "${receipt.projectSlug}", but deploy inferred "${suggestedSlug}" because there is no explicit config or local project link. Remove the receipt and run veryfront push again, or relink this project before deploying.`,
+    );
+  }
+
   if (dryRun) {
     if (!quiet) logInfo(`Would create project ${suggestedSlug}`);
     return {
@@ -1152,11 +1160,12 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   };
 
   const environmentConfig = await runWithProgress(getEnvironmentConfig);
+  const receipt = await runWithProgress(() => readPushReceipt(projectDir));
   const setup = await runWithProgress(() =>
-    ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, quiet)
+    ensureProjectLinkedForDeploy(projectDir, environmentConfig, receipt, dryRun, quiet)
   );
   let { config, client, project } = setup;
-  const bootstrapPush = await needsBootstrapPush(projectDir, skipSourcePush);
+  const bootstrapPush = needsBootstrapPush(receipt, skipSourcePush);
 
   if (dryRun && !project) {
     spinner.stop();
@@ -1374,9 +1383,16 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
   try {
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const environmentConfig = getEnvironmentConfig();
-    const setup = await ensureProjectLinkedForDeploy(projectDir, environmentConfig, dryRun, true);
+    const receipt = await readPushReceipt(projectDir);
+    const setup = await ensureProjectLinkedForDeploy(
+      projectDir,
+      environmentConfig,
+      receipt,
+      dryRun,
+      true,
+    );
     let { config, client, project } = setup;
-    const bootstrapPush = await needsBootstrapPush(projectDir, skipSourcePush);
+    const bootstrapPush = needsBootstrapPush(receipt, skipSourcePush);
     streamJsonLine({ type: "step", name: "resolve-config", status: "completed" });
 
     if (dryRun && !project) {

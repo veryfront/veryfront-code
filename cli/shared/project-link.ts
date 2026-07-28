@@ -23,6 +23,14 @@ function projectLinkPathError(): Error {
   );
 }
 
+function invalidProjectLinkError(projectDir: string): Error {
+  return new Error(
+    `Veryfront could not read ${
+      projectLinkPath(projectDir)
+    }; remove it and relink this project with veryfront push.`,
+  );
+}
+
 async function lstatIfPresent(path: string) {
   try {
     return await lstat(path);
@@ -84,14 +92,16 @@ function isProjectLink(value: unknown): value is ProjectLink {
 }
 
 export async function readProjectLink(projectDir: string): Promise<ProjectLink | null> {
-  await inspectProjectLinkPath(projectDir);
+  const inspected = await inspectProjectLinkPath(projectDir);
+  if (!inspected.linkExists) return null;
   try {
     const value: unknown = JSON.parse(await Deno.readTextFile(projectLinkPath(projectDir)));
-    return isProjectLink(value) ? value : null;
+    if (isProjectLink(value)) return value;
   } catch (error) {
-    if (error instanceof SyntaxError || isNotFoundError(error)) return null;
-    throw error;
+    if (isNotFoundError(error)) return null;
+    throw invalidProjectLinkError(projectDir);
   }
+  throw invalidProjectLinkError(projectDir);
 }
 
 export async function readProjectLinkForControlPlane(

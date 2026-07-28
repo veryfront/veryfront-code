@@ -233,6 +233,77 @@ function createDeployFetchHandler(options: {
   };
 }
 
+async function withInferredDeployEnv<T>(
+  projectDir: string,
+  fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
+): Promise<T> {
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+  try {
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"missing-app"}\n');
+    await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
+    const commitSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: PUSHED_SOURCE },
+      { path: "package.json", content: '{"name":"missing-app"}\n' },
+    ]);
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    return await fn({ commitSha, sourceDigest });
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    setJsonMode(false);
+    setVerboseMode(false);
+    await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+async function expectDeployReceiptError(
+  operation: () => Promise<void>,
+  jsonMode: boolean,
+  output: string[],
+): Promise<void> {
+  if (!jsonMode) {
+    await assertRejects(
+      operation,
+      Error,
+      "orphaned",
+    );
+    return;
+  }
+
+  const originalExit = Deno.exit;
+  try {
+    Deno.exit = ((code?: number): never => {
+      throw new Error(`Deno.exit(${code ?? 0})`);
+    }) as typeof Deno.exit;
+    await assertRejects(operation, Error, "Deno.exit(1)");
+  } finally {
+    Deno.exit = originalExit;
+  }
+
+  const result = output.map((line) => JSON.parse(line)).at(-1);
+  assertEquals(result.success, false);
+  assertEquals(String(result.error).includes("orphaned"), true);
+}
+
 it("deploys production from the existing verified push without mutating source", async () => {
   for (const jsonMode of [false, true]) {
     const projectDir = await Deno.makeTempDir();
@@ -295,6 +366,62 @@ it("deploys production from the existing verified push without mutating source",
         assertEquals(result.data.sourceDigest, sourceDigest);
       }
     });
+  }
+});
+
+it("fails inferred deploys with an orphaned receipt before creating remote or local state", async () => {
+  for (const jsonMode of [false, true]) {
+    for (const dryRun of [true, false]) {
+      const projectDir = await Deno.makeTempDir();
+      await withInferredDeployEnv(projectDir, async ({ commitSha, sourceDigest }) => {
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: PROJECT_ID,
+          projectSlug: "orphaned-project",
+          branch: "main",
+          commitSha,
+          sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+
+        const requests: string[] = [];
+        const output: string[] = [];
+        const originalLog = console.log;
+        setJsonMode(jsonMode);
+        console.log = (...args: unknown[]) => {
+          output.push(args.map(String).join(" "));
+        };
+
+        try {
+          await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            requests.push(`${request.method} ${url.pathname}`);
+            return Response.json({ message: "not found" }, { status: 404 });
+          }, () =>
+            expectDeployReceiptError(
+              () =>
+                deployCommand({
+                  projectDir,
+                  branch: "main",
+                  env: "production",
+                  dryRun,
+                  force: false,
+                  quiet: true,
+                }),
+              jsonMode,
+              output,
+            ));
+        } finally {
+          console.log = originalLog;
+        }
+
+        assertEquals(requests.some((request) => request.startsWith("POST ")), false);
+        assertEquals(requests.some((request) => request.startsWith("PUT ")), false);
+        assertEquals(await readProjectLink(projectDir), null);
+      });
+    }
   }
 });
 

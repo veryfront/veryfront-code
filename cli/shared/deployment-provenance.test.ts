@@ -208,6 +208,81 @@ describe("push receipt persistence", () => {
     }
   });
 
+  it("rejects a malformed existing receipt with recovery guidance", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(`${projectDir}/.veryfront/push-receipt.json`, "{not json");
+
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        ".veryfront/push-receipt.json",
+      );
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        "remove it and run veryfront push again",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects an unsupported existing receipt with recovery guidance", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(
+        `${projectDir}/.veryfront/push-receipt.json`,
+        `${JSON.stringify({ ...RECEIPT, version: 1 }, null, 2)}\n`,
+      );
+
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        ".veryfront/push-receipt.json",
+      );
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        "remove it and run veryfront push again",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects an unreadable existing receipt with recovery guidance", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const projectDir = await Deno.makeTempDir();
+    const receiptPath = `${projectDir}/.veryfront/push-receipt.json`;
+    try {
+      await Deno.mkdir(`${projectDir}/.veryfront`);
+      await Deno.writeTextFile(receiptPath, `${JSON.stringify(RECEIPT, null, 2)}\n`);
+      await Deno.chmod(receiptPath, 0);
+
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        ".veryfront/push-receipt.json",
+      );
+      await assertRejects(
+        () => readPushReceipt(projectDir),
+        Error,
+        "remove it and run veryfront push again",
+      );
+    } finally {
+      try {
+        await Deno.chmod(receiptPath, 0o600);
+      } catch {
+        // Best effort cleanup after permission-focused assertion.
+      }
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("rejects a tracked Veryfront directory symlink without touching its target", async () => {
     if (Deno.build.os === "windows") return;
 
