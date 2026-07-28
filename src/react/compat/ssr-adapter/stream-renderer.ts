@@ -6,13 +6,15 @@ import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { isDebugEnvEnabled } from "#veryfront/config/env.ts";
-import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import {
+  getSSRAdapterTimeoutMs,
+  resetSSRAdapterTimeoutForTests,
+  setSSRAdapterTimeoutForTests,
+} from "./timeout.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
 }
-
-let ssrTimeoutMs = SSR_TIMEOUT_MS;
 
 function isDebugMode(): boolean {
   return Boolean((globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ || isDebugEnvEnabled());
@@ -31,11 +33,11 @@ function notifyObserver<Args extends unknown[]>(
 }
 
 export function __setSSRStreamTimeoutForTests(timeoutMs: number): void {
-  ssrTimeoutMs = timeoutMs;
+  setSSRAdapterTimeoutForTests(timeoutMs);
 }
 
 export function __resetSSRStreamRendererForTests(): void {
-  ssrTimeoutMs = SSR_TIMEOUT_MS;
+  resetSSRAdapterTimeoutForTests();
 }
 
 async function renderToReadableStreamImpl(
@@ -55,6 +57,7 @@ async function renderToReadableStreamImpl(
 
   const debug = isDebugMode();
   const start = performance.now();
+  const timeoutMs = getSSRAdapterTimeoutMs();
 
   const controller = new AbortController();
   // Track whether the abort was triggered by our own timeout so we can detect
@@ -62,9 +65,9 @@ async function renderToReadableStreamImpl(
   let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;
-    logger.error("SSR_TIMEOUT aborting React render", { timeoutMs: ssrTimeoutMs });
-    controller.abort(new Error(`SSR timeout: React render exceeded ${ssrTimeoutMs}ms`));
-  }, ssrTimeoutMs);
+    logger.error("SSR_TIMEOUT aborting React render", { timeoutMs });
+    controller.abort(new Error(`SSR timeout: React render exceeded ${timeoutMs}ms`));
+  }, timeoutMs);
 
   try {
     if (debug) logger.info("SSR renderToReadableStream started");
@@ -111,7 +114,7 @@ async function renderToReadableStreamImpl(
     if (isAbort) {
       logger.error("SSR_TIMEOUT React render was aborted", {
         durationMs,
-        timeoutMs: ssrTimeoutMs,
+        timeoutMs,
       });
       throw error;
     }
@@ -148,6 +151,7 @@ function renderToPipeableStreamImpl(
 
   const renderToPipeableStream = server.renderToPipeableStream;
   const start = performance.now();
+  const timeoutMs = getSSRAdapterTimeoutMs();
   // Track whether the rejection was caused by our own timeout so the catch
   // block can detect it without string-matching the error message.
   let timedOut = false;
@@ -184,7 +188,7 @@ function renderToPipeableStreamImpl(
       settled = true;
       timedOut = true;
 
-      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs: ssrTimeoutMs });
+      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs });
 
       if (abortFn) {
         try {
@@ -196,10 +200,10 @@ function renderToPipeableStreamImpl(
 
       reject(
         new Error(
-          `SSR timeout: React render exceeded ${ssrTimeoutMs}ms - likely a hanging data fetch`,
+          `SSR timeout: React render exceeded ${timeoutMs}ms - likely a hanging data fetch`,
         ),
       );
-    }, ssrTimeoutMs);
+    }, timeoutMs);
 
     try {
       const { pipe, abort } = renderToPipeableStream(element, {
