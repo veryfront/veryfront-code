@@ -29,8 +29,14 @@ describe("main-help", () => {
       assertEquals(output.includes("--no-animation"), true);
       assertEquals(output.includes("--verbose"), true);
       assertEquals(output.includes("--quiet"), true);
-      assertEquals(output.includes("https://veryfront.com/docs"), true);
-      assertEquals(output.includes("https://github.com/veryfront/veryfront-code/issues"), true);
+      assertEquals(
+        lines.find((line) => line.trimStart().startsWith("Docs:"))?.trim(),
+        "Docs:    https://veryfront.com/docs",
+      );
+      assertEquals(
+        lines.find((line) => line.trimStart().startsWith("Support:"))?.trim(),
+        "Support: https://github.com/veryfront/veryfront-code/issues",
+      );
     });
   });
 });

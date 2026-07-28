@@ -296,10 +296,11 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         );
       } else if (!verbose) {
         const humanOutput = stripAnsi(output.join("\n"));
+        const humanLines = humanOutput.split("\n").map((line) => line.trim()).filter(Boolean);
         assertEquals(humanOutput.includes("✓ Deployed my-project to production"), true);
         assertEquals(
-          humanOutput.includes("https://my-project.production.veryfront.com/dashboard"),
-          true,
+          humanLines[1],
+          "https://my-project.production.veryfront.com/dashboard",
         );
         assertEquals(humanOutput.includes("Protected"), true);
         assertEquals(humanOutput.includes("Release 0.0.41"), true);
