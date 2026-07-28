@@ -36,6 +36,7 @@ import {
 } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -266,17 +267,16 @@ describe("push JSON output", () => {
       try {
         await pushCommand({ projectDir, dryRun: false });
 
+        const humanOutput = output.map(stripAnsi);
         assertEquals(
-          output.some((line) =>
-            line.includes("Studio:") &&
-            line.includes("https://veryfront.com/projects/canonical-slug?branch=main")
+          humanOutput.includes(
+            "  Studio:  https://veryfront.com/projects/canonical-slug?branch=main",
           ),
           true,
         );
         assertEquals(
-          output.some((line) =>
-            line.includes("Preview:") &&
-            line.includes("https://canonical-slug.preview.veryfront.com")
+          humanOutput.includes(
+            "  Preview: https://canonical-slug.preview.veryfront.com",
           ),
           true,
         );

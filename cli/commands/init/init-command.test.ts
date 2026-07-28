@@ -10,6 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
+import { stripAnsi } from "../../ui/ansi.ts";
 import { initCommand } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
@@ -84,7 +85,7 @@ describe("InitCommand Types", () => {
         );
 
         const liveLine = output.find((line) => line.includes("Live:"));
-        assertEquals(liveLine?.includes(deployedUrl), true);
+        assertEquals(stripAnsi(liveLine ?? ""), `  Live: ${deployedUrl}`);
       } finally {
         console.log = originalLog;
         await remove(parentDir, { recursive: true }).catch(() => {});
