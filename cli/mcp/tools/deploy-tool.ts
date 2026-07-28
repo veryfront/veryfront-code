@@ -104,7 +104,6 @@ export async function triggerDeploy(
       projectId: project.id,
       projectSlug: project.slug,
       branch: input.branch,
-      requireClean: input.environment === "production",
     });
 
     const release = await createRelease(client, project.id, {

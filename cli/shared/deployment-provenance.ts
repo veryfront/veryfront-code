@@ -43,7 +43,6 @@ interface PushReceiptExpectation {
   branch: string;
   commitSha?: string | null;
   clean?: boolean;
-  requireClean?: boolean;
 }
 
 function receiptPath(projectDir: string): string {
@@ -277,14 +276,6 @@ export function validatePushReceipt(
       receipt.commitSha
         ? "The latest push came from a different commit. Run veryfront push again."
         : "The latest push has no Git commit SHA. Run veryfront push again from the checked-out commit.",
-    );
-  }
-  if (
-    expected.requireClean && expected.commitSha &&
-    (!receipt.clean || expected.clean === false)
-  ) {
-    throw new Error(
-      "The latest push included uncommitted changes. Commit the source and push again.",
     );
   }
   return receipt.commitSha;
