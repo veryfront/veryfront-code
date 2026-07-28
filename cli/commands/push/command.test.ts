@@ -36,6 +36,7 @@ import {
 } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -105,6 +106,10 @@ async function withGitProject(test: (project: GitProject) => Promise<void>): Pro
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) Deno.env.delete(key);
   else Deno.env.set(key, value);
+}
+
+function captureConsoleLog(output: string[]): (...args: unknown[]) => void {
+  return (...args: unknown[]) => output.push(args.map(String).join(" "));
 }
 
 async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<void> {
@@ -240,7 +245,7 @@ describe("push JSON output", () => {
       for (const dryRun of [true, false]) {
         const projectDir = await Deno.makeTempDir();
         const output: string[] = [];
-        console.log = (message?: unknown) => output.push(String(message));
+        console.log = captureConsoleLog(output);
         try {
           await pushCommand({ projectDir, dryRun });
 
@@ -253,6 +258,30 @@ describe("push JSON output", () => {
         } finally {
           await Deno.remove(projectDir, { recursive: true });
         }
+      }
+
+      setJsonMode(false);
+      const projectDir = await Deno.makeTempDir();
+      const output: string[] = [];
+      console.log = captureConsoleLog(output);
+      try {
+        await pushCommand({ projectDir, dryRun: false });
+
+        const humanOutput = output.map(stripAnsi);
+        assertEquals(
+          humanOutput.includes(
+            "  Studio:  https://veryfront.com/projects/canonical-slug?branch=main",
+          ),
+          true,
+        );
+        assertEquals(
+          humanOutput.includes(
+            "  Preview: https://canonical-slug.preview.veryfront.com",
+          ),
+          true,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
       }
     } finally {
       setJsonMode(false);
@@ -277,7 +306,7 @@ describe("push JSON output", () => {
       Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
       _resetEnvironmentConfig();
       setJsonMode(true);
-      console.log = (message?: unknown) => output.push(String(message));
+      console.log = captureConsoleLog(output);
 
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
@@ -329,7 +358,7 @@ describe("push JSON output", () => {
         Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
         _resetEnvironmentConfig();
         setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
+        console.log = captureConsoleLog(output);
 
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
@@ -381,7 +410,7 @@ describe("push JSON output", () => {
         Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
         _resetEnvironmentConfig();
         setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
+        console.log = captureConsoleLog(output);
 
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
