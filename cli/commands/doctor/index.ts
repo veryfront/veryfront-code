@@ -10,7 +10,15 @@ import {
 } from "./project-structure.ts";
 import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-checks.ts";
 import { checkAIConfig } from "./ai-checks.ts";
-import { bold, checkList, createSpinner, error, formatDuration, warning } from "#cli/ui";
+import {
+  bold,
+  checkList,
+  createSpinner,
+  error,
+  formatDuration,
+  type SpinnerController,
+  warning,
+} from "#cli/ui";
 import { DEFAULT_DEV_PORT } from "#cli/shared/constants";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 
@@ -52,10 +60,21 @@ function formatWarningCount(count: number): string {
 }
 
 type CheckFn = () => Promise<DiagnosticResult | DiagnosticResult[]>;
+type SpinnerFactory = (text: string) => SpinnerController;
 
-async function streamCheck(fn: CheckFn, allResults: DiagnosticResult[]): Promise<void> {
-  const spinner = createSpinner("Checking...");
-  const raw = await fn();
+export async function streamCheck(
+  fn: CheckFn,
+  allResults: DiagnosticResult[],
+  spinnerFactory: SpinnerFactory = createSpinner,
+): Promise<void> {
+  const spinner = spinnerFactory("Checking...");
+  let raw: DiagnosticResult | DiagnosticResult[];
+  try {
+    raw = await fn();
+  } catch (cause) {
+    spinner.stop();
+    throw cause;
+  }
   const batch = Array.isArray(raw) ? raw : [raw];
 
   if (batch.length === 0) {

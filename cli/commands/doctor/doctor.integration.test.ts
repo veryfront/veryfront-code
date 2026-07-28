@@ -9,12 +9,36 @@ import {
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import { doctorCommand, reportDoctorResults, resolveDoctorPort } from "./index.ts";
+import { doctorCommand, reportDoctorResults, resolveDoctorPort, streamCheck } from "./index.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { setJsonMode } from "../../shared/json-output.ts";
 
 describe("CLI doctor command", () => {
+  it("stops progress before propagating an unexpected check error", async () => {
+    let stopCalls = 0;
+
+    await assertRejects(
+      () =>
+        streamCheck(
+          () => Promise.reject(new Error("check crashed")),
+          [],
+          () => ({
+            update() {},
+            success() {},
+            error() {},
+            stop() {
+              stopCalls++;
+            },
+          }),
+        ),
+      Error,
+      "check crashed",
+    );
+
+    assertEquals(stopCalls, 1);
+  });
+
   it("emits exactly one JSON success envelope without decorated prose", async () => {
     const output: unknown[][] = [];
     const originalLog = console.log;
