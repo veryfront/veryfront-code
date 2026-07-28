@@ -129,6 +129,94 @@ type SignalRuntime = {
   exit?: (code: number) => never | void;
 };
 
+type LifecyclePhase = {
+  readonly label: string;
+  readonly run: () => void | Promise<void>;
+  completed: boolean;
+};
+
+type SynchronousLifecyclePhase = {
+  readonly label: string;
+  readonly run: () => void;
+  completed: boolean;
+};
+
+function lifecycleFailureMessage(
+  operation: string,
+  failures: readonly { label: string; error: unknown }[],
+): string {
+  const labels = failures.map(({ label }) => label).join(", ");
+  return `${operation} failed in ${failures.length} phase${
+    failures.length === 1 ? "" : "s"
+  }: ${labels}`;
+}
+
+function runSynchronousLifecyclePhases(
+  phases: readonly SynchronousLifecyclePhase[],
+  operation: string,
+): void {
+  const failures: Array<{ label: string; error: unknown }> = [];
+  for (const phase of phases) {
+    if (phase.completed) continue;
+    try {
+      phase.run();
+      phase.completed = true;
+    } catch (error) {
+      failures.push({ label: phase.label, error });
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map(({ error }) => error),
+      lifecycleFailureMessage(operation, failures),
+    );
+  }
+}
+
+async function runLifecyclePhases(
+  phases: readonly LifecyclePhase[],
+  operation: string,
+): Promise<void> {
+  const failures: Array<{ label: string; error: unknown }> = [];
+  for (const phase of phases) {
+    if (phase.completed) continue;
+    try {
+      await phase.run();
+      phase.completed = true;
+    } catch (error) {
+      failures.push({ label: phase.label, error });
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map(({ error }) => error),
+      lifecycleFailureMessage(operation, failures),
+    );
+  }
+}
+
+function createRetryableLifecycle(
+  phases: readonly LifecyclePhase[],
+  operation: string,
+): () => Promise<void> {
+  let lifecyclePromise: Promise<void> | undefined;
+  return () => {
+    if (lifecyclePromise) return lifecyclePromise;
+
+    const attempt = runLifecyclePhases(phases, operation);
+    lifecyclePromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (lifecyclePromise === attempt) lifecyclePromise = undefined;
+      },
+    );
+    return attempt;
+  };
+}
+
 function defaultNotFound(): Response {
   return new Response("Not Found", { status: 404 });
 }
@@ -153,6 +241,27 @@ export function createVeryfrontServer(
   const notFound = options.notFound ?? defaultNotFound;
   const onError = options.onError ??
     ((error, request) => defaultErrorResponse(error, request, logger));
+  const shutdownPhases: SynchronousLifecyclePhase[] = options.modules.flatMap(
+    (module, index) =>
+      module.setShuttingDown
+        ? [{
+          label: `module ${index} (${module.name}) shutdown notification`,
+          run: () => module.setShuttingDown?.(),
+          completed: false,
+        }]
+        : [],
+  );
+  const moduleStopPhases: LifecyclePhase[] = options.modules.flatMap(
+    (module, index) =>
+      module.stop
+        ? [{
+          label: `module ${index} (${module.name}) cleanup`,
+          run: () => module.stop?.(),
+          completed: false,
+        }]
+        : [],
+  );
+  const stop = createRetryableLifecycle(moduleStopPhases, "Veryfront service module cleanup");
 
   return {
     fetch: async (request) => {
@@ -170,15 +279,12 @@ export function createVeryfrontServer(
       }
     },
     setShuttingDown: () => {
-      for (const module of options.modules) {
-        module.setShuttingDown?.();
-      }
+      runSynchronousLifecyclePhases(
+        shutdownPhases,
+        "Veryfront service shutdown notification",
+      );
     },
-    stop: async () => {
-      for (const module of options.modules) {
-        await module.stop?.();
-      }
-    },
+    stop,
   };
 }
 
@@ -335,13 +441,37 @@ function resolveRuntimeKind(): VeryfrontServiceServerRuntimeKind {
   return "node";
 }
 
-async function stopRuntime(
+function createServiceServerStop(
   runtime: VeryfrontServiceServerRuntime,
   stopServer: () => void | Promise<void>,
-): Promise<void> {
-  runtime.setShuttingDown();
-  await stopServer();
-  await runtime.stop();
+  removeSignalHandlers: () => void,
+  runtimeKind: VeryfrontServiceServerRuntimeKind,
+): () => Promise<void> {
+  return createRetryableLifecycle(
+    [
+      {
+        label: "runtime shutdown notification",
+        run: () => runtime.setShuttingDown(),
+        completed: false,
+      },
+      {
+        label: `${runtimeKind} HTTP listener`,
+        run: stopServer,
+        completed: false,
+      },
+      {
+        label: "service runtime",
+        run: () => runtime.stop(),
+        completed: false,
+      },
+      {
+        label: "signal handlers",
+        run: removeSignalHandlers,
+        completed: false,
+      },
+    ],
+    `Veryfront ${runtimeKind} service server cleanup`,
+  );
 }
 
 function installSignalHandlers(options: {
@@ -357,7 +487,11 @@ function installSignalHandlers(options: {
   }
 
   const hardShutdownTimeoutMs = options.hardShutdownTimeoutMs ?? 20_000;
-  const installedHandlers: Array<{ signal: NodeJS.Signals; handler: SignalHandler }> = [];
+  const installedHandlers: Array<{
+    signal: NodeJS.Signals;
+    handler: SignalHandler;
+    removed: boolean;
+  }> = [];
   let signalShutdownStarted = false;
 
   for (const signal of options.signals ?? ["SIGTERM"]) {
@@ -401,7 +535,7 @@ function installSignalHandlers(options: {
 
     try {
       options.signalRuntime.add(signal, handler);
-      installedHandlers.push({ signal, handler });
+      installedHandlers.push({ signal, handler, removed: false });
     } catch (error) {
       options.logger.warn?.("Veryfront service server could not install shutdown signal handler", {
         signal,
@@ -412,16 +546,38 @@ function installSignalHandlers(options: {
   }
 
   return () => {
-    for (const { signal, handler } of installedHandlers) {
+    const failures: Array<{ label: string; error: unknown }> = [];
+    for (const installed of installedHandlers) {
+      if (installed.removed) continue;
+      const { signal, handler } = installed;
       try {
-        options.signalRuntime?.remove?.(signal, handler);
+        if (!options.signalRuntime?.remove) {
+          throw new TypeError("Signal runtime does not support listener removal");
+        }
+        options.signalRuntime.remove(signal, handler);
+        installed.removed = true;
       } catch (error) {
-        options.logger.warn?.("Veryfront service server could not remove shutdown signal handler", {
-          signal,
-          runtime: options.runtime,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        failures.push({ label: signal, error });
+        try {
+          options.logger.warn?.(
+            "Veryfront service server could not remove shutdown signal handler",
+            {
+              signal,
+              runtime: options.runtime,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        } catch {
+          // Observability failures must not prevent the remaining signal cleanup attempts.
+        }
       }
+    }
+
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map(({ error }) => error),
+        lifecycleFailureMessage("Veryfront service signal cleanup", failures),
+      );
     }
   };
 }
@@ -439,28 +595,21 @@ async function startDenoVeryfrontServer(
     signal: abortController.signal,
     onListen: () => undefined,
   }, options.runtime.fetch);
-  let shutdownStarted = false;
   let removeSignalHandlers: () => void = () => undefined;
 
-  const stop = async () => {
-    if (shutdownStarted) {
-      return;
-    }
-
-    shutdownStarted = true;
-    try {
-      await stopRuntime(options.runtime, async () => {
-        if (server.shutdown) {
-          await server.shutdown();
-          return;
-        }
-        abortController.abort();
-        await server.finished?.catch(() => undefined);
-      });
-    } finally {
-      removeSignalHandlers();
-    }
-  };
+  const stop = createServiceServerStop(
+    options.runtime,
+    async () => {
+      if (server.shutdown) {
+        await server.shutdown();
+        return;
+      }
+      abortController.abort();
+      await server.finished?.catch(() => undefined);
+    },
+    () => removeSignalHandlers(),
+    "deno",
+  );
 
   removeSignalHandlers = installSignalHandlers({
     signalRuntime: createDenoSignalRuntime(deno),
@@ -497,23 +646,19 @@ async function startBunVeryfrontServer(
     hostname: bindAddress,
     fetch: options.runtime.fetch,
   });
-  let shutdownStarted = false;
   let removeSignalHandlers: () => void = () => undefined;
 
-  const stop = async () => {
-    if (shutdownStarted) {
-      return;
-    }
-
-    shutdownStarted = true;
-    try {
-      await stopRuntime(options.runtime, async () => {
-        await server.stop?.();
-      });
-    } finally {
-      removeSignalHandlers();
-    }
-  };
+  const stop = createServiceServerStop(
+    options.runtime,
+    async () => {
+      if (!server.stop) {
+        throw new TypeError("Bun server does not expose a stop method");
+      }
+      await server.stop();
+    },
+    () => removeSignalHandlers(),
+    "bun",
+  );
 
   removeSignalHandlers = installSignalHandlers({
     signalRuntime: getProcessSignalRuntime(),
@@ -567,28 +712,27 @@ export async function startNodeVeryfrontServer(
   const logger = options.logger ?? serverLogger.component("service-server");
   const bindAddress = options.bindAddress ?? "0.0.0.0";
   const server = createServer(toNodeHandler(options.runtime.fetch));
-  let shutdownStarted = false;
   let removeSignalHandlers: () => void = () => undefined;
-
-  const stop = async () => {
-    if (shutdownStarted) {
-      return;
-    }
-
-    shutdownStarted = true;
-    try {
-      await stopRuntime(options.runtime, () => closeNodeServer(server));
-    } finally {
-      removeSignalHandlers();
-    }
-  };
+  let listeningPort = options.port;
+  let listeningUrl = `http://${bindAddress}:${listeningPort}`;
+  const stop = createServiceServerStop(
+    options.runtime,
+    () => closeNodeServer(server),
+    () => removeSignalHandlers(),
+    "node",
+  );
 
   const ready = new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, bindAddress, () => {
       server.off("error", reject);
+      const address = server.address();
+      if (address && typeof address !== "string") {
+        listeningPort = address.port;
+        listeningUrl = `http://${bindAddress}:${listeningPort}`;
+      }
       logger.info?.("Veryfront service server listening", {
-        port: options.port,
+        port: listeningPort,
         bindAddress,
       });
       resolve();
@@ -608,8 +752,12 @@ export async function startNodeVeryfrontServer(
     server,
     ready,
     stop,
-    port: options.port,
-    url: `http://${bindAddress}:${options.port}`,
+    get port() {
+      return listeningPort;
+    },
+    get url() {
+      return listeningUrl;
+    },
     runtime: "node",
   };
 }
