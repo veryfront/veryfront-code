@@ -179,6 +179,19 @@ Deno.test("MemoryTokenStore conditionally replaces only the observed token revis
   assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "replacement");
 });
 
+Deno.test("MemoryTokenStore bounds and canonicalizes expected token revisions", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("svc", "alice", tokens("original"));
+  for (const revision of ["", " revision", "rev\nision", "x".repeat(257)]) {
+    await assertRejects(
+      () => store.compareAndSetTokens("svc", "alice", revision, tokens("replacement")),
+      TypeError,
+      "Expected OAuth token revision",
+    );
+  }
+  assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "original");
+});
+
 Deno.test("MemoryTokenStore revisions prevent ABA after disconnect and reauthorization", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("same-token"));
@@ -265,6 +278,8 @@ Deno.test("MemoryTokenStore rejects malformed and accessor-backed token rows", a
     const malformed of [
       { accessToken: "   " },
       { accessToken: "token", refreshToken: "" },
+      { accessToken: "unsafe\naccess" },
+      { accessToken: "token", refreshToken: "unsafe\u0000refresh" },
       { accessToken: "token", expiresAt: Number.NaN },
       { accessToken: "token", expiresAt: Number.POSITIVE_INFINITY },
     ]
@@ -316,6 +331,44 @@ Deno.test("MemoryTokenStore detaches state metadata from callers", async () => {
   assertEquals(consumed?.userId, "alice");
   assertEquals(consumed?.scopes, ["read"]);
   assertEquals(consumed?.metadata, { nested: { value: "original" } });
+});
+
+Deno.test("MemoryTokenStore rejects non-data and oversized state metadata", async () => {
+  const store = new MemoryTokenStore();
+  let getterCalls = 0;
+  const accessorMetadata = Object.defineProperty({}, "secret", {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      return "value";
+    },
+  });
+  const cyclicMetadata: Record<string, unknown> = {};
+  cyclicMetadata.self = cyclicMetadata;
+
+  class MetadataRecord {
+    value = "class-instance";
+  }
+
+  for (
+    const [state, metadata] of [
+      ["accessor", accessorMetadata],
+      ["cycle", cyclicMetadata],
+      ["class", new MetadataRecord()],
+      ["oversized", { value: "x".repeat(16 * 1_024) }],
+    ] as const
+  ) {
+    await assertRejects(
+      () =>
+        store.setState(state, {
+          ...oauthState("alice"),
+          metadata: metadata as Record<string, unknown>,
+        }),
+      TypeError,
+      "Invalid OAuth state row",
+    );
+  }
+  assertEquals(getterCalls, 0);
 });
 
 Deno.test("MemoryTokenStore rejects duplicate live state values", async () => {

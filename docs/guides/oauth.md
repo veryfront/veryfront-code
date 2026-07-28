@@ -240,9 +240,7 @@ const redisTokenStore: RefreshCapableTokenStore = {
 };
 
 function tokenKey(serviceId: string, userId: string): string {
-  return `oauth:tokens:${encodeURIComponent(serviceId)}:${
-    encodeURIComponent(userId)
-  }`;
+  return `oauth:tokens:${encodeURIComponent(serviceId)}:${encodeURIComponent(userId)}`;
 }
 
 export const GET = createOAuthCallbackHandler(githubConfig, {
@@ -275,10 +273,19 @@ Use the same persistent `TokenStore` instance or backing keyspace for the init
 and callback routes. The built-in memory store is process-local and intended
 only for development and tests.
 
+If you add `metadata` to an OAuth state row in a custom flow or store adapter,
+keep it a plain data-only JSON object no larger than 16 KiB when serialized.
+Do not put class instances, accessors, cycles, functions, sparse arrays, or
+non-finite numbers in it. The runtime rejects those values so an in-memory row
+and its durable JSON representation cannot diverge.
+
 If a store implements only the base `TokenStore`, automatic refresh fails
-closed. An expired access token with a refresh token is reported as disconnected
-until the store also provides revisioned snapshots, atomic compare-and-set, and
-the distributed refresh lease.
+closed after the access token actually expires. A still-valid token remains
+usable during the five-minute proactive refresh window, but an expired row with
+a refresh token is reported as disconnected until the store provides revisioned
+snapshots, atomic compare-and-set, and the distributed refresh lease. Status
+also requires the provider credentials to be configured before it reports an
+expired refreshable row as connected.
 
 ## Status and disconnect
 
@@ -315,10 +322,7 @@ explicitly. Other methods return `405` without touching the token store.
 For providers not included, create your own config:
 
 ```ts
-import {
-  createOAuthCallbackHandler,
-  createOAuthInitHandler,
-} from "veryfront/oauth";
+import { createOAuthCallbackHandler, createOAuthInitHandler } from "veryfront/oauth";
 
 const myProvider = {
   providerId: "my-provider",
@@ -361,8 +365,17 @@ import { tokenStore } from "../../lib/token-store.ts";
 const gmail = new OAuthService(gmailConfig, tokenStore);
 
 // Pass the signed-in user's id: never a hardcoded constant.
-const response = await gmail.fetch(session.userId, "/users/me/messages");
+const response = await gmail.fetch(session.userId, "/users/me/messages", {
+  signal: request.signal,
+});
 ```
+
+`OAuthService.fetch` snapshots the endpoint, headers, and request options before
+waiting on token storage. Its configured `requestTimeoutMs` bounds token lookup,
+the provider request, and response-body consumption; the caller signal can end
+its own wait sooner. Relative and absolute endpoints must remain on the
+configured API origin. Pass canonical URL text without raw controls or
+backslashes, and do not forward an unchecked user-supplied endpoint.
 
 ## Verify it worked
 

@@ -2,6 +2,7 @@ import type { StoredOAuthState } from "./types.ts";
 import { isOAuthRedirectUrl } from "./url-validation.ts";
 import { normalizeOAuthScopeSet } from "./scope-utils.ts";
 import { MAX_OAUTH_SERVICE_ID_LENGTH, MAX_OAUTH_USER_ID_LENGTH } from "./limits.ts";
+import { type OAuthStateMetadata, snapshotOAuthStateMetadata } from "./state-metadata.ts";
 
 export const DEFAULT_OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
 export const DEFAULT_OAUTH_STATE_CLOCK_SKEW_MS = 60 * 1_000;
@@ -41,7 +42,21 @@ export function isFreshOAuthStateTimestamp(
 
 /** Copy state before storing or returning it so caller mutation cannot alter ownership. */
 export function cloneStoredOAuthState<T extends StoredOAuthState>(state: T): T {
-  return structuredClone(state);
+  let metadata: OAuthStateMetadata | undefined;
+  if (state.metadata !== undefined) {
+    const snapshot = snapshotOAuthStateMetadata(state.metadata);
+    if (snapshot === null) throw new TypeError("Invalid OAuth state metadata");
+    metadata = snapshot;
+  }
+  return {
+    userId: state.userId,
+    serviceId: state.serviceId,
+    ...(state.codeVerifier === undefined ? {} : { codeVerifier: state.codeVerifier }),
+    ...(state.redirectUri === undefined ? {} : { redirectUri: state.redirectUri }),
+    ...(state.scopes === undefined ? {} : { scopes: [...state.scopes] }),
+    createdAt: state.createdAt,
+    ...(metadata === undefined ? {} : { metadata }),
+  } as T;
 }
 
 /** Validate a state row returned by an application-provided persistent store. */
@@ -78,21 +93,21 @@ export function normalizeStoredOAuthStateForStorage(
     }
     const normalizedScopes = normalizeOAuthScopeSet(scopes);
     if (!normalizedScopes) return null;
-    if (
-      metadata !== undefined &&
-      (metadata === null || typeof metadata !== "object" || Array.isArray(metadata))
-    ) {
-      return null;
+    let normalizedMetadata: OAuthStateMetadata | undefined;
+    if (metadata !== undefined) {
+      const snapshot = snapshotOAuthStateMetadata(metadata);
+      if (snapshot === null) return null;
+      normalizedMetadata = snapshot;
     }
 
-    return cloneStoredOAuthState({
+    return cloneStoredOAuthState<NormalizedStoredOAuthState>({
       userId: normalizedUserId,
       serviceId,
       redirectUri,
       createdAt,
       scopes: normalizedScopes,
       ...(codeVerifier === undefined ? {} : { codeVerifier }),
-      ...(metadata === undefined ? {} : { metadata: metadata as Record<string, unknown> }),
+      ...(normalizedMetadata === undefined ? {} : { metadata: normalizedMetadata }),
     });
   } catch {
     return null;

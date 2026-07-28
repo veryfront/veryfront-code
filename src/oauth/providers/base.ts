@@ -13,6 +13,8 @@ import { INVALID_ARGUMENT, NETWORK_ERROR, TOKEN_STORAGE_ERROR } from "#veryfront
 import { base64urlEncodeBytes, logger as baseLogger } from "#veryfront/utils";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/index.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
   isRefreshCapableTokenStore,
   normalizeOAuthTokenSnapshot,
@@ -22,20 +24,23 @@ import {
   MAX_OAUTH_API_RESPONSE_BYTES,
   MAX_OAUTH_AUTHORIZATION_CODE_LENGTH,
   MAX_OAUTH_CREDENTIAL_LENGTH,
+  MAX_OAUTH_REFRESH_INFLIGHT_COUNT,
   MAX_OAUTH_REQUEST_TIMEOUT_MS,
   MAX_OAUTH_SCOPE_WIRE_LENGTH,
   MAX_OAUTH_SERVICE_ID_LENGTH,
   MAX_OAUTH_TOKEN_RESPONSE_BYTES,
   MAX_OAUTH_TOKEN_TYPE_LENGTH,
   MAX_OAUTH_TOKEN_VALUE_LENGTH,
+  MAX_OAUTH_URL_LENGTH,
 } from "../limits.ts";
-import { isOAuthRedirectUrl, isSecureOAuthEndpointUrl } from "../url-validation.ts";
+import {
+  isOAuthRedirectUrl,
+  isSafeOAuthUrlText,
+  isSecureOAuthEndpointUrl,
+} from "../url-validation.ts";
 import { normalizeOAuthScopeSet } from "../scope-utils.ts";
 import { normalizeOAuthUserId } from "../state-utils.ts";
 import {
-  getOAuthParameterRecordIssues,
-  getOAuthStaticHeaderIssues,
-  getOAuthTokenResponseMappingIssues,
   getReservedOAuthUrlParameterIssues,
   isValidOAuthDisplayName,
   isValidOAuthEnvironmentVariableName,
@@ -44,7 +49,12 @@ import {
   RESERVED_AUTHORIZATION_PARAMETERS,
   RESERVED_TOKEN_PARAMETERS,
   RESERVED_TOKEN_REQUEST_HEADERS,
+  snapshotOAuthParameterRecord,
+  snapshotOAuthStaticHeaders,
+  snapshotOAuthTokenResponseMapping,
 } from "../config-validation.ts";
+import { snapshotOwnDataProperties } from "../data-properties.ts";
+import { hasAsciiControlCharacter } from "../text-validation.ts";
 
 const logger = baseLogger.component("o-auth");
 
@@ -86,12 +96,13 @@ function assertRedirectUrl(value: unknown, name: string): asserts value is strin
   }
 }
 
-function assertNoReservedParameters(
+function cloneParameterRecord(
   params: unknown,
   reserved: ReadonlySet<string>,
   kind: "authorization" | "token",
-): void {
-  const issue = getOAuthParameterRecordIssues(params, reserved)[0];
+): Record<string, string> | undefined {
+  const result = snapshotOAuthParameterRecord(params, reserved);
+  const issue = result.issues[0];
   if (issue) {
     throw INVALID_ARGUMENT.create({
       detail: issue.message.includes("reserved")
@@ -99,6 +110,7 @@ function assertNoReservedParameters(
         : `Invalid OAuth ${kind} parameter configuration: ${issue.message}`,
     });
   }
+  return result.snapshot;
 }
 
 function cloneStaticHeaders(
@@ -106,8 +118,8 @@ function cloneStaticHeaders(
   reserved: ReadonlySet<string>,
   kind: "token request" | "API",
 ): Record<string, string> | undefined {
-  if (headers === undefined) return undefined;
-  const issue = getOAuthStaticHeaderIssues(headers, reserved)[0];
+  const result = snapshotOAuthStaticHeaders(headers, reserved);
+  const issue = result.issues[0];
   if (issue) {
     throw INVALID_ARGUMENT.create({
       detail: issue.message.includes("reserved")
@@ -115,72 +127,107 @@ function cloneStaticHeaders(
         : `Invalid OAuth ${kind} header configuration: ${issue.message}`,
     });
   }
-  const headerRecord = headers as Record<string, string>;
-  const cloned: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headerRecord)) {
-    cloned[name] = value;
-  }
-  return cloned;
+  return result.snapshot;
 }
 
 function cloneProviderConfig(config: OAuthProviderConfig): OAuthProviderConfig {
-  if (!isValidOAuthProviderId(config.providerId)) {
+  const captured = snapshotOwnDataProperties(
+    config,
+    [
+      "providerId",
+      "displayName",
+      "authorizationUrl",
+      "tokenUrl",
+      "userInfoUrl",
+      "revocationUrl",
+      "clientIdEnvVar",
+      "clientSecretEnvVar",
+      "additionalAuthParams",
+      "additionalTokenParams",
+      "useBasicAuth",
+      "pkceMode",
+      "runtimeSupport",
+      "tokenRequestFormat",
+      "tokenRequestHeaders",
+      "apiHeaders",
+      "scopeSeparator",
+      "requestTimeoutMs",
+      "maxTokenResponseBytes",
+      "maxApiResponseBytes",
+      "tokenResponseMapping",
+      "serviceId",
+      "defaultScopes",
+      "apiBaseUrl",
+    ] as const,
+  );
+  if (!captured) {
+    throw INVALID_ARGUMENT.create({
+      detail: "OAuth provider configuration must use plain data properties",
+    });
+  }
+  const raw = captured as Record<string, unknown>;
+
+  if (!isValidOAuthProviderId(raw.providerId)) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth providerId" });
   }
-  if (!isValidOAuthDisplayName(config.displayName)) {
+  if (!isValidOAuthDisplayName(raw.displayName)) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth displayName" });
   }
-  if (!isValidOAuthEnvironmentVariableName(config.clientIdEnvVar)) {
+  if (!isValidOAuthEnvironmentVariableName(raw.clientIdEnvVar)) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth clientIdEnvVar" });
   }
-  if (!isValidOAuthEnvironmentVariableName(config.clientSecretEnvVar)) {
+  if (!isValidOAuthEnvironmentVariableName(raw.clientSecretEnvVar)) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth clientSecretEnvVar" });
   }
-  assertHttpsUrl(config.authorizationUrl, "authorizationUrl");
-  assertHttpsUrl(config.tokenUrl, "tokenUrl");
-  if (config.userInfoUrl !== undefined) assertHttpsUrl(config.userInfoUrl, "userInfoUrl");
-  if (config.revocationUrl !== undefined) assertHttpsUrl(config.revocationUrl, "revocationUrl");
-  assertNoReservedParameters(
-    config.additionalAuthParams,
+  assertHttpsUrl(raw.authorizationUrl, "authorizationUrl");
+  assertHttpsUrl(raw.tokenUrl, "tokenUrl");
+  if (raw.userInfoUrl !== undefined) assertHttpsUrl(raw.userInfoUrl, "userInfoUrl");
+  if (raw.revocationUrl !== undefined) assertHttpsUrl(raw.revocationUrl, "revocationUrl");
+  const additionalAuthParams = cloneParameterRecord(
+    raw.additionalAuthParams,
     RESERVED_AUTHORIZATION_PARAMETERS,
     "authorization",
   );
-  assertNoReservedParameters(config.additionalTokenParams, RESERVED_TOKEN_PARAMETERS, "token");
+  const additionalTokenParams = cloneParameterRecord(
+    raw.additionalTokenParams,
+    RESERVED_TOKEN_PARAMETERS,
+    "token",
+  );
   if (
-    config.scopeSeparator !== undefined && config.scopeSeparator !== " " &&
-    config.scopeSeparator !== ","
+    raw.scopeSeparator !== undefined && raw.scopeSeparator !== " " &&
+    raw.scopeSeparator !== ","
   ) {
     throw INVALID_ARGUMENT.create({ detail: "scopeSeparator must be a space or comma" });
   }
   if (
-    config.pkceMode !== undefined && config.pkceMode !== "required" &&
-    config.pkceMode !== "supported" && config.pkceMode !== "unsupported"
+    raw.pkceMode !== undefined && raw.pkceMode !== "required" &&
+    raw.pkceMode !== "supported" && raw.pkceMode !== "unsupported"
   ) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth PKCE capability mode" });
   }
   if (
-    config.runtimeSupport !== undefined && config.runtimeSupport !== "generic" &&
-    config.runtimeSupport !== "provider-adapter-required"
+    raw.runtimeSupport !== undefined && raw.runtimeSupport !== "generic" &&
+    raw.runtimeSupport !== "provider-adapter-required"
   ) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth runtime support mode" });
   }
   if (
-    config.tokenRequestFormat !== undefined && config.tokenRequestFormat !== "form" &&
-    config.tokenRequestFormat !== "json"
+    raw.tokenRequestFormat !== undefined && raw.tokenRequestFormat !== "form" &&
+    raw.tokenRequestFormat !== "json"
   ) {
     throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth tokenRequestFormat" });
   }
-  if (config.useBasicAuth !== undefined && typeof config.useBasicAuth !== "boolean") {
+  if (raw.useBasicAuth !== undefined && typeof raw.useBasicAuth !== "boolean") {
     throw INVALID_ARGUMENT.create({ detail: "OAuth useBasicAuth must be a boolean" });
   }
   const tokenRequestHeaders = cloneStaticHeaders(
-    config.tokenRequestHeaders,
+    raw.tokenRequestHeaders,
     RESERVED_TOKEN_REQUEST_HEADERS,
     "token request",
   );
-  const apiHeaders = cloneStaticHeaders(config.apiHeaders, RESERVED_API_HEADERS, "API");
+  const apiHeaders = cloneStaticHeaders(raw.apiHeaders, RESERVED_API_HEADERS, "API");
   const authorizationUrlIssue = getReservedOAuthUrlParameterIssues(
-    config.authorizationUrl,
+    raw.authorizationUrl,
     RESERVED_AUTHORIZATION_PARAMETERS,
   )[0];
   if (authorizationUrlIssue) {
@@ -189,7 +236,7 @@ function cloneProviderConfig(config: OAuthProviderConfig): OAuthProviderConfig {
     });
   }
   const tokenUrlIssue = getReservedOAuthUrlParameterIssues(
-    config.tokenUrl,
+    raw.tokenUrl,
     RESERVED_TOKEN_PARAMETERS,
   )[0];
   if (tokenUrlIssue) {
@@ -197,48 +244,64 @@ function cloneProviderConfig(config: OAuthProviderConfig): OAuthProviderConfig {
       detail: `${tokenUrlIssue.key} is a reserved OAuth token parameter`,
     });
   }
-  const tokenMappingIssue = getOAuthTokenResponseMappingIssues(config.tokenResponseMapping)[0];
+  const tokenMapping = snapshotOAuthTokenResponseMapping(raw.tokenResponseMapping);
+  const tokenMappingIssue = tokenMapping.issues[0];
   if (tokenMappingIssue) {
     throw INVALID_ARGUMENT.create({
       detail: `Invalid OAuth tokenResponseMapping: ${tokenMappingIssue.message}`,
     });
   }
-  if (config.requestTimeoutMs !== undefined) {
+  if (raw.requestTimeoutMs !== undefined) {
     assertBoundedPositiveInteger(
-      config.requestTimeoutMs,
+      raw.requestTimeoutMs as number,
       "requestTimeoutMs",
       MAX_OAUTH_REQUEST_TIMEOUT_MS,
     );
   }
-  if (config.maxTokenResponseBytes !== undefined) {
+  if (raw.maxTokenResponseBytes !== undefined) {
     assertBoundedPositiveInteger(
-      config.maxTokenResponseBytes,
+      raw.maxTokenResponseBytes as number,
       "maxTokenResponseBytes",
       MAX_OAUTH_TOKEN_RESPONSE_BYTES,
     );
   }
-  if (config.maxApiResponseBytes !== undefined) {
+  if (raw.maxApiResponseBytes !== undefined) {
     assertBoundedPositiveInteger(
-      config.maxApiResponseBytes,
+      raw.maxApiResponseBytes as number,
       "maxApiResponseBytes",
       MAX_OAUTH_API_RESPONSE_BYTES,
     );
   }
+  if (raw.defaultScopes !== undefined) {
+    const defaultScopes = normalizeOAuthScopeSet(
+      raw.defaultScopes,
+      raw.scopeSeparator === "," ? "," : " ",
+    );
+    if (!defaultScopes) {
+      throw INVALID_ARGUMENT.create({
+        detail: "defaultScopes must contain trimmed nonblank values",
+      });
+    }
+    raw.defaultScopes = defaultScopes;
+  }
 
-  return {
-    ...config,
-    ...(config.additionalAuthParams
-      ? { additionalAuthParams: { ...config.additionalAuthParams } }
-      : {}),
-    ...(config.additionalTokenParams
-      ? { additionalTokenParams: { ...config.additionalTokenParams } }
-      : {}),
-    ...(config.tokenResponseMapping
-      ? { tokenResponseMapping: { ...config.tokenResponseMapping } }
-      : {}),
-    ...(tokenRequestHeaders ? { tokenRequestHeaders } : {}),
-    ...(apiHeaders ? { apiHeaders } : {}),
-  };
+  const snapshot: Record<string, unknown> = Object.create(null);
+  for (const [key, value] of Object.entries(raw)) {
+    Object.defineProperty(snapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+  if (additionalAuthParams !== undefined) snapshot.additionalAuthParams = additionalAuthParams;
+  if (additionalTokenParams !== undefined) snapshot.additionalTokenParams = additionalTokenParams;
+  if (tokenRequestHeaders !== undefined) snapshot.tokenRequestHeaders = tokenRequestHeaders;
+  if (apiHeaders !== undefined) snapshot.apiHeaders = apiHeaders;
+  if (tokenMapping.snapshot !== undefined) {
+    snapshot.tokenResponseMapping = tokenMapping.snapshot;
+  }
+  return snapshot as unknown as OAuthProviderConfig;
 }
 
 function encodeBasicCredentials(clientId: string, clientSecret: string): string {
@@ -266,12 +329,73 @@ function normalizeOAuthError(value: unknown, fallback: string): string {
 async function readBoundedResponseText(
   response: Response,
   maxBytes: number,
+  signal?: AbortSignal,
 ): Promise<{ text: string; oversized: boolean }> {
-  const { text, truncated } = await readResponseTextPrefix(response, maxBytes + 1);
+  const { text, truncated } = await readResponseTextPrefix(
+    response,
+    maxBytes + 1,
+    signal,
+    { fatalUtf8: true },
+  );
   return {
     text,
     oversized: truncated || new TextEncoder().encode(text).byteLength > maxBytes,
   };
+}
+
+interface OAuthRequestAbortScope {
+  signal: AbortSignal;
+  dispose(): void;
+}
+
+function createOAuthRequestAbortScope(
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): OAuthRequestAbortScope {
+  const controller = new AbortController();
+  const forwardCallerAbort = (): void => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) {
+    forwardCallerAbort();
+  } else {
+    callerSignal?.addEventListener("abort", forwardCallerAbort, { once: true });
+  }
+
+  const timeout = controller.signal.aborted ? undefined : setTimeout(() => {
+    controller.abort(new DOMException("OAuth request timed out", "TimeoutError"));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    dispose() {
+      if (timeout !== undefined) clearTimeout(timeout);
+      callerSignal?.removeEventListener("abort", forwardCallerAbort);
+    },
+  };
+}
+
+function cancelResponseBody(response: Response): void {
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation) void cancellation.catch(() => {});
+  } catch {
+    // Best-effort cleanup must not replace the request result or block callers.
+  }
+}
+
+async function fetchWithStrictAbort(
+  input: string | URL | Request,
+  init: RequestInit,
+  signal: AbortSignal,
+): Promise<Response> {
+  throwIfAborted(signal);
+  const pending = Promise.resolve().then(() => fetch(input, { ...init, signal }));
+  try {
+    return await awaitAbortable(pending, signal);
+  } catch (error) {
+    // A custom or test fetch implementation may ignore AbortSignal. Detach the
+    // caller immediately, then release any body that arrives after cancellation.
+    void pending.then(cancelResponseBody, () => {});
+    throw error;
+  }
 }
 
 export type EnvReader = (key: string) => string | undefined;
@@ -338,24 +462,41 @@ export class OAuthProvider {
       : "supported";
   }
 
+  /** Separator used to serialize the provider's configured scope set. */
+  get scopeSeparator(): " " | "," {
+    return this.config.scopeSeparator === "," ? "," : " ";
+  }
+
   async createAuthorizationUrl(
     options: AuthorizationUrlOptions & { defaultScopes?: string[] } = {},
   ): Promise<{ url: string; state: OAuthState }> {
+    const captured = snapshotOwnDataProperties(
+      options,
+      [
+        "scopes",
+        "state",
+        "usePkce",
+        "additionalParams",
+        "redirectUri",
+        "defaultScopes",
+      ] as const,
+    );
+    if (!captured) {
+      throw INVALID_ARGUMENT.create({
+        detail: "OAuth authorization options must use plain data properties",
+      });
+    }
     const clientId = this.getClientId();
     if (!clientId) {
       throw INVALID_ARGUMENT.create({ detail: `${this.config.clientIdEnvVar} not configured` });
     }
 
-    const rawAdditionalParams = options.additionalParams;
-    assertNoReservedParameters(
-      rawAdditionalParams,
+    const additionalParams = cloneParameterRecord(
+      captured.additionalParams,
       RESERVED_AUTHORIZATION_PARAMETERS,
       "authorization",
     );
-    const additionalParams = rawAdditionalParams === undefined
-      ? undefined
-      : { ...(rawAdditionalParams as Record<string, string>) };
-    const state = options.state ?? generateRandomString(32);
+    const state = captured.state ?? generateRandomString(32);
     if (typeof state !== "string" || !state || state.length > 1_024) {
       throw INVALID_ARGUMENT.create({
         detail: "OAuth state must contain between 1 and 1024 characters",
@@ -363,7 +504,7 @@ export class OAuthProvider {
     }
     const scopeSeparator: " " | "," = this.config.scopeSeparator === "," ? "," : " ";
     const scopes = normalizeOAuthScopeSet(
-      options.scopes ?? options.defaultScopes ?? [],
+      captured.scopes ?? captured.defaultScopes ?? [],
       scopeSeparator,
     );
     if (!scopes) {
@@ -379,25 +520,25 @@ export class OAuthProvider {
         },
       );
     }
-    const redirectUri = options.redirectUri;
+    const redirectUri = captured.redirectUri;
     if (!redirectUri) {
       throw INVALID_ARGUMENT.create({ detail: "redirectUri is required" });
     }
     assertRedirectUrl(redirectUri, "redirectUri");
-    if (options.usePkce !== undefined && typeof options.usePkce !== "boolean") {
+    if (captured.usePkce !== undefined && typeof captured.usePkce !== "boolean") {
       throw INVALID_ARGUMENT.create({ detail: "OAuth usePkce must be a boolean" });
     }
-    if (this.pkceMode === "required" && options.usePkce === false) {
+    if (this.pkceMode === "required" && captured.usePkce === false) {
       throw INVALID_ARGUMENT.create({ detail: "OAuth provider requires PKCE" });
     }
-    if (this.pkceMode === "unsupported" && options.usePkce === true) {
+    if (this.pkceMode === "unsupported" && captured.usePkce === true) {
       throw INVALID_ARGUMENT.create({ detail: "OAuth provider does not support PKCE" });
     }
     const usePkce = this.pkceMode === "required"
       ? true
       : this.pkceMode === "unsupported"
       ? false
-      : options.usePkce !== false;
+      : captured.usePkce !== false;
 
     let codeVerifier: string | undefined;
     let codeChallenge: string | undefined;
@@ -482,7 +623,7 @@ export class OAuthProvider {
       if (value === null && allowNull) return { present: true, valid: true, value: null };
       if (
         typeof value !== "string" || !value || value.length > maxLength ||
-        value.trim() !== value
+        value.trim() !== value || hasAsciiControlCharacter(value)
       ) {
         return { present: true, valid: false };
       }
@@ -559,29 +700,42 @@ export class OAuthProvider {
     body: URLSearchParams,
     clientId: string,
     clientSecret: string,
+    callerSignal?: AbortSignal,
   ): Promise<{ response: Response; data: Record<string, unknown>; truncated: boolean }> {
     const requestTimeoutMs = this.config.requestTimeoutMs ?? HTTP_FETCH_TIMEOUT_MS;
-    const response = await fetch(this.config.tokenUrl, {
-      method: "POST",
-      headers: this.buildTokenHeaders(clientId, clientSecret),
-      body: this.config.tokenRequestFormat === "json"
-        ? JSON.stringify(Object.fromEntries(body))
-        : body.toString(),
-      signal: AbortSignal.timeout(requestTimeoutMs),
-      redirect: "error",
-    });
+    const scope = createOAuthRequestAbortScope(requestTimeoutMs, callerSignal);
+    try {
+      const response = await fetchWithStrictAbort(
+        this.config.tokenUrl,
+        {
+          method: "POST",
+          headers: this.buildTokenHeaders(clientId, clientSecret),
+          body: this.config.tokenRequestFormat === "json"
+            ? JSON.stringify(Object.fromEntries(body))
+            : body.toString(),
+          redirect: "error",
+        },
+        scope.signal,
+      );
 
-    const maxBytes = this.config.maxTokenResponseBytes ?? DEFAULT_TOKEN_RESPONSE_MAX_BYTES;
-    const { text, oversized } = await readBoundedResponseText(response, maxBytes);
-    let parsed: unknown = {};
-    if (!oversized && text) {
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = {};
+      const maxBytes = this.config.maxTokenResponseBytes ?? DEFAULT_TOKEN_RESPONSE_MAX_BYTES;
+      const { text, oversized } = await readBoundedResponseText(
+        response,
+        maxBytes,
+        scope.signal,
+      );
+      let parsed: unknown = {};
+      if (!oversized && text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = {};
+        }
       }
+      return { response, data: isRecord(parsed) ? parsed : {}, truncated: oversized };
+    } finally {
+      scope.dispose();
     }
-    return { response, data: isRecord(parsed) ? parsed : {}, truncated: oversized };
   }
 
   private buildClientCredentialsParams(
@@ -599,12 +753,14 @@ export class OAuthProvider {
     errorFallback: string,
     errorDescriptionFallback?: (status: number) => string,
     fallbackRefreshToken?: string,
+    signal?: AbortSignal,
   ): Promise<TokenExchangeResult> {
     try {
       const { response, data, truncated } = await this.postTokenRequest(
         body,
         clientId,
         clientSecret,
+        signal,
       );
 
       // Some providers signal errors with a 2xx status and a body-level
@@ -640,25 +796,38 @@ export class OAuthProvider {
     }
   }
 
-  async exchangeCode(options: TokenExchangeOptions): Promise<TokenExchangeResult> {
-    assertTrimmedNonBlank(options.code, "OAuth authorization code");
-    if (options.code.length > MAX_OAUTH_AUTHORIZATION_CODE_LENGTH) {
+  async exchangeCode(
+    options: TokenExchangeOptions,
+    signal?: AbortSignal,
+  ): Promise<TokenExchangeResult> {
+    const captured = snapshotOwnDataProperties(
+      options,
+      ["code", "redirectUri", "codeVerifier"] as const,
+    );
+    if (!captured) {
+      throw INVALID_ARGUMENT.create({
+        detail: "OAuth token exchange options must use plain data properties",
+      });
+    }
+    assertTrimmedNonBlank(captured.code, "OAuth authorization code");
+    if (captured.code.length > MAX_OAUTH_AUTHORIZATION_CODE_LENGTH) {
       throw INVALID_ARGUMENT.create({ detail: "OAuth authorization code is too long" });
     }
-    assertRedirectUrl(options.redirectUri, "redirectUri");
-    if (this.pkceMode === "required" && options.codeVerifier === undefined) {
+    assertRedirectUrl(captured.redirectUri, "redirectUri");
+    if (this.pkceMode === "required" && captured.codeVerifier === undefined) {
       throw INVALID_ARGUMENT.create({
         detail: "OAuth provider requires a PKCE code verifier",
       });
     }
-    if (this.pkceMode === "unsupported" && options.codeVerifier !== undefined) {
+    if (this.pkceMode === "unsupported" && captured.codeVerifier !== undefined) {
       throw INVALID_ARGUMENT.create({
         detail: "OAuth provider does not support PKCE code verifiers",
       });
     }
     if (
-      options.codeVerifier !== undefined &&
-      !/^[A-Za-z0-9._~-]{43,128}$/.test(options.codeVerifier)
+      captured.codeVerifier !== undefined &&
+      (typeof captured.codeVerifier !== "string" ||
+        !/^[A-Za-z0-9._~-]{43,128}$/.test(captured.codeVerifier))
     ) {
       throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth PKCE code verifier" });
     }
@@ -677,9 +846,9 @@ export class OAuthProvider {
 
     const body = new URLSearchParams({
       grant_type: "authorization_code",
-      code: options.code,
-      redirect_uri: options.redirectUri,
-      ...(options.codeVerifier ? { code_verifier: options.codeVerifier } : {}),
+      code: captured.code,
+      redirect_uri: captured.redirectUri,
+      ...(captured.codeVerifier ? { code_verifier: captured.codeVerifier } : {}),
       ...this.buildClientCredentialsParams(clientId, clientSecret),
       ...this.config.additionalTokenParams,
     });
@@ -690,10 +859,15 @@ export class OAuthProvider {
       clientSecret,
       "token_exchange_failed",
       (status) => `Status ${status}`,
+      undefined,
+      signal,
     );
   }
 
-  async refreshTokens(refreshToken: string): Promise<TokenExchangeResult> {
+  async refreshTokens(
+    refreshToken: string,
+    signal?: AbortSignal,
+  ): Promise<TokenExchangeResult> {
     assertTrimmedNonBlank(refreshToken, "OAuth refresh token");
     if (refreshToken.length > MAX_OAUTH_TOKEN_VALUE_LENGTH) {
       throw INVALID_ARGUMENT.create({ detail: "OAuth refresh token is too long" });
@@ -719,10 +893,11 @@ export class OAuthProvider {
       "refresh_failed",
       undefined,
       refreshToken,
+      signal,
     );
   }
 
-  async revokeToken(token: string): Promise<boolean> {
+  async revokeToken(token: string, callerSignal?: AbortSignal): Promise<boolean> {
     assertTrimmedNonBlank(token, "OAuth token");
     if (token.length > MAX_OAUTH_TOKEN_VALUE_LENGTH) {
       throw INVALID_ARGUMENT.create({ detail: "OAuth token is too long" });
@@ -736,15 +911,22 @@ export class OAuthProvider {
       return false;
     }
 
+    const scope = createOAuthRequestAbortScope(
+      this.config.requestTimeoutMs ?? HTTP_FETCH_TIMEOUT_MS,
+      callerSignal,
+    );
     try {
-      const response = await fetch(revocationUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ token }).toString(),
-        signal: AbortSignal.timeout(this.config.requestTimeoutMs ?? HTTP_FETCH_TIMEOUT_MS),
-        redirect: "error",
-      });
-      await response.body?.cancel().catch(() => {});
+      const response = await fetchWithStrictAbort(
+        revocationUrl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ token }).toString(),
+          redirect: "error",
+        },
+        scope.signal,
+      );
+      cancelResponseBody(response);
 
       if (!response.ok) {
         logger.warn("Token revocation request rejected by provider", {
@@ -757,9 +939,11 @@ export class OAuthProvider {
       // the token could still be live. Surface it rather than swallowing it, so
       // security-critical disconnect flows don't report success on a no-op.
       logger.warn("Token revocation request failed to reach provider", {
-        error: error instanceof Error ? error.message : String(error),
+        errorClass: error instanceof Error ? error.name : "NonError",
       });
       return false;
+    } finally {
+      scope.dispose();
     }
   }
 }
@@ -779,17 +963,25 @@ function getRefreshInFlight(
   return refreshInFlightByStore.get(tokenStore)?.get(key);
 }
 
-function setRefreshInFlight(
+function createRefreshInFlight(
   tokenStore: TokenStore,
   key: string,
-  promise: Promise<string | null>,
-): void {
+  operation: () => Promise<string | null>,
+): Promise<string | null> {
   let storeInflight = refreshInFlightByStore.get(tokenStore);
   if (!storeInflight) {
     storeInflight = new Map();
     refreshInFlightByStore.set(tokenStore, storeInflight);
   }
+  if (storeInflight.size >= MAX_OAUTH_REFRESH_INFLIGHT_COUNT) {
+    throw TOKEN_STORAGE_ERROR.create({
+      detail:
+        `OAuth refresh capacity of ${MAX_OAUTH_REFRESH_INFLIGHT_COUNT} distinct token slots is exhausted`,
+    });
+  }
+  const promise = operation();
   storeInflight.set(key, promise);
+  return promise;
 }
 
 function clearRefreshInFlight(
@@ -812,17 +1004,18 @@ export class OAuthService extends OAuthProvider {
 
   constructor(config: OAuthServiceConfig, tokenStore?: TokenStore, envReader?: EnvReader) {
     super(config, envReader);
+    const capturedConfig = this.config as OAuthServiceConfig;
     if (
-      typeof config.serviceId !== "string" ||
-      config.serviceId.length > MAX_OAUTH_SERVICE_ID_LENGTH ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(config.serviceId)
+      typeof capturedConfig.serviceId !== "string" ||
+      capturedConfig.serviceId.length > MAX_OAUTH_SERVICE_ID_LENGTH ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(capturedConfig.serviceId)
     ) {
       throw INVALID_ARGUMENT.create({ detail: "Invalid OAuth serviceId" });
     }
-    assertHttpsUrl(config.apiBaseUrl, "apiBaseUrl");
+    assertHttpsUrl(capturedConfig.apiBaseUrl, "apiBaseUrl");
     const defaultScopes = normalizeOAuthScopeSet(
-      config.defaultScopes,
-      config.scopeSeparator === "," ? "," : " ",
+      capturedConfig.defaultScopes,
+      capturedConfig.scopeSeparator === "," ? "," : " ",
     );
     if (!defaultScopes) {
       throw INVALID_ARGUMENT.create({
@@ -830,7 +1023,7 @@ export class OAuthService extends OAuthProvider {
       });
     }
     this.serviceConfig = {
-      ...(this.config as OAuthServiceConfig),
+      ...capturedConfig,
       defaultScopes,
     };
     this.tokenStore = tokenStore;
@@ -853,13 +1046,24 @@ export class OAuthService extends OAuthProvider {
     return this.serviceConfig.apiBaseUrl;
   }
 
-  override createAuthorizationUrl(
+  override async createAuthorizationUrl(
     options: AuthorizationUrlOptions = {},
   ): Promise<{ url: string; state: OAuthState }> {
-    return super.createAuthorizationUrl({
-      ...options,
-      defaultScopes: this.serviceConfig.defaultScopes,
-    });
+    const captured = snapshotOwnDataProperties(
+      options,
+      ["scopes", "state", "usePkce", "additionalParams", "redirectUri"] as const,
+    );
+    if (!captured) {
+      throw INVALID_ARGUMENT.create({
+        detail: "OAuth authorization options must use plain data properties",
+      });
+    }
+    return await super.createAuthorizationUrl(
+      {
+        ...captured,
+        defaultScopes: this.serviceConfig.defaultScopes,
+      } as AuthorizationUrlOptions & { defaultScopes: string[] },
+    );
   }
 
   /**
@@ -869,13 +1073,14 @@ export class OAuthService extends OAuthProvider {
    * prevent one user's OAuth completion from overwriting another user's
    * tokens. See VULN-AUTH-2.
    */
-  async getAccessToken(userId: string): Promise<string | null> {
+  async getAccessToken(userId: string, signal?: AbortSignal): Promise<string | null> {
+    throwIfAborted(signal);
     if (normalizeOAuthUserId(userId) !== userId) {
       throw INVALID_ARGUMENT.create({
         detail: "OAuth userId must be trimmed, nonblank, and within the supported length",
       });
     }
-    const stored = await this.readTokenSnapshot(userId);
+    const stored = await awaitAbortable(this.readTokenSnapshot(userId), signal);
     if (!stored) return null;
     const { tokens } = stored;
 
@@ -895,6 +1100,7 @@ export class OAuthService extends OAuthProvider {
     if (
       !stored.revision || !isRefreshCapableTokenStore(this.tokenStore)
     ) {
+      if (!isExpired) return tokens.accessToken;
       throw TOKEN_STORAGE_ERROR.create({
         detail:
           "TokenStore must implement revisioned CAS and a distributed refresh lock for atomic token refresh",
@@ -903,17 +1109,20 @@ export class OAuthService extends OAuthProvider {
 
     const key = JSON.stringify([this.serviceId, userId]);
     const existingRefresh = getRefreshInFlight(this.tokenStore, key);
-    if (existingRefresh) return existingRefresh;
+    if (existingRefresh) return await waitForSharedPromise(existingRefresh, signal);
 
     const tokenStore = this.tokenStore;
-    const refreshPromise = this.refreshAndStoreAccessToken(userId);
-    setRefreshInFlight(tokenStore, key, refreshPromise);
-
-    try {
-      return await refreshPromise;
-    } finally {
+    const refreshPromise = createRefreshInFlight(
+      tokenStore,
+      key,
+      () => this.refreshAndStoreAccessToken(userId),
+    );
+    void refreshPromise.then(() => {
       clearRefreshInFlight(tokenStore, key, refreshPromise);
-    }
+    }, () => {
+      clearRefreshInFlight(tokenStore, key, refreshPromise);
+    });
+    return await waitForSharedPromise(refreshPromise, signal);
   }
 
   private async refreshAndStoreAccessToken(
@@ -1030,6 +1239,12 @@ export class OAuthService extends OAuthProvider {
    * SEC-003 in the security audit.
    */
   private resolveEndpointUrl(endpoint: string): string {
+    if (!isSafeOAuthUrlText(endpoint)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `OAuth endpoint must be nonempty, at most ${MAX_OAUTH_URL_LENGTH} characters, and contain no raw controls or backslashes`,
+      });
+    }
     let target: URL;
     const allowed = new URL(this.apiBaseUrl);
     try {
@@ -1055,72 +1270,87 @@ export class OAuthService extends OAuthProvider {
   }
 
   async fetch<T>(userId: string, endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw TOKEN_STORAGE_ERROR.create({
-        detail: `Not authenticated with ${this.serviceConfig.displayName}`,
-      });
-    }
-
     const url = this.resolveEndpointUrl(endpoint);
-
+    const requestOptions: RequestInit = { ...options };
     const headers = new Headers(this.serviceConfig.apiHeaders);
-    for (const [name, value] of new Headers(options.headers)) headers.set(name, value);
-    headers.set("Authorization", `Bearer ${token}`);
-    const timeoutSignal = AbortSignal.timeout(
+    for (const [name, value] of new Headers(requestOptions.headers)) headers.set(name, value);
+    const callerSignal = requestOptions.signal ?? undefined;
+    const requestScope = createOAuthRequestAbortScope(
       this.config.requestTimeoutMs ?? HTTP_FETCH_TIMEOUT_MS,
+      callerSignal,
     );
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, timeoutSignal])
-      : timeoutSignal;
-
-    let response: Response;
     try {
-      response = await fetch(url, { ...options, headers, signal, redirect: "error" });
-    } catch (error) {
-      throw NETWORK_ERROR.create({
-        detail: `${this.serviceConfig.displayName} API request failed`,
-        cause: error,
-        context: { serviceId: this.serviceConfig.serviceId },
-      });
-    }
+      const token = await this.getAccessToken(userId, requestScope.signal);
+      if (!token) {
+        throw TOKEN_STORAGE_ERROR.create({
+          detail: `Not authenticated with ${this.serviceConfig.displayName}`,
+        });
+      }
+      headers.set("Authorization", `Bearer ${token}`);
 
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      logger.error("OAuth provider API error", {
-        serviceId: this.serviceConfig.serviceId,
-        status: response.status,
-      });
-      throw NETWORK_ERROR.create({
-        detail: `${this.serviceConfig.displayName} API error: ${response.status}`,
-        context: {
+      let response: Response;
+      try {
+        response = await fetchWithStrictAbort(
+          url,
+          { ...requestOptions, headers, redirect: "error" },
+          requestScope.signal,
+        );
+      } catch (error) {
+        throw NETWORK_ERROR.create({
+          detail: `${this.serviceConfig.displayName} API request failed`,
+          cause: error,
+          context: { serviceId: this.serviceConfig.serviceId },
+        });
+      }
+
+      if (!response.ok) {
+        cancelResponseBody(response);
+        logger.error("OAuth provider API error", {
           serviceId: this.serviceConfig.serviceId,
-          upstreamStatus: response.status,
-        },
-      });
-    }
+          status: response.status,
+        });
+        throw NETWORK_ERROR.create({
+          detail: `${this.serviceConfig.displayName} API error: ${response.status}`,
+          context: {
+            serviceId: this.serviceConfig.serviceId,
+            upstreamStatus: response.status,
+          },
+        });
+      }
 
-    if (response.status === 204 || response.status === 205) {
-      await response.body?.cancel().catch(() => {});
-      return undefined as T;
-    }
+      if (response.status === 204 || response.status === 205) {
+        cancelResponseBody(response);
+        return undefined as T;
+      }
 
-    const maxBytes = this.serviceConfig.maxApiResponseBytes ?? DEFAULT_API_RESPONSE_MAX_BYTES;
-    const { text, oversized } = await readBoundedResponseText(response, maxBytes);
-    if (oversized) {
-      throw NETWORK_ERROR.create({
-        detail: `${this.serviceConfig.displayName} API response exceeded configured byte limit`,
-        context: { serviceId: this.serviceConfig.serviceId, maxBytes },
-      });
-    }
-    try {
-      return JSON.parse(text) as T;
-    } catch (error) {
-      throw NETWORK_ERROR.create({
-        detail: `${this.serviceConfig.displayName} API returned invalid JSON`,
-        cause: error,
-        context: { serviceId: this.serviceConfig.serviceId },
-      });
+      const maxBytes = this.serviceConfig.maxApiResponseBytes ?? DEFAULT_API_RESPONSE_MAX_BYTES;
+      let body: { text: string; oversized: boolean };
+      try {
+        body = await readBoundedResponseText(response, maxBytes, requestScope.signal);
+      } catch (error) {
+        throw NETWORK_ERROR.create({
+          detail: `${this.serviceConfig.displayName} API response could not be read`,
+          cause: error,
+          context: { serviceId: this.serviceConfig.serviceId },
+        });
+      }
+      if (body.oversized) {
+        throw NETWORK_ERROR.create({
+          detail: `${this.serviceConfig.displayName} API response exceeded configured byte limit`,
+          context: { serviceId: this.serviceConfig.serviceId, maxBytes },
+        });
+      }
+      try {
+        return JSON.parse(body.text) as T;
+      } catch (error) {
+        throw NETWORK_ERROR.create({
+          detail: `${this.serviceConfig.displayName} API returned invalid JSON`,
+          cause: error,
+          context: { serviceId: this.serviceConfig.serviceId },
+        });
+      }
+    } finally {
+      requestScope.dispose();
     }
   }
 }

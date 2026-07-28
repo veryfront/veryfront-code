@@ -49,7 +49,10 @@ sequenceDiagram
    error responses. They validate its age, service id, exact callback URI, and
    PKCE verifier before exchanging a code.
 4. Token requests have explicit time and response-size bounds. Successful token
-   responses require a nonblank access token and valid expiry data.
+   responses require strict UTF-8 JSON, a nonblank control-free access token,
+   and valid expiry data. The deadline covers fetch and body consumption even
+   when an injected fetch or stream ignores its abort signal; late response
+   bodies are cancelled without blocking completion.
 5. Tokens are stored under the initiating user. Refresh writes verify that the
    stored token generation has not been disconnected or replaced while the
    provider request was in flight. Shared stores also serialize refresh through
@@ -59,6 +62,12 @@ sequenceDiagram
    authentication callbacks or token-store mutation.
 7. Provider catalogs supply common service configs, scopes, URLs, and client env
    variable names.
+
+Provider configuration and handler authorization options are captured from
+plain own data properties at construction. Nested parameter, header, mapping,
+and scope values are detached before asynchronous work. This prevents a getter
+or caller mutation from changing a validated endpoint, credential mode, scope,
+or reserved transport field later in the flow.
 
 ## Boundaries
 
@@ -73,11 +82,30 @@ sequenceDiagram
   use transport security, and keep `(serviceId, userId)` inside the storage key.
 - State consumption must be an atomic read-and-delete operation. A separate
   read followed by delete permits concurrent callback reuse.
+- Optional state metadata must be a data-only JSON object whose serialized
+  representation is at most 16 KiB. Accessors, class instances, cycles, sparse
+  structures, non-finite numbers, and larger values are rejected before
+  persistence so memory and durable stores preserve the same meaning.
 - Refresh requires revisioned snapshots, atomic compare-and-set, and a
   crash-recoverable distributed lease. Without all three capabilities, refresh
-  fails closed before contacting the provider.
+  fails closed before contacting the provider after actual token expiry. A
+  still-valid token remains usable during the proactive refresh window when a
+  legacy base store lacks those capabilities.
+- One cancelled caller detaches from a shared refresh without cancelling or
+  evicting its leader. Refresh leaders are capacity-bounded per store, and the
+  distributed lock contract remains responsible for a bounded,
+  crash-recoverable lease across workers.
+- Provider, redirect, application, callback, and API endpoint text is bounded
+  before URL parsing. Raw controls and backslashes are rejected instead of
+  relying on WHATWG normalization; API endpoints must retain the configured
+  origin.
 - Completion redirects remain on the configured application origin. Handler
   responses disable caching and referrer propagation.
+- A shared callback dispatcher accepts at most 100 logical services and
+  snapshots a dense allowlist before constructing service clients.
+- Status reports an expired refreshable row as connected only when the store
+  has every safe-refresh capability and provider credentials are currently
+  configured.
 
 ## Change checks
 

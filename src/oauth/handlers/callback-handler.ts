@@ -13,8 +13,10 @@ import {
 } from "../state-utils.ts";
 import {
   MAX_OAUTH_AUTHORIZATION_CODE_LENGTH,
+  MAX_OAUTH_CALLBACK_SERVICE_COUNT,
   MAX_OAUTH_ERROR_DESCRIPTION_LENGTH,
   MAX_OAUTH_ERROR_LENGTH,
+  MAX_OAUTH_URL_LENGTH,
 } from "../limits.ts";
 import {
   buildOAuthCallbackUrl,
@@ -96,6 +98,41 @@ interface OAuthCallbackRuntimeOptions {
   onError?: OAuthCallbackHandlerOptions["onError"];
   defaultErrorServiceId?: string;
   selectService: (state: NormalizedStoredOAuthState) => OAuthService | null;
+}
+
+function snapshotDispatcherConfigs(value: unknown): OAuthServiceConfig[] {
+  try {
+    if (!Array.isArray(value)) {
+      throw new Error("OAuth callback dispatcher requires a service config array");
+    }
+    const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+    const length = lengthDescriptor && "value" in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined;
+    if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 1) {
+      throw new Error("OAuth callback dispatcher requires at least one service config");
+    }
+    if (length > MAX_OAUTH_CALLBACK_SERVICE_COUNT) {
+      throw new Error(
+        `OAuth callback dispatcher supports at most ${MAX_OAUTH_CALLBACK_SERVICE_COUNT} services`,
+      );
+    }
+
+    const configs: OAuthServiceConfig[] = [];
+    for (let index = 0; index < length; index++) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+        throw new Error("OAuth callback dispatcher configs must use dense data properties");
+      }
+      configs.push(descriptor.value as OAuthServiceConfig);
+    }
+    return configs;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("OAuth callback dispatcher")) {
+      throw error;
+    }
+    throw new Error("OAuth callback dispatcher requires a valid service config array");
+  }
 }
 
 const CALLBACK_PARAMETER_LIMITS = {
@@ -200,7 +237,26 @@ function createOAuthCallbackRuntime(
       );
     }
 
-    const parsed = readOAuthCallbackParameters(new URL(request.url));
+    if (
+      typeof request.url !== "string" || request.url.length > MAX_OAUTH_URL_LENGTH
+    ) {
+      return handleError(
+        "invalid_request",
+        defaultErrorServiceId,
+        "Oversized OAuth callback URL",
+      );
+    }
+    let callbackUrl: URL;
+    try {
+      callbackUrl = new URL(request.url);
+    } catch {
+      return handleError(
+        "invalid_request",
+        defaultErrorServiceId,
+        "Invalid OAuth callback URL",
+      );
+    }
+    const parsed = readOAuthCallbackParameters(callbackUrl);
     if (!parsed.parameters) {
       return handleError(
         "invalid_request",
@@ -346,10 +402,8 @@ export function createOAuthCallbackDispatcher(
   configs: readonly OAuthServiceConfig[],
   options: OAuthCallbackDispatcherOptions,
 ): (request: Request) => Promise<Response> {
-  if (!Array.isArray(configs) || configs.length === 0) {
-    throw new Error("OAuth callback dispatcher requires at least one service config");
-  }
-  if (!options || typeof options.callbackRouteId !== "string" || !options.callbackRouteId) {
+  const configSnapshot = snapshotDispatcherConfigs(configs);
+  if (!options) {
     throw new Error("OAuth callback dispatcher requires a nonempty callbackRouteId");
   }
 
@@ -365,11 +419,14 @@ export function createOAuthCallbackDispatcher(
     env = getEnvironmentConfig(),
     envReader = getEnv,
   } = options;
+  if (typeof callbackRouteId !== "string" || !callbackRouteId) {
+    throw new Error("OAuth callback dispatcher requires a nonempty callbackRouteId");
+  }
 
   assertStateValidationEnabled(skipStateValidation);
   const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
   const services = new Map<string, OAuthService>();
-  for (const config of configs) {
+  for (const config of configSnapshot) {
     const service = new OAuthService(config, tokenStore, envReader);
     if (services.has(service.serviceId)) {
       throw new Error("OAuth callback dispatcher service IDs must be unique");

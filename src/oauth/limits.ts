@@ -18,6 +18,15 @@ export const MAX_OAUTH_API_RESPONSE_BYTES = 10 * 1_048_576;
 /** Maximum opaque token-store revision length accepted across the boundary. */
 export const MAX_OAUTH_TOKEN_REVISION_LENGTH = 256;
 
+/** Maximum serialized size of optional data-only OAuth transaction metadata. */
+export const MAX_OAUTH_STATE_METADATA_BYTES = 16 * 1_024;
+
+/** Maximum logical services admitted by one shared callback dispatcher. */
+export const MAX_OAUTH_CALLBACK_SERVICE_COUNT = 100;
+
+/** Maximum distinct refresh leaders retained for one token-store instance. */
+export const MAX_OAUTH_REFRESH_INFLIGHT_COUNT = 10_000;
+
 /** Bounds each configured OAuth scope token and the complete scope set. */
 export const MAX_OAUTH_SCOPE_TOKEN_LENGTH = 256;
 export const MAX_OAUTH_SCOPE_COUNT = 100;

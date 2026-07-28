@@ -10,6 +10,7 @@ import type {
   RefreshCapableTokenStore,
   TokenStore,
 } from "./types.ts";
+import { hasAsciiControlCharacter } from "./text-validation.ts";
 
 /** Runtime capability guard for stores that can refresh without lost updates. */
 export function isRefreshCapableTokenStore(
@@ -34,7 +35,7 @@ function readOptionalTokenString(
   if (value === undefined) return undefined;
   if (
     typeof value !== "string" || !value || value.length > maxLength ||
-    value.trim() !== value
+    value.trim() !== value || hasAsciiControlCharacter(value)
   ) return null;
   return value;
 }
@@ -91,7 +92,8 @@ export function normalizeOAuthTokenSnapshot(value: unknown): OAuthTokenSnapshot 
     const revision = ownDataValue(value, "revision");
     if (
       typeof revision !== "string" || !revision || revision.trim() !== revision ||
-      revision.length > MAX_OAUTH_TOKEN_REVISION_LENGTH
+      revision.length > MAX_OAUTH_TOKEN_REVISION_LENGTH ||
+      hasAsciiControlCharacter(revision)
     ) {
       return null;
     }

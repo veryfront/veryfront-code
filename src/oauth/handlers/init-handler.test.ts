@@ -413,6 +413,26 @@ Deno.test("status handler: treats expired access as connected when refresh token
   assertEquals(body.hasRefreshToken, true);
 });
 
+Deno.test("status handler does not claim expired refreshable access without credentials", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens(TEST_CONFIG.serviceId, "alice", {
+    accessToken: "expired",
+    refreshToken: "refresh",
+    expiresAt: Date.now() - 1,
+  });
+  const handler = createOAuthStatusHandler(TEST_CONFIG, {
+    tokenStore: store,
+    envReader: () => undefined,
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(makeRequest());
+  const body = await response.json();
+  assertEquals(body.connected, false);
+  assertEquals(body.configured, false);
+  assertEquals(body.refreshCapable, true);
+});
+
 Deno.test("status handler does not claim an expired token is usable without refresh capabilities", async () => {
   const store: TokenStore = {
     getTokens: () =>
@@ -702,6 +722,31 @@ Deno.test("init handler: snapshots authorization options at construction", async
   assertEquals(location.searchParams.get("state") === "attacker-controlled", false);
 });
 
+Deno.test("init handler rejects accessor-backed auth options without invoking them", () => {
+  let getterCalls = 0;
+  const authOptions = Object.defineProperty({}, "additionalParams", {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      return { audience: "attacker-controlled" };
+    },
+  });
+
+  assertThrows(
+    () =>
+      createOAuthInitHandler(TEST_CONFIG, {
+        tokenStore: new MemoryTokenStore(),
+        env: makeEnv(),
+        envReader: (key) => ENV[key],
+        getUserId: () => "alice",
+        authOptions,
+      }),
+    Error,
+    "data properties",
+  );
+  assertEquals(getterCalls, 0);
+});
+
 Deno.test("init handler: rejects invalid application base URLs eagerly", () => {
   for (
     const baseUrl of [
@@ -710,6 +755,7 @@ Deno.test("init handler: rejects invalid application base URLs eagerly", () => {
       "https://app.test/base-path",
       "https://app.test/?next=elsewhere",
       " https://app.test",
+      "https://app.test\\@attacker.test",
     ]
   ) {
     assertThrows(

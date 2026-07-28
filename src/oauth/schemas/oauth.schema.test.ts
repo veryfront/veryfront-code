@@ -147,6 +147,15 @@ Deno.test("OAuth schemas reject blank credentials, tokens, codes, and scopes", (
     getOAuthTokensSchema().safeParse({ accessToken: "x".repeat(65_537) }).success,
     false,
   );
+  for (const field of ["accessToken", "refreshToken", "tokenType", "scope", "idToken"] as const) {
+    assertEquals(
+      getOAuthTokensSchema().safeParse({
+        accessToken: "token",
+        [field]: "unsafe\u0000value",
+      }).success,
+      false,
+    );
+  }
   assertEquals(
     getOAuthServiceConfigSchema().safeParse({
       ...PROVIDER_CONFIG,
@@ -194,6 +203,39 @@ Deno.test("OAuth request schemas bound state and validate redirects and PKCE", (
     }).success,
     false,
   );
+
+  const cyclicMetadata: Record<string, unknown> = {};
+  cyclicMetadata.self = cyclicMetadata;
+  let getterCalls = 0;
+  const accessorMetadata = Object.defineProperty({}, "secret", {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      return "value";
+    },
+  });
+  for (
+    const metadata of [
+      cyclicMetadata,
+      accessorMetadata,
+      { value: "x".repeat(16 * 1_024) },
+      new (class MetadataRecord {
+        value = "class-instance";
+      })(),
+    ]
+  ) {
+    assertEquals(
+      getOAuthStateSchema().safeParse({
+        state: "state",
+        redirectUri: "https://app.test/callback",
+        scopes: ["read"],
+        createdAt: Date.now(),
+        metadata,
+      }).success,
+      false,
+    );
+  }
+  assertEquals(getterCalls, 0);
 });
 
 Deno.test("OAuth token exchange results enforce success and failure invariants", () => {

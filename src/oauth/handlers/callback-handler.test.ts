@@ -595,6 +595,15 @@ Deno.test("callback-handler: rejects cross-origin completion redirects", () => {
     Error,
     "credentials",
   );
+  assertThrows(
+    () =>
+      createOAuthCallbackHandler(TEST_CONFIG, {
+        baseUrl: "https://app.test",
+        successRedirect: "/account\\settings",
+      }),
+    Error,
+    "raw controls or backslashes",
+  );
 });
 
 Deno.test("callback-handler: redirect responses prevent caching and referrer leakage", async () => {

@@ -16,9 +16,10 @@ import { isRefreshCapableTokenStore, normalizeStoredOAuthTokens } from "../token
 import { normalizeOAuthUserId } from "../state-utils.ts";
 import { normalizeOAuthScopeSet } from "../scope-utils.ts";
 import {
-  getOAuthParameterRecordIssues,
   RESERVED_AUTHORIZATION_PARAMETERS,
+  snapshotOAuthParameterRecord,
 } from "../config-validation.ts";
+import { snapshotOwnDataProperties } from "../data-properties.ts";
 import { resolveOAuthHandlerTokenStore } from "./token-store-policy.ts";
 
 const logger = baseLogger.component("o-auth");
@@ -140,7 +141,7 @@ export function createOAuthInitHandler(
     tokenStore: configuredTokenStore,
     baseUrl,
     callbackRouteId,
-    authOptions = {},
+    authOptions: rawAuthOptions = {},
     env = getEnvironmentConfig(),
     envReader = getEnv,
     isAuthenticated,
@@ -149,6 +150,19 @@ export function createOAuthInitHandler(
   const tokenStore = resolveOAuthHandlerTokenStore(configuredTokenStore, env);
   const service = new OAuthService(config, tokenStore, envReader);
   const handlerUsesPkce = service.pkceMode !== "unsupported";
+  const authOptions = snapshotOwnDataProperties(
+    rawAuthOptions,
+    [
+      "scopes",
+      "state",
+      "usePkce",
+      "additionalParams",
+      "redirectUri",
+    ] as const,
+  );
+  if (!authOptions) {
+    throw new Error("OAuth init handler authOptions must use plain data properties");
+  }
 
   if (authOptions.state !== undefined) {
     throw new Error(
@@ -162,15 +176,16 @@ export function createOAuthInitHandler(
   }
   const scopes = authOptions.scopes === undefined ? undefined : normalizeOAuthScopeSet(
     authOptions.scopes,
-    config.scopeSeparator === "," ? "," : " ",
+    service.scopeSeparator,
   );
   if (authOptions.scopes !== undefined && !scopes) {
     throw new Error("OAuth init handler scopes are invalid");
   }
-  const additionalParamsIssue = getOAuthParameterRecordIssues(
+  const additionalParams = snapshotOAuthParameterRecord(
     authOptions.additionalParams,
     RESERVED_AUTHORIZATION_PARAMETERS,
-  )[0];
+  );
+  const additionalParamsIssue = additionalParams.issues[0];
   if (additionalParamsIssue) {
     throw new Error(
       `Invalid OAuth authorization parameter configuration: ${additionalParamsIssue.message}`,
@@ -184,11 +199,10 @@ export function createOAuthInitHandler(
     );
   }
   const authorizationOptions: AuthorizationUrlOptions = {
-    ...authOptions,
     ...(scopes ? { scopes } : {}),
-    ...(authOptions.additionalParams !== undefined
-      ? { additionalParams: { ...authOptions.additionalParams } }
-      : {}),
+    ...(additionalParams.snapshot === undefined
+      ? {}
+      : { additionalParams: additionalParams.snapshot }),
     usePkce: handlerUsesPkce,
   };
   const appUrl = resolveOAuthApplicationUrl(baseUrl, env);
@@ -286,12 +300,14 @@ export function createOAuthStatusHandler(
       const isExpired = tokens?.expiresAt !== undefined ? Date.now() >= tokens.expiresAt : false;
       const hasRefreshToken = !!tokens?.refreshToken;
       const refreshCapable = isRefreshCapableTokenStore(tokenStore);
+      const configured = service.isConfigured();
 
       return createOAuthJsonResponse({
         service: service.serviceId,
         displayName: service.displayName,
-        connected: isConnected && (!isExpired || (hasRefreshToken && refreshCapable)),
-        configured: service.isConfigured(),
+        connected: isConnected &&
+          (!isExpired || (hasRefreshToken && refreshCapable && configured)),
+        configured,
         expiresAt: tokens?.expiresAt,
         hasRefreshToken,
         refreshCapable,

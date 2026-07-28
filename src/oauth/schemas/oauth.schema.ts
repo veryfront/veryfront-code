@@ -14,6 +14,8 @@ import {
 } from "../limits.ts";
 import { isOAuthRedirectUrl, isSecureOAuthEndpointUrl } from "../url-validation.ts";
 import { isValidOAuthScopeSet } from "../scope-utils.ts";
+import { type OAuthStateMetadata, snapshotOAuthStateMetadata } from "../state-metadata.ts";
+import { hasAsciiControlCharacter } from "../text-validation.ts";
 import {
   getOAuthParameterRecordIssues,
   getOAuthStaticHeaderIssues,
@@ -33,8 +35,22 @@ function isTrimmedNonBlank(value: string): boolean {
   return value.length > 0 && value.trim() === value;
 }
 
+function isSafeTokenString(value: string): boolean {
+  return isTrimmedNonBlank(value) && !hasAsciiControlCharacter(value);
+}
+
 const HTTPS_URL_MESSAGE = "Must be an absolute HTTPS URL without credentials or a fragment";
 const REDIRECT_URL_MESSAGE = "Must use HTTPS or HTTP on an explicit loopback host";
+
+const getOAuthStateMetadataSchema = defineSchema((v) =>
+  v.custom<unknown>(() => true)
+    .transform((value) => snapshotOAuthStateMetadata(value))
+    .refine(
+      (metadata) => metadata !== null,
+      "Must be a bounded data-only JSON object",
+    )
+    .transform((metadata): OAuthStateMetadata => metadata ?? Object.create(null))
+);
 
 function addConfigIssues(
   issues: OAuthConfigIssue[],
@@ -161,25 +177,25 @@ export const getOAuthServiceConfigSchema = defineSchema((v) =>
 export const getOAuthTokensSchema = defineSchema((v) =>
   v.object({
     accessToken: v.string().min(1).max(MAX_OAUTH_TOKEN_VALUE_LENGTH).refine(
-      isTrimmedNonBlank,
-      "Must be trimmed and nonblank",
+      isSafeTokenString,
+      "Must be trimmed, nonblank, and contain no control characters",
     ),
     refreshToken: v.string().max(MAX_OAUTH_TOKEN_VALUE_LENGTH).refine(
-      isTrimmedNonBlank,
-      "Must be trimmed and nonblank",
+      isSafeTokenString,
+      "Must be trimmed, nonblank, and contain no control characters",
     ).optional(),
     expiresAt: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     tokenType: v.string().max(MAX_OAUTH_TOKEN_TYPE_LENGTH).refine(
-      isTrimmedNonBlank,
-      "Must be trimmed and nonblank",
+      isSafeTokenString,
+      "Must be trimmed, nonblank, and contain no control characters",
     ).optional(),
     scope: v.string().max(MAX_OAUTH_SCOPE_WIRE_LENGTH).refine(
-      isTrimmedNonBlank,
-      "Must be trimmed and nonblank",
+      isSafeTokenString,
+      "Must be trimmed, nonblank, and contain no control characters",
     ).optional(),
     idToken: v.string().max(MAX_OAUTH_TOKEN_VALUE_LENGTH).refine(
-      isTrimmedNonBlank,
-      "Must be trimmed and nonblank",
+      isSafeTokenString,
+      "Must be trimmed, nonblank, and contain no control characters",
     ).optional(),
   })
 );
@@ -195,7 +211,7 @@ export const getOAuthStateSchema = defineSchema((v) =>
       "Must contain valid bounded OAuth scope tokens",
     ),
     createdAt: v.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    metadata: v.record(v.string(), v.unknown()).optional(),
+    metadata: getOAuthStateMetadataSchema().optional(),
   })
 );
 

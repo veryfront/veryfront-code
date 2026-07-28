@@ -222,6 +222,72 @@ unit. No unit now lacks a current authoritative-branch review delta; the next
 dependency-ordered work closes the remaining reviewed unit and revalidates the
 touched units.
 
+### OAuth active checkpoint
+
+The `oauth` audit unit owns public provider and service configuration, init,
+callback, status and disconnect handlers, one-shot authorization state, token
+exchange and refresh, token-store capability contracts, the built-in provider
+catalog, runtime schemas, and the exact `veryfront/oauth` package surface. Its
+direct dependencies are configuration, structured errors, platform
+environment/process compatibility, bounded JSON schemas, utilities, and the
+integration feature catalog. Direct consumers include application OAuth
+routes, generated integration templates, CLI composition, documentation
+examples, and integration runtime configuration.
+
+All non-policy findings from the current deep review are remediated:
+
+- provider configs, nested parameter/header/mapping records, scopes, handler
+  authorization options, and callback-dispatch allowlists are captured through
+  own data descriptors before asynchronous work; accessors are rejected without
+  invocation and caller mutation cannot change a validated endpoint, reserved
+  field, header, scope, or request option;
+- state metadata is a detached data-only JSON object with a 16 KiB serialized
+  limit; accessors, class instances, cycles, sparse or non-JSON structures, and
+  oversized values fail before persistence;
+- provider, redirect, completion, callback, application, and API URL text is
+  length-bounded and rejects raw controls/backslashes before WHATWG parsing;
+  API endpoints are validated before token-store work and remain on the
+  configured origin, while shared dispatch is capped at 100 dense services;
+- token and API deadlines now cover non-cooperative fetch implementations and
+  stalled bodies; caller abort can detach from token lookup or a shared refresh,
+  late bodies are cancelled without awaiting untrusted cleanup, response JSON
+  uses fatal UTF-8, and request options are snapshotted before token lookup;
+- refresh leaders are capacity-bounded per store and remain registered when one
+  waiter aborts; still-valid tokens remain usable with a base store during the
+  proactive window, expired refresh requires revisioned CAS plus a distributed
+  lease, and status additionally requires configured provider credentials;
+- token strings and opaque revisions reject raw controls and enforce canonical
+  length bounds; revocation diagnostics no longer coerce or disclose hostile
+  thrown values; the exact public runtime export surface now has an owning
+  source/package parity test; and architecture plus operator guidance matches
+  these contracts.
+
+Reproducible checkpoint evidence:
+
+- all 14 OAuth test files pass 191 tests and 27 nested steps with zero failures
+  under leak tracing, including accessor, mutation, malformed UTF-8, stalled
+  transport/body, late response, waiter cancellation, CAS, status, callback,
+  provider-protocol, storage, schema, and exact-export regressions;
+- focused OAuth formatting, lint, typechecking, and `git diff --check` pass;
+- `deno task docs:validate` passes 67 guides, 112 public documentation files,
+  47 executable documentation tests with 90 nested steps, and all 747 links.
+
+One provider-policy decision remains before formal closure. Slack now exposes
+PKCE only for apps explicitly enabled as public clients; its PKCE instructions
+require exchanging the verifier without a client secret, while the conventional
+confidential web flow authenticates with the client secret. The built-in
+`slackConfig` currently combines `pkceMode: "supported"` (the handlers therefore
+always send PKCE) with HTTP Basic client-secret authentication. Slack documents
+`pkce_not_allowed` for apps not enabled for PKCE and instructs enabled public
+clients to omit the secret. The recommended compatibility policy is to make the
+built-in Slack config the conventional confidential web flow
+(`pkceMode: "unsupported"`, retain Basic authentication) and document that
+PKCE-enabled public Slack apps require a dedicated adapter/runtime
+authentication mode that omits secret authentication; the current generic
+runtime still requires a client secret, so a custom config alone is
+insufficient. That wire-behavior change requires approval before it is applied.
+Until then, `oauth` remains in revalidation rather than being counted as closed.
+
 ### Proxy active checkpoint
 
 The `proxy` audit unit has completed its implementation-level review and

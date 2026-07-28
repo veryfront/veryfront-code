@@ -1,6 +1,6 @@
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { isLoopbackHttpUrl } from "./url-validation.ts";
-import { MAX_OAUTH_SERVICE_ID_LENGTH } from "./limits.ts";
+import { isLoopbackHttpUrl, isSafeOAuthUrlText } from "./url-validation.ts";
+import { MAX_OAUTH_SERVICE_ID_LENGTH, MAX_OAUTH_URL_LENGTH } from "./limits.ts";
 
 const LOCAL_DEVELOPMENT_APP_URL = "http://localhost:3000";
 
@@ -31,8 +31,18 @@ export function resolveOAuthApplicationUrl(
       "OAuth callback base URL not configured: set APP_URL (or pass baseUrl) outside explicit development/test environments.",
     );
   }
+  if (typeof candidate !== "string" || candidate.length > MAX_OAUTH_URL_LENGTH) {
+    throw invalidApplicationUrl(
+      `the URL must be a string no longer than ${MAX_OAUTH_URL_LENGTH} characters`,
+    );
+  }
   if (candidate.trim() !== candidate) {
     throw invalidApplicationUrl("the URL must not contain surrounding whitespace");
+  }
+  if (!isSafeOAuthUrlText(candidate)) {
+    throw invalidApplicationUrl(
+      `the URL must be at most ${MAX_OAUTH_URL_LENGTH} characters and contain no raw controls or backslashes`,
+    );
   }
 
   let parsed: URL;
@@ -72,6 +82,11 @@ export function buildOAuthCallbackUrl(appUrl: URL, serviceId: string): string {
 
 /** Resolve a post-flow redirect while preventing an OAuth client open redirector. */
 export function resolveOAuthCompletionRedirect(appUrl: URL, target: string): URL {
+  if (!isSafeOAuthUrlText(target)) {
+    throw new Error(
+      `OAuth completion redirect must be nonempty, at most ${MAX_OAUTH_URL_LENGTH} characters, and contain no raw controls or backslashes`,
+    );
+  }
   let resolved: URL;
   try {
     resolved = new URL(target, appUrl);

@@ -1,11 +1,21 @@
 import { MAX_OAUTH_URL_LENGTH } from "./limits.ts";
+import { hasAsciiControlCharacter } from "./text-validation.ts";
+
+/**
+ * Reject raw URL text that WHATWG parsing would silently strip or reinterpret.
+ *
+ * Canonical percent-encoding remains allowed; raw controls and backslashes do
+ * not, because accepting them makes validation depend on parser normalization.
+ */
+export function isSafeOAuthUrlText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    value.length <= MAX_OAUTH_URL_LENGTH && value.trim() === value &&
+    !hasAsciiControlCharacter(value) && !value.includes("\\");
+}
 
 function parseSafeAbsoluteUrl(value: unknown): URL | null {
   try {
-    if (
-      typeof value !== "string" || !value || value.length > MAX_OAUTH_URL_LENGTH ||
-      value.trim() !== value
-    ) return null;
+    if (!isSafeOAuthUrlText(value)) return null;
     const parsed = new URL(value);
     if (parsed.username || parsed.password || parsed.hash) return null;
     return parsed;

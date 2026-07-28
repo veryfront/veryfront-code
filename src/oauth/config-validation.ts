@@ -59,8 +59,63 @@ export interface OAuthConfigIssue {
   message: string;
 }
 
-function isRecordObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+export interface OAuthConfigSnapshot<T> {
+  snapshot: T | undefined;
+  issues: OAuthConfigIssue[];
+}
+
+function defineStringProperty(
+  target: Record<string, string>,
+  key: string,
+  value: string,
+): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function capitalizeLabel(label: string): string {
+  return label.length === 0 ? label : label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function snapshotRecordEntries(
+  value: unknown,
+  label: string,
+): { entries: [string, unknown][] | undefined; issues: OAuthConfigIssue[] } {
+  if (value === undefined) return { entries: undefined, issues: [] };
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return { entries: undefined, issues: [{ message: `Must be ${label}` }] };
+    }
+    const prototype = Reflect.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return { entries: undefined, issues: [{ message: `Must be ${label}` }] };
+    }
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key === "symbol")) {
+      return {
+        entries: undefined,
+        issues: [{ message: `${capitalizeLabel(label)} must use string keys` }],
+      };
+    }
+    const entries: [string, unknown][] = [];
+    for (const key of keys as string[]) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
+        return {
+          entries: undefined,
+          issues: [{ key, message: `${capitalizeLabel(label)} must use data properties` }],
+        };
+      }
+      entries.push([key, descriptor.value]);
+    }
+    return { entries, issues: [] };
+  } catch {
+    return { entries: undefined, issues: [{ message: `Must be ${label}` }] };
+  }
 }
 
 export function isValidOAuthProviderId(value: unknown): value is string {
@@ -78,14 +133,15 @@ export function isValidOAuthEnvironmentVariableName(value: unknown): value is st
     /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
-export function getOAuthParameterRecordIssues(
+export function snapshotOAuthParameterRecord(
   value: unknown,
   reserved: ReadonlySet<string>,
-): OAuthConfigIssue[] {
-  if (value === undefined) return [];
-  if (!isRecordObject(value)) return [{ message: "Must be an OAuth parameter record" }];
-  const entries = Object.entries(value);
-  const issues: OAuthConfigIssue[] = [];
+): OAuthConfigSnapshot<Record<string, string>> {
+  const captured = snapshotRecordEntries(value, "an OAuth parameter record");
+  if (!captured.entries) return { snapshot: undefined, issues: captured.issues };
+  const issues = [...captured.issues];
+  const snapshot: Record<string, string> = Object.create(null);
+  const entries = captured.entries;
   if (entries.length > MAX_OAUTH_CONFIG_PARAMETER_COUNT) {
     issues.push({ message: `Must contain at most ${MAX_OAUTH_CONFIG_PARAMETER_COUNT} entries` });
   }
@@ -100,19 +156,29 @@ export function getOAuthParameterRecordIssues(
       parameterValue.length > MAX_OAUTH_CONFIG_PARAMETER_VALUE_LENGTH
     ) {
       issues.push({ key, message: "OAuth parameter value is too large" });
+    } else {
+      defineStringProperty(snapshot, key, parameterValue);
     }
   }
-  return issues;
+  return { snapshot: issues.length === 0 ? snapshot : undefined, issues };
 }
 
-export function getOAuthStaticHeaderIssues(
+export function getOAuthParameterRecordIssues(
   value: unknown,
   reserved: ReadonlySet<string>,
 ): OAuthConfigIssue[] {
-  if (value === undefined) return [];
-  if (!isRecordObject(value)) return [{ message: "Must be an HTTP header record" }];
-  const entries = Object.entries(value);
-  const issues: OAuthConfigIssue[] = [];
+  return snapshotOAuthParameterRecord(value, reserved).issues;
+}
+
+export function snapshotOAuthStaticHeaders(
+  value: unknown,
+  reserved: ReadonlySet<string>,
+): OAuthConfigSnapshot<Record<string, string>> {
+  const captured = snapshotRecordEntries(value, "an HTTP header record");
+  if (!captured.entries) return { snapshot: undefined, issues: captured.issues };
+  const issues = [...captured.issues];
+  const snapshot: Record<string, string> = Object.create(null);
+  const entries = captured.entries;
   const names = new Set<string>();
   if (entries.length > MAX_OAUTH_STATIC_HEADER_COUNT) {
     issues.push({ message: `Must contain at most ${MAX_OAUTH_STATIC_HEADER_COUNT} entries` });
@@ -140,12 +206,20 @@ export function getOAuthStaticHeaderIssues(
       continue;
     }
     try {
-      new Headers({ [name]: headerValue });
+      new Headers([[name, headerValue]]);
+      defineStringProperty(snapshot, name, headerValue);
     } catch {
       issues.push({ key: name, message: "Invalid HTTP header" });
     }
   }
-  return issues;
+  return { snapshot: issues.length === 0 ? snapshot : undefined, issues };
+}
+
+export function getOAuthStaticHeaderIssues(
+  value: unknown,
+  reserved: ReadonlySet<string>,
+): OAuthConfigIssue[] {
+  return snapshotOAuthStaticHeaders(value, reserved).issues;
 }
 
 const TOKEN_MAPPING_FIELDS = [
@@ -156,15 +230,51 @@ const TOKEN_MAPPING_FIELDS = [
   "scope",
 ] as const;
 
-export function getOAuthTokenResponseMappingIssues(
+export function snapshotOAuthTokenResponseMapping(
   value: unknown,
-): OAuthConfigIssue[] {
-  if (value === undefined) return [];
-  if (!isRecordObject(value)) return [{ message: "Must be a token response mapping record" }];
+): OAuthConfigSnapshot<Partial<Record<(typeof TOKEN_MAPPING_FIELDS)[number], string>>> {
+  if (value === undefined) return { snapshot: undefined, issues: [] };
+  let descriptors: Partial<Record<(typeof TOKEN_MAPPING_FIELDS)[number], unknown>>;
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return {
+        snapshot: undefined,
+        issues: [{ message: "Must be a token response mapping record" }],
+      };
+    }
+    const prototype = Reflect.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return {
+        snapshot: undefined,
+        issues: [{ message: "Must be a token response mapping record" }],
+      };
+    }
+    descriptors = Object.create(null);
+    for (const field of TOKEN_MAPPING_FIELDS) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, field);
+      if (descriptor === undefined) continue;
+      if (!("value" in descriptor) || descriptor.enumerable !== true) {
+        return {
+          snapshot: undefined,
+          issues: [{ key: field, message: "Token response mapping must use data properties" }],
+        };
+      }
+      descriptors[field] = descriptor.value;
+    }
+  } catch {
+    return {
+      snapshot: undefined,
+      issues: [{ message: "Must be a token response mapping record" }],
+    };
+  }
+
   const issues: OAuthConfigIssue[] = [];
   const responseFields = new Set<string>();
+  const snapshot: Partial<Record<(typeof TOKEN_MAPPING_FIELDS)[number], string>> = Object.create(
+    null,
+  );
   for (const field of TOKEN_MAPPING_FIELDS) {
-    const responseField = value[field];
+    const responseField = descriptors[field];
     if (responseField === undefined) continue;
     if (
       typeof responseField !== "string" || !responseField ||
@@ -179,8 +289,20 @@ export function getOAuthTokenResponseMappingIssues(
       continue;
     }
     responseFields.add(responseField);
+    Object.defineProperty(snapshot, field, {
+      configurable: true,
+      enumerable: true,
+      value: responseField,
+      writable: true,
+    });
   }
-  return issues;
+  return { snapshot: issues.length === 0 ? snapshot : undefined, issues };
+}
+
+export function getOAuthTokenResponseMappingIssues(
+  value: unknown,
+): OAuthConfigIssue[] {
+  return snapshotOAuthTokenResponseMapping(value).issues;
 }
 
 export function getReservedOAuthUrlParameterIssues(

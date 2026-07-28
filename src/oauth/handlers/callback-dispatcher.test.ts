@@ -7,7 +7,12 @@ import {
 } from "./callback-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";
 import type { OAuthServiceConfig, StoredOAuthState } from "../types.ts";
-import { MAX_OAUTH_ERROR_DESCRIPTION_LENGTH, MAX_OAUTH_SERVICE_ID_LENGTH } from "../limits.ts";
+import {
+  MAX_OAUTH_CALLBACK_SERVICE_COUNT,
+  MAX_OAUTH_ERROR_DESCRIPTION_LENGTH,
+  MAX_OAUTH_SERVICE_ID_LENGTH,
+  MAX_OAUTH_URL_LENGTH,
+} from "../limits.ts";
 
 const APP_URL = "http://localhost:3000";
 const CALLBACK_ROUTE_ID = "shared";
@@ -292,6 +297,7 @@ Deno.test("callback dispatcher rejects duplicate or oversized parameters before 
         ["state", "valid-state"],
         ["error_description", "x".repeat(MAX_OAUTH_ERROR_DESCRIPTION_LENGTH + 1)],
       ]),
+      new Request(`${CALLBACK_URI}?padding=${"x".repeat(MAX_OAUTH_URL_LENGTH)}`),
     ]
   ) {
     const response = await handler(request);
@@ -357,6 +363,15 @@ Deno.test("callback dispatcher validates its allowlist and shared route eagerly"
     "at least one",
   );
   assertThrows(
+    () =>
+      createOAuthCallbackDispatcher(
+        Array.from({ length: MAX_OAUTH_CALLBACK_SERVICE_COUNT + 1 }, () => ALPHA_CONFIG),
+        options,
+      ),
+    Error,
+    "at most",
+  );
+  assertThrows(
     () => createOAuthCallbackDispatcher([ALPHA_CONFIG, { ...ALPHA_CONFIG }], options),
     Error,
     "unique",
@@ -398,4 +413,20 @@ Deno.test("callback dispatcher validates its allowlist and shared route eagerly"
     Error,
     "state validation cannot be disabled",
   );
+
+  let getterCalls = 0;
+  const accessorConfigs = [ALPHA_CONFIG];
+  Object.defineProperty(accessorConfigs, "0", {
+    enumerable: true,
+    get() {
+      getterCalls++;
+      return ALPHA_CONFIG;
+    },
+  });
+  assertThrows(
+    () => createOAuthCallbackDispatcher(accessorConfigs, options),
+    Error,
+    "data properties",
+  );
+  assertEquals(getterCalls, 0);
 });

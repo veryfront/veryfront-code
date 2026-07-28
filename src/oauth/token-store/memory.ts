@@ -19,8 +19,10 @@ import { normalizeStoredOAuthTokens } from "../token-utils.ts";
 import {
   MAX_OAUTH_PROJECT_ID_LENGTH,
   MAX_OAUTH_SERVICE_ID_LENGTH,
+  MAX_OAUTH_TOKEN_REVISION_LENGTH,
   MAX_OAUTH_USER_ID_LENGTH,
 } from "../limits.ts";
+import { hasAsciiControlCharacter } from "../text-validation.ts";
 
 const logger = baseLogger.component("o-auth");
 
@@ -189,8 +191,15 @@ export class MemoryTokenStore implements RefreshCapableTokenStore {
     expectedRevision: string,
     tokens: OAuthTokens,
   ): Promise<boolean> {
-    if (!expectedRevision) {
-      throw new TypeError("Expected OAuth token revision must not be empty");
+    if (
+      typeof expectedRevision !== "string" || !expectedRevision ||
+      expectedRevision.trim() !== expectedRevision ||
+      expectedRevision.length > MAX_OAUTH_TOKEN_REVISION_LENGTH ||
+      hasAsciiControlCharacter(expectedRevision)
+    ) {
+      throw new TypeError(
+        `Expected OAuth token revision must be trimmed, nonempty, and at most ${MAX_OAUTH_TOKEN_REVISION_LENGTH} characters`,
+      );
     }
     const replacement = normalizeStoredOAuthTokens(tokens);
     if (!replacement) throw new TypeError("Invalid OAuth token row");
