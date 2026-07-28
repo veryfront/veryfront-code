@@ -1,4 +1,4 @@
-import { join } from "veryfront/platform/path";
+import { join, relative, resolve } from "veryfront/platform/path";
 import { runtime } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { buildProduction } from "veryfront/build";
@@ -35,6 +35,10 @@ export async function runWithBundlerShutdown<T>(
 
   await stopBundler();
   return result;
+}
+
+export function formatBuildOutputPath(projectDir: string, outputDir: string): string {
+  return relative(projectDir, resolve(projectDir, outputDir)).replace(/\\/g, "/");
 }
 
 export function buildCommand(options: BuildOptions): Promise<void> {
@@ -104,7 +108,12 @@ export function buildCommand(options: BuildOptions): Promise<void> {
           return;
         }
 
-        displayBuildSuccess(stats, startTime, options.outputDir ?? "dist", dryRun);
+        displayBuildSuccess(
+          stats,
+          startTime,
+          formatBuildOutputPath(options.projectDir, outputDir),
+          dryRun,
+        );
       } catch (error) {
         if (isJsonMode()) {
           streamJsonLine({

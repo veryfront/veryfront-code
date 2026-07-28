@@ -38,13 +38,13 @@ const PROJECT_PROMPT_DISPLAY: PromptDisplayOptions = {
 };
 
 export function createProjectSelector(options: ProjectSelectorOptions): ProjectSelector {
-  let open = false;
+  let isOpen = false;
 
   return {
     async open(): Promise<void> {
-      if (open) return;
+      if (isOpen) return;
 
-      open = true;
+      isOpen = true;
       let interrupted = false;
       options.pauseKeyboard();
 
@@ -79,7 +79,7 @@ export function createProjectSelector(options: ProjectSelectorOptions): ProjectS
         }
         throw error;
       } finally {
-        open = false;
+        isOpen = false;
         if (!interrupted || !options.onInterrupt) options.resumeKeyboard();
       }
     },
