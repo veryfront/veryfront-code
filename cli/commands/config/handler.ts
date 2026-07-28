@@ -1,11 +1,14 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger } from "#cli/utils";
 import { getEnv } from "veryfront/platform";
+import {
+  ENVIRONMENT_PROJECT_REFERENCE_NAMES,
+  resolveEnvironmentProjectReference,
+} from "#cli/shared/config";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { bold, dim } from "../../ui/colors.ts";
 
 const ENV_OVERRIDES: Record<string, string> = {
-  projectSlug: "VERYFRONT_PROJECT_SLUG",
   apiBaseUrl: "VERYFRONT_API_BASE_URL",
   apiToken: "VERYFRONT_API_TOKEN",
   nodeEnv: "NODE_ENV",
@@ -37,14 +40,13 @@ export async function detectConfigSource(
 
 export function getEnvOverrides(): string[] {
   const overrides: string[] = [];
+  for (const envVar of ENVIRONMENT_PROJECT_REFERENCE_NAMES) {
+    if (getEnv(envVar)) overrides.push(`projectSlug (${envVar})`);
+  }
   for (const [field, envVar] of Object.entries(ENV_OVERRIDES)) {
     if (getEnv(envVar)) overrides.push(`${field} (${envVar})`);
   }
   return overrides;
-}
-
-function getTenantProjectReference(): string | undefined {
-  return getEnv("TENANT_PROJECT_SLUG") ?? getEnv("TENANT_PROJECT_ID");
 }
 
 export type ConfigCommandData = {
@@ -72,9 +74,9 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
   const detectedConfigSource = await detectConfigSource(projectDir);
   const envOverrides = getEnvOverrides();
   const fileConfig = await readConfigFile(projectDir);
-  const tenantProjectReference = getTenantProjectReference();
+  const environmentProjectReference = resolveEnvironmentProjectReference()?.reference;
   const linkedProjectSlug = !config.projectSlug && !fileConfig?.projectSlug &&
-      !tenantProjectReference
+      !environmentProjectReference
     ? (await readProjectLinkForControlPlane(
       projectDir,
       resolveCliApiUrl(config, fileConfig?.apiUrl),
@@ -82,7 +84,7 @@ export async function getConfigCommandData(projectDir: string): Promise<ConfigCo
     : undefined;
 
   return {
-    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? tenantProjectReference ??
+    projectSlug: config.projectSlug ?? fileConfig?.projectSlug ?? environmentProjectReference ??
       linkedProjectSlug ?? null,
     nodeEnv: config.nodeEnv,
     veryfrontEnv: config.veryfrontEnv || null,
