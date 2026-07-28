@@ -1,8 +1,9 @@
 /**
  * Deploy command - Create a release and deploy to an environment
  *
- * Creates a new release from the specified branch (default: main)
- * and deploys it to the target environment (default: production).
+ * Creates a new release from the specified branch, the latest verified push,
+ * or main when the project has not been pushed yet, then deploys it to the
+ * target environment (default: production).
  *
  * @module cli/commands/deploy
  */
@@ -57,7 +58,7 @@ import { isWithinDirectory, normalizePath } from "veryfront/utils";
 export const getDeployArgsSchema = defineSchema((v) =>
   v.object({
     projectDir: v.string().optional(),
-    branch: v.string().min(1).default("main"),
+    branch: v.string().min(1).optional(),
     env: v.string().min(1).default("production"),
     releaseName: v.string().min(1).optional(),
     dryRun: v.boolean().default(false),
@@ -1200,7 +1201,7 @@ export async function waitForReleaseAssetManifest(
 export async function deployCommand(options: DeployOptions): Promise<DeployResult | null> {
   const {
     projectDir = cwd(),
-    branch,
+    branch: requestedBranch,
     env,
     releaseName,
     dryRun,
@@ -1237,6 +1238,7 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
 
   const environmentConfig = await runWithProgress(getEnvironmentConfig);
   const receipt = await runWithProgress(() => readPushReceipt(projectDir));
+  const branch = requestedBranch ?? receipt?.branch ?? "main";
   const setup = await runWithProgress(() =>
     ensureProjectLinkedForDeploy(projectDir, environmentConfig, receipt, dryRun, quiet)
   );
@@ -1461,7 +1463,7 @@ export async function deployCommand(options: DeployOptions): Promise<DeployResul
 async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
   const {
     projectDir = cwd(),
-    branch,
+    branch: requestedBranch,
     env,
     releaseName,
     dryRun,
@@ -1476,6 +1478,7 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
     streamJsonLine({ type: "step", name: "resolve-config", status: "started" });
     const environmentConfig = getEnvironmentConfig();
     const receipt = await readPushReceipt(projectDir);
+    const branch = requestedBranch ?? receipt?.branch ?? "main";
     const setup = await ensureProjectLinkedForDeploy(
       projectDir,
       environmentConfig,
