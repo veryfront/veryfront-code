@@ -543,6 +543,56 @@ describe("commands/serve/command", () => {
     assertEquals((flushTimeouts[0] ?? 0) > 0, true);
   });
 
+  it("preserves default reporter acquisition failures without remote capture", async () => {
+    const commandModule = await import("./command.ts") as {
+      runProductionServer?: (
+        options: ServeOptions,
+        dependencies: {
+          ensureBundlerContracts: () => Promise<void>;
+          loadSentryModule: () => Promise<never>;
+        },
+      ) => Promise<void>;
+    };
+    const runProductionServer = commandModule.runProductionServer;
+    assertExists(runProductionServer);
+
+    const loadError = new Error("Sentry module failed to load");
+    let bundlerCalled = false;
+    const result = runProductionServer(
+      {
+        mode: "production",
+        port: 3000,
+        bindAddress: "127.0.0.1",
+        splitMode: false,
+        useBinary: false,
+        binaryPath: "./bin/veryfront",
+        debug: false,
+      },
+      {
+        loadSentryModule: () => Promise.reject(loadError),
+        ensureBundlerContracts: () => {
+          bundlerCalled = true;
+          return Promise.resolve();
+        },
+      },
+    ).then(
+      (value: void) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<{ timedOut: true }>((resolve) => {
+      timeoutId = setTimeout(() => resolve({ timedOut: true }), 250);
+    });
+    const outcome = await Promise.race([result, timeout]);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+
+    assertEquals("timedOut" in outcome, false);
+    assertEquals("value" in outcome, false);
+    if ("error" in outcome) assertStrictEquals(outcome.error, loadError);
+    assertEquals(bundlerCalled, false);
+  });
+
   for (const mode of ["production", "combined"] as const) {
     it(`routes ${mode} mode through the production server boundary`, async () => {
       const calls: ServeOptions[] = [];

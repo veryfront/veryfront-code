@@ -164,6 +164,9 @@ function createDeferredProductionStartupErrorReporter(): {
 
   return {
     reporter: {
+      // If Sentry module acquisition fails, no remote transport exists yet.
+      // Preserve the acquisition failure and bound flush instead of adding a
+      // fallback reporter inside the startup path.
       captureApplicationError: (error, context) =>
         sentryModule?.captureApplicationError(error, context),
       flushApplicationErrors: (timeoutMs) =>
