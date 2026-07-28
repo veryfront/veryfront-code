@@ -135,6 +135,7 @@ Deno.bench({
       projectId: "bench-health",
       permissions: TEST_PERMISSIONS,
       requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
     });
     worker.start();
     await worker.isHealthy(5_000);

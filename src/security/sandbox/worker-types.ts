@@ -129,7 +129,7 @@ export interface ExecuteAppRouteRequest {
   projectDir: string;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  /** Per-project env var overlay for multi-tenant proxy mode */
+  /** Immutable per-request project env snapshot exposed through the handler context. */
   projectEnv?: Record<string, string>;
 }
 
@@ -144,7 +144,7 @@ export interface ExecutePagesRouteRequest {
   projectDir: string;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  /** Per-project env var overlay for multi-tenant proxy mode */
+  /** Immutable per-request project env snapshot exposed through the handler context. */
   projectEnv?: Record<string, string>;
 }
 
@@ -159,7 +159,7 @@ export interface InspectApiRouteMethodsRequest {
   projectDir: string;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  /** Per-project env var overlay for multi-tenant proxy mode. */
+  /** Immutable per-request project env snapshot used in module semantics. */
   projectEnv?: Record<string, string>;
 }
 
@@ -190,18 +190,74 @@ export interface RenderSSRRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming SSR Protocol
+// Internal SSR Wire Protocol
 // ---------------------------------------------------------------------------
 
-export interface WorkerStreamChunk {
-  type: "stream-chunk";
+/** @internal Opens one host-owned SSR execution on this worker generation. */
+export interface WorkerSSRExecutionOpen {
+  type: "ssr-execution-open";
   id: string;
+  generation: string;
+  token: string;
+  delivery: "string" | "stream";
+}
+
+/** @internal Grants exactly one additional framework-owned SSR frame. */
+export interface WorkerStreamCredit {
+  type: "stream-credit";
+  id: string;
+  generation: string;
+  token: string;
+  sequence: number;
+}
+
+/** @internal One fixed, tightly owned framework SSR frame. */
+export interface WorkerStreamFrame {
+  type: "stream-frame";
+  id: string;
+  generation: string;
+  token: string;
+  sequence: number;
   chunk: Uint8Array;
 }
 
+/** @internal Successful terminal message for streaming delivery. */
 export interface WorkerStreamEnd {
   type: "stream-end";
   id: string;
+  generation: string;
+  token: string;
+  sequence: number;
+}
+
+/** @internal Successful terminal message for string delivery. */
+export interface WorkerSSRWireResult {
+  type: "ssr-wire-result";
+  id: string;
+  generation: string;
+  token: string;
+  sequence: number;
+  html: string;
+}
+
+/** @internal Bounded worker-side SSR output failure. */
+export interface WorkerSSROutputLimit {
+  type: "ssr-output-limit";
+  id: string;
+  generation: string;
+  token: string;
+  sequence: number;
+  limit: "bytes" | "chunks";
+}
+
+/** @internal Token-bound SSR failure serialized by the worker. */
+export interface WorkerSSRWireError {
+  type: "ssr-wire-error";
+  id: string;
+  generation: string;
+  token: string;
+  sequence: number;
+  error: SerializedError;
 }
 
 export type WorkerResponse =
@@ -264,7 +320,7 @@ export interface WorkerPoolConfig {
   maxPoolSize: number;
   /**
    * Maximum worker-protocol requests admitted concurrently to one worker
-   * (default: 20).
+   * (default: 1).
    *
    * Optional for compatibility with callers that construct the complete
    * legacy config shape. The pool always resolves this to the default.
@@ -272,7 +328,10 @@ export interface WorkerPoolConfig {
   maxActiveRequestsPerWorker?: number;
   /** Idle timeout before evicting a worker (default: 300_000 = 5 minutes) */
   idleTimeoutMs: number;
-  /** Per-request timeout inside the worker (default: 30_000) */
+  /**
+   * Absolute wall-clock request deadline, including stream backpressure
+   * (default: 30_000).
+   */
   requestTimeoutMs: number;
   /** Health check interval (default: 30_000) */
   healthCheckIntervalMs: number;
@@ -288,10 +347,21 @@ export interface WorkerPoolConfig {
    * containment requires process or container isolation.
    */
   memoryBudgetMb: number;
+  /** Host-owned snapshot allowing internal network egress (default: false). */
+  allowInternalEgress?: boolean;
 }
 
 /** Maximum request body size for worker isolation (10 MB) */
 export const MAX_WORKER_BODY_BYTES = 10 * 1024 * 1024;
+
+/** Compatibility boundary: isolated SSR rejects HTML above 16 MiB. */
+export const MAX_WORKER_SSR_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+/** Maximum chunks one isolated streaming SSR request may emit. */
+export const MAX_WORKER_SSR_OUTPUT_CHUNKS = 16_384;
+
+/** Maximum bytes accepted in one isolated streaming SSR chunk (1 MiB). */
+export const MAX_WORKER_SSR_CHUNK_BYTES = 1024 * 1024;
 
 /** Maximum number of UTF-16 code units in one worker protocol request ID. */
 export const MAX_WORKER_REQUEST_ID_CHARS = 256;
@@ -305,8 +375,11 @@ export const MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES = 16 * 1024 * 1024;
 /** Maximum number of distinct logical-route/source module identities per worker. */
 export const MAX_WORKER_RETAINED_MODULES = 128;
 
-/** Default concurrent worker-protocol request ceiling for one project worker. */
-export const DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER = 20;
+/**
+ * Worker protocol requests are serialized inside one project worker, so host
+ * admission permits exactly one active request per worker.
+ */
+export const DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER = 1;
 
 export const DEFAULT_WORKER_POOL_CONFIG: Required<WorkerPoolConfig> = {
   maxPoolSize: 20,
@@ -317,4 +390,5 @@ export const DEFAULT_WORKER_POOL_CONFIG: Required<WorkerPoolConfig> = {
   maxRequestsPerWorker: 1_000,
   maxWorkerAgeMs: 600_000,
   memoryBudgetMb: 64,
+  allowInternalEgress: false,
 };

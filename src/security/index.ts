@@ -3,6 +3,14 @@
  * CSP and security headers, path traversal prevention, and secure filesystem access.
  *
  * @module security
+ *
+ * @example Apply response security headers
+ * ```ts
+ * import { applySecurityHeaders, generateNonce } from "veryfront/security";
+ *
+ * const response = new Response("Ready");
+ * applySecurityHeaders(response.headers, false, generateNonce(), null);
+ * ```
  */
 
 export { BaseHandler } from "./http/base-handler.ts";

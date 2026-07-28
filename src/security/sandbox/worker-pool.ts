@@ -20,13 +20,16 @@ import { getHostEnv, unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SECURITY_VIOLATION, SERVICE_OVERLOADED } from "#veryfront/errors";
-import { sanitizeDiagnosticText } from "#veryfront/errors/safe-diagnostics.ts";
 import { basename, dirname, resolve as resolvePath } from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { ProjectWorker, type ProjectWorkerOptions } from "./project-worker.ts";
+import {
+  isInternalEgressOverrideEnabled,
+  WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
+} from "./worker-egress-guard.ts";
 import { isWorkerGenerationInScope } from "./worker-generation.ts";
-import { buildWorkerEnvAllowlist, buildWorkerPermissions } from "./worker-permissions.ts";
+import { buildWorkerPermissions } from "./worker-permissions.ts";
 import type {
   RenderSSRRequest,
   WorkerPoolConfig,
@@ -36,10 +39,7 @@ import type {
 import { DEFAULT_WORKER_POOL_CONFIG } from "./worker-types.ts";
 
 const logger = serverLogger.component("worker-pool");
-const MAX_DIAGNOSTIC_PATH_LENGTH = 512;
-const MAX_DIAGNOSTIC_PROJECT_ID_LENGTH = 128;
 const apply = Reflect.apply;
-const stringSlice = String.prototype.slice;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 const numberFromString = Number;
@@ -54,7 +54,6 @@ interface PoolEntry {
   worker: ProjectWorker;
   lastAccessedAt: number;
   createdAt: number;
-  projectEnvKeys: string[];
   readPaths: string[];
   activeRequests: number;
   retirementRequested: boolean;
@@ -79,22 +78,6 @@ export interface WorkerPoolDependencies {
   createWorker?: (options: ProjectWorkerOptions) => ProjectWorker;
   /** Test seam for deterministic host-memory pressure behavior. */
   getHeapUsedPercent?: () => number;
-}
-
-function extractProjectEnvKeys(request: WorkerRequest): string[] {
-  if (!("projectEnv" in request) || !request.projectEnv) return [];
-  return Object.keys(request.projectEnv);
-}
-
-function normalizeProjectEnvKeys(keys: Iterable<string | undefined>): string[] {
-  const frameworkEnvKeyCount = buildWorkerEnvAllowlist([]).length;
-  return buildWorkerEnvAllowlist(keys).slice(frameworkEnvKeyCount);
-}
-
-function sameEnvKeySet(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightSet = new Set(right);
-  return left.every((key) => rightSet.has(key));
 }
 
 function canonicalizePath(path: string): string {
@@ -123,10 +106,6 @@ function canonicalizePath(path: string): string {
     unresolvedSegments.unshift(segment);
     candidate = parent;
   }
-}
-
-function boundedDiagnostic(value: string, maxLength: number): string {
-  return apply(stringSlice, value, [0, maxLength]);
 }
 
 function getHostEnvBoolean(key: string, fallback = false): boolean {
@@ -190,6 +169,19 @@ function requirePositivePoolInteger(
   return value;
 }
 
+function requireSerializedWorkerCapacity(value: unknown): number {
+  const validated = requirePositivePoolInteger(
+    "maxActiveRequestsPerWorker",
+    value,
+  );
+  if (validated !== 1) {
+    throw new TypeError(
+      "Worker pool maxActiveRequestsPerWorker must be exactly 1 because worker execution is serialized",
+    );
+  }
+  return validated;
+}
+
 function requireNonNegativePoolInteger(
   name: string,
   value: unknown,
@@ -210,6 +202,13 @@ function requireNonNegativePoolInteger(
 
 function valueOrDefault<T>(value: T | undefined, fallback: T): T {
   return value === undefined ? fallback : value;
+}
+
+function requirePoolBoolean(name: string, value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`Worker pool ${name} must be a boolean`);
+  }
+  return value;
 }
 
 function normalizeReadPaths(paths: Iterable<string | undefined>): string[] {
@@ -268,8 +267,7 @@ export class WorkerPool {
           DEFAULT_WORKER_POOL_CONFIG.maxPoolSize,
         ),
       ),
-      maxActiveRequestsPerWorker: requirePositivePoolInteger(
-        "maxActiveRequestsPerWorker",
+      maxActiveRequestsPerWorker: requireSerializedWorkerCapacity(
         valueOrDefault(
           config.maxActiveRequestsPerWorker,
           DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
@@ -321,6 +319,13 @@ export class WorkerPool {
           DEFAULT_WORKER_POOL_CONFIG.memoryBudgetMb,
         ),
       ),
+      allowInternalEgress: requirePoolBoolean(
+        "allowInternalEgress",
+        valueOrDefault(
+          config.allowInternalEgress,
+          DEFAULT_WORKER_POOL_CONFIG.allowInternalEgress,
+        ),
+      ),
     };
     this.createWorker = dependencies.createWorker ?? ((options) => new ProjectWorker(options));
     this.getHeapUsedPercent = dependencies.getHeapUsedPercent ??
@@ -339,27 +344,20 @@ export class WorkerPool {
   getOrCreateWorker(
     projectId: string,
     readPaths: string[],
-    projectEnvKeys: Iterable<string | undefined> = [],
   ): ProjectWorker {
     if (this.shuttingDown) {
       throw this.createOverloadError("Worker pool is shutting down");
     }
 
-    const normalizedProjectEnvKeys = normalizeProjectEnvKeys(projectEnvKeys);
     const normalizedReadPaths = normalizeReadPaths(readPaths);
     const existing = this.pool.get(projectId);
     if (existing) {
-      const envKeysChanged = !sameEnvKeySet(
-        existing.projectEnvKeys,
-        normalizedProjectEnvKeys,
-      );
       const readPathsChanged = !sameOrderedPaths(existing.readPaths, normalizedReadPaths);
 
       if (this.isTerminal(existing)) {
         this.requestRetirement(projectId, existing, "terminal");
-      } else if (envKeysChanged || readPathsChanged) {
-        const reason = readPathsChanged ? "read_paths_changed" : "environment_keys_changed";
-        this.requestRetirement(projectId, existing, reason);
+      } else if (readPathsChanged) {
+        this.requestRetirement(projectId, existing, "read_paths_changed");
         if (this.pool.get(projectId) === existing) {
           throw this.createOverloadError(
             "Worker is finishing active requests before applying changed permissions",
@@ -387,13 +385,12 @@ export class WorkerPool {
 
     this.ensureCapacityForAdmission();
 
-    const permissions = buildWorkerPermissions(normalizedReadPaths, {
-      projectEnvKeys: normalizedProjectEnvKeys,
-    });
+    const permissions = buildWorkerPermissions(normalizedReadPaths);
     const worker = this.createWorker({
       projectId,
       permissions,
       requestTimeoutMs: this.config.requestTimeoutMs,
+      allowInternalEgress: this.config.allowInternalEgress,
     });
 
     worker.start();
@@ -407,7 +404,6 @@ export class WorkerPool {
       worker,
       lastAccessedAt: now,
       createdAt: now,
-      projectEnvKeys: normalizedProjectEnvKeys,
       readPaths: normalizedReadPaths,
       activeRequests: 0,
       retirementRequested: false,
@@ -425,7 +421,6 @@ export class WorkerPool {
     this.pool.set(projectId, entry);
 
     logger.debug("Worker created", {
-      projectId,
       poolSize: this.pool.size,
     });
 
@@ -442,7 +437,7 @@ export class WorkerPool {
     request: WorkerRequest,
   ): Promise<WorkerResponse> {
     try {
-      this.validateRequestModulePaths(projectId, readPaths, request);
+      this.validateRequestModulePaths(readPaths, request);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -470,7 +465,7 @@ export class WorkerPool {
 
           let entry: PoolEntry;
           try {
-            entry = this.admitRequest(projectId, readPaths, request);
+            entry = this.admitRequest(projectId, readPaths);
           } catch (error) {
             const current = this.pool.get(projectId);
             if (
@@ -512,7 +507,7 @@ export class WorkerPool {
           await entry.retired;
         }
       },
-      { "workerPool.projectId": projectId },
+      { "workerPool.requestType": request.type },
     );
   }
 
@@ -529,8 +524,8 @@ export class WorkerPool {
     readPaths: string[],
     request: RenderSSRRequest,
   ): ReadableStream<Uint8Array> {
-    this.validateRequestModulePaths(projectId, readPaths, request);
-    const entry = this.admitRequest(projectId, readPaths, request);
+    this.validateRequestModulePaths(readPaths, request);
+    const entry = this.admitRequest(projectId, readPaths);
 
     let source: ReadableStream<Uint8Array>;
     try {
@@ -836,11 +831,7 @@ export class WorkerPool {
     }
   }
 
-  private validateRequestModulePaths(
-    projectId: string,
-    readPaths: string[],
-    request: WorkerRequest,
-  ): void {
+  private validateRequestModulePaths(readPaths: string[], request: WorkerRequest): void {
     const modulePaths: string[] = [];
     if ("modulePath" in request && request.modulePath) {
       modulePaths.push(request.modulePath);
@@ -871,14 +862,7 @@ export class WorkerPool {
       if (isAllowed) continue;
 
       logger.warn("Worker module path rejected by read boundary", {
-        projectId: boundedDiagnostic(
-          sanitizeDiagnosticText(projectId),
-          MAX_DIAGNOSTIC_PROJECT_ID_LENGTH,
-        ),
-        modulePath: boundedDiagnostic(
-          sanitizeDiagnosticText(modulePath),
-          MAX_DIAGNOSTIC_PATH_LENGTH,
-        ),
+        requestType: request.type,
       });
       throw SECURITY_VIOLATION.create({
         detail: "Worker module path is outside the allowed project boundary",
@@ -889,10 +873,8 @@ export class WorkerPool {
   private admitRequest(
     projectId: string,
     readPaths: string[],
-    request: WorkerRequest,
   ): PoolEntry {
-    const projectEnvKeys = extractProjectEnvKeys(request);
-    const worker = this.getOrCreateWorker(projectId, readPaths, projectEnvKeys);
+    const worker = this.getOrCreateWorker(projectId, readPaths);
     const entry = this.pool.get(projectId);
     if (!entry || entry.worker !== worker || entry.retirementRequested) {
       throw this.createOverloadError(
@@ -964,7 +946,6 @@ export class WorkerPool {
       entry.retirementRequested = true;
       entry.retirementReason = reason;
       logger.debug("Worker retirement requested", {
-        projectId,
         reason,
         pending: this.isBusy(entry),
       });
@@ -985,7 +966,6 @@ export class WorkerPool {
     this.settleRetirement(entry);
 
     logger.debug("Worker retired", {
-      projectId,
       reason: entry.retirementReason ?? "unspecified",
       poolSize: this.pool.size,
     });
@@ -1021,10 +1001,7 @@ export class WorkerPool {
     try {
       entry.worker.terminate();
     } catch (error) {
-      logger.debug("Worker termination failed", {
-        projectId: entry.worker.projectId,
-        error,
-      });
+      logger.debug("Worker termination failed", { error });
     }
   }
 
@@ -1070,7 +1047,7 @@ export class WorkerPool {
       }
 
       if (!healthy) {
-        logger.warn("Worker failed health check", { projectId });
+        logger.warn("Worker failed health check");
         this.requestRetirement(projectId, entry, "health_check_failed");
       }
     }
@@ -1105,7 +1082,6 @@ export class WorkerPool {
 
         this.requestRetirement(projectId, entry, "host_memory_pressure");
         logger.debug("Retired worker due to host memory pressure", {
-          projectId,
           heapUsedPercent,
           poolSize: this.pool.size,
         });
@@ -1180,6 +1156,7 @@ export function getWorkerPool(): WorkerPool {
       maxActiveRequestsPerWorker: getHostEnvInteger(
         "WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER",
         DEFAULT_WORKER_POOL_CONFIG.maxActiveRequestsPerWorker,
+        1,
       ),
       idleTimeoutMs: getHostEnvInteger(
         "WORKER_IDLE_TIMEOUT_MS",
@@ -1205,6 +1182,9 @@ export function getWorkerPool(): WorkerPool {
       memoryBudgetMb: getHostEnvInteger(
         "WORKER_MEMORY_BUDGET_MB",
         DEFAULT_WORKER_POOL_CONFIG.memoryBudgetMb,
+      ),
+      allowInternalEgress: isInternalEgressOverrideEnabled(
+        getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV),
       ),
     });
   }

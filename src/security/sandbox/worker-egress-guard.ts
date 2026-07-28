@@ -7,7 +7,6 @@
  * @module security/sandbox/worker-egress-guard
  */
 
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 
@@ -37,6 +36,10 @@ export interface WorkerEgressGuardOptions {
   socksProxy?: WorkerEgressSocksProxyConfig;
   httpBroker?: WorkerEgressHttpBrokerConfig;
 }
+
+export type InstalledWorkerEgressGuardOptions = WorkerEgressGuardOptions & {
+  allowInternalEgress: boolean;
+};
 
 export type WorkerEgressTcpConnect = (options: Deno.ConnectOptions) => Promise<Deno.TcpConn>;
 export type WorkerEgressTcpListen = (options: Deno.ListenOptions) => Deno.TcpListener;
@@ -309,10 +312,6 @@ function getConnectHostname(options: unknown): string | null {
   if (transport !== undefined && transport !== "tcp") return null;
   const hostname = options.hostname;
   return typeof hostname === "string" ? hostname : "127.0.0.1";
-}
-
-function getAllowInternalEgress(): boolean {
-  return isInternalEgressOverrideEnabled(getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV));
 }
 
 function getPinnedEgressRuntime(
@@ -1416,16 +1415,17 @@ export async function guardedWorkerConnectTls(
   }
 }
 
-export function installWorkerEgressGuard(options: WorkerEgressGuardOptions = {}): void {
+export function installWorkerEgressGuard(
+  options: InstalledWorkerEgressGuardOptions,
+): void {
   const globalRecord = globalThis as typeof globalThis & Record<PropertyKey, unknown>;
   if (globalRecord[guardInstalled]) return;
+  if (typeof options.allowInternalEgress !== "boolean") {
+    throw new TypeError("Worker egress allowInternalEgress must be a boolean");
+  }
 
   const runtime = getPinnedEgressRuntime();
-
-  const baseOptions = {
-    ...options,
-    allowInternalEgress: options.allowInternalEgress ?? getAllowInternalEgress(),
-  };
+  const baseOptions = { ...options };
 
   const originalFetch = globalThis.fetch.bind(globalThis);
   const fetchWrapper = async (

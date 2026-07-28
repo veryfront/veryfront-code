@@ -738,7 +738,6 @@ describe("worker-script prepared modules", () => {
     const projectDir = await Deno.makeTempDir();
     const envKey = `VF_WORKER_PRIVATE_${crypto.randomUUID().replaceAll("-", "_")}`;
     const observedKey = `__vf_observed_${crypto.randomUUID().replaceAll("-", "_")}`;
-    const safeEnvGetterKey = `__vf_env_get_${crypto.randomUUID().replaceAll("-", "_")}`;
     const workerOptions = {
       type: "module",
       deno: {
@@ -746,7 +745,7 @@ describe("worker-script prepared modules", () => {
           read: true,
           write: false,
           net: false,
-          env: [envKey],
+          env: false,
           run: false,
           ffi: false,
           sys: false,
@@ -758,7 +757,7 @@ describe("worker-script prepared modules", () => {
           read: boolean;
           write: boolean;
           net: boolean;
-          env: string[];
+          env: boolean;
           run: boolean;
           ffi: boolean;
           sys: boolean;
@@ -793,8 +792,6 @@ describe("worker-script prepared modules", () => {
       );
 
       const poisonSource = `
-        const safeEnvGet = Deno.env.get.bind(Deno.env);
-        globalThis[${JSON.stringify(safeEnvGetterKey)}] = safeEnvGet;
         globalThis[${JSON.stringify(observedKey)}] = 0;
         self.addEventListener("message", () => {
           globalThis[${JSON.stringify(observedKey)}]++;
@@ -814,11 +811,12 @@ describe("worker-script prepared modules", () => {
         Deno.env.get = () => {
           throw new Error("poisoned Deno.env.get was used");
         };
-        export async function GET() {
+        export async function GET(_request, { env }) {
           await new Promise((resolve) => setTimeout(resolve, 20));
           return Response.json({
             observed: globalThis[${JSON.stringify(observedKey)}],
-            env: safeEnvGet(${JSON.stringify(envKey)}),
+            env: env[${JSON.stringify(envKey)}],
+            envFrozen: Object.isFrozen(env),
           });
         }
       `;
@@ -852,15 +850,14 @@ describe("worker-script prepared modules", () => {
       assertExists(first.response?.body);
       assertEquals(
         JSON.parse(new TextDecoder().decode(first.response.body)),
-        { observed: 0, env: "first-tenant-secret" },
+        { observed: 0, env: "first-tenant-secret", envFrozen: true },
       );
 
       const healthySource = `
-        export function GET() {
-          const safeEnvGet = globalThis[${JSON.stringify(safeEnvGetterKey)}];
+        export function GET(_request, { env }) {
           return Response.json({
             observed: globalThis[${JSON.stringify(observedKey)}],
-            envWasScrubbed: safeEnvGet(${JSON.stringify(envKey)}) === undefined,
+            envWasScrubbed: env[${JSON.stringify(envKey)}] === undefined,
           });
         }
       `;
@@ -1369,5 +1366,68 @@ describe("worker-script prepared modules", () => {
       getPreparedModuleRetentionStats().sourceBytes,
       MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES - remaining,
     );
+  });
+});
+
+describe("worker-script bootstrap", () => {
+  it("rejects bootstrap without an explicit internal-egress decision", async () => {
+    const worker = new Worker(
+      import.meta.resolve("./worker-script.ts"),
+      {
+        type: "module",
+        deno: {
+          permissions: {
+            read: true,
+            write: false,
+            net: false,
+            env: false,
+            run: false,
+            ffi: false,
+            sys: false,
+          },
+        },
+      } as WorkerOptions & {
+        deno: {
+          permissions: {
+            read: boolean;
+            write: boolean;
+            net: boolean;
+            env: boolean;
+            run: boolean;
+            ffi: boolean;
+            sys: boolean;
+          };
+        };
+      },
+    );
+    const channel = new MessageChannel();
+    channel.port1.start();
+
+    try {
+      const exitMessage = waitForPortMessage(
+        channel.port1,
+        (message) =>
+          typeof message === "object" &&
+          message !== null &&
+          (message as { type?: unknown }).type === "worker-exit",
+      );
+
+      worker.postMessage(
+        {
+          type: "initialize-egress",
+          options: {},
+          controlPort: channel.port2,
+        },
+        [channel.port2],
+      );
+
+      assertEquals(
+        (await exitMessage as { type: string }).type,
+        "worker-exit",
+      );
+    } finally {
+      worker.terminate();
+      channel.port1.close();
+    }
   });
 });

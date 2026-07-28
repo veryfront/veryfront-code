@@ -89,10 +89,14 @@ Data, and Rendering. It is not exported from `veryfront/security`.
 
 The worker pool provides:
 
-- bounded worker count and concurrent admissions;
+- bounded worker count and exactly one active admission per serialized worker;
 - per-request deadlines and generation retirement;
-- scoped read and environment permissions;
+- project-root reads plus immutable framework-source reads in compiled builds,
+  with shared caches and `DENO_DIR` excluded;
+- denied Deno environment permission, with a frozen request-owned `env` record
+  passed through App and Pages handler contexts instead;
 - prepared-module size and retained-module limits;
+- bounded, normalized data-loader results before worker-to-host transfer;
 - a private control port protected from project-code message forgery;
 - DNS-pinned outbound networking that blocks loopback, private, link-local,
   metadata, and other non-global destinations by default; and
@@ -104,8 +108,10 @@ are enabled. Defined invalid flags and pool limits are startup errors; they are
 not silently replaced with defaults.
 
 Deno Workers share the host process. Worker retirement is lifecycle hygiene,
-not a hard per-worker memory boundary. Strong memory and process containment
-requires a separately limited process or container.
+not a hard per-worker memory or CPU boundary. A project can still create
+host-process memory pressure or consume a worker thread until the host
+terminates it. Strong memory, CPU, and process containment requires a
+separately limited process or container.
 
 ## Internal-only files
 

@@ -7,6 +7,18 @@ import { SecurityConfigLoader } from "./http/config.ts";
 import { loadSecurityConfig, setCors } from "./http/middleware/index.ts";
 
 describe("security/index.ts exports", () => {
+  it("is available through the public package security subpath", async () => {
+    const denoConfig = JSON.parse(
+      await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+    ) as { exports?: Record<string, string> };
+
+    assertEquals(denoConfig.exports?.["./security"], "./src/security/index.ts");
+
+    const publicSecurityModule = await import("veryfront/security");
+    assertEquals(publicSecurityModule.AuthHandler, AuthHandler);
+    assertEquals(publicSecurityModule.SecurityConfigLoader, SecurityConfigLoader);
+  });
+
   it("keeps the public runtime surface explicit", () => {
     assertEquals(
       Object.keys(securityModule).sort(),

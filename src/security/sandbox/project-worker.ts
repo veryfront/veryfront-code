@@ -10,34 +10,72 @@
 
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { INVALID_ARGUMENT, TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  INVALID_ARGUMENT,
+  SSR_OUTPUT_LIMIT_EXCEEDED,
+  TIMEOUT_ERROR,
+  UNKNOWN_ERROR,
+} from "#veryfront/errors";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import {
-  isInternalEgressOverrideEnabled,
   type ResolveWorkerHost,
   startWorkerEgressBroker,
-  WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
   type WorkerEgressBroker,
 } from "./worker-egress-guard.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
+import { deserializeWorkerError } from "./worker-error-boundary.ts";
 import type {
+  SerializedError,
   WorkerRequest,
   WorkerResponse,
-  WorkerStreamChunk,
+  WorkerSSRExecutionOpen,
+  WorkerSSROutputLimit,
+  WorkerSSRWireError,
+  WorkerSSRWireResult,
+  WorkerStreamCredit,
   WorkerStreamEnd,
+  WorkerStreamFrame,
 } from "./worker-types.ts";
-import { MAX_WORKER_REQUEST_ID_CHARS } from "./worker-types.ts";
+import {
+  MAX_WORKER_REQUEST_ID_CHARS,
+  MAX_WORKER_SSR_CHUNK_BYTES,
+  MAX_WORKER_SSR_OUTPUT_BYTES,
+  MAX_WORKER_SSR_OUTPUT_CHUNKS,
+} from "./worker-types.ts";
 
 const logger = serverLogger.component("project-worker");
 const textEncoder = new TextEncoder();
 const NativeMessageChannel = MessageChannel;
 const apply = Reflect.apply;
 const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
+const eventPreventDefault = Event.prototype.preventDefault;
 const messagePortClose = MessagePort.prototype.close;
 const messagePortPostMessage = MessagePort.prototype.postMessage;
 const messagePortStart = MessagePort.prototype.start;
 const arrayIncludes = Array.prototype.includes;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
+const arrayBufferPrototype = ArrayBuffer.prototype;
+const uint8ArrayPrototype = Uint8Array.prototype;
+const typedArrayPrototype = getPrototypeOf(uint8ArrayPrototype);
+const typedArrayBufferGetter = typedArrayPrototype
+  ? getOwnPropertyDescriptor(typedArrayPrototype, "buffer")?.get
+  : undefined;
+const typedArrayByteLengthGetter = typedArrayPrototype
+  ? getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get
+  : undefined;
+const typedArrayByteOffsetGetter = typedArrayPrototype
+  ? getOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")?.get
+  : undefined;
+const arrayBufferByteLengthGetter = getOwnPropertyDescriptor(
+  arrayBufferPrototype,
+  "byteLength",
+)?.get;
+const arrayBufferResizableGetter = getOwnPropertyDescriptor(
+  arrayBufferPrototype,
+  "resizable",
+)?.get;
+const setBytes = Uint8Array.prototype.set;
 let workerPostMessage: ((...args: never[]) => unknown) | undefined;
 
 function postWorkerMessage(
@@ -99,6 +137,8 @@ export interface ProjectWorkerOptions {
   workerScriptUrl?: string;
   /** Override for deterministic egress resolution tests. */
   egressResolveHost?: ResolveWorkerHost;
+  /** Host-owned policy snapshot. Project code must never be able to change it. */
+  allowInternalEgress: boolean;
 }
 
 interface PendingRequest {
@@ -106,12 +146,148 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   expectedTypes: readonly string[];
+  ssr?: SSRWireState;
 }
 
 interface StreamHandler {
-  onChunk: (chunk: Uint8Array) => void;
+  state: SSRWireState;
+  onFrame: (chunk: Uint8Array) => void;
   onEnd: () => void;
   onError: (error: Error) => void;
+}
+
+interface SSRWireState {
+  readonly generation: string;
+  readonly token: string;
+  readonly delivery: "string" | "stream";
+  expectedSequence: number;
+  creditAvailable: boolean;
+  frameBuffered: boolean;
+  terminal: boolean;
+  outputBytes: number;
+  outputFrames: number;
+}
+
+type SSRWireMessage =
+  | WorkerStreamFrame
+  | WorkerStreamEnd
+  | WorkerSSROutputLimit
+  | WorkerSSRWireResult
+  | WorkerSSRWireError;
+
+function createSSROutputByteLimitError(): Error {
+  return SSR_OUTPUT_LIMIT_EXCEEDED.create({
+    detail: `Isolated SSR output exceeded ${MAX_WORKER_SSR_OUTPUT_BYTES} bytes`,
+  });
+}
+
+function createSSROutputChunkLimitError(): Error {
+  return SSR_OUTPUT_LIMIT_EXCEEDED.create({
+    detail: `Isolated SSR output exceeded ${MAX_WORKER_SSR_OUTPUT_CHUNKS} chunks`,
+  });
+}
+
+function isOversizedSSRHtml(value: string): boolean {
+  return value.length > MAX_WORKER_SSR_OUTPUT_BYTES ||
+    textEncoder.encode(value).byteLength > MAX_WORKER_SSR_OUTPUT_BYTES;
+}
+
+function readOwnDataProperty(value: object, key: string): unknown {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function isSSRWireMessage(value: unknown): value is SSRWireMessage {
+  if (value === null || typeof value !== "object") return false;
+  const prototype = getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const type = readOwnDataProperty(value, "type");
+  return type === "stream-frame" ||
+    type === "stream-end" ||
+    type === "ssr-output-limit" ||
+    type === "ssr-wire-result" ||
+    type === "ssr-wire-error";
+}
+
+function hasValidSSRWireEnvelope(
+  message: SSRWireMessage,
+  id: string,
+  state: SSRWireState,
+): boolean {
+  const messageId = readOwnDataProperty(message, "id");
+  const generation = readOwnDataProperty(message, "generation");
+  const token = readOwnDataProperty(message, "token");
+  const sequence = readOwnDataProperty(message, "sequence");
+  return messageId === id &&
+    generation === state.generation &&
+    token === state.token &&
+    typeof sequence === "number" &&
+    Number.isSafeInteger(sequence) &&
+    sequence >= 0 &&
+    sequence <= MAX_WORKER_SSR_OUTPUT_CHUNKS &&
+    sequence === state.expectedSequence;
+}
+
+/**
+ * Copy an untrusted worker view into a fixed, offset-zero ArrayBuffer.
+ *
+ * A view backed by SharedArrayBuffer or a resizable ArrayBuffer is rejected:
+ * either could change after accounting. Offset views over large fixed buffers
+ * are accepted, but only their visible bytes are retained.
+ */
+function copyTightFixedWorkerFrame(value: unknown): Uint8Array {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    getPrototypeOf(value) !== uint8ArrayPrototype ||
+    !typedArrayBufferGetter ||
+    !typedArrayByteLengthGetter ||
+    !typedArrayByteOffsetGetter ||
+    !arrayBufferByteLengthGetter
+  ) {
+    throw new TypeError("Worker returned a non-native isolated SSR frame");
+  }
+
+  const buffer = apply(typedArrayBufferGetter, value, []) as unknown;
+  if (
+    buffer === null ||
+    typeof buffer !== "object" ||
+    getPrototypeOf(buffer) !== arrayBufferPrototype
+  ) {
+    throw new TypeError("Worker returned a shared isolated SSR frame");
+  }
+  if (
+    arrayBufferResizableGetter &&
+    apply(arrayBufferResizableGetter, buffer, []) === true
+  ) {
+    throw new TypeError("Worker returned a resizable isolated SSR frame");
+  }
+
+  const byteLength = apply(typedArrayByteLengthGetter, value, []) as number;
+  const byteOffset = apply(typedArrayByteOffsetGetter, value, []) as number;
+  const bufferByteLength = apply(arrayBufferByteLengthGetter, buffer, []) as number;
+  if (
+    !Number.isSafeInteger(byteLength) ||
+    !Number.isSafeInteger(byteOffset) ||
+    byteLength < 0 ||
+    byteOffset < 0 ||
+    byteOffset > bufferByteLength ||
+    byteLength > bufferByteLength - byteOffset
+  ) {
+    throw new TypeError("Worker returned an invalid isolated SSR frame view");
+  }
+
+  const source = value as Uint8Array;
+  const copy = new Uint8Array(byteLength);
+  apply(setBytes, copy, [source]);
+  return copy;
+}
+
+function isSerializedWorkerError(value: unknown): value is SerializedError {
+  return value !== null &&
+    typeof value === "object" &&
+    typeof readOwnDataProperty(value, "name") === "string" &&
+    typeof readOwnDataProperty(value, "message") === "string";
 }
 
 /**
@@ -129,7 +305,7 @@ function expectedResponseTypes(request: WorkerRequest): readonly string[] {
     case "fetch-data":
       return ["data-result", "error"];
     case "render-ssr":
-      return ["ssr-result", "error"];
+      return ["ssr-wire-result", "ssr-wire-error", "ssr-output-limit"];
     default:
       // Runtime callers can still cross the TypeScript boundary. The worker
       // owns validation and reports unknown request kinds as a typed error.
@@ -142,6 +318,7 @@ export class ProjectWorker {
 
   private worker: Worker | null = null;
   private controlPort: MessagePort | null = null;
+  private workerGeneration: string | null = null;
   private pending = new Map<string, PendingRequest>();
   private streamHandlers = new Map<string, StreamHandler>();
   private idleListeners = new Set<() => void>();
@@ -150,6 +327,7 @@ export class ProjectWorker {
   private permissions: WorkerPermissions;
   private workerScriptUrl?: string;
   private egressResolveHost?: ResolveWorkerHost;
+  private readonly allowInternalEgress: boolean;
   private egressBroker: WorkerEgressBroker | null = null;
   private _requestCount = 0;
   private _lastActivityAt = Date.now();
@@ -161,6 +339,10 @@ export class ProjectWorker {
     this.requestTimeoutMs = requireRequestTimeoutMs(options.requestTimeoutMs);
     this.workerScriptUrl = options.workerScriptUrl;
     this.egressResolveHost = options.egressResolveHost;
+    if (typeof options.allowInternalEgress !== "boolean") {
+      throw new TypeError("Project worker allowInternalEgress must be a boolean");
+    }
+    this.allowInternalEgress = options.allowInternalEgress;
   }
 
   get status(): WorkerStatus {
@@ -201,9 +383,7 @@ export class ProjectWorker {
       });
     }
 
-    const allowInternalEgress = isInternalEgressOverrideEnabled(
-      getHostEnv(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV),
-    );
+    const allowInternalEgress = this.allowInternalEgress;
     let workerPermissions: ScopedWorkerPermissions = this.permissions;
     if (this.permissions.net === true) {
       this.egressBroker = startWorkerEgressBroker({
@@ -220,11 +400,12 @@ export class ProjectWorker {
       const workerUrl = this.getWorkerScriptUrl();
       const workerOptions: ExtendedWorkerOptions = {
         type: "module",
-        name: `project-worker-${this.projectId}`,
+        name: "project-worker",
         deno: { permissions: workerPermissions },
       };
 
       this.worker = new Worker(workerUrl, workerOptions);
+      this.workerGeneration = crypto.randomUUID();
       const startedWorker = this.worker;
       this._status = "idle";
 
@@ -276,11 +457,9 @@ export class ProjectWorker {
       }
 
       startedWorker.onerror = (event) => {
+        apply(eventPreventDefault, event, []);
         if (this.worker !== startedWorker) return;
-        logger.error("Worker error", {
-          projectId: this.projectId,
-          error: event.message ?? String(event),
-        });
+        logger.error("Worker error");
         this.failWorker("crashed", "Worker crashed");
       };
     } catch (error) {
@@ -290,6 +469,7 @@ export class ProjectWorker {
         // Preserve the startup error while still closing the egress broker.
       }
       this.worker = null;
+      this.workerGeneration = null;
       this.closeControlPort();
       this.egressBroker?.close();
       this.egressBroker = null;
@@ -297,7 +477,7 @@ export class ProjectWorker {
       throw error;
     }
 
-    logger.debug("Worker started", { projectId: this.projectId });
+    logger.debug("Worker started");
   }
 
   /**
@@ -321,12 +501,20 @@ export class ProjectWorker {
         if (this.pending.has(requestId)) {
           return Promise.reject(UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" }));
         }
+        if (request.type === "render-ssr" && request.delivery !== "string") {
+          return Promise.reject(
+            INVALID_ARGUMENT.create({
+              detail: "ProjectWorker.execute requires string SSR delivery",
+            }),
+          );
+        }
 
         this._requestCount++;
         this._lastActivityAt = Date.now();
         this._status = "busy";
 
         return new Promise<WorkerResponse>((resolve, reject) => {
+          const ssr = request.type === "render-ssr" ? this.createSSRWireState("string") : undefined;
           const timer = setTimeout(() => {
             this.pending.delete(requestId);
             const timeoutError = TIMEOUT_ERROR.create({
@@ -341,8 +529,10 @@ export class ProjectWorker {
             reject,
             timer,
             expectedTypes: expectedResponseTypes(request),
+            ssr,
           });
           try {
+            if (ssr) this.postSSRExecutionOpen(requestId, ssr);
             this.postToWorker(request);
           } catch {
             clearTimeout(timer);
@@ -356,9 +546,7 @@ export class ProjectWorker {
         });
       },
       {
-        "worker.projectId": this.projectId,
         "worker.requestType": request.type,
-        "worker.requestId": requestId,
       },
     );
   }
@@ -367,12 +555,16 @@ export class ProjectWorker {
    * Execute a streaming request. Returns a ReadableStream that yields
    * chunks as they arrive from the Worker via postMessage.
    *
-   * Used for streaming SSR where the Worker sends chunks progressively.
-   * Falls back to a single-chunk stream if the Worker returns a non-streaming
-   * response (ssr-result with full HTML).
+   * Each execution uses an authenticated, sequenced one-credit protocol. A
+   * string result is never accepted after streaming delivery begins.
    */
   executeStream(request: WorkerRequest): ReadableStream<Uint8Array> {
     const requestId = requireWorkerRequestId(request.id);
+    if (request.type !== "render-ssr" || request.delivery !== "stream") {
+      throw INVALID_ARGUMENT.create({
+        detail: "ProjectWorker.executeStream requires streaming SSR delivery",
+      });
+    }
     if (!this.worker || this._status === "crashed" || this._status === "terminated") {
       throw UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` });
     }
@@ -385,116 +577,184 @@ export class ProjectWorker {
     this._lastActivityAt = Date.now();
     this._status = "busy";
 
+    const state = this.createSSRWireState("stream");
     let cancelRequest: (() => void) | undefined;
+    let grantCreditForDemand: (() => void) | undefined;
 
-    return new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        let settled = false;
-        let timer: ReturnType<typeof setTimeout>;
+    return new ReadableStream<Uint8Array>(
+      {
+        start: (controller) => {
+          let settled = false;
+          const clearRegistration = () => {
+            clearTimeout(timer);
+            this.streamHandlers.delete(requestId);
+            this.pending.delete(requestId);
+          };
 
-        const clearRegistration = () => {
-          clearTimeout(timer);
-          this.streamHandlers.delete(requestId);
-          this.pending.delete(requestId);
-        };
-        const handleTimeout = () => {
-          if (settled) return;
-          settled = true;
-          clearRegistration();
-          const timeoutError = TIMEOUT_ERROR.create({
-            detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
-          });
-          this.terminate();
-          controller.error(timeoutError);
-        };
-
-        timer = setTimeout(handleTimeout, this.requestTimeoutMs);
-
-        const resetTimer = () => {
-          clearTimeout(timer);
-          timer = setTimeout(handleTimeout, this.requestTimeoutMs);
-        };
-
-        cancelRequest = () => {
-          if (settled) return;
-          settled = true;
-          clearRegistration();
-          // No worker-side cancel RPC exists. Retiring the worker is the only
-          // boundary that guarantees project rendering stops when the
-          // downstream consumer disconnects.
-          this.terminate();
-        };
-
-        // Register a stream handler for this request
-        this.streamHandlers.set(requestId, {
-          onChunk: (chunk: Uint8Array) => {
-            if (settled) return;
-            resetTimer();
-            controller.enqueue(chunk);
-          },
-          onEnd: () => {
+          const settle = (
+            outcome: "close" | "error" | "cancel",
+            error?: Error,
+            retireWorker = false,
+          ) => {
             if (settled) return;
             settled = true;
+            state.terminal = true;
             clearRegistration();
-            this.updateIdleStatus();
-            controller.close();
-          },
-          onError: (error: Error) => {
-            if (settled) return;
-            settled = true;
-            clearRegistration();
-            this.updateIdleStatus();
-            controller.error(error);
-          },
-        });
-
-        // Also register in pending for non-streaming responses (fallback)
-        this.pending.set(requestId, {
-          resolve: (response) => {
-            if (settled) return;
-            settled = true;
-            clearRegistration();
-            this.updateIdleStatus();
-
-            // If we get an ssr-result, emit it as a single chunk
-            if (response.type === "ssr-result") {
-              controller.enqueue(textEncoder.encode(response.html));
+            if (outcome === "close") {
               controller.close();
-            } else if (response.type === "error") {
-              const err = new Error(response.error.message);
-              err.name = response.error.name;
-              controller.error(err);
-            } else {
-              controller.close();
+            } else if (outcome === "error") {
+              controller.error(
+                error ??
+                  UNKNOWN_ERROR.create({ detail: "Isolated SSR stream failed" }),
+              );
             }
-          },
-          reject: (error) => {
-            if (settled) return;
-            settled = true;
-            clearRegistration();
-            this.updateIdleStatus();
-            controller.error(error);
-          },
-          timer,
-          expectedTypes: expectedResponseTypes(request),
-        });
+            if (retireWorker) {
+              this.failWorker(
+                "terminated",
+                error?.message ?? "Isolated SSR stream was cancelled",
+              );
+            } else {
+              this.updateIdleStatus();
+            }
+          };
 
-        try {
-          this.postToWorker(request);
-        } catch {
-          settled = true;
-          clearRegistration();
-          const sendError = UNKNOWN_ERROR.create({
-            detail: "Worker stream request could not be sent",
+          const timer = setTimeout(() => {
+            const timeoutError = TIMEOUT_ERROR.create({
+              detail: `Worker stream timed out after ${this.requestTimeoutMs}ms`,
+            });
+            settle("error", timeoutError, true);
+          }, this.requestTimeoutMs);
+
+          const grantCredit = () => {
+            if (
+              settled ||
+              state.terminal ||
+              !state.frameBuffered ||
+              state.creditAvailable
+            ) {
+              return;
+            }
+            if ((controller.desiredSize ?? 0) <= 0) return;
+
+            // State changes before posting so repeated pull() calls cannot
+            // manufacture more than one credit for this sequence.
+            state.frameBuffered = false;
+            state.creditAvailable = true;
+            try {
+              this.postToWorker(
+                {
+                  type: "stream-credit",
+                  id: requestId,
+                  generation: state.generation,
+                  token: state.token,
+                  sequence: state.expectedSequence,
+                } satisfies WorkerStreamCredit,
+              );
+            } catch {
+              settle(
+                "error",
+                UNKNOWN_ERROR.create({
+                  detail: "Worker stream credit could not be sent",
+                }),
+                true,
+              );
+            }
+          };
+          grantCreditForDemand = grantCredit;
+
+          cancelRequest = () => {
+            // No worker-side cancel RPC exists. Retiring the worker is the only
+            // boundary that guarantees project rendering stops when the
+            // downstream consumer disconnects.
+            settle("cancel", undefined, true);
+          };
+
+          this.streamHandlers.set(requestId, {
+            state,
+            onFrame: (chunk) => {
+              if (settled) return;
+
+              const chunkBytes = chunk.byteLength;
+              state.outputFrames += 1;
+              if (state.outputFrames > MAX_WORKER_SSR_OUTPUT_CHUNKS) {
+                settle("error", createSSROutputChunkLimitError(), true);
+                return;
+              }
+              if (
+                chunkBytes === 0 ||
+                chunkBytes > MAX_WORKER_SSR_CHUNK_BYTES
+              ) {
+                settle(
+                  "error",
+                  UNKNOWN_ERROR.create({
+                    detail: "Worker returned an invalid isolated SSR frame size",
+                  }),
+                  true,
+                );
+                return;
+              }
+              if (
+                chunkBytes > MAX_WORKER_SSR_OUTPUT_BYTES - state.outputBytes
+              ) {
+                settle("error", createSSROutputByteLimitError(), true);
+                return;
+              }
+              state.outputBytes += chunkBytes;
+
+              // copyTightFixedWorkerFrame() guarantees this queue never retains
+              // an offset, oversized, shared, or resizable backing allocation.
+              controller.enqueue(chunk);
+              state.frameBuffered = true;
+              grantCredit();
+            },
+            onEnd: () => {
+              settle("close");
+            },
+            onError: (error: Error) => {
+              settle("error", error);
+            },
           });
-          this.failWorker("crashed", "Worker control channel failed");
-          controller.error(sendError);
-        }
+
+          this.pending.set(requestId, {
+            resolve: () => {
+              settle(
+                "error",
+                UNKNOWN_ERROR.create({
+                  detail: "Worker returned a non-stream response for streaming SSR",
+                }),
+                true,
+              );
+            },
+            reject: (error) => {
+              settle("error", error);
+            },
+            timer,
+            expectedTypes: expectedResponseTypes(request),
+            ssr: state,
+          });
+
+          try {
+            this.postSSRExecutionOpen(requestId, state);
+            this.postToWorker(request);
+          } catch {
+            const sendError = UNKNOWN_ERROR.create({
+              detail: "Worker stream request could not be sent",
+            });
+            settle("error", sendError, true);
+          }
+        },
+        pull: () => {
+          grantCreditForDemand?.();
+        },
+        cancel: () => {
+          cancelRequest?.();
+        },
       },
-      cancel: () => {
-        cancelRequest?.();
+      {
+        highWaterMark: 1,
+        size: () => 1,
       },
-    });
+    );
   }
 
   /**
@@ -555,12 +815,41 @@ export class ProjectWorker {
    */
   terminate(): void {
     this.failWorker("terminated", "Worker terminated");
-    logger.debug("Worker terminated", { projectId: this.projectId });
+    logger.debug("Worker terminated");
   }
 
   // -----------------------------------------------------------------------
   // Private
   // -----------------------------------------------------------------------
+
+  private createSSRWireState(delivery: "string" | "stream"): SSRWireState {
+    if (!this.workerGeneration) {
+      throw UNKNOWN_ERROR.create({ detail: "Worker generation is not available" });
+    }
+    return {
+      generation: this.workerGeneration,
+      token: crypto.randomUUID(),
+      delivery,
+      expectedSequence: 0,
+      creditAvailable: true,
+      frameBuffered: false,
+      terminal: false,
+      outputBytes: 0,
+      outputFrames: 0,
+    };
+  }
+
+  private postSSRExecutionOpen(id: string, state: SSRWireState): void {
+    this.postToWorker(
+      {
+        type: "ssr-execution-open",
+        id,
+        generation: state.generation,
+        token: state.token,
+        delivery: state.delivery,
+      } satisfies WorkerSSRExecutionOpen,
+    );
+  }
 
   private postToWorker(message: unknown): void {
     if (this.controlPort) {
@@ -575,7 +864,11 @@ export class ProjectWorker {
 
   private failWorker(status: "crashed" | "terminated", reason: string): void {
     const worker = this.worker;
+    const hadActiveWork = this._status === "busy" ||
+      this.pending.size !== 0 ||
+      this.streamHandlers.size !== 0;
     this.worker = null;
+    this.workerGeneration = null;
     this._status = status;
 
     this.suppressIdleNotifications = true;
@@ -589,17 +882,14 @@ export class ProjectWorker {
       try {
         worker.terminate();
       } catch (error) {
-        logger.debug("Worker terminate failed", {
-          projectId: this.projectId,
-          error,
-        });
+        logger.debug("Worker terminate failed", { error });
       }
     }
 
     this.closeControlPort();
     this.egressBroker?.close();
     this.egressBroker = null;
-    this.notifyIdleListeners();
+    if (hadActiveWork) this.notifyIdleListeners();
   }
 
   private closeControlPort(): void {
@@ -618,26 +908,29 @@ export class ProjectWorker {
     return import.meta.resolve("./worker-script.ts");
   }
 
-  private handleMessage(
-    data:
-      | WorkerResponse
-      | WorkerStreamChunk
-      | WorkerStreamEnd
-      | { type: "worker-exit" }
-      | { type: "pong"; id: string },
-  ): void {
-    if (typeof data !== "object" || data === null || typeof data.type !== "string") {
+  private handleMessage(data: unknown): void {
+    if (typeof data !== "object" || data === null) {
+      this.failWorker("crashed", "Worker returned an invalid control message");
+      return;
+    }
+    const type = readOwnDataProperty(data, "type");
+    if (typeof type !== "string") {
       this.failWorker("crashed", "Worker returned an invalid control message");
       return;
     }
 
-    if (data.type === "worker-exit") {
+    if (type === "worker-exit") {
       this.terminate();
       return;
     }
 
-    if (data.type === "pong") {
-      const pending = this.pending.get((data as { id: string }).id);
+    if (type === "pong") {
+      const id = readOwnDataProperty(data, "id");
+      if (typeof id !== "string") {
+        this.failWorker("crashed", "Worker returned an invalid health response");
+        return;
+      }
+      const pending = this.pending.get(id);
       if (pending) {
         if (!apply(arrayIncludes, pending.expectedTypes, ["pong"])) {
           this.failWorker("crashed", "Worker returned a response for the wrong request type");
@@ -645,56 +938,190 @@ export class ProjectWorker {
         }
         clearTimeout(pending.timer);
         pending.resolve(data as unknown as WorkerResponse);
-        this.pending.delete((data as { id: string }).id);
+        this.pending.delete(id);
       }
       return;
     }
 
-    // Handle streaming SSR chunks
-    if (data.type === "stream-chunk") {
-      const handler = this.streamHandlers.get(data.id);
-      if (!handler) {
-        this.failWorker("crashed", "Worker returned an unexpected stream chunk");
-        return;
-      }
-      handler.onChunk(data.chunk);
+    if (isSSRWireMessage(data)) {
+      this.handleSSRWireMessage(data);
       return;
     }
 
-    if (data.type === "stream-end") {
-      const handler = this.streamHandlers.get(data.id);
-      if (!handler) {
-        this.failWorker("crashed", "Worker returned an unexpected stream end");
-        return;
-      }
-      handler.onEnd();
+    const id = readOwnDataProperty(data, "id");
+    if (typeof id !== "string") {
+      this.failWorker("crashed", "Worker returned an invalid control response");
       return;
     }
-
-    const response = data as WorkerResponse;
-    const pending = this.pending.get(response.id);
+    const pending = this.pending.get(id);
     if (!pending) {
       logger.warn("Received response for unknown request", {
-        projectId: this.projectId,
-        id: response.id,
+        responseType: type,
       });
       return;
     }
-    if (!apply(arrayIncludes, pending.expectedTypes, [response.type])) {
+    if (pending.ssr) {
+      this.failWorker("crashed", "Worker mixed the generic and isolated SSR protocols");
+      return;
+    }
+    if (!apply(arrayIncludes, pending.expectedTypes, [type])) {
       this.failWorker("crashed", "Worker returned a response for the wrong request type");
       return;
     }
 
     clearTimeout(pending.timer);
-    this.pending.delete(response.id);
+    this.pending.delete(id);
     this.updateIdleStatus();
 
-    pending.resolve(response);
+    pending.resolve(data as WorkerResponse);
+  }
+
+  private handleSSRWireMessage(message: SSRWireMessage): void {
+    const id = readOwnDataProperty(message, "id");
+    if (typeof id !== "string") {
+      this.failWorker("crashed", "Worker returned an invalid isolated SSR envelope");
+      return;
+    }
+    const pending = this.pending.get(id);
+    const state = pending?.ssr;
+    if (!pending || !state || state.terminal) {
+      this.failWorker("crashed", "Worker returned a stale isolated SSR message");
+      return;
+    }
+    if (!hasValidSSRWireEnvelope(message, id, state)) {
+      this.failWorker("crashed", "Worker returned a mismatched isolated SSR message");
+      return;
+    }
+
+    if (message.type === "stream-frame") {
+      const handler = this.streamHandlers.get(id);
+      if (
+        state.delivery !== "stream" ||
+        !handler ||
+        handler.state !== state ||
+        !state.creditAvailable ||
+        state.frameBuffered
+      ) {
+        this.failWorker("crashed", "Worker emitted an uncredited isolated SSR frame");
+        return;
+      }
+
+      let chunk: Uint8Array;
+      try {
+        chunk = copyTightFixedWorkerFrame(
+          readOwnDataProperty(message, "chunk"),
+        );
+      } catch {
+        this.failWorker("crashed", "Worker returned an unsafe isolated SSR frame");
+        return;
+      }
+      state.creditAvailable = false;
+      state.expectedSequence += 1;
+      handler.onFrame(chunk);
+      return;
+    }
+
+    if (!state.creditAvailable || state.frameBuffered) {
+      this.failWorker("crashed", "Worker emitted an uncredited isolated SSR terminal");
+      return;
+    }
+
+    if (message.type === "stream-end") {
+      const handler = this.streamHandlers.get(id);
+      if (
+        state.delivery !== "stream" ||
+        !handler ||
+        handler.state !== state
+      ) {
+        this.failWorker("crashed", "Worker returned an invalid isolated SSR stream terminal");
+        return;
+      }
+      state.terminal = true;
+      handler.onEnd();
+      return;
+    }
+
+    if (message.type === "ssr-wire-result") {
+      if (
+        state.delivery !== "string" ||
+        state.expectedSequence !== 0 ||
+        typeof readOwnDataProperty(message, "html") !== "string"
+      ) {
+        this.failWorker("crashed", "Worker returned an invalid isolated SSR string terminal");
+        return;
+      }
+      const html = readOwnDataProperty(message, "html") as string;
+      state.terminal = true;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      if (isOversizedSSRHtml(html)) {
+        pending.reject(createSSROutputByteLimitError());
+        this.failWorker("terminated", "Worker exceeded the isolated SSR output boundary");
+        return;
+      }
+      this.updateIdleStatus();
+      pending.resolve({ type: "ssr-result", id, html });
+      return;
+    }
+
+    if (message.type === "ssr-output-limit") {
+      const limit = readOwnDataProperty(message, "limit");
+      if (limit !== "bytes" && limit !== "chunks") {
+        this.failWorker("crashed", "Worker returned an invalid isolated SSR output limit");
+        return;
+      }
+      state.terminal = true;
+      const error = limit === "bytes"
+        ? createSSROutputByteLimitError()
+        : createSSROutputChunkLimitError();
+      if (state.delivery === "stream") {
+        const handler = this.streamHandlers.get(id);
+        if (!handler || handler.state !== state) {
+          this.failWorker("crashed", "Worker returned an unexpected isolated SSR output limit");
+          return;
+        }
+        handler.onError(error);
+      } else {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(error);
+        this.updateIdleStatus();
+      }
+      return;
+    }
+
+    if (message.type === "ssr-wire-error") {
+      const serialized = readOwnDataProperty(message, "error");
+      if (!isSerializedWorkerError(serialized)) {
+        this.failWorker("crashed", "Worker returned an invalid isolated SSR error");
+        return;
+      }
+      const error = deserializeWorkerError(serialized);
+      state.terminal = true;
+      if (state.delivery === "stream") {
+        const handler = this.streamHandlers.get(id);
+        if (!handler || handler.state !== state) {
+          this.failWorker("crashed", "Worker returned an unexpected isolated SSR error");
+          return;
+        }
+        handler.onError(error);
+      } else {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        this.updateIdleStatus();
+        pending.resolve({
+          type: "error",
+          id,
+          error: serialized,
+        });
+      }
+    }
   }
 
   private updateIdleStatus(): void {
     if (this.pending.size !== 0 || this.streamHandlers.size !== 0) return;
-    if (this._status === "busy") this._status = "idle";
+    if (this._status !== "busy") return;
+    this._status = "idle";
     this.notifyIdleListeners();
   }
 

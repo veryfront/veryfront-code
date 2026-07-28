@@ -29,9 +29,13 @@ import type {
   WorkerRequest,
   WorkerResultResponse,
   WorkerRouteMethodsResponse,
-  WorkerSSRResultResponse,
-  WorkerStreamChunk,
+  WorkerSSRExecutionOpen,
+  WorkerSSROutputLimit,
+  WorkerSSRWireError,
+  WorkerSSRWireResult,
+  WorkerStreamCredit,
   WorkerStreamEnd,
+  WorkerStreamFrame,
 } from "./worker-types.ts";
 import {
   MAX_WORKER_BODY_BYTES,
@@ -39,8 +43,16 @@ import {
   MAX_WORKER_REQUEST_ID_CHARS,
   MAX_WORKER_RETAINED_MODULE_SOURCE_BYTES,
   MAX_WORKER_RETAINED_MODULES,
+  MAX_WORKER_SSR_CHUNK_BYTES,
+  MAX_WORKER_SSR_OUTPUT_BYTES,
+  MAX_WORKER_SSR_OUTPUT_CHUNKS,
 } from "./worker-types.ts";
-import { installWorkerEgressGuard, type WorkerEgressGuardOptions } from "./worker-egress-guard.ts";
+import {
+  type InstalledWorkerEgressGuardOptions,
+  installWorkerEgressGuard,
+  type WorkerEgressHttpBrokerConfig,
+  type WorkerEgressSocksProxyConfig,
+} from "./worker-egress-guard.ts";
 import { isAbsolute, relative, resolve as resolvePath, sep as PATH_SEP } from "node:path";
 import { types as nodeUtilTypes } from "node:util";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -70,7 +82,7 @@ import { createWorkerExitControls } from "./worker-exit-controls.ts";
 
 type InitializeEgressMessage = {
   type: "initialize-egress";
-  options: WorkerEgressGuardOptions;
+  options: InstalledWorkerEgressGuardOptions;
   controlPort: MessagePort;
 };
 
@@ -81,6 +93,7 @@ const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const eventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
 const eventCurrentTargetGetter = getOwnPropertyDescriptor(Event.prototype, "currentTarget")?.get;
 const eventIsTrustedGetter = getOwnPropertyDescriptor(Event.prototype, "isTrusted")?.get;
+const eventPreventDefault = Event.prototype.preventDefault;
 const messageEventDataGetter = getOwnPropertyDescriptor(MessageEvent.prototype, "data")?.get;
 const getPrototypeOf = Object.getPrototypeOf;
 const objectEntries = Object.entries;
@@ -90,8 +103,10 @@ const isArray = Array.isArray;
 const isProxy = nodeUtilTypes.isProxy;
 const NativeArray = Array;
 const NativeError = Error;
+const NativeMap = Map;
 const NativeMessagePort = MessagePort;
 const NativeNotFound = Deno.errors.NotFound;
+const NativePromise = Promise;
 const NativeRequest = Request;
 const NativeResponse = Response;
 const NativeSet = Set;
@@ -106,11 +121,28 @@ const objectPrototype = Object.prototype;
 const arrayPrototype = Array.prototype;
 const uint8ArrayPrototype = NativeUint8Array.prototype;
 const typedArrayPrototype = getPrototypeOf(uint8ArrayPrototype);
+const typedArrayBufferGetter = typedArrayPrototype
+  ? getOwnPropertyDescriptor(typedArrayPrototype, "buffer")?.get
+  : undefined;
 const typedArrayByteLengthGetter = typedArrayPrototype
   ? getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")?.get
   : undefined;
+const typedArrayByteOffsetGetter = typedArrayPrototype
+  ? getOwnPropertyDescriptor(typedArrayPrototype, "byteOffset")?.get
+  : undefined;
+const arrayBufferPrototype = ArrayBuffer.prototype;
+const arrayBufferByteLengthGetter = getOwnPropertyDescriptor(
+  arrayBufferPrototype,
+  "byteLength",
+)?.get;
+const arrayBufferResizableGetter = getOwnPropertyDescriptor(
+  arrayBufferPrototype,
+  "resizable",
+)?.get;
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const encodeText = TextEncoder.prototype.encode;
+const decodeText = TextDecoder.prototype.decode;
 const bytesToBase64 = NativeUint8Array.prototype.toBase64;
 const bytesToHex = NativeUint8Array.prototype.toHex;
 const setBytes = NativeUint8Array.prototype.set;
@@ -118,6 +150,12 @@ const digestBytes = crypto.subtle.digest.bind(crypto.subtle);
 const messagePortPostMessage = MessagePort.prototype.postMessage;
 const messagePortStart = MessagePort.prototype.start;
 const promiseThen = Promise.prototype.then;
+const readableStreamGetReader = ReadableStream.prototype.getReader;
+const readableStreamReaderCancel = ReadableStreamDefaultReader.prototype.cancel;
+const readableStreamReaderRead = ReadableStreamDefaultReader.prototype.read;
+const readableStreamReaderReleaseLock = ReadableStreamDefaultReader.prototype.releaseLock;
+const arrayPush = Array.prototype.push;
+const mapDelete = Map.prototype.delete;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const weakMapGet = WeakMap.prototype.get;
@@ -141,14 +179,13 @@ const objectFreeze = Object.freeze;
 const numberIsFinite = Number.isFinite;
 const numberIsSafeInteger = Number.isSafeInteger;
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-const denoEnvGet = Deno.env.get.bind(Deno.env);
-const denoEnvSet = Deno.env.set.bind(Deno.env);
-const denoEnvDelete = Deno.env.delete.bind(Deno.env);
 const denoReadDir = Deno.readDir.bind(Deno);
 const denoReadFile = Deno.readFile.bind(Deno);
 const denoReadTextFile = Deno.readTextFile.bind(Deno);
 const denoRealPath = Deno.realPath.bind(Deno);
 const denoStat = Deno.stat.bind(Deno);
+const nativeWorkerClose = typeof globalThis.close === "function" ? globalThis.close : undefined;
+const WORKER_EXIT_MESSAGE = objectFreeze({ type: "worker-exit" as const });
 const LOWERCASE_SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const CANONICAL_POLICY_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const CANONICAL_ROUTE_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]{1,64}$/;
@@ -180,8 +217,64 @@ const MAX_WORKER_DATA_UTF8_BYTES = 16 * 1024 * 1024;
 let egressInitialized = false;
 let exitNotifierInstalled = false;
 let workerControlPort: MessagePort | null = null;
-let postControlPortMessage: ((message: unknown) => void) | null = null;
+let postControlPortMessage:
+  | ((message: unknown, transfer?: readonly Transferable[]) => void)
+  | null = null;
 let closeWorkerProcess: (() => void) | null = null;
+let workerWireGeneration: string | null = null;
+let unhandledWorkerFaultClosed = false;
+
+interface SSRExecutionContext {
+  readonly id: string;
+  readonly generation: string;
+  readonly token: string;
+  readonly delivery: "string" | "stream";
+  sequence: number;
+}
+
+interface StreamCreditWaiter {
+  readonly id: string;
+  readonly generation: string;
+  readonly token: string;
+  readonly sequence: number;
+  readonly resolve: () => void;
+}
+
+let pendingSSRExecutionOpen: SSRExecutionContext | null = null;
+const activeSSRExecutions = new NativeMap<string, SSRExecutionContext>();
+const streamCreditWaiters = new NativeMap<string, StreamCreditWaiter>();
+const MAX_SSR_WIRE_TOKEN_CHARS = 256;
+
+function containUnhandledWorkerFault(event: Event): void {
+  apply(eventPreventDefault, event, []);
+  if (unhandledWorkerFaultClosed) return;
+  unhandledWorkerFaultClosed = true;
+
+  const closeWorker = closeWorkerProcess;
+  try {
+    if (closeWorker) {
+      closeWorker();
+    } else if (nativeWorkerClose) {
+      apply(nativeWorkerClose, globalThis, []);
+    }
+  } catch {
+    // The protected close wrapper invokes the native close in a finally block.
+  }
+}
+
+function installUnhandledWorkerFaultBoundary(): void {
+  if (!nativeWorkerClose) return;
+  apply(eventTargetAddEventListener, self, [
+    "error",
+    containUnhandledWorkerFault as EventListener,
+  ]);
+  apply(eventTargetAddEventListener, self, [
+    "unhandledrejection",
+    containUnhandledWorkerFault as EventListener,
+  ]);
+}
+
+installUnhandledWorkerFaultBoundary();
 
 function createWorkerResponse(
   body: BodyInit | null | undefined,
@@ -211,12 +304,15 @@ function createWorkerTextResponse(data: string, init?: ResponseInit): Response {
   return createWorkerResponse(data, "text/plain", init);
 }
 
-function sendControlMessage(message: unknown): void {
+function sendControlMessage(
+  message: unknown,
+  transfer?: readonly Transferable[],
+): void {
   const postMessage = postControlPortMessage;
   if (!postMessage) {
     throw new NativeError("Worker control channel is not initialized");
   }
-  postMessage(message);
+  postMessage(message, transfer);
 }
 
 function isTrustedMessageEventFrom(
@@ -241,10 +337,10 @@ function readMessageEventData(event: MessageEvent): unknown {
 }
 
 function installWorkerExitNotifier(): void {
-  if (exitNotifierInstalled || typeof globalThis.close !== "function") return;
+  if (exitNotifierInstalled || !nativeWorkerClose) return;
 
-  const notifyExit = () => sendControlMessage({ type: "worker-exit" });
-  const closeWorker = globalThis.close.bind(globalThis);
+  const notifyExit = () => sendControlMessage(WORKER_EXIT_MESSAGE);
+  const closeWorker = () => apply(nativeWorkerClose, globalThis, []);
   const exitWorker = typeof Deno.exit === "function" ? Deno.exit.bind(Deno) : undefined;
   const controls = createWorkerExitControls({ notifyExit, closeWorker, exitWorker });
   const workerPostMessage = self.postMessage.bind(self);
@@ -1159,6 +1255,97 @@ function snapshotStructuredDataRecord(
   return snapshot as Record<string, unknown>;
 }
 
+function invalidIsolatedDataResult(): never {
+  throw new NativeTypeError("Invalid isolated data result");
+}
+
+function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
+  try {
+    const { record: result } = requirePlainDataRecord(
+      value,
+      "data result",
+    );
+    const rawProps = readOptionalDataProperty(result, "props");
+    const rawRedirect = readOptionalDataProperty(result, "redirect");
+    const rawNotFound = readOptionalDataProperty(result, "notFound");
+    const rawRevalidate = readOptionalDataProperty(result, "revalidate");
+    const hasProps = rawProps.present && rawProps.value !== undefined;
+    const hasRedirect = rawRedirect.present && rawRedirect.value !== undefined;
+    const hasNotFound = rawNotFound.present && rawNotFound.value !== undefined;
+    const hasRevalidate = rawRevalidate.present && rawRevalidate.value !== undefined;
+
+    let normalizedRedirect:
+      | { destination: string; permanent?: boolean }
+      | undefined;
+    if (hasRedirect) {
+      const { record: redirectRecord } = requirePlainDataRecord(
+        rawRedirect.value,
+        "data result redirect",
+      );
+      const destinationField = readOptionalDataProperty(
+        redirectRecord,
+        "destination",
+      );
+      if (!destinationField.present) return invalidIsolatedDataResult();
+      const destination = requireString(
+        destinationField.value,
+        "data result redirect destination",
+        MAX_WORKER_URL_CHARS,
+        true,
+      );
+      const permanent = readOptionalDataProperty(redirectRecord, "permanent");
+      const hasPermanent = permanent.present && permanent.value !== undefined;
+      if (hasPermanent && typeof permanent.value !== "boolean") {
+        return invalidIsolatedDataResult();
+      }
+      normalizedRedirect = {
+        destination,
+        ...(hasPermanent ? { permanent: permanent.value as boolean } : {}),
+      };
+    }
+
+    if (hasNotFound && typeof rawNotFound.value !== "boolean") {
+      return invalidIsolatedDataResult();
+    }
+    const normalizedNotFound = hasNotFound ? rawNotFound.value as boolean : undefined;
+    const activeOutcomes = (hasProps ? 1 : 0) +
+      (hasRedirect ? 1 : 0) +
+      (normalizedNotFound === true ? 1 : 0);
+    if (activeOutcomes > 1) {
+      return invalidIsolatedDataResult();
+    }
+
+    let normalizedRevalidate: number | false | undefined;
+    if (hasRevalidate) {
+      if (
+        rawRevalidate.value !== false &&
+        (typeof rawRevalidate.value !== "number" ||
+          !numberIsFinite(rawRevalidate.value) ||
+          rawRevalidate.value < 0)
+      ) {
+        return invalidIsolatedDataResult();
+      }
+      normalizedRevalidate = rawRevalidate.value as number | false;
+    }
+
+    const normalized: Record<string, unknown> = {};
+    if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
+    if (normalizedRedirect) {
+      defineDataProperty(normalized, "redirect", normalizedRedirect);
+    }
+    if (normalizedNotFound !== undefined) {
+      defineDataProperty(normalized, "notFound", normalizedNotFound);
+    }
+    if (normalizedRevalidate !== undefined) {
+      defineDataProperty(normalized, "revalidate", normalizedRevalidate);
+    }
+    const budget: DataSnapshotBudget = { nodes: 0, utf8Bytes: 0 };
+    return snapshotStructuredDataRecord(normalized, budget) as SerializedDataResult;
+  } catch {
+    return invalidIsolatedDataResult();
+  }
+}
+
 function snapshotOptionalString(
   record: DataRecord,
   key: string,
@@ -1672,10 +1859,63 @@ let retainedPreparedModuleSourceBytes = 0;
 const WORKER_MODULE_CAPACITY_ERROR = new NativeError(
   "Worker prepared-module retention capacity exceeded",
 );
-const WORKER_ENV_CLEANUP_ERROR = new NativeError(
-  "Project environment cleanup failed",
+const WORKER_SSR_OUTPUT_BYTE_LIMIT_ERROR = new NativeError(
+  "Isolated SSR output exceeded its byte boundary",
+);
+const WORKER_SSR_OUTPUT_CHUNK_LIMIT_ERROR = new NativeError(
+  "Isolated SSR output exceeded its chunk boundary",
 );
 
+function closeForSSRProtocolViolation(): void {
+  try {
+    closeWorkerProcess?.();
+  } catch {
+    // Closing the worker is the only safe recovery from a framework-wire fault.
+  }
+}
+
+function waitForStreamCredit(
+  execution: SSRExecutionContext,
+  sequence: number,
+): Promise<void> {
+  if (apply(mapGet, streamCreditWaiters, [execution.token]) !== undefined) {
+    throw new NativeError("Duplicate isolated SSR stream credit waiter");
+  }
+  return new NativePromise<void>((resolve) => {
+    apply(mapSet, streamCreditWaiters, [
+      execution.token,
+      {
+        id: execution.id,
+        generation: execution.generation,
+        token: execution.token,
+        sequence,
+        resolve,
+      } satisfies StreamCreditWaiter,
+    ]);
+  });
+}
+
+function discardStreamCredit(token: string): void {
+  apply(mapDelete, streamCreditWaiters, [token]);
+}
+
+function acceptWorkerStreamCredit(credit: WorkerStreamCredit): void {
+  const waiter = apply(mapGet, streamCreditWaiters, [credit.token]) as
+    | StreamCreditWaiter
+    | undefined;
+  if (
+    !waiter ||
+    credit.id !== waiter.id ||
+    credit.generation !== waiter.generation ||
+    credit.token !== waiter.token ||
+    credit.sequence !== waiter.sequence
+  ) {
+    closeForSSRProtocolViolation();
+    return;
+  }
+  apply(mapDelete, streamCreditWaiters, [credit.token]);
+  waiter.resolve();
+}
 function wrapPreparedModuleFailure(
   cause: unknown,
   digest: string,
@@ -1933,43 +2173,21 @@ export function getPreparedModuleRetentionStats(): {
 }
 
 // ---------------------------------------------------------------------------
-// Project Env Overlay
+// Request-owned Project Env
 // ---------------------------------------------------------------------------
 
-async function withProjectEnv<T>(
+function createRequestProjectEnv(
   env: Record<string, string> | undefined,
-  operation: () => Promise<T>,
-): Promise<T> {
-  if (!env) return await operation();
-
-  const entries = apply(objectEntries, Object, [env]) as [string, string][];
-  let operationFailed = false;
-  let operationError: unknown;
-  let result: T | undefined;
-  try {
+): Readonly<Record<string, string>> {
+  const output = createNullPrototypeRecord<string>();
+  if (env) {
+    const entries = apply(objectEntries, Object, [env]) as [string, string][];
     for (let index = 0; index < entries.length; index++) {
-      const entry = entries[index]!;
-      denoEnvSet(entry[0], entry[1]);
-    }
-    result = await operation();
-  } catch (error) {
-    operationFailed = true;
-    operationError = error;
-  }
-
-  let cleanupFailed = false;
-  for (let index = 0; index < entries.length; index++) {
-    const key = entries[index]![0];
-    try {
-      denoEnvDelete(key);
-      if (denoEnvGet(key) !== undefined) cleanupFailed = true;
-    } catch {
-      cleanupFailed = true;
+      const [key, value] = entries[index]!;
+      defineDataProperty(output, key, value);
     }
   }
-  if (cleanupFailed) throw WORKER_ENV_CLEANUP_ERROR;
-  if (operationFailed) throw operationError;
-  return result as T;
+  return freezeObject(output);
 }
 
 // ---------------------------------------------------------------------------
@@ -1986,36 +2204,40 @@ function runWithWorkerSourceIntegrationPolicy<T>(
 async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedResponse> {
   return await runWithWorkerSourceIntegrationPolicy(
     req.sourceIntegrationPolicy,
-    () =>
-      withProjectEnv(req.projectEnv, async () => {
-        const mod = await loadPreparedModule(req.module, {
-          logicalModuleId: req.modulePath,
-          sourceIntegrationPolicy: req.sourceIntegrationPolicy,
-          projectEnv: req.projectEnv,
-        });
+    async () => {
+      const env = createRequestProjectEnv(req.projectEnv);
+      const mod = await loadPreparedModule(req.module, {
+        logicalModuleId: req.modulePath,
+        sourceIntegrationPolicy: req.sourceIntegrationPolicy,
+        projectEnv: req.projectEnv,
+      });
 
-        const handlerFn = resolveRouteHandlerExport(mod, req.method) as
-          | ((
-            request: Request,
-            context: { params: Record<string, string> },
-          ) => Promise<unknown> | unknown)
-          | undefined;
+      const handlerFn = resolveRouteHandlerExport(mod, req.method) as
+        | ((
+          request: Request,
+          context: {
+            params: Record<string, string>;
+            env: Readonly<Record<string, string>>;
+          },
+        ) => Promise<unknown> | unknown)
+        | undefined;
 
-        if (!handlerFn) {
-          return serializeResponse(
-            createAppRouteMethodNotAllowed(mod),
-            req.method,
-          );
-        }
+      if (!handlerFn) {
+        return serializeResponse(
+          createAppRouteMethodNotAllowed(mod),
+          req.method,
+        );
+      }
 
-        const pendingResponse = handlerFn(deserializeRequest(req.request), {
-          params: req.params ?? {},
-        });
-        const response = isTrustedRouteResponsePromise(pendingResponse)
-          ? await pendingResponse
-          : pendingResponse;
-        return serializeResponse(response, req.method);
-      }),
+      const pendingResponse = handlerFn(deserializeRequest(req.request), {
+        params: req.params ?? {},
+        env,
+      });
+      const response = isTrustedRouteResponsePromise(pendingResponse)
+        ? await pendingResponse
+        : pendingResponse;
+      return serializeResponse(response, req.method);
+    },
   );
 }
 
@@ -2076,12 +2298,9 @@ async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataRes
       }
 
       const context = deserializeDataContext(req.context);
-      const result = await runServerData(getServerData, context);
-
-      // Normalize the result shape
-      if (result.redirect) return { redirect: result.redirect };
-      if (result.notFound) return { notFound: true };
-      return { props: result.props ?? {}, revalidate: result.revalidate };
+      return snapshotDataResultForBoundary(
+        await runServerData(getServerData, context),
+      );
     },
   );
 }
@@ -2089,85 +2308,86 @@ async function handleFetchData(req: FetchDataRequest): Promise<SerializedDataRes
 async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<SerializedResponse> {
   return await runWithWorkerSourceIntegrationPolicy(
     req.sourceIntegrationPolicy,
-    () =>
-      withProjectEnv(req.projectEnv, async () => {
-        const mod = await loadPreparedModule(req.module, {
-          logicalModuleId: req.modulePath,
-          sourceIntegrationPolicy: req.sourceIntegrationPolicy,
-          projectEnv: req.projectEnv,
-        });
+    async () => {
+      const env = createRequestProjectEnv(req.projectEnv);
+      const mod = await loadPreparedModule(req.module, {
+        logicalModuleId: req.modulePath,
+        sourceIntegrationPolicy: req.sourceIntegrationPolicy,
+        projectEnv: req.projectEnv,
+      });
 
-        const handlerFn = resolveRouteHandlerExport(mod, req.method) as
-          | ((ctx: unknown) => Promise<unknown> | unknown)
-          | undefined;
+      const handlerFn = resolveRouteHandlerExport(mod, req.method) as
+        | ((ctx: unknown) => Promise<unknown> | unknown)
+        | undefined;
 
-        if (!handlerFn) {
-          return serializeResponse(
-            createPagesRouteMethodNotAllowed(mod),
-            req.method,
-          );
-        }
+      if (!handlerFn) {
+        return serializeResponse(
+          createPagesRouteMethodNotAllowed(mod),
+          req.method,
+        );
+      }
 
-        const { request, params, cookies } = deserializePagesRequest(req.context);
-        const url = new NativeURL(request.url);
+      const { request, params, cookies } = deserializePagesRequest(req.context);
+      const url = new NativeURL(request.url);
 
-        // Build a minimal read-only fs adapter scoped to the project directory.
-        // Every path is validated against the project root before it reaches a
-        // Deno API so user route handlers cannot read arbitrary host files.
-        const assertContained = makeProjectPathGuard(req.projectDir);
-        const workerFs = {
-          readTextFile: async (path: string) => denoReadTextFile(await assertContained(path)),
-          readFile: async (path: string) => denoReadFile(await assertContained(path)),
-          exists: async (path: string) => {
-            try {
-              await denoStat(await assertContained(path));
-              return true;
-            } catch (error) {
-              if (isNativeNotFound(error)) return false;
-              throw error;
-            }
-          },
-          stat: async (path: string) => {
-            const info = await denoStat(await assertContained(path));
-            return {
-              isFile: info.isFile,
-              isDirectory: info.isDirectory,
-              isSymlink: info.isSymlink,
-              size: info.size,
-              mtime: info.mtime,
-            };
-          },
-          readDir: async function* (path: string) {
-            const safePath = await assertContained(path);
-            for await (const entry of denoReadDir(safePath)) {
-              yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
-            }
-          },
-        };
+      // Build a minimal read-only fs adapter scoped to the project directory.
+      // Every path is validated against the project root before it reaches a
+      // Deno API so user route handlers cannot read arbitrary host files.
+      const assertContained = makeProjectPathGuard(req.projectDir);
+      const workerFs = {
+        readTextFile: async (path: string) => denoReadTextFile(await assertContained(path)),
+        readFile: async (path: string) => denoReadFile(await assertContained(path)),
+        exists: async (path: string) => {
+          try {
+            await denoStat(await assertContained(path));
+            return true;
+          } catch (error) {
+            if (isNativeNotFound(error)) return false;
+            throw error;
+          }
+        },
+        stat: async (path: string) => {
+          const info = await denoStat(await assertContained(path));
+          return {
+            isFile: info.isFile,
+            isDirectory: info.isDirectory,
+            isSymlink: info.isSymlink,
+            size: info.size,
+            mtime: info.mtime,
+          };
+        },
+        readDir: async function* (path: string) {
+          const safePath = await assertContained(path);
+          for await (const entry of denoReadDir(safePath)) {
+            yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
+          }
+        },
+      };
 
-        // Build a minimal APIContext (subset of the full context)
-        const ctx = {
-          request,
-          req: request,
-          params,
-          query: url.searchParams,
-          cookies,
-          headers: request.headers,
-          url,
-          // The same helpers the in-process context uses, so a handler behaves
-          // the same whether or not isolation is enabled.
-          json: createWorkerJsonResponse,
-          body: createBodyReader(request),
-          text: createWorkerTextResponse,
-          fs: workerFs,
-        };
+      // Build a minimal APIContext (subset of the full context)
+      const ctx = {
+        request,
+        req: request,
+        params,
+        query: url.searchParams,
+        cookies,
+        headers: request.headers,
+        url,
+        // The same helpers the in-process context uses, so a handler behaves
+        // the same whether or not isolation is enabled.
+        json: createWorkerJsonResponse,
+        body: createBodyReader(request),
+        text: createWorkerTextResponse,
+        fs: workerFs,
+        env,
+      };
 
-        const pendingResponse = handlerFn(ctx);
-        const response = isTrustedRouteResponsePromise(pendingResponse)
-          ? await pendingResponse
-          : pendingResponse;
-        return serializeResponse(response, req.method);
-      }),
+      const pendingResponse = handlerFn(ctx);
+      const response = isTrustedRouteResponsePromise(pendingResponse)
+        ? await pendingResponse
+        : pendingResponse;
+      return serializeResponse(response, req.method);
+    },
   );
 }
 
@@ -2176,18 +2396,17 @@ async function handleInspectApiRouteMethods(
 ): Promise<string[]> {
   return await runWithWorkerSourceIntegrationPolicy(
     req.sourceIntegrationPolicy,
-    () =>
-      withProjectEnv(req.projectEnv, async () => {
-        const mod = await loadPreparedModule(req.module, {
-          logicalModuleId: req.modulePath,
-          sourceIntegrationPolicy: req.sourceIntegrationPolicy,
-          projectEnv: req.projectEnv,
-        });
-        return snapshotResolvedRouteMethods(
-          resolveExecutableRouteMethods(mod, req.requestedMethod),
-          false,
-        );
-      }),
+    async () => {
+      const mod = await loadPreparedModule(req.module, {
+        logicalModuleId: req.modulePath,
+        sourceIntegrationPolicy: req.sourceIntegrationPolicy,
+        projectEnv: req.projectEnv,
+      });
+      return snapshotResolvedRouteMethods(
+        resolveExecutableRouteMethods(mod, req.requestedMethod),
+        false,
+      );
+    },
   );
 }
 
@@ -2207,16 +2426,222 @@ async function handleInspectApiRouteMethods(
  */
 async function handleRenderSSR(
   req: RenderSSRRequest,
-): Promise<{ html: string } | "streaming"> {
+  execution: SSRExecutionContext,
+): Promise<string | null> {
   return await runWithWorkerSourceIntegrationPolicy(
     req.sourceIntegrationPolicy,
-    async () => await renderSSR(req),
+    async () => await renderSSR(req, execution),
   );
+}
+
+interface FixedUint8View {
+  readonly buffer: ArrayBuffer;
+  readonly byteOffset: number;
+  readonly byteLength: number;
+}
+
+function inspectFixedUint8View(value: unknown): FixedUint8View {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    isProxy(value) ||
+    getPrototypeOf(value) !== uint8ArrayPrototype ||
+    !typedArrayBufferGetter ||
+    !typedArrayByteLengthGetter ||
+    !typedArrayByteOffsetGetter ||
+    !arrayBufferByteLengthGetter
+  ) {
+    throw new NativeTypeError("React emitted a non-native SSR byte chunk");
+  }
+
+  const buffer = apply(typedArrayBufferGetter, value, []) as unknown;
+  if (
+    buffer === null ||
+    typeof buffer !== "object" ||
+    getPrototypeOf(buffer) !== arrayBufferPrototype
+  ) {
+    throw new NativeTypeError("React emitted a shared SSR byte chunk");
+  }
+  if (
+    arrayBufferResizableGetter &&
+    apply(arrayBufferResizableGetter, buffer, []) === true
+  ) {
+    throw new NativeTypeError("React emitted a resizable SSR byte chunk");
+  }
+
+  const byteOffset = apply(typedArrayByteOffsetGetter, value, []) as number;
+  const byteLength = apply(typedArrayByteLengthGetter, value, []) as number;
+  const bufferByteLength = apply(arrayBufferByteLengthGetter, buffer, []) as number;
+  if (
+    !numberIsSafeInteger(byteOffset) ||
+    !numberIsSafeInteger(byteLength) ||
+    byteOffset < 0 ||
+    byteLength < 0 ||
+    byteOffset > bufferByteLength ||
+    byteLength > bufferByteLength - byteOffset
+  ) {
+    throw new NativeTypeError("React emitted an invalid SSR byte view");
+  }
+  return {
+    buffer: buffer as ArrayBuffer,
+    byteOffset,
+    byteLength,
+  };
+}
+
+function copyTightSSRFrame(
+  source: FixedUint8View,
+  relativeOffset: number,
+  byteLength: number,
+): Uint8Array {
+  if (
+    byteLength <= 0 ||
+    byteLength > MAX_WORKER_SSR_CHUNK_BYTES ||
+    relativeOffset < 0 ||
+    relativeOffset > source.byteLength ||
+    byteLength > source.byteLength - relativeOffset
+  ) {
+    throw new NativeTypeError("Invalid isolated SSR frame slice");
+  }
+  const sourceSlice = new NativeUint8Array(
+    source.buffer,
+    source.byteOffset + relativeOffset,
+    byteLength,
+  );
+  const frame = new NativeUint8Array(byteLength);
+  apply(setBytes, frame, [sourceSlice]);
+
+  const frameBuffer = typedArrayBufferGetter
+    ? apply(typedArrayBufferGetter, frame, []) as ArrayBuffer
+    : undefined;
+  const frameOffset = typedArrayByteOffsetGetter
+    ? apply(typedArrayByteOffsetGetter, frame, []) as number
+    : -1;
+  const frameBufferBytes = frameBuffer && arrayBufferByteLengthGetter
+    ? apply(arrayBufferByteLengthGetter, frameBuffer, []) as number
+    : -1;
+  if (
+    !frameBuffer ||
+    getPrototypeOf(frameBuffer) !== arrayBufferPrototype ||
+    frameOffset !== 0 ||
+    frameBufferBytes !== byteLength ||
+    (arrayBufferResizableGetter &&
+      apply(arrayBufferResizableGetter, frameBuffer, []) === true)
+  ) {
+    throw new NativeError("Unable to allocate a fixed isolated SSR frame");
+  }
+  return frame;
+}
+
+async function sendStreamFrame(
+  execution: SSRExecutionContext,
+  frame: Uint8Array,
+): Promise<void> {
+  const sequence = execution.sequence;
+  const nextSequence = sequence + 1;
+  const credit = waitForStreamCredit(execution, nextSequence);
+  try {
+    const buffer = apply(typedArrayBufferGetter!, frame, []) as ArrayBuffer;
+    const message: WorkerStreamFrame = {
+      type: "stream-frame",
+      id: execution.id,
+      generation: execution.generation,
+      token: execution.token,
+      sequence,
+      chunk: frame,
+    };
+    sendControlMessage(message, [buffer]);
+    execution.sequence = nextSequence;
+  } catch (error) {
+    discardStreamCredit(execution.token);
+    throw error;
+  }
+  await credit;
+}
+
+/**
+ * Bound framework-owned SSR retention after React yields each source chunk.
+ *
+ * This worker shares a process with React and project code. A component or
+ * React may therefore allocate a large value before the framework can observe,
+ * split, account, cancel, or release it. A hard pre-allocation memory boundary
+ * requires process/container isolation rather than a same-process Worker.
+ */
+async function consumeSSRByteStream(
+  stream: ReadableStream<Uint8Array>,
+  onFrame: (frame: Uint8Array) => Promise<void> | void,
+): Promise<number> {
+  const reader = apply(
+    readableStreamGetReader,
+    stream,
+    [],
+  ) as ReadableStreamDefaultReader<Uint8Array>;
+  let completed = false;
+  let outputBytes = 0;
+  let outputFrames = 0;
+  let sourceChunks = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await apply(
+        readableStreamReaderRead,
+        reader,
+        [],
+      ) as ReadableStreamReadResult<Uint8Array>;
+      if (done) {
+        completed = true;
+        return outputBytes;
+      }
+
+      sourceChunks += 1;
+      if (sourceChunks > MAX_WORKER_SSR_OUTPUT_CHUNKS) {
+        throw WORKER_SSR_OUTPUT_CHUNK_LIMIT_ERROR;
+      }
+      const source = inspectFixedUint8View(value);
+      if (source.byteLength > MAX_WORKER_SSR_OUTPUT_BYTES - outputBytes) {
+        throw WORKER_SSR_OUTPUT_BYTE_LIMIT_ERROR;
+      }
+      outputBytes += source.byteLength;
+
+      let offset = 0;
+      while (offset < source.byteLength) {
+        outputFrames += 1;
+        if (outputFrames > MAX_WORKER_SSR_OUTPUT_CHUNKS) {
+          throw WORKER_SSR_OUTPUT_CHUNK_LIMIT_ERROR;
+        }
+        const frameBytes = Math.min(
+          MAX_WORKER_SSR_CHUNK_BYTES,
+          source.byteLength - offset,
+        );
+        const frame = copyTightSSRFrame(source, offset, frameBytes);
+        await onFrame(frame);
+        offset += frameBytes;
+      }
+    }
+  } finally {
+    if (!completed) {
+      try {
+        await (apply(
+          readableStreamReaderCancel,
+          reader,
+          ["Isolated SSR rendering stopped"],
+        ) as Promise<void>);
+      } catch {
+        // The worker request failure remains authoritative.
+      }
+    }
+    try {
+      apply(readableStreamReaderReleaseLock, reader, []);
+    } catch {
+      // The worker request failure remains authoritative.
+    }
+  }
 }
 
 async function renderSSR(
   req: RenderSSRRequest,
-): Promise<{ html: string } | "streaming"> {
+  execution: SSRExecutionContext,
+): Promise<string | null> {
   // Load React only for SSR workers. API-only workers and health checks should
   // not pay the React import cost or contend on it under parallel worker tests.
   await ensureReactReady();
@@ -2226,7 +2651,6 @@ async function renderSSR(
   }
 
   const React = _React;
-  const { renderToString } = _ReactDOMServer;
 
   // Import the page component
   const pageMod = await loadModule(req.pageModulePath);
@@ -2265,49 +2689,146 @@ async function renderSSR(
     element = createElement(Layout, layoutProps, element);
   }
 
-  // Streaming mode: send chunks via postMessage
-  if (req.delivery === "stream") {
-    // Use renderToReadableStream if available (React 18+)
-    const serverModule = _ReactDOMServer as unknown as Record<string, unknown>;
-    const renderToReadableStream = serverModule.renderToReadableStream as
-      | ((element: React.ReactElement) => Promise<ReadableStream<Uint8Array>>)
-      | undefined;
-
-    if (renderToReadableStream) {
-      const stream = await renderToReadableStream(element);
-      const reader = stream.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          const endMsg: WorkerStreamEnd = { type: "stream-end", id: req.id };
-          sendControlMessage(endMsg);
-          break;
-        }
-        const chunkMsg: WorkerStreamChunk = {
-          type: "stream-chunk",
-          id: req.id,
-          chunk: value,
-        };
-        sendControlMessage(chunkMsg);
-      }
-
-      return "streaming";
-    }
-
-    // Fallback: render to string if streaming not available
+  const serverModule = _ReactDOMServer as unknown as Record<string, unknown>;
+  const renderToReadableStream = serverModule.renderToReadableStream as
+    | ((element: React.ReactElement) => Promise<ReadableStream<Uint8Array>>)
+    | undefined;
+  if (typeof renderToReadableStream !== "function") {
+    // A synchronous render followed by a size check cannot bound allocation.
+    throw new NativeError("Bounded React SSR streaming is unavailable");
   }
 
-  // String mode (or streaming fallback): render to string
-  const html = renderToString(element);
-  return { html };
+  const stream = await renderToReadableStream(element);
+  if (execution.delivery === "stream") {
+    await consumeSSRByteStream(
+      stream,
+      async (frame) => await sendStreamFrame(execution, frame),
+    );
+    return null;
+  }
+
+  const frames = new NativeArray<Uint8Array>();
+  const outputBytes = await consumeSSRByteStream(stream, (frame) => {
+    apply(arrayPush, frames, [frame]);
+  });
+  const collected = new NativeUint8Array(outputBytes);
+  let offset = 0;
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index]!;
+    apply(setBytes, collected, [frame, offset]);
+    offset += byteLengthOf(frame);
+  }
+  return apply(decodeText, textDecoder, [collected]) as string;
 }
 
 // ---------------------------------------------------------------------------
 // Message Handler
 // ---------------------------------------------------------------------------
 
-async function processWorkerRequest(request: WorkerRequest): Promise<void> {
+function claimQueuedSSRExecution(
+  request: RenderSSRRequest,
+): SSRExecutionContext | null {
+  const execution = pendingSSRExecutionOpen;
+  if (
+    !execution ||
+    execution.id !== request.id ||
+    execution.delivery !== request.delivery ||
+    execution.generation !== workerWireGeneration
+  ) {
+    closeForSSRProtocolViolation();
+    return null;
+  }
+  pendingSSRExecutionOpen = null;
+  return execution;
+}
+
+async function processSSRWorkerRequest(
+  request: RenderSSRRequest,
+  execution: SSRExecutionContext,
+): Promise<void> {
+  if (apply(mapGet, activeSSRExecutions, [request.id]) !== undefined) {
+    closeForSSRProtocolViolation();
+    return;
+  }
+  apply(mapSet, activeSSRExecutions, [request.id, execution]);
+
+  try {
+    if (!egressInitialized) {
+      throw new NativeError("Worker egress guard is not initialized");
+    }
+    const html = await handleRenderSSR(request, execution);
+    if (execution.delivery === "stream") {
+      const end: WorkerStreamEnd = {
+        type: "stream-end",
+        id: execution.id,
+        generation: execution.generation,
+        token: execution.token,
+        sequence: execution.sequence,
+      };
+      sendControlMessage(end);
+    } else {
+      if (html === null || execution.sequence !== 0) {
+        throw new NativeError("Invalid isolated SSR string rendering state");
+      }
+      const result: WorkerSSRWireResult = {
+        type: "ssr-wire-result",
+        id: execution.id,
+        generation: execution.generation,
+        token: execution.token,
+        sequence: 0,
+        html,
+      };
+      sendControlMessage(result);
+    }
+  } catch (error) {
+    if (
+      error === WORKER_SSR_OUTPUT_BYTE_LIMIT_ERROR ||
+      error === WORKER_SSR_OUTPUT_CHUNK_LIMIT_ERROR
+    ) {
+      const outputLimit: WorkerSSROutputLimit = {
+        type: "ssr-output-limit",
+        id: execution.id,
+        generation: execution.generation,
+        token: execution.token,
+        sequence: execution.sequence,
+        limit: error === WORKER_SSR_OUTPUT_BYTE_LIMIT_ERROR ? "bytes" : "chunks",
+      };
+      sendControlMessage(outputLimit);
+    } else {
+      const failure: WorkerSSRWireError = {
+        type: "ssr-wire-error",
+        id: execution.id,
+        generation: execution.generation,
+        token: execution.token,
+        sequence: execution.sequence,
+        error: serializeError(error),
+      };
+      sendControlMessage(failure);
+    }
+  } finally {
+    discardStreamCredit(execution.token);
+    const active = apply(mapGet, activeSSRExecutions, [
+      execution.id,
+    ]) as SSRExecutionContext | undefined;
+    if (active === execution) {
+      apply(mapDelete, activeSSRExecutions, [execution.id]);
+    }
+  }
+}
+
+async function processWorkerRequest(
+  request: WorkerRequest,
+  ssrExecution?: SSRExecutionContext,
+): Promise<void> {
+  if (request.type === "render-ssr") {
+    if (!ssrExecution) {
+      closeForSSRProtocolViolation();
+      return;
+    }
+    await processSSRWorkerRequest(request, ssrExecution);
+    return;
+  }
+
   try {
     if (!egressInitialized) {
       throw new NativeError("Worker egress guard is not initialized");
@@ -2322,22 +2843,6 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
         result: dataResult,
       };
       sendControlMessage(response);
-      return;
-    }
-
-    // SSR rendering — may stream chunks or return HTML string
-    if (request.type === "render-ssr") {
-      const ssrResult = await handleRenderSSR(request);
-
-      // If streaming, chunks were already sent via postMessage
-      if (ssrResult === "streaming") return;
-
-      const ssrResponse: WorkerSSRResultResponse = {
-        type: "ssr-result",
-        id: request.id,
-        html: ssrResult.html,
-      };
-      sendControlMessage(ssrResponse);
       return;
     }
 
@@ -2395,10 +2900,7 @@ async function processWorkerRequest(request: WorkerRequest): Promise<void> {
       ),
     };
     sendControlMessage(errorResponse);
-    if (
-      preparedFailure.failed ||
-      error === WORKER_ENV_CLEANUP_ERROR
-    ) {
+    if (preparedFailure.failed) {
       closeWorkerProcess?.();
     }
   }
@@ -2424,14 +2926,144 @@ function snapshotControlMessageId(value: unknown): string {
     : "";
 }
 
-function enqueueWorkerRequest(request: WorkerRequest): void {
+function enqueueWorkerRequest(
+  request: WorkerRequest,
+  ssrExecution?: SSRExecutionContext,
+): void {
   // Project code may mutate Promise.prototype after its first import. Invoke
   // the captured intrinsic directly so the serialized env overlay queue
   // remains framework-owned.
   requestQueue = apply(promiseThen, requestQueue, [
-    () => processWorkerRequest(request),
-    () => processWorkerRequest(request),
+    () => processWorkerRequest(request, ssrExecution),
+    () => processWorkerRequest(request, ssrExecution),
   ]) as Promise<void>;
+}
+
+function snapshotSSRExecutionOpen(message: unknown): WorkerSSRExecutionOpen {
+  const cloned = cloneStructuredValue(message);
+  const open = requireRecordShape(
+    cloned,
+    ["type", "id", "generation", "token", "delivery"],
+    [],
+    "SSR execution open",
+  );
+  if (readDataProperty(open, "type") !== "ssr-execution-open") {
+    return invalidWorkerRequest("type");
+  }
+  const delivery = readDataProperty(open, "delivery");
+  if (delivery !== "string" && delivery !== "stream") {
+    return invalidWorkerRequest("delivery");
+  }
+  return {
+    type: "ssr-execution-open",
+    id: requireString(
+      readDataProperty(open, "id"),
+      "id",
+      MAX_WORKER_REQUEST_ID_CHARS,
+      false,
+    ),
+    generation: requireString(
+      readDataProperty(open, "generation"),
+      "generation",
+      MAX_SSR_WIRE_TOKEN_CHARS,
+      false,
+    ),
+    token: requireString(
+      readDataProperty(open, "token"),
+      "token",
+      MAX_SSR_WIRE_TOKEN_CHARS,
+      false,
+    ),
+    delivery,
+  };
+}
+
+function openSSRExecution(message: unknown): void {
+  const open = snapshotSSRExecutionOpen(message);
+  if (
+    pendingSSRExecutionOpen !== null ||
+    (workerWireGeneration !== null &&
+      workerWireGeneration !== open.generation) ||
+    apply(mapGet, activeSSRExecutions, [open.id]) !== undefined
+  ) {
+    closeForSSRProtocolViolation();
+    return;
+  }
+  workerWireGeneration ??= open.generation;
+  pendingSSRExecutionOpen = {
+    id: open.id,
+    generation: open.generation,
+    token: open.token,
+    delivery: open.delivery,
+    sequence: 0,
+  };
+}
+
+function snapshotStreamCredit(message: unknown): WorkerStreamCredit {
+  const cloned = cloneStructuredValue(message);
+  const credit = requireRecordShape(
+    cloned,
+    ["type", "id", "generation", "token", "sequence"],
+    [],
+    "stream credit",
+  );
+  if (readDataProperty(credit, "type") !== "stream-credit") {
+    return invalidWorkerRequest("type");
+  }
+  const sequence = readDataProperty(credit, "sequence");
+  if (
+    typeof sequence !== "number" ||
+    !numberIsSafeInteger(sequence) ||
+    sequence < 1 ||
+    sequence > MAX_WORKER_SSR_OUTPUT_CHUNKS
+  ) {
+    return invalidWorkerRequest("sequence");
+  }
+  return {
+    type: "stream-credit",
+    id: requireString(
+      readDataProperty(credit, "id"),
+      "id",
+      MAX_WORKER_REQUEST_ID_CHARS,
+      false,
+    ),
+    generation: requireString(
+      readDataProperty(credit, "generation"),
+      "generation",
+      MAX_SSR_WIRE_TOKEN_CHARS,
+      false,
+    ),
+    token: requireString(
+      readDataProperty(credit, "token"),
+      "token",
+      MAX_SSR_WIRE_TOKEN_CHARS,
+      false,
+    ),
+    sequence,
+  };
+}
+
+function sendInvalidSSRRequestFailure(
+  message: unknown,
+  error: unknown,
+): void {
+  const id = snapshotControlMessageId(message);
+  const execution = pendingSSRExecutionOpen;
+  if (!execution || execution.id !== id) {
+    closeForSSRProtocolViolation();
+    return;
+  }
+  pendingSSRExecutionOpen = null;
+  sendControlMessage(
+    {
+      type: "ssr-wire-error",
+      id,
+      generation: execution.generation,
+      token: execution.token,
+      sequence: 0,
+      error: serializeError(error),
+    } satisfies WorkerSSRWireError,
+  );
 }
 
 function handleControlPortMessage(event: MessageEvent<unknown>): void {
@@ -2448,6 +3080,17 @@ function handleControlPortMessage(event: MessageEvent<unknown>): void {
   ) {
     const descriptor = getOwnPropertyDescriptor(message, "type");
     messageType = descriptor && "value" in descriptor ? descriptor.value : undefined;
+  }
+
+  // The host posts an SSR open and its request synchronously on one ordered
+  // channel. Pair them at admission so queued valid work does not consume a
+  // separate hard-coded "pending open" capacity.
+  if (
+    pendingSSRExecutionOpen !== null &&
+    messageType !== "render-ssr"
+  ) {
+    closeForSSRProtocolViolation();
+    return;
   }
 
   if (messageType === "ping") {
@@ -2473,9 +3116,42 @@ function handleControlPortMessage(event: MessageEvent<unknown>): void {
     return;
   }
 
+  if (messageType === "ssr-execution-open") {
+    try {
+      openSSRExecution(message);
+    } catch {
+      closeForSSRProtocolViolation();
+    }
+    return;
+  }
+
+  if (messageType === "stream-credit") {
+    try {
+      acceptWorkerStreamCredit(snapshotStreamCredit(message));
+    } catch {
+      closeForSSRProtocolViolation();
+    }
+    return;
+  }
+
   try {
-    enqueueWorkerRequest(snapshotWorkerRequest(message));
+    const request = snapshotWorkerRequest(message);
+    if (request.type === "render-ssr") {
+      const execution = claimQueuedSSRExecution(request);
+      if (!execution) return;
+      enqueueWorkerRequest(request, execution);
+    } else {
+      if (pendingSSRExecutionOpen !== null) {
+        closeForSSRProtocolViolation();
+        return;
+      }
+      enqueueWorkerRequest(request);
+    }
   } catch (error) {
+    if (messageType === "render-ssr") {
+      sendInvalidSSRRequestFailure(message, error);
+      return;
+    }
     sendControlMessage(
       {
         type: "error",
@@ -2484,6 +3160,103 @@ function handleControlPortMessage(event: MessageEvent<unknown>): void {
       } satisfies WorkerErrorResponse,
     );
   }
+}
+
+function snapshotWorkerEgressSocksProxy(
+  value: unknown,
+): WorkerEgressSocksProxyConfig {
+  const record = requireRecordShape(
+    value,
+    ["hostname", "port", "username", "password"],
+    [],
+    "bootstrap options socksProxy",
+  );
+  const port = readDataProperty(record, "port");
+  if (
+    typeof port !== "number" ||
+    !numberIsSafeInteger(port) ||
+    port < 1 ||
+    port > 65_535
+  ) {
+    return invalidWorkerRequest("bootstrap options socksProxy");
+  }
+  return {
+    hostname: requireString(
+      readDataProperty(record, "hostname"),
+      "bootstrap options socksProxy hostname",
+      MAX_WORKER_URL_CHARS,
+      false,
+    ),
+    port,
+    username: requireString(
+      readDataProperty(record, "username"),
+      "bootstrap options socksProxy username",
+      MAX_WORKER_VALUE_CHARS,
+      false,
+    ),
+    password: requireString(
+      readDataProperty(record, "password"),
+      "bootstrap options socksProxy password",
+      MAX_WORKER_VALUE_CHARS,
+      false,
+    ),
+  };
+}
+
+function snapshotWorkerEgressHttpBroker(
+  value: unknown,
+): WorkerEgressHttpBrokerConfig {
+  const record = requireRecordShape(
+    value,
+    ["url", "token"],
+    [],
+    "bootstrap options httpBroker",
+  );
+  return {
+    url: requireString(
+      readDataProperty(record, "url"),
+      "bootstrap options httpBroker url",
+      MAX_WORKER_URL_CHARS,
+      false,
+    ),
+    token: requireString(
+      readDataProperty(record, "token"),
+      "bootstrap options httpBroker token",
+      MAX_WORKER_VALUE_CHARS,
+      false,
+    ),
+  };
+}
+
+function snapshotWorkerEgressBootstrapOptions(
+  value: unknown,
+): InstalledWorkerEgressGuardOptions {
+  const cloned = cloneStructuredValue(value);
+  const record = requireRecordShape(
+    cloned,
+    ["allowInternalEgress"],
+    ["socksProxy", "httpBroker"],
+    "bootstrap options",
+  );
+  const allowInternalEgress = readDataProperty(
+    record,
+    "allowInternalEgress",
+  );
+  if (typeof allowInternalEgress !== "boolean") {
+    return invalidWorkerRequest("bootstrap options allowInternalEgress");
+  }
+
+  const socksProxy = readOptionalDataProperty(record, "socksProxy");
+  const httpBroker = readOptionalDataProperty(record, "httpBroker");
+  return {
+    allowInternalEgress,
+    ...(socksProxy.present && socksProxy.value !== undefined
+      ? { socksProxy: snapshotWorkerEgressSocksProxy(socksProxy.value) }
+      : {}),
+    ...(httpBroker.present && httpBroker.value !== undefined
+      ? { httpBroker: snapshotWorkerEgressHttpBroker(httpBroker.value) }
+      : {}),
+  };
 }
 
 function handleWorkerBootstrapMessage(
@@ -2511,14 +3284,22 @@ function handleWorkerBootstrapMessage(
   if (!(port instanceof NativeMessagePort)) {
     throw new NativeTypeError("Invalid worker control port");
   }
-  const options = cloneStructuredValue(
-    readDataProperty(bootstrap, "options"),
-  ) as WorkerEgressGuardOptions;
 
   workerControlPort = port;
-  postControlPortMessage = (payload: unknown): void => {
-    apply(messagePortPostMessage, port, [payload]);
+  postControlPortMessage = (
+    payload: unknown,
+    transfer?: readonly Transferable[],
+  ): void => {
+    apply(
+      messagePortPostMessage,
+      port,
+      transfer === undefined ? [payload] : [payload, transfer],
+    );
   };
+  installWorkerExitNotifier();
+  const options = snapshotWorkerEgressBootstrapOptions(
+    readDataProperty(bootstrap, "options"),
+  );
   apply(eventTargetAddEventListener, port, [
     "message",
     handleControlPortMessage as EventListener,
@@ -2529,7 +3310,6 @@ function handleWorkerBootstrapMessage(
     handleWorkerBootstrapMessage as EventListener,
   ]);
 
-  installWorkerExitNotifier();
   installWorkerEgressGuard(options);
   egressInitialized = true;
 }

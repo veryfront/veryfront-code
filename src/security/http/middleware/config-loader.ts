@@ -51,11 +51,10 @@ export function loadSecurityConfig(
         }
 
         return securityConfig;
-      } catch (error) {
-        serverLogger.debug("Failed to load security config", { error });
+      } catch {
+        serverLogger.debug("Failed to load security config");
         return null;
       }
     },
-    { "security.projectDir": projectDir },
   );
 }

@@ -31,6 +31,7 @@ import {
   DEFAULT_WORKER_POOL_CONFIG,
   MAX_WORKER_BODY_BYTES,
 } from "./worker-types.ts";
+import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import { resolveWorkerGeneration, snapshotWorkerGenerationIdentity } from "./worker-generation.ts";
 
 // Worker isolation only works in Deno (requires Deno Worker permissions API)
@@ -100,6 +101,7 @@ function makeSSRRequest(
 
 class ControlledWorker {
   readonly projectId: string;
+  readonly allowInternalEgress: boolean | undefined;
   status: "idle" | "busy" | "crashed" | "terminated" = "idle";
   requestCount = 0;
   terminateCalls = 0;
@@ -118,6 +120,7 @@ class ControlledWorker {
     behavior: ControlledWorkerBehavior = {},
   ) {
     this.projectId = options.projectId;
+    this.allowInternalEgress = options.allowInternalEgress;
     this.behavior = behavior;
   }
 
@@ -344,6 +347,20 @@ testSuite("WorkerPool", () => {
     assertEquals(stats.poolSize, 1);
   });
 
+  it("passes the resolved internal-egress decision to every worker", () => {
+    const controlled = createControlledPool(
+      { allowInternalEgress: true } as Partial<WorkerPoolConfig>,
+    );
+    pool.shutdown();
+    pool = controlled.pool;
+
+    const worker = pool.getOrCreateWorker("internal-egress-project", []);
+    assertEquals(
+      (worker as unknown as ControlledWorker).allowInternalEgress,
+      true,
+    );
+  });
+
   it("returns the same worker for the same project", () => {
     const w1 = pool.getOrCreateWorker("project-a", []);
     const w2 = pool.getOrCreateWorker("project-a", []);
@@ -351,16 +368,6 @@ testSuite("WorkerPool", () => {
 
     const stats = pool.getStats();
     assertEquals(stats.poolSize, 1);
-  });
-
-  it("recreates a worker when the project env key set changes", () => {
-    const w1 = pool.getOrCreateWorker("project-a", [], ["PROJECT_SECRET_A"]);
-    const w2 = pool.getOrCreateWorker("project-a", [], ["PROJECT_SECRET_A"]);
-    const w3 = pool.getOrCreateWorker("project-a", [], ["PROJECT_SECRET_B"]);
-
-    assertEquals(w1, w2);
-    assert(w1 !== w3, "worker permissions must be rebuilt for changed env keys");
-    assertEquals(pool.getStats().poolSize, 1);
   });
 
   it("creates separate workers for different projects", () => {
@@ -515,35 +522,31 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
   });
 
   it("rejects same-worker requests at the active ceiling and admits after settlement", async () => {
-    const controlled = createControlledPool({
-      maxActiveRequestsPerWorker: 2,
-    });
+    const controlled = createControlledPool();
     pool = controlled.pool;
 
     const first = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
-    const second = pool.execute("scope-a", ["/tmp"], makeRequest("a-2"));
     const workerA = latestWorker(controlled.workers, "scope-a");
 
     const overload = await assertRejects(
-      () => pool.execute("scope-a", ["/tmp"], makeRequest("a-3")),
+      () => pool.execute("scope-a", ["/tmp"], makeRequest("a-2")),
       VeryfrontError,
       "active request capacity reached",
     );
     assert(overload instanceof VeryfrontError);
     assertEquals(overload.slug, "service-overloaded");
-    assertEquals(workerA.requestCount, 2);
-    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 2);
+    assertEquals(workerA.requestCount, 1);
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 1);
 
     workerA.complete("a-1");
     await first;
 
-    const third = pool.execute("scope-a", ["/tmp"], makeRequest("a-3"));
-    assertEquals(workerA.requestCount, 3);
-    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 2);
+    const second = pool.execute("scope-a", ["/tmp"], makeRequest("a-2"));
+    assertEquals(workerA.requestCount, 2);
+    assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 1);
 
     workerA.complete("a-2");
-    workerA.complete("a-3");
-    await Promise.all([second, third]);
+    await second;
     assertEquals(pool.getStats().workers["scope-a"]?.activeRequests, 0);
   });
 
@@ -632,6 +635,14 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     } finally {
       compatible.shutdown();
     }
+  });
+
+  it("rejects an active ceiling above serialized worker capacity", () => {
+    assertThrows(
+      () => new WorkerPool({ maxActiveRequestsPerWorker: 2 }),
+      TypeError,
+      "must be exactly 1",
+    );
   });
 
   it("validates every direct pool resource and timer boundary", () => {
@@ -764,7 +775,7 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(new Uint8Array(await new Response(stream).arrayBuffer()), new Uint8Array([9]));
   });
 
-  it("defers environment-key replacement until the busy worker settles", async () => {
+  it("keeps project env changes request-owned without replacing the worker", async () => {
     const controlled = createControlledPool({ maxPoolSize: 1 });
     pool = controlled.pool;
 
@@ -775,26 +786,19 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     );
     const workerA = latestWorker(controlled.workers, "scope-a");
 
-    await assertRejects(
-      () =>
-        pool.execute(
-          "scope-a",
-          ["/tmp"],
-          makeRequest("a-2", { PROJECT_SECRET_B: "two" }),
-        ),
-      VeryfrontError,
-      "changed permissions",
-    );
-    assertEquals(workerA.terminateCalls, 0);
-    assertEquals(pool.getStats().workers["scope-a"]?.retiring, true);
-
     workerA.complete("a-1");
     await active;
-    assertEquals(workerA.terminateCalls, 1);
-    assertEquals(pool.getStats().workers["scope-a"], undefined);
 
-    const workerB = pool.getOrCreateWorker("scope-a", [], ["PROJECT_SECRET_B"]);
-    assert(workerB !== (workerA as unknown as ProjectWorker));
+    const second = pool.execute(
+      "scope-a",
+      ["/tmp"],
+      makeRequest("a-2", { PROJECT_SECRET_B: "two" }),
+    );
+    assertEquals(latestWorker(controlled.workers, "scope-a"), workerA);
+    assertEquals(pool.getStats().workers["scope-a"]?.retiring, false);
+    workerA.complete("a-2");
+    await second;
+    assertEquals(workerA.terminateCalls, 0);
   });
 
   it("defers changed read permissions until the busy worker settles", async () => {
@@ -860,6 +864,36 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
       "outside the allowed project boundary",
     );
     assertEquals(pool.getStats().poolSize, 0);
+  });
+
+  it("does not include tenant identifiers or module paths in boundary logs", async () => {
+    const projectId = "tenant-private-identifier-97";
+    const modulePath = "/tmp/private-module-name-53/route.ts";
+    const originalWarn = console.warn;
+    let output = "";
+    console.warn = (...args: unknown[]) => {
+      output += args.map(String).join(" ");
+    };
+
+    try {
+      const controlled = createControlledPool();
+      pool = controlled.pool;
+      await assertRejects(
+        () =>
+          pool.execute(
+            projectId,
+            ["/tmp/allowed-project"],
+            makeRequest("redacted-log", undefined, modulePath),
+          ),
+        VeryfrontError,
+        "outside the allowed project boundary",
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assertEquals(output.includes(projectId), false);
+    assertEquals(output.includes(modulePath), false);
   });
 
   it("rejects an existing module path that escapes through a symlink", async () => {
@@ -1015,24 +1049,14 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(controlled.workers.get("scope-a")?.length, 2);
   });
 
-  it("drains concurrent prepared requests and retries once after capacity rollover", async () => {
+  it("retries one serialized prepared request after capacity rollover", async () => {
     const controlled = createControlledPool({ maxPoolSize: 1 });
     pool = controlled.pool;
 
-    const first = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
-    const second = pool.execute("scope-a", ["/tmp"], makeRequest("a-2"));
-    const third = pool.execute("scope-a", ["/tmp"], makeRequest("a-3"));
+    const execution = pool.execute("scope-a", ["/tmp"], makeRequest("a-1"));
     const workerA = latestWorker(controlled.workers, "scope-a");
 
     workerA.reachPreparedModuleCapacity("a-1");
-    await Promise.resolve();
-
-    // Admissions that arrive during the rollover wait for the same retirement
-    // instead of failing or entering the exhausted generation.
-    const fourth = pool.execute("scope-a", ["/tmp"], makeRequest("a-4"));
-
-    workerA.reachPreparedModuleCapacity("a-2");
-    workerA.reachPreparedModuleCapacity("a-3");
 
     await waitForWorkerGeneration(controlled.workers, "scope-a", 2);
     const workerB = latestWorker(controlled.workers, "scope-a");
@@ -1040,17 +1064,7 @@ testSuite("WorkerPool - bounded admission and retirement", () => {
     assertEquals(workerA.terminateCalls, 1);
 
     workerB.complete("a-1");
-    workerB.complete("a-2");
-    workerB.complete("a-3");
-    workerB.complete("a-4");
-
-    const responses = await Promise.all([first, second, third, fourth]);
-    assertEquals(responses.map((response) => response.type), [
-      "result",
-      "result",
-      "result",
-      "result",
-    ]);
+    assertEquals((await execution).type, "result");
     assertEquals(controlled.workers.get("scope-a")?.length, 2);
   });
 
@@ -1391,7 +1405,7 @@ describe("Feature flag caching", () => {
   it("ignores project overlays and applies host pool limits", () => {
     __resetPoolForTests();
     Deno.env.set("WORKER_MAX_POOL_SIZE", "2");
-    Deno.env.set("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "3");
+    Deno.env.set("WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "1");
     Deno.env.set("WORKER_REQUEST_TIMEOUT_MS", "1234");
 
     runWithProjectEnv(
@@ -1404,10 +1418,36 @@ describe("Feature flag caching", () => {
         const singleton = getWorkerPool();
         const config = (singleton as unknown as { config: WorkerPoolConfig }).config;
         assertEquals(singleton.getStats().maxPoolSize, 2);
-        assertEquals(singleton.getStats().maxActiveRequestsPerWorker, 3);
+        assertEquals(singleton.getStats().maxActiveRequestsPerWorker, 1);
         assertEquals(config.requestTimeoutMs, 1234);
       },
     );
+  });
+
+  it("snapshots the host internal-egress decision when the singleton resolves", () => {
+    __resetPoolForTests();
+    Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "1");
+    try {
+      const first = getWorkerPool();
+      const firstConfig = (first as unknown as {
+        config: WorkerPoolConfig & { allowInternalEgress?: boolean };
+      }).config;
+      assertEquals(firstConfig.allowInternalEgress, true);
+
+      Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, "0");
+      assertEquals(getWorkerPool(), first);
+      assertEquals(firstConfig.allowInternalEgress, true);
+
+      __resetPoolForTests();
+      const second = getWorkerPool();
+      const secondConfig = (second as unknown as {
+        config: WorkerPoolConfig & { allowInternalEgress?: boolean };
+      }).config;
+      assertEquals(secondConfig.allowInternalEgress, false);
+    } finally {
+      __resetPoolForTests();
+      Deno.env.delete(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV);
+    }
   });
 
   it("fails closed for invalid host pool limits", () => {
@@ -1415,6 +1455,7 @@ describe("Feature flag caching", () => {
       const [name, value] of [
         ["WORKER_MAX_POOL_SIZE", "0"],
         ["WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "0"],
+        ["WORKER_MAX_ACTIVE_REQUESTS_PER_WORKER", "2"],
         ["WORKER_REQUEST_TIMEOUT_MS", "Infinity"],
       ] as const
     ) {
