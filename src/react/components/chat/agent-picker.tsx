@@ -121,7 +121,14 @@ function findAgent(
 
 function AgentPickerLoadingRows(): React.ReactElement {
   return (
-    <output aria-label="Loading agents" className="block px-1 py-1">
+    <div
+      role="option"
+      aria-disabled="true"
+      aria-selected="false"
+      aria-live="polite"
+      aria-label="Loading agents"
+      className="block px-1 py-1"
+    >
       <span className="sr-only">Loading agents</span>
       {LOADING_ROW_WIDTHS.map((widthClass, index) => (
         <div
@@ -138,7 +145,7 @@ function AgentPickerLoadingRows(): React.ReactElement {
           />
         </div>
       ))}
-    </output>
+    </div>
   );
 }
 
