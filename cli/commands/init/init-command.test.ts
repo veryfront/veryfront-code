@@ -56,6 +56,41 @@ describe("InitCommand Types", () => {
       }
     });
 
+    it("prints the verified URL returned by the composed deployment", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-deploy-" });
+      const name = `deployed-target-${crypto.randomUUID()}`;
+      const deployedUrl = "https://verified.example.test/app/dashboard";
+      const output: string[] = [];
+      const originalLog = console.log;
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        await initCommand(
+          {
+            name,
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            deploy: true,
+          },
+          {
+            deployProject: async (projectDir) => {
+              assertEquals(projectDir, join(parentDir, name));
+              return deployedUrl;
+            },
+          },
+        );
+
+        const liveLine = output.find((line) => line.includes("Live:"));
+        assertEquals(liveLine?.includes(deployedUrl), true);
+      } finally {
+        console.log = originalLog;
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
     it("should allow empty options", () => {
       const options: InitOptions = {};
       assertExists(options);

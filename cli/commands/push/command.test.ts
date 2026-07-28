@@ -254,6 +254,31 @@ describe("push JSON output", () => {
           await Deno.remove(projectDir, { recursive: true });
         }
       }
+
+      setJsonMode(false);
+      const projectDir = await Deno.makeTempDir();
+      const output: string[] = [];
+      console.log = (message?: unknown) => output.push(String(message));
+      try {
+        await pushCommand({ projectDir, dryRun: false });
+
+        assertEquals(
+          output.some((line) =>
+            line.includes("Studio:") &&
+            line.includes("https://veryfront.com/projects/canonical-slug?branch=main")
+          ),
+          true,
+        );
+        assertEquals(
+          output.some((line) =>
+            line.includes("Preview:") &&
+            line.includes("https://canonical-slug.preview.veryfront.com")
+          ),
+          true,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     } finally {
       setJsonMode(false);
       console.log = originalLog;
