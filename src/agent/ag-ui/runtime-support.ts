@@ -14,6 +14,32 @@ function parseToolArguments(serializedArguments: string): Record<string, unknown
   }
 }
 
+type AgUiRuntimeUserMessage = Extract<
+  AgUiRuntimeRequest["messages"][number],
+  { role: "user" }
+>;
+type AgUiRuntimeAttachment = NonNullable<
+  AgUiRuntimeUserMessage["attachments"]
+>[number];
+
+function normalizeRuntimeAttachment(
+  attachment: AgUiRuntimeAttachment,
+): Message["parts"][number] {
+  const {
+    upload_id: legacyUploadId,
+    upload_path: legacyUploadPath,
+    ...canonicalAttachment
+  } = attachment;
+  const uploadId = canonicalAttachment.uploadId ?? legacyUploadId;
+  const uploadPath = canonicalAttachment.uploadPath ?? legacyUploadPath;
+
+  return {
+    ...canonicalAttachment,
+    ...(uploadId ? { uploadId } : {}),
+    ...(uploadPath ? { uploadPath } : {}),
+  };
+}
+
 /** Normalizes AG-UI runtime messages. */
 export function normalizeAgUiRuntimeMessages(
   messages: AgUiRuntimeRequest["messages"],
@@ -33,7 +59,7 @@ export function normalizeAgUiRuntimeMessages(
         if (message.content.length > 0) {
           parts.push({ type: "text", text: message.content });
         }
-        parts.push(...message.attachments ?? []);
+        parts.push(...(message.attachments ?? []).map(normalizeRuntimeAttachment));
         break;
       case "assistant":
         if (typeof message.content === "string" && message.content.length > 0) {
