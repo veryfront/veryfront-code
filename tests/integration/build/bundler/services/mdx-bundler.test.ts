@@ -211,7 +211,7 @@ import NonExistent from "./non-existent.js"
         assertEquals(result.errors.length > 0, true);
         assertEquals(result.outputs.size, 0);
         const hasImportError = result.errors.some((err) =>
-          err.message.includes("Cannot find module")
+          err.message.includes("Cannot resolve mdx module")
         );
         assertEquals(hasImportError, true);
       });
@@ -383,6 +383,11 @@ Using global: {API_URL}`;
 
     it("extracts dependencies correctly", async () => {
       await withTestContext("mdx-deps-extract", async (context) => {
+        await Deno.mkdir(join(context.projectDir, "components"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "components", "Button.tsx"),
+          "export default function Button() { return null; }",
+        );
         const content = `---
 title: Dependencies Test
 ---
@@ -399,8 +404,12 @@ import { useState } from "react"
           mode: "production",
         });
 
+        assertEquals(result.errors, undefined);
         assertEquals(Array.isArray(result.dependencies), true);
-        assertEquals(result.dependencies.length >= 0, true);
+        assertEquals(
+          result.dependencies.some((dependency) => dependency.endsWith("/components/Button.tsx")),
+          true,
+        );
       });
     });
 

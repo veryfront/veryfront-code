@@ -23,6 +23,9 @@ describe("Loader Utils", () => {
         ["/src/components/Button.tsx", "tsx"],
         ["/src/utils/helpers.js", "js"],
         ["/src/utils/helpers.mjs", "js"],
+        ["/src/utils/helpers.cjs", "js"],
+        ["/src/utils/helpers.mts", "ts"],
+        ["/src/utils/helpers.cts", "ts"],
         ["/src/components/Button.jsx", "jsx"],
         ["/config/settings.json", "json"],
         ["/styles/main.css", "css"],
@@ -47,9 +50,12 @@ describe("Loader Utils", () => {
         ["/src/components/Button.jsx", "jsx"],
         ["/src/utils/helpers.js", "js"],
         ["/src/utils/helpers.mjs", "js"],
+        ["/src/utils/helpers.cjs", "js"],
+        ["/src/utils/helpers.mts", "ts"],
+        ["/src/utils/helpers.cts", "ts"],
         ["/styles/main.css", "css"],
         ["/config/settings.json", "json"],
-        ["/data/file.txt", "js"],
+        ["/data/file.txt", "unknown"],
         ["/src/Component.MDX", "mdx"],
         ["/src/components/Button.test.tsx", "tsx"],
       ],
@@ -66,7 +72,7 @@ describe("Loader Utils", () => {
         ["./pages/index.tsx", "pages"],
         ["./pages/blog/index.tsx", "pages/blog"],
         ["./pages/AboutUs.tsx", "pages/aboutus"],
-        ["./pages/my page!.tsx", "pages/my-page-"],
+        ["./pages/my page!.tsx", "pages/my-page"],
         ["./pages/hello@world#test.tsx", "pages/hello-world-test"],
         ["./pages/about-us.tsx", "pages/about-us"],
         ["./pages/blog/posts/first.tsx", "pages/blog/posts/first"],
@@ -74,12 +80,26 @@ describe("Loader Utils", () => {
         ["./content/article.mdx", "content/article"],
         ["./components/Button.jsx", "components/button"],
         ["./utils/helpers.js", "utils/helpers"],
-        ["./pages/Blog Post #1!/index.tsx", "pages/blog-post--1-"],
-        ["./pages//about.tsx", "pages//about"],
+        ["./pages/Blog Post #1!/index.tsx", "pages/blog-post-1"],
+        ["./pages//about.tsx", "pages/about"],
         ["./index.tsx", "index"],
+        [".\\pages\\Windows Route.tsx", "pages/windows-route"],
+        ["./pages/Crème brûlée.mdx", "pages/crème-brûlée"],
       ],
       getSlugFromPath,
       (path, expected) => `returns "${expected}" for ${path}`,
     );
+
+    it("rejects absolute, traversing, and empty route sources", () => {
+      for (const path of ["/pages/about.tsx", "../about.tsx", "./pages/!!!.tsx", ""]) {
+        let didThrow = false;
+        try {
+          getSlugFromPath(path);
+        } catch (error) {
+          didThrow = error instanceof TypeError;
+        }
+        assertEquals(didThrow, true);
+      }
+    });
   });
 });

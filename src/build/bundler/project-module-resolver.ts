@@ -170,12 +170,15 @@ export function getProjectModuleCandidates(
   resolveDir: string,
   projectDir: string,
   label: string,
+  displaySpecifier = specifier,
 ): ProjectModuleCandidates | null {
   const local = localImportBase(specifier, resolveDir, projectDir);
   if (!local) return null;
   if (!isContainedBuildPath(projectDir, local.path)) {
     throw SECURITY_VIOLATION.create({
-      detail: `${label} module import resolves outside the project: ${specifier}`,
+      detail: `${label} module import resolves outside the project directory: ${
+        JSON.stringify(displaySpecifier)
+      }`,
     });
   }
   return {
@@ -195,30 +198,40 @@ export async function resolveProjectModule(
   projectDir: string,
   fs: FileSystem,
   label: string,
+  displaySpecifier = specifier,
 ): Promise<ResolvedProjectModule | null> {
   const candidates = getProjectModuleCandidates(
     specifier,
     resolveDir,
     projectDir,
     label,
+    displaySpecifier,
   );
   if (!candidates) return null;
 
-  const canonicalProject = await realPath(projectDir);
+  let canonicalProject: Promise<string> | undefined;
   for (const candidate of candidates.paths) {
     if (!isContainedBuildPath(projectDir, candidate)) {
       throw SECURITY_VIOLATION.create({
-        detail: `${label} module import resolves outside the project: ${specifier}`,
+        detail: `${label} module import resolves outside the project directory: ${
+          JSON.stringify(displaySpecifier)
+        }`,
       });
     }
 
     try {
       const info = await fs.stat(candidate);
       if (!info.isFile) continue;
-      const canonicalCandidate = await realPath(candidate);
-      if (!isContainedBuildPath(canonicalProject, canonicalCandidate)) {
+      const [canonicalProjectPath, canonicalCandidate] = await Promise.all([
+        canonicalProject ??= realPath(projectDir),
+        realPath(candidate),
+      ]);
+      if (!isContainedBuildPath(canonicalProjectPath, canonicalCandidate)) {
         throw SECURITY_VIOLATION.create({
-          detail: `${label} module import escapes through a symbolic link: ${specifier}`,
+          detail:
+            `${label} module import resolves outside the project directory through a symbolic link: ${
+              JSON.stringify(displaySpecifier)
+            }`,
         });
       }
       return {
@@ -233,7 +246,7 @@ export async function resolveProjectModule(
 
   throw MODULE_NOT_FOUND.create({
     detail: `Cannot resolve ${label.toLowerCase()} module ${
-      JSON.stringify(specifier)
+      JSON.stringify(displaySpecifier)
     } from ${resolveDir}`,
   });
 }

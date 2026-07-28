@@ -1,19 +1,15 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import {
-  dirname,
-  fromFileUrl,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  toFileUrl,
-} from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, relative, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentPlugin, ContentProcessor } from "#veryfront/extensions/content/index.ts";
-import { ensureError, MODULE_NOT_FOUND, SECURITY_VIOLATION } from "#veryfront/errors";
-import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
-import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { ensureError } from "#veryfront/errors";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  type ResolvedProjectModule,
+  resolveProjectModule,
+  resolveProjectSourcePath as resolveContainedProjectSourcePath,
+} from "../../bundler/project-module-resolver.ts";
 import type {
   BundleResult,
   BundlerOptions,
@@ -31,26 +27,8 @@ import { normalizePlugins } from "../utils/plugin-utils.ts";
 const fs = createFileSystem();
 const MDX_PROVIDER_IMPORT_SOURCE = "veryfront/mdx";
 const MDX_METADATA_EXPORT_NAME = "meta";
-const LOCAL_IMPORT_SUFFIXES = [
-  "",
-  ".tsx",
-  ".ts",
-  ".jsx",
-  ".js",
-  ".mdx",
-  ".mts",
-  ".mjs",
-  ".cts",
-  ".cjs",
-  ".json",
-  ".css",
-] as const;
 
-interface ResolvedLocalImport {
-  path: string;
-  readPath: string;
-  suffix: string;
-}
+type ResolvedLocalImport = ResolvedProjectModule;
 
 type CompileMdxImport = (
   source: string,
@@ -71,30 +49,18 @@ interface MdxModuleGraphState {
   outputs: Map<string, StagedMdxOutput>;
   dependencies: Map<string, string[]>;
   activeOutputs: Set<string>;
-  canonicalProjectDir?: Promise<string>;
 }
 
 function resolveProjectSourcePath(
   sourcePath: string,
   projectDir: string,
 ): { absolutePath: string; relativePath: string } {
-  if (!isAbsolute(projectDir)) {
-    throw new TypeError("MDX project directory must be absolute");
-  }
-
-  const absolutePath = isAbsolute(sourcePath) ? sourcePath : resolve(projectDir, sourcePath);
-  const projectRelativePath = relative(projectDir, absolutePath);
-  const isWithinProject = projectRelativePath !== "" &&
-    projectRelativePath !== ".." &&
-    !projectRelativePath.startsWith("../") &&
-    !projectRelativePath.startsWith("..\\") &&
-    !isAbsolute(projectRelativePath);
-
-  if (!isWithinProject) {
-    throw new TypeError(`MDX source path must be inside the project directory: ${sourcePath}`);
-  }
-
-  return { absolutePath, relativePath: projectRelativePath };
+  const absolutePath = resolveContainedProjectSourcePath(
+    sourcePath,
+    projectDir,
+    "MDX",
+  );
+  return { absolutePath, relativePath: relative(projectDir, absolutePath) };
 }
 
 function createGlobalBindings(globals: Record<string, string>): Record<string, string> {
@@ -128,144 +94,55 @@ function createGlobalBindings(globals: Record<string, string>): Record<string, s
   );
 }
 
-function splitPathSuffix(importPath: string): { path: string; suffix: string } {
-  const queryIndex = importPath.indexOf("?");
-  const fragmentIndex = importPath.indexOf("#");
-  const suffixIndex = queryIndex === -1
-    ? fragmentIndex
-    : fragmentIndex === -1
-    ? queryIndex
-    : Math.min(queryIndex, fragmentIndex);
-  return suffixIndex === -1
-    ? { path: importPath, suffix: "" }
-    : { path: importPath.slice(0, suffixIndex), suffix: importPath.slice(suffixIndex) };
-}
-
 function toMdxOutputPath(sourcePath: string): string {
-  if (!sourcePath.endsWith(".mdx")) {
+  if (!sourcePath.toLowerCase().endsWith(".mdx")) {
     throw new TypeError(`MDX source path must end with ".mdx": ${sourcePath}`);
   }
   return `${sourcePath.slice(0, -".mdx".length)}.js`;
 }
 
-function toLocalImportPath(
-  importPath: string,
-  sourcePath: string,
-  projectDir: string,
-): { path: string; suffix: string } | null {
-  if (importPath.startsWith("file:")) {
-    try {
-      const url = new URL(importPath);
-      if (url.protocol !== "file:") return null;
-      const suffix = `${url.search}${url.hash}`;
-      url.search = "";
-      url.hash = "";
-      return { path: fromFileUrl(url), suffix };
-    } catch (error) {
-      throw MODULE_NOT_FOUND.create({
-        detail: `Cannot resolve malformed local module URL from '${sourcePath}'`,
-        cause: ensureError(error),
-      });
-    }
+function assertMdxInput(
+  content: string,
+  mode: BundlerOptions["mode"],
+): void {
+  if (typeof content !== "string") {
+    throw new TypeError("MDX source content must be a string");
   }
-
-  const localSpecifier = splitPathSuffix(importPath);
-  if (localSpecifier.path.startsWith("/")) {
-    return {
-      path: join(projectDir, localSpecifier.path),
-      suffix: localSpecifier.suffix,
-    };
+  if (mode !== "development" && mode !== "production") {
+    throw new TypeError("MDX bundle mode must be development or production");
   }
-  if (isAbsolute(localSpecifier.path)) return localSpecifier;
-  if (localSpecifier.path.startsWith(".")) {
-    return {
-      path: resolve(dirname(sourcePath), localSpecifier.path),
-      suffix: localSpecifier.suffix,
-    };
-  }
-  return null;
 }
 
-function assertProjectContainment(
-  candidatePath: string,
-  projectDir: string,
-  sourcePath: string,
-): void {
-  if (isWithinDirectory(resolve(projectDir), resolve(candidatePath))) return;
+function toAuthoredSpecifier(importPath: string, sourcePath: string): string {
+  if (!importPath.startsWith("file:")) return importPath;
 
-  throw SECURITY_VIOLATION.create({
-    detail: `Local MDX import from '${sourcePath}' resolves outside the project directory`,
-  });
+  try {
+    const url = new URL(importPath);
+    const suffix = `${url.search}${url.hash}`;
+    url.search = "";
+    url.hash = "";
+    const relativePath = relative(dirname(sourcePath), fromFileUrl(url));
+    const authoredPath = relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+    return `${authoredPath}${suffix}`;
+  } catch {
+    // Resolution below reports a structured error for malformed file URLs.
+    return importPath;
+  }
 }
 
 async function resolveLocalImport(
   importPath: string,
   sourcePath: string,
   projectDir: string,
-  authoredSpecifier: string,
-  getCanonicalProjectDir: () => Promise<string> = () => realPath(projectDir),
 ): Promise<ResolvedLocalImport | null> {
-  const localSpecifier = toLocalImportPath(importPath, sourcePath, projectDir);
-  if (localSpecifier === null) return null;
-  const basePath = localSpecifier.path;
-
-  assertProjectContainment(basePath, projectDir, sourcePath);
-
-  const inferredSuffixes = LOCAL_IMPORT_SUFFIXES.slice(1);
-  const hasExplicitModuleSuffix = inferredSuffixes.some((suffix) => basePath.endsWith(suffix));
-  const candidates = hasExplicitModuleSuffix ? [basePath] : [
-    basePath,
-    ...inferredSuffixes.map((suffix) => `${basePath}${suffix}`),
-    ...inferredSuffixes.map((suffix) => join(basePath, `index${suffix}`)),
-  ];
-
-  for (const candidatePath of candidates) {
-    assertProjectContainment(candidatePath, projectDir, sourcePath);
-    try {
-      const stat = await fs.stat(candidatePath);
-      if (!stat.isFile) continue;
-
-      const [canonicalProjectDir, canonicalCandidate] = await Promise.all([
-        getCanonicalProjectDir(),
-        realPath(candidatePath),
-      ]);
-      if (!isWithinDirectory(canonicalProjectDir, canonicalCandidate)) {
-        throw SECURITY_VIOLATION.create({
-          detail: `Local MDX import from '${sourcePath}' resolves outside the project directory`,
-        });
-      }
-
-      return {
-        path: candidatePath,
-        readPath: canonicalCandidate,
-        suffix: localSpecifier.suffix,
-      };
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-      /* expected: this candidate may not exist */
-    }
-  }
-
-  throw MODULE_NOT_FOUND.create({
-    detail: `Cannot find module '${authoredSpecifier}' from '${sourcePath}'`,
-  });
-}
-
-function toAuthoredSpecifier(
-  importPath: string,
-  sourcePath: string,
-  projectDir: string,
-): string {
-  const localSpecifier = toLocalImportPath(importPath, sourcePath, projectDir);
-  if (localSpecifier === null) return importPath;
-
-  const relativePath = relative(dirname(sourcePath), localSpecifier.path);
-  const authoredPath = relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
-  return `${authoredPath}${localSpecifier.suffix}`;
-}
-
-function getCanonicalProjectDir(state: MdxModuleGraphState): Promise<string> {
-  return state.canonicalProjectDir ??= realPath(state.options.projectDir);
+  return await resolveProjectModule(
+    importPath,
+    dirname(sourcePath),
+    projectDir,
+    fs,
+    "MDX",
+    toAuthoredSpecifier(importPath, sourcePath),
+  );
 }
 
 async function compileNestedMdxImport(
@@ -319,12 +196,6 @@ async function rewriteLocalModuleImports(
       moduleImport.specifier,
       sourcePath,
       state.options.projectDir,
-      toAuthoredSpecifier(
-        moduleImport.specifier,
-        sourcePath,
-        state.options.projectDir,
-      ),
-      () => getCanonicalProjectDir(state),
     );
     if (localImport === null) continue;
     if (!localImport.path.endsWith(".mdx")) {
@@ -377,16 +248,12 @@ async function rewriteStandaloneLocalImports(
   projectDir: string,
 ): Promise<string> {
   const replacements = new Map<string, string>();
-  let canonicalProjectDir: Promise<string> | undefined;
-  const getProjectDir = () => canonicalProjectDir ??= realPath(projectDir);
 
   for (const moduleImport of await parseModuleImports(code)) {
     const localImport = await resolveLocalImport(
       moduleImport.specifier,
       sourcePath,
       projectDir,
-      toAuthoredSpecifier(moduleImport.specifier, sourcePath, projectDir),
-      getProjectDir,
     );
     if (localImport === null) continue;
     if (localImport.path.endsWith(".mdx")) {
@@ -416,6 +283,10 @@ export function bundleMdx(
     "build.renderer.bundleMDX",
     async () => {
       try {
+        assertMdxInput(source.content, options.mode);
+        if (typeof compileMDXForImport !== "function") {
+          throw new TypeError("MDX nested compiler must be a function");
+        }
         const processor = resolveContract<ContentProcessor>("ContentProcessor");
         const { body, frontmatter } = processor.extractFrontmatter({
           content: source.content,
@@ -453,6 +324,7 @@ export function bundleMdx(
           options,
           compileMDXForImport,
         );
+        const rootDependencies = await getModuleDependencies(moduleGraph.code);
 
         for (const [nestedOutputPath, nestedOutput] of moduleGraph.outputs) {
           result.outputs.set(nestedOutputPath, nestedOutput);
@@ -469,7 +341,7 @@ export function bundleMdx(
         }
         result.dependencies.set(
           source.path,
-          await getModuleDependencies(moduleGraph.code),
+          rootDependencies,
         );
 
         logger.debug(`Bundled MDX: ${source.path} -> ${outputPath}`);
@@ -504,7 +376,9 @@ export function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBund
       logger.info(`Bundling MDX file: ${filePath}`);
 
       try {
+        assertMdxInput(content, mode);
         const projectSource = resolveProjectSourcePath(filePath, options.projectDir);
+        toMdxOutputPath(projectSource.absolutePath);
         const processor = resolveContract<ContentProcessor>("ContentProcessor");
         const { body, frontmatter } = processor.extractFrontmatter({
           content,

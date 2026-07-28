@@ -147,7 +147,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       assertEquals(result.outputs.size, 0);
       assertEquals(result.dependencies.size, 0);
       assertEquals(result.errors.length, 1);
-      assertStringIncludes(result.errors[0]!.message, "inside the project directory");
+      assertStringIncludes(result.errors[0]!.message, "outside the project directory");
     });
 
     it("rejects source paths that cannot produce a distinct JavaScript output", async () => {
@@ -227,6 +227,19 @@ describe("build/renderer/services/mdx-bundler", () => {
         true,
         "should replace .mdx with .js in output path",
       );
+    });
+
+    it("accepts an uppercase MDX extension without changing the logical stem", async () => {
+      const source = {
+        path: "/tmp/test-project/pages/about.MDX",
+        content: "# About",
+      };
+      const result = createBundleResult();
+
+      await bundleMdx(source, createOptions(), result, () => Promise.resolve(""));
+
+      assertExists(result.outputs.get("/tmp/test-project/pages/about.js"));
+      assertEquals(result.errors, []);
     });
 
     it("should track dependencies", async () => {
@@ -657,7 +670,10 @@ describe("build/renderer/services/mdx-bundler", () => {
         assertEquals(result.outputs.size, 0);
         assertEquals(result.dependencies.size, 0);
         assertEquals(result.errors.length, 1);
-        assertStringIncludes(result.errors[0]!.message, "Cannot find module './Component.js'");
+        assertStringIncludes(
+          result.errors[0]!.message,
+          'Cannot resolve mdx module "./Component.js"',
+        );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
@@ -787,7 +803,7 @@ describe("build/renderer/services/mdx-bundler", () => {
         assertEquals(result.code, "");
         assertEquals(result.dependencies, []);
         assertEquals(result.errors?.length, 1);
-        assertStringIncludes(result.errors![0]!.message, "inside the project directory");
+        assertStringIncludes(result.errors![0]!.message, "outside the project directory");
       } finally {
         await Deno.remove(rootDir, { recursive: true });
       }
@@ -987,6 +1003,25 @@ describe("build/renderer/services/mdx-bundler", () => {
       assertExists(result.errors, "should have errors array");
       assertEquals(result.errors!.length > 0, true, "should contain at least one error");
       assertEquals(result.code, "", "error path should return empty code");
+    });
+
+    it("rejects a non-MDX source path and an invalid runtime mode", async () => {
+      const wrongExtension = await bundleMDXWithOptions({
+        content: "# Test",
+        filePath: "/tmp/test.txt",
+        projectDir: "/tmp",
+      });
+      assertEquals(wrongExtension.code, "");
+      assertStringIncludes(wrongExtension.errors![0]!.message, 'must end with ".mdx"');
+
+      const wrongMode = await bundleMDXWithOptions({
+        content: "# Test",
+        filePath: "/tmp/test.mdx",
+        projectDir: "/tmp",
+        mode: "staging" as BundlerOptions["mode"],
+      });
+      assertEquals(wrongMode.code, "");
+      assertStringIncludes(wrongMode.errors![0]!.message, "development or production");
     });
   });
 });
