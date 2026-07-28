@@ -94,7 +94,7 @@ describe(
           adapter,
           transformOpts: { projectId: "test", dev: true, ssr: false },
           isSSR: false,
-          // No releaseRewriteOptions — batch-handler behaviour
+          // No releaseRewriteOptions: standalone transforms may opt out.
         });
 
         assertStringIncludes(code, "greeting");

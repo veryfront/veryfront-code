@@ -1,15 +1,12 @@
 import { registerLRUCache } from "#veryfront/cache";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
-type ModuleSourceResolver = "module-server" | "module-batch";
-
 const SOURCE_MISS_CACHE_MAX_ENTRIES = 5_000;
-const SOURCE_MISS_CACHE_KEY_PREFIX = "module-source-miss:v2:";
+const SOURCE_MISS_CACHE_KEY_PREFIX = "module-source-miss:v3:";
 const MAX_SOURCE_MISS_CACHE_IDENTITY_BYTES = 32 * 1024;
 const encoder = new TextEncoder();
 
 type SourceMissCacheIdentity = [
-  resolver: ModuleSourceResolver,
   projectDir: string,
   projectId: string,
   projectSlug: string,
@@ -19,20 +16,12 @@ type SourceMissCacheIdentity = [
   basePath: string,
 ];
 
-const sourceMissCaches: Record<ModuleSourceResolver, LRUCache<string, true>> = {
-  "module-server": new LRUCache<string, true>({
-    maxEntries: SOURCE_MISS_CACHE_MAX_ENTRIES,
-  }),
-  "module-batch": new LRUCache<string, true>({
-    maxEntries: SOURCE_MISS_CACHE_MAX_ENTRIES,
-  }),
-};
-
-registerLRUCache("module-server-source-miss-cache", sourceMissCaches["module-server"]);
-registerLRUCache("module-batch-source-miss-cache", sourceMissCaches["module-batch"]);
+const sourceMissCache = new LRUCache<string, true>({
+  maxEntries: SOURCE_MISS_CACHE_MAX_ENTRIES,
+});
+registerLRUCache("module-server-source-miss-cache", sourceMissCache);
 
 export function buildSourceMissCacheKey(options: {
-  resolver: ModuleSourceResolver;
   projectDir: string;
   projectId?: string;
   projectSlug?: string | null;
@@ -41,11 +30,7 @@ export function buildSourceMissCacheKey(options: {
   basePath: string;
   reactVersion?: string;
 }): string {
-  if (options.resolver !== "module-server" && options.resolver !== "module-batch") {
-    throw new TypeError("Source miss cache resolver is invalid");
-  }
   const identity: SourceMissCacheIdentity = [
-    options.resolver,
     options.projectDir,
     options.projectId ?? "",
     options.projectSlug ?? "",
@@ -71,20 +56,17 @@ export function buildSourceMissCacheKey(options: {
 }
 
 export function hasSourceMiss(cacheKey: string): boolean {
-  return sourceMissCaches[parseSourceMissCacheKey(cacheKey)[0]].has(cacheKey);
+  parseSourceMissCacheKey(cacheKey);
+  return sourceMissCache.has(cacheKey);
 }
 
 export function rememberSourceMiss(cacheKey: string): void {
-  sourceMissCaches[parseSourceMissCacheKey(cacheKey)[0]].set(cacheKey, true);
+  parseSourceMissCacheKey(cacheKey);
+  sourceMissCache.set(cacheKey, true);
 }
 
-export function clearSourceMissCache(resolver?: ModuleSourceResolver): void {
-  if (resolver) {
-    sourceMissCaches[resolver].clear();
-    return;
-  }
-
-  for (const cache of Object.values(sourceMissCaches)) cache.clear();
+export function clearSourceMissCache(): void {
+  sourceMissCache.clear();
 }
 
 /**
@@ -102,11 +84,11 @@ export function clearSourceMissCacheForProject(identity: {
   const projectSlug = identity.projectSlug?.trim();
   const projectDir = identity.projectDir?.trim();
   const matchField = projectId
-    ? { index: 2, value: projectId }
+    ? { index: 1, value: projectId }
     : projectSlug
-    ? { index: 3, value: projectSlug }
+    ? { index: 2, value: projectSlug }
     : projectDir
-    ? { index: 1, value: projectDir }
+    ? { index: 0, value: projectDir }
     : undefined;
 
   if (!matchField) {
@@ -114,11 +96,9 @@ export function clearSourceMissCacheForProject(identity: {
   }
 
   let deleted = 0;
-  for (const cache of Object.values(sourceMissCaches)) {
-    for (const key of cache.keys()) {
-      const fields = parseSourceMissCacheKey(key);
-      if (fields[matchField.index] === matchField.value && cache.delete(key)) deleted++;
-    }
+  for (const key of sourceMissCache.keys()) {
+    const fields = parseSourceMissCacheKey(key);
+    if (fields[matchField.index] === matchField.value && sourceMissCache.delete(key)) deleted++;
   }
   return deleted;
 }
@@ -141,8 +121,7 @@ function parseSourceMissCacheKey(cacheKey: string): SourceMissCacheIdentity {
   }
   if (
     !Array.isArray(parsed) ||
-    parsed.length !== 8 ||
-    (parsed[0] !== "module-server" && parsed[0] !== "module-batch") ||
+    parsed.length !== 7 ||
     !parsed.every((field) =>
       typeof field === "string" &&
       encoder.encode(field).byteLength <= MAX_SOURCE_MISS_CACHE_IDENTITY_BYTES

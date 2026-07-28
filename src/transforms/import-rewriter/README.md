@@ -24,7 +24,9 @@ Served by the local module server. Contains:
 | --------------------------- | ---------------------------------------- |
 | `/_vf_modules/_veryfront/*` | Framework internal modules (from `src/`) |
 | `/_vf_modules/*`            | User project modules                     |
-| `/_vf_modules/_batch`       | Batch module loading endpoint            |
+
+The removed `/_vf_modules/_batch` endpoint returns `410 Gone`. Import project
+modules through their canonical `/_vf_modules/*` URLs.
 
 ### External URLs
 

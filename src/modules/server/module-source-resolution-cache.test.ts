@@ -14,13 +14,11 @@ describe("modules/server/module-source-resolution-cache", () => {
 
   it("frames identity fields injectively even when values contain NUL", () => {
     const first = buildSourceMissCacheKey({
-      resolver: "module-server",
       projectDir: "project\0nested",
       projectId: "tenant",
       basePath: "components/Card",
     });
     const second = buildSourceMissCacheKey({
-      resolver: "module-server",
       projectDir: "project",
       projectId: "nested\0tenant",
       basePath: "components/Card",
@@ -42,28 +40,13 @@ describe("modules/server/module-source-resolution-cache", () => {
     );
   });
 
-  it("rejects invalid resolver identities at construction", () => {
-    assertThrows(
-      () =>
-        buildSourceMissCacheKey({
-          resolver: "unknown" as "module-server",
-          projectDir: "/project",
-          basePath: "components/Card",
-        }),
-      TypeError,
-      "resolver is invalid",
-    );
-  });
-
   it("evicts only the exact encoded project identity", () => {
     const target = buildSourceMissCacheKey({
-      resolver: "module-server",
       projectDir: "/shared",
       projectId: "tenant\0one",
       basePath: "missing",
     });
     const other = buildSourceMissCacheKey({
-      resolver: "module-server",
       projectDir: "/shared",
       projectId: "tenant",
       projectSlug: "one",

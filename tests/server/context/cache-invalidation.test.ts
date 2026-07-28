@@ -28,13 +28,11 @@ describe("cache-invalidation", () => {
 
     it("clears source miss caches", async () => {
       const cacheKey = buildSourceMissCacheKey({
-        resolver: "module-server",
         projectDir: "/test-project",
         projectSlug: "test-project",
         basePath: "components/Missing",
       });
       const unrelatedCacheKey = buildSourceMissCacheKey({
-        resolver: "module-server",
         projectDir: "/other-project",
         projectSlug: "other-project",
         basePath: "components/Missing",

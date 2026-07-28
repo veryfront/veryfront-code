@@ -262,6 +262,40 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 404);
   });
 
+  it("rejects unsupported methods before filesystem access", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const adapter = createMockAdapter();
+    let filesystemCalls = 0;
+    const originalStat = adapter.fs.stat.bind(adapter.fs);
+    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+    adapter.fs.stat = (path) => {
+      filesystemCalls++;
+      return originalStat(path);
+    };
+    adapter.fs.readFile = (path) => {
+      filesystemCalls++;
+      return originalReadFile(path);
+    };
+
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+      const response = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/page.js", {
+          method,
+        }),
+        {
+          projectId: "method-contract",
+          projectDir: "/project",
+          adapter,
+        },
+      );
+
+      assertEquals(response.status, 405);
+      assertEquals(response.headers.get("allow"), "GET, HEAD");
+      assertEquals(await response.text(), "Method not allowed");
+    }
+    assertEquals(filesystemCalls, 0);
+  });
+
   it("rejects malformed paths in framework-owned module namespaces", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_snippets/.js"));
 
@@ -604,7 +638,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("caches missing project module lookups", async () => {
-    clearSourceMissCache("module-server");
+    clearSourceMissCache();
     const adapter = createMockAdapter();
     const originalStat = adapter.fs.stat;
     let statCalls = 0;
@@ -632,7 +666,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("scopes missing project module lookups by project identity", async () => {
-    clearSourceMissCache("module-server");
+    clearSourceMissCache();
     const { serveModule } = await import("./module-server.ts");
     const request = new Request("http://localhost:3000/_vf_modules/components/Missing.js");
 

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -548,7 +548,7 @@ describe("ComponentRegistry", () => {
       });
     });
 
-    it("should handle component name conflicts by last-write-wins", async () => {
+    it("rejects component name conflicts within a directory tree", async () => {
       await withTestContext("registry-conflict", async (context) => {
         const componentsDir = join(context.projectDir, "components");
         const dir1 = join(componentsDir, "dir1");
@@ -559,10 +559,11 @@ describe("ComponentRegistry", () => {
         await writeTextFile(join(dir2, "Component.tsx"), "export default function C2(){}");
 
         const reg = await createRegistry(context.projectDir);
-        await reg.discover();
-
-        assertEquals(reg.getComponentNames().length, 1);
-        assert(reg.has("Component"));
+        await assertRejects(
+          () => reg.discover(),
+          TypeError,
+          'Duplicate component name "Component"',
+        );
       });
     });
 
@@ -592,7 +593,7 @@ describe("ComponentRegistry", () => {
       });
     });
 
-    it("should handle components with same name in different directories", async () => {
+    it("rejects components with the same name in different roots", async () => {
       await withTestContext("registry-same-name", async (context) => {
         const componentsDir = join(context.projectDir, "components");
         const islandsDir = join(context.projectDir, "islands");
@@ -602,9 +603,11 @@ describe("ComponentRegistry", () => {
         await writeTextFile(join(islandsDir, "Button.tsx"), "export default function B2(){}");
 
         const reg = await createRegistry(context.projectDir);
-        await reg.discover();
-
-        assertEquals(reg.getComponentNames().filter((n) => n === "Button").length, 1);
+        await assertRejects(
+          () => reg.discover(),
+          TypeError,
+          'Duplicate component name "Button"',
+        );
       });
     });
 
@@ -685,19 +688,6 @@ describe("ComponentRegistry", () => {
       });
     });
 
-    it("should expose loader after discovery", async () => {
-      await withTestContext("registry-loader", async (context) => {
-        const reg = await createRegistry(context.projectDir);
-
-        assertEquals(reg.getLoader(), undefined);
-
-        await reg.discover();
-
-        const _loader = reg.getLoader();
-        void _loader;
-      });
-    });
-
     it("should handle component with special characters in name", async () => {
       await withTestContext("registry-special-chars", async (context) => {
         const componentsDir = join(context.projectDir, "components");
@@ -714,7 +704,7 @@ describe("ComponentRegistry", () => {
       });
     });
 
-    it("should handle discovery with already existing components", async () => {
+    it("preserves explicit components during filesystem discovery", async () => {
       await withTestContext("registry-existing", async (context) => {
         const reg = await createRegistry(context.projectDir);
 
@@ -732,42 +722,6 @@ describe("ComponentRegistry", () => {
 
         assertEquals(reg.has("Manual"), true);
         assertEquals(reg.has("Discovered"), true);
-      });
-    });
-  });
-
-  describe("ComponentLoader Integration", () => {
-    it("should initialize loader during discovery", async () => {
-      await withTestContext("registry-loader-init", async (context) => {
-        const reg = await createRegistry(context.projectDir);
-
-        await reg.discover();
-
-        const _loader = reg.getLoader();
-        void _loader;
-      });
-    });
-
-    it("should handle loader initialization failure gracefully", async () => {
-      await withTestContext("registry-loader-fail", async (context) => {
-        const reg = await createRegistry(context.projectDir);
-
-        await reg.discover();
-        assertEquals(reg.getComponentNames().length, 0);
-      });
-    });
-
-    it("should preserve loader across multiple discoveries", async () => {
-      await withTestContext("registry-loader-preserve", async (context) => {
-        const reg = await createRegistry(context.projectDir);
-
-        await reg.discover();
-        const firstLoader = reg.getLoader();
-
-        await reg.discover();
-        const secondLoader = reg.getLoader();
-
-        assertEquals(firstLoader, secondLoader);
       });
     });
   });

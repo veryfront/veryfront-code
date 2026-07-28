@@ -125,12 +125,6 @@ function rewriteBareSpecifier(specifier: string, version?: string): string {
   return `https://esm.sh/${bareSpecifier}?external=react&target=es2022`;
 }
 
-function rewriteBareImports(code: string, version?: string): string {
-  return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
-    return `from "${rewriteBareSpecifier(specifier, version)}"`;
-  });
-}
-
 function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewriteOptions): string {
   return hashString([
     target.kind,
@@ -141,14 +135,6 @@ function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewri
     options.crossProjectRef ?? "",
     options.reactVersion ?? "",
   ].join("\0"));
-}
-
-function getCacheBusterSync(
-  target: SSRImportRewriteTarget,
-  options: SSRRewriteOptions,
-): string {
-  if (options.cacheBuster !== undefined) return String(options.cacheBuster);
-  return getDefaultCacheBuster(target, options);
 }
 
 async function getCacheBusterAsync(
@@ -166,7 +152,7 @@ function buildAliasRewrite(
   options: SSRRewriteOptions,
 ): { target: SSRImportRewriteTarget; prefix: string } {
   const { crossProjectRef } = options;
-  const jsPath = specifierPath.endsWith(".js") ? specifierPath : `${specifierPath}.js`;
+  const jsPath = /\.(?:mjs|js)$/i.test(specifierPath) ? specifierPath : `${specifierPath}.js`;
 
   if (crossProjectRef) {
     const rewrittenPath = `/_vf_modules/_cross/${crossProjectRef}/@/${jsPath}`;
@@ -239,44 +225,6 @@ function buildScopedParams(options: SSRRewriteOptions): string {
     ? `&branch=${encodeSSRQueryIdentity(options.branch, "SSR branch")}`
     : "";
   return `${projectParam}${branchParam}`;
-}
-
-function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
-  const scopedParams = buildScopedParams(options);
-
-  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
-    const { target, prefix } = buildAliasRewrite(path, options);
-    const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${
-      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
-    }"`;
-  });
-}
-
-function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
-  const scopedParams = buildScopedParams(options);
-
-  return code.replace(/from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g, (_match, path: string) => {
-    const { target, prefix } = buildRelativeRewrite(path);
-    const cacheBuster = getCacheBusterSync(target, options);
-    return `from "${prefix}${scopedParams}&v=${
-      encodeSSRQueryIdentity(cacheBuster, "SSR cache buster")
-    }"`;
-  });
-}
-
-/**
- * Legacy synchronous SSR import rewriting.
- *
- * @deprecated Use {@link rewriteSSRImportsCompatAsync}. This compatibility
- * path cannot initialize the module lexer and therefore retains its historical
- * regex-bounded behavior.
- */
-export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
-  let result = rewriteBareImports(code, options.reactVersion);
-  result = rewritePathAliases(result, options);
-  result = rewriteRelativeImports(result, options);
-  return result;
 }
 
 async function rewriteAliasSpecifierAsync(

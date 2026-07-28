@@ -17,7 +17,7 @@ under `transforms/`, `rendering/`, `routing/`, and `build/`.
 | `module-resolver.ts`              | Resolve virtual, local, external, and npm module identities while containing filesystem access to a project root.        |
 | `react-loader/`                   | Transform source strings into executable React modules or materialize a bounded batch of components.                     |
 | `react-loader/ssr-module-loader/` | Transform dependency graphs for SSR and manage memory, disk, and optional distributed caches.                            |
-| `server/`                         | Classify and serve browser/SSR module requests, data requests, and WebSocket traffic.                                    |
+| `server/`                         | Classify and serve browser/SSR module requests and WebSocket traffic.                                                    |
 | `manifest/`                       | Track bounded route dependency graphs and generate escaped module-preload hints.                                         |
 | `loader-shared/`                  | Shared path validation and narrow compatibility patterns used by loader implementations.                                 |
 
@@ -51,7 +51,7 @@ specialized entry points are intentionally separate:
 | `#veryfront/modules/import-map/index.ts`                     | Import-map identity creation and validation in addition to the root import-map API. |
 | `#veryfront/modules/react-loader/index.ts`                   | `loadModuleFromSource` and the React loader surface.                                |
 | `#veryfront/modules/react-loader/ssr-module-loader/index.ts` | `SSRModuleLoader`, SSR import-map identities, cache controls, and cache statistics. |
-| `#veryfront/modules/server/index.ts`                         | `serveModule`, `APIServer`, `RateLimiter`, and WebSocket lifecycle functions.       |
+| `#veryfront/modules/server/index.ts`                         | `serveModule`, `RateLimiter`, and WebSocket lifecycle functions.                    |
 | `#veryfront/modules/manifest/index.ts`                       | Route module collection, lookup, invalidation, and preload hints.                   |
 | `#veryfront/modules/loader-shared/index.ts`                  | Cross-project request validation and low-level compatibility patterns.              |
 
@@ -178,6 +178,14 @@ then enforces the framework React mappings.
 - Missing project files generally return `null` or a not-found response.
   Malformed identities, unsafe paths, invalid source, and operational adapter
   failures are not converted into alternate dependency graphs.
+- Component discovery replaces stale filesystem entries, preserves explicit
+  registrations, and rejects ambiguous component names.
+- Module-serving and data endpoints accept `GET` and `HEAD`; other methods
+  return `405 Method Not Allowed`.
+- The former `/_vf_modules/_batch` endpoint returns `410 Gone`. The invalid
+  source-concatenation implementation was removed; use canonical module URLs.
+- Page-data requests are owned by the request handlers under
+  `server/handlers/request/module/`, not by a second modules-level API server.
 - The regex constants in `loader-shared/patterns.ts` exist for narrow legacy
   consumers. New source rewrites should use the module lexer/import-rewriter
   primitives so comments and strings cannot be mistaken for imports.

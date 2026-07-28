@@ -17,6 +17,7 @@ import {
   serverLogger,
   VERSION,
 } from "#veryfront/utils";
+import { HTTP_METHOD_NOT_ALLOWED } from "#veryfront/utils/constants/index.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
@@ -293,6 +294,18 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         ? async () => importMapIdentity.importMap
         : undefined;
       const method = req.method.toUpperCase();
+      if (method !== "GET" && method !== "HEAD") {
+        return createModuleResponse(
+          method,
+          "Method not allowed",
+          HTTP_METHOD_NOT_ALLOWED,
+          {
+            "Allow": "GET, HEAD",
+            "Cache-Control": "no-store",
+            "Content-Type": "text/plain; charset=utf-8",
+          },
+        );
+      }
       const isHeadRequest = method === "HEAD";
       const kind = classifyModuleRequest(url);
 
@@ -1039,7 +1052,6 @@ async function findSourceFile(
   const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
     basePathWithoutExt.startsWith("deps/");
   const missCacheKey = buildSourceMissCacheKey({
-    resolver: "module-server",
     projectDir,
     projectId: context.projectId,
     projectSlug: context.projectSlug,

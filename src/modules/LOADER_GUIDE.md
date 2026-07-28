@@ -151,7 +151,7 @@ import { type ModuleServerOptions, serveModule } from "#veryfront/modules/server
 modules, cross-project modules, SSR query identities, release-aware response
 caching, and HEAD response semantics. Hosted callers should supply a validated
 request-bound `importMapIdentity` and the project/source identities used by
-their filesystem adapter.
+their filesystem adapter. Only `GET` and `HEAD` are accepted.
 
 ## Shared patterns
 
@@ -165,6 +165,18 @@ must distinguish real imports and exports from comments, strings, templates,
 or regular expressions.
 
 ## Migration reference
+
+The following legacy module surfaces have been removed:
+
+| Removed surface                                       | Migration                                                                                                  |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `/_vf_modules/_batch`                                 | Import each canonical `/_vf_modules/*` URL. The removed endpoint now returns `410 Gone`.                   |
+| `ComponentRegistry.getLoader()`                       | Use `loadComponent()` for source metadata or the `react-loader` APIs for executable components.            |
+| `rewriteSSRImportsCompat` / `applySSRImportRewrites`  | Await `rewriteSSRImportsCompatAsync` / `applySSRImportRewritesAsync`; these use the module lexer.          |
+| `APIServer` from `#veryfront/modules/server/index.ts` | Route page-data requests through the hosted server request pipeline; there is no modules-level API server. |
+
+Module-serving endpoints accept only `GET` and `HEAD`. Callers that previously
+used another method must issue a read request instead.
 
 The former `module-loader/` MDX helper paths were consolidated under
 `transforms/mdx/esm-module-loader/`:

@@ -1,9 +1,9 @@
 /**
  * Module Transform — shared ESM transform + SSR / release-rewrite sequence.
  *
- * Unifies the three near-identical copies in module-server.ts and the fourth
- * in module-batch-handler.ts: `transformToESM → (SSR) applySSRImportRewritesAsync
- * or (non-SSR) rewriteReleaseDependencyImportsForModule`.
+ * Unifies the module-server transform paths:
+ * `transformToESM → (SSR) applySSRImportRewritesAsync or (non-SSR)
+ * rewriteReleaseDependencyImportsForModule`.
  *
  * Genuine differences that could not be cleanly unified:
  *   - `ensureFilenameDefaultExport` in the dev-module path runs between the ESM
@@ -11,8 +11,6 @@
  *   - HMR timestamp injection and `addReleaseVersionToFallbackImports` in the
  *     dev-module path run after the release rewrite; callers apply them manually
  *     on the returned code.
- *   - The batch handler (copy 4) never rewrites release dependencies on the
- *     non-SSR path; callers simply omit `releaseRewriteOptions`.
  *
  * @module modules/server/module-transform
  */
@@ -73,8 +71,7 @@ export interface TransformModuleToServableOptions {
   ssrRewriteOptions?: SSRRewriteOptions;
   /**
    * Release-dependency import-rewrite options. Applied when `isSSR=false`.
-   * Omit (or pass `undefined`) to skip release dependency rewriting — used by
-   * the batch handler which has no non-SSR release rewrite step.
+   * Omit only when the caller deliberately does not serve release-bound code.
    */
   releaseRewriteOptions?: RewriteReleaseDependencyImportsOptions;
   /**

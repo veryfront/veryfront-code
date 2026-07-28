@@ -258,16 +258,9 @@ export class DevServer {
         hmrLog.debug("ReloadNotifier subscriptions registered (invalidate + ordered reload)");
       }
 
-      const moduleServerUrl = buildLocalhostUrl(
-        this.options.moduleServerPort ?? this.listeningPort,
-      );
-      const vendorBundleHash = "dev-vendor-bundle";
-
       this.componentRegistry = new ComponentRegistry({
         projectDir: this.options.projectDir,
         adapter: this.adapter,
-        moduleServerUrl,
-        vendorBundleHash,
       });
 
       const routeDiscovery = new RouteDiscovery(

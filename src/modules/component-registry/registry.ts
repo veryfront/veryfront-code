@@ -52,17 +52,11 @@ export interface ComponentRegistryOptions {
   projectDir: string;
   componentDirs?: string[];
   adapter: RuntimeAdapter;
-  moduleServerUrl?: string;
-  vendorBundleHash?: string;
 }
-
-export type ComponentLoader = {
-  loadComponent: (componentName: string, source: string, projectDir: string) => Promise<unknown>;
-  clearCache: () => void;
-};
 
 export class ComponentRegistry {
   private components = new Map<string, ComponentInfo>();
+  private readonly manualComponents = new Map<string, ComponentInfo>();
   private readonly componentDirs: readonly string[];
   private readonly projectDir: string;
   private initializedPromise: Promise<void> | null = null;
@@ -73,7 +67,7 @@ export class ComponentRegistry {
   >();
   private generation = 0;
 
-  constructor(private options: ComponentRegistryOptions) {
+  constructor(options: ComponentRegistryOptions) {
     this.adapter = options.adapter;
     this.projectDir = normalize(options.projectDir);
     this.componentDirs = Object.freeze(
@@ -101,10 +95,18 @@ export class ComponentRegistry {
       async () => {
         const discovered = await this._discoverInternal();
         if (this.generation === generation) {
+          for (const [name, component] of this.manualComponents) {
+            discovered.set(name, component);
+          }
+          if (discovered.size > MAX_COMPONENTS) {
+            throw new RangeError(
+              `Component registry exceeds the ${MAX_COMPONENTS} component limit`,
+            );
+          }
           this.components = discovered;
         }
       },
-      { "registry.projectDir": this.options.projectDir },
+      { "registry.projectDir": this.projectDir },
     );
     this.initializedPromise = discovery;
     const clearDiscovery = (): void => {
@@ -325,10 +327,6 @@ export class ComponentRegistry {
     return new Map(this.components);
   }
 
-  getLoader(): ComponentLoader | undefined {
-    return undefined;
-  }
-
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
     const components: Record<string, React.ComponentType<unknown>> = {};
 
@@ -353,25 +351,26 @@ export class ComponentRegistry {
         `Component registry exceeds the ${MAX_COMPONENTS} component limit`,
       );
     }
-    this.components.set(
+    const component = immutableComponentInfo({
       name,
-      immutableComponentInfo({
-        name,
-        path: info.path ?? `virtual:${name}`,
-        content: info.content,
-        isLoaded: true,
-        exports: info.exports,
-      }),
-    );
+      path: info.path ?? `virtual:${name}`,
+      content: info.content,
+      isLoaded: true,
+      exports: info.exports,
+    });
+    this.manualComponents.set(name, component);
+    this.components.set(name, component);
   }
 
   remove(name: string): void {
+    this.manualComponents.delete(name);
     this.components.delete(name);
   }
 
   clear(): void {
     this.generation += 1;
     this.components.clear();
+    this.manualComponents.clear();
     this.initializedPromise = null;
     this.componentLoads.clear();
   }
