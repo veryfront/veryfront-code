@@ -264,7 +264,10 @@ export const POST = createAgUiHandler("researcher");
       assertEquals(loadSkillJson.toolId, "load_skill");
       assertStringIncludes(loadSkillJson.result.instructions, "crisp final draft");
       assertEquals(loadSkillJson.result.allowedTools, ["Read", "api:*"]);
-      assertEquals(loadSkillJson.result.references, ["references/style-guide.md"]);
+      assertEquals(loadSkillJson.result.references.toSorted(), [
+        "assets/voice.txt",
+        "references/style-guide.md",
+      ]);
       assertEquals(loadSkillJson.result.scripts, ["scripts/echo-style.sh"]);
 
       const { response: loadSkillReferenceResponse, json: loadSkillReferenceJson } = await postJson<
