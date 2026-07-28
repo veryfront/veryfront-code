@@ -1,14 +1,21 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
-import { getEnv, getEnvNumber } from "#veryfront/compat/process.ts";
+import { getEnv } from "veryfront/platform";
 import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { ServerModeSchema } from "#cli/shared/types";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
 
+function readPortEnv(name: string, fallback: number): number {
+  const value = getEnv(name);
+  if (value === undefined) return fallback;
+  const port = Number.parseInt(value, 10);
+  return Number.isNaN(port) ? fallback : port;
+}
+
 function getDefaultServePort(): number {
-  const veryfrontPort = getEnvNumber("VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
-  return getEnvNumber("PORT", veryfrontPort);
+  const veryfrontPort = readPortEnv("VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
+  return readPortEnv("PORT", veryfrontPort);
 }
 
 function getDefaultBindAddress(): string {
@@ -59,7 +66,9 @@ export const parseServeArgs: typeof parseServeArgsBase = (args) => {
 
 export async function handleServeCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseServeArgs, "serve", args);
-  await ensureCliBundlerContracts();
+  if (opts.split || opts.mode === "proxy") {
+    await ensureCliBundlerContracts();
+  }
   const { serveCommand } = await import("./command.ts");
   await serveCommand({
     mode: opts.mode as "production" | "proxy" | "combined",
