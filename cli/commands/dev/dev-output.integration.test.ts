@@ -4,7 +4,6 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
-import { delay } from "#std/async";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
 import {
@@ -261,7 +260,7 @@ describe(
           assert(ready.ready, `dev server did not become ready:\n${run.output()}`);
 
           await requestPageAndApi(port);
-          await delay(300);
+          await run.stop();
 
           const output = run.output();
           assertStringIncludes(output, "Server ready at");
@@ -294,7 +293,7 @@ describe(
           assert(ready.ready, `debug dev server did not become ready:\n${run.output()}`);
 
           await requestPageAndApi(port);
-          await delay(300);
+          await run.stop();
 
           const output = run.output();
           assertStringIncludes(output, "Server ready at");
