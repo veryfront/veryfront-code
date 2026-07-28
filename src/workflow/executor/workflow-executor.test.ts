@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -168,6 +173,25 @@ class CleanupTrackingBackend extends MemoryBackend {
 }
 
 describe("workflow/executor/workflow-executor", () => {
+  it("rejects invalid maxConcurrency before accepting workflow work", () => {
+    const invalidValues = [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    for (const maxConcurrency of invalidValues) {
+      assertThrows(
+        () => new WorkflowExecutor({ backend: new MemoryBackend(), maxConcurrency }),
+        Error,
+        "maxConcurrency must be a positive safe integer",
+      );
+    }
+  });
+
   it("persists the exact source integration policy when a run starts", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });

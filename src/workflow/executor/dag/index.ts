@@ -51,14 +51,25 @@ import {
   mergeContextPatches,
 } from "./context-patch.ts";
 
+const DEFAULT_MAX_CONCURRENCY = 10;
+
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
 
   constructor(config: DAGExecutorConfig) {
+    const maxConcurrency = config.maxConcurrency === undefined
+      ? DEFAULT_MAX_CONCURRENCY
+      : config.maxConcurrency;
+    if (!Number.isSafeInteger(maxConcurrency) || maxConcurrency < 1) {
+      throw INVALID_ARGUMENT.create({
+        detail: `maxConcurrency must be a positive safe integer, got: ${maxConcurrency}`,
+      });
+    }
+
     this.config = {
-      maxConcurrency: 10,
-      debug: false,
       ...config,
+      maxConcurrency,
+      debug: config.debug ?? false,
     };
   }
 
@@ -699,7 +710,7 @@ export class DAGExecutor {
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<DAGInternalExecutionResult> {
-    if (!options?.maxConcurrency) {
+    if (options?.maxConcurrency === undefined) {
       return await this.executeUnwrapped(nodes, run, undefined, abortSignal, ownership);
     }
 

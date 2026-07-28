@@ -102,7 +102,7 @@ export async function executeMapNodeStrategy(
       createdAt: new Date(),
       sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
     },
-    config.concurrency ? { maxConcurrency: config.concurrency } : undefined,
+    config.concurrency === undefined ? undefined : { maxConcurrency: config.concurrency },
   );
   runtime.abortSignal?.throwIfAborted();
 

@@ -12,7 +12,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/executor/dag/index.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import type {
@@ -882,6 +887,31 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
     });
+
+    it("should reject defined invalid map concurrency instead of using the default", async () => {
+      for (const concurrency of [0, Number.NaN]) {
+        const nodes: WorkflowNode[] = [
+          {
+            id: "map-invalid-concurrency",
+            dependsOn: [],
+            config: {
+              type: "map",
+              items: ["item"],
+              processor: { id: "proc", config: { type: "step" } as any },
+              concurrency,
+            } as any,
+          },
+        ];
+
+        const result = await executor.execute(nodes, createTestRun());
+
+        assertEquals(result.completed, false);
+        assertEquals(
+          result.error?.includes("maxConcurrency must be a positive safe integer"),
+          true,
+        );
+      }
+    });
   });
 
   describe("loop node", () => {
@@ -1177,6 +1207,25 @@ describe("DAGExecutor", () => {
   });
 
   describe("maxConcurrency", () => {
+    it("should reject values that cannot make forward progress safely", () => {
+      const invalidValues = [
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER + 1,
+      ];
+
+      for (const maxConcurrency of invalidValues) {
+        assertThrows(
+          () => new DAGExecutor({ stepExecutor, maxConcurrency }),
+          Error,
+          "maxConcurrency must be a positive safe integer",
+        );
+      }
+    });
+
     it("should respect maxConcurrency config", async () => {
       const exec = new DAGExecutor({ stepExecutor, maxConcurrency: 1 });
 
