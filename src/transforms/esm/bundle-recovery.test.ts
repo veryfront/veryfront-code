@@ -273,10 +273,27 @@ describe("transforms/esm/bundle-recovery", () => {
     it("returns true even when the local bundle file does not exist", async () => {
       const cacheDir = await Deno.makeTempDir();
       try {
-        const result = await invalidateHttpBundle("does-not-exist", cacheDir);
+        const result = await invalidateHttpBundle("deadbeef", cacheDir);
         assertEquals(result, true);
       } finally {
         await Deno.remove(cacheDir, { recursive: true });
+      }
+    });
+
+    it("rejects invalid hashes before constructing a filesystem path", async () => {
+      const parentDir = await Deno.makeTempDir();
+      const cacheDir = join(parentDir, "cache");
+      const sentinelPath = join(parentDir, "sentinel.mjs");
+      try {
+        await Deno.mkdir(cacheDir);
+        await Deno.writeTextFile(sentinelPath, "keep");
+
+        const result = await invalidateHttpBundle("../sentinel", cacheDir);
+
+        assertEquals(result, false);
+        assertEquals(await Deno.readTextFile(sentinelPath), "keep");
+      } finally {
+        await Deno.remove(parentDir, { recursive: true });
       }
     });
   });
