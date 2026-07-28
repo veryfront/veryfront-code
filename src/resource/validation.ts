@@ -123,28 +123,18 @@ function captureResourceMCPConfig(value: unknown): McpConfig {
   assertKnownFields(
     value,
     "Resource MCP configuration",
-    ["enabled", "cachePolicy", "content"],
+    ["enabled", "content"],
   );
   const enabled = value.enabled;
-  const cachePolicy = value.cachePolicy;
   const contentValue = value.content;
 
   if (enabled !== undefined && typeof enabled !== "boolean") {
     throw new TypeError("Resource MCP enabled must be a boolean");
   }
-  if (
-    cachePolicy !== undefined &&
-    cachePolicy !== "no-cache" &&
-    cachePolicy !== "cache" &&
-    cachePolicy !== "cache-first"
-  ) {
-    throw new TypeError("Resource MCP cachePolicy is invalid");
-  }
   const content = contentValue === undefined ? undefined : snapshotMCPContentConfig(contentValue);
 
   const snapshot: McpConfig = {};
   if (enabled !== undefined) snapshot.enabled = enabled;
-  if (cachePolicy !== undefined) snapshot.cachePolicy = cachePolicy;
   if (content !== undefined) snapshot.content = content;
   return ObjectFreeze(snapshot);
 }

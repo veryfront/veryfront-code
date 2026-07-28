@@ -208,16 +208,37 @@ describe("tool factory", () => {
       assertEquals(t.inputSchemaJson?.additionalProperties, true);
     });
 
-    it("should preserve mcp config", () => {
+    it("should preserve supported MCP config", () => {
       const t = tool({
         id: "mcp-tool",
         description: "desc",
         inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => null,
-        mcp: { enabled: true, requiresAuth: false, cachePolicy: "cache" },
+        mcp: { enabled: true, title: "MCP tool" },
       });
-      assertEquals(t.mcp?.enabled, true);
-      assertEquals(t.mcp?.cachePolicy, "cache");
+      assertEquals(t.mcp, { enabled: true, title: "MCP tool" });
+    });
+
+    it("rejects legacy MCP fields that never had runtime semantics", () => {
+      for (
+        const [field, mcp] of [
+          ["requiresAuth", { requiresAuth: true }],
+          ["cachePolicy", { cachePolicy: "cache" }],
+        ] as const
+      ) {
+        assertThrows(
+          () =>
+            tool({
+              id: `unsupported-${field}`,
+              description: "desc",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: async () => null,
+              mcp: mcp as never,
+            }),
+          TypeError,
+          `MCP configuration contains unsupported field "${field}"`,
+        );
+      }
     });
 
     it("snapshots raw schemas and metadata at construction", () => {

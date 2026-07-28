@@ -39,6 +39,13 @@ rejects partial or ambiguous catalogs, and revalidates project-scoped visibility
 at execution time. Discovery therefore informs availability but does not grant
 permanent execution authority.
 
+Tool MCP metadata accepts exposure, display-title, and standard annotation
+hints. It does not accept `requiresAuth` or `cachePolicy`: earlier releases
+retained those fields without enforcing them. Configure authentication at the
+MCP server or trusted host boundary, and put caching in the tool implementation
+or its backend where identity, lifetime, invalidation, and failure behavior are
+explicit.
+
 Keep tools focused. A tool should do one thing, validate its input, and return a
 clear result. If the operation grows into multiple stages, approvals, or retries,
 move the coordination into a workflow.

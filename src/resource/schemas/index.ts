@@ -5,9 +5,6 @@
  */
 
 export {
-  type CachePolicy,
-  cachePolicySchema,
-  getCachePolicySchema,
   getMcpConfigSchema,
   getMcpContentConfigSchema,
   type McpConfig,

@@ -55,12 +55,6 @@ export interface ToolConfig<TInput = any, TOutput = any> {
     /** Expose via MCP */
     enabled?: boolean;
 
-    /** Require authentication */
-    requiresAuth?: boolean;
-
-    /** Cache policy */
-    cachePolicy?: "no-cache" | "cache" | "cache-first";
-
     /** Human-readable title for display */
     title?: string;
     /** Behavioral hints for clients (MCP 2025-11-25) */

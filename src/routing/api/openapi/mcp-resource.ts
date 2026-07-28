@@ -25,7 +25,6 @@ export function createOpenAPIResource(
     },
     mcp: {
       enabled: true,
-      cachePolicy: "cache",
     },
   });
 }

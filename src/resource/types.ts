@@ -9,7 +9,7 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 // Re-export schema-based types
-export type { CachePolicy, McpConfig, McpContentConfig } from "./schemas/index.ts";
+export type { McpConfig, McpContentConfig } from "./schemas/index.ts";
 
 // Import for use in interface definitions
 import type { McpConfig } from "./schemas/index.ts";
@@ -48,7 +48,6 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
    * MCP exposure metadata.
    *
    * `enabled: false` is enforced by list, template, and read operations.
-   * `cachePolicy` is reserved for compatibility and is not currently enforced.
    */
   mcp?: McpConfig;
 }

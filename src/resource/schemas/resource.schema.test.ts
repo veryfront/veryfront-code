@@ -24,6 +24,7 @@ Deno.test("resource MCP schema rejects unknown configuration fields", () => {
   const schema = getMcpConfigSchema();
 
   assertThrows(() => schema.parse({ enabled: true, typo: true }));
+  assertThrows(() => schema.parse({ cachePolicy: "cache" }));
   assertThrows(() =>
     schema.parse({
       content: {

@@ -242,6 +242,20 @@ describe("resource factory", () => {
       assertThrows(
         () =>
           resource({
+            pattern: "/unsupported-cache-policy",
+            description: "Unsupported cache policy",
+            paramsSchema: defineSchema((v) => v.object({}))(),
+            load: () => ({}),
+            mcp: {
+              cachePolicy: "cache",
+            } as never,
+          }),
+        TypeError,
+        'Resource MCP configuration contains unsupported field "cachePolicy"',
+      );
+      assertThrows(
+        () =>
+          resource({
             pattern: "/unknown-content-field",
             description: "Invalid content field",
             paramsSchema: defineSchema((v) => v.object({}))(),

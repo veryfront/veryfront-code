@@ -40,53 +40,53 @@ export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AuthorizationUrlOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L300) |
-| `OAuthProviderConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L295) |
-| `OAuthServiceConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L296) |
-| `OAuthStateSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L298) |
-| `OAuthTokensSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L297) |
-| `TokenExchangeOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L301) |
-| `TokenExchangeResultSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L299) |
+| `AuthorizationUrlOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L316) |
+| `OAuthProviderConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L311) |
+| `OAuthServiceConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L312) |
+| `OAuthStateSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L314) |
+| `OAuthTokensSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L313) |
+| `TokenExchangeOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L317) |
+| `TokenExchangeResultSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L315) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createOAuthCallbackDispatcher` | Create one callback handler shared by a fixed allowlist of logical services. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L345) |
-| `createOAuthCallbackHandler` | Create a callback handler for one logical OAuth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L305) |
-| `createOAuthDisconnectHandler` | Handler for create oauth disconnect. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L320) |
-| `createOAuthInitHandler` | Handler for create oauth init. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L135) |
-| `createOAuthStatusHandler` | Handler for create oauth status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L256) |
+| `createOAuthCallbackDispatcher` | Create one callback handler shared by a fixed allowlist of logical services. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L401) |
+| `createOAuthCallbackHandler` | Create a callback handler for one logical OAuth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L361) |
+| `createOAuthDisconnectHandler` | Handler for create oauth disconnect. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L336) |
+| `createOAuthInitHandler` | Handler for create oauth init. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L136) |
+| `createOAuthStatusHandler` | Handler for create oauth status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L270) |
 
 ### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MemoryTokenStore` | In-memory TokenStore keyed by `(serviceId, userId)`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L91) |
-| `OAuthProvider` | Implement oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L297) |
-| `OAuthService` | Implement oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L809) |
+| `MemoryTokenStore` | In-memory TokenStore keyed by `(serviceId, userId)`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L93) |
+| `OAuthProvider` | Implement oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L421) |
+| `OAuthService` | Implement oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L1001) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AuthorizationUrlOptions` | Options accepted by authorization URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L288) |
-| `GetUserIdFn` | Signature for resolving the authenticated user's ID from a request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L91) |
-| `MemoryTokenStoreOptions` | Options for `MemoryTokenStore`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L45) |
-| `OAuthCallbackDispatcherOptions` | Options accepted by a shared OAuth callback dispatcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L70) |
-| `OAuthCallbackHandlerOptions` | Options accepted by oauth callback handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L31) |
-| `OAuthDisconnectHandlerOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L306) |
-| `OAuthInitHandlerOptions` | Options accepted by oauth init handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L94) |
-| `OAuthProviderConfig` | Configuration used by oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L278) |
-| `OAuthServiceConfig` | Configuration used by oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L280) |
-| `OAuthState` | State for oauth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L284) |
-| `OAuthStatusHandlerOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L238) |
-| `OAuthTokens` | Public API contract for oauth tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L282) |
+| `AuthorizationUrlOptions` | Options accepted by authorization URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L304) |
+| `GetUserIdFn` | Signature for resolving the authenticated user's ID from a request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L92) |
+| `MemoryTokenStoreOptions` | Options for `MemoryTokenStore`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L47) |
+| `OAuthCallbackDispatcherOptions` | Options accepted by a shared OAuth callback dispatcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L72) |
+| `OAuthCallbackHandlerOptions` | Options accepted by oauth callback handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L33) |
+| `OAuthDisconnectHandlerOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L322) |
+| `OAuthInitHandlerOptions` | Options accepted by oauth init handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L95) |
+| `OAuthProviderConfig` | Configuration used by oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L294) |
+| `OAuthServiceConfig` | Configuration used by oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L296) |
+| `OAuthState` | State for oauth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L300) |
+| `OAuthStatusHandlerOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L252) |
+| `OAuthTokens` | Public API contract for oauth tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L298) |
 | `OAuthTokenSnapshot` | Detached token row plus an opaque store revision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/types.ts#L47) |
 | `RefreshCapableTokenStore` | Token store contract required for safe refresh across concurrent workers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/types.ts#L115) |
 | `StoredOAuthState` | Persisted OAuth state row. Created when init handler starts a flow and consumed exactly once by the callback handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/types.ts#L22) |
-| `TokenExchangeOptions` | Options accepted by token exchange. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L292) |
-| `TokenExchangeResult` | Result returned from token exchange. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L286) |
+| `TokenExchangeOptions` | Options accepted by token exchange. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L308) |
+| `TokenExchangeResult` | Result returned from token exchange. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L302) |
 | `TokenStore` | TokenStore is keyed by `(serviceId, userId)` - tokens are per-user. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/types.ts#L61) |
 
 ### Constants
@@ -104,13 +104,13 @@ export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 | `driveConfig` | Configuration used by drive. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L64) |
 | `figmaConfig` | Configuration used by figma. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L71) |
 | `freshdeskConfig` | Configuration used by freshdesk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L250) |
-| `getAuthorizationUrlOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L243) |
-| `getOAuthProviderConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L52) |
-| `getOAuthServiceConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L140) |
-| `getOAuthStateSchema` | State for CSRF protection and PKCE | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L188) |
-| `getOAuthTokensSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L161) |
-| `getTokenExchangeOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L265) |
-| `getTokenExchangeResultSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L202) |
+| `getAuthorizationUrlOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L259) |
+| `getOAuthProviderConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L68) |
+| `getOAuthServiceConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L156) |
+| `getOAuthStateSchema` | State for CSRF protection and PKCE | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L204) |
+| `getOAuthTokensSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L177) |
+| `getTokenExchangeOptionsSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L281) |
+| `getTokenExchangeResultSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L218) |
 | `githubConfig` | Configuration used by github. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L5) |
 | `gitlabConfig` | Configuration used by gitlab. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L106) |
 | `gmailConfig` | Configuration used by gmail. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L20) |

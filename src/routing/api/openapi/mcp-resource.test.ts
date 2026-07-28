@@ -93,7 +93,7 @@ describe("routing/api/openapi/mcp-resource", () => {
 
     it("should have MCP config enabled", () => {
       const resource = createResource(makeSpec());
-      assertEquals(resource.mcp?.enabled, true);
+      assertEquals(resource.mcp, { enabled: true });
     });
   });
 });

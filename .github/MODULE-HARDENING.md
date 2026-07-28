@@ -26,8 +26,8 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                             |
 | ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    45 |      77.6% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     2 |       3.4% | Reviewed remediation or design work remains open    |
+| Closed                         |    46 |      79.3% | Current formal closure evidence remains valid       |
+| Deep reviewed, fixes pending   |     1 |       1.7% | Reviewed remediation or design work remains open    |
 | Touched, revalidation required |    11 |      19.0% | Substantive recovered or current work exists        |
 | Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
 | Total                          |    58 |     100.0% | All audit units                                     |
@@ -69,6 +69,7 @@ stricter closure count.
 - `registry`
 - `release-assets`
 - `repositories`
+- `resource`
 - `routing`
 - `runs`
 - `runtime`
@@ -86,7 +87,6 @@ stricter closure count.
 
 ### Deep reviewed, fixes pending
 
-- `resource`
 - `utils`
 
 ### Touched, revalidation required
@@ -126,7 +126,7 @@ The current closed review chain covers `agent`, `cache`, `channels`, `chat`,
 `html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
 `internal-agents`, `mcp`, `middleware`, `observability`, `oauth`, `platform`, `provider`,
 `prompt`, `registry`, `release-assets`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `index.ts`, and
+`schemas`, `studio`, `task`, `tool`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
 `version.ts`.
 The chain also covers `testing` after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
@@ -217,9 +217,11 @@ classification, registry projection, host and remote materialization, remote
 MCP transport, project-scoped execution admission, provenance, tracing,
 credentials, documentation, and direct consumers were remediated and
 revalidated.
-`resource` and `utils` have received deep current-state reviews and substantial
-remediation. Resource remains open while its cache-policy breaking-change
-decision is unresolved. Utils remains open while its future-lockfile,
+`resource` is closed after its pattern grammar, construction and registry
+boundaries, read lifecycle, MCP projection and content budgets, public
+metadata, documentation, and direct consumers were remediated and revalidated.
+`utils` has received a deep current-state review and substantial remediation.
+Utils remains open while its future-lockfile,
 malformed-import-map, and default-memoization compatibility decisions are
 unresolved. Each closure requires a complete consumer map, deep module-level
 review, adversarial boundary tests, public-contract documentation, and
@@ -1500,8 +1502,8 @@ The `prompt` unit is closed. Adjacent `agent`, `cache`, `discovery`, `mcp`,
 units remain in their stricter ledger states because focused Prompt closure
 does not substitute for a full top-level review of those consumers.
 
-The following findings keep `resource` in
-`Deep reviewed, fixes pending`:
+The following finding kept `resource` in
+`Deep reviewed, fixes pending` at this checkpoint:
 
 - Resource `mcp.cachePolicy` remains a reserved but unenforced setting. Cache
   key, TTL, invalidation, and failure semantics require a deliberate API
@@ -1579,6 +1581,59 @@ Current reproducible evidence:
   passes 3 tests, `deno task verify:quick` passes every configured source,
   documentation, lint, architecture, and typecheck gate, and the branch remains
   zero commits behind upstream.
+
+### Resource closure and truthful MCP metadata checkpoint
+
+The final Resource decision removes the last formal blocker rather than
+inventing semantics for a configuration field that had never been consumed:
+
+- **Symptom -> Source -> Consequence -> Remedy:** Resource
+  `mcp.cachePolicy` accepted `no-cache`, `cache`, and `cache-first`, but the
+  field had no protocol representation, key, lifetime, invalidation,
+  credential partition, failure policy, or runtime consumer. Applications
+  could reasonably infer freshness and isolation guarantees that did not
+  exist. The field, its schema aliases, and its exported type are removed;
+  runtime configuration now rejects it as unsupported; and the built-in
+  OpenAPI resource no longer advertises a fictitious cache mode. Applications
+  that need caching must implement it behind the loader or data backend with
+  explicit identity, lifetime, invalidation, and failure semantics.
+- The same consistency search found Tool `mcp.cachePolicy` and
+  `mcp.requiresAuth`, also retained without a consumer. Those fields are
+  removed and rejected instead of implying per-tool cache or authorization
+  enforcement. Tool authentication remains owned by the MCP server or trusted
+  host boundary. The complete Tool and MCP portfolios were rerun so this
+  cross-module correction does not invalidate their prior closure.
+- The Resource and Tool concept pages document the migration and the actual
+  ownership boundaries. Generated Resource, Tool, OAuth, and Observability
+  reference locations were refreshed from the current source rather than
+  retaining stale links.
+
+Reproducible closure evidence:
+
+- The focused Resource and OpenAPI-resource portfolio passes seven top-level
+  tests and 68 nested checks with zero failures. Direct Resource coverage is
+  84.8 percent branches, 83.3 percent functions, and 79.0 percent lines.
+- All Tool suites pass 61 top-level tests and 172 nested checks, and all MCP
+  suites pass seven top-level tests and 236 nested checks, under leak tracing.
+- All Discovery suites pass 67 top-level tests and 118 nested checks. The
+  dashboard, request-time rediscovery, and OpenAPI integration portfolio passes
+  ten top-level tests and 124 nested checks.
+- Direct Resource/Tool/MCP/OpenAPI typechecking, repository lint, formatting,
+  and `git diff --check` pass. The npm package and every first-party extension
+  rebuild successfully, root-import lifecycle checks pass, and external
+  TypeScript composition is consumer-clean.
+- Documentation validation passes all 40 reference pages, 67 guides, 112
+  public documentation files, executable examples, and 747 links.
+- `deno task verify:quick` passes manifest freshness, formatting of 4,473
+  files, repository lint and policy ratchets, dependency and module boundaries,
+  documentation validation, and every configured production and browser
+  entrypoint typecheck.
+
+No known unresolved critical or high-confidence Resource production risk
+remains. The removed fields are an intentional breaking correction to
+previously false, no-op contracts; preserving or silently mapping them would
+retain the defect. `resource` is closed at 46 of 58 formal units, with 12 units
+remaining open or awaiting top-level revalidation.
 
 ### Cross-module cache, routing, and production-server remediation checkpoint
 

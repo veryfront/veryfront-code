@@ -60,9 +60,11 @@ Resources can also remain available to application code while being hidden from
 MCP clients. Setting `mcp.enabled` to `false` excludes the resource from MCP
 lists, templates, and reads.
 
-`mcp.cachePolicy` is currently a reserved compatibility field, not an enforced
-cache contract. Do not rely on it for freshness or isolation until cache keys,
-lifetimes, and invalidation semantics are defined.
+Resource MCP metadata does not accept `cachePolicy`. Earlier releases accepted
+that field without enforcing it; it is now rejected instead of implying a
+freshness or isolation guarantee that the transport cannot provide. Put caching
+behind the loader or its data backend, where the application can define
+credential-safe keys, lifetimes, invalidation, and failure behavior explicitly.
 
 ## Wrong fit
 
