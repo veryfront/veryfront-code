@@ -63,7 +63,6 @@ describe("validatePushReceipt", () => {
       projectSlug: RECEIPT.projectSlug,
       branch: "main",
       commitSha: RECEIPT.commitSha,
-      requireClean: true,
     });
 
     assertEquals(result, RECEIPT.commitSha);
@@ -118,7 +117,7 @@ describe("validatePushReceipt", () => {
     );
   });
 
-  it("rejects a different or dirty commit for production", async () => {
+  it("rejects a different commit when one is required", async () => {
     await assertRejects(
       () =>
         Promise.resolve().then(() =>
@@ -133,39 +132,19 @@ describe("validatePushReceipt", () => {
       Error,
       "different commit",
     );
+  });
 
-    await assertRejects(
-      () =>
-        Promise.resolve().then(() =>
-          validatePushReceipt({ ...RECEIPT, clean: false }, {
-            controlPlane: RECEIPT.controlPlane,
-            projectId: RECEIPT.projectId,
-            projectSlug: RECEIPT.projectSlug,
-            branch: RECEIPT.branch,
-            commitSha: RECEIPT.commitSha,
-            requireClean: true,
-          })
-        ),
-      Error,
-      "uncommitted changes",
-    );
+  it("accepts dirty metadata for the same deployment target and commit", () => {
+    const result = validatePushReceipt({ ...RECEIPT, clean: false }, {
+      controlPlane: RECEIPT.controlPlane,
+      projectId: RECEIPT.projectId,
+      projectSlug: RECEIPT.projectSlug,
+      branch: RECEIPT.branch,
+      commitSha: RECEIPT.commitSha,
+      clean: false,
+    });
 
-    await assertRejects(
-      () =>
-        Promise.resolve().then(() =>
-          validatePushReceipt(RECEIPT, {
-            controlPlane: RECEIPT.controlPlane,
-            projectId: RECEIPT.projectId,
-            projectSlug: RECEIPT.projectSlug,
-            branch: RECEIPT.branch,
-            commitSha: RECEIPT.commitSha,
-            clean: false,
-            requireClean: true,
-          })
-        ),
-      Error,
-      "uncommitted changes",
-    );
+    assertEquals(result, RECEIPT.commitSha);
   });
 
   it("accepts a digest-only first push when the project has no Git source", () => {
@@ -176,7 +155,6 @@ describe("validatePushReceipt", () => {
       branch: RECEIPT.branch,
       commitSha: null,
       clean: false,
-      requireClean: true,
     });
 
     assertEquals(result, null);
@@ -193,7 +171,6 @@ describe("validatePushReceipt", () => {
             branch: RECEIPT.branch,
             commitSha: RECEIPT.commitSha,
             clean: true,
-            requireClean: true,
           })
         ),
       Error,

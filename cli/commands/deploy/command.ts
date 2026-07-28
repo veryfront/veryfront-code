@@ -605,7 +605,6 @@ export async function resolvePushedSource(input: {
   projectId: string;
   projectSlug: string;
   branch: string;
-  requireClean: boolean;
 }): Promise<{ commitSha: string | null; sourceDigest: string }> {
   const receipt = await readPushReceipt(input.projectDir);
   if (!receipt) {
@@ -622,7 +621,6 @@ export async function resolvePushedSource(input: {
     branch: input.branch,
     commitSha: gitSource.commitSha,
     clean: gitSource.clean,
-    requireClean: input.requireClean,
   });
   return { commitSha, sourceDigest: receipt.sourceDigest };
 }
@@ -1214,7 +1212,6 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       projectId: project.id,
       projectSlug: project.slug,
       branch,
-      requireClean: env === "production",
     });
   } catch (error) {
     spinner.stop();
@@ -1434,7 +1431,6 @@ async function deployCommandJson(options: DeployOptions): Promise<void> {
       projectId: project.id,
       projectSlug: project.slug,
       branch,
-      requireClean: env === "production",
     });
     streamJsonLine({ type: "step", name: "verify-source", status: "completed" });
 

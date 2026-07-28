@@ -415,6 +415,179 @@ it("uses canonical production read-back in human and JSON modes", async () => {
   }
 });
 
+it("deploys production from a dirty worktree when the pushed digest matches the release", async () => {
+  const projectDir = await Deno.makeTempDir();
+  const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const releaseSource = "export default function Dashboard() { return null; }\n";
+  const requests: string[] = [];
+
+  try {
+    await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
+    await Deno.writeTextFile(`${projectDir}/pages/dashboard.tsx`, releaseSource);
+    const actualSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      { path: "pages/dashboard.tsx", content: releaseSource },
+    ]);
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: actualSha,
+      sourceDigest,
+      clean: false,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await Deno.writeTextFile(
+      `${projectDir}/pages/dashboard.tsx`,
+      "export default function Dashboard() { return 'local draft'; }\n",
+    );
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+    _resetEnvironmentConfig();
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}`);
+
+      if (request.method === "GET" && url.pathname === "/api/projects/my-project") {
+        return Response.json({ id: PROJECT_ID, slug: "my-project" });
+      }
+      if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+        return Response.json({
+          data: [{
+            id: ENVIRONMENT_ID,
+            name: "production",
+            project_id: PROJECT_ID,
+            protected: true,
+            deployment: {
+              id: DEPLOYMENT_ID,
+              release: { id: RELEASE_ID, name: `github-main-${actualSha}` },
+            },
+          }],
+        });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+        return Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+        return Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        });
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/versions`)
+      ) {
+        return Response.json({
+          data: [{
+            path: "pages/dashboard.tsx",
+            data: JSON.stringify({ body: releaseSource, path: "pages/dashboard.tsx" }),
+          }],
+          page_info: {},
+        });
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)
+      ) {
+        return Response.json({
+          state: "ready",
+          manifest_version: 1,
+          manifest: {
+            schemaVersion: 1,
+            projectId: PROJECT_ID,
+            releaseId: RELEASE_ID,
+            releaseVersion: 41,
+            manifestVersion: 1,
+            builderVersion: "test",
+            sourceContentHash: sourceDigest,
+            createdAt: "2026-07-10T09:20:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {
+              "pages/dashboard.tsx": {
+                contentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                size: 10,
+                contentType: "text/javascript",
+              },
+            },
+            css: [],
+            routes: {
+              "/dashboard": {
+                modules: ["pages/dashboard.tsx"],
+              },
+            },
+            dependencies: {},
+            fallback: { mode: "jit", gaps: [] },
+          },
+        });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/deployments")) {
+        return Response.json({
+          id: DEPLOYMENT_ID,
+          release_id: RELEASE_ID,
+          environment_id: ENVIRONMENT_ID,
+          routing_convergence: { status: "converged", acknowledged: 1, recipients: 1 },
+        }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/deployments/${DEPLOYMENT_ID}`)) {
+        return Response.json({
+          id: DEPLOYMENT_ID,
+          release_id: RELEASE_ID,
+          environment_id: ENVIRONMENT_ID,
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/dashboard") {
+        return new Response("ready");
+      }
+      return Response.json({ message: "not found" }, { status: 404 });
+    }, () =>
+      deployCommand({
+        projectDir,
+        branch: "main",
+        env: "production",
+        releaseName: `github-main-${actualSha}`,
+        dryRun: false,
+        force: false,
+        quiet: true,
+        skipSourcePush: true,
+        environmentPollIntervalMs: 1,
+        environmentTimeoutMs: 1_000,
+      }));
+
+    assertEquals(
+      requests.includes(`GET /api/projects/${PROJECT_ID}/releases/${RELEASE_ID}/versions`),
+      true,
+    );
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
 it("models an inferred missing project during dry-run deploy", async () => {
   const projectDir = await Deno.makeTempDir();
   const envKeys = [
