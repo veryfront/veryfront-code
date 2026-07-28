@@ -180,7 +180,7 @@ type StructureNode = {
 };
 
 interface InitCommandDependencies {
-  deployProject?: (projectDir: string) => Promise<string | undefined>;
+  deployProject?: (projectDir: string) => Promise<string>;
 }
 
 const STRUCTURE_ORDER = [

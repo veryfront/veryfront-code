@@ -107,6 +107,10 @@ function restoreEnv(key: string, value: string | undefined): void {
   else Deno.env.set(key, value);
 }
 
+function captureConsoleLog(output: string[]): (...args: unknown[]) => void {
+  return (...args: unknown[]) => output.push(args.map(String).join(" "));
+}
+
 async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<void> {
   const originalFetch = globalThis.fetch;
   const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -240,7 +244,7 @@ describe("push JSON output", () => {
       for (const dryRun of [true, false]) {
         const projectDir = await Deno.makeTempDir();
         const output: string[] = [];
-        console.log = (message?: unknown) => output.push(String(message));
+        console.log = captureConsoleLog(output);
         try {
           await pushCommand({ projectDir, dryRun });
 
@@ -258,7 +262,7 @@ describe("push JSON output", () => {
       setJsonMode(false);
       const projectDir = await Deno.makeTempDir();
       const output: string[] = [];
-      console.log = (message?: unknown) => output.push(String(message));
+      console.log = captureConsoleLog(output);
       try {
         await pushCommand({ projectDir, dryRun: false });
 
@@ -302,7 +306,7 @@ describe("push JSON output", () => {
       Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
       _resetEnvironmentConfig();
       setJsonMode(true);
-      console.log = (message?: unknown) => output.push(String(message));
+      console.log = captureConsoleLog(output);
 
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
@@ -354,7 +358,7 @@ describe("push JSON output", () => {
         Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
         _resetEnvironmentConfig();
         setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
+        console.log = captureConsoleLog(output);
 
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
@@ -406,7 +410,7 @@ describe("push JSON output", () => {
         Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
         _resetEnvironmentConfig();
         setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
+        console.log = captureConsoleLog(output);
 
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
