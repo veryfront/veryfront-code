@@ -97,11 +97,9 @@ class RequestTracker {
   private totalCompleted = 0;
   private totalTimedOut = 0;
 
-  constructor() {
-    this.startStatusLogging();
-  }
-
   private startStatusLogging(): void {
+    if (this.statusInterval) return;
+
     this.statusInterval = setInterval(() => {
       if (this.inFlight.size === 0) return;
 
@@ -137,6 +135,8 @@ class RequestTracker {
     env?: string,
     releaseId?: string,
   ): void {
+    this.startStatusLogging();
+
     const startTime = performance.now();
     this.totalRequests++;
 
@@ -320,7 +320,10 @@ class RequestTracker {
   }
 
   shutdown(): void {
-    if (this.statusInterval) clearInterval(this.statusInterval);
+    if (this.statusInterval) {
+      clearInterval(this.statusInterval);
+      this.statusInterval = undefined;
+    }
 
     for (const tracked of this.inFlight.values()) {
       if (tracked.slowTimer) clearTimeout(tracked.slowTimer);

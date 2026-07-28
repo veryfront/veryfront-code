@@ -19,16 +19,13 @@ function captureLogs(): LogEntry[] {
   return entries;
 }
 
-describe({
-  name: "server/runtime-handler/request-tracker",
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, () => {
+describe("server/runtime-handler/request-tracker", () => {
   afterEach(() => {
     // Clean up any tracked requests
     for (const tracked of requestTracker.getInFlightRequests()) {
       requestTracker.complete(tracked.requestId, 200);
     }
+    requestTracker.shutdown();
     Deno.env.delete("VERYFRONT_SLOW_REQUEST_PROFILE_LOG_THRESHOLD_MS");
     if (originalLogLevel === undefined) Deno.env.delete("LOG_LEVEL");
     else Deno.env.set("LOG_LEVEL", originalLogLevel);

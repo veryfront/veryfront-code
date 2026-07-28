@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { agent } from "../factory.ts";
 import type { ModelTransportRequest } from "../types.ts";
 import {
@@ -43,6 +43,7 @@ describe("agent provider transport hooks", () => {
     else Deno.env.set("LOG_LEVEL", originalLogLevel);
     __resetLoggerConfigForTests();
     __resetLogRecordEmitterForTests();
+    clearModelProviders();
   });
 
   it("lets hosts override the model runtime and transport options for generate()", async () => {
