@@ -1,12 +1,14 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { basename, isAbsolute, join, normalize } from "#veryfront/compat/path/index.ts";
+import { basename, isAbsolute, join, normalize, relative } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type * as React from "react";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
 
 const MAX_COMPONENTS = 10_000;
 const MAX_COMPONENT_DIRECTORY_DEPTH = 64;
+const COMPONENT_LOAD_CONCURRENCY = 20;
 
 function immutableComponentInfo(info: ComponentInfo): ComponentInfo {
   const exports = info.exports ? Object.freeze({ ...info.exports }) : undefined;
@@ -62,6 +64,7 @@ export type ComponentLoader = {
 export class ComponentRegistry {
   private components = new Map<string, ComponentInfo>();
   private readonly componentDirs: readonly string[];
+  private readonly projectDir: string;
   private initializedPromise: Promise<void> | null = null;
   private readonly adapter: RuntimeAdapter;
   private readonly componentLoads = new Map<
@@ -72,6 +75,7 @@ export class ComponentRegistry {
 
   constructor(private options: ComponentRegistryOptions) {
     this.adapter = options.adapter;
+    this.projectDir = normalize(options.projectDir);
     this.componentDirs = Object.freeze(
       Array.from(
         new Set(
@@ -115,12 +119,28 @@ export class ComponentRegistry {
   private async _discoverInternal(): Promise<Map<string, ComponentInfo>> {
     logger.debug(`Discovering components in: ${this.componentDirs.join(", ")}`);
     const discovered = new Map<string, ComponentInfo>();
+    let canonicalProjectDir: string | undefined;
+    if (this.adapter.fs.realPath) {
+      try {
+        canonicalProjectDir = normalize(
+          await this.adapter.fs.realPath(this.projectDir),
+        );
+      } catch (error) {
+        if (isNotFoundError(error)) return discovered;
+        throw error;
+      }
+    }
 
     for (const dir of this.componentDirs) {
-      const fullPath = join(this.options.projectDir, dir);
+      const fullPath = join(this.projectDir, dir);
 
       try {
-        await this.walkDirectory(fullPath, discovered, 0);
+        await this.walkDirectory(
+          fullPath,
+          discovered,
+          0,
+          canonicalProjectDir,
+        );
       } catch (error) {
         if (isNotFoundError(error)) continue;
         throw error;
@@ -131,10 +151,44 @@ export class ComponentRegistry {
     return discovered;
   }
 
+  private isWithinProject(path: string, projectDir = this.projectDir): boolean {
+    const relativePath = relative(projectDir, path);
+    return relativePath === "" ||
+      (
+        relativePath !== ".." &&
+        !relativePath.startsWith("../") &&
+        !relativePath.startsWith("..\\") &&
+        !isAbsolute(relativePath)
+      );
+  }
+
+  private async assertContainedPath(
+    path: string,
+    canonicalProjectDir: string | undefined,
+  ): Promise<void> {
+    const normalizedPath = normalize(path);
+    if (!this.isWithinProject(normalizedPath)) {
+      throw new TypeError(
+        `Component path escapes the project root: ${path}`,
+      );
+    }
+    if (!canonicalProjectDir || !this.adapter.fs.realPath) return;
+
+    const canonicalPath = normalize(
+      await this.adapter.fs.realPath(normalizedPath),
+    );
+    if (!this.isWithinProject(canonicalPath, canonicalProjectDir)) {
+      throw new TypeError(
+        `Component path escapes the canonical project root: ${path}`,
+      );
+    }
+  }
+
   private async walkDirectory(
     dir: string,
     discovered: Map<string, ComponentInfo>,
     depth: number,
+    canonicalProjectDir: string | undefined,
   ): Promise<void> {
     if (depth > MAX_COMPONENT_DIRECTORY_DEPTH) {
       throw new RangeError(
@@ -142,6 +196,7 @@ export class ComponentRegistry {
       );
     }
 
+    await this.assertContainedPath(dir, canonicalProjectDir);
     const entries = await Array.fromAsync(this.adapter.fs.readDir(dir));
     entries.sort((left, right) => left.name.localeCompare(right.name));
 
@@ -157,12 +212,18 @@ export class ComponentRegistry {
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        await this.walkDirectory(fullPath, discovered, depth + 1);
+        await this.walkDirectory(
+          fullPath,
+          discovered,
+          depth + 1,
+          canonicalProjectDir,
+        );
         continue;
       }
 
       if (!entry.isFile || !/\.(tsx|jsx)$/.test(entry.name)) continue;
 
+      await this.assertContainedPath(fullPath, canonicalProjectDir);
       const ext = entry.name.substring(entry.name.lastIndexOf("."));
       const componentName = basename(entry.name, ext);
       if (componentName === "index") continue;
@@ -244,7 +305,13 @@ export class ComponentRegistry {
     return withSpan(
       "modules.componentRegistry.loadAll",
       async () => {
-        await Promise.all(Array.from(this.components.keys(), (name) => this.loadComponent(name)));
+        await parallelMap(
+          Array.from(this.components.keys()),
+          async (name) => {
+            await this.loadComponent(name);
+          },
+          { concurrency: COMPONENT_LOAD_CONCURRENCY },
+        );
       },
       { "registry.componentCount": this.components.size },
     );
@@ -278,6 +345,14 @@ export class ComponentRegistry {
   }
 
   add(name: string, info: Partial<ComponentInfo>): void {
+    if (
+      !this.components.has(name) &&
+      this.components.size >= MAX_COMPONENTS
+    ) {
+      throw new RangeError(
+        `Component registry exceeds the ${MAX_COMPONENTS} component limit`,
+      );
+    }
     this.components.set(
       name,
       immutableComponentInfo({

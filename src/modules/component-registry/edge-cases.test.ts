@@ -171,6 +171,31 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       );
     });
 
+    it("rejects canonical component paths outside the project", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/canonical-containment";
+      const componentPath = `${projectDir}/components/Button.tsx`;
+      adapter.fs.files.set(
+        componentPath,
+        "export default function Button() {}",
+      );
+      adapter.fs.realPath = (path) => {
+        if (path === componentPath) {
+          return Promise.resolve("/outside/components/Button.tsx");
+        }
+        return Promise.resolve(path);
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+
+      await assertRejects(
+        () => registry.discover(),
+        TypeError,
+        "escapes the canonical project root",
+      );
+      assertEquals(registry.getAll().size, 0);
+    });
+
     it("should only match tsx and jsx extensions", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/extensions";
@@ -282,6 +307,38 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.get("Input")?.isLoaded, true);
     });
 
+    it("bounds concurrent reads when loading all components", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/bounded-load-all";
+      for (let index = 0; index < 50; index++) {
+        adapter.fs.files.set(
+          `${projectDir}/components/Component${index}.tsx`,
+          `export default function Component${index}() {}`,
+        );
+      }
+      const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+      let activeReads = 0;
+      let maxActiveReads = 0;
+      adapter.fs.readFile = async (path) => {
+        activeReads++;
+        maxActiveReads = Math.max(maxActiveReads, activeReads);
+        try {
+          await Promise.resolve();
+          return await originalReadFile(path);
+        } finally {
+          activeReads--;
+        }
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      await registry.discover();
+      await registry.loadAll();
+
+      assertEquals(registry.getAll().size, 50);
+      assertEquals(maxActiveReads > 1, true);
+      assertEquals(maxActiveReads <= 20, true);
+    });
+
     it("should handle concurrent component loads", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/concurrent-load";
@@ -324,6 +381,25 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       const component = registry.get("VirtualButton");
       assertEquals(component?.isLoaded, true);
       assertEquals(component?.path, "virtual:VirtualButton");
+    });
+
+    it("applies the component limit to manual additions", () => {
+      const registry = new ComponentRegistry({
+        projectDir: "/test/manual-limit",
+        adapter: createMockAdapter(),
+      });
+
+      for (let index = 0; index < 10_000; index++) {
+        registry.add(`Virtual${index}`, { content: "" });
+      }
+      assertThrows(
+        () => registry.add("Overflow", { content: "" }),
+        RangeError,
+        "10000 component limit",
+      );
+
+      registry.add("Virtual0", { content: "updated" });
+      assertEquals(registry.get("Virtual0")?.content, "updated");
     });
 
     it("should remove components", async () => {
