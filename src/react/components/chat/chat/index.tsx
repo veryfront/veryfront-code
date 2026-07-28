@@ -165,19 +165,17 @@ export {
   useAttachmentsPanel,
 } from "./components/attachments-panel.tsx";
 
-export {
-  type ConversationPatch,
-  useConversations,
-  type UseConversationsOptions,
-  type UseConversationsResult,
-} from "./hooks/use-conversations.ts";
+export { useConversations } from "./hooks/use-conversations.ts";
+export type * from "./hooks/use-conversations.ts";
 export {
   useConversation,
   type UseConversationOptions,
+  type UseConversationPersistenceState,
   type UseConversationResult,
 } from "./hooks/use-conversation.ts";
 export {
   ConversationsContextProvider,
+  type ConversationsContextValue,
   ConversationsProvider,
   type ConversationsProviderProps,
   useConversationsContext,
@@ -187,8 +185,12 @@ export {
 export {
   type Conversation,
   type ConversationStore,
+  ConversationStoreError,
+  type ConversationStoreOperation,
   type ConversationSummary,
 } from "./persistence/conversation-store.ts";
+export { CONVERSATION_STORAGE_LIMITS } from "./persistence/conversation-codec.ts";
+export type { ConversationStorageLimits } from "./persistence/conversation-codec.ts";
 export {
   localConversationStore,
   type StorageLike,
@@ -274,6 +276,5 @@ export {
 } from "./contexts/index.ts";
 
 // ChatProps: preset interface, re-exported here to preserve the public surface.
-
 export type { ChatAgentInfo, ChatProps } from "./chat-props.ts";
 export { Chat } from "./chat-preset.tsx";

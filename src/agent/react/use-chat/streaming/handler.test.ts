@@ -201,8 +201,6 @@ describe("use-chat streaming handler", () => {
         toolName: "web_fetch",
         state: "input-available",
         input: { url: "https://example.com/docs" },
-        output: undefined,
-        errorText: undefined,
         providerExecuted: true,
       },
     ]);
@@ -237,6 +235,28 @@ describe("use-chat streaming handler", () => {
       rec.callbacks,
     );
     assertEquals(rec.data, [{ a: 1 }, { b: 2 }]);
+  });
+
+  it("ignores custom data events without a JSON payload", async () => {
+    const rec = recorder();
+    await handleStreamingResponse(
+      sseStream([
+        { type: "message-start", messageId: "msg-custom-data" },
+        { type: "data-missing" },
+        { type: "data-null", data: null },
+        { type: "data-false", data: false },
+        { type: "data-zero", data: 0 },
+        { type: "message-finish" },
+      ]),
+      rec.callbacks,
+    );
+
+    assertEquals(rec.data, [null, false, 0]);
+    assertEquals(rec.messages[0]?.parts, [
+      { type: "data-null", data: null },
+      { type: "data-false", data: false },
+      { type: "data-zero", data: 0 },
+    ]);
   });
 
   it("skips malformed JSON lines without throwing", async () => {
@@ -347,7 +367,6 @@ describe("use-chat streaming handler", () => {
         state: "output-available",
         input: { query: "agents" },
         output: { count: 2 },
-        errorText: undefined,
         providerExecuted: true,
       },
     ]);

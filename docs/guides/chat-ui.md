@@ -222,19 +222,84 @@ The provider owns the conversation list and persistence; `<ChatSidebar>` and
 `<Chat>` both read it from context, so neither needs wiring:
 
 ```tsx
-import { Chat, ChatSidebar, ConversationsProvider } from "veryfront/chat";
+"use client";
 
-function App() {
+import { useState } from "react";
+import {
+  Chat,
+  ChatSidebar,
+  ConversationsProvider,
+  type ConversationStoreError,
+} from "veryfront/chat";
+
+export default function ChatApp() {
+  const [persistenceError, setPersistenceError] = useState<ConversationStoreError | null>(null);
+
   return (
-    <ConversationsProvider storageKey="my-app">
-      <div style={{ display: "flex" }}>
-        <ChatSidebar />
-        <Chat agentId="assistant" />
-      </div>
+    <ConversationsProvider
+      storageKey="my-app"
+      onError={(error) => setPersistenceError(error)}
+    >
+      <main>
+        {persistenceError && (
+          <div role="alert">
+            <p>
+              Conversation storage {persistenceError.operation}{" "}
+              failed. Do not treat the current view as durable until this operation succeeds.
+            </p>
+            <button
+              type="button"
+              onClick={() => setPersistenceError(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        <div style={{ display: "flex" }}>
+          <ChatSidebar />
+          <Chat agentId="assistant" />
+        </div>
+      </main>
     </ConversationsProvider>
   );
 }
 ```
+
+The default local adapter fails closed. Unavailable, blocked, corrupt, full, or
+out-of-bounds storage reports a `ConversationStoreError`; it does not pretend
+the operation succeeded or silently switch to memory. The error's `operation`
+is `list`, `load`, `save`, `delete`, or `subscribe`.
+
+### Keep conversations ephemeral
+
+Use `memoryConversationStore()` for SSR, short-lived demos, or sensitive
+sessions whose transcript must not be written to browser storage. Create the
+store once per mounted tree:
+
+```tsx
+// app/private-chat/page.tsx
+"use client";
+
+import { useState } from "react";
+import { Chat, ChatSidebar, ConversationsProvider, memoryConversationStore } from "veryfront/chat";
+
+export default function PrivateChat() {
+  const [store] = useState(() => memoryConversationStore());
+
+  return (
+    <ConversationsProvider store={store}>
+      <main style={{ display: "flex" }}>
+        <ChatSidebar />
+        <Chat agentId="assistant" />
+      </main>
+    </ConversationsProvider>
+  );
+}
+```
+
+The memory store is cleared when the tree is discarded or the page reloads.
+Do not create a module-level memory store in server-rendered code, because
+different requests would share the same store.
 
 Use chat context providers only when nested components need direct state access.
 Prefer preset props or composition components first.
@@ -313,6 +378,10 @@ Run `veryfront dev` and open the page that renders the chat UI:
 - The preset renders its default controls.
 - Custom layouts keep the message list and composer wired to the same AG-UI
   stream.
+- A persisted conversation remains in the sidebar after a page reload.
+- A conversation persistence failure renders an alert with the failed
+  operation.
+- A chat using `memoryConversationStore()` starts empty after a page reload.
 - Standalone Markdown is semantic in the initial server HTML, and fenced code
   remains readable before browser enhancement.
 

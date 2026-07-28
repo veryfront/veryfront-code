@@ -245,7 +245,12 @@ function processStreamEvent(
       return;
 
     default:
-      if (typeof parsed.type === "string" && parsed.type.startsWith("data-")) {
+      if (
+        typeof parsed.type === "string" &&
+        parsed.type.startsWith("data-") &&
+        Object.hasOwn(parsed, "data") &&
+        parsed.data !== undefined
+      ) {
         handleDataPart(
           { type: parsed.type, data: parsed.data },
           state,
@@ -350,7 +355,8 @@ function processChatStreamEvent(
 
     default:
       if (event.type.startsWith("data-")) {
-        const data = (event as { data: unknown }).data;
+        const data = (event as { data?: unknown }).data;
+        if (data === undefined) return;
         handleDataPart({ type: event.type, data }, state, onUpdate, getBuildParts);
         onData(data);
       }
