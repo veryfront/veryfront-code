@@ -5,6 +5,7 @@ import {
   clearReactVersionCache,
   DEFAULT_REACT_VERSION,
   isValidReactVersion,
+  MAX_PROJECT_PACKAGE_JSON_BYTES,
   normalizeReactVersion,
   readProjectDependencyVersions,
   resolveProjectReactVersion,
@@ -181,6 +182,21 @@ describe("package-registry", () => {
         const second = await readProjectDependencyVersions(dir);
         assertEquals(second.react, "19.0.0");
         assertEquals(second.veryfront, "0.2.0");
+      } finally {
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+
+    it("does not parse an oversized project package.json", async () => {
+      const dir = await Deno.makeTempDir({ prefix: "vf-react-version-oversized-" });
+
+      try {
+        await Deno.writeTextFile(
+          `${dir}/package.json`,
+          " ".repeat(MAX_PROJECT_PACKAGE_JSON_BYTES + 1),
+        );
+
+        assertEquals(await readProjectDependencyVersions(dir), {});
       } finally {
         await Deno.remove(dir, { recursive: true });
       }

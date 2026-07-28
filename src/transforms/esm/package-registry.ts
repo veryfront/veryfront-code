@@ -16,17 +16,23 @@ import {
   getReactImportMap as getReactImportMapFromRewriter,
   TAILWIND_VERSION,
 } from "../import-rewriter/url-builder.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 // Re-export constants from unified source
 export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION, TAILWIND_VERSION };
 
 interface CachedDependencyVersions {
   mtimeMs: number | null;
+  size: number;
   react?: string;
   veryfront?: string;
 }
 
-const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
+const MAX_CACHED_PROJECT_DEPENDENCY_VERSIONS = 1_000;
+export const MAX_PROJECT_PACKAGE_JSON_BYTES = 1024 * 1024;
+const dependencyVersionCache = new LRUCache<string, CachedDependencyVersions>({
+  maxEntries: MAX_CACHED_PROJECT_DEPENDENCY_VERSIONS,
+});
 
 /**
  * Validate React version format (semver: X.Y.Z).
@@ -118,10 +124,15 @@ export async function readProjectDependencyVersions(
     const { createFileSystem } = await import("../../platform/compat/fs.ts");
     const fs = createFileSystem();
     const stat = await fs.stat(packageJsonPath);
+    if (stat.size > MAX_PROJECT_PACKAGE_JSON_BYTES) {
+      throw new RangeError(
+        `Project package.json exceeds ${MAX_PROJECT_PACKAGE_JSON_BYTES} bytes`,
+      );
+    }
     const mtimeMs = getMtimeMs(stat.mtime);
     const cached = dependencyVersionCache.get(packageJsonPath);
 
-    if (cached && cached.mtimeMs === mtimeMs) {
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === stat.size) {
       return { react: cached.react, veryfront: cached.veryfront };
     }
 
@@ -134,10 +145,16 @@ export async function readProjectDependencyVersions(
     const react = deps.react ? normalizeReactVersion(stripSemverRange(deps.react)) : undefined;
     const veryfront = deps.veryfront ? stripSemverRange(deps.veryfront) : undefined;
 
-    dependencyVersionCache.set(packageJsonPath, { mtimeMs, react, veryfront });
+    dependencyVersionCache.set(packageJsonPath, {
+      mtimeMs,
+      size: stat.size,
+      react,
+      veryfront,
+    });
 
     return { react, veryfront };
   } catch (error) {
+    dependencyVersionCache.delete(packageJsonPath);
     // ENOENT means there is no package.json in the project dir — expected for
     // framework-only environments.  Any other error (permission denied, malformed
     // JSON, etc.) is logged at warn so it is visible without crashing the server.

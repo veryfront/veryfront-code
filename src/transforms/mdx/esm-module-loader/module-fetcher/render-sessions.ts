@@ -18,6 +18,7 @@ interface RenderSession {
   modules: Set<string>;
   projectSlug?: string;
   route?: string;
+  moduleLimitWarned: boolean;
 }
 
 /**
@@ -25,6 +26,23 @@ interface RenderSession {
  * Key: renderSessionId, Value: RenderSession
  */
 const renderSessions = new Map<string, RenderSession>();
+const MAX_ACTIVE_RENDER_SESSIONS = 2_000;
+const MAX_MODULES_PER_RENDER_SESSION = 10_000;
+const MAX_RENDER_SESSION_ID_CHARACTERS = 16 * 1024;
+const MAX_RECORDED_MODULE_PATH_CHARACTERS = 16 * 1024;
+
+function requireRenderSessionId(sessionId: string): string {
+  if (
+    typeof sessionId !== "string" ||
+    sessionId.length === 0 ||
+    sessionId.length > MAX_RENDER_SESSION_ID_CHARACTERS
+  ) {
+    throw new RangeError(
+      `Render session ID must contain 1-${MAX_RENDER_SESSION_ID_CHARACTERS} characters`,
+    );
+  }
+  return sessionId;
+}
 
 /**
  * The render session id active on the current async execution context.
@@ -38,7 +56,7 @@ const currentSessionIdStorage = new AsyncLocalStorage<string>();
  * work it spawns. Modules fetched inside are attributed to this session.
  */
 export function runInRenderSession<T>(sessionId: string, fn: () => T): T {
-  return currentSessionIdStorage.run(sessionId, fn);
+  return currentSessionIdStorage.run(requireRenderSessionId(sessionId), fn);
 }
 
 /**
@@ -46,9 +64,24 @@ export function runInRenderSession<T>(sessionId: string, fn: () => T): T {
  * Call this before rendering a page.
  */
 export function startRenderSession(sessionId: string, projectSlug?: string, route?: string): void {
-  renderSessions.set(sessionId, { modules: new Set(), projectSlug, route });
+  const id = requireRenderSessionId(sessionId);
+  if (renderSessions.has(id)) {
+    throw new Error("Render session already exists");
+  }
+  if (renderSessions.size >= MAX_ACTIVE_RENDER_SESSIONS) {
+    throw new Error(
+      `Active render session limit reached (${MAX_ACTIVE_RENDER_SESSIONS})`,
+    );
+  }
+
+  renderSessions.set(id, {
+    modules: new Set(),
+    projectSlug,
+    route,
+    moduleLimitWarned: false,
+  });
   globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
-    sessionId,
+    sessionId: id,
     projectSlug,
     route,
   });
@@ -58,17 +91,22 @@ export function startRenderSession(sessionId: string, projectSlug?: string, rout
  * End a render session and record loaded modules to the manifest.
  */
 export function endRenderSession(sessionId: string): void {
-  const session = renderSessions.get(sessionId);
+  const id = requireRenderSessionId(sessionId);
+  const session = renderSessions.get(id);
   if (!session) {
     globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`, {
-      sessionId,
+      sessionId: id,
     });
     return;
   }
 
+  // Release process-lifetime state before logging or manifest publication.
+  // A downstream failure must never strand the session in memory.
+  renderSessions.delete(id);
+
   const modulePaths = Array.from(session.modules);
   globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} End render session`, {
-    sessionId,
+    sessionId: id,
     moduleCount: modulePaths.length,
     projectSlug: session.projectSlug,
     route: session.route,
@@ -88,12 +126,19 @@ export function endRenderSession(sessionId: string): void {
       },
     );
   }
+}
 
-  renderSessions.delete(sessionId);
+/** Abandon a failed render without publishing its partial dependency graph. */
+export function abortRenderSession(sessionId: string): void {
+  const id = requireRenderSessionId(sessionId);
+  if (!renderSessions.delete(id)) return;
+  globalLogger.debug(`${LOG_PREFIX_MDX_LOADER} Aborted render session`, {
+    sessionId: id,
+  });
 }
 
 export function hasRenderSession(sessionId: string): boolean {
-  return renderSessions.has(sessionId);
+  return renderSessions.has(requireRenderSessionId(sessionId));
 }
 
 /**
@@ -120,9 +165,29 @@ function getCurrentSession(): RenderSession | null {
 export function recordModuleToSession(normalizedPath: string): void {
   const session = getCurrentSession();
   if (!session) return;
-
+  if (
+    normalizedPath.length === 0 ||
+    normalizedPath.length > MAX_RECORDED_MODULE_PATH_CHARACTERS
+  ) {
+    globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} Skipping invalid render-session module path`, {
+      pathLength: normalizedPath.length,
+    });
+    return;
+  }
   const moduleUrlPath = normalizedPath
     .replace(/^_vf_modules\//, "")
     .replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+  if (moduleUrlPath.length === 0 || session.modules.has(moduleUrlPath)) return;
+
+  if (session.modules.size >= MAX_MODULES_PER_RENDER_SESSION) {
+    if (!session.moduleLimitWarned) {
+      session.moduleLimitWarned = true;
+      globalLogger.warn(`${LOG_PREFIX_MDX_LOADER} Render session module limit reached`, {
+        maxModules: MAX_MODULES_PER_RENDER_SESSION,
+      });
+    }
+    return;
+  }
+
   session.modules.add(moduleUrlPath);
 }

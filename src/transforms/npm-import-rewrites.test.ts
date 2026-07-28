@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotStrictEquals, assertStrictEquals } from "#veryfront/testing/assert";
+import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   _resetCache,
@@ -8,7 +8,7 @@ import {
   REWRITABLE_PACKAGES,
   rewriteNpmImports,
 } from "./npm-import-rewrites.ts";
-import { join, resolve } from "#veryfront/compat/path/index.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 
 describe("npm-import-rewrites", () => {
@@ -58,48 +58,25 @@ describe("npm-import-rewrites", () => {
       assertEquals(result, input);
     });
 
-    it("keeps cached rewrite rules isolated by canonical project directory", async () => {
-      const firstProject = await Deno.makeTempDir();
-      const secondProject = await Deno.makeTempDir();
-
-      try {
-        _resetCache();
-        const firstRules = getNpmRewriteRules(firstProject);
-        const secondRules = getNpmRewriteRules(secondProject);
-
-        assertNotStrictEquals(firstRules, secondRules);
-        assertStrictEquals(getNpmRewriteRules(firstProject), firstRules);
-        assertStrictEquals(getNpmRewriteRules(secondProject), secondRules);
-      } finally {
-        _resetCache();
-        await Deno.remove(firstProject, { recursive: true });
-        await Deno.remove(secondProject, { recursive: true });
-      }
-    });
-
-    it("loads deno.json from the same canonical directory used for relative baseDir caching", () => {
-      const relativeBaseDir = "relative-project";
-      const resolvedProjectDir = resolve(relativeBaseDir);
-      const canonicalProjectDir = "/canonical/project";
+    it("does not retain project state or touch the filesystem when no packages are configured", () => {
       const originalRealPathSync = Deno.realPathSync;
       const originalReadTextFileSync = Deno.readTextFileSync;
-      let readPath: string | undefined;
+      let filesystemCalls = 0;
 
       try {
         _resetCache();
-        Deno.realPathSync = ((path: string | URL) => {
-          assertEquals(path, resolvedProjectDir);
-          return canonicalProjectDir;
+        Deno.realPathSync = ((_path: string | URL) => {
+          filesystemCalls += 1;
+          throw new Error("realPathSync must not be called");
         }) as typeof Deno.realPathSync;
-        Deno.readTextFileSync = ((path: string | URL) => {
-          readPath = String(path);
-          return JSON.stringify({ imports: {} });
+        Deno.readTextFileSync = ((_path: string | URL) => {
+          filesystemCalls += 1;
+          throw new Error("readTextFileSync must not be called");
         }) as typeof Deno.readTextFileSync;
 
-        const rules = getNpmRewriteRules(relativeBaseDir);
-
-        assertEquals(rules, []);
-        assertEquals(readPath, join(canonicalProjectDir, "deno.json"));
+        assertEquals(getNpmRewriteRules("relative-project"), []);
+        assertEquals(rewriteNpmImports('import "zod"', "relative-project"), 'import "zod"');
+        assertEquals(filesystemCalls, 0);
       } finally {
         Deno.realPathSync = originalRealPathSync;
         Deno.readTextFileSync = originalReadTextFileSync;

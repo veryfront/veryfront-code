@@ -32,6 +32,7 @@ import { transformResolvedModuleSource } from "./source-transform.ts";
 // Re-export extracted modules for backward compatibility
 export { rewriteDntImports } from "./import-rewriter.ts";
 export {
+  abortRenderSession,
   endRenderSession,
   hasRenderSession,
   runInRenderSession,

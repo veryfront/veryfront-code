@@ -20,6 +20,7 @@ import {
   ESM_SH_BUILD_PIN,
   getFrameworkBrowserDependencyVersion,
 } from "../framework-dependencies.ts";
+import { buildImportWarningKey, rememberImportWarning } from "../../shared/import-warning-dedup.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -30,10 +31,8 @@ function hasVersionSpecifier(specifier: string): boolean {
 }
 
 function warnUnversionedImport(specifier: string, projectId: string): void {
-  const key = `${projectId}:${specifier}`;
-  if (unversionedImportsWarned.has(key)) return;
-
-  unversionedImportsWarned.add(key);
+  const key = buildImportWarningKey(specifier, projectId);
+  if (!rememberImportWarning(unversionedImportsWarned, key)) return;
 
   const isScoped = specifier.startsWith("@");
   const parts = specifier.split("/");

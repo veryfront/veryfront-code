@@ -12,6 +12,7 @@ import { isDataControlResult } from "#veryfront/data/helpers.ts";
 import type { DataResult } from "#veryfront/data/types.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
+  abortRenderSession,
   endRenderSession,
   hasRenderSession,
   runInRenderSession,
@@ -253,7 +254,7 @@ export class SSRService implements SSRServiceLike {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
 
-    const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
+    const renderSessionId = `render-${crypto.randomUUID()}`;
     const preRenderHeap = getHeapStats();
 
     if (preRenderHeap.heapUsedPercent > 30) {
@@ -369,9 +370,7 @@ export class SSRService implements SSRServiceLike {
         slug,
       };
     } catch (error) {
-      if (hasRenderSession(renderSessionId)) {
-        endRenderSession(renderSessionId);
-      }
+      if (hasRenderSession(renderSessionId)) abortRenderSession(renderSessionId);
       return this.handleRenderError(error, ctx, slug, request, nonce);
     }
   }

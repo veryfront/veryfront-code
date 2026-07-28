@@ -11,6 +11,7 @@
 
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { join, resolve } from "#veryfront/compat/path/index.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 /**
  * Bare specifiers that should be rewritten to their pinned npm: versions.
@@ -23,7 +24,10 @@ interface RewriteRule {
   replacement: string;
 }
 
-let cachedRules = new Map<string, RewriteRule[]>();
+const MAX_CACHED_REWRITE_PROJECTS = 256;
+const cachedRules = new LRUCache<string, RewriteRule[]>({
+  maxEntries: MAX_CACHED_REWRITE_PROJECTS,
+});
 
 function escapeForRegex(pkg: string): string {
   return pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -88,6 +92,8 @@ function resolveProjectDir(baseDir: string): string {
  * Rules are cached per resolved project directory.
  */
 export function getNpmRewriteRules(baseDir: string = cwd()): RewriteRule[] {
+  if (REWRITABLE_PACKAGES.length === 0) return [];
+
   const projectDir = resolveProjectDir(baseDir);
   const cacheKey = projectDir;
   const cached = cachedRules.get(cacheKey);
@@ -106,7 +112,7 @@ const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
  * No-op on Node.js where bare specifiers resolve via node_modules.
  */
 export function rewriteNpmImports(source: string, baseDir: string = cwd()): string {
-  if (!isDeno) return source;
+  if (!isDeno || REWRITABLE_PACKAGES.length === 0) return source;
   let result = source;
   for (const { pattern, replacement } of getNpmRewriteRules(baseDir)) {
     result = result.replace(pattern, replacement);
@@ -119,5 +125,5 @@ export { buildRules, REWRITABLE_PACKAGES };
 
 /** @internal Reset cached rules — only for testing */
 export function _resetCache(): void {
-  cachedRules = new Map<string, RewriteRule[]>();
+  cachedRules.clear();
 }

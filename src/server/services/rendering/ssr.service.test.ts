@@ -13,6 +13,11 @@ import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import { recordModuleToSession } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts";
+import {
+  clearProjectManifests,
+  getRouteManifest,
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -681,6 +686,29 @@ describe("server/services/rendering/ssr.service", () => {
         } finally {
           setApplicationErrorReporter(undefined);
         }
+      });
+
+      it("does not publish a partial module manifest for a failed render", async () => {
+        const projectSlug = "failed-render-project";
+        const route = "failed-route";
+        clearProjectManifests(projectSlug);
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            recordModuleToSession("_vf_modules/pages/partial.tsx");
+            throw new Error("render failed after loading a module");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ projectSlug }),
+          makeRenderOptions({ slug: route }),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(getRouteManifest(projectSlug, route), null);
       });
 
       it("captures app-router error-boundary failures before returning boundary HTML", async () => {

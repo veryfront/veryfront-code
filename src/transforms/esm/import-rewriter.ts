@@ -7,6 +7,7 @@ import {
 import { rendererLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeVendorExportName } from "../shared/vendor-export-name.ts";
+import { buildImportWarningKey, rememberImportWarning } from "../shared/import-warning-dedup.ts";
 
 const logger = rendererLogger.component("esm");
 const MAX_HMR_TIMESTAMP_CODE_UNITS = 256;
@@ -56,7 +57,6 @@ export async function addHMRTimestamps(
  * Key format: `${projectId}:${specifier}` for project-scoped deduplication.
  * @see plans/architecture-audit/011.1-global-warning-state-pollution.md
  */
-const MAX_WARNED_ENTRIES = 10_000;
 const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
@@ -64,11 +64,8 @@ function hasVersionSpecifier(specifier: string): boolean {
 }
 
 function warnUnversionedImport(specifier: string, projectId?: string): void {
-  const key = projectId ? `${projectId}:${specifier}` : specifier;
-  if (unversionedImportsWarned.has(key)) return;
-
-  if (unversionedImportsWarned.size >= MAX_WARNED_ENTRIES) unversionedImportsWarned.clear();
-  unversionedImportsWarned.add(key);
+  const key = buildImportWarningKey(specifier, projectId);
+  if (!rememberImportWarning(unversionedImportsWarned, key)) return;
 
   const isScoped = specifier.startsWith("@");
   const parts = specifier.split("/");

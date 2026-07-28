@@ -10,8 +10,6 @@ export class ReactStrategy implements ImportRewriteStrategy {
   readonly name = "react";
   readonly priority = 0;
 
-  private importMapCache = new Map<string, Record<string, string>>();
-
   matches(specifier: string, _ctx: RewriteContext): boolean {
     return (
       specifier === "react" ||
@@ -22,7 +20,7 @@ export class ReactStrategy implements ImportRewriteStrategy {
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {
-    const importMap = this.getImportMap(ctx.reactVersion);
+    const importMap = getReactImportMap(ctx.reactVersion);
     const mapped = importMap[info.specifier];
 
     if (mapped) return { specifier: mapped };
@@ -33,15 +31,6 @@ export class ReactStrategy implements ImportRewriteStrategy {
     if (!prefix) return { specifier: null };
 
     return { specifier: prefix + info.specifier.slice("react/".length) };
-  }
-
-  private getImportMap(version: string): Record<string, string> {
-    const cached = this.importMapCache.get(version);
-    if (cached) return cached;
-
-    const importMap = getReactImportMap(version);
-    this.importMapCache.set(version, importMap);
-    return importMap;
   }
 }
 
